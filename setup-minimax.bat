@@ -1,0 +1,14 @@
+@echo off
+REM CMD Skript zur Konfiguration der Minimax API
+
+REM 1. Ersetze "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJHcm91cE5hbWUiOiJEYXZpZCBMT0NITUFOTiIsIlVzZXJOYW1lIjoiRGF2aWQgTE9DSE1BTk4iLCJBY2NvdW50IjoiIiwiU3ViamVjdElEIjoiMTk4NDA2MzM3MTgxMjU0NDk0MSIsIlBob25lIjoiIiwiR3JvdXBJRCI6IjE5ODQwNjMzNzE4MDQxNTIyMzciLCJQYWdlTmFtZSI6IiIsIk1haWwiOiJkYXZpZGxvY2htYW5uMkBnbWFpbC5jb20iLCJDcmVhdGVUaW1lIjoiMjAyNS0xMC0zMSAwOTo1NTo1NyIsIlRva2VuVHlwZSI6MSwiaXNzIjoibWluaW1heCJ9.fEPrbcPXN8gRyGVbluPkv2AEW3p5t4N7KOpZ9SZYGZwzSRFDNyB1uSr8dYz3giFTN1aZSHV-2sC3rKTsOkAyvLR0J2UD-ZeYqOLcxe6ENP7O8kANXmGqisCJEmO6HyVD0iTIoD98z-QbNKmYSpcn9L8ff0iUpZZx4ka4OAMNDqb22tsWOMi0DKDM-qWa74kvEwem7NAYFTy6UNgejCiUhSaKIReLZUgw-0Yz0jUBQMUxI7Vxr4R9VndIltjXQD0NQKtcQKbhDWhARBlGqMHcFRi66uA97IjCVhGc_TxjzL76Pd4cDXgdaZ2HSXXlBg7NLMq6H9adAqhaO9fj_E0dUA" mit deinem tatsächlichen API-Schlüssel von Minimax.
+set ANTHROPIC_API_KEY=DEIN_MINIMAX_API_KEY
+
+REM 2. Setzt die API-URL auf den Minimax-Endpunkt.
+set ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic
+
+echo Umgebungsvariablen fuer Minimax wurden gesetzt. Du kannst jetzt die 'claude' CLI verwenden.
+echo ANTHROPIC_BASE_URL ist jetzt: %ANTHROPIC_BASE_URL%
+
+REM Beispiel für die Verwendung (führe diesen Befehl nach dem Skript aus):
+REM claude ask "Erkläre maschinelles Lernen in einfachen Worten" --model MiniMax-M2

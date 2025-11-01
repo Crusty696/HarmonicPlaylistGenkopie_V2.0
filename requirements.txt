@@ -1,0 +1,5 @@
+librosa
+numpy
+PyQt6
+mutagen
+ruptures

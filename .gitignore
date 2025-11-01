@@ -1,0 +1,149 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.py[co]
+*.pyd
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+ENV/
+env/
+virtualenv/
+
+# Cache files
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+.mypy_cache/
+
+# Database
+*.sqlite3
+cache.db
+*.db
+*.sql
+*.sqlite
+*.sqlite-journal
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-*
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# Project specific
+.Claude
+.claude_flow
+.agentic-tools-mcp
+.benchmarks
+.swarm
+.hivemind
+hpg_cache_v3.dbm.*
+
+# Logs
+*.log
+logs/
+
+# Local development
+.env
+.env.*
+!.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+*.ipynb
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Executables
+toolbox.exe
+*.exe
+*.dll
+*.so
+
+# Documentation
+docs/_build/
+docs/api/
+docs
+
+# Tests
+tests/
+test_real_integration.py
+test_mix_points_manual.py
+test_full_collection.py
+run_tests.py
+live_test.py
+
+# Git
+.git/
+.gitattributes
+.gitkeep
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Project specific
+*.swp
+.hivemind
+.Claude
+.claude_flow
+TODO.md
+TEST.md
+playlist_Genre_Flow.m3u
+PLAN.md
+GEMINI.md
+CLAUDE.md
+tools.yaml
+toolbox.exe
+RESEARCH.md
+HONEST_STATUS.md
+cache.db
+ACT.md
+
+
+
