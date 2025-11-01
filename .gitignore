@@ -65,6 +65,8 @@ cache.db
 .swarm
 .hivemind
 hpg_cache_v3.dbm.*
+.claude-flow
+.hive-mind
 
 # Logs
 *.log
