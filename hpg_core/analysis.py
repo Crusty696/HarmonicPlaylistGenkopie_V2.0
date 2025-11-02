@@ -2,6 +2,7 @@ import numpy as np
 import librosa
 import mutagen
 import os
+import re
 import ruptures as rpt
 from .models import Track
 from .caching import generate_cache_key, get_cached_track, cache_track
@@ -98,18 +99,82 @@ def calculate_bass_intensity(y, sr):
     bass_intensity = float(np.interp(bass_ratio, [0.0, 0.5], [0.0, 100.0]))
     return int(min(max(bass_intensity, 0.0), 100.0))
 
-def get_id3_tags(file_path):
-    """Extracts Artist, Title, and Genre from ID3 tags using mutagen."""
+def parse_filename_for_metadata(file_path):
+    """
+    Extracts Artist and Title from filename using common DJ filename patterns.
+
+    Supported patterns:
+    - "Artist - Track.ext"
+    - "01 - Artist - Track.ext"
+    - "Artist-Track.ext"
+    - "Track Number - Artist - Track.ext"
+
+    Returns:
+        tuple: (artist, title) or (None, None) if parsing fails
+    """
+    filename = os.path.basename(file_path)
+    # Remove file extension
+    name_without_ext = os.path.splitext(filename)[0]
+
+    # Pattern 1: "Artist - Track" (most common DJ format)
+    match = re.match(r'^(?:\d+[\s.-]*)?([^-]+?)\s*-\s*(.+)$', name_without_ext)
+    if match:
+        artist = match.group(1).strip()
+        title = match.group(2).strip()
+
+        # Validate: artist and title should have reasonable length
+        if 1 <= len(artist) <= 100 and 1 <= len(title) <= 200:
+            return artist, title
+
+    # Pattern 2: "Artist_Track" (underscore separator)
+    match = re.match(r'^(?:\d+[\s._-]*)?([^_]+?)_(.+)$', name_without_ext)
+    if match:
+        artist = match.group(1).strip()
+        title = match.group(2).strip()
+        if 1 <= len(artist) <= 100 and 1 <= len(title) <= 200:
+            return artist, title
+
+    # If no pattern matched, return None
+    return None, None
+
+def extract_metadata(file_path):
+    """
+    Extracts Artist, Title, and Genre from ID3 tags or filename.
+
+    Tries ID3 tags first, then falls back to filename parsing if tags are missing.
+
+    Returns:
+        tuple: (artist, title, genre)
+    """
+    artist = None
+    title = None
+    genre = None
+
+    # Try to extract from ID3 tags first
     try:
         audio = mutagen.File(file_path, easy=True)
         if audio:
-            artist = audio.get('artist', ['Unknown'])[0]
-            title = audio.get('title', [os.path.basename(file_path)])[0]
-            genre = audio.get('genre', ['Unknown'])[0]
-            return artist, title, genre
+            artist = audio.get('artist', [None])[0]
+            title = audio.get('title', [None])[0]
+            genre = audio.get('genre', [None])[0]
     except Exception as e:
-        print(f"Error reading ID3 tags for {file_path}: {e}")
-    return "Unknown", os.path.basename(file_path), "Unknown"
+        print(f"Warning: Error reading ID3 tags for {file_path}: {e}")
+
+    # Fallback to filename parsing if artist or title is missing
+    if not artist or not title or artist == "Unknown" or title == "Unknown":
+        parsed_artist, parsed_title = parse_filename_for_metadata(file_path)
+
+        # Use parsed values if available
+        if not artist or artist == "Unknown":
+            artist = parsed_artist if parsed_artist else "Unknown"
+        if not title or title == "Unknown":
+            title = parsed_title if parsed_title else os.path.basename(file_path)
+
+    # Fallback for genre (always from tags or Unknown)
+    if not genre:
+        genre = "Unknown"
+
+    return artist, title, genre
 
 def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
     """
@@ -376,8 +441,8 @@ def analyze_track(file_path: str) -> Track | None:
         return cached_track
 
     print(f"Analyzing: {os.path.basename(file_path)}")
-    
-    artist, title, genre = get_id3_tags(file_path)
+
+    artist, title, genre = extract_metadata(file_path)
 
     try:
         y, sr = librosa.load(file_path)

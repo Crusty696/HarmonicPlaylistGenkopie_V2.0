@@ -65,6 +65,8 @@ cache.db
 .swarm
 .hivemind
 hpg_cache_v3.dbm.*
+hpg_cache_v4.dbm.*
+hpg_cache_v4.lock
 .claude-flow
 .hive-mind
 
@@ -149,3 +151,9 @@ ACT.md
 
 
 
+# Snapshot System (NEU - ergänzt)
+snapshots/
+
+# Test Output Files (NEU - ergänzt)
+test_results.txt
+performance_results.txt

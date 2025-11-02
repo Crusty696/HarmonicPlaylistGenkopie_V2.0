@@ -10,6 +10,7 @@ import sys
 
 from hpg_core.models import Track
 from hpg_core.analysis import analyze_track
+from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.playlist import (
     generate_playlist,
     STRATEGIES,
@@ -39,9 +40,10 @@ class AnalysisWorker(QThread):
         self.supported_formats = ('.wav', '.aiff', '.mp3', '.flac')
 
     def run(self):
-        """The main work of the thread."""
+        """The main work of the thread - now with multi-core processing."""
         self.status_update.emit("Scanning for audio files...")
 
+        # Scan for audio files
         audio_files = []
         for root, _, files in os.walk(self.folder_path):
             for file in files:
@@ -49,26 +51,29 @@ class AnalysisWorker(QThread):
                     audio_files.append(os.path.join(root, file))
 
         total_files = len(audio_files)
-        analyzed_tracks = []
+        self.status_update.emit(f"Found {total_files} audio files. Starting analysis...")
 
-        for i, file_path in enumerate(audio_files):
-            if not os.path.exists(file_path):
-                self.status_update.emit(f"Error: File not found at {os.path.basename(file_path)}. Skipping.")
-                self.progress.emit(int(((i + 1) / total_files) * 100))
-                continue
-            track = analyze_track(file_path)
-            if track:
-                analyzed_tracks.append(track)
-            else:
-                self.status_update.emit(f"Error analyzing {os.path.basename(file_path)}. Skipping.")
-            self.progress.emit(int(((i + 1) / total_files) * 100))
+        # Progress callback for parallel analyzer
+        def progress_callback(current, total, status_msg):
+            """Forward progress updates to GUI"""
+            self.progress.emit(int((current / total) * 100))
+            self.status_update.emit(status_msg)
+
+        # Use ParallelAnalyzer for multi-core processing
+        analyzer = ParallelAnalyzer(max_workers=6)  # Use up to 6 cores as requested
+        analyzed_tracks = analyzer.analyze_files(audio_files, progress_callback=progress_callback)
+
+        if not analyzed_tracks:
+            self.status_update.emit("No tracks were successfully analyzed.")
+            self.finished.emit([], {})
+            return
 
         self.status_update.emit("Generating playlist...")
         sorted_playlist = generate_playlist(analyzed_tracks, mode=self.mode, bpm_tolerance=self.bpm_tolerance)
 
         # Calculate quality metrics
-        quality_metrics = calculate_playlist_quality(sorted_playlist, self.bpm_tolerance)
         self.status_update.emit("Calculating quality metrics...")
+        quality_metrics = calculate_playlist_quality(sorted_playlist, self.bpm_tolerance)
 
         self.finished.emit(sorted_playlist, quality_metrics)
 

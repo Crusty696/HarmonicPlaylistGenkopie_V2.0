@@ -3,8 +3,8 @@ import os
 import hashlib
 from .models import Track
 
-CACHE_FILE = "hpg_cache_v3.dbm" # Using .dbm for shelve
-CACHE_VERSION = 3
+CACHE_FILE = "hpg_cache_v4.dbm" # Using .dbm for shelve
+CACHE_VERSION = 4
 
 def init_cache():
     """Initializes the cache, checking for version compatibility."""
