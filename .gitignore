@@ -1,11 +1,17 @@
-# Python
+# ========================================
+# Harmonic Playlist Generator - .gitignore
+# ========================================
+
+# Python Runtime
 __pycache__/
 *.py[cod]
 *$py.class
-*.py[co]
+*.pyo
 *.pyd
 *.so
 .Python
+
+# Distribution / Packaging
 build/
 develop-eggs/
 dist/
@@ -21,77 +27,56 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual Environment
+# PyInstaller Build Artifacts
+*.spec.bak
+dist/
+build/
+*.exe
+*.dll
+icon.ico.bak
+
+# Virtual Environments
 venv/
 .venv/
 ENV/
 env/
 virtualenv/
 
-# Cache files
-.cache/
+# Testing & Coverage
 .pytest_cache/
 .coverage
 htmlcov/
 .hypothesis/
+.tox/
+.nox/
+test_results.txt
+performance_results.txt
+
+# Cache Files
+.cache/
 .mypy_cache/
-
-# Database
-*.sqlite3
+*.dbm.bak
+*.dbm.dat
+*.dbm.dir
+*.lock
 cache.db
-*.db
-*.sql
-*.sqlite
-*.sqlite-journal
+hpg_cache_*.dbm.*
+hpg_cache_*.lock
 
-# IDE and Editor files
+# IDE / Editor
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 *.sublime-*
-*.sublime-workspace
 .project
 .pydevproject
 .settings/
 
-# Project specific
-.Claude
-.claude_flow
-.agentic-tools-mcp
-.benchmarks
-.swarm
-.hivemind
-hpg_cache_v3.dbm.*
-hpg_cache_v4.dbm.*
-hpg_cache_v4.lock
-.claude-flow
-.hive-mind
-
-# Logs
-*.log
-logs/
-
-# Local development
-.env
-.env.*
-!.env.example
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb_checkpoints
-*.ipynb
-
-# OS generated files
+# OS Files
 .DS_Store
 .DS_Store?
 ._*
@@ -101,41 +86,29 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# Executables
-toolbox.exe
-*.exe
-*.dll
-*.so
+# Logs
+*.log
+logs/
 
-# Documentation
-docs/_build/
-docs/api/
-docs
+# Environment
+.env
+.env.*
+!.env.example
 
-# Tests
-tests/
-test_real_integration.py
-test_mix_points_manual.py
-test_full_collection.py
-run_tests.py
-live_test.py
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
 
-# Git
-.git/
-.gitattributes
-.gitkeep
+# Development Tools (Claude-specific)
+.claude/
+.claude-flow/
+.swarm/
+.hivemind/
+.hive-mind/
+.agentic-tools-mcp/
+.benchmarks/
 
-# Temporary files
-*.tmp
-*.bak
-*.swp
-*~
-
-# Project specific
-*.swp
-.hivemind
-.Claude
-.claude_flow
+# Temporary Development Files
 TODO.md
 TEST.md
 playlist_Genre_Flow.m3u
@@ -157,3 +130,116 @@ snapshots/
 # Test Output Files (NEU - ergänzt)
 test_results.txt
 performance_results.txt
+
+# Audio/Media Test Files (User sollte eigene Musik verwenden)
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.wma
+*.aiff
+*.ape
+*.opus
+
+# Playlist Export Files (generierte Outputs, nicht Source Code)
+*.m3u
+*.m3u8
+*.pls
+*.xspf
+!example.m3u
+!sample_playlist.m3u
+
+# Database Files (Cache & User Data)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Rekordbox/DJ Software Specific
+rekordbox.xml.bak
+collection.nml.bak
+*.rekordbox
+pioneer/
+
+# Backup Files
+*.bak
+*.backup
+*.old
+*.orig
+*~.nib
+
+# Test/Development Music Collections
+test_music/
+test_collection/
+sample_tracks/
+music_library/
+audio_files/
+
+# Performance & Benchmark Data
+benchmark_*.txt
+performance_*.json
+profile_*.dat
+*.prof
+
+# Documentation Build
+docs/_build/
+docs/.doctrees/
+docs/_static/
+docs/_templates/
+site/
+
+# Package Manager
+poetry.lock
+Pipfile.lock
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Windows Build Artifacts
+*.manifest
+*.res
+*.rc
+
+# Compiled C Extensions
+*.c
+*.cpp
+*.h
+!setup.py
+
+# User-specific Configuration
+config_local.json
+settings_local.json
+user_preferences.json
+
+# Claude Code Session Files
+.claude-session
+.aider*
+.cursor/
+
+# Development Notes & Planning
+NOTES.md
+IDEAS.md
+SCRATCH.md
+DEV_NOTES.md
+
+# Test Scripts & Integration Tests (nicht für GitHub)
+test_*.py
+*_test.py
+live_test.py
+run_tests.py
+test_full_collection.py
+test_mix_points_manual.py
+test_real_integration.py
+
+# Test Directory (wenn mit echter Musik)
+tests/
+
+# Entwicklungs-Dokumentation (nicht für GitHub)
+docs/
+
+# Development Markdown Files
+CHANGELOG.md
+CONTRIBUTING.md

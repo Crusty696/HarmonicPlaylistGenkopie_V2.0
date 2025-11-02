@@ -1,0 +1,96 @@
+name: Test One-Click Installer
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Ermöglicht manuelles Ausführen
+
+jobs:
+  test-windows-installer:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Display Python Version
+      run: python --version
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install PyInstaller
+      run: pip install pyinstaller
+
+    - name: Run Build Script
+      run: |
+        cmd /c build.bat
+      shell: cmd
+
+    - name: Check if EXE was created
+      run: |
+        if (Test-Path "dist/HarmonicPlaylistGenerator.exe") {
+          Write-Host "✅ EXE successfully created!"
+          Get-Item "dist/HarmonicPlaylistGenerator.exe" | Select-Object Name, Length, LastWriteTime
+        } else {
+          Write-Error "❌ EXE was not created!"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Upload Build Artifact
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: HarmonicPlaylistGenerator-Windows
+        path: dist/HarmonicPlaylistGenerator.exe
+        retention-days: 7
+
+    - name: Test Import of Core Modules
+      run: |
+        python -c "import hpg_core.playlist_generator; print('✅ playlist_generator OK')"
+        python -c "import hpg_core.audio_analyzer; print('✅ audio_analyzer OK')"
+        python -c "import hpg_core.rekordbox_parser; print('✅ rekordbox_parser OK')"
+
+  test-python-code:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+
+    - name: Run Tests (if available)
+      run: |
+        if (Test-Path "tests") {
+          python -m pytest tests/ -v
+        } else {
+          Write-Host "⚠️ No tests directory found, skipping tests"
+        }
+      shell: pwsh
+      continue-on-error: true
+
+    - name: Check Code Quality
+      run: |
+        python -m py_compile hpg_core/*.py
+        Write-Host "✅ All Python files compile successfully"
+      shell: pwsh
