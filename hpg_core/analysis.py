@@ -6,6 +6,7 @@ import re
 import ruptures as rpt
 from .models import Track
 from .caching import generate_cache_key, get_cached_track, cache_track
+from .rekordbox_importer import get_rekordbox_importer
 
 # Krumhansl-Schmuckler key profiles (simplified)
 # C, C#, D, D#, E, F, F#, G, G#, A, A#, B
@@ -442,6 +443,88 @@ def analyze_track(file_path: str) -> Track | None:
 
     print(f"Analyzing: {os.path.basename(file_path)}")
 
+    # Try to get analysis data from Rekordbox first (MUCH faster!)
+    rekordbox_importer = get_rekordbox_importer()
+    rekordbox_data = rekordbox_importer.get_track_data(file_path)
+
+    if rekordbox_data and rekordbox_data.bpm:
+        # Rekordbox data available - use it!
+        print(f"  [RB] Using Rekordbox data (BPM: {rekordbox_data.bpm}, Key: {rekordbox_data.camelot_code})")
+
+        # Still extract ID3 tags (Rekordbox might have different metadata)
+        artist_id3, title_id3, genre_id3 = extract_metadata(file_path)
+
+        # Prefer Rekordbox metadata, fallback to ID3
+        artist = rekordbox_data.artist or artist_id3
+        title = rekordbox_data.title or title_id3
+        genre = rekordbox_data.genre or genre_id3
+
+        # For duration and some missing data, we still need librosa (quick load only)
+        try:
+            y, sr = librosa.load(file_path)
+            duration = rekordbox_data.duration or librosa.get_duration(y=y, sr=sr)
+
+            # Calculate energy and bass (not in Rekordbox)
+            energy = calculate_energy(y)
+            bass_intensity = calculate_bass_intensity(y, sr)
+
+            # Analyze mix points (not in Rekordbox, but use Rekordbox cues as hints)
+            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = analyze_structure_and_mix_points(
+                y, sr, duration, energy, rekordbox_data.bpm
+            )
+
+            # Override mix points if Rekordbox has cue points
+            if rekordbox_data.cue_points:
+                for cue in rekordbox_data.cue_points:
+                    if cue['name'] and cue['position']:
+                        if 'IN' in cue['name'].upper() or 'START' in cue['name'].upper():
+                            mix_in_point = cue['position']
+                        elif 'OUT' in cue['name'].upper() or 'END' in cue['name'].upper():
+                            mix_out_point = cue['position']
+
+        except Exception as e:
+            print(f"  Warning: Quick librosa load failed: {e}")
+            duration = rekordbox_data.duration or 0.0
+            energy = 50  # Default energy
+            bass_intensity = 50
+            mix_in_point, mix_out_point = 0.0, duration
+            mix_in_bars, mix_out_bars = 0, 0
+
+        # Extract key note and mode from Camelot code (for backward compatibility)
+        key_note = "C"
+        key_mode = "Major"
+        if rekordbox_data.camelot_code:
+            # Parse Camelot code (e.g., "8A" → A minor)
+            if 'A' in rekordbox_data.camelot_code:
+                key_mode = "Minor"
+            elif 'B' in rekordbox_data.camelot_code:
+                key_mode = "Major"
+
+        # Create Track object with Rekordbox data
+        track = Track(
+            filePath=file_path,
+            fileName=os.path.basename(file_path),
+            artist=artist,
+            title=title,
+            genre=genre,
+            duration=duration,
+            bpm=rekordbox_data.bpm,
+            keyNote=key_note,
+            keyMode=key_mode,
+            camelotCode=rekordbox_data.camelot_code,
+            energy=energy,
+            bass_intensity=bass_intensity,
+            mix_in_point=mix_in_point,
+            mix_out_point=mix_out_point,
+            mix_in_bars=mix_in_bars,
+            mix_out_bars=mix_out_bars
+        )
+
+        cache_track(cache_key, track)
+        return track
+
+    # No Rekordbox data - fallback to full librosa analysis
+    print(f"  [LIBROSA] Full analysis (no Rekordbox data)")
     artist, title, genre = extract_metadata(file_path)
 
     try:

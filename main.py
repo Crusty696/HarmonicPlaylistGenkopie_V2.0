@@ -19,6 +19,8 @@ from hpg_core.playlist import (
     EnergyDirection,
     compute_transition_recommendations,
 )
+from hpg_core.exporters.m3u8_exporter import M3U8Exporter
+from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
 import shelve
 from hpg_core.caching import init_cache, CACHE_FILE
 import json
@@ -975,30 +977,95 @@ class MainWindow(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.result_view)
 
     def export_playlist(self):
-        """Export playlist to M3U file."""
+        """Export playlist in M3U8 or Rekordbox XML format."""
         if not self.playlist:
+            QMessageBox.warning(self, "No Playlist", "No playlist to export. Please analyze audio files first.")
             return
 
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Playlist",
-            f"playlist_{datetime.now().strftime('%Y%m%d_%H%M%S')}.m3u",
-            "M3U Playlist (*.m3u)"
+        # Let user choose export format
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Playlist",
+            f"HPG_Playlist_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "M3U8 Playlist (*.m3u8);;Rekordbox XML (*.xml);;All Files (*.*)"
         )
 
-        if file_path:
-            try:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write("#EXTM3U\n")
-                    for i, track in enumerate(self.playlist):
-                        # Write extended info
-                        duration = int(track.duration) if track.duration > 0 else -1
-                        f.write(f"#EXTINF:{duration},{track.artist} - {track.title}\n")
-                        f.write(track.filePath + '\n')
+        if not file_path:
+            return  # User cancelled
 
-                QMessageBox.information(self, "Export Successful",
-                                      f"Playlist exported successfully to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Error exporting playlist: {e}")
+        try:
+            # Determine format from filter or extension
+            file_lower = file_path.lower()
+
+            if selected_filter.startswith("Rekordbox") or file_lower.endswith('.xml'):
+                # Export as Rekordbox XML
+                self._export_rekordbox_xml(file_path)
+            else:
+                # Export as M3U8 (default)
+                if not file_lower.endswith('.m3u8'):
+                    file_path += '.m3u8'
+                self._export_m3u8(file_path)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error",
+                               f"Failed to export playlist:\n{str(e)}\n\n"
+                               f"Please check file permissions and try again.")
+
+    def _export_m3u8(self, file_path: str):
+        """Export playlist as M3U8 format."""
+        try:
+            exporter = M3U8Exporter()
+            playlist_name = f"HPG - {self.current_mode}"
+            exporter.export(self.playlist, file_path, playlist_name)
+
+            QMessageBox.information(
+                self, "Export Successful",
+                f"M3U8 Playlist exported successfully!\n\n"
+                f"Location: {file_path}\n"
+                f"Tracks: {len(self.playlist)}\n"
+                f"Format: M3U8 (Universal Compatible)\n\n"
+                f"✅ Compatible with:\n"
+                f"   • Rekordbox 5.x, 6.x, 7.x\n"
+                f"   • Serato DJ Pro\n"
+                f"   • Traktor Pro 3\n"
+                f"   • Most DJ Software"
+            )
+        except Exception as e:
+            raise Exception(f"M3U8 export failed: {e}")
+
+    def _export_rekordbox_xml(self, file_path: str):
+        """Export playlist as Rekordbox XML format."""
+        try:
+            exporter = RekordboxXMLExporter()
+            playlist_name = f"HPG - {self.current_mode}"
+            exporter.export(self.playlist, file_path, playlist_name)
+
+            QMessageBox.information(
+                self, "Export Successful",
+                f"Rekordbox XML exported successfully!\n\n"
+                f"Location: {file_path}\n"
+                f"Tracks: {len(self.playlist)}\n"
+                f"Format: Rekordbox XML (Professional)\n\n"
+                f"✅ Included Metadata:\n"
+                f"   • BPM & Key (Camelot → Rekordbox)\n"
+                f"   • Mix In/Out Points (Memory Cues)\n"
+                f"   • Artist, Title, Genre\n"
+                f"   • Full track paths\n\n"
+                f"📥 Import into Rekordbox:\n"
+                f"   File → Import → rekordbox xml"
+            )
+        except ImportError:
+            QMessageBox.critical(
+                self, "Library Missing",
+                "pyrekordbox library is not installed!\n\n"
+                "Install with:\n"
+                "pip install pyrekordbox\n\n"
+                "Falling back to M3U8 export..."
+            )
+            # Fallback to M3U8
+            m3u8_path = file_path.replace('.xml', '.m3u8')
+            self._export_m3u8(m3u8_path)
+        except Exception as e:
+            raise Exception(f"Rekordbox XML export failed: {e}")
 
     def preview_transitions(self):
         """Show transition preview dialog."""
