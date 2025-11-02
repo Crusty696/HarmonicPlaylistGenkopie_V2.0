@@ -39,23 +39,28 @@ jobs:
     - name: Check if EXE was created
       run: |
         Write-Host "=== Searching for EXE files ==="
-        Get-ChildItem -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq "HarmonicPlaylistGenerator.exe" } | Select-Object FullName, Length, LastWriteTime
+        $exeFile = Get-ChildItem -Recurse -Filter "HarmonicPlaylistGenerator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-        if (Test-Path "dist/HarmonicPlaylistGenerator.exe") {
-          Write-Host "✅ EXE found in dist/ directory!"
-          Get-Item "dist/HarmonicPlaylistGenerator.exe" | Select-Object Name, Length, LastWriteTime
-        } elseif (Test-Path "venv/dist/HarmonicPlaylistGenerator.exe") {
-          Write-Host "✅ EXE found in venv/dist/ directory!"
-          Get-Item "venv/dist/HarmonicPlaylistGenerator.exe" | Select-Object Name, Length, LastWriteTime
+        if ($exeFile) {
+          Write-Host "✅ EXE successfully created!"
+          Write-Host "   Location: $($exeFile.FullName)"
+          Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
+          Write-Host "   Created: $($exeFile.LastWriteTime)"
+
+          # Ensure dist/ directory exists
           if (-not (Test-Path "dist")) {
-            New-Item -ItemType Directory -Path "dist" -Force
+            New-Item -ItemType Directory -Path "dist" -Force | Out-Null
           }
-          Copy-Item "venv/dist/HarmonicPlaylistGenerator.exe" "dist/" -Force
-          Write-Host "✅ Copied to dist/ directory"
+
+          # Copy to dist/ if not already there
+          if ($exeFile.FullName -notlike "*\dist\*") {
+            Copy-Item $exeFile.FullName "dist/HarmonicPlaylistGenerator.exe" -Force
+            Write-Host "✅ Copied to dist/ for artifact upload"
+          }
+
+          Get-Item "dist/HarmonicPlaylistGenerator.exe" | Select-Object Name, Length, LastWriteTime
         } else {
-          Write-Host "❌ EXE was not created in expected locations!"
-          Write-Host "Checking all directories..."
-          Get-ChildItem -Recurse -Directory -Filter "dist" -ErrorAction SilentlyContinue | ForEach-Object { Get-ChildItem $_.FullName -Filter "*.exe" }
+          Write-Host "❌ EXE was not created!"
           exit 1
         }
       shell: pwsh
