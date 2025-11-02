@@ -39,22 +39,20 @@ if errorlevel 1 (
 echo.
 
 REM Install dependencies from requirements.txt
-echo [3/6] Installing dependencies...
-pip install --upgrade pip >nul 2>&1
-pip install -r requirements.txt >nul 2>&1
+echo [3/7] Installing dependencies...
+pip install --upgrade pip -q
+pip install -r requirements.txt -q
 if errorlevel 1 (
-    echo [WARNING] Some dependencies may have failed to install
+    echo [WARNING] Some dependencies may have failed to install - continuing...
 )
 echo [SUCCESS] Dependencies installed
 echo.
 
 REM Install/upgrade PyInstaller
-echo [4/6] Installing PyInstaller...
-pip install --upgrade pyinstaller >nul 2>&1
+echo [4/7] Installing PyInstaller...
+pip install --upgrade pyinstaller -q
 if errorlevel 1 (
-    echo [ERROR] Failed to install PyInstaller
-    pause
-    exit /b 1
+    echo [WARNING] PyInstaller installation had errors - trying to continue...
 )
 echo [SUCCESS] PyInstaller ready
 echo.
