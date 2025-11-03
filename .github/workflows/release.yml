@@ -1,0 +1,109 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggert bei Tags wie v3.0.0, v3.1.0, etc.
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Get Version from Tag
+      id: get_version
+      shell: pwsh
+      run: |
+        $VERSION = "${{ github.ref_name }}"
+        echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Build Executable
+      run: |
+        cmd /c build.bat
+      shell: cmd
+
+    - name: Verify EXE was created
+      shell: pwsh
+      run: |
+        $exeFile = Get-ChildItem -Recurse -Filter "HarmonicPlaylistGenerator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if ($exeFile) {
+          Write-Host "✅ EXE found: $($exeFile.FullName)"
+          Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
+
+          # Copy to predictable location
+          Copy-Item $exeFile.FullName "HarmonicPlaylistGenerator.exe" -Force
+        } else {
+          Write-Error "❌ EXE not found!"
+          exit 1
+        }
+
+    - name: Create Release Notes
+      shell: pwsh
+      run: |
+        $VERSION = "${{ steps.get_version.outputs.VERSION }}"
+        $NOTES = @"
+        # 🎵 Harmonic Playlist Generator $VERSION
+
+        **Multi-Core Optimized DJ Playlist Generator**
+
+        ## 📥 Download
+
+        Download \`HarmonicPlaylistGenerator.exe\` below (Windows 10/11, 64-bit)
+
+        ## 🚀 Installation
+
+        1. Download the executable
+        2. Run it (no installation required!)
+        3. Select your music folder
+        4. Generate playlists!
+
+        ## 📝 What's New
+
+        See [CHANGELOG.md](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/blob/main/CHANGELOG.md) for details.
+
+        ## 🐛 Bug Reports
+
+        [Report issues](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/issues)
+
+        ---
+
+        **Generated automatically via GitHub Actions** 🤖
+        "@
+
+        $NOTES | Out-File -FilePath "release_notes.md" -Encoding UTF8
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: HarmonicPlaylistGenerator.exe
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload Build Artifact (Backup)
+      uses: actions/upload-artifact@v4
+      with:
+        name: HarmonicPlaylistGenerator-${{ steps.get_version.outputs.VERSION }}
+        path: HarmonicPlaylistGenerator.exe
+        retention-days: 30
