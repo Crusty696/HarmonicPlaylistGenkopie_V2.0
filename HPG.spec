@@ -78,10 +78,10 @@ a = Analysis(
         'IPython',
         'jupyter',
         'notebook',
-        'tkinter',
-        'test',
-        'unittest',
-        'pytest',
+        # NOTE: unittest is NEEDED by numpy.testing - do NOT exclude!
+        # 'unittest',  # REMOVED - needed for numpy.testing
+        # 'test',      # REMOVED - may be needed
+        # 'pytest',    # REMOVED - may be needed
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
