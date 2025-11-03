@@ -1107,6 +1107,10 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == '__main__':
+    # CRITICAL: Required for PyInstaller + multiprocessing on Windows
+    # This MUST be the first line to prevent infinite process spawning
+    multiprocessing.freeze_support()
+
     # Try to clear shelve cache files, but continue if locked
     for ext in ['.bak', '.dat', '.dir', '.db']:
         cache_file_path = CACHE_FILE + ext
