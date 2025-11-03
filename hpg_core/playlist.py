@@ -1,3 +1,5 @@
+from __future__ import annotations  # Python 3.9 compatibility for | type hints
+
 from .models import Track
 import re
 import random

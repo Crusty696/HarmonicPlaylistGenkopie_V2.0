@@ -1,3 +1,5 @@
+from __future__ import annotations  # Python 3.9 compatibility for | type hints
+
 import numpy as np
 import librosa
 import mutagen

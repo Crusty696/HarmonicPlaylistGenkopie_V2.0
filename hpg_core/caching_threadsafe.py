@@ -7,6 +7,8 @@ multiple worker processes access the cache simultaneously.
 Works on both Windows (msvcrt) and Unix/Linux (fcntl).
 """
 
+from __future__ import annotations  # Python 3.9 compatibility for | type hints
+
 import shelve
 import os
 import sys
