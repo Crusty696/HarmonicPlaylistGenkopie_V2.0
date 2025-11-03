@@ -7,6 +7,34 @@
 
 > **Professional DJ Tool for Harmonically Perfect Playlists**
 
+---
+
+## 📥 Download Latest Version
+
+### ⚡ Windows Standalone Executable - Ready to Use!
+
+**Latest Release: v3.0.6** (Fully tested and stable)
+
+<div align="center">
+
+### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.0.6-REALLY-FIXED/HarmonicPlaylistGenerator.exe)
+
+**No installation required • Just download and run!**
+
+</div>
+
+**What's Fixed in v3.0.6:**
+- ✅ Single-process execution (no multiple windows)
+- ✅ Multi-core audio analysis (uses all CPU cores)
+- ✅ Stable cache handling
+- ✅ Professional-grade performance
+
+**Alternative Downloads:**
+- All releases: [GitHub Releases Page](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases)
+- Source code: See "For Developers" section below
+
+---
+
 HPG is a high-performance desktop application for professional DJs that creates harmonically and rhythmically coherent playlists using advanced audio analysis and intelligent sorting algorithms. Version 3.0 introduces **4-6x faster** performance through multi-core processing and optional Rekordbox integration.
 
 ---
