@@ -13,22 +13,22 @@
 
 ### ⚡ Windows Standalone Executable - Ready to Use!
 
-**Latest Release: v3.0.7.1** (CPU Optimization Hotfix)
+**Latest Release: v3.0.8** (Duration Display Feature)
 
 <div align="center">
 
-### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.0.7.1/HarmonicPlaylistGenerator.exe)
+### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.0.8/HarmonicPlaylistGenerator.exe)
 
 **No installation required • Just download and run!**
 
 </div>
 
-**What's New in v3.0.7.1:**
-- 🔥 **HOTFIX:** Now uses full CPU capacity (8 cores on 16-core AMD Ryzen 7 7800X3D)
-- ✅ Fixed workload scaling bug (was limiting to 5 cores for typical workloads)
+**What's New in v3.0.8:**
+- 🆕 **NEW:** Duration column now displays track length (MM:SS format)
+- ✅ Better overview of your playlist with visible track durations
+- ✅ All previous optimizations included (8-core utilization on 16-core CPUs)
 - ✅ Smart CPU scaling (uses up to 50% of cores on high-end CPUs)
 - ✅ 33-433% faster on 16+ core systems
-- ✅ Maintains performance on 4-12 core systems
 
 **Alternative Downloads:**
 - All releases: [GitHub Releases Page](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases)
