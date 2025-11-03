@@ -26,9 +26,13 @@ a = Analysis(
         'librosa.feature',
         'librosa.beat',
         'numpy',
+        'numpy.testing',
         'scipy',
         'scipy.signal',
+        'scipy.spatial',
+        'scipy.sparse',
         'soundfile',
+        'ruptures',
 
         # Metadata
         'mutagen',
@@ -55,6 +59,14 @@ a = Analysis(
         'platform',
         'pathlib',
         'typing',
+
+        # Standard library (needed by numpy.testing)
+        'unittest',
+        'unittest.mock',
+        'doctest',
+        'pprint',
+        'tempfile',
+        'warnings',
     ],
     hookspath=[],
     hooksconfig={},
