@@ -1,8 +1,35 @@
-# Harmonic Playlist Generator (HPG) v3.0 - OPTIMIZED EDITION
+# 🎵 Harmonic Playlist Generator (HPG) v3.0
 
-**Professional DJ Tool for Harmonically Perfect Playlists**
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)]()
+[![Releases](https://img.shields.io/badge/releases-latest-green.svg)](../../releases)
 
-HPG is a high-performance desktop application for professional DJs that creates harmonically and rhythmically coherent playlists using advanced audio analysis and intelligent sorting algorithms. Version 3.0 introduces massive performance improvements through multi-core processing and optional Rekordbox integration.
+> **Professional DJ Tool for Harmonically Perfect Playlists**
+
+HPG is a high-performance desktop application for professional DJs that creates harmonically and rhythmically coherent playlists using advanced audio analysis and intelligent sorting algorithms. Version 3.0 introduces **4-6x faster** performance through multi-core processing and optional Rekordbox integration.
+
+---
+
+## 🚀 Quick Start
+
+### For End Users (Windows)
+
+1. **Download** [HPG_v3.0_Setup.exe](../../releases/latest)
+2. **Run** the installer
+3. **Launch** from Desktop icon
+4. **Select** your music folder
+5. **Choose** a playlist strategy
+6. **Export** your optimized playlist
+
+### For Developers
+
+```bash
+git clone https://github.com/yourusername/HarmonicPlaylistGenerator.git
+cd HarmonicPlaylistGenerator
+pip install -r requirements.txt
+python main.py
+```
 
 ---
 
@@ -470,6 +497,45 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## 🔨 Building from Source
+
+### Build Standalone Executable (Windows)
+
+```bash
+# 1. Create application icon (optional)
+python create_icon.py
+
+# 2. Build executable (~164 MB)
+build.bat
+
+# Result: HarmonicPlaylistGenerator.exe
+```
+
+### Build Windows Installer (Professional Distribution)
+
+```bash
+# Prerequisites: Inno Setup 6 (https://jrsoftware.org/isdl.php)
+
+# 1. Build executable first
+build.bat
+
+# 2. Build installer
+build_installer.bat
+
+# Result: installer_output/HPG_v3.0_Setup.exe
+```
+
+### Full Documentation
+
+See [BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md) for:
+- Detailed build process
+- Icon creation guide
+- Troubleshooting
+- Distribution checklist
+- Advanced configuration
 
 ---
 

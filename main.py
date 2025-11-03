@@ -1107,10 +1107,17 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == '__main__':
-    # Clear shelve cache files before initializing for a clean integration test
+    # Try to clear shelve cache files, but continue if locked
     for ext in ['.bak', '.dat', '.dir', '.db']:
-        if os.path.exists(CACHE_FILE + ext):
-            os.remove(CACHE_FILE + ext)
+        cache_file_path = CACHE_FILE + ext
+        if os.path.exists(cache_file_path):
+            try:
+                os.remove(cache_file_path)
+            except PermissionError:
+                print(f"Warning: Could not remove {cache_file_path} (file is locked)")
+            except Exception as e:
+                print(f"Warning: Could not remove {cache_file_path}: {e}")
+
     init_cache()
 
     app = QApplication(sys.argv)
