@@ -13,19 +13,20 @@
 
 ### ⚡ Windows Standalone Executable - Ready to Use!
 
-**Latest Release: v3.0.7** (Smart CPU scaling)
+**Latest Release: v3.0.7.1** (CPU Optimization Hotfix)
 
 <div align="center">
 
-### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.0.7/HarmonicPlaylistGenerator.exe)
+### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.0.7.1/HarmonicPlaylistGenerator.exe)
 
 **No installation required • Just download and run!**
 
 </div>
 
-**What's New in v3.0.7:**
+**What's New in v3.0.7.1:**
+- 🔥 **HOTFIX:** Now uses full CPU capacity (8 cores on 16-core AMD Ryzen 7 7800X3D)
+- ✅ Fixed workload scaling bug (was limiting to 5 cores for typical workloads)
 - ✅ Smart CPU scaling (uses up to 50% of cores on high-end CPUs)
-- ✅ Automatic core detection and optimization
 - ✅ 33-433% faster on 16+ core systems
 - ✅ Maintains performance on 4-12 core systems
 
