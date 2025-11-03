@@ -450,9 +450,9 @@ class EnhancedResultView(QWidget):
 
         # Enhanced table with drag-and-drop
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
-            '#', 'Track Name', 'Artist', 'BPM', 'Key', 'Camelot', 'Energy', 'Mix In', 'Mix Out', 'Transition Score'
+            '#', 'Track Name', 'Artist', 'Duration', 'BPM', 'Key', 'Camelot', 'Energy', 'Mix In', 'Mix Out', 'Transition Score'
         ])
 
         # Enable drag and drop reordering
@@ -603,10 +603,17 @@ class EnhancedResultView(QWidget):
             self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
             self.table.setItem(i, 1, QTableWidgetItem(track.fileName))
             self.table.setItem(i, 2, QTableWidgetItem(track.artist))
-            self.table.setItem(i, 3, QTableWidgetItem(f"{track.bpm:.1f}"))
-            self.table.setItem(i, 4, QTableWidgetItem(f"{track.keyNote} {track.keyMode}"))
-            self.table.setItem(i, 5, QTableWidgetItem(track.camelotCode))
-            self.table.setItem(i, 6, QTableWidgetItem(str(track.energy)))
+
+            # Format duration to MM:SS
+            duration_minutes = int(track.duration // 60)
+            duration_seconds = int(track.duration % 60)
+            formatted_duration = f"{duration_minutes}:{duration_seconds:02d}"
+            self.table.setItem(i, 3, QTableWidgetItem(formatted_duration))
+
+            self.table.setItem(i, 4, QTableWidgetItem(f"{track.bpm:.1f}"))
+            self.table.setItem(i, 5, QTableWidgetItem(f"{track.keyNote} {track.keyMode}"))
+            self.table.setItem(i, 6, QTableWidgetItem(track.camelotCode))
+            self.table.setItem(i, 7, QTableWidgetItem(str(track.energy)))
 
             # Format mix points to MM:SS (Bar Nummer)
             mix_in_minutes = int(track.mix_in_point // 60)
@@ -617,8 +624,8 @@ class EnhancedResultView(QWidget):
             mix_out_seconds = int(track.mix_out_point % 60)
             formatted_mix_out = f"{mix_out_minutes:02d}:{mix_out_seconds:02d} ({track.mix_out_bars} bars)"
 
-            self.table.setItem(i, 7, QTableWidgetItem(formatted_mix_in))
-            self.table.setItem(i, 8, QTableWidgetItem(formatted_mix_out))
+            self.table.setItem(i, 8, QTableWidgetItem(formatted_mix_in))
+            self.table.setItem(i, 9, QTableWidgetItem(formatted_mix_out))
 
             # Color-code transition score
             score_item = QTableWidgetItem(f"{transition_score}%")
@@ -630,7 +637,7 @@ class EnhancedResultView(QWidget):
                 score_item.setBackground(QColor("#f44336"))  # Red
             score_item.setForeground(QColor("white"))
 
-            self.table.setItem(i, 9, score_item)
+            self.table.setItem(i, 10, score_item)
                     # Update analytics
         self._update_analytics()
         self._update_mix_recommendations()
@@ -849,7 +856,7 @@ class EnhancedResultView(QWidget):
                 score_item.setBackground(QColor("#f44336"))  # Red
             score_item.setForeground(QColor("white"))
 
-            self.table.setItem(i, 9, score_item)
+            self.table.setItem(i, 10, score_item)
 
         # Recalculate overall quality metrics for the reordered playlist
         self.quality_metrics = calculate_playlist_quality(self.playlist, self.bpm_tolerance)
