@@ -2,7 +2,7 @@
 Multi-core audio analysis engine for Harmonic Playlist Generator
 
 Provides parallel processing capabilities using ProcessPoolExecutor for
-CPU-intensive audio analysis tasks, enabling up to 6-core utilization.
+CPU-intensive audio analysis tasks with smart multi-core scaling (up to 50% of cores).
 """
 
 import os
@@ -17,23 +17,31 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     """
     Determines optimal number of worker processes based on CPU count and workload.
 
+    Uses smart dynamic allocation:
+    - Small CPUs (≤12 cores): Up to 6 cores
+    - Large CPUs (>12 cores): Up to 50% of cores
+
     Args:
         file_count: Number of files to process (optional)
 
     Returns:
-        int: Optimal number of workers (1-6)
+        int: Optimal number of workers (minimum 2, scales with CPU)
     """
     cpu_count = mp.cpu_count()
-    max_workers = min(6, cpu_count)  # Cap at 6 cores as requested
+
+    # Smart scaling: use the better of the two strategies
+    # - Small CPU strategy: min(6, cpu_count)
+    # - Large CPU strategy: cpu_count // 2
+    max_workers = max(min(6, cpu_count), cpu_count // 2)
 
     if file_count:
         # Scale workers based on workload
         if file_count < 5:
-            return 1  # Single-threaded for tiny batches
-        elif file_count < 20:
             return min(2, max_workers)
+        elif file_count < 20:
+            return min(max(2, max_workers // 2), max_workers)
         elif file_count < 50:
-            return min(4, max_workers)
+            return min(max(4, int(max_workers * 0.66)), max_workers)
 
     return max_workers
 
@@ -73,10 +81,12 @@ class ParallelAnalyzer:
         Initialize parallel analyzer.
 
         Args:
-            max_workers: Maximum number of worker processes (default: auto-detect, max 6)
+            max_workers: Maximum number of worker processes (default: auto-detect, smart scaling)
         """
         cpu_count = mp.cpu_count()
-        self.max_workers = min(max_workers or min(6, cpu_count), cpu_count)
+        # Use smart allocation if max_workers not explicitly provided
+        default_workers = max(min(6, cpu_count), cpu_count // 2)
+        self.max_workers = min(max_workers or default_workers, cpu_count)
         print(f"[PARALLEL] Initialized with {self.max_workers} workers (CPU count: {cpu_count})")
 
     def analyze_files(

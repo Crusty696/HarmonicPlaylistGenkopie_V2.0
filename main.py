@@ -62,8 +62,8 @@ class AnalysisWorker(QThread):
             self.progress.emit(int((current / total) * 100))
             self.status_update.emit(status_msg)
 
-        # Use ParallelAnalyzer for multi-core processing
-        analyzer = ParallelAnalyzer(max_workers=6)  # Use up to 6 cores as requested
+        # Use ParallelAnalyzer for multi-core processing with smart scaling
+        analyzer = ParallelAnalyzer()  # Auto-detect optimal core count (smart scaling)
         analyzed_tracks = analyzer.analyze_files(audio_files, progress_callback=progress_callback)
 
         if not analyzed_tracks:
