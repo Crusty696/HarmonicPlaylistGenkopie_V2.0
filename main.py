@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QPropertyAnimation, QE
 from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter, QBrush
 import os
 import sys
+import multiprocessing  # CRITICAL: Required for freeze_support()
 
 from hpg_core.models import Track
 from hpg_core.analysis import analyze_track
