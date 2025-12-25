@@ -34,8 +34,8 @@ if sys.platform == 'win32':
         """Unlock file on Windows using msvcrt"""
         try:
             msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
-        except:
-            pass
+        except (IOError, OSError):
+            pass  # Ignore unlock errors - file may already be unlocked
 else:
     import fcntl
 
@@ -47,8 +47,8 @@ else:
         """Unlock file on Unix/Linux using fcntl"""
         try:
             fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
-        except:
-            pass
+        except (IOError, OSError):
+            pass  # Ignore unlock errors - file may already be unlocked
 
 
 @contextmanager

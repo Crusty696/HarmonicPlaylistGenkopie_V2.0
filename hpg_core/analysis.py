@@ -5,7 +5,14 @@ import librosa
 import mutagen
 import os
 import re
-from .models import Track
+from .models import Track, CAMELOT_MAP
+from .config import (
+    HOP_LENGTH, METER, INTRO_PERCENTAGE, OUTRO_PERCENTAGE,
+    INTRO_MAX_PERCENTAGE, OUTRO_MIN_PERCENTAGE, RMS_THRESHOLD, DEFAULT_BPM
+)
+
+# Reverse mapping: Camelot code → (Note, Mode)
+REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
 from .caching import generate_cache_key, get_cached_track, cache_track
 from .rekordbox_importer import get_rekordbox_importer
 
@@ -86,7 +93,7 @@ def calculate_bass_intensity(y, sr):
         n_fft = max(64, int(max(y.size // 2, 1)) * 2)
 
     stft = np.abs(librosa.stft(y, n_fft=n_fft, center=y.size >= n_fft))
-    freqs = librosa.fft_frequencies(sr=sr)
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
     # Find frequency bins for the bass range
     bass_indices = np.where((freqs >= 20) & (freqs <= 150))[0]
@@ -201,21 +208,18 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         return round(mix_in_point, 2), round(mix_out_point, 2), mix_in_bars, mix_out_bars
 
     try:
-        # Use a larger hop length for faster analysis (approx 46ms per frame at 22050Hz)
-        hop_length = 1024 
-        
-        # Calculate RMS energy profile
-        rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
-        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
-        
-        # Determine energy threshold (40% of average energy)
+        # Calculate RMS energy profile using configured hop length
+        rms = librosa.feature.rms(y=y, hop_length=HOP_LENGTH)[0]
+        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=HOP_LENGTH)
+
+        # Determine energy threshold using configured RMS threshold
         avg_energy = np.mean(rms)
-        threshold = avg_energy * 0.4
+        threshold = avg_energy * RMS_THRESHOLD
         
         # --- Intro Detection ---
         # Find first point where energy stays above threshold for a sustained period
-        # Smoothing window ~2 seconds (approx 43 frames)
-        window_size = int(2.0 * sr / hop_length)
+        # Smoothing window ~2 seconds
+        window_size = int(2.0 * sr / HOP_LENGTH)
         
         # Smooth the RMS curve
         rms_smooth = np.convolve(rms, np.ones(window_size)/window_size, mode='same')
@@ -233,28 +237,27 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
             outro_start_time = times[outro_start_idx]
         else:
             # Fallback if track is very quiet
-            intro_end_time = duration * 0.15
-            outro_start_time = duration * 0.85
-            
-        # Sanity checks
-        if intro_end_time > duration * 0.4:
-            intro_end_time = duration * 0.15 # Fallback if intro detected as too long
-            
-        if outro_start_time < duration * 0.6:
-            outro_start_time = duration * 0.85 # Fallback if outro detected as too early
+            intro_end_time = duration * INTRO_PERCENTAGE
+            outro_start_time = duration * OUTRO_PERCENTAGE
+
+        # Sanity checks using configured thresholds
+        if intro_end_time > duration * INTRO_MAX_PERCENTAGE:
+            intro_end_time = duration * INTRO_PERCENTAGE  # Fallback if intro detected as too long
+
+        if outro_start_time < duration * OUTRO_MIN_PERCENTAGE:
+            outro_start_time = duration * OUTRO_PERCENTAGE  # Fallback if outro detected as too early
             
         if intro_end_time >= outro_start_time:
-             intro_end_time = duration * 0.15
-             outro_start_time = duration * 0.85
+            intro_end_time = duration * INTRO_PERCENTAGE
+            outro_start_time = duration * OUTRO_PERCENTAGE
              
         # --- Mix Point Calculation ---
         # Mix-in: 8 bars after intro (or at intro end if short)
         # Mix-out: 8 bars before outro
-        
+
         seconds_per_beat = 60.0 / bpm
-        seconds_per_bar = seconds_per_beat * 4
-        phrase_length = seconds_per_bar * 8 # 8-bar phrase
-        
+        seconds_per_bar = seconds_per_beat * METER
+
         mix_in_point = intro_end_time
         mix_out_point = outro_start_time
         
@@ -285,12 +288,14 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         safe_out = min(safe_out, duration)
         safe_in = min(safe_in, max(safe_out - 1.0, 0.0))
 
-        # Calculate bars for fallback
-        seconds_per_bar = (60.0 / bpm) * 4 if bpm > 0 else 2.0  # Default ~120 BPM
+        # Calculate bars for fallback using METER constant
+        seconds_per_bar = (60.0 / bpm) * METER if bpm > 0 else (60.0 / DEFAULT_BPM) * METER
         safe_in_bars = int(safe_in / seconds_per_bar)
         safe_out_bars = int(safe_out / seconds_per_bar)
 
         return round(safe_in, 2), round(safe_out, 2), safe_in_bars, safe_out_bars
+
+
 def analyze_track(file_path: str) -> Track | None:
     """Analyzes a single audio file for all v3.0 metadata, using a cache."""
     if not file_path:
@@ -366,11 +371,16 @@ def analyze_track(file_path: str) -> Track | None:
         key_note = "C"
         key_mode = "Major"
         if rekordbox_data.camelot_code:
-            # Parse Camelot code (e.g., "8A" → A minor)
-            if 'A' in rekordbox_data.camelot_code:
-                key_mode = "Minor"
-            elif 'B' in rekordbox_data.camelot_code:
-                key_mode = "Major"
+            # Use reverse mapping to get correct Note and Mode from Camelot code
+            key_tuple = REVERSE_CAMELOT_MAP.get(rekordbox_data.camelot_code)
+            if key_tuple:
+                key_note, key_mode = key_tuple
+            else:
+                # Fallback: at least detect mode from A/B suffix
+                if 'A' in rekordbox_data.camelot_code:
+                    key_mode = "Minor"
+                elif 'B' in rekordbox_data.camelot_code:
+                    key_mode = "Major"
 
         # Create Track object with Rekordbox data
         track = Track(
@@ -416,17 +426,14 @@ def analyze_track(file_path: str) -> Track | None:
             intervals = np.diff(beat_times)
             if intervals.size:
                 bpm_value = 60.0 / np.mean(intervals)
-        bpm = round(float(bpm_value if bpm_value > 0 else 120.0), 2)
+        bpm = round(float(bpm_value if bpm_value > 0 else DEFAULT_BPM), 2)
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         chroma_vector = np.mean(chroma, axis=1)
         key_note, key_mode = get_key(chroma_vector)
 
-        # Assign camelotCode here directly
-        from .models import key_to_camelot # Import locally to avoid circular dependency issues
-        temp_track_for_camelot = Track(filePath=file_path, fileName=os.path.basename(file_path), keyNote=key_note, keyMode=key_mode)
-        key_to_camelot(temp_track_for_camelot)
-        camelot_code = temp_track_for_camelot.camelotCode
+        # Get Camelot code from key
+        camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
 
         energy = calculate_energy(y)
         bass_intensity = calculate_bass_intensity(y, sr)

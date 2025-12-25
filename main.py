@@ -80,7 +80,12 @@ class AnalysisWorker(QThread):
             return
 
         self.status_update.emit("Generating playlist...")
-        sorted_playlist = generate_playlist(analyzed_tracks, mode=self.mode, bpm_tolerance=self.bpm_tolerance)
+        sorted_playlist = generate_playlist(
+            analyzed_tracks,
+            mode=self.mode,
+            bpm_tolerance=self.bpm_tolerance,
+            advanced_params=self.advanced_params
+        )
 
         # Calculate quality metrics
         self.status_update.emit("Calculating quality metrics...")
@@ -879,7 +884,7 @@ class EnhancedResultView(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Harmonic Playlist Generator v2.0")
+        self.setWindowTitle("Harmonic Playlist Generator v3.0")
         self.resize(1200, 800)
         self.playlist = []
         self.quality_metrics = {}
@@ -1030,7 +1035,7 @@ class MainWindow(QMainWindow):
         """Export playlist as M3U8 format."""
         try:
             exporter = M3U8Exporter()
-            playlist_name = f"HPG - {self.current_mode}"
+            playlist_name = f"HPG - {self.current_playlist_mode}"
             exporter.export(self.playlist, file_path, playlist_name)
 
             QMessageBox.information(
@@ -1052,7 +1057,7 @@ class MainWindow(QMainWindow):
         """Export playlist as Rekordbox XML format."""
         try:
             exporter = RekordboxXMLExporter()
-            playlist_name = f"HPG - {self.current_mode}"
+            playlist_name = f"HPG - {self.current_playlist_mode}"
             exporter.export(self.playlist, file_path, playlist_name)
 
             QMessageBox.information(

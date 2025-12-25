@@ -94,8 +94,20 @@ def calculate_enhanced_compatibility(track1: Track, track2: Track, bpm_tolerance
         overall_score=overall_score
     )
 
-def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float) -> int:
-    """Calculates a compatibility score between two tracks, including advanced harmonic rules."""
+def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float, **kwargs) -> int:
+    """Calculates a compatibility score between two tracks, including advanced harmonic rules.
+
+    Args:
+        track1, track2: Tracks to compare
+        bpm_tolerance: Max BPM difference allowed
+        **kwargs: Advanced parameters:
+            - harmonic_strictness (1-10): Higher = stricter scoring (default: 7)
+            - allow_experimental (bool): Allow +4/+7 techniques (default: True)
+    """
+    # Get advanced parameters
+    strictness = kwargs.get('harmonic_strictness', 7)
+    allow_experimental = kwargs.get('allow_experimental', True)
+
     if abs(track1.bpm - track2.bpm) > bpm_tolerance:
         return 0 # No compatibility if BPM difference is too high
     if not track1.camelotCode or not track2.camelotCode:
@@ -107,39 +119,38 @@ def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float) 
     if num1 == 0 or num2 == 0: # Invalid camelot codes
         return 10
 
-    # Direct matches
+    # Direct matches (always allowed)
     if num1 == num2 and letter1 == letter2: return 100 # Same key
     if num1 == num2 and letter1 != letter2: return 90  # Relative major/minor
 
     # Adjacent keys (Camelot wheel)
-    # Clockwise (num + 1) or Counter-clockwise (num - 1)
     next_num_cw = (num1 % 12) + 1
-    next_num_ccw = (num1 - 2 + 12) % 12 + 1 # (num1 - 1) adjusted for 1-12 cycle
+    next_num_ccw = (num1 - 2 + 12) % 12 + 1
 
     if letter1 == letter2: # Same mode, adjacent numbers
         if num2 == next_num_cw or num2 == next_num_ccw: return 80
 
-    # Advanced harmonic compatibility (beyond basic Camelot wheel)
-    # Plus Four Technique (e.g., 8A -> 12A or 8B -> 12B)
-    plus_four_num = (num1 + 4 - 1) % 12 + 1
-    if num2 == plus_four_num and letter1 == letter2: return 70 # Good, but experimental
+    # Experimental techniques (can be disabled)
+    if allow_experimental:
+        # Plus Four Technique (e.g., 8A -> 12A)
+        plus_four_num = (num1 + 4 - 1) % 12 + 1
+        if num2 == plus_four_num and letter1 == letter2: return 70
 
-    # Plus Seven Technique (dominant relationships)
-    plus_seven_num = (num1 + 7 - 1) % 12 + 1
-    if num2 == plus_seven_num and letter1 == letter2: return 65 # Circle of fifths
+        # Plus Seven Technique (circle of fifths)
+        plus_seven_num = (num1 + 7 - 1) % 12 + 1
+        if num2 == plus_seven_num and letter1 == letter2: return 65
 
-    # Diagonal Mixing (e.g., 8A -> 9B or 8A -> 7B)
-    # This is often a +/-1 number change with a mode change
+    # Diagonal Mixing
     if letter1 != letter2:
-        if num2 == next_num_cw or num2 == next_num_ccw: return 60 # Adjacent number, different mode
-        # Energy Boost technique (same number, switch to major for energy)
+        if num2 == next_num_cw or num2 == next_num_ccw: return 60
+        # Energy Boost/Drop techniques
         if num1 == num2 and letter1 == 'A' and letter2 == 'B': return 85
-        # Energy Drop technique (same number, switch to minor for mood)
         if num1 == num2 and letter1 == 'B' and letter2 == 'A': return 75
 
-    return 10 # Default low compatibility
+    # Return low score (affected by strictness - stricter = lower fallback)
+    return max(5, 15 - strictness)
 
-def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Greedy algorithm to find the most harmonically compatible path."""
     unprocessed = list(tracks)
     start_track = min(unprocessed, key=lambda t: t.bpm)
@@ -151,7 +162,7 @@ def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track
         best_next = None
         highest_score = -1
         for candidate in unprocessed:
-            score = calculate_compatibility(current_track, candidate, bpm_tolerance)
+            score = calculate_compatibility(current_track, candidate, bpm_tolerance, **kwargs)
             if score > highest_score:
                 highest_score = score
                 best_next = candidate
@@ -169,10 +180,13 @@ def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track
             
     return final_playlist
 
-def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.bpm)
+
+    # Capture kwargs in closure for nested function
+    compat_kwargs = kwargs
 
     def _lookahead_score(current: Track, remaining: List[Track], depth: int = 2) -> Tuple[Track, float]:
         """Look ahead to find the best path with given depth."""
@@ -183,7 +197,7 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float) -> l
         best_total_score = -1
 
         for candidate in remaining:
-            immediate_score = calculate_compatibility(current, candidate, bpm_tolerance)
+            immediate_score = calculate_compatibility(current, candidate, bpm_tolerance, **compat_kwargs)
             if immediate_score == 0:  # Skip incompatible tracks
                 continue
 
@@ -201,13 +215,13 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float) -> l
 
     unprocessed = list(tracks)
     # Start with a track that has good overall connectivity
-    start_track = _find_best_starting_track(tracks, bpm_tolerance)
+    start_track = _find_best_starting_track(tracks, bpm_tolerance, **kwargs)
     final_playlist = [start_track]
     unprocessed.remove(start_track)
 
     current_track = start_track
     while unprocessed:
-        best_next, score = _lookahead_score(current_track, unprocessed, depth=3)
+        best_next, score = _lookahead_score(current_track, unprocessed, depth=2)  # Optimized: depth=2 (was 3)
 
         if best_next and score > 0:
             final_playlist.append(best_next)
@@ -216,39 +230,65 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float) -> l
         else:
             # Fallback: choose track with best single compatibility
             fallback = max(unprocessed,
-                         key=lambda t: calculate_compatibility(current_track, t, bpm_tolerance))
+                         key=lambda t: calculate_compatibility(current_track, t, bpm_tolerance, **compat_kwargs))
             final_playlist.append(fallback)
             unprocessed.remove(fallback)
             current_track = fallback
 
     return final_playlist
 
-def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float) -> Track:
-    """Find the track with the best overall connectivity as starting point."""
-    connectivity_scores = []
+def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float, **kwargs) -> Track:
+    """Find the track with the best overall connectivity as starting point.
 
-    for i, track in enumerate(tracks):
+    Optimized: For large playlists, only samples a subset of tracks to reduce O(n²) complexity.
+    """
+    # Optimization: For large playlists, sample max 50 candidates and check against max 30 others
+    max_candidates = min(50, len(tracks))
+    max_comparisons = min(30, len(tracks))
+
+    # Sample evenly distributed tracks as candidates
+    if len(tracks) > max_candidates:
+        step = len(tracks) // max_candidates
+        candidate_indices = list(range(0, len(tracks), step))[:max_candidates]
+    else:
+        candidate_indices = list(range(len(tracks)))
+
+    # Sample tracks for comparison
+    if len(tracks) > max_comparisons:
+        comp_step = len(tracks) // max_comparisons
+        comparison_indices = set(range(0, len(tracks), comp_step))
+    else:
+        comparison_indices = set(range(len(tracks)))
+
+    best_track = tracks[0]
+    best_score = -1
+
+    for i in candidate_indices:
+        track = tracks[i]
         total_compatibility = 0
         connections = 0
-        for j, other_track in enumerate(tracks):
+
+        for j in comparison_indices:
             if i != j:
-                score = calculate_compatibility(track, other_track, bpm_tolerance)
+                score = calculate_compatibility(track, tracks[j], bpm_tolerance, **kwargs)
                 if score > 0:
                     total_compatibility += score
                     connections += 1
 
         # Average compatibility weighted by number of connections
-        connectivity_score = (total_compatibility / max(1, connections)) * (connections / len(tracks))
-        connectivity_scores.append(connectivity_score)
+        connectivity_score = (total_compatibility / max(1, connections)) * (connections / len(comparison_indices))
 
-    best_index = max(range(len(tracks)), key=lambda i: connectivity_scores[i])
-    return tracks[best_index]
+        if connectivity_score > best_score:
+            best_score = connectivity_score
+            best_track = track
 
-def _sort_warm_up(tracks: list[Track], **kwargs) -> list[Track]:
+    return best_track
+
+def _sort_warm_up(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Sorts tracks by ascending BPM."""
     return sorted(tracks, key=lambda t: t.bpm)
 
-def _sort_cool_down(tracks: list[Track], **kwargs) -> list[Track]:
+def _sort_cool_down(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Sorts tracks by descending BPM."""
     return sorted(tracks, key=lambda t: t.bpm, reverse=True)
 
@@ -276,7 +316,7 @@ def _prepare_track_metrics(tracks: list[Track]) -> list[tuple[Track, float, floa
         metrics.append((track, combined_score, norm_bpm, norm_energy))
     return metrics
 
-def _sort_peak_time(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Arrange tracks to build towards a peak (combined BPM/Energy) before a controlled decline."""
     if not tracks:
         return []
@@ -300,7 +340,7 @@ def _sort_peak_time(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
     # type ignore safe due to population step above
     return [track for track in ordered_tracks if track is not None]
 
-def _sort_energy_wave(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_energy_wave(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Create a wave-like journey that alternates between higher and lower energy tracks."""
     if not tracks:
         return []
@@ -332,13 +372,16 @@ def _sort_energy_wave(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
 
     return result
 
-def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Enhanced peak-time arrangement with harmonic considerations and multiple peaks."""
     if not tracks:
         return []
 
     if len(tracks) <= 3:
         return sorted(tracks, key=lambda t: t.bpm + t.energy)
+
+    # Get peak position from advanced params (default: 70%)
+    peak_position = kwargs.get('peak_position', 70) / 100.0
 
     scored_tracks = _prepare_track_metrics(tracks)
     count = len(scored_tracks)
@@ -347,10 +390,10 @@ def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float) -> list[
     peak_curve = []
     for idx in range(count):
         # Create asymmetric curve: slow build, sharp peak, controlled decline
-        if idx < count * 0.7:  # Build phase (70%)
-            curve_val = (idx / (count * 0.7)) ** 1.5  # Exponential build
-        else:  # Decline phase (30%)
-            decline_progress = (idx - count * 0.7) / (count * 0.3)
+        if idx < count * peak_position:  # Build phase (user-defined)
+            curve_val = (idx / (count * peak_position)) ** 1.5  # Exponential build
+        else:  # Decline phase
+            decline_progress = (idx - count * peak_position) / (count * (1 - peak_position))
             curve_val = 1.0 - (decline_progress ** 0.7)  # Controlled decline
         peak_curve.append(curve_val)
 
@@ -359,7 +402,6 @@ def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float) -> list[
 
     # Assign tracks to positions with harmonic consideration
     ordered_tracks: list[Track | None] = [None] * count
-    used_tracks = set()
 
     for position_idx, track_idx in enumerate(zip(scored_tracks, waveform_positions)):
         track, score, norm_bpm, norm_energy = track_idx[0]
@@ -370,31 +412,37 @@ def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float) -> list[
 
     # Apply harmonic smoothing pass
     result = [track for track in ordered_tracks if track is not None]
-    return _apply_harmonic_smoothing(result, bpm_tolerance)
+    return _apply_harmonic_smoothing(result, bpm_tolerance, **kwargs)
 
-def _apply_harmonic_smoothing(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
-    """Apply local swaps to improve harmonic flow while preserving energy curve."""
+def _apply_harmonic_smoothing(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+    """Apply local swaps to improve harmonic flow while preserving energy curve.
+
+    Optimized: Max 3 iterations (was len/2) - most improvements happen in first 2-3 passes.
+    """
     if len(tracks) <= 2:
         return tracks
 
     result = list(tracks)
     improved = True
     iterations = 0
-    max_iterations = len(tracks) // 2
+    max_iterations = 3  # Optimized: Fixed limit instead of len(tracks) // 2
 
     while improved and iterations < max_iterations:
         improved = False
         iterations += 1
 
         for i in range(len(result) - 1):
-            current_score = calculate_compatibility(result[i], result[i + 1], bpm_tolerance)
+            current_score = calculate_compatibility(result[i], result[i + 1], bpm_tolerance, **kwargs)
 
             # Try swapping with next track if it improves harmony
             if i + 2 < len(result):
-                swap_score = calculate_compatibility(result[i], result[i + 2], bpm_tolerance)
-                next_swap_score = calculate_compatibility(result[i + 1], result[i + 2], bpm_tolerance)
+                swap_score = calculate_compatibility(result[i], result[i + 2], bpm_tolerance, **kwargs)
+                next_swap_score = calculate_compatibility(result[i + 1], result[i + 2], bpm_tolerance, **kwargs)
+                # Calculate what score would be AFTER swap: [i]->[i+1] becomes [i]->[i+2], [i+2]->[i+1]
+                new_pair_score = calculate_compatibility(result[i + 2], result[i + 1], bpm_tolerance, **kwargs)
 
-                if swap_score + next_swap_score > current_score + calculate_compatibility(result[i + 1], result[i + 2], bpm_tolerance):
+                # Compare: current transition score vs score after swap
+                if swap_score + new_pair_score > current_score + next_swap_score:
                     # Only swap if energy curve isn't severely disrupted
                     energy_disruption = abs(result[i].energy - result[i + 2].energy)
                     if energy_disruption < 20:  # Threshold for acceptable energy jump
@@ -403,15 +451,26 @@ def _apply_harmonic_smoothing(tracks: list[Track], bpm_tolerance: float) -> list
 
     return result
 
-def _sort_emotional_journey(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_emotional_journey(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Create an emotional journey based on energy, BPM, and harmonic progression."""
     if len(tracks) <= 3:
         return sorted(tracks, key=lambda t: (t.energy, t.bpm))
 
-    # Phase 1: Opening (25%) - Warm, inviting tracks
-    # Phase 2: Building (40%) - Gradual energy increase
-    # Phase 3: Peak (20%) - High energy, maximum engagement
-    # Phase 4: Resolution (15%) - Controlled cooldown
+    # Get energy direction from advanced params
+    energy_dir_str = kwargs.get('energy_direction', 'Auto')
+
+    # Map user selection to energy directions for each phase
+    if energy_dir_str == "Build Up":
+        # Continuous energy build throughout
+        phase_directions = [EnergyDirection.UP, EnergyDirection.UP, EnergyDirection.UP, EnergyDirection.UP]
+    elif energy_dir_str == "Cool Down":
+        # Continuous energy decline throughout
+        phase_directions = [EnergyDirection.DOWN, EnergyDirection.DOWN, EnergyDirection.DOWN, EnergyDirection.DOWN]
+    elif energy_dir_str == "Maintain":
+        # Keep energy consistent
+        phase_directions = [EnergyDirection.MAINTAIN, EnergyDirection.MAINTAIN, EnergyDirection.MAINTAIN, EnergyDirection.MAINTAIN]
+    else:  # "Auto" - default emotional journey curve
+        phase_directions = [EnergyDirection.UP, EnergyDirection.UP, EnergyDirection.MAINTAIN, EnergyDirection.DOWN]
 
     # Sort tracks by energy and BPM
     energy_sorted = sorted(tracks, key=lambda t: t.energy)
@@ -431,10 +490,10 @@ def _sort_emotional_journey(tracks: list[Track], bpm_tolerance: float) -> list[T
 
     # Arrange each phase with harmonic consideration
     journey = []
-    journey.extend(_arrange_phase(opening_tracks, bpm_tolerance, EnergyDirection.UP))
-    journey.extend(_arrange_phase(building_tracks, bpm_tolerance, EnergyDirection.UP))
-    journey.extend(_arrange_phase(peak_tracks, bpm_tolerance, EnergyDirection.MAINTAIN))
-    journey.extend(_arrange_phase(resolution_tracks, bpm_tolerance, EnergyDirection.DOWN))
+    journey.extend(_arrange_phase(opening_tracks, bpm_tolerance, phase_directions[0]))
+    journey.extend(_arrange_phase(building_tracks, bpm_tolerance, phase_directions[1]))
+    journey.extend(_arrange_phase(peak_tracks, bpm_tolerance, phase_directions[2]))
+    journey.extend(_arrange_phase(resolution_tracks, bpm_tolerance, phase_directions[3]))
 
     return journey
 
@@ -482,10 +541,18 @@ def _arrange_phase(tracks: list[Track], bpm_tolerance: float, energy_direction: 
 
     return arranged
 
-def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Arrange tracks to create smooth genre transitions while maintaining energy."""
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.bpm)
+
+    # Get genre parameters
+    genre_mixing_enabled = kwargs.get('genre_mixing', True)
+    genre_weight = kwargs.get('genre_weight', 0.3)  # 0.0-1.0
+
+    # If genre mixing disabled, use harmonic flow instead
+    if not genre_mixing_enabled:
+        return _sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
 
     # Group tracks by genre
     genre_groups = {}
@@ -496,14 +563,24 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
         genre_groups[genre].append(track)
 
     # Define genre compatibility matrix (simplified)
-    genre_compatibility = {
+    base_genre_compatibility = {
         ("Electronic", "House"): 0.9,
         ("House", "Techno"): 0.8,
         ("Hip Hop", "R&B"): 0.8,
         ("Rock", "Alternative"): 0.8,
         ("Pop", "Electronic"): 0.7,
-        # Add more as needed
+        ("Techno", "Electronic"): 0.85,
+        ("Trance", "Electronic"): 0.85,
+        ("Drum & Bass", "Electronic"): 0.75,
     }
+
+    # Apply genre_weight to compatibility scores
+    # Higher weight = stronger preference for same/similar genres
+    genre_compatibility = {}
+    for key, value in base_genre_compatibility.items():
+        # Scale compatibility based on weight (higher weight = more separation)
+        adjusted = value * (1 - genre_weight) + genre_weight
+        genre_compatibility[key] = adjusted
 
     # Create transitions between genres
     result = []
@@ -514,8 +591,8 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
 
     while len(processed_genres) < len(genre_groups):
         if current_genre in genre_groups and current_genre not in processed_genres:
-            # Arrange tracks within current genre
-            genre_tracks = _sort_consistent(genre_groups[current_genre], bpm_tolerance)
+            # Arrange tracks within current genre (pass kwargs for harmonic params)
+            genre_tracks = _sort_consistent(genre_groups[current_genre], bpm_tolerance, **kwargs)
             result.extend(genre_tracks)
             processed_genres.add(current_genre)
 
@@ -525,8 +602,8 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
 
         for genre in genre_groups:
             if genre not in processed_genres:
-                compatibility = genre_compatibility.get((current_genre, genre), 0.5)
-                compatibility += genre_compatibility.get((genre, current_genre), 0.5)
+                compatibility = genre_compatibility.get((current_genre, genre), 0.5 * (1 - genre_weight))
+                compatibility += genre_compatibility.get((genre, current_genre), 0.5 * (1 - genre_weight))
                 if compatibility > best_compatibility:
                     best_compatibility = compatibility
                     best_next_genre = genre
@@ -543,10 +620,13 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
 
     return result
 
-def _sort_consistent(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
+def _sort_consistent(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Keep transitions smooth by minimising BPM/Energy jumps while preferring harmonic compatibility."""
     if not tracks:
         return []
+
+    # Capture kwargs for nested function
+    compat_kwargs = kwargs
 
     remaining = list(tracks)
     average_bpm = sum(getattr(track, "bpm", 0.0) for track in remaining) / len(remaining)
@@ -565,7 +645,7 @@ def _sort_consistent(tracks: list[Track], bpm_tolerance: float) -> list[Track]:
         def _transition_cost(candidate: Track) -> float:
             bpm_delta = abs(getattr(candidate, "bpm", current.bpm) - getattr(current, "bpm", 0.0))
             energy_delta = abs(getattr(candidate, "energy", current.energy) - getattr(current, "energy", 0)) / 5.0
-            compatibility = calculate_compatibility(current, candidate, bpm_tolerance)
+            compatibility = calculate_compatibility(current, candidate, bpm_tolerance, **compat_kwargs)
             compatibility_penalty = (100 - compatibility) / 8.0
             if compatibility == 0:
                 compatibility_penalty += 10.0
@@ -754,10 +834,29 @@ STRATEGIES = {
     "Consistent": _sort_consistent,
 }
 
-def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0) -> list[Track]:
-    """Generates a playlist based on the selected mode and parameters."""
+def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0,
+                      advanced_params: Optional[Dict] = None) -> list[Track]:
+    """
+    Generates a playlist based on the selected mode and parameters.
+
+    Args:
+        tracks: List of Track objects to sort
+        mode: Sorting strategy name
+        bpm_tolerance: Maximum BPM difference for compatible transitions
+        advanced_params: Optional dict with advanced settings:
+            - energy_direction: "Auto", "Build Up", "Cool Down", "Maintain"
+            - peak_position: 40-80 (percentage for peak placement)
+            - harmonic_strictness: 1-10 (weight for harmonic matching)
+            - allow_experimental: bool (allow +4/+7 techniques)
+            - genre_mixing: bool (enable genre-based sorting)
+            - genre_weight: 0.0-1.0 (weight for genre similarity)
+    """
     if not tracks:
         return []
+
+    # Default advanced params if not provided
+    if advanced_params is None:
+        advanced_params = {}
 
     # Ensure all tracks have a camelot code before sorting
     for track in tracks:
@@ -786,8 +885,8 @@ def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0
     # Get the sorting function from the strategy map
     sorter = STRATEGIES.get(mode, _sort_harmonic_flow) # Default to harmonic flow
 
-    # Call the selected sorting strategy
-    result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance)
+    # Call the selected sorting strategy with advanced params
+    result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **advanced_params)
 
     # Log quality metrics for analysis
     quality = calculate_playlist_quality(result, bpm_tolerance)

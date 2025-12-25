@@ -35,15 +35,14 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     max_workers = max(min(6, cpu_count), cpu_count // 2)
 
     if file_count:
-        # Only scale down for very small workloads to avoid process overhead
+        # Scale workers based on workload to avoid process overhead
         if file_count < 5:
-            return 1 # Force single worker to avoid spawn overhead on Windows
-        elif file_count < 20:
-            return 2
+            return 1  # Force single worker to avoid spawn overhead on Windows
         elif file_count < 10:
-            # For small workloads, use at least half capacity
-            return max(4, max_workers // 2)
-        # For 10+ files, use full capacity
+            return 2  # Small workload: minimal parallelism
+        elif file_count < 20:
+            return max(4, max_workers // 2)  # Medium workload: half capacity
+        # For 20+ files, use full capacity
 
     return max_workers
 

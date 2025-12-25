@@ -17,7 +17,7 @@ OUTRO_MIN_PERCENTAGE = 0.75  # Outro can't start before 75%
 MIN_SEGMENT_DURATION = 5.0  # Minimum segment length in seconds
 
 # Heuristic multipliers for intro/outro detection
-RMS_THRESHOLD = 0.5  # Segment RMS must be < 50% of average
+RMS_THRESHOLD = 0.4  # Segment RMS must be < 40% of average (intro/outro detection)
 ONSET_THRESHOLD = 0.5  # Segment onset must be < 50% of average
 CENTROID_THRESHOLD = 0.7  # Segment centroid must be < 70% of average
 
