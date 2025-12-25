@@ -9,9 +9,8 @@ from .models import Track, CAMELOT_MAP
 from .analysis import analyze_track
 from .playlist import generate_playlist, calculate_playlist_quality, STRATEGIES
 from .parallel_analyzer import ParallelAnalyzer
-from .caching import AnalysisCache
 
-__version__ = "3.5.1"
+__version__ = "3.5.2"
 __all__ = [
     "Track",
     "CAMELOT_MAP",
@@ -20,5 +19,4 @@ __all__ = [
     "calculate_playlist_quality",
     "STRATEGIES",
     "ParallelAnalyzer",
-    "AnalysisCache",
 ]
