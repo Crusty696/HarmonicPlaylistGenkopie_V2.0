@@ -44,54 +44,85 @@ class AnalysisWorker(QThread):
 
     def run(self):
         """The main work of the thread - now with multi-core processing."""
-        self.status_update.emit("Scanning for audio files...")
+        try:
+            self.status_update.emit("Scanning for audio files...")
 
-        # Scan for audio files
-        audio_files = []
-        for root, _, files in os.walk(self.folder_path):
-            for file in files:
-                if file.lower().endswith(self.supported_formats):
-                    audio_files.append(os.path.join(root, file))
+            # Scan for audio files
+            audio_files = []
+            for root, _, files in os.walk(self.folder_path):
+                for file in files:
+                    if file.lower().endswith(self.supported_formats):
+                        audio_files.append(os.path.join(root, file))
 
-        total_files = len(audio_files)
-        self.status_update.emit(f"Found {total_files} audio files. Starting analysis...")
+            total_files = len(audio_files)
+            if total_files == 0:
+                self.status_update.emit("ERROR: No audio files found in selected folder!")
+                self.finished.emit([], {})
+                return
 
-        # Progress callback for parallel analyzer
-        last_update_time = 0
+            self.status_update.emit(f"Found {total_files} audio files. Starting analysis...")
 
-        def progress_callback(current, total, status_msg):
-            """Forward progress updates to GUI with throttling"""
-            nonlocal last_update_time
-            current_time = time.time() * 1000  # Convert to ms
-            
-            # Throttle updates: Max every 100ms or on completion
-            if (current_time - last_update_time > 100) or (current >= total):
-                self.progress.emit(int((current / total) * 100))
-                self.status_update.emit(status_msg)
-                last_update_time = current_time
+            # Progress callback for parallel analyzer
+            last_update_time = 0
 
-        # Use ParallelAnalyzer for multi-core processing with smart scaling
-        analyzer = ParallelAnalyzer()  # Auto-detect optimal core count (smart scaling)
-        analyzed_tracks = analyzer.analyze_files(audio_files, progress_callback=progress_callback)
+            def progress_callback(current, total, status_msg):
+                """Forward progress updates to GUI with throttling"""
+                nonlocal last_update_time
+                current_time = time.time() * 1000  # Convert to ms
 
-        if not analyzed_tracks:
-            self.status_update.emit("No tracks were successfully analyzed.")
+                # Throttle updates: Max every 100ms or on completion
+                if (current_time - last_update_time > 100) or (current >= total):
+                    self.progress.emit(int((current / total) * 100))
+                    self.status_update.emit(status_msg)
+                    last_update_time = current_time
+
+            # Use ParallelAnalyzer for multi-core processing with smart scaling
+            try:
+                analyzer = ParallelAnalyzer()  # Auto-detect optimal core count (smart scaling)
+                analyzed_tracks = analyzer.analyze_files(audio_files, progress_callback=progress_callback)
+            except Exception as e:
+                self.status_update.emit(f"ERROR during analysis: {str(e)}")
+                self.finished.emit([], {})
+                return
+
+            if not analyzed_tracks:
+                self.status_update.emit("ERROR: No tracks were successfully analyzed.")
+                self.finished.emit([], {})
+                return
+
+            self.status_update.emit(f"Analyzed {len(analyzed_tracks)} tracks. Generating playlist...")
+
+            try:
+                sorted_playlist = generate_playlist(
+                    analyzed_tracks,
+                    mode=self.mode,
+                    bpm_tolerance=self.bpm_tolerance,
+                    advanced_params=self.advanced_params
+                )
+            except Exception as e:
+                self.status_update.emit(f"ERROR generating playlist: {str(e)}")
+                self.finished.emit([], {})
+                return
+
+            if not sorted_playlist:
+                self.status_update.emit("ERROR: Playlist generation returned empty result.")
+                self.finished.emit([], {})
+                return
+
+            # Calculate quality metrics
+            self.status_update.emit("Calculating quality metrics...")
+            try:
+                quality_metrics = calculate_playlist_quality(sorted_playlist, self.bpm_tolerance)
+            except Exception as e:
+                self.status_update.emit(f"Warning: Quality metrics failed: {str(e)}")
+                quality_metrics = {}
+
+            self.status_update.emit(f"Complete! {len(sorted_playlist)} tracks in playlist.")
+            self.finished.emit(sorted_playlist, quality_metrics)
+
+        except Exception as e:
+            self.status_update.emit(f"FATAL ERROR: {str(e)}")
             self.finished.emit([], {})
-            return
-
-        self.status_update.emit("Generating playlist...")
-        sorted_playlist = generate_playlist(
-            analyzed_tracks,
-            mode=self.mode,
-            bpm_tolerance=self.bpm_tolerance,
-            advanced_params=self.advanced_params
-        )
-
-        # Calculate quality metrics
-        self.status_update.emit("Calculating quality metrics...")
-        quality_metrics = calculate_playlist_quality(sorted_playlist, self.bpm_tolerance)
-
-        self.finished.emit(sorted_playlist, quality_metrics)
 
 
 class AdvancedParametersWidget(QWidget):

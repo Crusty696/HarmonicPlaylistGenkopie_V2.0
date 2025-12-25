@@ -11,10 +11,24 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        # Add data files if needed (e.g., images, configs)
-        # ('path/to/data', 'destination_folder'),
+        # Include hpg_core package as data (backup for imports)
+        ('hpg_core', 'hpg_core'),
     ],
     hiddenimports=[
+        # HPG Core modules (CRITICAL - must be explicit!)
+        'hpg_core',
+        'hpg_core.models',
+        'hpg_core.config',
+        'hpg_core.analysis',
+        'hpg_core.playlist',
+        'hpg_core.caching',
+        'hpg_core.parallel_analyzer',
+        'hpg_core.rekordbox_importer',
+        'hpg_core.exporters',
+        'hpg_core.exporters.base_exporter',
+        'hpg_core.exporters.m3u8_exporter',
+        'hpg_core.exporters.rekordbox_xml_exporter',
+
         # Core dependencies
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -23,15 +37,27 @@ a = Analysis(
         # Audio analysis
         'librosa',
         'librosa.core',
+        'librosa.core.audio',
+        'librosa.core.spectrum',
+        'librosa.core.pitch',
+        'librosa.core.constantq',
         'librosa.feature',
+        'librosa.feature.spectral',
+        'librosa.feature.rhythm',
         'librosa.beat',
+        'librosa.onset',
+        'librosa.util',
         'numpy',
+        'numpy.core',
+        'numpy.fft',
         'numpy.testing',
         'scipy',
         'scipy.signal',
         'scipy.spatial',
         'scipy.sparse',
+        'scipy.fft',
         'soundfile',
+        'audioread',
 
         # Metadata
         'mutagen',
@@ -39,25 +65,39 @@ a = Analysis(
         'mutagen.flac',
         'mutagen.wave',
         'mutagen.aiff',
+        'mutagen.id3',
+        'mutagen.mp4',
 
         # Optional: Rekordbox integration
         'pyrekordbox',
         'pyrekordbox.db6',
         'sqlalchemy',
+        'sqlalchemy.orm',
+        'sqlalchemy.engine',
         'bidict',
 
         # Caching
         'sqlite3',
         'shelve',
+        'dbm',
+        'dbm.dumb',
 
-        # Multiprocessing
+        # Multiprocessing (CRITICAL for parallel analysis)
         'multiprocessing',
+        'multiprocessing.pool',
+        'multiprocessing.queues',
+        'multiprocessing.managers',
         'concurrent.futures',
+        'concurrent.futures.process',
 
         # System
         'platform',
         'pathlib',
         'typing',
+        'dataclasses',
+        'enum',
+        'hashlib',
+        'contextlib',
 
         # Standard library (needed by numpy.testing)
         'unittest',
