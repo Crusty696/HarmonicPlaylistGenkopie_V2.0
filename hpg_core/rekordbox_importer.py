@@ -17,6 +17,7 @@ import os
 from typing import Optional, Dict, List
 from pathlib import Path
 from dataclasses import dataclass
+from .models import CAMELOT_MAP
 
 try:
     from pyrekordbox import Rekordbox6Database
@@ -58,20 +59,6 @@ class RekordboxImporter:
     # - Most tracks: Camelot codes (1A-12A, 1B-12B)
     # - Some tracks: Musical notation (Am, Fm, C, etc.)
     # We need to handle both!
-
-    VALID_CAMELOT_CODES = {
-        '1A', '2A', '3A', '4A', '5A', '6A', '7A', '8A', '9A', '10A', '11A', '12A',
-        '1B', '2B', '3B', '4B', '5B', '6B', '7B', '8B', '9B', '10B', '11B', '12B'
-    }
-
-    REKORDBOX_TO_CAMELOT = {
-        # Major keys (B)
-        'C': '8B', 'Db': '3B', 'D': '10B', 'Eb': '5B', 'E': '12B', 'F': '7B',
-        'Gb': '2B', 'G': '9B', 'Ab': '4B', 'A': '11B', 'Bb': '6B', 'B': '1B',
-        # Minor keys (A)
-        'Cm': '5A', 'Dbm': '12A', 'Dm': '7A', 'Ebm': '2A', 'Em': '9A', 'Fm': '4A',
-        'Gbm': '11A', 'Gm': '6A', 'Abm': '1A', 'Am': '8A', 'Bbm': '3A', 'Bm': '10A',
-    }
 
     def __init__(self):
         """Initialize Rekordbox Importer"""
@@ -139,42 +126,31 @@ class RekordboxImporter:
 
     def _convert_key_to_camelot(self, rekordbox_key: str) -> Optional[str]:
         """
-        Convert/validate Rekordbox key to Camelot code
-
-        Rekordbox stores keys in MIXED formats:
-        - Most: Camelot codes (8A, 11B, 6A, etc.) → return directly
-        - Some: Musical notation (Am, C, Fm, etc.) → convert to Camelot
-
-        Args:
-            rekordbox_key: Rekordbox key (e.g., "8A", "Am", "C")
-
-        Returns:
-            Camelot code (e.g., "8A", "8B") or None if unknown
+        Convert/validate Rekordbox key to Camelot code using central definition.
         """
-        # Clean up key string
         key = rekordbox_key.strip()
 
-        # 1. Check if already valid Camelot code (most common case)
-        if key in self.VALID_CAMELOT_CODES:
+        # 1. Check if it's already a Camelot code (Value in CAMELOT_MAP)
+        if key in CAMELOT_MAP.values():
             return key
 
-        # 2. Try to convert from musical notation
-        if key in self.REKORDBOX_TO_CAMELOT:
-            return self.REKORDBOX_TO_CAMELOT[key]
+        # 2. Convert Musical Notation -> Camelot
+        # Detect Mode
+        if key.endswith('m'):
+            mode = 'Minor'
+            note = key[:-1]
+        else:
+            mode = 'Major'
+            note = key
 
-        # 3. Try with 'sharp' → 'flat' conversion (e.g., "C#" → "Db")
-        if '#' in key:
-            sharp_to_flat = {
-                'C#': 'Db', 'D#': 'Eb', 'F#': 'Gb', 'G#': 'Ab', 'A#': 'Bb',
-                'C#m': 'Dbm', 'D#m': 'Ebm', 'F#m': 'Gbm', 'G#m': 'Abm', 'A#m': 'Bbm'
-            }
-            flat_key = sharp_to_flat.get(key)
-            if flat_key and flat_key in self.REKORDBOX_TO_CAMELOT:
-                return self.REKORDBOX_TO_CAMELOT[flat_key]
+        # Handle Flat -> Sharp conversion (CAMELOT_MAP uses Sharps)
+        flat_to_sharp = {
+            'Db': 'C#', 'Eb': 'D#', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#'
+        }
+        if note in flat_to_sharp:
+            note = flat_to_sharp[note]
 
-        # Unknown format
-        print(f"[WARNING] Unknown Rekordbox key format: {rekordbox_key}")
-        return None
+        return CAMELOT_MAP.get((note, mode))
 
     def _extract_cue_points(self, cues) -> List[Dict]:
         """

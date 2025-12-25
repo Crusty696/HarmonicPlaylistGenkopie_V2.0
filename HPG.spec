@@ -32,7 +32,6 @@ a = Analysis(
         'scipy.spatial',
         'scipy.sparse',
         'soundfile',
-        'ruptures',
 
         # Metadata
         'mutagen',
@@ -78,10 +77,11 @@ a = Analysis(
         'IPython',
         'jupyter',
         'notebook',
-        # NOTE: unittest is NEEDED by numpy.testing - do NOT exclude!
-        # 'unittest',  # REMOVED - needed for numpy.testing
-        # 'test',      # REMOVED - may be needed
-        # 'pytest',    # REMOVED - may be needed
+        'tkinter',
+        'scipy.optimize',
+        'scipy.stats',
+        'scipy.integrate',
+        'scipy.interpolate',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

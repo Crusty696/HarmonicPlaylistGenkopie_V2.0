@@ -1,24 +1,12 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
-from .models import Track
+from .models import Track, CAMELOT_MAP, key_to_camelot
 import re
 import random
 import math
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from enum import Enum
-
-# Mapping from Key and Mode to Camelot Code
-CAMELOT_MAP = {
-    ('A', 'Minor'): '8A', ('A#', 'Minor'): '3A', ('B', 'Minor'): '10A',
-    ('C', 'Minor'): '5A', ('C#', 'Minor'): '12A', ('D', 'Minor'): '7A',
-    ('D#', 'Minor'): '2A', ('E', 'Minor'): '9A', ('F', 'Minor'): '4A',
-    ('F#', 'Minor'): '11A', ('G', 'Minor'): '6A', ('G#', 'Minor'): '1A',
-    ('C', 'Major'): '8B', ('C#', 'Major'): '3B', ('D', 'Major'): '10B',
-    ('D#', 'Major'): '5B', ('E', 'Major'): '12B', ('F', 'Major'): '7B',
-    ('F#', 'Major'): '2B', ('G', 'Major'): '9B', ('G#', 'Major'): '4B',
-    ('A', 'Major'): '11B', ('A#', 'Major'): '6B', ('B', 'Major'): '1B',
-}
 
 @dataclass
 class TransitionMetrics:
@@ -52,10 +40,6 @@ class EnergyDirection(Enum):
     DOWN = "down"
     MAINTAIN = "maintain"
 
-def key_to_camelot(track: Track):
-    """Assigns a Camelot code to a track based on its key."""
-    if track.keyNote and track.keyMode:
-        track.camelotCode = CAMELOT_MAP.get((track.keyNote, track.keyMode), "")
 
 def _get_camelot_components(camelot_code: str) -> tuple[int, str]:
     """Parses a Camelot code into its number and letter components."""

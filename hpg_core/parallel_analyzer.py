@@ -36,8 +36,10 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
 
     if file_count:
         # Only scale down for very small workloads to avoid process overhead
-        if file_count < 3:
-            return min(2, max_workers)
+        if file_count < 5:
+            return 1 # Force single worker to avoid spawn overhead on Windows
+        elif file_count < 20:
+            return 2
         elif file_count < 10:
             # For small workloads, use at least half capacity
             return max(4, max_workers // 2)

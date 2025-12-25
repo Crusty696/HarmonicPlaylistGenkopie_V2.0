@@ -57,10 +57,18 @@ class AnalysisWorker(QThread):
         self.status_update.emit(f"Found {total_files} audio files. Starting analysis...")
 
         # Progress callback for parallel analyzer
+        last_update_time = 0
+
         def progress_callback(current, total, status_msg):
-            """Forward progress updates to GUI"""
-            self.progress.emit(int((current / total) * 100))
-            self.status_update.emit(status_msg)
+            """Forward progress updates to GUI with throttling"""
+            nonlocal last_update_time
+            current_time = time.time() * 1000  # Convert to ms
+            
+            # Throttle updates: Max every 100ms or on completion
+            if (current_time - last_update_time > 100) or (current >= total):
+                self.progress.emit(int((current / total) * 100))
+                self.status_update.emit(status_msg)
+                last_update_time = current_time
 
         # Use ParallelAnalyzer for multi-core processing with smart scaling
         analyzer = ParallelAnalyzer()  # Auto-detect optimal core count (smart scaling)

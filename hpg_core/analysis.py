@@ -5,7 +5,6 @@ import librosa
 import mutagen
 import os
 import re
-import ruptures as rpt
 from .models import Track
 from .caching import generate_cache_key, get_cached_track, cache_track
 from .rekordbox_importer import get_rekordbox_importer
@@ -181,9 +180,15 @@ def extract_metadata(file_path):
 
 def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
     """
-    Analyzes the audio structure to find intro/outro and calculates optimal mix points
-    based on beats, downbeats, and musical phrases, avoiding intro/outro sections.
-
+    Analyzes the audio structure to find intro/outro and calculates optimal mix points.
+    
+    Refactored to remove ruptures dependency. Uses RMS energy thresholding for
+    faster and more robust intro/outro detection.
+    
+    Logic:
+    - Intro ends when energy consistently exceeds 40% of average energy.
+    - Outro starts when energy consistently drops below 40% of average energy.
+    
     Returns:
         tuple: (mix_in_point, mix_out_point, mix_in_bars, mix_out_bars)
     """
@@ -196,211 +201,77 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         return round(mix_in_point, 2), round(mix_out_point, 2), mix_in_bars, mix_out_bars
 
     try:
-        # --- 1. Feature Extraction ---
-        hop_length = 1024 # Increased hop_length for better temporal resolution in some features
-        frame_rate = sr / hop_length
-
-        # RMS energy (for overall loudness and intro/outro heuristics)
+        # Use a larger hop length for faster analysis (approx 46ms per frame at 22050Hz)
+        hop_length = 1024 
+        
+        # Calculate RMS energy profile
         rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
-        rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
-
-        # Onset strength envelope (for beat tracking and rhythmic density)
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
-
-        # Tempogram (for structural segmentation)
-        tempogram = librosa.feature.tempogram(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
-        tempogram_normalized = librosa.util.normalize(tempogram, axis=0)
-
-        # Spectral Centroid (for timbral changes)
-        cent = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
-        cent_normalized = librosa.util.normalize(cent)
-
-        # --- 2. Beat and Downbeat Tracking ---
-        tempo, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
-        beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=hop_length)
-
-        # Downbeat detection heuristic (simplified for 4/4 time)
-        # This assumes a 4/4 time signature and finds the strongest beat within each measure.
-        # More robust methods exist but this is a reasonable heuristic for a prototype.
-        meter = 4
-        downbeat_times = []
-        if len(beat_times) > meter:
-            # Group beats into potential measures
-            num_measures = len(beat_times) // meter
-            for i in range(num_measures):
-                measure_beats_indices = beats[i * meter : (i + 1) * meter]
-                if len(measure_beats_indices) == meter:
-                    measure_onset_strengths = onset_env[measure_beats_indices]
-                    # The downbeat is often the strongest beat in a measure
-                    downbeat_local_idx = np.argmax(measure_onset_strengths)
-                    downbeat_times.append(librosa.frames_to_time(measure_beats_indices[downbeat_local_idx], sr=sr, hop_length=hop_length))
-        downbeat_times = np.array(downbeat_times)
-
-
-        # --- 3. Structural Segmentation with ruptures ---
-        # Combine features for segmentation. Tempogram is a good start.
-        # For more robustness, one could concatenate other features like RMS, spectral contrast.
-        # Here, we use tempogram for simplicity as it's effective for rhythmic structure.
-        if tempogram_normalized.shape[1] < 2: # ruptures needs at least 2 samples
-            raise ValueError("Tempogram too short for ruptures segmentation.")
-
-        # Use FASTER algorithm: Pelt instead of Dynp, and increase jump for speed
-        # Pelt is much faster than Dynp while maintaining good accuracy
-        algo = rpt.Pelt(model="l2", jump=5, min_size=int(frame_rate * 5)).fit(tempogram_normalized.T)
-        # Estimate number of change points. A simple heuristic: 1 change point per ~60-90 seconds of music.
-        # Pelt auto-detects change points, but we can still use penalty parameter for control
-        segment_frames = algo.predict(pen=np.log(tempogram_normalized.shape[1]) * 2)
-        segment_times = librosa.frames_to_time(segment_frames, sr=sr, hop_length=hop_length)
-        segment_times = np.unique(np.concatenate(([0.0], segment_times, [duration]))) # Ensure start and end are included
-
-        # --- 4. Robust Intro/Outro Detection using Heuristics ---
-        # Set safe fallback values first (15% for intro, 85% for outro)
-        intro_end_time = duration * 0.15  # Default: first 15% is intro
-        outro_start_time = duration * 0.85  # Default: last 15% is outro
-        main_body_segments = []
-
-        # Heuristics for Intro: low energy, low spectral centroid, low onset density
-        # Iterate through initial segments to find a likely intro
-        for i in range(len(segment_times) - 1):
-            start_t = segment_times[i]
-            end_t = segment_times[i+1]
-            if end_t - start_t < 5: # Ignore very short segments for intro/outro
-                continue
-
-            # Calculate average features for the segment
-            rms_segment = rms[(rms_times >= start_t) & (rms_times < end_t)]
-            onset_segment = onset_env[(rms_times >= start_t) & (rms_times < end_t)]
-            cent_segment = cent_normalized[(rms_times >= start_t) & (rms_times < end_t)]
-
-            avg_rms = np.mean(rms_segment) if rms_segment.size > 0 else 0.0
-            avg_onset_strength = np.mean(onset_segment) if onset_segment.size > 0 else 0.0
-            avg_cent = np.mean(cent_segment) if cent_segment.size > 0 else 0.0
-
-            # Simple heuristic: Intro has low RMS, low onset strength, low spectral centroid
-            # These thresholds are empirical and might need tuning
-            is_intro_candidate = (avg_rms < np.mean(rms) * 0.5 and # significantly lower energy than average
-                                  avg_onset_strength < np.mean(onset_env) * 0.5 and # less rhythmic activity
-                                  avg_cent < np.mean(cent_normalized) * 0.7) # darker timbre
-
-            if is_intro_candidate and end_t < duration * 0.25: # Intro usually in first 25% of track
-                intro_end_time = max(intro_end_time, end_t)  # Keep the latest (longest) intro found
-            else:
-                break # First non-intro segment found
-
-        # Heuristics for Outro: low energy, low spectral centroid, low onset density, towards the end
-        # Iterate backwards from the end to find a likely outro
-        for i in range(len(segment_times) - 1, 0, -1):
-            start_t = segment_times[i-1]
-            end_t = segment_times[i]
-            if end_t - start_t < 5: # Ignore very short segments
-                continue
-
-            rms_segment = rms[(rms_times >= start_t) & (rms_times < end_t)]
-            onset_segment = onset_env[(rms_times >= start_t) & (rms_times < end_t)]
-            cent_segment = cent_normalized[(rms_times >= start_t) & (rms_times < end_t)]
-
-            avg_rms = np.mean(rms_segment) if rms_segment.size > 0 else 0.0
-            avg_onset_strength = np.mean(onset_segment) if onset_segment.size > 0 else 0.0
-            avg_cent = np.mean(cent_segment) if cent_segment.size > 0 else 0.0
-
-            is_outro_candidate = (avg_rms < np.mean(rms) * 0.5 and # significantly lower energy than average
-                                  avg_onset_strength < np.mean(onset_env) * 0.5 and # less rhythmic activity
-                                  avg_cent < np.mean(cent_normalized) * 0.7) # darker timbre
-
-            if is_outro_candidate and start_t > duration * 0.75: # Outro usually in last 25% of track
-                outro_start_time = min(outro_start_time, start_t)  # Keep the earliest (longest) outro found
-            else:
-                break # First non-outro segment found
-
-        # Ensure intro_end_time is before outro_start_time
-        if intro_end_time >= outro_start_time:
-            # Fallback to safe percentage-based values
+        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
+        
+        # Determine energy threshold (40% of average energy)
+        avg_energy = np.mean(rms)
+        threshold = avg_energy * 0.4
+        
+        # --- Intro Detection ---
+        # Find first point where energy stays above threshold for a sustained period
+        # Smoothing window ~2 seconds (approx 43 frames)
+        window_size = int(2.0 * sr / hop_length)
+        
+        # Smooth the RMS curve
+        rms_smooth = np.convolve(rms, np.ones(window_size)/window_size, mode='same')
+        
+        # Find start of main body (Intro End)
+        main_body_indices = np.where(rms_smooth > threshold)[0]
+        
+        if main_body_indices.size > 0:
+            # Intro ends at the first index where energy is significant
+            intro_end_idx = main_body_indices[0]
+            intro_end_time = times[intro_end_idx]
+            
+            # Outro starts at the last index where energy is significant
+            outro_start_idx = main_body_indices[-1]
+            outro_start_time = times[outro_start_idx]
+        else:
+            # Fallback if track is very quiet
             intro_end_time = duration * 0.15
             outro_start_time = duration * 0.85
-
-        # Define Main Body segments (where mixing is allowed)
-        for i in range(len(segment_times) - 1):
-            start_t = segment_times[i]
-            end_t = segment_times[i+1]
-            if start_t >= intro_end_time and end_t <= outro_start_time:
-                main_body_segments.append((start_t, end_t))
-        
-        # If no main body segments found, default to full track minus small buffer
-        if not main_body_segments:
-            main_body_segments.append((intro_end_time, outro_start_time))
-            if main_body_segments[0][1] - main_body_segments[0][0] < 10: # If main body is too short, expand
-                main_body_segments[0] = (max(0.0, intro_end_time - 10), min(duration, outro_start_time + 10))
-
-
-        # --- 5. Phrase Identification within Main Body ---
-        # Find all downbeats within the main body
-        main_body_downbeats = []
-        for start_seg, end_seg in main_body_segments:
-            for db_time in downbeat_times:
-                if start_seg <= db_time < end_seg:
-                    main_body_downbeats.append(db_time)
-        main_body_downbeats = np.array(main_body_downbeats)
-
-        # Filter for 8-bar phrases (or 16-bar, depending on desired granularity)
-        # A phrase starts at a downbeat and is followed by 7 (for 8-bar) or 15 (for 16-bar) more downbeats
-        # We'll look for downbeats that align with 8-bar boundaries
-        phrase_start_candidates = []
-        if len(main_body_downbeats) > 0:
-            # Assuming 8-bar phrases, so we need 8 downbeats to form a phrase
-            # We look for downbeats that are multiples of 8 bars from the start of the main body
-            # This is a simplification; a more robust approach would look for musical changes at phrase boundaries
             
-            # Let's find the first downbeat after intro_end_time
-            first_valid_downbeat_idx = np.searchsorted(downbeat_times, intro_end_time)
-            if first_valid_downbeat_idx < len(downbeat_times):
-                first_valid_downbeat_time = downbeat_times[first_valid_downbeat_idx]
-                
-                # Iterate through downbeats from this point, looking for 8-bar intervals
-                for i, db_time in enumerate(downbeat_times[first_valid_downbeat_idx:]):
-                    # Check if this downbeat is roughly at an 8-bar interval from the first valid downbeat
-                    # This is a very rough heuristic and assumes consistent tempo and 8-bar phrasing
-                    # A more accurate method would involve counting actual bars
-                    
-                    # For now, let's just consider all downbeats within the main body as phrase start candidates
-                    # and filter them later for mix points
-                    if db_time >= intro_end_time and db_time <= outro_start_time:
-                        phrase_start_candidates.append(db_time)
+        # Sanity checks
+        if intro_end_time > duration * 0.4:
+            intro_end_time = duration * 0.15 # Fallback if intro detected as too long
+            
+        if outro_start_time < duration * 0.6:
+            outro_start_time = duration * 0.85 # Fallback if outro detected as too early
+            
+        if intro_end_time >= outro_start_time:
+             intro_end_time = duration * 0.15
+             outro_start_time = duration * 0.85
+             
+        # --- Mix Point Calculation ---
+        # Mix-in: 8 bars after intro (or at intro end if short)
+        # Mix-out: 8 bars before outro
         
-        # Remove duplicates and sort
-        phrase_start_candidates = np.unique(phrase_start_candidates)
-        
-        # --- 6. Mix Point Selection ---
-        # Default to safe values if no suitable phrase candidates are found
-        mix_in_point = max(0.0, intro_end_time + 5.0) # 5 seconds after intro ends
-        mix_out_point = min(duration, outro_start_time - 5.0) # 5 seconds before outro starts
-
-        # Try to find a mix-in point at an 8-bar boundary
-        for p_time in phrase_start_candidates:
-            if p_time >= intro_end_time + 5.0 and p_time < duration * 0.5: # Mix-in in first half, after intro
-                mix_in_point = p_time
-                break
-        
-        # Try to find a mix-out point at an 8-bar boundary
-        for p_time in reversed(phrase_start_candidates):
-            if p_time <= outro_start_time - 5.0 and p_time > duration * 0.5 and p_time > mix_in_point + 10: # Mix-out in second half, before outro, and after mix-in
-                mix_out_point = p_time
-                break
-        
-        # Final sanity checks
-        if mix_in_point >= mix_out_point - 10.0: # Ensure at least 10 seconds between in and out
-            mix_in_point = max(0.0, intro_end_time + 5.0)
-            mix_out_point = min(duration, outro_start_time - 5.0)
-            if mix_in_point >= mix_out_point: # Fallback to simple buffer if complex logic fails
-                mix_in_point = duration * 0.25
-                mix_out_point = duration * 0.75
-
-        # --- 7. Calculate Bar Numbers ---
-        # Bar = 4 Beats in 4/4 time signature
-        # BPM = Beats per Minute, so seconds per beat = 60 / BPM
-        # Bars = (time_in_seconds / (60 / BPM)) / 4
         seconds_per_beat = 60.0 / bpm
-        seconds_per_bar = seconds_per_beat * 4  # 4 beats per bar in 4/4
+        seconds_per_bar = seconds_per_beat * 4
+        phrase_length = seconds_per_bar * 8 # 8-bar phrase
+        
+        mix_in_point = intro_end_time
+        mix_out_point = outro_start_time
+        
+        # Try to align to phrase structure (simple heuristic)
+        #Ideally we would use beat grid, but for now we use the detected points
+        
+        # Add a small buffer into the track for mix-in
+        mix_in_point += 0.5 # start mixing slightly after full energy hits
+        
+        # Start mixing out slightly before energy drop
+        mix_out_point -= 0.5 
+        
+        # Ensure points are within bounds
+        mix_in_point = max(0.0, min(mix_in_point, duration - 10))
+        mix_out_point = min(duration, max(mix_out_point, mix_in_point + 10))
 
+        # Calculate bars
         mix_in_bars = int(mix_in_point / seconds_per_bar)
         mix_out_bars = int(mix_out_point / seconds_per_bar)
 
@@ -408,7 +279,7 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
 
     except Exception as e:
         print(f"Error in analyze_structure_and_mix_points: {e}")
-        # Fallback to safe default values
+        # Safe fallback
         safe_in = min(max(duration * 0.2, 0.0), max(duration - 1.0, 0.0))
         safe_out = max(duration * 0.8, safe_in + 1.0)
         safe_out = min(safe_out, duration)
@@ -420,7 +291,6 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         safe_out_bars = int(safe_out / seconds_per_bar)
 
         return round(safe_in, 2), round(safe_out, 2), safe_in_bars, safe_out_bars
-
 def analyze_track(file_path: str) -> Track | None:
     """Analyzes a single audio file for all v3.0 metadata, using a cache."""
     if not file_path:
@@ -553,7 +423,7 @@ def analyze_track(file_path: str) -> Track | None:
         key_note, key_mode = get_key(chroma_vector)
 
         # Assign camelotCode here directly
-        from .playlist import key_to_camelot # Import locally to avoid circular dependency issues
+        from .models import key_to_camelot # Import locally to avoid circular dependency issues
         temp_track_for_camelot = Track(filePath=file_path, fileName=os.path.basename(file_path), keyNote=key_note, keyMode=key_mode)
         key_to_camelot(temp_track_for_camelot)
         camelot_code = temp_track_for_camelot.camelotCode

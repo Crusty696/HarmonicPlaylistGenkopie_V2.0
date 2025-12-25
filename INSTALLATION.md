@@ -22,9 +22,9 @@ python --version
 
 **Im Projektordner:**
 ```bash
-cd C:\Users\david\Desktop\HarmonicPlaylistGenerator_v5
+cd %USERPROFILE%\Desktop\HarmonicPlaylistGenerator_v5
 
-# Alle benötigten Bibliotheken installieren
+# Alle benÃ¶tigten Bibliotheken installieren
 pip install -r requirements.txt
 ```
 
@@ -126,12 +126,11 @@ python main.py 2>&1
 ### Cache löschen (wenn Probleme):
 ```bash
 # Windows:
-del hpg_cache_v3.dbm.*
+del hpg_cache_v4.dbm.*
 del cache.db
 
 # Oder im Python:
-python -c "import os; [os.remove(f) for f in os.listdir('.') if 'cache' in f.lower()]"
-```
+
 
 ---
 
