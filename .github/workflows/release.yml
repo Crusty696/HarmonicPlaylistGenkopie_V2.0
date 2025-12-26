@@ -48,8 +48,14 @@ jobs:
           Write-Host "✅ EXE found: $($exeFile.FullName)"
           Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
 
-          # Copy to predictable location
-          Copy-Item $exeFile.FullName "HarmonicPlaylistGenerator.exe" -Force
+          # Copy to predictable location (only if not already in working directory)
+          $targetPath = Join-Path (Get-Location) "HarmonicPlaylistGenerator.exe"
+          if ($exeFile.FullName -ne $targetPath) {
+            Copy-Item $exeFile.FullName "HarmonicPlaylistGenerator.exe" -Force
+            Write-Host "   Copied to working directory"
+          } else {
+            Write-Host "   EXE already in working directory, no copy needed"
+          }
         } else {
           Write-Error "❌ EXE not found!"
           exit 1
