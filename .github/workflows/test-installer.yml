@@ -42,23 +42,26 @@ jobs:
         $exeFile = Get-ChildItem -Recurse -Filter "HarmonicPlaylistGenerator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 
         if ($exeFile) {
-          Write-Host "✅ EXE successfully created!"
-          Write-Host "   Location: $($exeFile.FullName)"
+          Write-Host "✅ EXE found: $($exeFile.FullName)"
           Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
-          Write-Host "   Created: $($exeFile.LastWriteTime)"
 
           # Ensure dist/ directory exists
           if (-not (Test-Path "dist")) {
             New-Item -ItemType Directory -Path "dist" -Force | Out-Null
           }
 
-          # Copy to dist/ if not already there
-          if ($exeFile.FullName -notlike "*\dist\*") {
-            Copy-Item $exeFile.FullName "dist/HarmonicPlaylistGenerator.exe" -Force
-            Write-Host "✅ Copied to dist/ for artifact upload"
+          # Define target path
+          $targetPath = Join-Path (Get-Location) "dist\HarmonicPlaylistGenerator.exe"
+
+          # Only copy if source and target are different
+          if ($exeFile.FullName -ne $targetPath) {
+            Copy-Item $exeFile.FullName $targetPath -Force
+            Write-Host "✅ Copied to dist/"
+          } else {
+            Write-Host "✅ EXE already in dist/"
           }
 
-          Get-Item "dist/HarmonicPlaylistGenerator.exe" | Select-Object Name, Length, LastWriteTime
+          Get-Item $targetPath | Select-Object Name, Length, LastWriteTime
         } else {
           Write-Host "❌ EXE was not created!"
           exit 1
