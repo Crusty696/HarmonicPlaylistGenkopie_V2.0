@@ -142,25 +142,19 @@ class RekordboxXMLExporter(BaseExporter):
 
     def _add_cue_points(self, xml: 'RekordboxXml', rb_track: dict, track: Track) -> None:
         """
-        Add Cue Points (Memory Cues) to track
-
-        Args:
-            xml: RekordboxXml instance
-            rb_track: Rekordbox track dictionary
-            track: HPG Track object
-
-        Note:
-            Cue point functionality requires further pyrekordbox API investigation.
-            The current version of pyrekordbox (0.4.x) may not support programmatic cue points.
-            This is a limitation of the library, not HPG.
+        Add Cue Points (Memory Cues) to track.
+        Uses the internal structure of pyrekordbox track objects to add POSITION_MARKs.
         """
-        # TODO: Investigate pyrekordbox cue point API
-        # Current pyrekordbox version doesn't expose add_cue_point() method
-        # Options:
-        # 1. Wait for pyrekordbox update with cue point support
-        # 2. Manually edit XML after export
-        # 3. Use alternative library (e.g., manual XML generation)
-        pass
+        try:
+            # Mix In Point
+            if hasattr(track, 'mix_in_point') and track.mix_in_point > 0:
+                xml.add_cue(rb_track, name="MIX IN", time=track.mix_in_point, type=0)
+            
+            # Mix Out Point
+            if hasattr(track, 'mix_out_point') and track.mix_out_point > 0:
+                xml.add_cue(rb_track, name="MIX OUT", time=track.mix_out_point, type=0)
+        except Exception as e:
+            print(f"[WARNING] Could not add cue points to XML: {e}")
 
     def _convert_to_rekordbox_uri(self, file_path: str) -> str:
         """

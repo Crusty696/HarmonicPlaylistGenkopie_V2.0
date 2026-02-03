@@ -631,7 +631,8 @@ class EnhancedResultView(QWidget):
         # Update quality metrics display
         self._update_quality_display()
 
-        # Populate table
+        # Populate table with performance optimization
+        self.table.setUpdatesEnabled(False)  # Disable updates during population
         self.table.setRowCount(len(playlist))
 
         for i, track in enumerate(playlist):
@@ -644,32 +645,22 @@ class EnhancedResultView(QWidget):
                 )
                 transition_score = int(compatibility.overall_score * 100)
 
-            self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
-            self.table.setItem(i, 1, QTableWidgetItem(track.fileName))
-            self.table.setItem(i, 2, QTableWidgetItem(track.artist))
-
-            # Format duration to MM:SS
-            duration_minutes = int(track.duration // 60)
-            duration_seconds = int(track.duration % 60)
-            formatted_duration = f"{duration_minutes}:{duration_seconds:02d}"
-            self.table.setItem(i, 3, QTableWidgetItem(formatted_duration))
-
-            self.table.setItem(i, 4, QTableWidgetItem(f"{track.bpm:.1f}"))
-            self.table.setItem(i, 5, QTableWidgetItem(f"{track.keyNote} {track.keyMode}"))
-            self.table.setItem(i, 6, QTableWidgetItem(track.camelotCode))
-            self.table.setItem(i, 7, QTableWidgetItem(str(track.energy)))
-
-            # Format mix points to MM:SS (Bar Nummer)
-            mix_in_minutes = int(track.mix_in_point // 60)
-            mix_in_seconds = int(track.mix_in_point % 60)
-            formatted_mix_in = f"{mix_in_minutes:02d}:{mix_in_seconds:02d} ({track.mix_in_bars} bars)"
-
-            mix_out_minutes = int(track.mix_out_point // 60)
-            mix_out_seconds = int(track.mix_out_point % 60)
-            formatted_mix_out = f"{mix_out_minutes:02d}:{mix_out_seconds:02d} ({track.mix_out_bars} bars)"
-
-            self.table.setItem(i, 8, QTableWidgetItem(formatted_mix_in))
-            self.table.setItem(i, 9, QTableWidgetItem(formatted_mix_out))
+            # Use faster item creation
+            items = [
+                QTableWidgetItem(str(i + 1)),
+                QTableWidgetItem(track.fileName),
+                QTableWidgetItem(track.artist),
+                QTableWidgetItem(f"{int(track.duration // 60)}:{int(track.duration % 60):02d}"),
+                QTableWidgetItem(f"{track.bpm:.1f}"),
+                QTableWidgetItem(f"{track.keyNote} {track.keyMode}"),
+                QTableWidgetItem(track.camelotCode),
+                QTableWidgetItem(str(track.energy)),
+                QTableWidgetItem(f"{int(track.mix_in_point // 60):02d}:{int(track.mix_in_point % 60):02d} ({track.mix_in_bars} bars)"),
+                QTableWidgetItem(f"{int(track.mix_out_point // 60):02d}:{int(track.mix_out_point % 60):02d} ({track.mix_out_bars} bars)")
+            ]
+            
+            for col, item in enumerate(items):
+                self.table.setItem(i, col, item)
 
             # Color-code transition score
             score_item = QTableWidgetItem(f"{transition_score}%")
@@ -680,8 +671,9 @@ class EnhancedResultView(QWidget):
             else:
                 score_item.setBackground(QColor("#f44336"))  # Red
             score_item.setForeground(QColor("white"))
-
             self.table.setItem(i, 10, score_item)
+            
+        self.table.setUpdatesEnabled(True)  # Re-enable updates
                     # Update analytics
         self._update_analytics()
         self._update_mix_recommendations()
@@ -1163,16 +1155,10 @@ if __name__ == '__main__':
     # This MUST be the first line to prevent infinite process spawning
     multiprocessing.freeze_support()
 
-    # Try to clear shelve cache files, but continue if locked
-    for ext in ['.bak', '.dat', '.dir', '.db']:
-        cache_file_path = CACHE_FILE + ext
-        if os.path.exists(cache_file_path):
-            try:
-                os.remove(cache_file_path)
-            except PermissionError:
-                print(f"Warning: Could not remove {cache_file_path} (file is locked)")
-            except Exception as e:
-                print(f"Warning: Could not remove {cache_file_path}: {e}")
+    # Only clear cache if explicitly requested or on major version changes
+    # Automatic clearing on every start is inefficient and can cause locking issues
+    # init_cache() already handles version-based clearing safely with file locks
+    pass
 
     init_cache()
 

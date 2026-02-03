@@ -240,25 +240,21 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kw
 def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float, **kwargs) -> Track:
     """Find the track with the best overall connectivity as starting point.
 
-    Optimized: For large playlists, only samples a subset of tracks to reduce O(n²) complexity.
+    Optimized: For large playlists, uses a more efficient sampling strategy.
     """
-    # Optimization: For large playlists, sample max 50 candidates and check against max 30 others
-    max_candidates = min(50, len(tracks))
-    max_comparisons = min(30, len(tracks))
+    if not tracks:
+        return None
+    if len(tracks) <= 1:
+        return tracks[0]
+
+    # Optimization: For large playlists, sample max 30 candidates and check against max 20 others
+    # This keeps the complexity O(1) for very large N
+    max_candidates = min(30, len(tracks))
+    max_comparisons = min(20, len(tracks))
 
     # Sample evenly distributed tracks as candidates
-    if len(tracks) > max_candidates:
-        step = len(tracks) // max_candidates
-        candidate_indices = list(range(0, len(tracks), step))[:max_candidates]
-    else:
-        candidate_indices = list(range(len(tracks)))
-
-    # Sample tracks for comparison
-    if len(tracks) > max_comparisons:
-        comp_step = len(tracks) // max_comparisons
-        comparison_indices = set(range(0, len(tracks), comp_step))
-    else:
-        comparison_indices = set(range(len(tracks)))
+    candidate_indices = [int(i * (len(tracks) - 1) / (max_candidates - 1)) for i in range(max_candidates)]
+    comparison_indices = [int(i * (len(tracks) - 1) / (max_comparisons - 1)) for i in range(max_comparisons)]
 
     best_track = tracks[0]
     best_score = -1
@@ -269,15 +265,14 @@ def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float, **kwarg
         connections = 0
 
         for j in comparison_indices:
-            if i != j:
-                score = calculate_compatibility(track, tracks[j], bpm_tolerance, **kwargs)
-                if score > 0:
-                    total_compatibility += score
-                    connections += 1
+            if i == j:
+                continue
+            score = calculate_compatibility(track, tracks[j], bpm_tolerance, **kwargs)
+            if score > 0:
+                total_compatibility += score
+                connections += 1
 
-        # Average compatibility weighted by number of connections
-        connectivity_score = (total_compatibility / max(1, connections)) * (connections / len(comparison_indices))
-
+        connectivity_score = total_compatibility / connections if connections > 0 else 0
         if connectivity_score > best_score:
             best_score = connectivity_score
             best_track = track
