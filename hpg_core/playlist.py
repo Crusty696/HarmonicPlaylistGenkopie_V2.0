@@ -714,9 +714,25 @@ def compute_transition_recommendations(
         current_mix_in, current_mix_out = _resolve_mix_points(current, effective_overlap)
         next_mix_in, next_mix_out = _resolve_mix_points(upcoming, effective_overlap)
 
-        fade_out_start = max(0.0, current_mix_out - effective_overlap)
-        fade_in_start = max(0.0, next_mix_in - effective_overlap / 2)
-        overlap = max(0.0, current_mix_out - fade_out_start)
+        # DJ Logic: The mix usually starts at the 'mix_in' of the upcoming track
+        # and ends at the 'mix_out' of the current track.
+        # We want to align the 'mix_in' of the next track with a phrase in the current track.
+        
+        # Calculate how long the transition should be (e.g., 16 or 32 bars)
+        seconds_per_beat = 60.0 / current.bpm if current.bpm > 0 else 0.5
+        seconds_per_bar = seconds_per_beat * 4
+        
+        # Standard DJ transition length: 32 bars (approx 60s at 124bpm)
+        transition_duration = seconds_per_bar * 32 
+        
+        # Adjust transition duration if tracks are short
+        if current.duration > 0:
+            transition_duration = min(transition_duration, current.duration * 0.25)
+            
+        fade_out_start = max(0.0, current_mix_out - transition_duration)
+        fade_in_start = next_mix_in
+        mix_entry = next_mix_in
+        overlap = transition_duration
 
         metrics = calculate_enhanced_compatibility(current, upcoming, bpm_tolerance)
         compatibility_score = int(metrics.overall_score * 100)

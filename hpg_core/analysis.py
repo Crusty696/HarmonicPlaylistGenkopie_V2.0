@@ -5,6 +5,7 @@ import librosa
 import mutagen
 import os
 import re
+from math import floor
 from .models import Track, CAMELOT_MAP
 from .config import (
     HOP_LENGTH, METER, INTRO_PERCENTAGE, OUTRO_PERCENTAGE,
@@ -252,31 +253,47 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
             outro_start_time = duration * OUTRO_PERCENTAGE
              
         # --- Mix Point Calculation ---
-        # Mix-in: 8 bars after intro (or at intro end if short)
-        # Mix-out: 8 bars before outro
+        # Optimized for DJ mixing:
+        # Mix-in: Usually at the end of the intro, aligned to an 8-bar phrase.
+        # Mix-out: Usually at the start of the outro, aligned to an 8-bar phrase.
 
         seconds_per_beat = 60.0 / bpm
         seconds_per_bar = seconds_per_beat * METER
+        seconds_per_phrase = seconds_per_bar * 8  # Standard 8-bar phrase
 
-        mix_in_point = intro_end_time
-        mix_out_point = outro_start_time
+        # 1. Align Intro End to nearest phrase boundary
+        # DJs rarely mix at random times; they mix at 8, 16, or 32 bar marks.
+        intro_phrase_count = round(intro_end_time / seconds_per_phrase)
+        # Ensure we have at least some intro, but not too much
+        if intro_phrase_count < 1: intro_phrase_count = 1
+        mix_in_point = intro_phrase_count * seconds_per_phrase
         
-        # Try to align to phrase structure (simple heuristic)
-        #Ideally we would use beat grid, but for now we use the detected points
+        # 2. Align Outro Start to phrase boundary
+        # We want to mix out BEFORE the energy drops completely.
+        # Typically 16 or 32 bars before the very end of the track.
+        total_phrases = duration / seconds_per_phrase
+        outro_phrase_index = floor(outro_start_time / seconds_per_phrase)
         
-        # Add a small buffer into the track for mix-in
-        mix_in_point += 0.5 # start mixing slightly after full energy hits
+        # If the detected outro is too late, pull it back to a phrase boundary
+        if outro_phrase_index >= floor(total_phrases) - 1:
+            outro_phrase_index = max(1, floor(total_phrases) - 4) # 32 bars before end as fallback
+            
+        mix_out_point = outro_phrase_index * seconds_per_phrase
         
-        # Start mixing out slightly before energy drop
-        mix_out_point -= 0.5 
-        
+        # 3. Refinement: Ensure mix-in is after the first beat and mix-out is before the last
+        # Also ensure there's enough space between them
+        if mix_in_point >= mix_out_point - (seconds_per_phrase * 2):
+            # If track is short, use 15% / 85% marks but still align to bars
+            mix_in_point = round((duration * 0.15) / seconds_per_bar) * seconds_per_bar
+            mix_out_point = round((duration * 0.85) / seconds_per_bar) * seconds_per_bar
+
         # Ensure points are within bounds
-        mix_in_point = max(0.0, min(mix_in_point, duration - 10))
-        mix_out_point = min(duration, max(mix_out_point, mix_in_point + 10))
+        mix_in_point = max(seconds_per_bar, min(mix_in_point, duration * 0.4))
+        mix_out_point = min(duration - seconds_per_bar, max(mix_out_point, duration * 0.6))
 
         # Calculate bars
-        mix_in_bars = int(mix_in_point / seconds_per_bar)
-        mix_out_bars = int(mix_out_point / seconds_per_bar)
+        mix_in_bars = int(round(mix_in_point / seconds_per_bar))
+        mix_out_bars = int(round(mix_out_point / seconds_per_bar))
 
         return round(float(mix_in_point), 2), round(float(mix_out_point), 2), mix_in_bars, mix_out_bars
 
