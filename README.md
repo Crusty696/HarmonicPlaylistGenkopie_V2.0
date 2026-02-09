@@ -1,4 +1,4 @@
-# 🎵 Harmonic Playlist Generator (HPG) v3.0
+# 🎵 Harmonic Playlist Generator (HPG) v3.5.3
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -13,22 +13,22 @@
 
 ### ⚡ Windows Standalone Executable - Ready to Use!
 
-**Latest Release: v3.0.8** (Duration Display Feature)
+**Latest Release: v3.5.3** (DJ Mix Point Optimization)
 
 <div align="center">
 
-### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.0.8/HarmonicPlaylistGenerator.exe)
+### [⬇️ **DOWNLOAD HarmonicPlaylistGenerator.exe** (164 MB)](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/download/v3.5.3/HarmonicPlaylistGenerator.exe)
 
 **No installation required • Just download and run!**
 
 </div>
 
-**What's New in v3.0.8:**
-- 🆕 **NEW:** Duration column now displays track length (MM:SS format)
-- ✅ Better overview of your playlist with visible track durations
-- ✅ All previous optimizations included (8-core utilization on 16-core CPUs)
-- ✅ Smart CPU scaling (uses up to 50% of cores on high-end CPUs)
-- ✅ 33-433% faster on 16+ core systems
+**What's New in v3.5.3:**
+- 🆕 **NEW:** **DJ-Optimized Mix Points**: Automatic alignment to 8-bar phrases.
+- 🆕 **NEW:** **Phrase-Aware Analysis**: Intelligent intro/outro detection for professional transitions.
+- 🚀 **Performance:** Optimized GUI table rendering for large playlists (1000+ tracks).
+- 🚀 **Algorithm:** Efficient O(1) sampling for best starting track selection.
+- ✅ **Rekordbox Fix:** Correct export of Mix-In/Out points as Cue Points in XML.
 
 **Alternative Downloads:**
 - All releases: [GitHub Releases Page](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases)
@@ -44,7 +44,7 @@ HPG is a high-performance desktop application for professional DJs that creates 
 
 ### For End Users (Windows)
 
-1. **Download** [HPG_v3.0_Setup.exe](../../releases/latest)
+1. **Download** [HPG_v3.5.3_Setup.exe](../../releases/latest)
 2. **Run** the installer
 3. **Launch** from Desktop icon
 4. **Select** your music folder

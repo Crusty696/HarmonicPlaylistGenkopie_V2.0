@@ -1,12 +1,12 @@
 @echo off
 REM =========================================================
-REM Build Professional Windows Installer for HPG v3.0
+REM Build Professional Windows Installer for HPG v3.5.3
 REM Requires: Inno Setup (https://jrsoftware.org/isdl.php)
 REM =========================================================
 
 echo.
 echo ========================================================
-echo   HPG v3.0 - INSTALLER BUILD SCRIPT
+echo   HPG v3.5.3 - INSTALLER BUILD SCRIPT
 echo ========================================================
 echo.
 
@@ -64,7 +64,7 @@ echo ========================================================
 echo   INSTALLER BUILD SUCCESSFUL!
 echo ========================================================
 echo.
-echo   Installer: installer_output\HPG_v3.0_Setup.exe
+echo   Installer: installer_output\HPG_v3.5.3_Setup.exe
 echo   Size: ~300-500 MB (standalone installer)
 echo.
 echo   Features:
@@ -80,8 +80,8 @@ echo ========================================================
 echo.
 
 REM Open output folder
-if exist "installer_output\HPG_v3.0_Setup.exe" (
-    explorer /select,"installer_output\HPG_v3.0_Setup.exe"
+if exist "installer_output\HPG_v3.5.3_Setup.exe" (
+    explorer /select,"installer_output\HPG_v3.5.3_Setup.exe"
 )
 
 pause

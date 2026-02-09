@@ -5,7 +5,7 @@
 [Setup]
 ; Application Information
 AppName=Harmonic Playlist Generator
-AppVersion=3.0
+AppVersion=3.5.3
 AppPublisher=HPG Team
 AppPublisherURL=https://github.com/yourusername/HPG
 AppSupportURL=https://github.com/yourusername/HPG/issues
@@ -16,7 +16,8 @@ AllowNoIcons=yes
 LicenseFile=LICENSE
 InfoBeforeFile=docs\QUICK_START.md
 OutputDir=installer_output
-OutputBaseFilename=HPG_v3.0_Setup
+AppVersion=3.5.3
+OutputBaseFilename=HPG_v3.5.3_Setup
 SetupIconFile=icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -88,6 +89,7 @@ begin
          '  - 4-6x faster audio analysis (multi-core)' + #13#10 +
          '  - Optional Rekordbox integration (12x speedup)' + #13#10 +
          '  - 10 advanced playlist algorithms' + #13#10 +
+         '  - DJ-optimized mix points (phrase-aligned)' + #13#10 +
          '  - M3U8 and Rekordbox XML export' + #13#10 + #13#10 +
          'Click Next to continue.',
          mbInformation, MB_OK);
