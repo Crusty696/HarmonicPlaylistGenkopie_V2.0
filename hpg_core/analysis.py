@@ -473,6 +473,40 @@ def extract_metadata(file_path):
     return artist, title, genre
 
 
+def extract_bpm_from_tags(file_path: str) -> float | None:
+    """
+    Liest BPM direkt aus ID3/AIFF-Tags (kein Librosa).
+
+    Beatport-Exporte enthalten immer korrekte BPM-Werte in den Tags.
+    Diese Funktion hat Vorrang vor der Librosa-BPM-Erkennung.
+
+    Returns:
+        float: BPM-Wert aus Tags, oder None wenn nicht vorhanden
+    """
+    try:
+        audio = mutagen.File(file_path, easy=True)
+        if audio is not None:
+            # easy=True normalisiert Tags auf lowercase-Keys
+            bpm_val = audio.get("bpm") or audio.get("tempo")
+            if bpm_val:
+                bpm = float(str(bpm_val[0]).strip())
+                if 20.0 < bpm < 300.0:  # Plausibilitaetscheck
+                    return round(bpm, 2)
+        # Fallback: mutagen ohne easy=True fuer nicht-standardisierte Tags
+        audio_raw = mutagen.File(file_path)
+        if audio_raw is not None:
+            for key in ("TBPM", "BPM", "bpm", "tempo"):
+                if key in audio_raw:
+                    tag = audio_raw[key]
+                    raw_val = str(tag.text[0]) if hasattr(tag, "text") else str(tag)
+                    bpm = float(raw_val.strip())
+                    if 20.0 < bpm < 300.0:
+                        return round(bpm, 2)
+    except Exception:
+        pass  # Kein BPM in Tags → Librosa-Fallback
+    return None
+
+
 def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
     """
     Analyzes the audio structure to find intro/outro and calculates optimal mix points.
@@ -807,30 +841,40 @@ def analyze_track(file_path: str) -> Track | None:
         y, sr = librosa.load(file_path)
         duration = librosa.get_duration(y=y, sr=sr)
 
-        # --- Full Analysis --- #
-        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-        tempo_array = np.atleast_1d(tempo)
-        bpm_value = float(tempo_array[0]) if tempo_array.size else 0.0
-        if bpm_value <= 0:
-            alt_tempo = librosa.beat.tempo(y=y, sr=sr)
-            alt_array = np.atleast_1d(alt_tempo)
-            bpm_value = float(alt_array[0]) if alt_array.size else 0.0
-        if bpm_value <= 0 and beat_frames.size > 1:
-            beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-            intervals = np.diff(beat_times)
-            if intervals.size:
-                bpm_value = 60.0 / np.mean(intervals)
-        bpm = round(float(bpm_value if bpm_value > 0 else DEFAULT_BPM), 2)
+        # --- BPM-Erkennung: ID3-Tags haben Vorrang vor Librosa --- #
+        # Beatport/Rekordbox-exportierte Dateien enthalten immer korrekte BPM-Werte.
+        # Librosa macht bei Psytrance haeufig Halftime/Doubletime-Fehler.
+        tag_bpm = extract_bpm_from_tags(file_path)
+        if tag_bpm is not None:
+            bpm = tag_bpm
+            print(f"  [BPM] ID3-Tag: {bpm:.2f} BPM (kein Librosa-Fallback noetig)")
+            beat_frames = np.array([])  # Kein Beat-Tracking noetig
+        else:
+            # Librosa-Fallback: wenn keine BPM-Tags vorhanden
+            tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+            tempo_array = np.atleast_1d(tempo)
+            bpm_value = float(tempo_array[0]) if tempo_array.size else 0.0
+            if bpm_value <= 0:
+                alt_tempo = librosa.beat.tempo(y=y, sr=sr)
+                alt_array = np.atleast_1d(alt_tempo)
+                bpm_value = float(alt_array[0]) if alt_array.size else 0.0
+            if bpm_value <= 0 and beat_frames.size > 1:
+                beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+                intervals = np.diff(beat_times)
+                if intervals.size:
+                    bpm_value = 60.0 / np.mean(intervals)
+            bpm = round(float(bpm_value if bpm_value > 0 else DEFAULT_BPM), 2)
 
-        # Halftime-Korrektur: Librosa erkennt manchmal die halbe BPM
-        # bei elektronischer Musik (Psytrance ~145, Techno ~130, House ~125).
-        # Schwellwert 95 statt 100: verhindert 80 BPM -> 160 BPM (wuerde DnB ausloesen).
-        # Zusaetzliche Obergrenze: Verdoppelung nur wenn Ergebnis <= BPM_HALFTIME_MAX_RESULT
-        # (verhindert ~92 BPM -> 184 BPM -> falsche DnB-Klassifikation)
-        if 40 < bpm < 95:
-            doubled = round(bpm * 2, 2)
-            if doubled <= BPM_HALFTIME_MAX_RESULT:
-                bpm = doubled
+            # Halftime-Korrektur: Librosa erkennt manchmal die halbe BPM
+            # bei elektronischer Musik (Psytrance ~145, Techno ~130, House ~125).
+            # Schwellwert 95 statt 100: verhindert 80 BPM -> 160 BPM (wuerde DnB ausloesen).
+            # Zusaetzliche Obergrenze: Verdoppelung nur wenn Ergebnis <= BPM_HALFTIME_MAX_RESULT
+            # (verhindert ~92 BPM -> 184 BPM -> falsche DnB-Klassifikation)
+            if 40 < bpm < 95:
+                doubled = round(bpm * 2, 2)
+                if doubled <= BPM_HALFTIME_MAX_RESULT:
+                    bpm = doubled
+            print(f"  [BPM] Librosa: {bpm:.2f} BPM (keine BPM-Tags gefunden)")
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         chroma_vector = np.mean(chroma, axis=1)
