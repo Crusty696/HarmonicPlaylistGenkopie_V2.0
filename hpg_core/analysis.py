@@ -8,8 +8,15 @@ import re
 from math import floor
 from .models import Track, CAMELOT_MAP
 from .config import (
-    HOP_LENGTH, METER, INTRO_PERCENTAGE, OUTRO_PERCENTAGE,
-    INTRO_MAX_PERCENTAGE, OUTRO_MIN_PERCENTAGE, RMS_THRESHOLD, DEFAULT_BPM
+    HOP_LENGTH,
+    METER,
+    INTRO_PERCENTAGE,
+    OUTRO_PERCENTAGE,
+    INTRO_MAX_PERCENTAGE,
+    OUTRO_MIN_PERCENTAGE,
+    RMS_THRESHOLD,
+    DEFAULT_BPM,
+    BPM_HALFTIME_MAX_RESULT,
 )
 
 # Reverse mapping: Camelot code → (Note, Mode)
@@ -25,7 +32,8 @@ from .dj_brain import calculate_genre_aware_mix_points
 MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
 MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 
-NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
 
 def get_key(chroma_vector):
     """Determines the key from a chroma vector by correlating with major/minor profiles."""
@@ -53,6 +61,7 @@ def get_key(chroma_vector):
     key_note = NOTES[key_index]
     return key_note, key_mode
 
+
 def calculate_energy(y):
     """Calculates the overall energy of a track and scales it to 0-100."""
     if y is None or len(y) == 0:
@@ -66,12 +75,13 @@ def calculate_energy(y):
     y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
     y = np.clip(y, -1.0, 1.0)
 
-    rms_energy = float(np.sqrt(np.mean(y ** 2))) if y.size else 0.0
+    rms_energy = float(np.sqrt(np.mean(y**2))) if y.size else 0.0
     if not np.isfinite(rms_energy):
         rms_energy = 0.0
 
     energy_scaled = float(np.interp(rms_energy, [0.0, 0.4], [0.0, 100.0]))
     return int(min(max(energy_scaled, 0.0), 100.0))
+
 
 def calculate_bass_intensity(y, sr):
     """Calculates the bass intensity (20-150Hz) and scales it to 0-100."""
@@ -102,8 +112,10 @@ def calculate_bass_intensity(y, sr):
     # Find frequency bins for the bass range
     bass_indices = np.where((freqs >= 20) & (freqs <= 150))[0]
 
-    total_energy = float(np.sum(stft ** 2))
-    bass_energy = float(np.sum(stft[bass_indices, :] ** 2)) if bass_indices.size else 0.0
+    total_energy = float(np.sum(stft**2))
+    bass_energy = (
+        float(np.sum(stft[bass_indices, :] ** 2)) if bass_indices.size else 0.0
+    )
 
     if total_energy == 0:
         return 0
@@ -111,6 +123,7 @@ def calculate_bass_intensity(y, sr):
     bass_ratio = bass_energy / total_energy
     bass_intensity = float(np.interp(bass_ratio, [0.0, 0.5], [0.0, 100.0]))
     return int(min(max(bass_intensity, 0.0), 100.0))
+
 
 def calculate_brightness(y, sr):
     """
@@ -260,7 +273,9 @@ def calculate_danceability(y, sr, bpm=None):
             beat_times = librosa.frames_to_time(beats, sr=sr)
             intervals = np.diff(beat_times)
             if intervals.size > 0 and np.mean(intervals) > 0:
-                beat_regularity = 1.0 - min(float(np.std(intervals) / np.mean(intervals)), 1.0)
+                beat_regularity = 1.0 - min(
+                    float(np.std(intervals) / np.mean(intervals)), 1.0
+                )
             else:
                 beat_regularity = 0.0
         else:
@@ -278,7 +293,7 @@ def calculate_danceability(y, sr, bpm=None):
                 peaks = []
                 for i in range(1, min(len(ac_norm), 200)):
                     if i > 0 and i < len(ac_norm) - 1:
-                        if ac_norm[i] > ac_norm[i-1] and ac_norm[i] > ac_norm[i+1]:
+                        if ac_norm[i] > ac_norm[i - 1] and ac_norm[i] > ac_norm[i + 1]:
                             peaks.append(ac_norm[i])
                 onset_regularity = float(max(peaks)) if peaks else 0.0
                 onset_regularity = min(onset_regularity, 1.0)
@@ -297,14 +312,18 @@ def calculate_danceability(y, sr, bpm=None):
                 bass_energy_over_time = np.mean(stft[bass_bins, :], axis=0)
                 if bass_energy_over_time.size > 1 and np.std(bass_energy_over_time) > 0:
                     # Periodizität des Bass-Signals
-                    bass_ac = librosa.autocorrelate(bass_energy_over_time,
-                                                     max_size=bass_energy_over_time.size // 2)
+                    bass_ac = librosa.autocorrelate(
+                        bass_energy_over_time, max_size=bass_energy_over_time.size // 2
+                    )
                     if bass_ac.size > 1 and bass_ac[0] > 0:
                         bass_ac_norm = bass_ac / bass_ac[0]
                         bass_peaks = []
                         for i in range(1, min(len(bass_ac_norm), 200)):
                             if i < len(bass_ac_norm) - 1:
-                                if bass_ac_norm[i] > bass_ac_norm[i-1] and bass_ac_norm[i] > bass_ac_norm[i+1]:
+                                if (
+                                    bass_ac_norm[i] > bass_ac_norm[i - 1]
+                                    and bass_ac_norm[i] > bass_ac_norm[i + 1]
+                                ):
                                     bass_peaks.append(bass_ac_norm[i])
                         bass_periodicity = float(max(bass_peaks)) if bass_peaks else 0.0
                     else:
@@ -329,9 +348,7 @@ def calculate_danceability(y, sr, bpm=None):
 
         # Gewichtete Kombination: Beat 40%, Onset 30%, Bass 20%, BPM 10%
         base_score = (
-            beat_regularity * 0.40 +
-            onset_regularity * 0.30 +
-            bass_periodicity * 0.20
+            beat_regularity * 0.40 + onset_regularity * 0.30 + bass_periodicity * 0.20
         )
         if bpm_bonus > 0:
             raw_score = base_score + (bpm_bonus / 0.15) * 0.10
@@ -395,7 +412,7 @@ def parse_filename_for_metadata(file_path):
     name_without_ext = os.path.splitext(filename)[0]
 
     # Pattern 1: "Artist - Track" (most common DJ format)
-    match = re.match(r'^(?:\d+[\s.-]*)?([^-]+?)\s*-\s*(.+)$', name_without_ext)
+    match = re.match(r"^(?:\d+[\s.-]*)?([^-]+?)\s*-\s*(.+)$", name_without_ext)
     if match:
         artist = match.group(1).strip()
         title = match.group(2).strip()
@@ -405,7 +422,7 @@ def parse_filename_for_metadata(file_path):
             return artist, title
 
     # Pattern 2: "Artist_Track" (underscore separator)
-    match = re.match(r'^(?:\d+[\s._-]*)?([^_]+?)_(.+)$', name_without_ext)
+    match = re.match(r"^(?:\d+[\s._-]*)?([^_]+?)_(.+)$", name_without_ext)
     if match:
         artist = match.group(1).strip()
         title = match.group(2).strip()
@@ -414,6 +431,7 @@ def parse_filename_for_metadata(file_path):
 
     # If no pattern matched, return None
     return None, None
+
 
 def extract_metadata(file_path):
     """
@@ -432,9 +450,9 @@ def extract_metadata(file_path):
     try:
         audio = mutagen.File(file_path, easy=True)
         if audio:
-            artist = audio.get('artist', [None])[0]
-            title = audio.get('title', [None])[0]
-            genre = audio.get('genre', [None])[0]
+            artist = audio.get("artist", [None])[0]
+            title = audio.get("title", [None])[0]
+            genre = audio.get("genre", [None])[0]
     except Exception as e:
         print(f"Warning: Error reading ID3 tags for {file_path}: {e}")
 
@@ -454,17 +472,18 @@ def extract_metadata(file_path):
 
     return artist, title, genre
 
+
 def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
     """
     Analyzes the audio structure to find intro/outro and calculates optimal mix points.
-    
+
     Refactored to remove ruptures dependency. Uses RMS energy thresholding for
     faster and more robust intro/outro detection.
-    
+
     Logic:
     - Intro ends when energy consistently exceeds 40% of average energy.
     - Outro starts when energy consistently drops below 40% of average energy.
-    
+
     Returns:
         tuple: (mix_in_point, mix_out_point, mix_in_bars, mix_out_bars)
     """
@@ -477,33 +496,40 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         raise ValueError(f"BPM muss positiv sein, erhalten: {bpm}")
 
     if duration is None or duration <= 0 or bpm is None:
-        return round(mix_in_point, 2), round(mix_out_point, 2), mix_in_bars, mix_out_bars
+        return (
+            round(mix_in_point, 2),
+            round(mix_out_point, 2),
+            mix_in_bars,
+            mix_out_bars,
+        )
 
     try:
         # Calculate RMS energy profile using configured hop length
         rms = librosa.feature.rms(y=y, hop_length=HOP_LENGTH)[0]
-        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=HOP_LENGTH)
+        times = librosa.frames_to_time(
+            np.arange(len(rms)), sr=sr, hop_length=HOP_LENGTH
+        )
 
         # Determine energy threshold using configured RMS threshold
         avg_energy = np.mean(rms)
         threshold = avg_energy * RMS_THRESHOLD
-        
+
         # --- Intro Detection ---
         # Find first point where energy stays above threshold for a sustained period
         # Smoothing window ~2 seconds
         window_size = int(2.0 * sr / HOP_LENGTH)
-        
+
         # Smooth the RMS curve
-        rms_smooth = np.convolve(rms, np.ones(window_size)/window_size, mode='same')
-        
+        rms_smooth = np.convolve(rms, np.ones(window_size) / window_size, mode="same")
+
         # Find start of main body (Intro End)
         main_body_indices = np.where(rms_smooth > threshold)[0]
-        
+
         if main_body_indices.size > 0:
             # Intro ends at the first index where energy is significant
             intro_end_idx = main_body_indices[0]
             intro_end_time = times[intro_end_idx]
-            
+
             # Outro starts at the last index where energy is significant
             outro_start_idx = main_body_indices[-1]
             outro_start_time = times[outro_start_idx]
@@ -514,15 +540,19 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
 
         # Sanity checks using configured thresholds
         if intro_end_time > duration * INTRO_MAX_PERCENTAGE:
-            intro_end_time = duration * INTRO_PERCENTAGE  # Fallback if intro detected as too long
+            intro_end_time = (
+                duration * INTRO_PERCENTAGE
+            )  # Fallback if intro detected as too long
 
         if outro_start_time < duration * OUTRO_MIN_PERCENTAGE:
-            outro_start_time = duration * OUTRO_PERCENTAGE  # Fallback if outro detected as too early
-            
+            outro_start_time = (
+                duration * OUTRO_PERCENTAGE
+            )  # Fallback if outro detected as too early
+
         if intro_end_time >= outro_start_time:
             intro_end_time = duration * INTRO_PERCENTAGE
             outro_start_time = duration * OUTRO_PERCENTAGE
-             
+
         # --- Mix Point Calculation ---
         # Optimized for DJ mixing:
         # Mix-in: Usually at the end of the intro, aligned to an 8-bar phrase.
@@ -536,21 +566,24 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         # DJs rarely mix at random times; they mix at 8, 16, or 32 bar marks.
         intro_phrase_count = round(intro_end_time / seconds_per_phrase)
         # Ensure we have at least some intro, but not too much
-        if intro_phrase_count < 1: intro_phrase_count = 1
+        if intro_phrase_count < 1:
+            intro_phrase_count = 1
         mix_in_point = intro_phrase_count * seconds_per_phrase
-        
+
         # 2. Align Outro Start to phrase boundary
         # We want to mix out BEFORE the energy drops completely.
         # Typically 16 or 32 bars before the very end of the track.
         total_phrases = duration / seconds_per_phrase
         outro_phrase_index = floor(outro_start_time / seconds_per_phrase)
-        
+
         # If the detected outro is too late, pull it back to a phrase boundary
         if outro_phrase_index >= floor(total_phrases) - 1:
-            outro_phrase_index = max(1, floor(total_phrases) - 4) # 32 bars before end as fallback
-            
+            outro_phrase_index = max(
+                1, floor(total_phrases) - 4
+            )  # 32 bars before end as fallback
+
         mix_out_point = outro_phrase_index * seconds_per_phrase
-        
+
         # 3. Refinement: Ensure mix-in is after the first beat and mix-out is before the last
         # Also ensure there's enough space between them
         if mix_in_point >= mix_out_point - (seconds_per_phrase * 2):
@@ -560,13 +593,20 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
 
         # Ensure points are within bounds
         mix_in_point = max(seconds_per_bar, min(mix_in_point, duration * 0.4))
-        mix_out_point = min(duration - seconds_per_bar, max(mix_out_point, duration * 0.6))
+        mix_out_point = min(
+            duration - seconds_per_bar, max(mix_out_point, duration * 0.6)
+        )
 
         # Calculate bars
         mix_in_bars = int(round(mix_in_point / seconds_per_bar))
         mix_out_bars = int(round(mix_out_point / seconds_per_bar))
 
-        return round(float(mix_in_point), 2), round(float(mix_out_point), 2), mix_in_bars, mix_out_bars
+        return (
+            round(float(mix_in_point), 2),
+            round(float(mix_out_point), 2),
+            mix_in_bars,
+            mix_out_bars,
+        )
 
     except Exception as e:
         print(f"Error in analyze_structure_and_mix_points: {e}")
@@ -577,7 +617,9 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         safe_in = min(safe_in, max(safe_out - 1.0, 0.0))
 
         # Calculate bars for fallback using METER constant
-        seconds_per_bar = (60.0 / bpm) * METER if bpm > 0 else (60.0 / DEFAULT_BPM) * METER
+        seconds_per_bar = (
+            (60.0 / bpm) * METER if bpm > 0 else (60.0 / DEFAULT_BPM) * METER
+        )
         safe_in_bars = int(safe_in / seconds_per_bar)
         safe_out_bars = int(safe_out / seconds_per_bar)
 
@@ -614,7 +656,9 @@ def analyze_track(file_path: str) -> Track | None:
 
     if rekordbox_data and rekordbox_data.bpm:
         # Rekordbox data available - use it!
-        print(f"  [RB] Using Rekordbox data (BPM: {rekordbox_data.bpm}, Key: {rekordbox_data.camelot_code})")
+        print(
+            f"  [RB] Using Rekordbox data (BPM: {rekordbox_data.bpm}, Key: {rekordbox_data.camelot_code})"
+        )
 
         # Still extract ID3 tags (Rekordbox might have different metadata)
         artist_id3, title_id3, genre_id3 = extract_metadata(file_path)
@@ -634,41 +678,60 @@ def analyze_track(file_path: str) -> Track | None:
             bass_intensity = calculate_bass_intensity(y, sr)
 
             # DJ Brain: Genre-Klassifikation
-            genre_result = classify_genre(y, sr, rekordbox_data.bpm, bass_intensity, genre)
-            print(f"  [GENRE] {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})")
+            genre_result = classify_genre(
+                y, sr, rekordbox_data.bpm, bass_intensity, genre
+            )
+            print(
+                f"  [GENRE] {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
+            )
 
             # DJ Brain: Struktur-Analyse
             structure = analyze_structure(y, sr, rekordbox_data.bpm, genre_result.genre)
             section_dicts = [s.to_dict() for s in structure.sections]
             section_labels = [s.label for s in structure.sections]
-            print(f"  [STRUCTURE] {len(structure.sections)} sections: {section_labels} (phrase: {structure.phrase_unit} bars)")
+            print(
+                f"  [STRUCTURE] {len(structure.sections)} sections: {section_labels} (phrase: {structure.phrase_unit} bars)"
+            )
 
             # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
             if genre_result.genre != "Unknown" and section_dicts:
-                mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = calculate_genre_aware_mix_points(
-                    section_dicts, rekordbox_data.bpm, duration, genre_result.genre
+                mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
+                    calculate_genre_aware_mix_points(
+                        section_dicts, rekordbox_data.bpm, duration, genre_result.genre
+                    )
                 )
-                print(f"  [DJ BRAIN] Mix points: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})")
+                print(
+                    f"  [DJ BRAIN] Mix points: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
+                )
             else:
-                mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = analyze_structure_and_mix_points(
-                    y, sr, duration, energy, rekordbox_data.bpm
+                mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
+                    analyze_structure_and_mix_points(
+                        y, sr, duration, energy, rekordbox_data.bpm
+                    )
                 )
 
             # Override mix points if Rekordbox has cue points
             if rekordbox_data.cue_points:
                 for cue in rekordbox_data.cue_points:
-                    if cue['name'] and cue['position']:
-                        if 'IN' in cue['name'].upper() or 'START' in cue['name'].upper():
-                            mix_in_point = cue['position']
-                        elif 'OUT' in cue['name'].upper() or 'END' in cue['name'].upper():
-                            mix_out_point = cue['position']
+                    if cue["name"] and cue["position"]:
+                        if (
+                            "IN" in cue["name"].upper()
+                            or "START" in cue["name"].upper()
+                        ):
+                            mix_in_point = cue["position"]
+                        elif (
+                            "OUT" in cue["name"].upper() or "END" in cue["name"].upper()
+                        ):
+                            mix_out_point = cue["position"]
 
             # Audio Feature Extensions
             brightness = calculate_brightness(y, sr)
             vocal_instrumental = detect_vocal_instrumental(y, sr)
             danceability = calculate_danceability(y, sr, rekordbox_data.bpm)
             mfcc_fingerprint = calculate_mfcc_fingerprint(y, sr)
-            print(f"  [FEATURES] brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}")
+            print(
+                f"  [FEATURES] brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
+            )
 
         except Exception as e:
             print(f"  Warning: Quick librosa load failed: {e}")
@@ -681,9 +744,13 @@ def analyze_track(file_path: str) -> Track | None:
             vocal_instrumental = "unknown"
             danceability = 0
             mfcc_fingerprint = []
-            genre_result = type('obj', (object,), {'genre': 'Unknown', 'confidence': 0.0, 'source': 'fallback'})()
+            genre_result = type(
+                "obj",
+                (object,),
+                {"genre": "Unknown", "confidence": 0.0, "source": "fallback"},
+            )()
             section_dicts = []
-            structure = type('obj', (object,), {'phrase_unit': 8})()
+            structure = type("obj", (object,), {"phrase_unit": 8})()
 
         # Extract key note and mode from Camelot code (for backward compatibility)
         key_note = "C"
@@ -695,9 +762,9 @@ def analyze_track(file_path: str) -> Track | None:
                 key_note, key_mode = key_tuple
             else:
                 # Fallback: at least detect mode from A/B suffix
-                if 'A' in rekordbox_data.camelot_code:
+                if "A" in rekordbox_data.camelot_code:
                     key_mode = "Minor"
-                elif 'B' in rekordbox_data.camelot_code:
+                elif "B" in rekordbox_data.camelot_code:
                     key_mode = "Major"
 
         # Create Track object with Rekordbox data
@@ -757,9 +824,13 @@ def analyze_track(file_path: str) -> Track | None:
 
         # Halftime-Korrektur: Librosa erkennt manchmal die halbe BPM
         # bei elektronischer Musik (Psytrance ~145, Techno ~130, House ~125).
-        # Wenn BPM unter 100 liegt, ist es fast sicher halftime -> verdoppeln.
-        if 40 < bpm < 100:
-            bpm = round(bpm * 2, 2)
+        # Schwellwert 95 statt 100: verhindert 80 BPM -> 160 BPM (wuerde DnB ausloesen).
+        # Zusaetzliche Obergrenze: Verdoppelung nur wenn Ergebnis <= BPM_HALFTIME_MAX_RESULT
+        # (verhindert ~92 BPM -> 184 BPM -> falsche DnB-Klassifikation)
+        if 40 < bpm < 95:
+            doubled = round(bpm * 2, 2)
+            if doubled <= BPM_HALFTIME_MAX_RESULT:
+                bpm = doubled
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         chroma_vector = np.mean(chroma, axis=1)
@@ -773,23 +844,31 @@ def analyze_track(file_path: str) -> Track | None:
 
         # DJ Brain: Genre-Klassifikation
         genre_result = classify_genre(y, sr, bpm, bass_intensity, genre)
-        print(f"  [GENRE] {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})")
+        print(
+            f"  [GENRE] {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
+        )
 
         # DJ Brain: Struktur-Analyse
         structure = analyze_structure(y, sr, bpm, genre_result.genre)
         section_dicts = [s.to_dict() for s in structure.sections]
         section_labels = [s.label for s in structure.sections]
-        print(f"  [STRUCTURE] {len(structure.sections)} sections: {section_labels} (phrase: {structure.phrase_unit} bars)")
+        print(
+            f"  [STRUCTURE] {len(structure.sections)} sections: {section_labels} (phrase: {structure.phrase_unit} bars)"
+        )
 
         # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
         if genre_result.genre != "Unknown" and section_dicts:
-            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = calculate_genre_aware_mix_points(
-                section_dicts, bpm, duration, genre_result.genre
+            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
+                calculate_genre_aware_mix_points(
+                    section_dicts, bpm, duration, genre_result.genre
+                )
             )
-            print(f"  [DJ BRAIN] Mix points: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})")
+            print(
+                f"  [DJ BRAIN] Mix points: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
+            )
         else:
-            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = analyze_structure_and_mix_points(
-                y, sr, duration, energy, bpm
+            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
+                analyze_structure_and_mix_points(y, sr, duration, energy, bpm)
             )
 
         # Audio Feature Extensions
@@ -797,17 +876,28 @@ def analyze_track(file_path: str) -> Track | None:
         vocal_instrumental = detect_vocal_instrumental(y, sr)
         danceability = calculate_danceability(y, sr, bpm)
         mfcc_fingerprint = calculate_mfcc_fingerprint(y, sr)
-        print(f"  [FEATURES] brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}")
+        print(
+            f"  [FEATURES] brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
+        )
 
         # --- Final Track Object --- #
         track = Track(
-            filePath=file_path, fileName=os.path.basename(file_path),
-            artist=artist, title=title, genre=genre,
-            duration=duration, bpm=bpm, keyNote=key_note, keyMode=key_mode,
+            filePath=file_path,
+            fileName=os.path.basename(file_path),
+            artist=artist,
+            title=title,
+            genre=genre,
+            duration=duration,
+            bpm=bpm,
+            keyNote=key_note,
+            keyMode=key_mode,
             camelotCode=camelot_code,
-            energy=energy, bass_intensity=bass_intensity,
-            mix_in_point=mix_in_point, mix_out_point=mix_out_point,
-            mix_in_bars=mix_in_bars, mix_out_bars=mix_out_bars,
+            energy=energy,
+            bass_intensity=bass_intensity,
+            mix_in_point=mix_in_point,
+            mix_out_point=mix_out_point,
+            mix_in_bars=mix_in_bars,
+            mix_out_bars=mix_out_bars,
             detected_genre=genre_result.genre,
             genre_confidence=genre_result.confidence,
             genre_source=genre_result.source,
@@ -825,6 +915,9 @@ def analyze_track(file_path: str) -> Track | None:
     except Exception as e:
         print(f"Error analyzing {file_path}: {e}")
         return Track(
-            filePath=file_path, fileName=os.path.basename(file_path),
-            artist=artist, title=title, genre=genre
+            filePath=file_path,
+            fileName=os.path.basename(file_path),
+            artist=artist,
+            title=title,
+            genre=genre,
         )

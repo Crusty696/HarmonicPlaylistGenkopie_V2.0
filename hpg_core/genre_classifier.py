@@ -29,38 +29,44 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
 import librosa
-from .config import GENRE_CONFIDENCE_THRESHOLD
+from .config import GENRE_CONFIDENCE_THRESHOLD, DNB_MINIMUM_BPM
 
 
 # === Genre Classification Result ===
 
+
 @dataclass
 class GenreClassification:
     """Result of genre classification."""
-    genre: str           # "Psytrance", "Tech House", "Progressive", "Melodic Techno",
-                         # "Techno", "Deep House", "Trance", "Drum & Bass", "Minimal", "Unknown"
-    confidence: float    # 0.0-1.0
-    source: str          # "audio_analysis" or "id3_tag"
+
+    genre: str  # "Psytrance", "Tech House", "Progressive", "Melodic Techno",
+    # "Techno", "Deep House", "Trance", "Drum & Bass", "Minimal", "Unknown"
+    confidence: float  # 0.0-1.0
+    source: str  # "audio_analysis" or "id3_tag"
     scores: dict = field(default_factory=dict)  # Per-genre scores for transparency
 
 
 # === Audio Feature Extraction ===
 
+
 @dataclass
 class GenreFeatures:
     """Audio features used for genre classification."""
+
     bpm: float
-    spectral_centroid_mean: float   # Brightness (Hz)
-    spectral_centroid_std: float    # Brightness variance
-    spectral_rolloff_mean: float    # Where high-freq energy drops off (Hz)
-    spectral_flatness_mean: float   # Noise-like (1.0) vs tonal (0.0)
-    onset_rate: float               # Percussive events per second
-    rms_variance: float             # Energy dynamics (normalized)
-    bass_ratio: float               # Bass intensity (0-100 from existing analysis)
-    mfcc_means: np.ndarray          # First 13 MFCC coefficients (timbral fingerprint)
+    spectral_centroid_mean: float  # Brightness (Hz)
+    spectral_centroid_std: float  # Brightness variance
+    spectral_rolloff_mean: float  # Where high-freq energy drops off (Hz)
+    spectral_flatness_mean: float  # Noise-like (1.0) vs tonal (0.0)
+    onset_rate: float  # Percussive events per second
+    rms_variance: float  # Energy dynamics (normalized)
+    bass_ratio: float  # Bass intensity (0-100 from existing analysis)
+    mfcc_means: np.ndarray  # First 13 MFCC coefficients (timbral fingerprint)
 
 
-def extract_genre_features(y: np.ndarray, sr: int, bpm: float, bass_intensity: int) -> GenreFeatures:
+def extract_genre_features(
+    y: np.ndarray, sr: int, bpm: float, bass_intensity: int
+) -> GenreFeatures:
     """
     Extract audio features relevant for genre classification.
 
@@ -102,7 +108,7 @@ def extract_genre_features(y: np.ndarray, sr: int, bpm: float, bass_intensity: i
     # RMS Energy Variance - dynamics over time
     rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
     rms_mean = float(np.mean(rms))
-    rms_var = float(np.var(rms)) / (rms_mean ** 2) if rms_mean > 0 else 0.0
+    rms_var = float(np.var(rms)) / (rms_mean**2) if rms_mean > 0 else 0.0
 
     # MFCCs - timbral fingerprint (first 13 coefficients)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop_length)
@@ -125,17 +131,19 @@ def extract_genre_features(y: np.ndarray, sr: int, bpm: float, bass_intensity: i
 # Based on research from Pioneer DJ, Club Ready DJ School, Native Instruments,
 # Psytrance Connection, ZIPDJ, Beatportal, Samplesound
 
+
 @dataclass
 class GenreProfile:
     """Defines characteristic audio features for a genre."""
+
     name: str
     bpm_range: tuple[float, float]
-    bpm_center: float                   # Most common BPM
+    bpm_center: float  # Most common BPM
     spectral_centroid_range: tuple[float, float]  # Hz
-    onset_rate_range: tuple[float, float]         # events/sec
+    onset_rate_range: tuple[float, float]  # events/sec
     spectral_flatness_range: tuple[float, float]  # 0-1
-    rms_variance_range: tuple[float, float]       # normalized
-    bass_ratio_range: tuple[float, float]         # 0-100
+    rms_variance_range: tuple[float, float]  # normalized
+    bass_ratio_range: tuple[float, float]  # 0-100
 
 
 GENRE_PROFILES: dict[str, GenreProfile] = {
@@ -277,11 +285,11 @@ GENRE_PROFILES: dict[str, GenreProfile] = {
 }
 
 # Feature weights for scoring
-WEIGHT_BPM = 0.35          # BPM is the strongest discriminator
-WEIGHT_SPECTRAL = 0.20     # Brightness + rolloff
-WEIGHT_RHYTHM = 0.20       # Onset rate + flatness
-WEIGHT_DYNAMICS = 0.15     # RMS variance
-WEIGHT_BASS = 0.10         # Bass intensity
+WEIGHT_BPM = 0.35  # BPM is the strongest discriminator
+WEIGHT_SPECTRAL = 0.20  # Brightness + rolloff
+WEIGHT_RHYTHM = 0.20  # Onset rate + flatness
+WEIGHT_DYNAMICS = 0.15  # RMS variance
+WEIGHT_BASS = 0.10  # Bass intensity
 
 # Minimum confidence to accept a classification (aus config.py)
 MIN_CONFIDENCE = GENRE_CONFIDENCE_THRESHOLD
@@ -305,14 +313,12 @@ ID3_GENRE_MAP: dict[str, str] = {
     "forest": "Psytrance",
     "hi-tech": "Psytrance",
     "hitech": "Psytrance",
-
     # Tech House variants
     "tech house": "Tech House",
     "tech-house": "Tech House",
     "techhouse": "Tech House",
     "minimal tech house": "Tech House",
     "bass house": "Tech House",
-
     # Progressive variants
     "progressive": "Progressive",
     "progressive house": "Progressive",
@@ -321,7 +327,6 @@ ID3_GENRE_MAP: dict[str, str] = {
     "prog trance": "Progressive",
     "prog": "Progressive",
     "deep progressive": "Progressive",
-
     # Melodic Techno variants
     "melodic techno": "Melodic Techno",
     "melodic house & techno": "Melodic Techno",
@@ -330,7 +335,6 @@ ID3_GENRE_MAP: dict[str, str] = {
     "indie dance": "Melodic Techno",
     "organic house": "Melodic Techno",
     "afro house": "Melodic Techno",
-
     # Techno variants
     "techno": "Techno",
     "hard techno": "Techno",
@@ -342,7 +346,6 @@ ID3_GENRE_MAP: dict[str, str] = {
     "peak time / driving techno": "Techno",
     "raw techno": "Techno",
     "warehouse techno": "Techno",
-
     # Deep House variants
     "deep house": "Deep House",
     "deep-house": "Deep House",
@@ -352,7 +355,6 @@ ID3_GENRE_MAP: dict[str, str] = {
     "deep tech": "Deep House",
     "chill house": "Deep House",
     "jazzy house": "Deep House",
-
     # Trance variants
     "trance": "Trance",
     "uplifting trance": "Trance",
@@ -364,7 +366,6 @@ ID3_GENRE_MAP: dict[str, str] = {
     "classic trance": "Trance",
     "tech trance": "Trance",
     "eurotrance": "Trance",
-
     # Drum & Bass variants
     "drum & bass": "Drum & Bass",
     "drum and bass": "Drum & Bass",
@@ -379,7 +380,6 @@ ID3_GENRE_MAP: dict[str, str] = {
     "liquid funk": "Drum & Bass",
     "jump up": "Drum & Bass",
     "breakbeat": "Drum & Bass",
-
     # Minimal variants
     "minimal": "Minimal",
     "minimal techno": "Minimal",
@@ -423,7 +423,10 @@ def match_id3_genre(id3_genre: str) -> str | None:
 
 # === Scoring Functions ===
 
-def _score_range(value: float, range_min: float, range_max: float, center: float = None) -> float:
+
+def _score_range(
+    value: float, range_min: float, range_max: float, center: float = None
+) -> float:
     """
     Score how well a value fits within a range.
 
@@ -458,17 +461,20 @@ def _score_genre(features: GenreFeatures, profile: GenreProfile) -> float:
     Returns a weighted score between 0.0 and 1.0.
     """
     # BPM score (strongest signal)
-    bpm_score = _score_range(features.bpm, *profile.bpm_range, center=profile.bpm_center)
+    bpm_score = _score_range(
+        features.bpm, *profile.bpm_range, center=profile.bpm_center
+    )
 
     # Spectral score (brightness)
     centroid_score = _score_range(
-        features.spectral_centroid_mean,
-        *profile.spectral_centroid_range
+        features.spectral_centroid_mean, *profile.spectral_centroid_range
     )
 
     # Rhythm score (onset rate + flatness)
     onset_score = _score_range(features.onset_rate, *profile.onset_rate_range)
-    flatness_score = _score_range(features.spectral_flatness_mean, *profile.spectral_flatness_range)
+    flatness_score = _score_range(
+        features.spectral_flatness_mean, *profile.spectral_flatness_range
+    )
     rhythm_score = (onset_score + flatness_score) / 2.0
 
     # Dynamics score (RMS variance)
@@ -490,6 +496,7 @@ def _score_genre(features: GenreFeatures, profile: GenreProfile) -> float:
 
 
 # === Main Classification Function ===
+
 
 def classify_genre(
     y: np.ndarray,
@@ -538,6 +545,9 @@ def classify_genre(
     scores = {}
     for genre_name, profile in GENRE_PROFILES.items():
         scores[genre_name] = _score_genre(features, profile)
+        # Hard BPM-Guard: DnB braucht echte 160+ BPM (schuetzt gegen Halftime-Korrektur-Fehler)
+        if genre_name == "Drum & Bass" and features.bpm < DNB_MINIMUM_BPM:
+            scores[genre_name] = 0.0
 
     # Step 4: Pick the best match
     if not scores:
@@ -562,7 +572,10 @@ def classify_genre(
     # If confidence is too low, mark as Unknown
     if confidence < MIN_CONFIDENCE:
         return GenreClassification(
-            genre="Unknown", confidence=confidence, source="audio_analysis", scores=scores
+            genre="Unknown",
+            confidence=confidence,
+            source="audio_analysis",
+            scores=scores,
         )
 
     return GenreClassification(

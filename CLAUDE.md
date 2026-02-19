@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # HPG — Harmonic Playlist Generator V2.0
 
 ## Projektarchitektur
@@ -80,9 +84,39 @@ if expected_key != cache_key:
 `label`, `start_time`, `end_time`, `start_bar`, `end_bar`, `avg_energy`
 (NICHT `start`/`end` — das sind die falschen Namen!)
 
+## Analyse-Pipeline (WICHTIG fuer Debugging)
+
+### Zwei Analyse-Pfade in analysis.py
+1. **Rekordbox Fast-Path** (~Zeile 615-733): Liest BPM/Key aus Rekordbox-DB, macht nur Energy/Genre/Structure
+2. **Vollstaendige Librosa-Analyse** (~Zeile 736-830): BPM-Erkennung, Chroma, Energy, Genre, Structure
+
+### BPM-Halftime-Korrektur (Zeile 761)
+```python
+if 40 < bpm < 95:  # Librosa erkennt manchmal halbe BPM bei elektronischer Musik
+    bpm = round(bpm * 2, 2)
+```
+**ACHTUNG:** War fruehers `< 100` — das konnte 80 BPM → 160 BPM verdoppeln und
+faelschlicherweise DnB ausloesen (DnB-Range: 160-180 BPM). Fix: `< 95` + Hard BPM-Guard.
+
+### Analyse-Geschwindigkeit
+"Analyse viel schneller" = fast immer **Cache-Hits** aus `track_cache.*` (shelve). Kein Bug.
+
+## Genre-Klassifikation (ACHTUNG: Fallstricke)
+
+### Scoring-System (genre_classifier.py)
+- Regelbasiert, kein ML. Gewichte: BPM 35%, Spectral 20%, Rhythm 20%, Dynamics 15%, Bass 10%
+- `_score_range()` gibt **ausserhalb der Range** noch Punkte (exponentieller Abfall)
+- Confidence = `(best_score * 0.6) + (gap_to_2nd * 2.0 * 0.4)`
+- Konfigurierbar: `GENRE_CONFIDENCE_THRESHOLD` und `DNB_MINIMUM_BPM` in config.py
+
+### DnB False-Positives (gefixt)
+**Ursache:** BPM-Halftime-Korrektur konnte ~80 BPM → ~160 BPM machen → DnB-Range.
+**Fix:** Hard BPM-Guard in `classify_genre()`: `if features.bpm < DNB_MINIMUM_BPM: scores["Drum & Bass"] = 0.0`
+**ID3-Tags:** Haben immer Vorrang (confidence=1.0). Falsche ID3-Tags = falsche Klassifikation.
+
 ## Projekt-Status
 
 - DJ Brain Phase 1-5: KOMPLETT
 - 961 Tests, 4 skipped (pyrekordbox), 0 failed
 - Coverage: ~81%
-- Letzte Fixes: K1 Thread-Safety, K2 Button-Disable, K3 XSS, K4 Cache-Race, W2 O(N)->O(1), W3 Progress-Reset, W4 Anti-Flicker, W5 Timeout, W8 Permission-Check
+- Letzte Fixes: K1 Thread-Safety, K2 Button-Disable, K3 XSS, K4 Cache-Race, W2 O(N)->O(1), W3 Progress-Reset, W4 Anti-Flicker, W5 Timeout, W8 Permission-Check, Genre-DnB-FalsePositive

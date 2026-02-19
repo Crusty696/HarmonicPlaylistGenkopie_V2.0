@@ -53,8 +53,19 @@ DJ_BRAIN_ENABLED = True  # Master-Schalter fuer DJ Brain
 DJ_BRAIN_FALLBACK_ON_UNKNOWN = True  # Fallback auf generische Logik bei "Unknown"
 
 # Genre Classification
-GENRE_CONFIDENCE_THRESHOLD = 0.3  # Minimum Confidence fuer Genre-Akzeptanz
+GENRE_CONFIDENCE_THRESHOLD = (
+    0.4  # Minimum Confidence fuer Genre-Akzeptanz (war 0.3 - zu niedrig)
+)
 GENRE_ID3_OVERRIDE = True  # ID3-Tag Genre hat Vorrang wenn es matched
+
+# Drum & Bass: Mindest-BPM fuer Klassifikation (schuetzt gegen BPM-Halftime-Fehler)
+# Tracks unter 155 BPM koennen nicht als DnB klassifiziert werden
+DNB_MINIMUM_BPM = 155.0
+
+# Halftime-Korrektur: Maximales Ergebnis nach Verdoppelung
+# Wenn bpm*2 > BPM_HALFTIME_MAX_RESULT, wird NICHT verdoppelt
+# (verhindert z.B. ~92 BPM -> 184 BPM -> falsche DnB-Klassifikation)
+BPM_HALFTIME_MAX_RESULT = 155.0
 
 # Genre BPM Ranges (min, max)
 PSYTRANCE_BPM_RANGE = (135, 150)
