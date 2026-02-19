@@ -1,0 +1,5 @@
+librosa
+numpy
+PyQt6
+mutagen
+pyrekordbox>=0.4.4  # Optional: Rekordbox database import (v3.0+)

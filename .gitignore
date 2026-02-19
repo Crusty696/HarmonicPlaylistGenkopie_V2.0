@@ -1,0 +1,92 @@
+# ========================================
+# Harmonic Playlist Generator - .gitignore
+# ========================================
+
+# Python Runtime
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+.Python
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# PyInstaller Build Artifacts
+*.spec.bak
+*.exe
+*.dll
+
+# Virtual Environments
+venv/
+.venv/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Cache Files
+*.dbm.bak
+*.dbm.dat
+*.dbm.dir
+*.lock
+hpg_cache_*.*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Claude Code
+.claude/
+
+# Blender Toolkit (nicht Teil von HPG)
+.blender-toolkit/
+
+# Audio/Media Files
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.aiff
+
+# Playlist Export Files (generierte Outputs)
+*.m3u
+*.m3u8
+
+# Database Files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup Files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Installer Output
+installer_output/
