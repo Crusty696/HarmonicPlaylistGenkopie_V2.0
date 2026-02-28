@@ -5,13 +5,16 @@ Provides parallel processing capabilities using ProcessPoolExecutor for
 CPU-intensive audio analysis tasks with smart multi-core scaling (up to 50% of cores).
 """
 
+import logging
 import os
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Callable, Optional
 from .models import Track
 from .analysis import analyze_track
-from .config import PARALLEL_ANALYSIS_TIMEOUT
+from .config import PARALLEL_ANALYSIS_TIMEOUT, PARALLEL_MAX_WORKERS
+
+logger = logging.getLogger(__name__)
 
 
 def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
@@ -28,6 +31,10 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     Returns:
         int: Optimal number of workers (minimum 2, scales with CPU)
     """
+    # M3 Audit-Fix: Konfigurierbar ueber config.py (PARALLEL_MAX_WORKERS)
+    if PARALLEL_MAX_WORKERS is not None:
+        return max(1, PARALLEL_MAX_WORKERS)
+
     cpu_count = mp.cpu_count()
 
     # Smart scaling: use the better of the two strategies
@@ -48,7 +55,7 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     return max_workers
 
 
-def _analyze_track_wrapper(file_path: str) -> Track:
+def _analyze_track_wrapper(file_path: str) -> Track | None:
     """
     Wrapper function for analyze_track() that can be pickled for multiprocessing.
 
@@ -63,7 +70,7 @@ def _analyze_track_wrapper(file_path: str) -> Track:
     try:
         return analyze_track(file_path)
     except Exception as e:
-        print(f"[ERROR] Worker failed for {os.path.basename(file_path)}: {e}")
+        logger.error(f"Worker fehlgeschlagen fuer {os.path.basename(file_path)}: {e}")
         return None
 
 
@@ -89,7 +96,7 @@ class ParallelAnalyzer:
         # Use smart allocation if max_workers not explicitly provided
         default_workers = max(min(6, cpu_count), cpu_count // 2)
         self.max_workers = min(max_workers or default_workers, cpu_count)
-        print(f"[PARALLEL] Initialized with {self.max_workers} workers (CPU count: {cpu_count})")
+        logger.info(f"Initialisiert mit {self.max_workers} Workers (CPU: {cpu_count} Kerne)")
 
     def analyze_files(
         self,
@@ -119,7 +126,7 @@ class ParallelAnalyzer:
         if progress_callback:
             progress_callback(0, total_files, f"Starting analysis with {worker_count} cores...")
 
-        print(f"\n[PARALLEL] Processing {total_files} files with {worker_count} workers...")
+        logger.info(f"Verarbeite {total_files} Dateien mit {worker_count} Workers...")
 
         # Use ProcessPoolExecutor for true parallel processing (bypasses GIL)
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
@@ -146,11 +153,11 @@ class ParallelAnalyzer:
                         status_msg = f"[FAILED] {os.path.basename(file_path)}"
 
                 except TimeoutError:
-                    print(f"[TIMEOUT] Analysis timed out for {os.path.basename(file_path)}")
+                    logger.warning(f"Timeout bei Analyse von {os.path.basename(file_path)}")
                     status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
 
                 except Exception as e:
-                    print(f"[ERROR] Worker crashed for {os.path.basename(file_path)}: {e}")
+                    logger.error(f"Worker-Crash fuer {os.path.basename(file_path)}: {e}")
                     status_msg = f"[ERROR] {os.path.basename(file_path)}"
 
                 # Report progress
@@ -160,6 +167,6 @@ class ParallelAnalyzer:
         # Filter out None values (failed analyses)
         successful_tracks = [track for track in analyzed_tracks if track is not None]
 
-        print(f"\n[PARALLEL] Analysis complete: {len(successful_tracks)}/{total_files} successful")
+        logger.info(f"Analyse fertig: {len(successful_tracks)}/{total_files} erfolgreich")
 
         return successful_tracks

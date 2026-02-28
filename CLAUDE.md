@@ -117,6 +117,8 @@ faelschlicherweise DnB ausloesen (DnB-Range: 160-180 BPM). Fix: `< 95` + Hard BP
 ## Projekt-Status
 
 - DJ Brain Phase 1-5: KOMPLETT
+- Audit 2026-02-20: 15 Findings, 11/15 behoben (siehe `.claude/audit-reports/2026-02-20-audit.md`)
+- Debugging-Infrastruktur: KOMPLETT (logging_config.py, profiling.py, 3 Debug-Skripte)
 - 961 Tests, 4 skipped (pyrekordbox), 0 failed
-- Coverage: ~81%
-- Letzte Fixes: K1 Thread-Safety, K2 Button-Disable, K3 XSS, K4 Cache-Race, W2 O(N)->O(1), W3 Progress-Reset, W4 Anti-Flicker, W5 Timeout, W8 Permission-Check, Genre-DnB-FalsePositive
+- Coverage: ~78%
+- Alle konfigurierbaren Konstanten in `config.py` zentralisiert

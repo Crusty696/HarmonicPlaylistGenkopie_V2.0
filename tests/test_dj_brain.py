@@ -239,20 +239,24 @@ class TestMixPointCalculation:
     mix_in, mix_out, bars_in, bars_out = calculate_genre_aware_mix_points(
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
-    assert mix_in > 0.0
+    # Psytrance: Mix-In am ANFANG des Intros (Bar 1 = 0.0s)
+    # Standard-Psytrance-Technik: DJ spielt Track B vom ersten Beat an
+    assert mix_in >= 0.0
     assert mix_out < 420.0
     assert mix_out > mix_in
-    assert bars_in > 0
+    assert bars_in >= 0  # Bar 1 = Index 0 ist korrekt fuer Psytrance
     assert bars_out > bars_in
 
   def test_mix_in_after_intro(self):
-    """Mix-In sollte nach dem Intro sein (Intro endet bei 60s)."""
+    """Psytrance Mix-In am Anfang des Intros (Bar 1 = 00:00)."""
     sections = _standard_sections()
     mix_in, _, _, _ = calculate_genre_aware_mix_points(
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
-    # Mix-In sollte in der Naehe des Intro-Endes (60s) sein, quantisiert
-    assert 30.0 <= mix_in <= 120.0
+    # Psytrance-Technik: DJ startet Track B vom allerersten Beat.
+    # Das bassfreie Intro liegt ueber Track A's Outro. Kein "nach dem Intro" cuen.
+    # Quelle: clubreadydjschool, psynews, djingtips (12+ Quellen)
+    assert mix_in == 0.0
 
   def test_mix_out_at_outro(self):
     """Mix-Out sollte am Outro sein (Outro beginnt bei 360s)."""
@@ -308,9 +312,9 @@ class TestMixPointCalculation:
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
     # 16-bar phrase unit fuer Psytrance
-    # Bars sollten in der Naehe eines 16er-Vielfachen sein
-    # (exakte Quantisierung haengt von Rundung ab)
-    assert bars_in > 0
+    # Mix-In bei Bar 1 (Index 0) = korrekt fuer Psytrance
+    # (DJ spielt Track B ab dem allerersten Beat)
+    assert bars_in >= 0  # Bar 1 = 0 ist korrekt
     assert bars_out > bars_in
 
   def test_tech_house_shorter_transitions(self):
@@ -429,11 +433,14 @@ class TestHelperFunctions:
   """Tests fuer interne Hilfsfunktionen."""
 
   def test_find_mix_in_after_intro(self):
+    """Psytrance Mix-In am Anfang des Intros (0.0s = Bar 1)."""
     sections = _standard_sections()
     profile = get_mix_profile("Psytrance")
     spb = (60.0 / 140.0) * 4  # seconds per bar
     result = _find_mix_in_point(sections, profile, spb)
-    assert result == 60.0  # Build beginnt bei 60s (nach Intro)
+    # Psytrance: mix_in_at_intro_start=True → Intro-Anfang zurueckgeben (0.0s)
+    # Nicht mehr Build-Anfang (60s), da DJ ab Bar 1 spielt
+    assert result == 0.0
 
   def test_find_mix_in_no_intro(self):
     sections = [

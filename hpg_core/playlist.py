@@ -6,12 +6,15 @@ from .config import (
     GENRE_WEIGHT_WITH_DJ_BRAIN, GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
     BPM_HALF_DOUBLE_ENABLED, BPM_HALF_DOUBLE_PENALTY
 )
+import logging
 import re
 import random
 import math
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TransitionMetrics:
@@ -533,11 +536,18 @@ def _sort_emotional_journey(tracks: list[Track], bpm_tolerance: float, **kwargs)
     energy_sorted = sorted(tracks, key=lambda t: t.energy)
     count = len(tracks)
 
-    # Distribute tracks across phases
+    # Verteile Tracks auf Phasen — Schutz gegen negative Werte bei Mini-Playlisten
     opening_count = max(1, count // 4)
     building_count = max(1, int(count * 0.4))
     peak_count = max(1, int(count * 0.2))
-    resolution_count = count - opening_count - building_count - peak_count
+    # Sicherstellen, dass Phase-Summe nicht > count (passiert bei count < 4)
+    total_allocated = opening_count + building_count + peak_count
+    if total_allocated > count:
+      # Bei Mini-Playlisten: einfache gleichmaessige Verteilung
+      opening_count = min(opening_count, count)
+      building_count = min(building_count, max(0, count - opening_count))
+      peak_count = min(peak_count, max(0, count - opening_count - building_count))
+    resolution_count = max(0, count - opening_count - building_count - peak_count)
 
     # Select tracks for each phase
     opening_tracks = energy_sorted[:opening_count]
@@ -956,17 +966,18 @@ def _build_transition_description(
         else:
             parts.append(f"BPM-Sprung {bpm_delta:+.1f} -- harter Cut oder Breakdown nutzen")
 
-    # --- 3. Energie-Verlauf (fuer Dancefloor-Dramaturgie) ---
-    if energy_delta > 25:
-        parts.append("Grosser Energie-Push [++] -- Drop-Einstieg ideal")
-    elif energy_delta > 12:
-        parts.append("Energie steigt [+] -- im Build reinmixen")
-    elif energy_delta < -25:
-        parts.append("Starker Energie-Drop [--] -- Breakdown-Uebergang planen")
-    elif energy_delta < -12:
-        parts.append("Energie faellt [-] -- im Outro sanft ueberblenden")
-    else:
-        parts.append("Energie stabil [=] -- nahtlose Ueberblendung moeglich")
+    # --- 3. Energie-Verlauf (nur ohne DJ Brain -- DJ Brain liefert energy_advice) ---
+    if not has_dj_brain:
+        if energy_delta > 25:
+            parts.append("Grosser Energie-Push [++] -- Drop-Einstieg ideal")
+        elif energy_delta > 12:
+            parts.append("Energie steigt [+] -- im Build reinmixen")
+        elif energy_delta < -25:
+            parts.append("Starker Energie-Drop [--] -- Breakdown-Uebergang planen")
+        elif energy_delta < -12:
+            parts.append("Energie faellt [-] -- im Outro sanft ueberblenden")
+        else:
+            parts.append("Energie stabil [=] -- nahtlose Ueberblendung moeglich")
 
     # --- 4. Gesamtbewertung als klarer Satz ---
     if compatibility_score >= 85:
@@ -1061,14 +1072,22 @@ def compute_transition_recommendations(
                     notes_parts.append(f"[{dj_rec.genre_pair}]")
                 for risk in dj_rec.risk_notes:
                     notes_parts.append(f"! {risk}")
+                # Konkrete Track-Empfehlungen mit echten Messwerten
+                if dj_rec.bpm_advice:
+                    notes_parts.append(f"BPM: {dj_rec.bpm_advice}")
+                if dj_rec.key_advice:
+                    notes_parts.append(f"Key: {dj_rec.key_advice}")
+                if dj_rec.energy_advice:
+                    notes_parts.append(f"Energy: {dj_rec.energy_advice}")
 
                 # DJ Brain Transition-Laenge uebernehmen
                 if dj_rec.transition_bars > 0 and current.bpm > 0:
                     seconds_per_bar = (60.0 / current.bpm) * 4
                     overlap = seconds_per_bar * dj_rec.transition_bars
                     fade_out_start = max(0.0, current_mix_out - overlap)
-            except Exception:
-                pass  # Fallback auf Standard-Notes
+            except Exception as e:
+                logger.warning(f"DJ-Brain Transition-Verarbeitung fehlgeschlagen: {e}")
+                # Fallback auf Standard-Notes
 
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen
@@ -1224,11 +1243,13 @@ def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0
 
     # Log quality metrics for analysis
     quality = calculate_playlist_quality(result, bpm_tolerance)
-    print(f"Playlist Quality Metrics for {mode}:")
-    print(f"  Overall Score: {quality['overall_score']:.2f}")
-    print(f"  Harmonic Flow: {quality['harmonic_flow']:.2f}")
-    print(f"  Energy Consistency: {quality['energy_consistency']:.2f}")
-    print(f"  BPM Smoothness: {quality['bpm_smoothness']:.2f}")
+    logger.info(
+      f"Playlist-Qualitaet ({mode}): "
+      f"Score={quality['overall_score']:.2f}, "
+      f"Harmonic={quality['harmonic_flow']:.2f}, "
+      f"Energy={quality['energy_consistency']:.2f}, "
+      f"BPM={quality['bpm_smoothness']:.2f}"
+    )
 
     return result
 

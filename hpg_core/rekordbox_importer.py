@@ -13,24 +13,29 @@ Features:
 - Graceful fallback if Rekordbox not available
 """
 
+import logging
 import os
 from typing import Optional, Dict, List
 from pathlib import Path
 from dataclasses import dataclass
 from .models import CAMELOT_MAP
 
+logger = logging.getLogger(__name__)
+
 try:
     from pyrekordbox import Rekordbox6Database
+
     REKORDBOX_AVAILABLE = True
 except ImportError:
     REKORDBOX_AVAILABLE = False
-    print("[INFO] pyrekordbox not installed. Rekordbox import unavailable.")
-    print("[INFO] Install with: pip install pyrekordbox")
+    logger.info("pyrekordbox nicht installiert. Rekordbox-Import nicht verfuegbar.")
+    logger.info("Installation: pip install pyrekordbox")
 
 
 @dataclass
 class RekordboxTrackData:
     """Container for Rekordbox analyzed track data"""
+
     bpm: Optional[float] = None
     key: Optional[str] = None  # Rekordbox notation (e.g., "Am", "C")
     camelot_code: Optional[str] = None  # Converted to Camelot (e.g., "8A", "8B")
@@ -69,14 +74,24 @@ class RekordboxImporter:
             try:
                 self.db = Rekordbox6Database()
                 self._build_track_cache()
-                print(f"[SUCCESS] Rekordbox database loaded: {len(self.track_cache)} tracks")
+                logger.info(f"Rekordbox-DB geladen: {len(self.track_cache)} Tracks")
             except Exception as e:
-                print(f"[WARNING] Failed to load Rekordbox database: {e}")
+                logger.warning(f"Rekordbox-DB konnte nicht geladen werden: {e}")
                 self.db = None
 
     def is_available(self) -> bool:
         """Check if Rekordbox database is available"""
         return self.db is not None and len(self.track_cache) > 0
+
+    @staticmethod
+    def _safe_bpm(raw_bpm) -> Optional[float]:
+        """Sicherer BPM-Wert aus Rekordbox (BPM * 100 gespeichert)."""
+        if not raw_bpm:
+            return None
+        try:
+            return float(raw_bpm) / 100.0
+        except (ValueError, TypeError):
+            return None
 
     def _build_track_cache(self):
         """Build fast lookup cache of all Rekordbox tracks"""
@@ -99,15 +114,17 @@ class RekordboxImporter:
                 # Extract data
                 # Note: Rekordbox stores BPM as integer * 100 (e.g., 13600 = 136.0 BPM)
                 data = RekordboxTrackData(
-                    bpm=float(content.BPM) / 100.0 if content.BPM else None,
-                    key=content.KeyName if hasattr(content, 'KeyName') else None,
+                    bpm=self._safe_bpm(content.BPM),
+                    key=content.KeyName if hasattr(content, "KeyName") else None,
                     duration=float(content.Length) if content.Length else None,
                     title=content.Title,
-                    artist=content.ArtistName if hasattr(content, 'ArtistName') else None,
-                    genre=content.GenreName if hasattr(content, 'GenreName') else None,
-                    album=content.AlbumName if hasattr(content, 'AlbumName') else None,
+                    artist=content.ArtistName
+                    if hasattr(content, "ArtistName")
+                    else None,
+                    genre=content.GenreName if hasattr(content, "GenreName") else None,
+                    album=content.AlbumName if hasattr(content, "AlbumName") else None,
                     rating=content.Rating if content.Rating else None,
-                    color=content.ColorName if hasattr(content, 'ColorName') else None,
+                    color=content.ColorName if hasattr(content, "ColorName") else None,
                 )
 
                 # Convert Rekordbox key to Camelot
@@ -115,14 +132,14 @@ class RekordboxImporter:
                     data.camelot_code = self._convert_key_to_camelot(data.key)
 
                 # Extract cue points
-                if hasattr(content, 'Cues') and content.Cues:
+                if hasattr(content, "Cues") and content.Cues:
                     data.cue_points = self._extract_cue_points(content.Cues)
 
                 # Cache by normalized path
                 self.track_cache[full_path] = data
 
         except Exception as e:
-            print(f"[WARNING] Error building Rekordbox track cache: {e}")
+            logger.warning(f"Fehler beim Aufbau des Rekordbox-Track-Cache: {e}")
 
     def _convert_key_to_camelot(self, rekordbox_key: str) -> Optional[str]:
         """
@@ -136,17 +153,15 @@ class RekordboxImporter:
 
         # 2. Convert Musical Notation -> Camelot
         # Detect Mode
-        if key.endswith('m'):
-            mode = 'Minor'
+        if key.endswith("m"):
+            mode = "Minor"
             note = key[:-1]
         else:
-            mode = 'Major'
+            mode = "Major"
             note = key
 
         # Handle Flat -> Sharp conversion (CAMELOT_MAP uses Sharps)
-        flat_to_sharp = {
-            'Db': 'C#', 'Eb': 'D#', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#'
-        }
+        flat_to_sharp = {"Db": "C#", "Eb": "D#", "Gb": "F#", "Ab": "G#", "Bb": "A#"}
         if note in flat_to_sharp:
             note = flat_to_sharp[note]
 
@@ -167,15 +182,19 @@ class RekordboxImporter:
         try:
             for cue in cues:
                 cue_data = {
-                    'position': float(cue.InMsec) / 1000.0 if hasattr(cue, 'InMsec') else None,
-                    'name': cue.Comment if hasattr(cue, 'Comment') else None,
-                    'type': cue.Kind if hasattr(cue, 'Kind') else None,
-                    'hot_cue_number': cue.HotCueBankNumber if hasattr(cue, 'HotCueBankNumber') else None,
-                    'color': cue.ColorID if hasattr(cue, 'ColorID') else None,
+                    "position": float(cue.InMsec) / 1000.0
+                    if hasattr(cue, "InMsec")
+                    else None,
+                    "name": cue.Comment if hasattr(cue, "Comment") else None,
+                    "type": cue.Kind if hasattr(cue, "Kind") else None,
+                    "hot_cue_number": cue.HotCueBankNumber
+                    if hasattr(cue, "HotCueBankNumber")
+                    else None,
+                    "color": cue.ColorID if hasattr(cue, "ColorID") else None,
                 }
                 cue_list.append(cue_data)
         except Exception as e:
-            print(f"[WARNING] Error extracting cue points: {e}")
+            logger.warning(f"Fehler beim Extrahieren der Cue-Points: {e}")
 
         return cue_list
 
@@ -203,7 +222,7 @@ class RekordboxImporter:
         filename = os.path.basename(normalized_path)
         for cached_path, data in self.track_cache.items():
             if os.path.basename(cached_path) == filename:
-                print(f"[INFO] Found Rekordbox match by filename: {filename}")
+                logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
                 return data
 
         return None
@@ -220,23 +239,27 @@ class RekordboxImporter:
         """Get statistics about Rekordbox database content"""
         if not self.is_available():
             return {
-                'available': False,
-                'total_tracks': 0,
+                "available": False,
+                "total_tracks": 0,
             }
 
         stats = {
-            'available': True,
-            'total_tracks': len(self.track_cache),
-            'tracks_with_bpm': sum(1 for d in self.track_cache.values() if d.bpm),
-            'tracks_with_key': sum(1 for d in self.track_cache.values() if d.camelot_code),
-            'tracks_with_cues': sum(1 for d in self.track_cache.values() if d.cue_points),
-            'average_bpm': None,
+            "available": True,
+            "total_tracks": len(self.track_cache),
+            "tracks_with_bpm": sum(1 for d in self.track_cache.values() if d.bpm),
+            "tracks_with_key": sum(
+                1 for d in self.track_cache.values() if d.camelot_code
+            ),
+            "tracks_with_cues": sum(
+                1 for d in self.track_cache.values() if d.cue_points
+            ),
+            "average_bpm": None,
         }
 
         # Calculate average BPM
         bpms = [d.bpm for d in self.track_cache.values() if d.bpm]
         if bpms:
-            stats['average_bpm'] = sum(bpms) / len(bpms)
+            stats["average_bpm"] = sum(bpms) / len(bpms)
 
         return stats
 

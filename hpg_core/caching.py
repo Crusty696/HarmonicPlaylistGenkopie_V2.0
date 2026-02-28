@@ -14,8 +14,12 @@ import os
 import sys
 import hashlib
 import time
+import logging
 from contextlib import contextmanager
 from .models import Track
+from .config import CACHE_LOCK_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 CACHE_FILE = "hpg_cache_v10.dbm"
 CACHE_VERSION = 10
@@ -91,7 +95,7 @@ def file_lock(lock_path: str, timeout: float = 5.0):
             lock_file_handle.close()
 
 
-def init_cache():
+def init_cache() -> None:
     """Initializes the cache with thread-safe version checking."""
     # Ensure directory exists if path is provided
     cache_dir = os.path.dirname(CACHE_FILE)
@@ -103,14 +107,14 @@ def init_cache():
             current_version = db.get('cache_version')
             if current_version is None:
                 db['cache_version'] = CACHE_VERSION
-                print(f"[CACHE] Initialized new cache (version {CACHE_VERSION})")
+                logger.info(f"Cache initialisiert (Version {CACHE_VERSION})")
             elif current_version != CACHE_VERSION:
-                print(f"[CACHE] Version mismatch. Clearing cache. Old: {current_version}, New: {CACHE_VERSION}")
+                logger.warning(f"Cache-Version veraltet (alt: {current_version}, neu: {CACHE_VERSION}). Cache geleert.")
                 db.clear()
                 db['cache_version'] = CACHE_VERSION
 
 
-def generate_cache_key(file_path: str) -> str:
+def generate_cache_key(file_path: str) -> str | None:
     """
     Generates a cache key based on file path, size, and modification time.
 
@@ -151,7 +155,7 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
         return None
 
     try:
-        with file_lock(LOCK_FILE, timeout=2.0):
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
             with shelve.open(CACHE_FILE) as db:
                 track = db.get(cache_key)
                 if track and file_path:
@@ -165,14 +169,14 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
                         pass  # Datei weg → cached Track trotzdem zurueckgeben
                 return track
     except TimeoutError:
-        print(f"[CACHE] Warning: Lock timeout for key {cache_key[:50]}...")
+        logger.warning(f"Lock-Timeout fuer Key {cache_key[:50]}...")
         return None
     except Exception as e:
-        print(f"[CACHE] Error retrieving from cache: {e}")
+        logger.error(f"Cache-Lesefehler: {e}")
         return None
 
 
-def cache_track(cache_key: str, track: Track):
+def cache_track(cache_key: str, track: Track) -> None:
     """
     Saves a track to the cache using thread-safe locking.
 
@@ -184,10 +188,10 @@ def cache_track(cache_key: str, track: Track):
         return
 
     try:
-        with file_lock(LOCK_FILE, timeout=2.0):
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
             with shelve.open(CACHE_FILE) as db:
                 db[cache_key] = track
     except TimeoutError:
-        print(f"[CACHE] Warning: Lock timeout when caching {track.fileName}")
+        logger.warning(f"Lock-Timeout beim Cachen von {track.fileName}")
     except Exception as e:
-        print(f"[CACHE] Error saving to cache: {e}")
+        logger.error(f"Cache-Schreibfehler: {e}")

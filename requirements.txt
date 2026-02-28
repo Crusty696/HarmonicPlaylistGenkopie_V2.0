@@ -1,5 +1,6 @@
-librosa
-numpy
-PyQt6
-mutagen
+# Direkte Dependencies — gepinnt auf getestete Versionen (H1 Audit-Fix)
+librosa==0.11.0
+numpy==2.3.5
+PyQt6==6.10.2
+mutagen==1.47.0
 pyrekordbox>=0.4.4  # Optional: Rekordbox database import (v3.0+)
