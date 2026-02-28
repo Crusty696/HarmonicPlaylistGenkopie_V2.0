@@ -1,10 +1,17 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
 from .models import Track, CAMELOT_MAP, key_to_camelot
-from .dj_brain import get_genre_compatibility, generate_dj_recommendation, get_mix_profile
+from .dj_brain import (
+    get_genre_compatibility,
+    generate_dj_recommendation,
+    get_mix_profile,
+    DJRecommendation,
+)
 from .config import (
-    GENRE_WEIGHT_WITH_DJ_BRAIN, GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
-    BPM_HALF_DOUBLE_ENABLED, BPM_HALF_DOUBLE_PENALTY
+    GENRE_WEIGHT_WITH_DJ_BRAIN,
+    GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
+    BPM_HALF_DOUBLE_ENABLED,
+    BPM_HALF_DOUBLE_PENALTY,
 )
 import logging
 import re
@@ -16,18 +23,22 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class TransitionMetrics:
     """Metrics for evaluating track transitions."""
+
     harmonic_score: int
     bpm_smoothness: float
     energy_flow: float
     genre_compatibility: float
     overall_score: float
 
+
 @dataclass
 class TransitionRecommendation:
     """Suggested mix window details for consecutive tracks."""
+
     index: int
     from_track: Track
     to_track: Track
@@ -42,9 +53,12 @@ class TransitionRecommendation:
     risk_level: str
     notes: str
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
+    dj_rec: "DJRecommendation | None" = None  # Paar-spezifische DJ-Brain-Empfehlung
+
 
 class EnergyDirection(Enum):
     """Direction of energy flow in transitions."""
+
     UP = "up"
     DOWN = "down"
     MAINTAIN = "maintain"
@@ -52,13 +66,18 @@ class EnergyDirection(Enum):
 
 def _get_camelot_components(camelot_code: str) -> tuple[int, str]:
     """Parses a Camelot code into its number and letter components."""
-    match = re.match(r'(\d+)([A|B])', camelot_code)
+    match = re.match(r"(\d+)([A|B])", camelot_code)
     if match:
         return int(match.group(1)), match.group(2)
-    return 0, ''
+    return 0, ""
 
-def calculate_enhanced_compatibility(track1: Track, track2: Track, bpm_tolerance: float,
-                                   energy_direction: Optional[EnergyDirection] = None) -> TransitionMetrics:
+
+def calculate_enhanced_compatibility(
+    track1: Track,
+    track2: Track,
+    bpm_tolerance: float,
+    energy_direction: Optional[EnergyDirection] = None,
+) -> TransitionMetrics:
     """Enhanced compatibility calculation with multiple factors."""
 
     # Basic harmonic compatibility
@@ -83,24 +102,28 @@ def calculate_enhanced_compatibility(track1: Track, track2: Track, bpm_tolerance
         energy_flow = 1.0 - abs(energy_diff) / 100.0  # Gentle energy preference
 
     # Genre compatibility - DJ Brain Matrix wenn detected_genre vorhanden
-    genre_a = getattr(track1, 'detected_genre', '') or track1.genre
-    genre_b = getattr(track2, 'detected_genre', '') or track2.genre
+    genre_a = getattr(track1, "detected_genre", "") or track1.genre
+    genre_b = getattr(track2, "detected_genre", "") or track2.genre
     genre_compatibility = get_genre_compatibility(genre_a, genre_b)
 
     # Genre-Weight hoeher wenn DJ Brain Genre-Daten vorhanden
-    has_dj_brain_genres = (
-        getattr(track1, 'detected_genre', 'Unknown') not in ('Unknown', '')
-        and getattr(track2, 'detected_genre', 'Unknown') not in ('Unknown', '')
+    has_dj_brain_genres = getattr(track1, "detected_genre", "Unknown") not in (
+        "Unknown",
+        "",
+    ) and getattr(track2, "detected_genre", "Unknown") not in ("Unknown", "")
+    genre_weight = (
+        GENRE_WEIGHT_WITH_DJ_BRAIN
+        if has_dj_brain_genres
+        else GENRE_WEIGHT_WITHOUT_DJ_BRAIN
     )
-    genre_weight = GENRE_WEIGHT_WITH_DJ_BRAIN if has_dj_brain_genres else GENRE_WEIGHT_WITHOUT_DJ_BRAIN
     remaining = 1.0 - genre_weight
 
     # Overall weighted score
     overall_score = (
-        (remaining * 0.44) * (harmonic_score / 100.0) +
-        (remaining * 0.28) * bpm_smoothness +
-        (remaining * 0.28) * energy_flow +
-        genre_weight * genre_compatibility
+        (remaining * 0.44) * (harmonic_score / 100.0)
+        + (remaining * 0.28) * bpm_smoothness
+        + (remaining * 0.28) * energy_flow
+        + genre_weight * genre_compatibility
     )
 
     return TransitionMetrics(
@@ -108,8 +131,9 @@ def calculate_enhanced_compatibility(track1: Track, track2: Track, bpm_tolerance
         bpm_smoothness=bpm_smoothness,
         energy_flow=energy_flow,
         genre_compatibility=genre_compatibility,
-        overall_score=overall_score
+        overall_score=overall_score,
     )
+
 
 def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     """Berechnet die effektive BPM-Differenz unter Beruecksichtigung von Half/Double-Time.
@@ -131,10 +155,10 @@ def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
 
     candidates = [
         (abs(bpm1 - bpm2), "direct"),
-        (abs(bpm1 - bpm2 * 2), "half"),      # bpm2 ist Half-Time
-        (abs(bpm1 * 2 - bpm2), "half"),      # bpm1 ist Half-Time
-        (abs(bpm1 - bpm2 / 2), "double"),    # bpm2 ist Double-Time
-        (abs(bpm1 / 2 - bpm2), "double"),    # bpm1 ist Double-Time
+        (abs(bpm1 - bpm2 * 2), "half"),  # bpm2 ist Half-Time
+        (abs(bpm1 * 2 - bpm2), "half"),  # bpm1 ist Half-Time
+        (abs(bpm1 - bpm2 / 2), "double"),  # bpm2 ist Double-Time
+        (abs(bpm1 / 2 - bpm2), "double"),  # bpm1 ist Double-Time
     ]
 
     if not BPM_HALF_DOUBLE_ENABLED:
@@ -143,7 +167,9 @@ def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     return min(candidates, key=lambda x: x[0])
 
 
-def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float, **kwargs) -> int:
+def calculate_compatibility(
+    track1: Track, track2: Track, bpm_tolerance: float, **kwargs
+) -> int:
     """Calculates a compatibility score between two tracks, including advanced harmonic rules.
 
     Args:
@@ -154,8 +180,8 @@ def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float, 
             - allow_experimental (bool): Allow +4/+7 techniques (default: True)
     """
     # Get advanced parameters
-    strictness = kwargs.get('harmonic_strictness', 7)
-    allow_experimental = kwargs.get('allow_experimental', True)
+    strictness = kwargs.get("harmonic_strictness", 7)
+    allow_experimental = kwargs.get("allow_experimental", True)
 
     bpm_diff, bpm_relation = effective_bpm_diff(track1.bpm, track2.bpm)
     if bpm_diff > bpm_tolerance:
@@ -170,7 +196,7 @@ def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float, 
     num1, letter1 = _get_camelot_components(track1.camelotCode)
     num2, letter2 = _get_camelot_components(track2.camelotCode)
 
-    if num1 == 0 or num2 == 0: # Invalid camelot codes
+    if num1 == 0 or num2 == 0:  # Invalid camelot codes
         return 10
 
     # Half/Double-Time Penalty-Faktor
@@ -180,13 +206,13 @@ def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float, 
     if num1 == num2 and letter1 == letter2:
         return int(100 * penalty)  # Same key
     if num1 == num2 and letter1 != letter2:
-        return int(90 * penalty)   # Relative major/minor
+        return int(90 * penalty)  # Relative major/minor
 
     # Adjacent keys (Camelot wheel)
     next_num_cw = (num1 % 12) + 1
     next_num_ccw = (num1 - 2 + 12) % 12 + 1
 
-    if letter1 == letter2: # Same mode, adjacent numbers
+    if letter1 == letter2:  # Same mode, adjacent numbers
         if num2 == next_num_cw or num2 == next_num_ccw:
             return int(80 * penalty)
 
@@ -207,15 +233,18 @@ def calculate_compatibility(track1: Track, track2: Track, bpm_tolerance: float, 
         if num2 == next_num_cw or num2 == next_num_ccw:
             return int(60 * penalty)
         # Energy Boost/Drop techniques
-        if num1 == num2 and letter1 == 'A' and letter2 == 'B':
+        if num1 == num2 and letter1 == "A" and letter2 == "B":
             return int(85 * penalty)
-        if num1 == num2 and letter1 == 'B' and letter2 == 'A':
+        if num1 == num2 and letter1 == "B" and letter2 == "A":
             return int(75 * penalty)
 
     # Return low score (affected by strictness - stricter = lower fallback)
     return max(5, int((15 - strictness) * penalty))
 
-def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_harmonic_flow(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Greedy algorithm to find the most harmonically compatible path."""
     unprocessed = list(tracks)
     start_track = min(unprocessed, key=lambda t: t.bpm)
@@ -227,11 +256,13 @@ def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> 
         best_next = None
         highest_score = -1
         for candidate in unprocessed:
-            score = calculate_compatibility(current_track, candidate, bpm_tolerance, **kwargs)
+            score = calculate_compatibility(
+                current_track, candidate, bpm_tolerance, **kwargs
+            )
             if score > highest_score:
                 highest_score = score
                 best_next = candidate
-        
+
         if best_next:
             final_playlist.append(best_next)
             unprocessed.remove(best_next)
@@ -242,10 +273,13 @@ def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> 
             final_playlist.append(random_pick)
             unprocessed.remove(random_pick)
             current_track = random_pick
-            
+
     return final_playlist
 
-def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_harmonic_flow_enhanced(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.bpm)
@@ -253,7 +287,9 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kw
     # Capture kwargs in closure for nested function
     compat_kwargs = kwargs
 
-    def _lookahead_score(current: Track, remaining: List[Track], depth: int = 2) -> Tuple[Track, float]:
+    def _lookahead_score(
+        current: Track, remaining: List[Track], depth: int = 2
+    ) -> Tuple[Track, float]:
         """Look ahead to find the best path with given depth."""
         if not remaining or depth <= 0:
             return None, 0.0
@@ -262,7 +298,9 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kw
         best_total_score = -1
 
         for candidate in remaining:
-            immediate_score = calculate_compatibility(current, candidate, bpm_tolerance, **compat_kwargs)
+            immediate_score = calculate_compatibility(
+                current, candidate, bpm_tolerance, **compat_kwargs
+            )
             if immediate_score == 0:  # Skip incompatible tracks
                 continue
 
@@ -271,7 +309,9 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kw
                 next_remaining = [t for t in remaining if t != candidate]
                 _, future_score = _lookahead_score(candidate, next_remaining, depth - 1)
 
-            total_score = immediate_score + 0.7 * future_score  # Weight immediate higher
+            total_score = (
+                immediate_score + 0.7 * future_score
+            )  # Weight immediate higher
             if total_score > best_total_score:
                 best_total_score = total_score
                 best_candidate = candidate
@@ -286,7 +326,9 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kw
 
     current_track = start_track
     while unprocessed:
-        best_next, score = _lookahead_score(current_track, unprocessed, depth=2)  # Optimized: depth=2 (was 3)
+        best_next, score = _lookahead_score(
+            current_track, unprocessed, depth=2
+        )  # Optimized: depth=2 (was 3)
 
         if best_next and score > 0:
             final_playlist.append(best_next)
@@ -294,15 +336,22 @@ def _sort_harmonic_flow_enhanced(tracks: list[Track], bpm_tolerance: float, **kw
             current_track = best_next
         else:
             # Fallback: choose track with best single compatibility
-            fallback = max(unprocessed,
-                         key=lambda t: calculate_compatibility(current_track, t, bpm_tolerance, **compat_kwargs))
+            fallback = max(
+                unprocessed,
+                key=lambda t: calculate_compatibility(
+                    current_track, t, bpm_tolerance, **compat_kwargs
+                ),
+            )
             final_playlist.append(fallback)
             unprocessed.remove(fallback)
             current_track = fallback
 
     return final_playlist
 
-def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float, **kwargs) -> Track:
+
+def _find_best_starting_track(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> Track:
     """Find the track with the best overall connectivity as starting point.
 
     Optimized: For large playlists, uses a more efficient sampling strategy.
@@ -318,8 +367,13 @@ def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float, **kwarg
     max_comparisons = min(20, len(tracks))
 
     # Sample evenly distributed tracks as candidates
-    candidate_indices = [int(i * (len(tracks) - 1) / (max_candidates - 1)) for i in range(max_candidates)]
-    comparison_indices = [int(i * (len(tracks) - 1) / (max_comparisons - 1)) for i in range(max_comparisons)]
+    candidate_indices = [
+        int(i * (len(tracks) - 1) / (max_candidates - 1)) for i in range(max_candidates)
+    ]
+    comparison_indices = [
+        int(i * (len(tracks) - 1) / (max_comparisons - 1))
+        for i in range(max_comparisons)
+    ]
 
     best_track = tracks[0]
     best_score = -1
@@ -344,13 +398,16 @@ def _find_best_starting_track(tracks: list[Track], bpm_tolerance: float, **kwarg
 
     return best_track
 
+
 def _sort_warm_up(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Sorts tracks by ascending BPM."""
     return sorted(tracks, key=lambda t: t.bpm)
 
+
 def _sort_cool_down(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Sorts tracks by descending BPM."""
     return sorted(tracks, key=lambda t: t.bpm, reverse=True)
+
 
 def _normalize_series(values: list[float]) -> list[float]:
     """Normalize a series into the range [0, 1]."""
@@ -363,7 +420,10 @@ def _normalize_series(values: list[float]) -> list[float]:
     span = max_value - min_value
     return [(value - min_value) / span for value in values]
 
-def _prepare_track_metrics(tracks: list[Track]) -> list[tuple[Track, float, float, float]]:
+
+def _prepare_track_metrics(
+    tracks: list[Track],
+) -> list[tuple[Track, float, float, float]]:
     """Return tuples of (track, combined_score, normalized_bpm, normalized_energy)."""
     bpm_values = [track.bpm for track in tracks]
     energy_values = [track.energy for track in tracks]
@@ -375,6 +435,7 @@ def _prepare_track_metrics(tracks: list[Track]) -> list[tuple[Track, float, floa
         combined_score = 0.45 * norm_bpm + 0.55 * norm_energy
         metrics.append((track, combined_score, norm_bpm, norm_energy))
     return metrics
+
 
 def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
     """Arrange tracks to build towards a peak (combined BPM/Energy) before a controlled decline."""
@@ -389,8 +450,7 @@ def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list
         return [item[0] for item in scored_tracks]
 
     waveform_positions = sorted(
-        range(count),
-        key=lambda idx: math.sin((idx / (count - 1)) * math.pi)
+        range(count), key=lambda idx: math.sin((idx / (count - 1)) * math.pi)
     )
 
     ordered_tracks: list[Track | None] = [None] * count
@@ -400,7 +460,10 @@ def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list
     # type ignore safe due to population step above
     return [track for track in ordered_tracks if track is not None]
 
-def _sort_energy_wave(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_energy_wave(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Create a wave-like journey that alternates between higher and lower energy tracks."""
     if not tracks:
         return []
@@ -432,7 +495,10 @@ def _sort_energy_wave(tracks: list[Track], bpm_tolerance: float, **kwargs) -> li
 
     return result
 
-def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_peak_time_enhanced(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Enhanced peak-time arrangement with harmonic considerations and multiple peaks."""
     if not tracks:
         return []
@@ -441,7 +507,7 @@ def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs
         return sorted(tracks, key=lambda t: t.bpm + t.energy)
 
     # Get peak position from advanced params (default: 70%)
-    peak_position = kwargs.get('peak_position', 70) / 100.0
+    peak_position = kwargs.get("peak_position", 70) / 100.0
 
     scored_tracks = _prepare_track_metrics(tracks)
     count = len(scored_tracks)
@@ -453,8 +519,10 @@ def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs
         if idx < count * peak_position:  # Build phase (user-defined)
             curve_val = (idx / (count * peak_position)) ** 1.5  # Exponential build
         else:  # Decline phase
-            decline_progress = (idx - count * peak_position) / (count * (1 - peak_position))
-            curve_val = 1.0 - (decline_progress ** 0.7)  # Controlled decline
+            decline_progress = (idx - count * peak_position) / (
+                count * (1 - peak_position)
+            )
+            curve_val = 1.0 - (decline_progress**0.7)  # Controlled decline
         peak_curve.append(curve_val)
 
     # Sort tracks by curve position preference
@@ -474,7 +542,10 @@ def _sort_peak_time_enhanced(tracks: list[Track], bpm_tolerance: float, **kwargs
     result = [track for track in ordered_tracks if track is not None]
     return _apply_harmonic_smoothing(result, bpm_tolerance, **kwargs)
 
-def _apply_harmonic_smoothing(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _apply_harmonic_smoothing(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Apply local swaps to improve harmonic flow while preserving energy curve.
 
     Optimized: Max 3 iterations (was len/2) - most improvements happen in first 2-3 passes.
@@ -492,14 +563,22 @@ def _apply_harmonic_smoothing(tracks: list[Track], bpm_tolerance: float, **kwarg
         iterations += 1
 
         for i in range(len(result) - 1):
-            current_score = calculate_compatibility(result[i], result[i + 1], bpm_tolerance, **kwargs)
+            current_score = calculate_compatibility(
+                result[i], result[i + 1], bpm_tolerance, **kwargs
+            )
 
             # Try swapping with next track if it improves harmony
             if i + 2 < len(result):
-                swap_score = calculate_compatibility(result[i], result[i + 2], bpm_tolerance, **kwargs)
-                next_swap_score = calculate_compatibility(result[i + 1], result[i + 2], bpm_tolerance, **kwargs)
+                swap_score = calculate_compatibility(
+                    result[i], result[i + 2], bpm_tolerance, **kwargs
+                )
+                next_swap_score = calculate_compatibility(
+                    result[i + 1], result[i + 2], bpm_tolerance, **kwargs
+                )
                 # Calculate what score would be AFTER swap: [i]->[i+1] becomes [i]->[i+2], [i+2]->[i+1]
-                new_pair_score = calculate_compatibility(result[i + 2], result[i + 1], bpm_tolerance, **kwargs)
+                new_pair_score = calculate_compatibility(
+                    result[i + 2], result[i + 1], bpm_tolerance, **kwargs
+                )
 
                 # Compare: current transition score vs score after swap
                 if swap_score + new_pair_score > current_score + next_swap_score:
@@ -511,26 +590,49 @@ def _apply_harmonic_smoothing(tracks: list[Track], bpm_tolerance: float, **kwarg
 
     return result
 
-def _sort_emotional_journey(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_emotional_journey(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Create an emotional journey based on energy, BPM, and harmonic progression."""
     if len(tracks) <= 3:
         return sorted(tracks, key=lambda t: (t.energy, t.bpm))
 
     # Get energy direction from advanced params
-    energy_dir_str = kwargs.get('energy_direction', 'Auto')
+    energy_dir_str = kwargs.get("energy_direction", "Auto")
 
     # Map user selection to energy directions for each phase
     if energy_dir_str == "Build Up":
         # Continuous energy build throughout
-        phase_directions = [EnergyDirection.UP, EnergyDirection.UP, EnergyDirection.UP, EnergyDirection.UP]
+        phase_directions = [
+            EnergyDirection.UP,
+            EnergyDirection.UP,
+            EnergyDirection.UP,
+            EnergyDirection.UP,
+        ]
     elif energy_dir_str == "Cool Down":
         # Continuous energy decline throughout
-        phase_directions = [EnergyDirection.DOWN, EnergyDirection.DOWN, EnergyDirection.DOWN, EnergyDirection.DOWN]
+        phase_directions = [
+            EnergyDirection.DOWN,
+            EnergyDirection.DOWN,
+            EnergyDirection.DOWN,
+            EnergyDirection.DOWN,
+        ]
     elif energy_dir_str == "Maintain":
         # Keep energy consistent
-        phase_directions = [EnergyDirection.MAINTAIN, EnergyDirection.MAINTAIN, EnergyDirection.MAINTAIN, EnergyDirection.MAINTAIN]
+        phase_directions = [
+            EnergyDirection.MAINTAIN,
+            EnergyDirection.MAINTAIN,
+            EnergyDirection.MAINTAIN,
+            EnergyDirection.MAINTAIN,
+        ]
     else:  # "Auto" - default emotional journey curve
-        phase_directions = [EnergyDirection.UP, EnergyDirection.UP, EnergyDirection.MAINTAIN, EnergyDirection.DOWN]
+        phase_directions = [
+            EnergyDirection.UP,
+            EnergyDirection.UP,
+            EnergyDirection.MAINTAIN,
+            EnergyDirection.DOWN,
+        ]
 
     # Sort tracks by energy and BPM
     energy_sorted = sorted(tracks, key=lambda t: t.energy)
@@ -543,28 +645,37 @@ def _sort_emotional_journey(tracks: list[Track], bpm_tolerance: float, **kwargs)
     # Sicherstellen, dass Phase-Summe nicht > count (passiert bei count < 4)
     total_allocated = opening_count + building_count + peak_count
     if total_allocated > count:
-      # Bei Mini-Playlisten: einfache gleichmaessige Verteilung
-      opening_count = min(opening_count, count)
-      building_count = min(building_count, max(0, count - opening_count))
-      peak_count = min(peak_count, max(0, count - opening_count - building_count))
+        # Bei Mini-Playlisten: einfache gleichmaessige Verteilung
+        opening_count = min(opening_count, count)
+        building_count = min(building_count, max(0, count - opening_count))
+        peak_count = min(peak_count, max(0, count - opening_count - building_count))
     resolution_count = max(0, count - opening_count - building_count - peak_count)
 
     # Select tracks for each phase
     opening_tracks = energy_sorted[:opening_count]
-    building_tracks = energy_sorted[opening_count:opening_count + building_count]
+    building_tracks = energy_sorted[opening_count : opening_count + building_count]
     peak_tracks = energy_sorted[-peak_count:]
-    resolution_tracks = energy_sorted[opening_count + building_count:-peak_count] if resolution_count > 0 else []
+    resolution_tracks = (
+        energy_sorted[opening_count + building_count : -peak_count]
+        if resolution_count > 0
+        else []
+    )
 
     # Arrange each phase with harmonic consideration
     journey = []
     journey.extend(_arrange_phase(opening_tracks, bpm_tolerance, phase_directions[0]))
     journey.extend(_arrange_phase(building_tracks, bpm_tolerance, phase_directions[1]))
     journey.extend(_arrange_phase(peak_tracks, bpm_tolerance, phase_directions[2]))
-    journey.extend(_arrange_phase(resolution_tracks, bpm_tolerance, phase_directions[3]))
+    journey.extend(
+        _arrange_phase(resolution_tracks, bpm_tolerance, phase_directions[3])
+    )
 
     return journey
 
-def _arrange_phase(tracks: list[Track], bpm_tolerance: float, energy_direction: EnergyDirection) -> list[Track]:
+
+def _arrange_phase(
+    tracks: list[Track], bpm_tolerance: float, energy_direction: EnergyDirection
+) -> list[Track]:
     """Arrange tracks within a phase considering energy direction and harmony."""
     if not tracks:
         return []
@@ -593,7 +704,9 @@ def _arrange_phase(tracks: list[Track], bpm_tolerance: float, energy_direction: 
         best_score = -1
 
         for candidate in remaining:
-            metrics = calculate_enhanced_compatibility(current, candidate, bpm_tolerance, energy_direction)
+            metrics = calculate_enhanced_compatibility(
+                current, candidate, bpm_tolerance, energy_direction
+            )
             if metrics.overall_score > best_score:
                 best_score = metrics.overall_score
                 best_next = candidate
@@ -608,14 +721,17 @@ def _arrange_phase(tracks: list[Track], bpm_tolerance: float, energy_direction: 
 
     return arranged
 
-def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_genre_flow(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Arrange tracks to create smooth genre transitions while maintaining energy."""
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.bpm)
 
     # Get genre parameters
-    genre_mixing_enabled = kwargs.get('genre_mixing', True)
-    genre_weight = kwargs.get('genre_weight', 0.3)  # 0.0-1.0
+    genre_mixing_enabled = kwargs.get("genre_mixing", True)
+    genre_weight = kwargs.get("genre_weight", 0.3)  # 0.0-1.0
 
     # If genre mixing disabled, use harmonic flow instead
     if not genre_mixing_enabled:
@@ -624,7 +740,7 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
     # Group tracks by genre (bevorzuge detected_genre wenn vorhanden)
     genre_groups = {}
     for track in tracks:
-        genre = getattr(track, 'detected_genre', '') or track.genre
+        genre = getattr(track, "detected_genre", "") or track.genre
         if not genre or genre == "Unknown":
             genre = "Mixed"
         if genre not in genre_groups:
@@ -661,7 +777,9 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
     while len(processed_genres) < len(genre_groups):
         if current_genre in genre_groups and current_genre not in processed_genres:
             # Arrange tracks within current genre (pass kwargs for harmonic params)
-            genre_tracks = _sort_consistent(genre_groups[current_genre], bpm_tolerance, **kwargs)
+            genre_tracks = _sort_consistent(
+                genre_groups[current_genre], bpm_tolerance, **kwargs
+            )
             result.extend(genre_tracks)
             processed_genres.add(current_genre)
 
@@ -676,8 +794,12 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
                 if dj_compat > 0.5:
                     compatibility = dj_compat
                 else:
-                    compatibility = genre_compatibility.get((current_genre, genre), 0.5 * (1 - genre_weight))
-                    compatibility += genre_compatibility.get((genre, current_genre), 0.5 * (1 - genre_weight))
+                    compatibility = genre_compatibility.get(
+                        (current_genre, genre), 0.5 * (1 - genre_weight)
+                    )
+                    compatibility += genre_compatibility.get(
+                        (genre, current_genre), 0.5 * (1 - genre_weight)
+                    )
                 if compatibility > best_compatibility:
                     best_compatibility = compatibility
                     best_next_genre = genre
@@ -694,7 +816,10 @@ def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
 
     return result
 
-def _sort_consistent(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
+
+def _sort_consistent(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
     """Keep transitions smooth by minimising BPM/Energy jumps while preferring harmonic compatibility."""
     if not tracks:
         return []
@@ -703,12 +828,18 @@ def _sort_consistent(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
     compat_kwargs = kwargs
 
     remaining = list(tracks)
-    average_bpm = sum(getattr(track, "bpm", 0.0) for track in remaining) / len(remaining)
-    average_energy = sum(getattr(track, "energy", 0) for track in remaining) / len(remaining)
+    average_bpm = sum(getattr(track, "bpm", 0.0) for track in remaining) / len(
+        remaining
+    )
+    average_energy = sum(getattr(track, "energy", 0) for track in remaining) / len(
+        remaining
+    )
 
     def _center_distance(track: Track) -> float:
         bpm_deviation = abs(getattr(track, "bpm", average_bpm) - average_bpm)
-        energy_deviation = abs(getattr(track, "energy", average_energy) - average_energy) / 5.0
+        energy_deviation = (
+            abs(getattr(track, "energy", average_energy) - average_energy) / 5.0
+        )
         return bpm_deviation + energy_deviation
 
     current = min(remaining, key=_center_distance)
@@ -716,13 +847,21 @@ def _sort_consistent(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
     remaining.remove(current)
 
     while remaining:
+
         def _transition_cost(candidate: Track) -> float:
             bpm_delta, _ = effective_bpm_diff(
-                getattr(candidate, "bpm", current.bpm),
-                getattr(current, "bpm", 0.0)
+                getattr(candidate, "bpm", current.bpm), getattr(current, "bpm", 0.0)
             )
-            energy_delta = abs(getattr(candidate, "energy", current.energy) - getattr(current, "energy", 0)) / 5.0
-            compatibility = calculate_compatibility(current, candidate, bpm_tolerance, **compat_kwargs)
+            energy_delta = (
+                abs(
+                    getattr(candidate, "energy", current.energy)
+                    - getattr(current, "energy", 0)
+                )
+                / 5.0
+            )
+            compatibility = calculate_compatibility(
+                current, candidate, bpm_tolerance, **compat_kwargs
+            )
             compatibility_penalty = (100 - compatibility) / 8.0
             if compatibility == 0:
                 compatibility_penalty += 10.0
@@ -734,6 +873,7 @@ def _sort_consistent(tracks: list[Track], bpm_tolerance: float, **kwargs) -> lis
         current = next_track
 
     return playlist
+
 
 def _resolve_mix_points(track: Track, fallback_overlap: float) -> tuple[float, float]:
     """Ensure mix-in/out points are usable, applying sensible fallbacks."""
@@ -749,7 +889,9 @@ def _resolve_mix_points(track: Track, fallback_overlap: float) -> tuple[float, f
     if track.mix_out_point > 0:
         mix_out_point = track.mix_out_point
     elif duration > 0:
-        mix_out_point = max(mix_in_point + 4.0, duration - min(duration * 0.05, fallback_overlap))
+        mix_out_point = max(
+            mix_in_point + 4.0, duration - min(duration * 0.05, fallback_overlap)
+        )
     else:
         mix_out_point = mix_in_point + max(4.0, fallback_overlap / 2)
 
@@ -759,7 +901,10 @@ def _resolve_mix_points(track: Track, fallback_overlap: float) -> tuple[float, f
 
     return mix_in_point, mix_out_point
 
-def _categorise_risk_level(compatibility_score: int, bpm_delta: float, bpm_tolerance: float, energy_delta: int) -> str:
+
+def _categorise_risk_level(
+    compatibility_score: int, bpm_delta: float, bpm_tolerance: float, energy_delta: int
+) -> str:
     """Convert compatibility metrics into a qualitative risk label."""
     if abs(bpm_delta) > bpm_tolerance or compatibility_score < 50:
         return "high"
@@ -801,8 +946,8 @@ def predict_transition_type(
     harmonic_score = calculate_compatibility(from_track, to_track, bpm_tolerance)
 
     # Genre-Info
-    genre_a = getattr(from_track, 'detected_genre', 'Unknown') or 'Unknown'
-    genre_b = getattr(to_track, 'detected_genre', 'Unknown') or 'Unknown'
+    genre_a = getattr(from_track, "detected_genre", "Unknown") or "Unknown"
+    genre_b = getattr(to_track, "detected_genre", "Unknown") or "Unknown"
 
     # --- Regel 1: Half/Double-Time Wechsel ---
     if bpm_relation in ("half", "double") and eff_diff <= bpm_tolerance:
@@ -917,7 +1062,7 @@ def _build_transition_description(
     bpm_delta: float,
     bpm_tolerance: float,
     energy_delta: int,
-    metrics: 'TransitionMetrics',
+    metrics: "TransitionMetrics",
     from_track: Track,
     to_track: Track,
     has_dj_brain: bool = False,
@@ -933,8 +1078,8 @@ def _build_transition_description(
 
     # --- 1. Harmonic Bewertung ---
     harmonic = metrics.harmonic_score
-    key_a = getattr(from_track, 'camelotCode', '') or ''
-    key_b = getattr(to_track, 'camelotCode', '') or ''
+    key_a = getattr(from_track, "camelotCode", "") or ""
+    key_b = getattr(to_track, "camelotCode", "") or ""
     key_info = f" ({key_a}->{key_b})" if key_a and key_b else ""
 
     if has_dj_brain:
@@ -964,7 +1109,9 @@ def _build_transition_description(
         elif abs_bpm <= bpm_tolerance:
             parts.append(f"BPM-Anpassung {bpm_delta:+.1f} -- Pitch Fader korrigieren")
         else:
-            parts.append(f"BPM-Sprung {bpm_delta:+.1f} -- harter Cut oder Breakdown nutzen")
+            parts.append(
+                f"BPM-Sprung {bpm_delta:+.1f} -- harter Cut oder Breakdown nutzen"
+            )
 
     # --- 3. Energie-Verlauf (nur ohne DJ Brain -- DJ Brain liefert energy_advice) ---
     if not has_dj_brain:
@@ -987,14 +1134,15 @@ def _build_transition_description(
     elif compatibility_score >= 55:
         parts.append("Machbar, aber anspruchsvoll -- Timing und EQ muessen stimmen")
     else:
-        parts.append("Riskante Transition -- nur fuer erfahrene DJs oder mit langem Breakdown")
+        parts.append(
+            "Riskante Transition -- nur fuer erfahrene DJs oder mit langem Breakdown"
+        )
 
     return "; ".join(parts)
 
+
 def compute_transition_recommendations(
-    playlist: List[Track],
-    bpm_tolerance: float = 3.0,
-    default_overlap: float = 12.0
+    playlist: List[Track], bpm_tolerance: float = 3.0, default_overlap: float = 12.0
 ) -> List[TransitionRecommendation]:
     """Build actionable mix recommendations between consecutive tracks."""
     if len(playlist) < 2:
@@ -1010,27 +1158,29 @@ def compute_transition_recommendations(
         if current.duration > 0 and upcoming.duration > 0:
             effective_overlap = min(
                 default_overlap,
-                max(6.0, min(current.duration, upcoming.duration) * 0.2)
+                max(6.0, min(current.duration, upcoming.duration) * 0.2),
             )
 
-        current_mix_in, current_mix_out = _resolve_mix_points(current, effective_overlap)
+        current_mix_in, current_mix_out = _resolve_mix_points(
+            current, effective_overlap
+        )
         next_mix_in, next_mix_out = _resolve_mix_points(upcoming, effective_overlap)
 
         # DJ Logic: The mix usually starts at the 'mix_in' of the upcoming track
         # and ends at the 'mix_out' of the current track.
         # We want to align the 'mix_in' of the next track with a phrase in the current track.
-        
+
         # Calculate how long the transition should be (e.g., 16 or 32 bars)
         seconds_per_beat = 60.0 / current.bpm if current.bpm > 0 else 0.5
         seconds_per_bar = seconds_per_beat * 4
-        
+
         # Standard DJ transition length: 32 bars (approx 60s at 124bpm)
-        transition_duration = seconds_per_bar * 32 
-        
+        transition_duration = seconds_per_bar * 32
+
         # Adjust transition duration if tracks are short
         if current.duration > 0:
             transition_duration = min(transition_duration, current.duration * 0.25)
-            
+
         fade_out_start = max(0.0, current_mix_out - transition_duration)
         fade_in_start = next_mix_in
         mix_entry = next_mix_in
@@ -1046,15 +1196,17 @@ def compute_transition_recommendations(
         # Fuer Risikobewertung effektive Differenz nutzen
         risk_bpm_delta = eff_bpm_diff if bpm_relation == "direct" else eff_bpm_diff
 
-        risk_level = _categorise_risk_level(compatibility_score, risk_bpm_delta, bpm_tolerance, energy_delta)
+        risk_level = _categorise_risk_level(
+            compatibility_score, risk_bpm_delta, bpm_tolerance, energy_delta
+        )
 
         notes_parts = []
 
         # DJ Brain Empfehlungen wenn Genre-Daten vorhanden
         dj_rec = None
-        current_genre = getattr(current, 'detected_genre', 'Unknown') or 'Unknown'
-        upcoming_genre = getattr(upcoming, 'detected_genre', 'Unknown') or 'Unknown'
-        has_dj_data = current_genre != 'Unknown' and upcoming_genre != 'Unknown'
+        current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
+        upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
+        has_dj_data = current_genre != "Unknown" and upcoming_genre != "Unknown"
 
         if has_dj_data:
             try:
@@ -1092,8 +1244,13 @@ def compute_transition_recommendations(
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen
         transition_desc = _build_transition_description(
-            compatibility_score, bpm_delta, bpm_tolerance,
-            energy_delta, metrics, current, upcoming,
+            compatibility_score,
+            bpm_delta,
+            bpm_tolerance,
+            energy_delta,
+            metrics,
+            current,
+            upcoming,
             has_dj_brain=(dj_rec is not None),
         )
         notes_parts.append(transition_desc)
@@ -1118,15 +1275,24 @@ def compute_transition_recommendations(
                 transition_type=predict_transition_type(
                     current, upcoming, bpm_tolerance
                 ),
+                dj_rec=dj_rec,
             )
         )
 
     return recommendations
 
-def calculate_playlist_quality(tracks: list[Track], bpm_tolerance: float) -> Dict[str, float]:
+
+def calculate_playlist_quality(
+    tracks: list[Track], bpm_tolerance: float
+) -> Dict[str, float]:
     """Calculate comprehensive quality metrics for a playlist."""
     if len(tracks) < 2:
-        return {"overall_score": 1.0, "harmonic_flow": 1.0, "energy_consistency": 1.0, "bpm_smoothness": 1.0}
+        return {
+            "overall_score": 1.0,
+            "harmonic_flow": 1.0,
+            "energy_consistency": 1.0,
+            "bpm_smoothness": 1.0,
+        }
 
     harmonic_scores = []
     energy_diffs = []
@@ -1153,14 +1319,18 @@ def calculate_playlist_quality(tracks: list[Track], bpm_tolerance: float) -> Dic
 
     # Normalize scores (0-1, higher is better)
     harmonic_flow = avg_harmonic
-    energy_consistency = max(0, 1 - avg_energy_diff / 50.0)  # 50 is max reasonable energy diff
+    energy_consistency = max(
+        0, 1 - avg_energy_diff / 50.0
+    )  # 50 is max reasonable energy diff
     if bpm_tolerance <= 0:
         bpm_smoothness = 1.0 if avg_bpm_diff == 0 else 0.0
     else:
         bpm_smoothness = max(0.0, 1 - avg_bpm_diff / bpm_tolerance)
 
     # Overall weighted score
-    overall_score = 0.5 * harmonic_flow + 0.25 * energy_consistency + 0.25 * bpm_smoothness
+    overall_score = (
+        0.5 * harmonic_flow + 0.25 * energy_consistency + 0.25 * bpm_smoothness
+    )
 
     return {
         "overall_score": overall_score,
@@ -1169,8 +1339,9 @@ def calculate_playlist_quality(tracks: list[Track], bpm_tolerance: float) -> Dic
         "bpm_smoothness": bpm_smoothness,
         "avg_harmonic_score": avg_harmonic * 100,
         "avg_energy_jump": avg_energy_diff,
-        "avg_bpm_jump": avg_bpm_diff
+        "avg_bpm_jump": avg_bpm_diff,
     }
+
 
 # --- Main Dispatcher --- #
 
@@ -1187,8 +1358,13 @@ STRATEGIES = {
     "Consistent": _sort_consistent,
 }
 
-def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0,
-                      advanced_params: Optional[Dict] = None) -> list[Track]:
+
+def generate_playlist(
+    tracks: list[Track],
+    mode: str,
+    bpm_tolerance: float = 3.0,
+    advanced_params: Optional[Dict] = None,
+) -> list[Track]:
     """
     Generates a playlist based on the selected mode and parameters.
 
@@ -1233,10 +1409,10 @@ def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0
         valid_tracks.append(candidate)
 
     if not valid_tracks:
-        return tracks # Return original if no tracks are valid
+        return tracks  # Return original if no tracks are valid
 
     # Get the sorting function from the strategy map
-    sorter = STRATEGIES.get(mode, _sort_harmonic_flow) # Default to harmonic flow
+    sorter = STRATEGIES.get(mode, _sort_harmonic_flow)  # Default to harmonic flow
 
     # Call the selected sorting strategy with advanced params
     result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **advanced_params)
@@ -1244,16 +1420,19 @@ def generate_playlist(tracks: list[Track], mode: str, bpm_tolerance: float = 3.0
     # Log quality metrics for analysis
     quality = calculate_playlist_quality(result, bpm_tolerance)
     logger.info(
-      f"Playlist-Qualitaet ({mode}): "
-      f"Score={quality['overall_score']:.2f}, "
-      f"Harmonic={quality['harmonic_flow']:.2f}, "
-      f"Energy={quality['energy_consistency']:.2f}, "
-      f"BPM={quality['bpm_smoothness']:.2f}"
+        f"Playlist-Qualitaet ({mode}): "
+        f"Score={quality['overall_score']:.2f}, "
+        f"Harmonic={quality['harmonic_flow']:.2f}, "
+        f"Energy={quality['energy_consistency']:.2f}, "
+        f"BPM={quality['bpm_smoothness']:.2f}"
     )
 
     return result
 
-def benchmark_algorithms(tracks: list[Track], bpm_tolerance: float = 3.0) -> Dict[str, Dict[str, float]]:
+
+def benchmark_algorithms(
+    tracks: list[Track], bpm_tolerance: float = 3.0
+) -> Dict[str, Dict[str, float]]:
     """Benchmark all algorithms and return quality metrics comparison."""
     results = {}
 
@@ -1267,25 +1446,29 @@ def benchmark_algorithms(tracks: list[Track], bpm_tolerance: float = 3.0) -> Dic
 
 # === Set-Timing / Time-based Planning ===
 
+
 @dataclass
 class SetTimeline:
-  """Zeitplanung fuer ein DJ-Set."""
-  total_duration_minutes: float  # Gesamtlaenge in Minuten
-  target_duration_minutes: float  # Gewuenschte Laenge
-  peak_position_minutes: float  # Peak-Zeitpunkt
-  entries: list  # Liste von SetTimelineEntry dicts
-  overflow_minutes: float  # Ueberschuss/Defizit in Minuten
+    """Zeitplanung fuer ein DJ-Set."""
+
+    total_duration_minutes: float  # Gesamtlaenge in Minuten
+    target_duration_minutes: float  # Gewuenschte Laenge
+    peak_position_minutes: float  # Peak-Zeitpunkt
+    entries: list  # Liste von SetTimelineEntry dicts
+    overflow_minutes: float  # Ueberschuss/Defizit in Minuten
+
 
 @dataclass
 class SetTimelineEntry:
-  """Ein Track-Eintrag in der Set-Timeline."""
-  track: Track
-  start_time: float  # Start in Sekunden
-  end_time: float  # Ende in Sekunden (nach Overlap-Abzug)
-  playing_duration: float  # Effektive Spieldauer in Sekunden
-  overlap_with_next: float  # Overlap in Sekunden zum naechsten Track
-  is_peak: bool  # Ist dieser Track am Peak-Punkt?
-  energy_phase: str  # "intro", "build", "peak", "sustain", "cooldown"
+    """Ein Track-Eintrag in der Set-Timeline."""
+
+    track: Track
+    start_time: float  # Start in Sekunden
+    end_time: float  # Ende in Sekunden (nach Overlap-Abzug)
+    playing_duration: float  # Effektive Spieldauer in Sekunden
+    overlap_with_next: float  # Overlap in Sekunden zum naechsten Track
+    is_peak: bool  # Ist dieser Track am Peak-Punkt?
+    energy_phase: str  # "intro", "build", "peak", "sustain", "cooldown"
 
 
 def compute_set_timeline(
@@ -1294,179 +1477,184 @@ def compute_set_timeline(
     peak_position_pct: float = 0.65,
     default_overlap: float = 16.0,
 ) -> SetTimeline:
-  """
-  Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
+    """
+    Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
 
-  Jeder Track bekommt einen Start/Ende-Zeitpunkt. Overlaps werden
-  von der Gesamtdauer abgezogen. Der Peak-Track wird identifiziert.
+    Jeder Track bekommt einen Start/Ende-Zeitpunkt. Overlaps werden
+    von der Gesamtdauer abgezogen. Der Peak-Track wird identifiziert.
 
-  Args:
-    tracks: Sortierte Playlist
-    target_minutes: Gewuenschte Set-Laenge in Minuten
-    peak_position_pct: Peak-Position als Anteil (0.0-1.0, default 0.65)
-    default_overlap: Standard-Overlap in Sekunden wenn keine Mix-Points
+    Args:
+      tracks: Sortierte Playlist
+      target_minutes: Gewuenschte Set-Laenge in Minuten
+      peak_position_pct: Peak-Position als Anteil (0.0-1.0, default 0.65)
+      default_overlap: Standard-Overlap in Sekunden wenn keine Mix-Points
 
-  Returns:
-    SetTimeline mit allen Eintraegen
-  """
-  if not tracks:
-    return SetTimeline(
-      total_duration_minutes=0.0,
-      target_duration_minutes=target_minutes,
-      peak_position_minutes=0.0,
-      entries=[],
-      overflow_minutes=0.0,
-    )
+    Returns:
+      SetTimeline mit allen Eintraegen
+    """
+    if not tracks:
+        return SetTimeline(
+            total_duration_minutes=0.0,
+            target_duration_minutes=target_minutes,
+            peak_position_minutes=0.0,
+            entries=[],
+            overflow_minutes=0.0,
+        )
 
-  target_seconds = target_minutes * 60.0
-  peak_position_pct = max(0.1, min(0.9, peak_position_pct))
+    target_seconds = target_minutes * 60.0
+    peak_position_pct = max(0.1, min(0.9, peak_position_pct))
 
-  entries: list[SetTimelineEntry] = []
-  current_time = 0.0
+    entries: list[SetTimelineEntry] = []
+    current_time = 0.0
 
-  for i, track in enumerate(tracks):
-    track_dur = max(track.duration, 30.0)  # Minimum 30s pro Track
+    for i, track in enumerate(tracks):
+        track_dur = max(track.duration, 30.0)  # Minimum 30s pro Track
 
-    # Overlap zum naechsten Track berechnen
-    if i < len(tracks) - 1:
-      # Nutze Mix-Points wenn vorhanden, sonst Default
-      mix_out = track.mix_out_point if track.mix_out_point > 0 else track_dur * 0.85
-      overlap = track_dur - mix_out
-      overlap = max(4.0, min(overlap, default_overlap, track_dur * 0.3))
-    else:
-      overlap = 0.0  # Letzter Track hat keinen Overlap
+        # Overlap zum naechsten Track berechnen
+        if i < len(tracks) - 1:
+            # Nutze Mix-Points wenn vorhanden, sonst Default
+            mix_out = (
+                track.mix_out_point if track.mix_out_point > 0 else track_dur * 0.85
+            )
+            overlap = track_dur - mix_out
+            overlap = max(4.0, min(overlap, default_overlap, track_dur * 0.3))
+        else:
+            overlap = 0.0  # Letzter Track hat keinen Overlap
 
-    playing_duration = track_dur - overlap
-    end_time = current_time + playing_duration
+        playing_duration = track_dur - overlap
+        end_time = current_time + playing_duration
 
-    entries.append(SetTimelineEntry(
-      track=track,
-      start_time=round(current_time, 2),
-      end_time=round(end_time, 2),
-      playing_duration=round(playing_duration, 2),
-      overlap_with_next=round(overlap, 2),
-      is_peak=False,  # Wird spaeter gesetzt
-      energy_phase="build",  # Wird spaeter gesetzt
-    ))
+        entries.append(
+            SetTimelineEntry(
+                track=track,
+                start_time=round(current_time, 2),
+                end_time=round(end_time, 2),
+                playing_duration=round(playing_duration, 2),
+                overlap_with_next=round(overlap, 2),
+                is_peak=False,  # Wird spaeter gesetzt
+                energy_phase="build",  # Wird spaeter gesetzt
+            )
+        )
 
-    current_time = end_time
+        current_time = end_time
 
-  total_seconds = current_time
-  total_minutes = total_seconds / 60.0
+    total_seconds = current_time
+    total_minutes = total_seconds / 60.0
 
-  # Peak-Track identifizieren (hoechste Energie nahe peak_position_pct)
-  peak_time = total_seconds * peak_position_pct
-  best_peak_idx = 0
-  best_peak_score = -1.0
+    # Peak-Track identifizieren (hoechste Energie nahe peak_position_pct)
+    peak_time = total_seconds * peak_position_pct
+    best_peak_idx = 0
+    best_peak_score = -1.0
 
-  for i, entry in enumerate(entries):
-    mid = (entry.start_time + entry.end_time) / 2.0
-    # Score: Energie * (1 - Abstand zum Peak-Zeitpunkt)
-    time_factor = 1.0 - min(abs(mid - peak_time) / max(total_seconds, 1.0), 1.0)
-    energy_factor = entry.track.energy / 100.0
-    score = energy_factor * 0.6 + time_factor * 0.4
-    if score > best_peak_score:
-      best_peak_score = score
-      best_peak_idx = i
-
-  if entries:
-    entries[best_peak_idx].is_peak = True
-
-  # Energy-Phasen zuweisen
-  n = len(entries)
-  if n > 0:
-    peak_pos = best_peak_idx / max(n - 1, 1)
     for i, entry in enumerate(entries):
-      relative_pos = i / max(n - 1, 1)
-      if entry.is_peak:
-        entry.energy_phase = "peak"
-      elif i == 0:
-        entry.energy_phase = "intro"
-      elif i == n - 1:
-        entry.energy_phase = "cooldown"
-      elif relative_pos < peak_pos * 0.5:
-        entry.energy_phase = "build"
-      elif relative_pos <= peak_pos:
-        entry.energy_phase = "build"
-      elif relative_pos <= peak_pos + 0.15:
-        entry.energy_phase = "sustain"
-      elif relative_pos > peak_pos + 0.15:
-        entry.energy_phase = "cooldown"
-      else:
-        entry.energy_phase = "build"
+        mid = (entry.start_time + entry.end_time) / 2.0
+        # Score: Energie * (1 - Abstand zum Peak-Zeitpunkt)
+        time_factor = 1.0 - min(abs(mid - peak_time) / max(total_seconds, 1.0), 1.0)
+        energy_factor = entry.track.energy / 100.0
+        score = energy_factor * 0.6 + time_factor * 0.4
+        if score > best_peak_score:
+            best_peak_score = score
+            best_peak_idx = i
 
-  peak_minutes = entries[best_peak_idx].start_time / 60.0 if entries else 0.0
+    if entries:
+        entries[best_peak_idx].is_peak = True
 
-  return SetTimeline(
-    total_duration_minutes=round(total_minutes, 2),
-    target_duration_minutes=target_minutes,
-    peak_position_minutes=round(peak_minutes, 2),
-    entries=entries,
-    overflow_minutes=round(total_minutes - target_minutes, 2),
-  )
+    # Energy-Phasen zuweisen
+    n = len(entries)
+    if n > 0:
+        peak_pos = best_peak_idx / max(n - 1, 1)
+        for i, entry in enumerate(entries):
+            relative_pos = i / max(n - 1, 1)
+            if entry.is_peak:
+                entry.energy_phase = "peak"
+            elif i == 0:
+                entry.energy_phase = "intro"
+            elif i == n - 1:
+                entry.energy_phase = "cooldown"
+            elif relative_pos < peak_pos * 0.5:
+                entry.energy_phase = "build"
+            elif relative_pos <= peak_pos:
+                entry.energy_phase = "build"
+            elif relative_pos <= peak_pos + 0.15:
+                entry.energy_phase = "sustain"
+            elif relative_pos > peak_pos + 0.15:
+                entry.energy_phase = "cooldown"
+            else:
+                entry.energy_phase = "build"
+
+    peak_minutes = entries[best_peak_idx].start_time / 60.0 if entries else 0.0
+
+    return SetTimeline(
+        total_duration_minutes=round(total_minutes, 2),
+        target_duration_minutes=target_minutes,
+        peak_position_minutes=round(peak_minutes, 2),
+        entries=entries,
+        overflow_minutes=round(total_minutes - target_minutes, 2),
+    )
 
 
 def get_set_timing_summary(timeline: SetTimeline) -> dict:
-  """
-  Erstellt eine menschenlesbare Zusammenfassung der Set-Timeline.
+    """
+    Erstellt eine menschenlesbare Zusammenfassung der Set-Timeline.
 
-  Returns:
-    Dict mit: total_time, target_time, overflow, peak_track, peak_time,
-    phase_breakdown, track_count, avg_track_duration
-  """
-  if not timeline.entries:
+    Returns:
+      Dict mit: total_time, target_time, overflow, peak_track, peak_time,
+      phase_breakdown, track_count, avg_track_duration
+    """
+    if not timeline.entries:
+        return {
+            "total_time": "0:00",
+            "target_time": f"{timeline.target_duration_minutes:.0f}:00",
+            "overflow": "0:00",
+            "overflow_seconds": 0.0,
+            "peak_track": None,
+            "peak_time": "0:00",
+            "phase_breakdown": {},
+            "track_count": 0,
+            "avg_track_duration": 0.0,
+        }
+
+    total_sec = timeline.total_duration_minutes * 60
+    target_sec = timeline.target_duration_minutes * 60
+    overflow_sec = timeline.overflow_minutes * 60
+
+    # Formatiere Zeiten
+    def _fmt(seconds: float) -> str:
+        sign = "-" if seconds < 0 else ""
+        s = abs(seconds)
+        m = int(s // 60)
+        sec = int(s % 60)
+        return f"{sign}{m}:{sec:02d}"
+
+    # Peak-Track finden
+    peak_entry = next((e for e in timeline.entries if e.is_peak), None)
+    peak_track_name = peak_entry.track.title if peak_entry else "?"
+    peak_time = _fmt(peak_entry.start_time) if peak_entry else "0:00"
+
+    # Phasen-Breakdown
+    phases: dict[str, int] = {}
+    for entry in timeline.entries:
+        phases[entry.energy_phase] = phases.get(entry.energy_phase, 0) + 1
+
+    # Durchschnittliche Track-Dauer
+    durations = [e.playing_duration for e in timeline.entries]
+    avg_dur = sum(durations) / len(durations) if durations else 0
+
     return {
-      "total_time": "0:00",
-      "target_time": f"{timeline.target_duration_minutes:.0f}:00",
-      "overflow": "0:00",
-      "overflow_seconds": 0.0,
-      "peak_track": None,
-      "peak_time": "0:00",
-      "phase_breakdown": {},
-      "track_count": 0,
-      "avg_track_duration": 0.0,
+        "total_time": _fmt(total_sec),
+        "target_time": _fmt(target_sec),
+        "overflow": _fmt(overflow_sec),
+        "overflow_seconds": overflow_sec,
+        "peak_track": peak_track_name,
+        "peak_time": peak_time,
+        "phase_breakdown": phases,
+        "track_count": len(timeline.entries),
+        "avg_track_duration": round(avg_dur, 1),
     }
-
-  total_sec = timeline.total_duration_minutes * 60
-  target_sec = timeline.target_duration_minutes * 60
-  overflow_sec = timeline.overflow_minutes * 60
-
-  # Formatiere Zeiten
-  def _fmt(seconds: float) -> str:
-    sign = "-" if seconds < 0 else ""
-    s = abs(seconds)
-    m = int(s // 60)
-    sec = int(s % 60)
-    return f"{sign}{m}:{sec:02d}"
-
-  # Peak-Track finden
-  peak_entry = next((e for e in timeline.entries if e.is_peak), None)
-  peak_track_name = peak_entry.track.title if peak_entry else "?"
-  peak_time = _fmt(peak_entry.start_time) if peak_entry else "0:00"
-
-  # Phasen-Breakdown
-  phases: dict[str, int] = {}
-  for entry in timeline.entries:
-    phases[entry.energy_phase] = phases.get(entry.energy_phase, 0) + 1
-
-  # Durchschnittliche Track-Dauer
-  durations = [e.playing_duration for e in timeline.entries]
-  avg_dur = sum(durations) / len(durations) if durations else 0
-
-  return {
-    "total_time": _fmt(total_sec),
-    "target_time": _fmt(target_sec),
-    "overflow": _fmt(overflow_sec),
-    "overflow_seconds": overflow_sec,
-    "peak_track": peak_track_name,
-    "peak_time": peak_time,
-    "phase_breakdown": phases,
-    "track_count": len(timeline.entries),
-    "avg_track_duration": round(avg_dur, 1),
-  }
 
 
 # === Similarity Clustering (MFCC-basiert) ===
+
 
 def mfcc_distance(fp1: list, fp2: list) -> float:
     """Berechnet euklidische Distanz zwischen zwei MFCC-Fingerprints.
@@ -1480,9 +1668,9 @@ def mfcc_distance(fp1: list, fp2: list) -> float:
         Gibt float('inf') zurueck wenn ein Fingerprint leer ist.
     """
     if not fp1 or not fp2:
-        return float('inf')
+        return float("inf")
     if len(fp1) != len(fp2):
-        return float('inf')
+        return float("inf")
 
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(fp1, fp2)))
 
@@ -1512,7 +1700,7 @@ def find_similar_tracks(
         if track is reference:
             continue
         dist = mfcc_distance(reference.mfcc_fingerprint, track.mfcc_fingerprint)
-        if dist == float('inf'):
+        if dist == float("inf"):
             continue
         if max_distance is not None and dist > max_distance:
             continue
@@ -1540,8 +1728,12 @@ def cluster_tracks_by_similarity(
         Liste von Track-Listen (Cluster). Tracks ohne MFCC landen in einem Extra-Cluster.
     """
     # Trenne Tracks mit/ohne MFCC
-    with_mfcc = [t for t in tracks if t.mfcc_fingerprint and len(t.mfcc_fingerprint) > 0]
-    without_mfcc = [t for t in tracks if not t.mfcc_fingerprint or len(t.mfcc_fingerprint) == 0]
+    with_mfcc = [
+        t for t in tracks if t.mfcc_fingerprint and len(t.mfcc_fingerprint) > 0
+    ]
+    without_mfcc = [
+        t for t in tracks if not t.mfcc_fingerprint or len(t.mfcc_fingerprint) == 0
+    ]
 
     if len(with_mfcc) <= n_clusters:
         # Zu wenige Tracks — jeder Track ist sein eigenes Cluster
@@ -1552,9 +1744,7 @@ def cluster_tracks_by_similarity(
 
     # k-Means: Initialisierung mit gleichmaessig verteilten Tracks
     step = len(with_mfcc) // n_clusters
-    centroids = [
-        list(with_mfcc[i * step].mfcc_fingerprint) for i in range(n_clusters)
-    ]
+    centroids = [list(with_mfcc[i * step].mfcc_fingerprint) for i in range(n_clusters)]
 
     assignments = [0] * len(with_mfcc)
 
@@ -1623,7 +1813,9 @@ def get_cluster_summary(clusters: list[list[Track]]) -> list[dict]:
             "cluster_id": i,
             "size": len(cluster),
             "avg_bpm": round(sum(bpms) / len(bpms), 1) if bpms else 0.0,
-            "bpm_range": (round(min(bpms), 1), round(max(bpms), 1)) if bpms else (0.0, 0.0),
+            "bpm_range": (round(min(bpms), 1), round(max(bpms), 1))
+            if bpms
+            else (0.0, 0.0),
             "avg_energy": round(sum(energies) / len(energies), 1) if energies else 0.0,
             "top_genres": sorted(genres.items(), key=lambda x: -x[1])[:3],
             "tracks": [t.title for t in cluster[:5]],  # Erste 5 Titel als Preview

@@ -484,6 +484,12 @@ class DJRecommendation:
   energy_advice: str = ""     # Energie-Empfehlung basierend auf tatsaechlicher Differenz
   transition_type: str = "smooth_blend"  # Transition-Typ (fuer Farben in UI)
 
+  # Paarspezifische Mix-Punkte (ueberschreiben die gespeicherten Track-Werte)
+  # -1.0 = nicht berechnet -> UI nutzt track.mix_out_point / track.mix_in_point
+  adjusted_mix_out_a: float = -1.0   # Angepasster Mix-Out fuer Track A (Sekunden)
+  adjusted_mix_in_b: float = -1.0    # Angepasster Mix-In fuer Track B (Sekunden)
+  overlap_seconds: float = 0.0       # Berechnete Overlap-Dauer des Uebergangs
+
 
 def generate_dj_recommendation(
   track_a: Track,
@@ -541,6 +547,10 @@ def generate_dj_recommendation(
   key_advice = _key_advice(track_a.camelotCode, track_b.camelotCode)
   energy_advice = _energy_advice(float(track_a.energy), float(track_b.energy))
 
+  # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
+  adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
+  overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+
   return DJRecommendation(
     genre_pair=genre_pair,
     genre_compatibility=round(compat, 2),
@@ -554,7 +564,116 @@ def generate_dj_recommendation(
     bpm_advice=bpm_advice,
     key_advice=key_advice,
     energy_advice=energy_advice,
+    adjusted_mix_out_a=adjusted_mix_out_a,
+    adjusted_mix_in_b=adjusted_mix_in_b,
+    overlap_seconds=round(overlap_seconds, 2),
   )
+
+
+# === Paarspezifische Mix-Punkt-Berechnung ===
+
+def _get_intro_end(track: Track) -> float:
+  """
+  Gibt die Zeit zurueck, wo das Intro von Track endet.
+
+  Scannt sections nach zusammenhaengenden Intro-Sections am Track-Anfang.
+  Fallback: track.mix_in_point (bereits gespeicherter Wert aus Analyse).
+
+  Beispiel:
+    sections: [intro(0-53s), intro(53-106s), drop(106-...)]
+    -> gibt 106.0 zurueck (Ende aller Intro-Sections)
+  """
+  if not track.sections:
+    return track.mix_in_point if track.mix_in_point > 0 else 0.0
+
+  last_intro_end = 0.0
+  for section in track.sections:
+    label = section.get("label", "main")
+    if label == "intro":
+      # Akkumuliere Ende des Intros (auch Multi-Section Intros)
+      last_intro_end = section.get("end_time", section.get("start_time", 0.0))
+    else:
+      # Erste Non-Intro-Section nach dem Intro-Block: fertig
+      if last_intro_end > 0.0:
+        break
+
+  if last_intro_end > 0.0:
+    return last_intro_end
+
+  # Kein Intro erkannt -> gespeicherter mix_in_point als Schaetzung
+  return track.mix_in_point if track.mix_in_point > 0 else 0.0
+
+
+def calculate_paired_mix_points(
+  track_a: Track,
+  track_b: Track,
+) -> tuple[float, float]:
+  """
+  Berechnet aufeinander abgestimmte Mix-Out (Track A) und Mix-In (Track B).
+
+  Problem mit per-Track-Berechnung: Mix-In wird ohne Kenntnis des Partner-Tracks
+  berechnet. Bei Psytrance zB: Mix-In = immer 0.0, egal ob Intro 30s oder 300s.
+
+  Diese Funktion loest das: Overlap = min(intro_dauer_B, outro_dauer_A).
+
+  Beispiel Psytrance:
+    Track A: Duration 420s, Outro ab 367s -> Outro-Dauer = 53s
+    Track B: Intro bis 106s -> Intro-Dauer = 106s
+    Overlap = min(106, 53) = 53s
+    -> Mix-In B = max(0.0, 106 - 53) = 53s  (ab Bar 33, NICHT Bar 1!)
+    -> Mix-Out A = max(367, 420 - 53) = max(367, 367) = 367s (unveraendert)
+
+  Kurzes Intro (Track B Intro = 26s, Track A Outro = 53s):
+    Overlap = min(26, 53) = 26s
+    -> Mix-In B = max(0.0, 26 - 26) = 0.0  (Bar 1, voll von Anfang)
+    -> Mix-Out A = max(367, 420 - 26) = 394s  (spaeter als Original!)
+
+  Args:
+    track_a: Ausgehender Track (dessen Mix-Out angepasst wird)
+    track_b: Eingehender Track (dessen Mix-In angepasst wird)
+
+  Returns:
+    (adjusted_mix_out_a, adjusted_mix_in_b) in Sekunden
+  """
+  profile_b = get_mix_profile(track_b.detected_genre or "Unknown")
+
+  # Nur fuer Genres mit Intro-Start-Technik (Psytrance, Trance)
+  # Andere Genres: gespeicherte Werte behalten
+  if not profile_b.mix_in_at_intro_start:
+    return track_a.mix_out_point, track_b.mix_in_point
+
+  # --- Intro-Dauer von Track B ---
+  intro_end_b = _get_intro_end(track_b)  # Sekunden (absoluter Zeitpunkt)
+
+  # --- Outro-Dauer von Track A ---
+  outro_start_a = track_a.mix_out_point
+  if outro_start_a <= 0:
+    outro_start_a = track_a.duration * 0.8  # Fallback: letzte 20%
+  outro_duration_a = max(0.0, track_a.duration - outro_start_a)
+
+  # --- Minimaler Overlap: mindestens 8 Bars (fuer BPM-Anpassung) ---
+  bpm_b = track_b.bpm if track_b.bpm > 0 else 140.0
+  seconds_per_bar_b = (60.0 / bpm_b) * METER
+  min_overlap = seconds_per_bar_b * 8  # mind. 8 Bars Overlap
+
+  # --- Target Overlap: das Minimum beider Seiten (nicht mehr als das Kuerzere) ---
+  target_overlap = max(min_overlap, min(intro_end_b, outro_duration_a))
+
+  # --- Track B Mix-In: Starte so spaet, dass noch genau target_overlap bleibt ---
+  adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
+
+  # --- Track A Mix-Out: target_overlap Sekunden vor Track-Ende ---
+  adjusted_mix_out_a = track_a.duration - target_overlap
+  # Aber nicht frueher als das urspruenglich berechnete Mix-Out
+  # (wir verschieben nur nach hinten, nie nach vorne -- das waere schlechter)
+  adjusted_mix_out_a = max(outro_start_a, adjusted_mix_out_a)
+
+  # Sicherheitscheck: Mix-Out vor Track-Ende
+  bpm_a = track_a.bpm if track_a.bpm > 0 else 140.0
+  seconds_per_bar_a = (60.0 / bpm_a) * METER
+  adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
+
+  return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
 
 
 # === Hilfsfunktionen ===

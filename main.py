@@ -40,7 +40,16 @@ from PyQt6.QtCore import (
     QSize,
     QRect,
 )
-from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QKeySequence, QShortcut
+from PyQt6.QtGui import (
+    QFont,
+    QColor,
+    QPalette,
+    QPixmap,
+    QPainter,
+    QBrush,
+    QKeySequence,
+    QShortcut,
+)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import html as html_mod
 import os
@@ -71,11 +80,22 @@ import shelve
 from hpg_core.caching import init_cache, CACHE_FILE
 from hpg_core.logging_config import setup_logging
 from hpg_core.theme import (
-  COLORS, GENRE_COLORS, GENRE_DEFAULT,
-  RISK_STYLES, RISK_DEFAULT, RISK_LABELS,
-  PHASE_COLORS, PHASE_LABELS, TRANSITION_TYPE_COLORS,
-  score_color, html_style_block, apply_dark_theme,
-  FONT_FAMILY, FONT_SIZE, FONT_SIZE_SMALL, FONT_SIZE_HEADER,
+    COLORS,
+    GENRE_COLORS,
+    GENRE_DEFAULT,
+    RISK_STYLES,
+    RISK_DEFAULT,
+    RISK_LABELS,
+    PHASE_COLORS,
+    PHASE_LABELS,
+    TRANSITION_TYPE_COLORS,
+    score_color,
+    html_style_block,
+    apply_dark_theme,
+    FONT_FAMILY,
+    FONT_SIZE,
+    FONT_SIZE_SMALL,
+    FONT_SIZE_HEADER,
 )
 import json
 import time
@@ -223,10 +243,11 @@ class TransitionRenderWorker(QThread):
     Rendert alle Transition-Preview-Clips nacheinander im Hintergrund.
     Emittiert pro fertigem Clip ein Signal damit die UI sofort aktualisiert werden kann.
     """
-    clip_ready = pyqtSignal(int, str)   # (index, wav_pfad)
-    clip_error = pyqtSignal(int, str)   # (index, fehler_text)
-    all_done   = pyqtSignal()
-    progress   = pyqtSignal(int, int)   # (aktuell, gesamt)
+
+    clip_ready = pyqtSignal(int, str)  # (index, wav_pfad)
+    clip_error = pyqtSignal(int, str)  # (index, fehler_text)
+    all_done = pyqtSignal()
+    progress = pyqtSignal(int, int)  # (aktuell, gesamt)
 
     def __init__(self, transitions: list, parent=None):
         super().__init__(parent)
@@ -255,13 +276,30 @@ class TransitionRenderWorker(QThread):
                 self._temp_files.append(out_path)
 
                 # TransitionClipSpec aus TransitionRecommendation aufbauen
+                # Paar-spezifische Mix-Points bevorzugen wenn vorhanden (adjusted > -1)
+                dj = transition.dj_rec
+                mix_out = (
+                    dj.adjusted_mix_out_a
+                    if dj and dj.adjusted_mix_out_a > 0
+                    else float(transition.from_track.mix_out_point or 0)
+                )
+                mix_in = (
+                    dj.adjusted_mix_in_b
+                    if dj and dj.adjusted_mix_in_b >= 0 and dj.adjusted_mix_in_b > -0.5
+                    else float(transition.to_track.mix_in_point or 0)
+                )
+                crossfade = (
+                    dj.overlap_seconds
+                    if dj and dj.overlap_seconds > 0
+                    else float(transition.overlap or 16.0)
+                )
                 spec = TransitionClipSpec(
-                    track_a_path    = transition.from_track.filePath,
-                    track_b_path    = transition.to_track.filePath,
-                    mix_out_sec     = float(transition.from_track.mix_out_point or 0),
-                    mix_in_sec      = float(transition.to_track.mix_in_point or 0),
-                    crossfade_sec   = float(transition.overlap or 16.0),
-                    transition_type = transition.transition_type or "smooth_blend",
+                    track_a_path=transition.from_track.filePath,
+                    track_b_path=transition.to_track.filePath,
+                    mix_out_sec=mix_out,
+                    mix_in_sec=mix_in,
+                    crossfade_sec=crossfade,
+                    transition_type=transition.transition_type or "smooth_blend",
                 )
 
                 render_transition_clip(spec, out_path)
@@ -317,7 +355,7 @@ class TransitionPreviewWidget(QWidget):
 
         self._play_btn = QPushButton("▶")
         self._play_btn.setFixedSize(28, 28)
-        self._play_btn.setEnabled(False)   # Erst aktivieren wenn clip_ready
+        self._play_btn.setEnabled(False)  # Erst aktivieren wenn clip_ready
         self._play_btn.setToolTip("Preview abspielen / pausieren")
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
@@ -571,8 +609,8 @@ class SidebarWidget(QWidget):
     def init_ui(self):
         self.setStyleSheet(f"""
             SidebarWidget {{
-                background-color: {COLORS['bg_sidebar']};
-                border-right: 1px solid {COLORS['border']};
+                background-color: {COLORS["bg_sidebar"]};
+                border-right: 1px solid {COLORS["border"]};
             }}
         """)
 
@@ -610,15 +648,15 @@ class SidebarWidget(QWidget):
     def _update_styles(self):
         for i, btn in enumerate(self.buttons):
             icon, label = self.NAV_ITEMS[i]
-            is_active = (i == self.current_index)
+            is_active = i == self.current_index
 
             if is_active:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background-color: {COLORS['accent_primary_bg']};
-                        color: {COLORS['accent_primary']};
+                        background-color: {COLORS["accent_primary_bg"]};
+                        color: {COLORS["accent_primary"]};
                         border: none;
-                        border-left: 3px solid {COLORS['accent_primary']};
+                        border-left: 3px solid {COLORS["accent_primary"]};
                         border-radius: 0px;
                         font-family: {FONT_FAMILY};
                         font-size: 11px;
@@ -627,14 +665,14 @@ class SidebarWidget(QWidget):
                         text-align: center;
                     }}
                     QPushButton:hover {{
-                        background-color: {COLORS['bg_hover']};
+                        background-color: {COLORS["bg_hover"]};
                     }}
                 """)
             else:
                 btn.setStyleSheet(f"""
                     QPushButton {{
                         background-color: transparent;
-                        color: {COLORS['text_dim']};
+                        color: {COLORS["text_dim"]};
                         border: none;
                         border-left: 3px solid transparent;
                         border-radius: 0px;
@@ -645,9 +683,9 @@ class SidebarWidget(QWidget):
                         text-align: center;
                     }}
                     QPushButton:hover {{
-                        background-color: {COLORS['bg_hover']};
-                        color: {COLORS['text_primary']};
-                        border-left: 3px solid {COLORS['border']};
+                        background-color: {COLORS["bg_hover"]};
+                        color: {COLORS["text_primary"]};
+                        border-left: 3px solid {COLORS["border"]};
                     }}
                 """)
             # Text manuell setzen (QSS hat kein text-transform)
@@ -668,8 +706,8 @@ class ToolbarWidget(QWidget):
     def init_ui(self):
         self.setStyleSheet(f"""
             ToolbarWidget {{
-                background-color: {COLORS['bg_toolbar']};
-                border-bottom: 1px solid {COLORS['border']};
+                background-color: {COLORS["bg_toolbar"]};
+                border-bottom: 1px solid {COLORS["border"]};
             }}
         """)
 
@@ -681,7 +719,7 @@ class ToolbarWidget(QWidget):
         self.title_label = QLabel("HPG v3.0")
         self.title_label.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['accent_primary']};
+                color: {COLORS["accent_primary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 14px;
                 font-weight: bold;
@@ -693,7 +731,7 @@ class ToolbarWidget(QWidget):
         self.info_label = QLabel("No folder selected")
         self.info_label.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_secondary']};
+                color: {COLORS["text_secondary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 11px;
             }}
@@ -705,7 +743,7 @@ class ToolbarWidget(QWidget):
         self.quality_badge.setFixedHeight(24)
         self.quality_badge.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_bright']};
+                color: {COLORS["text_bright"]};
                 font-family: {FONT_FAMILY};
                 font-size: 11px;
                 font-weight: 600;
@@ -744,7 +782,7 @@ class ToolbarWidget(QWidget):
         self.quality_badge.setText(f"Q: {score:.0%}")
         self.quality_badge.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_bright']};
+                color: {COLORS["text_bright"]};
                 font-family: {FONT_FAMILY};
                 font-size: 11px;
                 font-weight: 600;
@@ -775,8 +813,8 @@ class StatusBarWidget(QWidget):
     def init_ui(self):
         self.setStyleSheet(f"""
             StatusBarWidget {{
-                background-color: {COLORS['bg_sidebar']};
-                border-top: 1px solid {COLORS['border']};
+                background-color: {COLORS["bg_sidebar"]};
+                border-top: 1px solid {COLORS["border"]};
             }}
         """)
 
@@ -788,7 +826,7 @@ class StatusBarWidget(QWidget):
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_secondary']};
+                color: {COLORS["text_secondary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 11px;
             }}
@@ -857,7 +895,7 @@ class LibraryPanel(QWidget):
         section_label = QLabel("MUSIC LIBRARY")
         section_label.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_secondary']};
+                color: {COLORS["text_secondary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 10px;
                 font-weight: bold;
@@ -894,7 +932,7 @@ class LibraryPanel(QWidget):
         strategy_label = QLabel("STRATEGY")
         strategy_label.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_secondary']};
+                color: {COLORS["text_secondary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 10px;
                 font-weight: bold;
@@ -931,7 +969,7 @@ class LibraryPanel(QWidget):
         bpm_label = QLabel("BPM TOLERANCE")
         bpm_label.setStyleSheet(f"""
             QLabel {{
-                color: {COLORS['text_secondary']};
+                color: {COLORS["text_secondary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 10px;
                 font-weight: bold;
@@ -986,24 +1024,24 @@ class LibraryPanel(QWidget):
         self.toggle_advanced.setChecked(True)
         self.toggle_advanced.setStyleSheet(f"""
             QPushButton {{
-                background-color: {COLORS['bg_card']};
-                color: {COLORS['text_secondary']};
+                background-color: {COLORS["bg_card"]};
+                color: {COLORS["text_secondary"]};
                 font-family: {FONT_FAMILY};
                 font-size: 12px;
                 font-weight: 500;
-                border: 1px solid {COLORS['border']};
+                border: 1px solid {COLORS["border"]};
                 border-radius: 0px;
                 padding: 7px 12px;
                 text-align: left;
             }}
             QPushButton:checked {{
-                color: {COLORS['accent_primary']};
-                border-color: {COLORS['border_active']};
-                background-color: {COLORS['accent_primary_bg']};
+                color: {COLORS["accent_primary"]};
+                border-color: {COLORS["border_active"]};
+                background-color: {COLORS["accent_primary_bg"]};
             }}
             QPushButton:hover {{
-                background-color: {COLORS['bg_hover']};
-                color: {COLORS['text_primary']};
+                background-color: {COLORS["bg_hover"]};
+                color: {COLORS["text_primary"]};
             }}
         """)
         self.toggle_advanced.clicked.connect(self._toggle_params)
@@ -1060,9 +1098,7 @@ class LibraryPanel(QWidget):
         if os.path.isdir(path):
             # W8: Pruefen ob Ordner lesbar ist
             if not os.access(path, os.R_OK):
-                self.info_label.setText(
-                    f"No read permission: {os.path.basename(path)}"
-                )
+                self.info_label.setText(f"No read permission: {os.path.basename(path)}")
                 self.info_label.setStyleSheet(
                     f"QLabel {{ color: {COLORS['accent_danger']}; font-size: 13px; padding: 20px 28px; "
                     f"border: 2px solid {COLORS['accent_danger']}; border-radius: 0px; "
@@ -1106,9 +1142,9 @@ class EnergyBarDelegate(QStyledItemDelegate):
 
         # Hintergrund: Selektion oder Standard
         if option.state & QStyle.StateFlag.State_Selected:
-            bg = QColor(COLORS['bg_selected'])
+            bg = QColor(COLORS["bg_selected"])
         else:
-            bg = QColor(COLORS['bg_input'])
+            bg = QColor(COLORS["bg_input"])
         painter.fillRect(option.rect, bg)
 
         # Balken-Bereich: leichte vertikale Einrueckung fuer sauberes Look
@@ -1117,22 +1153,22 @@ class EnergyBarDelegate(QStyledItemDelegate):
         filled_width = int(bar_rect.width() * ratio)
 
         # Hintergrund des Balkens (dunkel)
-        painter.fillRect(bar_rect, QColor(COLORS['border']))
+        painter.fillRect(bar_rect, QColor(COLORS["border"]))
 
         # Farbkodierung je Energie-Level
         if energy >= 75:
-            bar_color = QColor(COLORS['accent_primary'])       # Neon Gruen
+            bar_color = QColor(COLORS["accent_primary"])  # Neon Gruen
         elif energy >= 50:
-            bar_color = QColor(COLORS['accent_warning'])        # Gelb-Gold
+            bar_color = QColor(COLORS["accent_warning"])  # Gelb-Gold
         else:
-            bar_color = QColor(COLORS['accent_secondary'])      # Neon Violett
+            bar_color = QColor(COLORS["accent_secondary"])  # Neon Violett
 
         # Gefuellter Balken-Anteil
         filled_rect = QRect(bar_rect.x(), bar_rect.y(), filled_width, bar_rect.height())
         painter.fillRect(filled_rect, bar_color)
 
         # Zahl als Text zentriert darueber
-        painter.setPen(QColor(COLORS['text_bright']))
+        painter.setPen(QColor(COLORS["text_bright"]))
         painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, str(energy))
 
         painter.restore()
@@ -1172,11 +1208,23 @@ class PlaylistPanel(QWidget):
         # Tabelle
         self.table = QTableWidget()
         self.table.setColumnCount(13)
-        self.table.setHorizontalHeaderLabels([
-            "#", "Track Name", "Artist", "Duration", "BPM",
-            "Key", "Camelot", "Energy", "Genre", "Genre %",
-            "Mix In", "Mix Out", "Transition Score",
-        ])
+        self.table.setHorizontalHeaderLabels(
+            [
+                "#",
+                "Track Name",
+                "Artist",
+                "Duration",
+                "BPM",
+                "Key",
+                "Camelot",
+                "Energy",
+                "Genre",
+                "Genre %",
+                "Mix In",
+                "Mix Out",
+                "Transition Score",
+            ]
+        )
 
         # Tooltips fuer Spaltenheader
         header_tooltips = [
@@ -1270,8 +1318,13 @@ class PlaylistPanel(QWidget):
         btn_layout.addWidget(self.restart_button)
         layout.addLayout(btn_layout)
 
-    def set_playlist_data(self, playlist, quality_metrics,
-                          transition_recommendations=None, bpm_tolerance=3.0):
+    def set_playlist_data(
+        self,
+        playlist,
+        quality_metrics,
+        transition_recommendations=None,
+        bpm_tolerance=3.0,
+    ):
         """Playlist-Daten setzen und Tabelle fuellen."""
         self.playlist = playlist
         self.quality_metrics = quality_metrics
@@ -1334,7 +1387,7 @@ class PlaylistPanel(QWidget):
                 QLabel {{
                     font-size: 10px;
                     font-weight: 500;
-                    color: {COLORS['text_secondary']};
+                    color: {COLORS["text_secondary"]};
                     font-family: {FONT_FAMILY};
                     letter-spacing: 1px;
                 }}
@@ -1518,9 +1571,7 @@ class MixTipsPanel(QWidget):
             return
 
         for card_index, rec in enumerate(self.transition_recommendations):
-            bg_color, accent_color = RISK_STYLES.get(
-                rec.risk_level, RISK_DEFAULT
-            )
+            bg_color, accent_color = RISK_STYLES.get(rec.risk_level, RISK_DEFAULT)
 
             card = QFrame()
             card.setFrameShape(QFrame.Shape.StyledPanel)
@@ -1549,16 +1600,20 @@ class MixTipsPanel(QWidget):
             card_layout.addWidget(title)
 
             # Genre-Badge Zeile
-            if (from_genre and from_genre != "Unknown"
-                    and to_genre and to_genre != "Unknown"):
+            if (
+                from_genre
+                and from_genre != "Unknown"
+                and to_genre
+                and to_genre != "Unknown"
+            ):
                 from_color = GENRE_COLORS.get(from_genre, GENRE_DEFAULT)[0]
                 to_color = GENRE_COLORS.get(to_genre, GENRE_DEFAULT)[0]
                 genre_label = QLabel(
                     f'<span style="color: {from_color}; font-weight: bold;">'
-                    f'{html_mod.escape(str(from_genre))}</span>'
+                    f"{html_mod.escape(str(from_genre))}</span>"
                     f" -> "
                     f'<span style="color: {to_color}; font-weight: bold;">'
-                    f'{html_mod.escape(str(to_genre))}</span>'
+                    f"{html_mod.escape(str(to_genre))}</span>"
                 )
                 genre_label.setStyleSheet("QLabel { font-size: 11px; }")
                 card_layout.addWidget(genre_label)
@@ -1578,7 +1633,7 @@ class MixTipsPanel(QWidget):
             t_type = getattr(rec, "transition_type", "blend")
             t_label = TRANSITION_TYPE_LABELS.get(t_type, t_type)
             t_desc = TRANSITION_TYPE_DESCRIPTIONS.get(t_type, "")
-            t_color = TRANSITION_TYPE_COLORS.get(t_type, COLORS['text_secondary'])
+            t_color = TRANSITION_TYPE_COLORS.get(t_type, COLORS["text_secondary"])
             type_badge = QLabel(f"Empfohlene Technik: {t_label}")
             type_badge.setToolTip(t_desc)
             type_badge.setStyleSheet(
@@ -1588,12 +1643,23 @@ class MixTipsPanel(QWidget):
             )
             card_layout.addWidget(type_badge)
 
-            # Timing
-            timing = QLabel(
-                f"Fade out {rec.fade_out_start:.1f}s -> {rec.fade_out_end:.1f}s | "
-                f"Fade in starts {rec.fade_in_start:.1f}s | Mix entry {rec.mix_entry:.1f}s | "
-                f"Overlap {rec.overlap:.1f}s"
-            )
+            # Timing — paar-spezifische Werte wenn verfuegbar, sonst Standard
+            dj_rec = rec.dj_rec
+            if dj_rec and dj_rec.adjusted_mix_out_a > 0:
+                # Angepasste Mix-Points aus calculate_paired_mix_points()
+                timing_text = (
+                    f"Mix-Out A: {dj_rec.adjusted_mix_out_a:.1f}s | "
+                    f"Mix-In B: {dj_rec.adjusted_mix_in_b:.1f}s | "
+                    f"Overlap: {dj_rec.overlap_seconds:.1f}s "
+                    f"(Fade out {rec.fade_out_start:.1f}s -> {rec.fade_out_end:.1f}s)"
+                )
+            else:
+                timing_text = (
+                    f"Fade out {rec.fade_out_start:.1f}s -> {rec.fade_out_end:.1f}s | "
+                    f"Fade in starts {rec.fade_in_start:.1f}s | Mix entry {rec.mix_entry:.1f}s | "
+                    f"Overlap {rec.overlap:.1f}s"
+                )
+            timing = QLabel(timing_text)
             timing.setStyleSheet(f"QLabel {{ color: {COLORS['text_secondary']}; }}")
             card_layout.addWidget(timing)
 
@@ -1606,23 +1672,50 @@ class MixTipsPanel(QWidget):
             meta_parts = []
 
             for part in notes_parts:
-                if part.startswith(("Mix:", "EQ:", "Transition:", "BPM:", "Key:", "Energy:")):
+                if part.startswith(
+                    ("Mix:", "EQ:", "Transition:", "BPM:", "Key:", "Energy:")
+                ):
                     dj_brain_parts.append(part)
                 elif part.startswith("!"):
                     dj_brain_parts.append(part)
-                elif part.startswith((
-                    "Ideal:", "Gut:", "Smooth:", "Riskant:", "Mutig:",
-                    "Standard:", "OK:", "Struktur:",
-                )):
+                elif part.startswith(
+                    (
+                        "Ideal:",
+                        "Gut:",
+                        "Smooth:",
+                        "Riskant:",
+                        "Mutig:",
+                        "Standard:",
+                        "OK:",
+                        "Struktur:",
+                    )
+                ):
                     dj_brain_parts.append(part)
                 elif part.startswith("[") and part.endswith("]"):
                     meta_parts.append(part)
-                elif any(kw in part for kw in (
-                    "Tonart", "BPM", "Energie", "Harmoni", "Sichere",
-                    "Solide", "Machbar", "Push", "stabil", "steigt",
-                    "faellt", "Pitch", "ueberblend", "nahtlos", "allein",
-                    "mixbar", "erfahren", "Clash",
-                )):
+                elif any(
+                    kw in part
+                    for kw in (
+                        "Tonart",
+                        "BPM",
+                        "Energie",
+                        "Harmoni",
+                        "Sichere",
+                        "Solide",
+                        "Machbar",
+                        "Push",
+                        "stabil",
+                        "steigt",
+                        "faellt",
+                        "Pitch",
+                        "ueberblend",
+                        "nahtlos",
+                        "allein",
+                        "mixbar",
+                        "erfahren",
+                        "Clash",
+                    )
+                ):
                     desc_parts.append(part)
                 else:
                     meta_parts.append(part)
@@ -1788,7 +1881,7 @@ class TimelinePanel(QWidget):
             html += "<h4>Energie-Phasen</h4>"
             html += "<table style='margin: 8px 0; border-collapse: collapse;'>"
             for phase, count in phase_breakdown.items():
-                color = phase_colors.get(phase, COLORS['text_secondary'])
+                color = phase_colors.get(phase, COLORS["text_secondary"])
                 label = phase_labels.get(phase, phase)
                 html += (
                     f"<tr>"
@@ -1824,11 +1917,13 @@ class TimelinePanel(QWidget):
             dur_m = int(entry.playing_duration // 60)
             dur_s = int(entry.playing_duration % 60)
             phase = entry.energy_phase
-            color = phase_colors.get(phase, COLORS['text_secondary'])
+            color = phase_colors.get(phase, COLORS["text_secondary"])
 
             peak_marker = " *" if entry.is_peak else ""
-            bg = COLORS["bg_selected"] if entry.is_peak else (
-                COLORS["bg_table_alt"] if i % 2 else COLORS["bg_card"]
+            bg = (
+                COLORS["bg_selected"]
+                if entry.is_peak
+                else (COLORS["bg_table_alt"] if i % 2 else COLORS["bg_card"])
             )
 
             overlap_str = (
@@ -1916,7 +2011,9 @@ class AnalyticsPanel(QWidget):
         if quality_metrics.get("energy_consistency", 0) < 0.6:
             html += "<p>Consider 'Emotional Journey' or 'Energy Wave' for better energy flow.</p>"
         if quality_metrics.get("bpm_smoothness", 0) < 0.6:
-            html += "<p>Try increasing BPM tolerance or using 'Consistent' algorithm.</p>"
+            html += (
+                "<p>Try increasing BPM tolerance or using 'Consistent' algorithm.</p>"
+            )
 
         self.text_edit.setHtml(html)
 
@@ -1969,10 +2066,10 @@ class MainWindow(QMainWindow):
         self.timeline_panel = TimelinePanel()
         self.analytics_panel = AnalyticsPanel()
 
-        self.content_stack.addWidget(self.library_panel)    # Index 0
-        self.content_stack.addWidget(self.playlist_panel)   # Index 1
-        self.content_stack.addWidget(self.mix_tips_panel)   # Index 2
-        self.content_stack.addWidget(self.timeline_panel)   # Index 3
+        self.content_stack.addWidget(self.library_panel)  # Index 0
+        self.content_stack.addWidget(self.playlist_panel)  # Index 1
+        self.content_stack.addWidget(self.mix_tips_panel)  # Index 2
+        self.content_stack.addWidget(self.timeline_panel)  # Index 3
         self.content_stack.addWidget(self.analytics_panel)  # Index 4
 
         right_layout.addWidget(self.content_stack, 1)
@@ -2125,7 +2222,8 @@ class MainWindow(QMainWindow):
 
         # Daten an alle Panels verteilen
         self.playlist_panel.set_playlist_data(
-            playlist, quality_metrics,
+            playlist,
+            quality_metrics,
             transition_recommendations=transition_plan,
             bpm_tolerance=self.current_bpm_tolerance,
         )
@@ -2139,9 +2237,7 @@ class MainWindow(QMainWindow):
         overall = quality_metrics.get("overall_score", 0)
         self.toolbar.set_quality(overall)
         self.toolbar.set_export_enabled(True)
-        self.toolbar.set_info(
-            f"{len(playlist)} tracks | {self.current_playlist_mode}"
-        )
+        self.toolbar.set_info(f"{len(playlist)} tracks | {self.current_playlist_mode}")
 
         # StatusBar
         self.status_bar.set_status(
@@ -2175,7 +2271,8 @@ class MainWindow(QMainWindow):
         """Playlist exportieren — M3U8 oder Rekordbox XML."""
         if not self.playlist:
             QMessageBox.warning(
-                self, "No Playlist",
+                self,
+                "No Playlist",
                 "No playlist to export. Analyze audio files first.",
             )
             return
@@ -2200,7 +2297,8 @@ class MainWindow(QMainWindow):
                 self._export_m3u8(file_path)
         except Exception as e:
             QMessageBox.critical(
-                self, "Export Error",
+                self,
+                "Export Error",
                 f"Failed to export playlist:\n{str(e)}",
             )
 
@@ -2211,7 +2309,8 @@ class MainWindow(QMainWindow):
             exporter.export(self.playlist, file_path, playlist_name)
 
             QMessageBox.information(
-                self, "Export Successful",
+                self,
+                "Export Successful",
                 f"M3U8 Playlist exported!\n\n"
                 f"Location: {file_path}\n"
                 f"Tracks: {len(self.playlist)}\n"
@@ -2227,7 +2326,8 @@ class MainWindow(QMainWindow):
             exporter.export(self.playlist, file_path, playlist_name)
 
             QMessageBox.information(
-                self, "Export Successful",
+                self,
+                "Export Successful",
                 f"Rekordbox XML exported!\n\n"
                 f"Location: {file_path}\n"
                 f"Tracks: {len(self.playlist)}\n"
@@ -2235,7 +2335,8 @@ class MainWindow(QMainWindow):
             )
         except ImportError:
             QMessageBox.critical(
-                self, "Library Missing",
+                self,
+                "Library Missing",
                 "pyrekordbox not installed! Falling back to M3U8...",
             )
             m3u8_path = file_path.replace(".xml", ".m3u8")
@@ -2271,9 +2372,7 @@ class MainWindow(QMainWindow):
                 f"   Score: {compatibility.overall_score:.1%} "
                 f"(Harmonic: {compatibility.harmonic_score}/100)\n"
             )
-            transitions_info += (
-                f"   BPM: {current.bpm:.1f} -> {next_track.bpm:.1f}\n"
-            )
+            transitions_info += f"   BPM: {current.bpm:.1f} -> {next_track.bpm:.1f}\n"
             transitions_info += (
                 f"   Key: {current.camelotCode} -> {next_track.camelotCode}\n\n"
             )
