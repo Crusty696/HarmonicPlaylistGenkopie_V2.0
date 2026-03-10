@@ -15,6 +15,7 @@ import sys
 import hashlib
 import time
 import logging
+import errno
 from contextlib import contextmanager
 from .models import Track
 from .config import CACHE_LOCK_TIMEOUT
@@ -32,6 +33,7 @@ if sys.platform == 'win32':
 
     def _lock_file(file_handle):
         """Lock file on Windows using msvcrt"""
+        # Lock first byte. LK_NBLCK = Non-blocking lock
         msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
 
     def _unlock_file(file_handle):
@@ -59,25 +61,25 @@ else:
 def file_lock(lock_path: str, timeout: float = 5.0):
     """
     Cross-platform file-based locking context manager for multi-process synchronization.
-
-    Args:
-        lock_path: Path to lock file
-        timeout: Maximum time to wait for lock (seconds)
-
-    Yields:
-        File handle (locked)
-
-    Raises:
-        TimeoutError: If lock cannot be acquired within timeout
+    Includes robust retry logic for Windows PermissionErrors.
     """
     lock_file_handle = None
     start_time = time.time()
 
     try:
-        # Create lock file if it doesn't exist
-        lock_file_handle = open(lock_path, 'w')
+        # Step 1: Open the lock file with retries for PermissionError (Windows)
+        while True:
+            try:
+                lock_file_handle = open(lock_path, 'w')
+                break
+            except (PermissionError, IOError) as e:
+                # On Windows, open() can fail with Errno 13 if another process just closed it
+                # but the OS hasn't released the handle yet.
+                if time.time() - start_time > timeout:
+                    raise TimeoutError(f"Could not open lock file {lock_path} within {timeout}s: {e}")
+                time.sleep(0.02)
 
-        # Try to acquire exclusive lock with timeout
+        # Step 2: Acquire exclusive lock with timeout
         while True:
             try:
                 _lock_file(lock_file_handle)
@@ -91,107 +93,81 @@ def file_lock(lock_path: str, timeout: float = 5.0):
 
     finally:
         if lock_file_handle:
-            _unlock_file(lock_file_handle)
-            lock_file_handle.close()
+            try:
+                _unlock_file(lock_file_handle)
+            except:
+                pass
+            try:
+                lock_file_handle.close()
+            except:
+                pass
 
 
 def init_cache() -> None:
     """Initializes the cache with thread-safe version checking."""
-    # Ensure directory exists if path is provided
     cache_dir = os.path.dirname(CACHE_FILE)
     if cache_dir and not os.path.exists(cache_dir):
         os.makedirs(cache_dir, exist_ok=True)
 
-    with file_lock(LOCK_FILE):
-        with shelve.open(CACHE_FILE) as db:
-            current_version = db.get('cache_version')
-            if current_version is None:
-                db['cache_version'] = CACHE_VERSION
-                logger.info(f"Cache initialisiert (Version {CACHE_VERSION})")
-            elif current_version != CACHE_VERSION:
-                logger.warning(f"Cache-Version veraltet (alt: {current_version}, neu: {CACHE_VERSION}). Cache geleert.")
-                db.clear()
-                db['cache_version'] = CACHE_VERSION
+    try:
+        with file_lock(LOCK_FILE):
+            with shelve.open(CACHE_FILE) as db:
+                current_version = db.get('cache_version')
+                if current_version is None:
+                    db['cache_version'] = CACHE_VERSION
+                    logger.info(f"Cache initialisiert (Version {CACHE_VERSION})")
+                elif current_version != CACHE_VERSION:
+                    logger.warning(f"Cache-Version veraltet. Cache geleert.")
+                    db.clear()
+                    db['cache_version'] = CACHE_VERSION
+    except Exception as e:
+        logger.error(f"Init-Fehler: {e}")
 
 
 def generate_cache_key(file_path: str) -> str | None:
-    """
-    Generates a cache key based on file path, size, and modification time.
-
-    Args:
-        file_path: Path to audio file
-
-    Returns:
-        Cache key string or None if file not found
-    """
+    """Generates a cache key based on file path, size, and modification time."""
     if not file_path:
         return None
-
     identifier = str(file_path)
-
     try:
         stat = os.stat(identifier)
         return f"{identifier}-{stat.st_size}-{stat.st_mtime}"
-    except (FileNotFoundError, TypeError, ValueError):
-        return None
-    except OSError:
-        digest = hashlib.sha256(identifier.encode("utf-8", "ignore")).hexdigest()
-        return f"{digest}"
+    except:
+        return hashlib.sha256(identifier.encode("utf-8", "ignore")).hexdigest()
 
 
 def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
-    """
-    Retrieves a track from the cache using thread-safe locking.
-    Double-checks file mtime inside the lock to prevent TOCTOU race conditions.
-
-    Args:
-        cache_key: Cache key for the track
-        file_path: Original file path for staleness check (optional)
-
-    Returns:
-        Track object or None if not found or stale
-    """
+    """Retrieves a track from the cache using thread-safe locking."""
     if not cache_key:
         return None
 
     try:
-        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+        # Increase timeout slightly for reading to reduce collision risk
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT + 2.0):
             with shelve.open(CACHE_FILE) as db:
                 track = db.get(cache_key)
                 if track and file_path:
-                    # Double-check: Datei hat sich nicht zwischen Key-Generierung und Lesen geaendert
                     try:
                         stat = os.stat(file_path)
                         expected_key = f"{file_path}-{stat.st_size}-{stat.st_mtime}"
                         if expected_key != cache_key:
-                            return None  # Stale cache key
+                            return None
                     except OSError:
-                        pass  # Datei weg → cached Track trotzdem zurueckgeben
+                        pass
                 return track
-    except TimeoutError:
-        logger.warning(f"Lock-Timeout fuer Key {cache_key[:50]}...")
-        return None
-    except Exception as e:
-        logger.error(f"Cache-Lesefehler: {e}")
+    except Exception:
+        # Fail silently on cache miss due to lock
         return None
 
 
 def cache_track(cache_key: str, track: Track) -> None:
-    """
-    Saves a track to the cache using thread-safe locking.
-
-    Args:
-        cache_key: Cache key for the track
-        track: Track object to cache
-    """
+    """Saves a track to the cache using thread-safe locking."""
     if not cache_key:
         return
 
     try:
-        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT + 2.0):
             with shelve.open(CACHE_FILE) as db:
                 db[cache_key] = track
-    except TimeoutError:
-        logger.warning(f"Lock-Timeout beim Cachen von {track.fileName}")
     except Exception as e:
-        logger.error(f"Cache-Schreibfehler: {e}")
+        logger.debug(f"Caching skipped due to lock: {e}")
