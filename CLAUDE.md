@@ -2,123 +2,54 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# HPG — Harmonic Playlist Generator V2.0
+# HPG � Harmonic Playlist Generator V2.0
 
 ## Projektarchitektur
 
-```
+`
 main.py                    # PyQt6 GUI (~1600 Zeilen), QThread-Worker-Muster
-hpg_core/
+hpg_core/                  # Core analysis modules
   models.py                # Track-Dataclass (25+ Felder), TrackSection
   analysis.py              # Audio-Analyse (librosa): BPM, Key, Energy, Sections
-  config.py                # Alle konfigurierbaren Konstanten (PARALLEL_ANALYSIS_TIMEOUT etc.)
-  caching.py               # shelve-basierter Cache mit Cross-Platform File Locking
+  config.py                # Alle konfigurierbaren Konstanten
+  caching.py               # shelve-basierter Cache
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Verse/Drop/Outro)
-  dj_brain.py              # Genre-spezifische Mix-Logik, Transition-Empfehlungen
+  dj_brain.py              # Genre-spezifische Mix-Logik
   playlist.py              # Playlist-Generierung und Scoring
   rekordbox_importer.py    # Rekordbox-Datenbank Import (optional)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest, 29 Test-Dateien, ~80% Coverage
-```
+tests/                     # pytest (725+ Tests), Integrationstests
+tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection)
+docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
+plans/                     # Entwicklungsplaene und Roadmaps
+scripts/                   # Build- und Utility-Skripte
+`
 
 ## Python-Pfad (WICHTIG!)
 
 - **Echtes Python:** `C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe`
-- **NICHT** `python` oder `python3` aus PATH — findet Windows Store Stub
 - In Bash-Tool: `powershell -Command "& 'C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe' ..."`
 
 ## Tests ausfuehren
 
-```bash
+`ash
 powershell -Command "Set-Location 'C:\Users\david\Dokumente\HarmonicPlaylistGenkopie_V2.0-main'; & 'C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe' -m pytest tests/ --tb=short -q"
-```
-
-Test-Audio-Dateien: `D:\beatport_tracks_2025-08`
+`
 
 ## Coding-Konventionen
 
 - 2 Leerzeichen Einrueckung (keine Tabs)
 - Kommentare auf **Deutsch**
-- HTML in QTextBrowser IMMER mit `html_mod.escape()` escapen (import: `import html as html_mod`)
-- UI-Updates NUR im Main-Thread (nie direkt aus Worker-Threads)
-- `setUpdatesEnabled(False/True)` um Batch-Updates in Tabellen
+- UI-Updates NUR im Main-Thread
+- Hilfsskripte aus `tools/` muessen den Parent-Pfad zu `sys.path` hinzufuegen
 
 ## Geschuetzte Dateien (NICHT editieren)
 
-- `track_cache.*` — shelve Cache-Dateien
-- `*.lock`, `*.dbm`, `*.dat`, `*.coverage` — Lock- und Coverage-Dateien
-- `__pycache__/`, `.pytest_cache/` — Caches
+- `track_cache.*`, `hpg_cache_v10.*` � Cache-Dateien
+- `*.lock`, `*.coverage` � System-Dateien
 
-## Git
-
-- Repo: `https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0.git`
-- Branch: `main`
-- Vor jedem Commit: Tests laufen lassen (`/test`)
-
-## Wichtige Muster
-
-### Worker-Thread (Thread-Safety)
-```python
-class AnalysisWorker(QThread):
-    def __init__(self):
-        self._should_cancel = False
-    def request_cancel(self):
-        self._should_cancel = True
-    def run(self):
-        if self._should_cancel:
-            return
-```
-
-### Cache TOCTOU-Fix
-```python
-# Double-check nach Lock-Akquise
-stat = os.stat(file_path)
-expected_key = f"{file_path}-{stat.st_size}-{stat.st_mtime}"
-if expected_key != cache_key:
-    return None  # Stale
-```
-
-### TrackSection.to_dict() Schluessel
-`label`, `start_time`, `end_time`, `start_bar`, `end_bar`, `avg_energy`
-(NICHT `start`/`end` — das sind die falschen Namen!)
-
-## Analyse-Pipeline (WICHTIG fuer Debugging)
-
-### Zwei Analyse-Pfade in analysis.py
-1. **Rekordbox Fast-Path** (~Zeile 615-733): Liest BPM/Key aus Rekordbox-DB, macht nur Energy/Genre/Structure
-2. **Vollstaendige Librosa-Analyse** (~Zeile 736-830): BPM-Erkennung, Chroma, Energy, Genre, Structure
-
-### BPM-Halftime-Korrektur (Zeile 761)
-```python
-if 40 < bpm < 95:  # Librosa erkennt manchmal halbe BPM bei elektronischer Musik
-    bpm = round(bpm * 2, 2)
-```
-**ACHTUNG:** War fruehers `< 100` — das konnte 80 BPM → 160 BPM verdoppeln und
-faelschlicherweise DnB ausloesen (DnB-Range: 160-180 BPM). Fix: `< 95` + Hard BPM-Guard.
-
-### Analyse-Geschwindigkeit
-"Analyse viel schneller" = fast immer **Cache-Hits** aus `track_cache.*` (shelve). Kein Bug.
-
-## Genre-Klassifikation (ACHTUNG: Fallstricke)
-
-### Scoring-System (genre_classifier.py)
-- Regelbasiert, kein ML. Gewichte: BPM 35%, Spectral 20%, Rhythm 20%, Dynamics 15%, Bass 10%
-- `_score_range()` gibt **ausserhalb der Range** noch Punkte (exponentieller Abfall)
-- Confidence = `(best_score * 0.6) + (gap_to_2nd * 2.0 * 0.4)`
-- Konfigurierbar: `GENRE_CONFIDENCE_THRESHOLD` und `DNB_MINIMUM_BPM` in config.py
-
-### DnB False-Positives (gefixt)
-**Ursache:** BPM-Halftime-Korrektur konnte ~80 BPM → ~160 BPM machen → DnB-Range.
-**Fix:** Hard BPM-Guard in `classify_genre()`: `if features.bpm < DNB_MINIMUM_BPM: scores["Drum & Bass"] = 0.0`
-**ID3-Tags:** Haben immer Vorrang (confidence=1.0). Falsche ID3-Tags = falsche Klassifikation.
-
-## Projekt-Status
-
-- DJ Brain Phase 1-5: KOMPLETT
-- Audit 2026-02-20: 15 Findings, 11/15 behoben (siehe `.claude/audit-reports/2026-02-20-audit.md`)
-- Debugging-Infrastruktur: KOMPLETT (logging_config.py, profiling.py, 3 Debug-Skripte)
-- 961 Tests, 4 skipped (pyrekordbox), 0 failed
-- Coverage: ~78%
-- Alle konfigurierbaren Konstanten in `config.py` zentralisiert
+## Analyse-Pipeline
+1. **Rekordbox Fast-Path**: Nutzt existierende Metadaten.
+2. **Vollstaendige Librosa-Analyse**: Volle Audio-Analyse falls Metadaten fehlen.

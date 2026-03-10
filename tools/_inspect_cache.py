@@ -3,9 +3,9 @@
 import sys, io, shelve
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-sys.path.insert(0, ".")
+import os; from pathlib import Path; sys.path.insert(0, str(Path(__file__).parent.parent))
 
-CACHE_FILE = "hpg_cache_v10.dbm"
+CACHE_FILE = os.path.join(str(Path(__file__).parent.parent), 'hpg_cache_v10.dbm')
 
 with shelve.open(CACHE_FILE) as db:
     print(f"Cache-Einträge gesamt: {len(db)}\n")

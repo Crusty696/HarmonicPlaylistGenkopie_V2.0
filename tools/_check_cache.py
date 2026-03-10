@@ -1,7 +1,7 @@
 import sys, io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-sys.path.insert(0, ".")
+import os; from pathlib import Path; sys.path.insert(0, str(Path(__file__).parent.parent))
 import hpg_core.caching as c
 
 print("CACHE_FILE:", c.CACHE_FILE)
