@@ -30,6 +30,10 @@ class GenreMixProfile:
   eq_strategy: str                 # EQ-Empfehlung
   mix_technique: str               # Primaere Mix-Technik
   description: str                 # Kurze Genre-Beschreibung fuer UI
+  # Psytrance/Trance: Mix-In am ANFANG des Intros (Bar 1 = 00:00),
+  # weil der DJ Track B vom ersten Beat an spielt und das Intro ueber
+  # Track A's Outro legt. Default False = Ende des Intros (fuer Tech House etc.)
+  mix_in_at_intro_start: bool = False
 
 GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   "Psytrance": GenreMixProfile(
@@ -41,6 +45,7 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
     eq_strategy="Bass Swap an der Drop-Grenze",
     mix_technique="Langer Intro/Outro-Overlap mit Bass Swap",
     description="Psytrance: 16-Bar Phrasen, Bass Swap am Drop",
+    mix_in_at_intro_start=True,  # Intro von Anfang spielen, nicht ab Drop
   ),
   "Tech House": GenreMixProfile(
     name="Tech House",
@@ -101,6 +106,7 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
     eq_strategy="Bass Swap am Build, Melodie rein-filtern",
     mix_technique="Breakdown-basiertes Blending, Melodie-Layering",
     description="Trance: 16-Bar Phrasen, Breakdown-Blends",
+    mix_in_at_intro_start=True,  # Wie Psytrance: Intro von Anfang spielen
   ),
   "Drum & Bass": GenreMixProfile(
     name="Drum & Bass",
@@ -303,7 +309,9 @@ def calculate_genre_aware_mix_points(
     mix_out_time = round(mix_out_time / grid_seconds) * grid_seconds
 
   # Sicherheitsgrenzen
-  mix_in_time = max(seconds_per_bar, min(mix_in_time, duration * 0.4))
+  # Bei mix_in_at_intro_start (Psytrance/Trance): 0.0 ist korrekt (Bar 1)
+  min_mix_in = 0.0 if profile.mix_in_at_intro_start else seconds_per_bar
+  mix_in_time = max(min_mix_in, min(mix_in_time, duration * 0.4))
   mix_out_time = min(duration - seconds_per_bar, max(mix_out_time, duration * 0.6))
 
   # Sicherstellen, dass Mix-Out nach Mix-In liegt
@@ -335,6 +343,16 @@ def _find_mix_in_point(
   3. Energie-basierter Fallback: Erste Sektion mit ueberdurchschnittlicher Energie
   4. Letzter Fallback: Genre-Profil Intro-Bars als Schaetzung
   """
+  # --- Psytrance/Trance: Mix-In am ANFANG des Intros (Bar 1 = 00:00) ---
+  # Standard-Psytrance-Technik: DJ startet Track B vom ersten Beat an und legt
+  # das bassfreie Intro ueber Track A's Outro. Der Bass-Swap passiert am Drop.
+  # Quelle: clubreadydjschool.com, psynews, djingtips u.a.
+  if profile.mix_in_at_intro_start:
+    for section in sections:
+      if section.get("label", "main") == "intro":
+        return section.get("start_time", 0.0)
+    return 0.0  # Kein Intro erkannt -> absoluter Track-Anfang
+
   # --- Strategie 1: Ende aller zusammenhaengenden Intro-Sektionen ---
   last_intro_idx = -1
   for i, section in enumerate(sections):
@@ -460,6 +478,18 @@ class DJRecommendation:
   # Risiko-Bewertung
   risk_notes: list[str] = field(default_factory=list)  # z.B. ["BPM difference > 5"]
 
+  # NEU: Track-spezifische Empfehlungen (immer ausgefuellt, nie generisch)
+  bpm_advice: str = ""        # Konkrete BPM/Pitching-Empfehlung
+  key_advice: str = ""        # Camelot-basierte Tonart-Empfehlung
+  energy_advice: str = ""     # Energie-Empfehlung basierend auf tatsaechlicher Differenz
+  transition_type: str = "smooth_blend"  # Transition-Typ (fuer Farben in UI)
+
+  # Paarspezifische Mix-Punkte (ueberschreiben die gespeicherten Track-Werte)
+  # -1.0 = nicht berechnet -> UI nutzt track.mix_out_point / track.mix_in_point
+  adjusted_mix_out_a: float = -1.0   # Angepasster Mix-Out fuer Track A (Sekunden)
+  adjusted_mix_in_b: float = -1.0    # Angepasster Mix-In fuer Track B (Sekunden)
+  overlap_seconds: float = 0.0       # Berechnete Overlap-Dauer des Uebergangs
+
 
 def generate_dj_recommendation(
   track_a: Track,
@@ -488,10 +518,11 @@ def generate_dj_recommendation(
   profile_b = get_mix_profile(genre_b)
   profile_a = get_mix_profile(genre_a)
 
-  # Transition-Laenge: Mittelwert aus beiden Profilen
-  avg_transition_bars = int(
-    (profile_a.transition_bars[0] + profile_a.transition_bars[1] +
-     profile_b.transition_bars[0] + profile_b.transition_bars[1]) / 4.0
+  # Transition-Laenge: Dynamisch basierend auf tatsaechlichem BPM/Energy-Delta
+  transition_bars = _dynamic_transition_bars(
+    track_a.bpm, track_b.bpm,
+    float(track_a.energy), float(track_b.energy),
+    profile_a, profile_b,
   )
 
   # Mix-Technik: Verwende die des eingehenden Tracks (der DJ passt sich an)
@@ -511,17 +542,138 @@ def generate_dj_recommendation(
   # Risiko-Bewertung
   risk_notes = _assess_transition_risks(track_a, track_b, compat)
 
+  # Konkrete Track-basierte Empfehlungen (nutzen echte Mess-Werte)
+  bpm_advice = _bpm_advice(track_a.bpm, track_b.bpm)
+  key_advice = _key_advice(track_a.camelotCode, track_b.camelotCode)
+  energy_advice = _energy_advice(float(track_a.energy), float(track_b.energy))
+
+  # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
+  adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
+  overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+
   return DJRecommendation(
     genre_pair=genre_pair,
     genre_compatibility=round(compat, 2),
     mix_technique=mix_technique,
     eq_advice=eq_advice,
-    transition_bars=avg_transition_bars,
+    transition_bars=transition_bars,
     outgoing_section=outgoing_section,
     incoming_section=incoming_section,
     structure_note=structure_note,
     risk_notes=risk_notes,
+    bpm_advice=bpm_advice,
+    key_advice=key_advice,
+    energy_advice=energy_advice,
+    adjusted_mix_out_a=adjusted_mix_out_a,
+    adjusted_mix_in_b=adjusted_mix_in_b,
+    overlap_seconds=round(overlap_seconds, 2),
   )
+
+
+# === Paarspezifische Mix-Punkt-Berechnung ===
+
+def _get_intro_end(track: Track) -> float:
+  """
+  Gibt die Zeit zurueck, wo das Intro von Track endet.
+
+  Scannt sections nach zusammenhaengenden Intro-Sections am Track-Anfang.
+  Fallback: track.mix_in_point (bereits gespeicherter Wert aus Analyse).
+
+  Beispiel:
+    sections: [intro(0-53s), intro(53-106s), drop(106-...)]
+    -> gibt 106.0 zurueck (Ende aller Intro-Sections)
+  """
+  if not track.sections:
+    return track.mix_in_point if track.mix_in_point > 0 else 0.0
+
+  last_intro_end = 0.0
+  for section in track.sections:
+    label = section.get("label", "main")
+    if label == "intro":
+      # Akkumuliere Ende des Intros (auch Multi-Section Intros)
+      last_intro_end = section.get("end_time", section.get("start_time", 0.0))
+    else:
+      # Erste Non-Intro-Section nach dem Intro-Block: fertig
+      if last_intro_end > 0.0:
+        break
+
+  if last_intro_end > 0.0:
+    return last_intro_end
+
+  # Kein Intro erkannt -> gespeicherter mix_in_point als Schaetzung
+  return track.mix_in_point if track.mix_in_point > 0 else 0.0
+
+
+def calculate_paired_mix_points(
+  track_a: Track,
+  track_b: Track,
+) -> tuple[float, float]:
+  """
+  Berechnet aufeinander abgestimmte Mix-Out (Track A) und Mix-In (Track B).
+
+  Problem mit per-Track-Berechnung: Mix-In wird ohne Kenntnis des Partner-Tracks
+  berechnet. Bei Psytrance zB: Mix-In = immer 0.0, egal ob Intro 30s oder 300s.
+
+  Diese Funktion loest das: Overlap = min(intro_dauer_B, outro_dauer_A).
+
+  Beispiel Psytrance:
+    Track A: Duration 420s, Outro ab 367s -> Outro-Dauer = 53s
+    Track B: Intro bis 106s -> Intro-Dauer = 106s
+    Overlap = min(106, 53) = 53s
+    -> Mix-In B = max(0.0, 106 - 53) = 53s  (ab Bar 33, NICHT Bar 1!)
+    -> Mix-Out A = max(367, 420 - 53) = max(367, 367) = 367s (unveraendert)
+
+  Kurzes Intro (Track B Intro = 26s, Track A Outro = 53s):
+    Overlap = min(26, 53) = 26s
+    -> Mix-In B = max(0.0, 26 - 26) = 0.0  (Bar 1, voll von Anfang)
+    -> Mix-Out A = max(367, 420 - 26) = 394s  (spaeter als Original!)
+
+  Args:
+    track_a: Ausgehender Track (dessen Mix-Out angepasst wird)
+    track_b: Eingehender Track (dessen Mix-In angepasst wird)
+
+  Returns:
+    (adjusted_mix_out_a, adjusted_mix_in_b) in Sekunden
+  """
+  profile_b = get_mix_profile(track_b.detected_genre or "Unknown")
+
+  # Nur fuer Genres mit Intro-Start-Technik (Psytrance, Trance)
+  # Andere Genres: gespeicherte Werte behalten
+  if not profile_b.mix_in_at_intro_start:
+    return track_a.mix_out_point, track_b.mix_in_point
+
+  # --- Intro-Dauer von Track B ---
+  intro_end_b = _get_intro_end(track_b)  # Sekunden (absoluter Zeitpunkt)
+
+  # --- Outro-Dauer von Track A ---
+  outro_start_a = track_a.mix_out_point
+  if outro_start_a <= 0:
+    outro_start_a = track_a.duration * 0.8  # Fallback: letzte 20%
+  outro_duration_a = max(0.0, track_a.duration - outro_start_a)
+
+  # --- Minimaler Overlap: mindestens 8 Bars (fuer BPM-Anpassung) ---
+  bpm_b = track_b.bpm if track_b.bpm > 0 else 140.0
+  seconds_per_bar_b = (60.0 / bpm_b) * METER
+  min_overlap = seconds_per_bar_b * 8  # mind. 8 Bars Overlap
+
+  # --- Target Overlap: das Minimum beider Seiten (nicht mehr als das Kuerzere) ---
+  target_overlap = max(min_overlap, min(intro_end_b, outro_duration_a))
+
+  # --- Track B Mix-In: Starte so spaet, dass noch genau target_overlap bleibt ---
+  adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
+
+  # --- Track A Mix-Out: target_overlap Sekunden vor Track-Ende ---
+  adjusted_mix_out_a = track_a.duration - target_overlap
+  # Aber nicht frueher als das urspruenglich berechnete Mix-Out
+  # (wir verschieben nur nach hinten, nie nach vorne -- das waere schlechter)
+  adjusted_mix_out_a = max(outro_start_a, adjusted_mix_out_a)
+
+  # Sicherheitscheck: Mix-Out vor Track-Ende
+  bpm_a = track_a.bpm if track_a.bpm > 0 else 140.0
+  seconds_per_bar_a = (60.0 / bpm_a) * METER
+  adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
+
+  return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
 
 
 # === Hilfsfunktionen ===
@@ -585,6 +737,171 @@ def _build_structure_note(outgoing: str, incoming: str) -> str:
   if outgoing == "build" and incoming == "intro":
     return "OK: Build in Intro -- Energie passt"
   return f"Struktur: {outgoing} -> {incoming}"
+
+
+def _bpm_advice(bpm_a: float, bpm_b: float) -> str:
+  """
+  Gibt eine konkrete BPM/Pitching-Empfehlung basierend auf der tatsaechlichen Differenz.
+
+  Keine generischen Phrasen -- immer die echten Zahlen nennen.
+  Wird als Prefix "BPM: ..." in die Transition-Notes injiziert.
+  """
+  if bpm_a <= 0 or bpm_b <= 0:
+    return ""
+
+  diff = bpm_b - bpm_a
+  abs_diff = abs(diff)
+  pct = abs(diff / bpm_a) * 100  # Pitch-Prozent-Aenderung
+
+  if abs_diff < 0.3:
+    return f"{bpm_a:.1f} → {bpm_b:.1f} — Match, kein Pitching noetig"
+  elif abs_diff <= 2.0:
+    direction = "runter" if diff < 0 else "rauf"
+    return f"{bpm_a:.1f} → {bpm_b:.1f} (Diff {diff:+.1f}) — Pitch-Fader {pct:.1f}% {direction}"
+  elif abs_diff <= 5.0:
+    direction = "runter" if diff < 0 else "rauf"
+    return (
+      f"{bpm_a:.1f} → {bpm_b:.1f} (Diff {diff:+.1f})"
+      f" — {pct:.1f}% {direction} pitchen, frueh beginnen"
+    )
+  elif abs_diff <= 10.0:
+    return f"{bpm_a:.1f} → {bpm_b:.1f} (Diff {diff:+.1f}) — Tempo im Intro angleichen"
+  else:
+    return f"{bpm_a:.1f} → {bpm_b:.1f} (Diff {diff:+.1f}) — Breakdown-Bridge oder Cold Cut"
+
+
+def _key_advice(code_a: str, code_b: str) -> str:
+  """
+  Gibt eine Camelot-basierte Tonart-Empfehlung.
+
+  Camelot Wheel: 1-12A/B (kreisfoermig), harmonisch = Distanz 1 gleicher Buchstabe.
+  Wird als Prefix "Key: ..." in die Transition-Notes injiziert.
+  """
+  code_a = (code_a or "").strip()
+  code_b = (code_b or "").strip()
+  if not code_a or not code_b:
+    return ""
+
+  # Gleiche Tonart = perfekt
+  if code_a == code_b:
+    return f"{code_a} → {code_b} — Gleiche Tonart, perfekt harmonisch"
+
+  num_a = _extract_camelot_number(code_a)
+  num_b = _extract_camelot_number(code_b)
+  letter_a = code_a[-1].upper() if len(code_a) >= 2 else ""
+  letter_b = code_b[-1].upper() if len(code_b) >= 2 else ""
+
+  if num_a <= 0 or num_b <= 0:
+    return f"{code_a} → {code_b}"
+
+  # Camelot-Distanz: Kreis 1-12, kuerzester Weg
+  dist = min(abs(num_a - num_b), 12 - abs(num_a - num_b))
+
+  # Richtung auf dem Rad (+ = im Uhrzeigersinn)
+  direct = (num_b - num_a) % 12
+  direction = "+" if direct <= 6 else "-"
+
+  # Gleiche Nummer, A/B-Wechsel = Dur/Moll (Relative Major/Minor)
+  if num_a == num_b:
+    return f"{code_a} → {code_b} — Dur/Moll-Wechsel, smooth energy shift"
+
+  if dist == 1 and letter_a == letter_b:
+    return f"{code_a} → {code_b} — 1 Schritt ({direction}), harmonisch blendbar"
+  elif dist == 1:
+    return f"{code_a} → {code_b} — 1 Schritt ({direction}) + Modus-Wechsel, energy mix"
+  elif dist == 2:
+    return f"{code_a} → {code_b} — Distanz {dist}, Filter-Ride empfohlen"
+  elif dist == 3:
+    return f"{code_a} → {code_b} — Distanz {dist}, dezenter Clash — kein Melodie-Overlap"
+  else:
+    return f"{code_a} → {code_b} — Distanz {dist}, Key-Clash — nur Bass Swap"
+
+
+def _energy_advice(energy_a: float, energy_b: float) -> str:
+  """
+  Gibt eine Energie-Empfehlung basierend auf den tatsaechlichen Track-Werten.
+
+  Zeigt immer die echten Zahlen statt generischer Labels.
+  Wird als Prefix "Energy: ..." in die Transition-Notes injiziert.
+  """
+  if energy_a <= 0 and energy_b <= 0:
+    return ""
+
+  diff = energy_b - energy_a
+  abs_diff = abs(diff)
+
+  if abs_diff <= 5:
+    return (
+      f"{energy_a:.0f} → {energy_b:.0f} (Diff {diff:+.0f})"
+      f" — stabil, normaler Crossfade"
+    )
+  elif diff > 25:
+    return (
+      f"{energy_a:.0f} → {energy_b:.0f} (Diff {diff:+.0f})"
+      f" — Push, Drop-Cut oder Build-Einstieg"
+    )
+  elif diff > 10:
+    return (
+      f"{energy_a:.0f} → {energy_b:.0f} (Diff {diff:+.0f})"
+      f" — Aufbau, im Build einmixen"
+    )
+  elif diff < -25:
+    return (
+      f"{energy_a:.0f} → {energy_b:.0f} (Diff {diff:+.0f})"
+      f" — Drop, Breakdown-Uebergang planen"
+    )
+  elif diff < -10:
+    return (
+      f"{energy_a:.0f} → {energy_b:.0f} (Diff {diff:+.0f})"
+      f" — Abfall, im Outro ueberblenden"
+    )
+  else:
+    return (
+      f"{energy_a:.0f} → {energy_b:.0f} (Diff {diff:+.0f})"
+      f" — leichter Shift, smooth moeglich"
+    )
+
+
+def _dynamic_transition_bars(
+  bpm_a: float,
+  bpm_b: float,
+  energy_a: float,
+  energy_b: float,
+  profile_a: GenreMixProfile,
+  profile_b: GenreMixProfile,
+) -> int:
+  """
+  Berechnet die optimale Transition-Laenge in Bars.
+
+  Basiert auf dem Durchschnitt der Genre-Profile, passt sich aber
+  an die tatsaechlichen BPM- und Energie-Differenzen an.
+  Groessere Unterschiede = mehr Zeit zum Angleichen.
+  """
+  # Basis: Durchschnitt aus beiden Genre-Profilen
+  base = int(
+    (profile_a.transition_bars[0] + profile_a.transition_bars[1] +
+     profile_b.transition_bars[0] + profile_b.transition_bars[1]) / 4.0
+  )
+
+  bpm_diff = abs(bpm_a - bpm_b)
+  energy_diff = abs(energy_a - energy_b)
+
+  # Mehr Zeit fuer grosse Abweichungen
+  if bpm_diff > 8:
+    base += 8   # Viel Zeit zum Tempo-Angleichen
+  elif bpm_diff > 4:
+    base += 4
+
+  if energy_diff > 25:
+    base += 4   # Mehr Zeit fuer grossen Energie-Shift
+
+  # Kuerzer wenn beides gut passt
+  if bpm_diff < 1.0 and energy_diff < 10:
+    base -= 4
+
+  # Auf naechste 4-Bar-Grenze runden, Minimum 8 Bars
+  base = max(8, round(base / 4) * 4)
+  return base
 
 
 def _get_cross_genre_technique(genre_a: str, genre_b: str) -> str:

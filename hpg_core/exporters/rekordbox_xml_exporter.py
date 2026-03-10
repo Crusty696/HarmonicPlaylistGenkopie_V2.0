@@ -10,17 +10,21 @@ Exports playlists in Rekordbox XML format with full metadata:
 Compatible with Rekordbox 5.x, 6.x, 7.x
 """
 
+import logging
 import os
 from typing import List, Optional
 from ..models import Track
 from .base_exporter import BaseExporter
 
+logger = logging.getLogger(__name__)
+
 try:
     from pyrekordbox.rbxml import RekordboxXml
+
     PYREKORDBOX_AVAILABLE = True
 except ImportError:
     PYREKORDBOX_AVAILABLE = False
-    print("[WARNING] pyrekordbox not installed. Install with: pip install pyrekordbox")
+    logging.getLogger(__name__).warning("pyrekordbox nicht installiert. Install: pip install pyrekordbox")
 
 
 class RekordboxXMLExporter(BaseExporter):
@@ -38,14 +42,31 @@ class RekordboxXMLExporter(BaseExporter):
     # Camelot Wheel → Rekordbox Key Mapping
     CAMELOT_TO_REKORDBOX = {
         # Major Keys (B)
-        '1B': 'B',    '2B': 'Gb',   '3B': 'Db',   '4B': 'Ab',
-        '5B': 'Eb',   '6B': 'Bb',   '7B': 'F',    '8B': 'C',
-        '9B': 'G',    '10B': 'D',   '11B': 'A',   '12B': 'E',
-
+        "1B": "B",
+        "2B": "Gb",
+        "3B": "Db",
+        "4B": "Ab",
+        "5B": "Eb",
+        "6B": "Bb",
+        "7B": "F",
+        "8B": "C",
+        "9B": "G",
+        "10B": "D",
+        "11B": "A",
+        "12B": "E",
         # Minor Keys (A)
-        '1A': 'Abm',  '2A': 'Ebm',  '3A': 'Bbm',  '4A': 'Fm',
-        '5A': 'Cm',   '6A': 'Gm',   '7A': 'Dm',   '8A': 'Am',
-        '9A': 'Em',   '10A': 'Bm',  '11A': 'Gbm', '12A': 'Dbm',
+        "1A": "Abm",
+        "2A": "Ebm",
+        "3A": "Bbm",
+        "4A": "Fm",
+        "5A": "Cm",
+        "6A": "Gm",
+        "7A": "Dm",
+        "8A": "Am",
+        "9A": "Em",
+        "10A": "Bm",
+        "11A": "Gbm",
+        "12A": "Dbm",
     }
 
     def __init__(self):
@@ -61,7 +82,12 @@ class RekordboxXMLExporter(BaseExporter):
                 "Install with: pip install pyrekordbox"
             )
 
-    def export(self, playlist: List[Track], output_path: str, playlist_name: str = "HPG Playlist") -> None:
+    def export(
+        self,
+        playlist: List[Track],
+        output_path: str,
+        playlist_name: str = "HPG Playlist",
+    ) -> None:
         """
         Export playlist to Rekordbox XML format
 
@@ -94,15 +120,14 @@ class RekordboxXMLExporter(BaseExporter):
             # Save XML
             xml.save(output_path)
 
-            print(f"✅ Rekordbox XML exported: {output_path}")
-            print(f"   Tracks: {len(playlist)}")
-            print(f"   Playlist: {playlist_name}")
-            print(f"   Format: Rekordbox XML (Professional)")
+            logger.info(f"Rekordbox XML exportiert: {output_path} ({len(playlist)} Tracks, Playlist: {playlist_name})")
 
         except Exception as e:
             raise IOError(f"Failed to export Rekordbox XML: {e}")
 
-    def _add_track_to_collection(self, xml: 'RekordboxXml', track: Track, track_id: int) -> None:
+    def _add_track_to_collection(
+        self, xml: "RekordboxXml", track: Track, track_id: int
+    ) -> None:
         """
         Add a single track to the Rekordbox XML collection
 
@@ -140,21 +165,23 @@ class RekordboxXMLExporter(BaseExporter):
         # Add Cue Points (Mix In/Out markers)
         self._add_cue_points(xml, rb_track, track)
 
-    def _add_cue_points(self, xml: 'RekordboxXml', rb_track: dict, track: Track) -> None:
+    def _add_cue_points(
+        self, xml: "RekordboxXml", rb_track: dict, track: Track
+    ) -> None:
         """
         Add Cue Points (Memory Cues) to track.
         Uses the internal structure of pyrekordbox track objects to add POSITION_MARKs.
         """
         try:
             # Mix In Point
-            if hasattr(track, 'mix_in_point') and track.mix_in_point > 0:
+            if hasattr(track, "mix_in_point") and track.mix_in_point > 0:
                 xml.add_cue(rb_track, name="MIX IN", time=track.mix_in_point, type=0)
-            
+
             # Mix Out Point
-            if hasattr(track, 'mix_out_point') and track.mix_out_point > 0:
+            if hasattr(track, "mix_out_point") and track.mix_out_point > 0:
                 xml.add_cue(rb_track, name="MIX OUT", time=track.mix_out_point, type=0)
         except Exception as e:
-            print(f"[WARNING] Could not add cue points to XML: {e}")
+            logger.warning(f"Cue Points konnten nicht zur XML hinzugefuegt werden: {e}")
 
     def _convert_to_rekordbox_uri(self, file_path: str) -> str:
         """
@@ -170,9 +197,9 @@ class RekordboxXMLExporter(BaseExporter):
         abs_path = os.path.abspath(file_path)
 
         # Convert to URI format
-        if os.name == 'nt':  # Windows
+        if os.name == "nt":  # Windows
             # Replace backslashes with forward slashes
-            abs_path = abs_path.replace('\\', '/')
+            abs_path = abs_path.replace("\\", "/")
             uri = f"file://localhost/{abs_path}"
         else:  # Unix/Linux/Mac
             uri = f"file://localhost{abs_path}"
@@ -189,7 +216,10 @@ class RekordboxXMLExporter(BaseExporter):
         Returns:
             Rekordbox key notation (e.g., "Am", "G") or None if unknown
         """
-        return self.CAMELOT_TO_REKORDBOX.get(camelot_code)
+        # m2: Case-Normalisierung fuer robuste Lookup
+        if not camelot_code:
+            return None
+        return self.CAMELOT_TO_REKORDBOX.get(camelot_code.upper().strip())
 
     def get_format_info(self) -> dict:
         """
@@ -199,33 +229,29 @@ class RekordboxXMLExporter(BaseExporter):
             Dictionary with format information
         """
         return {
-            'format': 'Rekordbox XML',
-            'extension': '.xml',
-            'compatible_with': [
-                'Rekordbox 5.x',
-                'Rekordbox 6.x',
-                'Rekordbox 7.x'
+            "format": "Rekordbox XML",
+            "extension": ".xml",
+            "compatible_with": ["Rekordbox 5.x", "Rekordbox 6.x", "Rekordbox 7.x"],
+            "features": [
+                "Track paths (URI format)",
+                "Artist, Title, Genre metadata",
+                "BPM & Tempo information",
+                "Key (Musical Key)",
+                "Cue Points (Memory Cues)",
+                "Mix In/Out markers",
+                "Playlist hierarchy",
+                "Duration",
             ],
-            'features': [
-                'Track paths (URI format)',
-                'Artist, Title, Genre metadata',
-                'BPM & Tempo information',
-                'Key (Musical Key)',
-                'Cue Points (Memory Cues)',
-                'Mix In/Out markers',
-                'Playlist hierarchy',
-                'Duration'
-            ],
-            'metadata_mapping': {
-                'bpm': 'AverageBpm',
-                'key': 'Tonality (Camelot → Key)',
-                'mix_in_point': 'POSITION_MARK (MIX IN)',
-                'mix_out_point': 'POSITION_MARK (MIX OUT)',
-                'file_path': 'Location (URI)',
-                'artist': 'Artist',
-                'title': 'Name',
-                'genre': 'Genre',
-                'duration': 'TotalTime'
+            "metadata_mapping": {
+                "bpm": "AverageBpm",
+                "key": "Tonality (Camelot → Key)",
+                "mix_in_point": "POSITION_MARK (MIX IN)",
+                "mix_out_point": "POSITION_MARK (MIX OUT)",
+                "file_path": "Location (URI)",
+                "artist": "Artist",
+                "title": "Name",
+                "genre": "Genre",
+                "duration": "TotalTime",
             },
-            'dependencies': ['pyrekordbox>=0.3.0']
+            "dependencies": ["pyrekordbox>=0.3.0"],
         }

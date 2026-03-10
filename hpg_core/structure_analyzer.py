@@ -20,11 +20,14 @@ Algorithm:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, asdict
 import numpy as np
 import librosa
 
-from .config import HOP_LENGTH, METER
+from .config import HOP_LENGTH, METER, SECTION_ENERGY_THRESHOLD
+
+logger = logging.getLogger(__name__)
 
 
 # === Data Structures ===
@@ -104,14 +107,32 @@ def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH)
   # Extract MFCCs (13 coefficients, standard for music)
   mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop_length)
 
+  # Check for minimum MFCC length (needs at least 10 frames for recurrence matrix)
+  num_frames = mfcc.shape[1]
+  if num_frames < 10:
+    # Audio too short for novelty analysis
+    novelty = np.zeros(num_frames)
+    times = librosa.frames_to_time(np.arange(num_frames), sr=sr, hop_length=hop_length)
+    return novelty, times
+
   # Compute self-similarity using recurrence matrix
   # This creates a matrix where similar frames have high values
-  rec = librosa.segment.recurrence_matrix(
-    mfcc,
-    width=int(sr / hop_length * 4),  # ~4 second context window
-    mode='affinity',
-    sym=True,
-  )
+  # Width must be strictly less than (num_frames - 1) // 2 (safety margin for edge cases)
+  max_width = max(4, (num_frames - 1) // 2 - 1)  # Strict limit with safety margin
+  width = min(int(sr / hop_length * 4), max_width)  # ~4 second context window, but capped
+  try:
+    rec = librosa.segment.recurrence_matrix(
+      mfcc,
+      width=width,
+      mode='affinity',
+      sym=True,
+    )
+  except Exception:
+    # Audio signal is empty or too quiet for recurrence matrix (sparse/empty graph)
+    # This can happen with silent or very short audio files
+    novelty = np.zeros(num_frames)
+    times = librosa.frames_to_time(np.arange(num_frames), sr=sr, hop_length=hop_length)
+    return novelty, times
 
   # Compute novelty from the recurrence matrix
   # Novelty is high where the local structure changes
@@ -178,9 +199,9 @@ def _pick_boundaries(
   else:
     return [0.0]
 
-  # Find peaks with minimum height and distance
-  # Start with a moderate threshold, lower it if we get too few peaks
-  threshold = 0.3
+  # Peaks mit Mindest-Hoehe und Abstand finden
+  # M2 Audit-Fix: Threshold aus config.py statt Magic Number
+  threshold = SECTION_ENERGY_THRESHOLD
   boundaries = []
 
   while threshold >= 0.1 and len(boundaries) < MIN_SECTIONS - 1:
@@ -483,7 +504,7 @@ def analyze_structure(
       boundaries = _quantize_to_bars(boundaries, bpm, duration, phrase_unit)
 
   except Exception as e:
-    print(f"  [STRUCTURE] Novelty analysis failed: {e}")
+    logger.warning(f"Novelty-Analyse fehlgeschlagen: {e}")
     # Fallback: simple 3-section split
     third = duration / 3.0
     boundaries = [0.0, third, 2.0 * third]

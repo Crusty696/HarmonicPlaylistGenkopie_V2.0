@@ -14,6 +14,7 @@ from hpg_core.dj_brain import (
   get_genre_compatibility,
   get_mix_profile,
   calculate_genre_aware_mix_points,
+  calculate_paired_mix_points,
   generate_dj_recommendation,
   GenreMixProfile,
   DJRecommendation,
@@ -22,6 +23,7 @@ from hpg_core.dj_brain import (
   DEFAULT_MIX_PROFILE,
   _find_mix_in_point,
   _find_mix_out_point,
+  _get_intro_end,
   _get_section_at_mix_out,
   _get_section_at_mix_in,
   _build_structure_note,
@@ -239,20 +241,24 @@ class TestMixPointCalculation:
     mix_in, mix_out, bars_in, bars_out = calculate_genre_aware_mix_points(
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
-    assert mix_in > 0.0
+    # Psytrance: Mix-In am ANFANG des Intros (Bar 1 = 0.0s)
+    # Standard-Psytrance-Technik: DJ spielt Track B vom ersten Beat an
+    assert mix_in >= 0.0
     assert mix_out < 420.0
     assert mix_out > mix_in
-    assert bars_in > 0
+    assert bars_in >= 0  # Bar 1 = Index 0 ist korrekt fuer Psytrance
     assert bars_out > bars_in
 
   def test_mix_in_after_intro(self):
-    """Mix-In sollte nach dem Intro sein (Intro endet bei 60s)."""
+    """Psytrance Mix-In am Anfang des Intros (Bar 1 = 00:00)."""
     sections = _standard_sections()
     mix_in, _, _, _ = calculate_genre_aware_mix_points(
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
-    # Mix-In sollte in der Naehe des Intro-Endes (60s) sein, quantisiert
-    assert 30.0 <= mix_in <= 120.0
+    # Psytrance-Technik: DJ startet Track B vom allerersten Beat.
+    # Das bassfreie Intro liegt ueber Track A's Outro. Kein "nach dem Intro" cuen.
+    # Quelle: clubreadydjschool, psynews, djingtips (12+ Quellen)
+    assert mix_in == 0.0
 
   def test_mix_out_at_outro(self):
     """Mix-Out sollte am Outro sein (Outro beginnt bei 360s)."""
@@ -308,9 +314,9 @@ class TestMixPointCalculation:
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
     # 16-bar phrase unit fuer Psytrance
-    # Bars sollten in der Naehe eines 16er-Vielfachen sein
-    # (exakte Quantisierung haengt von Rundung ab)
-    assert bars_in > 0
+    # Mix-In bei Bar 1 (Index 0) = korrekt fuer Psytrance
+    # (DJ spielt Track B ab dem allerersten Beat)
+    assert bars_in >= 0  # Bar 1 = 0 ist korrekt
     assert bars_out > bars_in
 
   def test_tech_house_shorter_transitions(self):
@@ -429,11 +435,14 @@ class TestHelperFunctions:
   """Tests fuer interne Hilfsfunktionen."""
 
   def test_find_mix_in_after_intro(self):
+    """Psytrance Mix-In am Anfang des Intros (0.0s = Bar 1)."""
     sections = _standard_sections()
     profile = get_mix_profile("Psytrance")
     spb = (60.0 / 140.0) * 4  # seconds per bar
     result = _find_mix_in_point(sections, profile, spb)
-    assert result == 60.0  # Build beginnt bei 60s (nach Intro)
+    # Psytrance: mix_in_at_intro_start=True → Intro-Anfang zurueckgeben (0.0s)
+    # Nicht mehr Build-Anfang (60s), da DJ ab Bar 1 spielt
+    assert result == 0.0
 
   def test_find_mix_in_no_intro(self):
     sections = [
@@ -573,3 +582,232 @@ class TestPlaylistIntegration:
     rec = recs[0]
     # DJ Brain Notes sollten Mix-Technik oder EQ enthalten
     assert "Mix:" in rec.notes or "EQ:" in rec.notes or "Transition:" in rec.notes
+
+
+# === Paarspezifische Mix-Punkt-Berechnung ===
+
+def _psytrance_sections_long():
+  """Psytrance-Track mit langem Intro: 2x 64 Bars = 128 Bars = 106.2s (bei 145 BPM)."""
+  spb = (60.0 / 145.0) * 4  # 1.655s/Bar
+  intro1_end = 64 * spb      # ~105.9s
+  intro2_end = 128 * spb     # ~211.7s
+  drop_end   = 256 * spb     # ~423.4s
+  outro_start = drop_end     # Outro danach
+  duration    = outro_start + 64 * spb  # ~529s
+  return [
+    {"label": "intro", "start_time": 0.0,          "end_time": intro1_end, "start_bar": 0,   "end_bar": 64,  "avg_energy": 20.0},
+    {"label": "intro", "start_time": intro1_end,   "end_time": intro2_end, "start_bar": 64,  "end_bar": 128, "avg_energy": 25.0},
+    {"label": "drop",  "start_time": intro2_end,   "end_time": drop_end,   "start_bar": 128, "end_bar": 256, "avg_energy": 90.0},
+    {"label": "outro", "start_time": outro_start,  "end_time": duration,   "start_bar": 256, "end_bar": 320, "avg_energy": 20.0},
+  ], duration
+
+
+def _psytrance_sections_short():
+  """Psytrance-Track mit kurzem Intro: 16 Bars = 26.2s (bei 146 BPM)."""
+  spb = (60.0 / 146.0) * 4
+  intro_end   = 16 * spb   # ~26.2s
+  drop_end    = 128 * spb  # ~209.6s
+  outro_start = drop_end
+  duration    = outro_start + 32 * spb  # ~261.9s
+  return [
+    {"label": "intro", "start_time": 0.0,         "end_time": intro_end,  "start_bar": 0,   "end_bar": 16,  "avg_energy": 18.0},
+    {"label": "drop",  "start_time": intro_end,   "end_time": drop_end,   "start_bar": 16,  "end_bar": 128, "avg_energy": 88.0},
+    {"label": "outro", "start_time": outro_start, "end_time": duration,   "start_bar": 128, "end_bar": 160, "avg_energy": 18.0},
+  ], duration
+
+
+class TestGetIntroEnd:
+  """Tests fuer _get_intro_end(): Wo endet das Intro wirklich?"""
+
+  def test_standard_single_intro(self):
+    """Standard-Sections: Intro endet bei 60.0s."""
+    track = _make_track(sections=_standard_sections(), mix_in=60.0)
+    assert _get_intro_end(track) == 60.0
+
+  def test_long_multi_section_intro(self):
+    """Zwei aufeinanderfolgende Intro-Sections werden kumuliert."""
+    sections, duration = _psytrance_sections_long()
+    spb = (60.0 / 145.0) * 4
+    expected_end = round(128 * spb, 1)  # ~211.7s
+    track = _make_track(
+      genre="Psytrance", bpm=145.0, duration=duration,
+      sections=sections, mix_in=0.0,
+    )
+    assert abs(_get_intro_end(track) - expected_end) < 1.0  # 1s Toleranz
+
+  def test_no_intro_section_fallback_to_mix_in(self):
+    """Track ohne Intro-Section -> Fallback auf mix_in_point."""
+    sections = [
+      {"label": "drop",  "start_time": 0.0,   "end_time": 120.0, "avg_energy": 85.0},
+      {"label": "outro", "start_time": 120.0, "end_time": 180.0, "avg_energy": 20.0},
+    ]
+    track = _make_track(sections=sections, mix_in=45.0)
+    assert _get_intro_end(track) == 45.0
+
+  def test_no_sections_at_all(self):
+    """Leere sections -> mix_in_point."""
+    track = _make_track(sections=[], mix_in=88.0)
+    assert _get_intro_end(track) == 88.0
+
+  def test_no_sections_no_mix_in(self):
+    """Weder sections noch mix_in_point -> 0.0."""
+    track = _make_track(sections=[], mix_in=0.0)
+    assert _get_intro_end(track) == 0.0
+
+
+class TestCalculatePairedMixPoints:
+  """
+  Tests fuer calculate_paired_mix_points(track_a, track_b).
+
+  Szenario-Uebersicht:
+    [Gleiches Intro/Outro]: Overlap = min(60, 60) = 60s -> Mix-In B = 0.0
+    [Langes Intro B]:       Overlap = min(212, 60) = 60s -> Mix-In B = 152s
+    [Kurzes Intro B]:       Overlap = min(26, 60) = 26s  -> Mix-In B = 0.0, Mix-Out A spaeter
+    [Non-Psytrance]:        Unveraenderte gespeicherte Werte
+  """
+
+  def test_equal_intro_outro_mix_in_zero(self):
+    """
+    Intro B = 60s, Outro A = 60s.
+    Overlap = 60s -> Mix-In B = max(0, 60-60) = 0.0 (Bar 1).
+    """
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_in=60.0,
+    )
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+    assert mix_in_b == 0.0, f"Mix-In B sollte 0.0 sein, war {mix_in_b}"
+    assert mix_out_a == 360.0, f"Mix-Out A unveraendert, war {mix_out_a}"
+
+  def test_long_intro_mix_in_not_zero(self):
+    """
+    Intro B = ~212s, Outro A = 60s.
+    Overlap = min(212, 60) = 60s -> Mix-In B = ~152s (NICHT 0.0!).
+    """
+    sections_b, duration_b = _psytrance_sections_long()
+    spb_b = (60.0 / 145.0) * 4
+    intro_end_b = 128 * spb_b  # ~211.7s
+
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=145.0, duration=duration_b,
+      sections=sections_b, mix_in=0.0,
+    )
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    # Mix-In B = intro_end - outro_dauer_A = 211.7 - 60 = ~151.7s
+    expected_mix_in_b = intro_end_b - 60.0
+    assert mix_in_b > 0.0, (
+      f"Bei langem Intro sollte Mix-In B > 0 sein, war {mix_in_b}"
+    )
+    assert abs(mix_in_b - expected_mix_in_b) < 2.0, (
+      f"Mix-In B sollte ~{expected_mix_in_b:.1f}s sein, war {mix_in_b}"
+    )
+    # Mix-Out A bleibt bei 360.0 (nicht frueher als gespeichert)
+    assert mix_out_a >= 360.0, f"Mix-Out A darf nicht frueher sein, war {mix_out_a}"
+
+  def test_short_intro_mix_in_zero_mix_out_later(self):
+    """
+    Intro B = ~26s, Outro A = 60s.
+    Overlap = 26s (kuerzer!) -> Mix-In B = 0.0, Mix-Out A = 420-26 = 394s (spaeter!).
+    """
+    sections_b, duration_b = _psytrance_sections_short()
+
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=146.0, duration=duration_b,
+      sections=sections_b, mix_in=0.0,
+    )
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    # Mix-In B = 0.0 (Intro zu kurz fuer Offset)
+    assert mix_in_b == 0.0, f"Kurzes Intro -> Mix-In B = 0.0, war {mix_in_b}"
+    # Mix-Out A verspaetet sich: jetzt ~394s statt 360s
+    assert mix_out_a > 360.0, (
+      f"Kurzes Intro -> Mix-Out A soll spaeter sein, war {mix_out_a}"
+    )
+    assert mix_out_a < 420.0, f"Mix-Out A muss vor Track-Ende liegen"
+
+  def test_non_psytrance_returns_stored_values(self):
+    """
+    Tech House: Keine mix_in_at_intro_start-Logik.
+    Gespeicherte Werte bleiben unveraendert.
+    """
+    track_a = _make_track(
+      genre="Tech House", bpm=130.0, duration=360.0,
+      sections=_standard_sections(), mix_out=288.0,
+    )
+    track_b = _make_track(
+      genre="Tech House", bpm=132.0, duration=360.0,
+      sections=_standard_sections(), mix_in=55.0,
+    )
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    assert mix_out_a == 288.0, f"Tech House Mix-Out unveraendert, war {mix_out_a}"
+    assert mix_in_b == 55.0,  f"Tech House Mix-In unveraendert, war {mix_in_b}"
+
+  def test_overlap_minimum_8_bars(self):
+    """
+    Auch mit sehr kurzem Intro: Overlap mindestens 8 Bars.
+    """
+    sections_b, duration_b = _psytrance_sections_short()
+    bpm_b = 146.0
+    spb_b = (60.0 / bpm_b) * 4
+    min_expected_overlap = 8 * spb_b  # ~13.7s
+
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=bpm_b, duration=duration_b,
+      sections=sections_b, mix_in=0.0,
+    )
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+    actual_overlap = track_a.duration - mix_out_a
+
+    assert actual_overlap >= min_expected_overlap, (
+      f"Overlap {actual_overlap:.1f}s < Minimum {min_expected_overlap:.1f}s (8 Bars)"
+    )
+
+  def test_recommendation_includes_paired_points(self):
+    """generate_dj_recommendation() befuellt adjusted_mix_out_a und adjusted_mix_in_b."""
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_in=0.0,
+    )
+    rec = generate_dj_recommendation(track_a, track_b)
+
+    assert rec.adjusted_mix_out_a >= 0.0,   "adjusted_mix_out_a muss gesetzt sein"
+    assert rec.adjusted_mix_in_b >= 0.0,    "adjusted_mix_in_b muss gesetzt sein"
+    assert rec.overlap_seconds > 0.0,        "overlap_seconds muss > 0 sein"
+
+  def test_trance_same_as_psytrance_logic(self):
+    """Trance hat ebenfalls mix_in_at_intro_start=True -> gleiches Verhalten."""
+    track_a = _make_track(
+      genre="Trance", bpm=138.0, duration=400.0,
+      sections=_standard_sections(), mix_out=340.0,
+    )
+    track_b = _make_track(
+      genre="Trance", bpm=140.0, duration=400.0,
+      sections=_standard_sections(), mix_in=0.0,
+    )
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    # Intro B = 60s, Outro A = 400 - 340 = 60s -> Mix-In B = 0.0
+    assert mix_in_b == 0.0, f"Trance Mix-In B = 0.0, war {mix_in_b}"
+    assert mix_out_a >= 340.0

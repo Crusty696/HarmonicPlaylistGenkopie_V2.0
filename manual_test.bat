@@ -15,9 +15,9 @@ echo   Anderer Ordner:   manual_test.bat --folder "D:\mein_ordner"
 echo.
 
 if "%~1"=="" (
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -X utf8 manual_test.py
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -X utf8 tools\manual_test.py
 ) else (
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -X utf8 manual_test.py %*
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -X utf8 tools\manual_test.py %*
 )
 
 if %errorlevel% neq 0 (

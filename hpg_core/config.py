@@ -82,9 +82,28 @@ MINIMAL_BPM_RANGE = (120, 132)
 GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2  # Wenn DJ Brain Genre-Daten vorhanden
 GENRE_WEIGHT_WITHOUT_DJ_BRAIN = 0.1  # Fallback ohne DJ Brain Daten
 
+# === Librosa Memory Protection (K2 Audit-Fix) ===
+# Maximale Lade-Dauer in Sekunden — begrenzt RAM-Verbrauch bei langen Tracks.
+# Rekordbox Fast-Path: BPM/Key kommt aus DB, daher reichen 120s fuer Energy/Genre.
+# Volle Analyse: 600s (10 Min) als Sicherheitsnetz gegen riesige Dateien.
+LIBROSA_FAST_PATH_DURATION = 120  # Sekunden (fuer Rekordbox-Pfad)
+LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
+
 # === Parallel Analysis ===
 PARALLEL_ANALYSIS_TIMEOUT = 60  # Sekunden pro Track (schuetzt gegen korrupte Dateien)
+PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder feste Zahl
+
+# === Cache Lock ===
+CACHE_LOCK_TIMEOUT = 5.0  # Sekunden (vorher 2.0 — zu kurz bei langsamer Disk/SSD)
+
+# === Structure Analysis ===
+SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung (0.1-0.5)
 
 # === BPM Half/Double Tolerance ===
 BPM_HALF_DOUBLE_ENABLED = True  # 140 BPM ↔ 70 BPM als kompatibel erkennen
 BPM_HALF_DOUBLE_PENALTY = 0.85  # Leichter Abzug fuer Half/Double Transitions (0-1)
+
+# === Logging & Debugging ===
+LOG_LEVEL = "INFO"  # Standard-Level: DEBUG, INFO, WARNING, ERROR
+LOG_TO_FILE = True  # Logdatei unter logs/hpg.log (mit Rotation)
+LOG_TO_CONSOLE = True  # Konsolenausgabe auf stderr

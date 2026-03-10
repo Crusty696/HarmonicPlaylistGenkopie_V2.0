@@ -26,10 +26,13 @@ Sources:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 import numpy as np
 import librosa
 from .config import GENRE_CONFIDENCE_THRESHOLD, DNB_MINIMUM_BPM
+
+logger = logging.getLogger(__name__)
 
 
 # === Genre Classification Result ===
@@ -44,6 +47,8 @@ class GenreClassification:
     confidence: float  # 0.0-1.0
     source: str  # "audio_analysis" or "id3_tag"
     scores: dict = field(default_factory=dict)  # Per-genre scores for transparency
+    # M1 Audit-Fix: MFCC-Mean direkt mitliefern (vermeidet doppelte Berechnung)
+    mfcc_fingerprint: list = field(default_factory=list)
 
 
 # === Audio Feature Extraction ===
@@ -430,8 +435,20 @@ def _score_range(
     """
     Score how well a value fits within a range.
 
-    Returns 1.0 if at the center, drops off with distance.
-    Returns 0.0 if far outside the range.
+    Scoring-Zonen (H2 Audit-Fix: Dokumentation verbessert):
+    - distance <= 0.5: Innerhalb der Range → 1.0 (center) bis 0.8 (Rand)
+    - distance <= 1.0: Knapp ausserhalb → 0.8 bis 0.2 (linearer Abfall)
+    - distance <= 2.0: Weit ausserhalb → exponentieller Abfall bis ~0.0
+    - distance > 2.0:  Hard-Cutoff → 0.0 (verhindert ueberraschende Zuweisungen)
+
+    Args:
+        value: Zu bewertender Wert (z.B. BPM)
+        range_min: Untere Grenze der Genre-Range
+        range_max: Obere Grenze der Genre-Range
+        center: Optimaler Wert (Default: Mitte der Range)
+
+    Returns:
+        float: Score zwischen 0.0 und 1.0
     """
     if center is None:
         center = (range_min + range_max) / 2.0
@@ -440,18 +457,21 @@ def _score_range(
     if range_width <= 0:
         return 1.0 if value == center else 0.0
 
-    # Distance from center, normalized by range width
+    # Distanz vom Center, normalisiert auf Range-Breite
     distance = abs(value - center) / range_width
 
     if distance <= 0.5:
-        # Inside the range: high score
+        # Innerhalb der Range: hoher Score
         return 1.0 - (distance * 0.4)  # 1.0 at center, 0.8 at edges
     elif distance <= 1.0:
-        # Just outside range: moderate score
+        # Knapp ausserhalb: moderater Score
         return 0.8 - (distance - 0.5) * 1.2  # 0.8 at edge, 0.2 at 1x outside
-    else:
-        # Far outside: low score with exponential decay
+    elif distance <= 2.0:
+        # Weit ausserhalb: exponentieller Abfall
         return max(0.0, 0.2 * np.exp(-(distance - 1.0)))
+    else:
+        # H2 Hard-Cutoff: >2x Range-Breite entfernt → definitiv kein Match
+        return 0.0
 
 
 def _score_genre(features: GenreFeatures, profile: GenreProfile) -> float:
@@ -535,10 +555,13 @@ def classify_genre(
     # Step 2: Audio-based classification
     try:
         features = extract_genre_features(y, sr, bpm, bass_intensity)
+        # M1 Audit-Fix: MFCC-Mean fuer Fingerprint mitfuehren (spart doppelte Berechnung)
+        mfcc_fp = [round(float(v), 4) for v in features.mfcc_means]
     except Exception as e:
-        print(f"  [GENRE] Feature extraction failed: {e}")
+        logger.error(f"Feature-Extraktion fehlgeschlagen: {e}")
         return GenreClassification(
-            genre="Unknown", confidence=0.0, source="audio_analysis", scores={}
+            genre="Unknown", confidence=0.0, source="audio_analysis",
+            scores={}, mfcc_fingerprint=[]
         )
 
     # Step 3: Score each genre
@@ -576,6 +599,7 @@ def classify_genre(
             confidence=confidence,
             source="audio_analysis",
             scores=scores,
+            mfcc_fingerprint=mfcc_fp,
         )
 
     return GenreClassification(
@@ -583,4 +607,5 @@ def classify_genre(
         confidence=round(confidence, 3),
         source="audio_analysis",
         scores={k: round(v, 3) for k, v in scores.items()},
+        mfcc_fingerprint=mfcc_fp,
     )

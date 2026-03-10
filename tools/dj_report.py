@@ -7,7 +7,7 @@ import io
 # UTF-8 Ausgabe erzwingen fuer Windows
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-sys.path.insert(0, ".")
+import os; from pathlib import Path; sys.path.insert(0, str(Path(__file__).parent.parent))
 from hpg_core.analysis import analyze_track
 
 OK = "[OK]"

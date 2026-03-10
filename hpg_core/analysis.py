@@ -1,11 +1,14 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
+import logging
 import numpy as np
 import librosa
 import mutagen
 import os
 import re
 from math import floor
+
+logger = logging.getLogger(__name__)
 from .models import Track, CAMELOT_MAP
 from .config import (
     HOP_LENGTH,
@@ -17,14 +20,16 @@ from .config import (
     RMS_THRESHOLD,
     DEFAULT_BPM,
     BPM_HALFTIME_MAX_RESULT,
+    LIBROSA_FAST_PATH_DURATION,
+    LIBROSA_MAX_DURATION,
 )
 
 # Reverse mapping: Camelot code → (Note, Mode)
 REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
 from .caching import generate_cache_key, get_cached_track, cache_track
 from .rekordbox_importer import get_rekordbox_importer
-from .genre_classifier import classify_genre
-from .structure_analyzer import analyze_structure
+from .genre_classifier import classify_genre, GenreClassification
+from .structure_analyzer import analyze_structure, TrackStructure
 from .dj_brain import calculate_genre_aware_mix_points
 
 # Krumhansl-Schmuckler key profiles (simplified)
@@ -35,7 +40,7 @@ MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.3
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
-def get_key(chroma_vector):
+def get_key(chroma_vector: np.ndarray) -> tuple[str, str]:
     """Determines the key from a chroma vector by correlating with major/minor profiles."""
     major_correlations = []
     minor_correlations = []
@@ -62,7 +67,7 @@ def get_key(chroma_vector):
     return key_note, key_mode
 
 
-def calculate_energy(y):
+def calculate_energy(y: np.ndarray) -> int:
     """Calculates the overall energy of a track and scales it to 0-100."""
     if y is None or len(y) == 0:
         return 0
@@ -83,7 +88,7 @@ def calculate_energy(y):
     return int(min(max(energy_scaled, 0.0), 100.0))
 
 
-def calculate_bass_intensity(y, sr):
+def calculate_bass_intensity(y: np.ndarray, sr: int) -> int:
     """Calculates the bass intensity (20-150Hz) and scales it to 0-100."""
     if y is None or len(y) == 0 or sr is None or sr <= 0:
         return 0
@@ -125,7 +130,7 @@ def calculate_bass_intensity(y, sr):
     return int(min(max(bass_intensity, 0.0), 100.0))
 
 
-def calculate_brightness(y, sr):
+def calculate_brightness(y: np.ndarray, sr: int) -> int:
     """
     Berechnet die spektrale Helligkeit eines Tracks (0-100).
 
@@ -163,11 +168,11 @@ def calculate_brightness(y, sr):
         brightness = float(np.interp(mean_centroid, [500.0, 8000.0], [0.0, 100.0]))
         return int(min(max(brightness, 0.0), 100.0))
     except Exception as e:
-        print(f"[BRIGHTNESS] Error: {e}")
+        logger.error(f"Brightness-Berechnung fehlgeschlagen: {e}")
         return 0
 
 
-def detect_vocal_instrumental(y, sr):
+def detect_vocal_instrumental(y: np.ndarray, sr: int) -> str:
     """
     Erkennt ob ein Track Vocals oder nur Instrumental enthält.
 
@@ -236,11 +241,11 @@ def detect_vocal_instrumental(y, sr):
             return "unknown"
 
     except Exception as e:
-        print(f"[VOCAL] Error: {e}")
+        logger.error(f"Vocal-Erkennung fehlgeschlagen: {e}")
         return "unknown"
 
 
-def calculate_danceability(y, sr, bpm=None):
+def calculate_danceability(y: np.ndarray, sr: int, bpm: float | None = None) -> int:
     """
     Berechnet die Tanzbarkeit eines Tracks (0-100).
 
@@ -359,11 +364,11 @@ def calculate_danceability(y, sr, bpm=None):
         return int(min(max(danceability, 0.0), 100.0))
 
     except Exception as e:
-        print(f"[DANCEABILITY] Error: {e}")
+        logger.error(f"Danceability-Berechnung fehlgeschlagen: {e}")
         return 0
 
 
-def calculate_mfcc_fingerprint(y, sr, n_mfcc=13):
+def calculate_mfcc_fingerprint(y: np.ndarray, sr: int, n_mfcc: int = 13) -> list[float]:
     """
     Berechnet einen kompakten MFCC-Fingerprint für Similarity-Vergleiche.
 
@@ -390,11 +395,11 @@ def calculate_mfcc_fingerprint(y, sr, n_mfcc=13):
         mean_mfccs = np.mean(mfccs, axis=1)
         return [round(float(v), 4) for v in mean_mfccs]
     except Exception as e:
-        print(f"[MFCC] Error: {e}")
+        logger.error(f"MFCC-Fingerprint fehlgeschlagen: {e}")
         return []
 
 
-def parse_filename_for_metadata(file_path):
+def parse_filename_for_metadata(file_path: str) -> tuple[str, str]:
     """
     Extracts Artist and Title from filename using common DJ filename patterns.
 
@@ -433,7 +438,7 @@ def parse_filename_for_metadata(file_path):
     return None, None
 
 
-def extract_metadata(file_path):
+def extract_metadata(file_path: str) -> tuple[str, str, str]:
     """
     Extracts Artist, Title, and Genre from ID3 tags or filename.
 
@@ -454,7 +459,7 @@ def extract_metadata(file_path):
             title = audio.get("title", [None])[0]
             genre = audio.get("genre", [None])[0]
     except Exception as e:
-        print(f"Warning: Error reading ID3 tags for {file_path}: {e}")
+        logger.warning(f"ID3-Tags nicht lesbar fuer {file_path}: {e}")
 
     # Fallback to filename parsing if artist or title is missing
     if not artist or not title or artist == "Unknown" or title == "Unknown":
@@ -502,12 +507,14 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
                     bpm = float(raw_val.strip())
                     if 20.0 < bpm < 300.0:
                         return round(bpm, 2)
-    except Exception:
-        pass  # Kein BPM in Tags → Librosa-Fallback
+    except Exception as e:
+        # M4 Audit-Fix: Nicht mehr still verschlucken
+        logger.debug(f"Kein BPM in ID3-Tags fuer {file_path}: {e}")
+        pass  # Librosa-Fallback
     return None
 
 
-def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
+def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float) -> tuple[float, float, int, int]:
     """
     Analyzes the audio structure to find intro/outro and calculates optimal mix points.
 
@@ -643,7 +650,7 @@ def analyze_structure_and_mix_points(y, sr, duration, energy_level, bpm):
         )
 
     except Exception as e:
-        print(f"Error in analyze_structure_and_mix_points: {e}")
+        logger.error(f"Fehler in analyze_structure_and_mix_points: {e}")
         # Safe fallback
         safe_in = min(max(duration * 0.2, 0.0), max(duration - 1.0, 0.0))
         safe_out = max(duration * 0.8, safe_in + 1.0)
@@ -672,17 +679,17 @@ def analyze_track(file_path: str) -> Track | None:
         return None
 
     if not os.path.exists(file_path):
-        print(f"Error: File not found at {file_path}")
+        logger.error(f"Datei nicht gefunden: {file_path}")
         return None
 
     cache_key = generate_cache_key(file_path)
     cached_track = get_cached_track(cache_key, file_path=file_path)
 
     if cached_track:
-        print(f"Cache hit for: {os.path.basename(file_path)}")
+        logger.debug(f"Cache-Hit: {os.path.basename(file_path)}")
         return cached_track
 
-    print(f"Analyzing: {os.path.basename(file_path)}")
+    logger.info(f"Analysiere: {os.path.basename(file_path)}")
 
     # Try to get analysis data from Rekordbox first (MUCH faster!)
     rekordbox_importer = get_rekordbox_importer()
@@ -690,8 +697,8 @@ def analyze_track(file_path: str) -> Track | None:
 
     if rekordbox_data and rekordbox_data.bpm:
         # Rekordbox data available - use it!
-        print(
-            f"  [RB] Using Rekordbox data (BPM: {rekordbox_data.bpm}, Key: {rekordbox_data.camelot_code})"
+        logger.info(
+            f"Rekordbox-Daten: BPM={rekordbox_data.bpm}, Key={rekordbox_data.camelot_code}"
         )
 
         # Still extract ID3 tags (Rekordbox might have different metadata)
@@ -703,9 +710,11 @@ def analyze_track(file_path: str) -> Track | None:
         genre = rekordbox_data.genre or genre_id3
 
         # For duration and some missing data, we still need librosa (quick load only)
+        # K2 Audit-Fix: Dauer begrenzen — BPM/Key kommt aus Rekordbox, nur Energy/Genre noetig
         try:
-            y, sr = librosa.load(file_path)
-            duration = rekordbox_data.duration or librosa.get_duration(y=y, sr=sr)
+            y, sr = librosa.load(file_path, duration=LIBROSA_FAST_PATH_DURATION)
+            # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
+            duration = rekordbox_data.duration or float(librosa.get_duration(path=file_path))
 
             # Calculate energy and bass (not in Rekordbox)
             energy = calculate_energy(y)
@@ -715,16 +724,16 @@ def analyze_track(file_path: str) -> Track | None:
             genre_result = classify_genre(
                 y, sr, rekordbox_data.bpm, bass_intensity, genre
             )
-            print(
-                f"  [GENRE] {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
+            logger.info(
+                f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
             )
 
             # DJ Brain: Struktur-Analyse
             structure = analyze_structure(y, sr, rekordbox_data.bpm, genre_result.genre)
             section_dicts = [s.to_dict() for s in structure.sections]
             section_labels = [s.label for s in structure.sections]
-            print(
-                f"  [STRUCTURE] {len(structure.sections)} sections: {section_labels} (phrase: {structure.phrase_unit} bars)"
+            logger.info(
+                f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
             )
 
             # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
@@ -734,8 +743,8 @@ def analyze_track(file_path: str) -> Track | None:
                         section_dicts, rekordbox_data.bpm, duration, genre_result.genre
                     )
                 )
-                print(
-                    f"  [DJ BRAIN] Mix points: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
+                logger.info(
+                    f"DJ Brain Mix-Punkte: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
                 )
             else:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
@@ -762,13 +771,14 @@ def analyze_track(file_path: str) -> Track | None:
             brightness = calculate_brightness(y, sr)
             vocal_instrumental = detect_vocal_instrumental(y, sr)
             danceability = calculate_danceability(y, sr, rekordbox_data.bpm)
-            mfcc_fingerprint = calculate_mfcc_fingerprint(y, sr)
-            print(
-                f"  [FEATURES] brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
+            # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
+            mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(y, sr)
+            logger.debug(
+                f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
             )
 
         except Exception as e:
-            print(f"  Warning: Quick librosa load failed: {e}")
+            logger.warning(f"Schneller Librosa-Load fehlgeschlagen: {e}")
             duration = rekordbox_data.duration or 0.0
             energy = 50  # Default energy
             bass_intensity = 50
@@ -778,13 +788,13 @@ def analyze_track(file_path: str) -> Track | None:
             vocal_instrumental = "unknown"
             danceability = 0
             mfcc_fingerprint = []
-            genre_result = type(
-                "obj",
-                (object,),
-                {"genre": "Unknown", "confidence": 0.0, "source": "fallback"},
-            )()
+            # K1 Audit-Fix: Richtige Dataclasses statt fragiler Dummy-Objekte
+            genre_result = GenreClassification(
+                genre="Unknown", confidence=0.0, source="fallback",
+                mfcc_fingerprint=[]
+            )
             section_dicts = []
-            structure = type("obj", (object,), {"phrase_unit": 8})()
+            structure = TrackStructure()
 
         # Extract key note and mode from Camelot code (for backward compatibility)
         key_note = "C"
@@ -834,11 +844,12 @@ def analyze_track(file_path: str) -> Track | None:
         return track
 
     # No Rekordbox data - fallback to full librosa analysis
-    print(f"  [LIBROSA] Full analysis (no Rekordbox data)")
+    logger.info(f"Volle Librosa-Analyse (keine Rekordbox-Daten)")
     artist, title, genre = extract_metadata(file_path)
 
     try:
-        y, sr = librosa.load(file_path)
+        # K2 Audit-Fix: Safety-Net gegen extrem lange Dateien (>10 Min)
+        y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
         duration = librosa.get_duration(y=y, sr=sr)
 
         # --- BPM-Erkennung: ID3-Tags haben Vorrang vor Librosa --- #
@@ -847,7 +858,7 @@ def analyze_track(file_path: str) -> Track | None:
         tag_bpm = extract_bpm_from_tags(file_path)
         if tag_bpm is not None:
             bpm = tag_bpm
-            print(f"  [BPM] ID3-Tag: {bpm:.2f} BPM (kein Librosa-Fallback noetig)")
+            logger.info(f"BPM aus ID3-Tag: {bpm:.2f} (kein Librosa-Fallback noetig)")
             beat_frames = np.array([])  # Kein Beat-Tracking noetig
         else:
             # Librosa-Fallback: wenn keine BPM-Tags vorhanden
@@ -874,7 +885,7 @@ def analyze_track(file_path: str) -> Track | None:
                 doubled = round(bpm * 2, 2)
                 if doubled <= BPM_HALFTIME_MAX_RESULT:
                     bpm = doubled
-            print(f"  [BPM] Librosa: {bpm:.2f} BPM (keine BPM-Tags gefunden)")
+            logger.info(f"BPM via Librosa: {bpm:.2f} (keine BPM-Tags gefunden)")
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         chroma_vector = np.mean(chroma, axis=1)
@@ -888,16 +899,16 @@ def analyze_track(file_path: str) -> Track | None:
 
         # DJ Brain: Genre-Klassifikation
         genre_result = classify_genre(y, sr, bpm, bass_intensity, genre)
-        print(
-            f"  [GENRE] {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
+        logger.info(
+            f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
         )
 
         # DJ Brain: Struktur-Analyse
         structure = analyze_structure(y, sr, bpm, genre_result.genre)
         section_dicts = [s.to_dict() for s in structure.sections]
         section_labels = [s.label for s in structure.sections]
-        print(
-            f"  [STRUCTURE] {len(structure.sections)} sections: {section_labels} (phrase: {structure.phrase_unit} bars)"
+        logger.info(
+            f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
         )
 
         # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
@@ -907,8 +918,8 @@ def analyze_track(file_path: str) -> Track | None:
                     section_dicts, bpm, duration, genre_result.genre
                 )
             )
-            print(
-                f"  [DJ BRAIN] Mix points: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
+            logger.info(
+                f"DJ Brain Mix-Punkte: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
             )
         else:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
@@ -919,9 +930,10 @@ def analyze_track(file_path: str) -> Track | None:
         brightness = calculate_brightness(y, sr)
         vocal_instrumental = detect_vocal_instrumental(y, sr)
         danceability = calculate_danceability(y, sr, bpm)
-        mfcc_fingerprint = calculate_mfcc_fingerprint(y, sr)
-        print(
-            f"  [FEATURES] brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
+        # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
+        mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(y, sr)
+        logger.debug(
+            f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
         )
 
         # --- Final Track Object --- #
@@ -957,7 +969,7 @@ def analyze_track(file_path: str) -> Track | None:
         return track
 
     except Exception as e:
-        print(f"Error analyzing {file_path}: {e}")
+        logger.error(f"Analyse fehlgeschlagen fuer {file_path}: {e}")
         return Track(
             filePath=file_path,
             fileName=os.path.basename(file_path),

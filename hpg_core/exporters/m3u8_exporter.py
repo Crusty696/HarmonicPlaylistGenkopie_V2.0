@@ -10,10 +10,13 @@ Exports playlists in M3U8 format, compatible with:
 - Most other DJ software and media players
 """
 
+import logging
 import os
 from typing import List
 from ..models import Track
 from .base_exporter import BaseExporter
+
+logger = logging.getLogger(__name__)
 
 
 class M3U8Exporter(BaseExporter):
@@ -27,7 +30,7 @@ class M3U8Exporter(BaseExporter):
     - No dependencies required
     """
 
-    def __init__(self, encoding: str = 'utf-8'):
+    def __init__(self, encoding: str = "utf-8"):
         """
         Initialize M3U8 Exporter
 
@@ -36,7 +39,12 @@ class M3U8Exporter(BaseExporter):
         """
         self.encoding = encoding
 
-    def export(self, playlist: List[Track], output_path: str, playlist_name: str = "HPG Playlist") -> None:
+    def export(
+        self,
+        playlist: List[Track],
+        output_path: str,
+        playlist_name: str = "HPG Playlist",
+    ) -> None:
         """
         Export playlist to M3U8 format
 
@@ -53,7 +61,7 @@ class M3U8Exporter(BaseExporter):
         self._validate_playlist(playlist)
 
         try:
-            with open(output_path, 'w', encoding=self.encoding) as f:
+            with open(output_path, "w", encoding=self.encoding) as f:
                 # Write header
                 f.write("#EXTM3U\n")
                 f.write(f"#EXTENC:{self.encoding.upper()}\n")
@@ -69,12 +77,11 @@ class M3U8Exporter(BaseExporter):
                     # EXTINF format: #EXTINF:duration,artist - title
                     f.write(f"#EXTINF:{duration},{artist} - {title}\n")
 
-                    # File path
-                    f.write(f"{track.filePath}\n\n")
+                    # M5: Pfade mit Forward-Slashes fuer Cross-Platform-Kompatibilitaet
+                    normalized_path = track.filePath.replace("\\", "/")
+                    f.write(f"{normalized_path}\n\n")
 
-            print(f"✅ M3U8 playlist exported: {output_path}")
-            print(f"   Tracks: {len(playlist)}")
-            print(f"   Format: M3U8 (Universal Compatible)")
+            logger.info(f"M3U8 exportiert: {output_path} ({len(playlist)} Tracks)")
 
         except IOError as e:
             raise IOError(f"Failed to write M3U8 file: {e}")
@@ -87,27 +94,27 @@ class M3U8Exporter(BaseExporter):
             Dictionary with format information
         """
         return {
-            'format': 'M3U8',
-            'extension': '.m3u8',
-            'encoding': self.encoding,
-            'compatible_with': [
-                'Rekordbox 5.x, 6.x, 7.x',
-                'Serato DJ Pro',
-                'Traktor Pro 3',
-                'iTunes/Music.app',
-                'VLC Media Player',
-                'Most DJ Software'
+            "format": "M3U8",
+            "extension": ".m3u8",
+            "encoding": self.encoding,
+            "compatible_with": [
+                "Rekordbox 5.x, 6.x, 7.x",
+                "Serato DJ Pro",
+                "Traktor Pro 3",
+                "iTunes/Music.app",
+                "VLC Media Player",
+                "Most DJ Software",
             ],
-            'features': [
-                'Track paths',
-                'Artist & Title metadata',
-                'Duration information',
-                'UTF-8 support'
+            "features": [
+                "Track paths",
+                "Artist & Title metadata",
+                "Duration information",
+                "UTF-8 support",
             ],
-            'limitations': [
-                'No BPM data',
-                'No Key data',
-                'No Cue Points',
-                'No Beat Grid'
-            ]
+            "limitations": [
+                "No BPM data",
+                "No Key data",
+                "No Cue Points",
+                "No Beat Grid",
+            ],
         }

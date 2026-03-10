@@ -30,6 +30,10 @@ from tests.fixtures.track_factories import (
   make_dj_set,
 )
 
+# Import performance-optimized cached fixtures
+# These provide pre-analyzed Track objects without audio file generation
+pytest_plugins = ["tests.performance_fixtures"]
+
 
 # === Audio Fixtures ===
 
