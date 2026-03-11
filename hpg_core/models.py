@@ -14,6 +14,25 @@ CAMELOT_MAP = {
 }
 
 @dataclass
+class TrackSection:
+    """A labeled section of a track with advanced audio features."""
+    label: str        # "intro", "build", "drop", "breakdown", "outro", "main"
+    start_time: float # Seconds
+    end_time: float   # Seconds
+    start_bar: int
+    end_bar: int
+    avg_energy: float = 0.0
+    avg_bass: float = 0.0
+    avg_mids: float = 0.0
+    avg_highs: float = 0.0
+    percussive_ratio: float = 0.0
+    spectral_flatness: float = 0.0
+
+    def to_dict(self) -> dict:
+        from dataclasses import asdict
+        return asdict(self)
+
+@dataclass
 class Track:
     # Core Info
     filePath: str
@@ -33,11 +52,16 @@ class Track:
     energy: int = 0
     bass_intensity: int = 0
 
+    # Advanced Frequency Bands
+    avg_bass: float = 0.0
+    avg_mids: float = 0.0
+    avg_highs: float = 0.0
+
     # Structural Info
     mix_in_point: float = 0.0
     mix_out_point: float = 0.0
 
-    # Mix Points in Bars (fÃ¼r DJ-Anzeige)
+    # Mix Points in Bars (für DJ-Anzeige)
     mix_in_bars: int = 0
     mix_out_bars: int = 0
 
@@ -51,13 +75,15 @@ class Track:
     phrase_unit: int = 8
 
     # Audio Feature Extensions (Phase 3)
-    brightness: int = 0  # Spektrale Helligkeit 0-100 (dunkelâ†’hell)
+    brightness: int = 0  # Spektrale Helligkeit 0-100 (dunkel?hell)
     vocal_instrumental: str = "unknown"  # "vocal", "instrumental", "unknown"
     danceability: int = 0  # Tanzbarkeit 0-100
-    mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor fÃ¼r Similarity
+    spectral_flatness: float = 0.0
+    percussive_ratio: float = 0.0
+    mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor für Similarity
+    timbre_fingerprint: list = field(default_factory=list)  # Gemittelter MFCC-Fingerabdruck
 
 def key_to_camelot(track: Track):
     """Assigns a Camelot code to a track based on its key."""
     if track.keyNote and track.keyMode:
         track.camelotCode = CAMELOT_MAP.get((track.keyNote, track.keyMode), "")
-

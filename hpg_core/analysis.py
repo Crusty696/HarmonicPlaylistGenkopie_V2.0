@@ -32,6 +32,33 @@ from .genre_classifier import classify_genre, GenreClassification
 from .structure_analyzer import analyze_structure, TrackStructure
 from .dj_brain import calculate_genre_aware_mix_points
 
+def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float]:
+    if y is None or len(y) == 0: return 0.0, 0.0, 0.0
+    S = np.abs(librosa.stft(y, hop_length=HOP_LENGTH))
+    freqs = librosa.fft_frequencies(sr=sr)
+    bass_mask = (freqs >= 20) & (freqs <= 200)
+    mids_mask = (freqs > 200) & (freqs <= 4000)
+    highs_mask = (freqs > 4000)
+    def get_e(mask):
+        if not np.any(mask): return 0.0
+        return float(np.sqrt(np.mean(S[mask]**2)))
+    b, m, h = get_e(bass_mask), get_e(mids_mask), get_e(highs_mask)
+    t = b + m + h + 1e-6
+    return round(b/t*100, 1), round(m/t*100, 1), round(h/t*100, 1)
+
+def analyze_rhythm_complexity(y: np.ndarray, sr: int) -> tuple[float, float]:
+    if y is None or len(y) == 0: return 0.0, 0.0
+    y_h, y_p = librosa.effects.hpss(y)
+    pe = np.sqrt(np.mean(y_p**2)); he = np.sqrt(np.mean(y_h**2))
+    pr = pe / (pe + he + 1e-6)
+    sf = np.mean(librosa.feature.spectral_flatness(y=y))
+    return round(float(pr), 3), round(float(sf), 3)
+
+def generate_timbre_fingerprint(y: np.ndarray, sr: int) -> list[float]:
+    if y is None or len(y) == 0: return []
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    return [round(float(v), 3) for v in np.mean(mfccs, axis=1)]
+
 # Krumhansl-Schmuckler key profiles (simplified)
 # C, C#, D, D#, E, F, F#, G, G#, A, A#, B
 MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
@@ -812,7 +839,60 @@ def analyze_track(file_path: str) -> Track | None:
                     key_mode = "Major"
 
         # Create Track object with Rekordbox data
-        track = Track(
+        
+            # --- Advanced Audio Analysis (Phase 2) ---
+            try:
+                # Load full audio for detailed section analysis (if not already loaded fully)
+                y_full, _ = librosa.load(file_path, sr=sr, duration=LIBROSA_MAX_DURATION)
+                
+                # Calculate Timbre Fingerprint for the whole track
+                timbre_fp = generate_timbre_fingerprint(y_full, sr)
+                
+                # Update each section with detailed frequency and rhythm data
+                updated_sections = []
+                for sec_dict in section_dicts:
+                    start_s = sec_dict['start_time']
+                    end_s = sec_dict['end_time']
+                    
+                    # Extract segment
+                    start_sample = int(start_s * sr)
+                    end_sample = int(end_s * sr)
+                    y_seg = y_full[start_sample:end_sample]
+                    
+                    if len(y_seg) > sr: # At least 1 second
+                        # Frequency Bands
+                        b, m, h = analyze_frequency_bands(y_seg, sr)
+                        sec_dict['avg_bass'] = b
+                        sec_dict['avg_mids'] = m
+                        sec_dict['avg_highs'] = h
+                        
+                        # Rhythm & Texture
+                        pr, sf = analyze_rhythm_complexity(y_seg, sr)
+                        sec_dict['percussive_ratio'] = pr
+                        sec_dict['spectral_flatness'] = sf
+                    else:
+                        sec_dict['avg_bass'] = sec_dict.get('avg_bass', 0.0)
+                        sec_dict['avg_mids'] = 0.0
+                        sec_dict['avg_highs'] = 0.0
+                        sec_dict['percussive_ratio'] = 0.0
+                        sec_dict['spectral_flatness'] = 0.0
+                    
+                    updated_sections.append(sec_dict)
+                
+                section_dicts = updated_sections
+                
+                # Overall Track Averages for Advanced Features
+                avg_b, avg_m, avg_h = analyze_frequency_bands(y_full, sr)
+                track_pr, track_sf = analyze_rhythm_complexity(y_full, sr)
+                
+            except Exception as e:
+                logger.warning(f"Erweiterte Analyse fehlgeschlagen: {e}")
+                timbre_fp = []
+                avg_b = avg_m = avg_h = 0.0
+                track_pr = track_sf = 0.0
+
+            track = Track(
+        avg_bass=avg_b, avg_mids=avg_m, avg_highs=avg_h, spectral_flatness=track_sf, percussive_ratio=track_pr, timbre_fingerprint=timbre_fp, 
             filePath=file_path,
             fileName=os.path.basename(file_path),
             artist=artist,
@@ -936,7 +1016,33 @@ def analyze_track(file_path: str) -> Track | None:
             f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
         )
 
-        # --- Final Track Object --- #
+        
+        # --- Advanced Audio Analysis (Phase 2) ---
+        try:
+            # We already have y and sr loaded. For detailed analysis, use full signal.
+            timbre_fp = generate_timbre_fingerprint(y, sr)
+            
+            updated_sections = []
+            for sec_dict in section_dicts:
+                start_s = sec_dict['start_time']
+                end_s = sec_dict['end_time']
+                start_sample = int(start_s * sr)
+                end_sample = int(end_s * sr)
+                y_seg = y[start_sample:end_sample]
+                
+                if len(y_seg) > sr:
+                    b, m, h = analyze_frequency_bands(y_seg, sr)
+                    pr, sf = analyze_rhythm_complexity(y_seg, sr)
+                    sec_dict.update({'avg_bass': b, 'avg_mids': m, 'avg_highs': h, 'percussive_ratio': pr, 'spectral_flatness': sf})
+                updated_sections.append(sec_dict)
+            section_dicts = updated_sections
+            
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr)
+            track_pr, track_sf = analyze_rhythm_complexity(y, sr)
+        except Exception as e:
+            logger.warning(f"Librosa-Phase-2 fehlgeschlagen: {e}")
+            timbre_fp = []; avg_b = avg_m = avg_h = 0.0; track_pr = track_sf = 0.0
+
         track = Track(
             filePath=file_path,
             fileName=os.path.basename(file_path),
@@ -950,6 +1056,12 @@ def analyze_track(file_path: str) -> Track | None:
             camelotCode=camelot_code,
             energy=energy,
             bass_intensity=bass_intensity,
+            avg_bass=avg_b,
+            avg_mids=avg_m,
+            avg_highs=avg_h,
+            spectral_flatness=track_sf,
+            percussive_ratio=track_pr,
+            timbre_fingerprint=timbre_fp,
             mix_in_point=mix_in_point,
             mix_out_point=mix_out_point,
             mix_in_bars=mix_in_bars,
@@ -962,18 +1074,15 @@ def analyze_track(file_path: str) -> Track | None:
             brightness=brightness,
             vocal_instrumental=vocal_instrumental,
             danceability=danceability,
-            mfcc_fingerprint=mfcc_fingerprint,
+            mfcc_fingerprint=mfcc_fingerprint
         )
 
         cache_track(cache_key, track)
         return track
 
     except Exception as e:
-        logger.error(f"Analyse fehlgeschlagen fuer {file_path}: {e}")
-        return Track(
-            filePath=file_path,
-            fileName=os.path.basename(file_path),
-            artist=artist,
-            title=title,
-            genre=genre,
-        )
+        logger.error(f"Fehler bei der Librosa-Analyse von {file_path}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
