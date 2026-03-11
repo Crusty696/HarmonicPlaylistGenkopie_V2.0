@@ -32,10 +32,6 @@ class GenreMixProfile:
   eq_strategy: str                 # EQ-Empfehlung
   mix_technique: str               # Primaere Mix-Technik
   description: str                 # Kurze Genre-Beschreibung fuer UI
-  # Psytrance/Trance: Mix-In am ANFANG des Intros (Bar 1 = 00:00),
-  # weil der DJ Track B vom ersten Beat an spielt und das Intro ueber
-  # Track A's Outro legt. Default False = Ende des Intros (fuer Tech House etc.)
-  mix_in_at_intro_start: bool = False
 
 GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   "Psytrance": GenreMixProfile(
@@ -47,7 +43,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
     eq_strategy="Bass Swap an der Drop-Grenze",
     mix_technique="Langer Intro/Outro-Overlap mit Bass Swap",
     description="Psytrance: 16-Bar Phrasen, Bass Swap am Drop",
-    mix_in_at_intro_start=True,  # Intro von Anfang spielen, nicht ab Drop
   ),
   "Tech House": GenreMixProfile(
     name="Tech House",
@@ -108,7 +103,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
     eq_strategy="Bass Swap am Build, Melodie rein-filtern",
     mix_technique="Breakdown-basiertes Blending, Melodie-Layering",
     description="Trance: 16-Bar Phrasen, Breakdown-Blends",
-    mix_in_at_intro_start=True,  # Wie Psytrance: Intro von Anfang spielen
   ),
   "Drum & Bass": GenreMixProfile(
     name="Drum & Bass",
@@ -297,10 +291,13 @@ def calculate_genre_aware_mix_points(
     mix_in_time = round(mix_in_time / grid_seconds) * grid_seconds
     mix_out_time = round(mix_out_time / grid_seconds) * grid_seconds
 
-  # Sicherheitsgrenzen
-  min_mix_in = 0.0 if profile.mix_in_at_intro_start else seconds_per_bar * 8
+  # Sicherheitsgrenzen -- intro/outro-aware
+  intro_end = _get_intro_end_from_sections(sections)
+  outro_start = _get_outro_start_from_sections(sections, duration)
+
+  min_mix_in = max(intro_end, seconds_per_bar * 4)
   mix_in_time = max(min_mix_in, min(mix_in_time, duration * 0.4))
-  mix_out_time = min(duration - seconds_per_bar * 8, max(mix_out_time, duration * 0.6))
+  mix_out_time = min(outro_start, duration - seconds_per_bar * 4, max(mix_out_time, duration * 0.6))
 
   # Sicherstellen, dass Mix-Out nach Mix-In liegt
   if mix_out_time <= mix_in_time + seconds_per_bar * 8:
@@ -321,59 +318,58 @@ def _find_mix_in_point(
 ) -> float:
   """
   ADAPTIVES MIX-IN: Sucht den musikalisch sinnvollsten Einstiegspunkt.
-  Kein stures Schema, sondern Bewertung von Energie-Flow und Phrasen.
+
+  REGEL: Mix-In NIEMALS in einer Intro-Sektion.
+
+  Strategie:
+  1. Bestimme Intro-Ende aus Sektionen
+  2. Suche die beste Sektion nach dem Intro (bevorzugt: build > main > drop)
+  3. Quantisiere auf Phrasen-Grenze
   """
   if not sections:
     return 0.0
 
-  # Berechne den energetischen Kontext des gesamten Tracks
+  # --- Intro-Ende bestimmen ---
+  intro_end = _get_intro_end_from_sections(sections)
+
+  # --- Energetischen Kontext berechnen ---
   all_energies = [s.get("avg_energy", 50.0) for s in sections]
-  avg_total_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
-  max_track_energy = max(all_energies) if all_energies else 100.0
+  avg_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
 
-  # Finde die erste relevante Sektion (meist das Intro)
-  first_sec = sections[0]
-  label = first_sec.get("label", "main")
-  energy = first_sec.get("avg_energy", 0.0)
-  duration_bars = first_sec.get("end_bar", 0) - first_sec.get("start_bar", 0)
+  # --- Kandidaten: Sektionen nach Intro, nicht Outro ---
+  candidates = [
+    s for s in sections
+    if s.get("start_time", 0.0) >= intro_end
+    and s.get("label", "main") not in ("intro", "outro")
+  ]
 
-  # --- Fall 1: Das Intro ist sehr lang (> 32 Bars) ---
-  # Hier wollen wir nicht stur bei 0:00 starten, sondern den 'Sweet Spot' finden.
-  if label == "intro" and duration_bars > 32:
-    # Wir probieren klassische DJ-Einstiegspunkte (Phrasen-Anfaenge)
-    # Psytrance/Trance: 16-Bar Phrasen | House/Techno: 8-Bar Phrasen
-    phrase_step = 16 if profile.name in ("Psytrance", "Trance") else 8
-    
-    # Wir bewerten moegliche Einstiege: Bar 1, Bar 17, Bar 33...
-    # Aber wir bleiben im ersten Drittel der Sektion, um Zeit fuer den Mix zu lassen.
-    possible_entry_bars = [0, phrase_step, phrase_step * 2]
-    
-    # Strategie: Wenn Bar 1 schon extrem viel Energie hat (wie bei deinem Test-Track),
-    # schauen wir, ob wir trotzdem etwas spaeter einsteigen, um den Übergang 
-    # nicht zu 'ueberladen' -- ODER wir starten bei 0, wenn es ein 'Cold Start' ist.
-    if energy > avg_total_energy * 0.9:
-        # Track startet sofort 'heiss'. DJ-Entscheidung: 
-        # Entweder Bar 1 (voller Drive) oder Bar 17 (nach dem ersten Schock).
-        # Wir waehlen Bar 17 als 'elegantere' Loesung fuer lange Mixe.
-        return phrase_step * seconds_per_bar
-    
-    # Wenn das Intro moderat startet, ist Bar 1 oft ideal.
-    return 0.0
+  if not candidates:
+    # Kein nutzbarer Bereich nach Intro gefunden
+    phrase_seconds = seconds_per_bar * profile.phrase_unit
+    if phrase_seconds > 0:
+      return max(intro_end, round(intro_end / phrase_seconds) * phrase_seconds)
+    return intro_end
 
-  # --- Fall 2: Kurzes Intro oder direkter Start ---
-  if label in ("build", "drop", "main") or duration_bars <= 32:
-    # Wenn der Track direkt 'knallt', starten wir am Anfang,
-    # es sei denn, die Energie ist absolut Peak (dann suchen wir den Build).
-    if energy > max_track_energy * 0.9:
-        # Zu viel Energie am Start? Suche die erste leisere Stelle (Breakdown)
-        for s in sections:
-            if s.get("avg_energy", 100) < avg_total_energy:
-                return s.get("start_time", 0.0)
-    return first_sec.get("start_time", 0.0)
+  # --- Beste Sektion waehlen ---
+  # Praeferenz fuer Mix-In: build > main > breakdown > drop
+  label_priority = {"build": 0, "main": 1, "breakdown": 2, "drop": 3}
 
-  # Fallback: Mittelwert Genre-Profil
-  avg_intro_bars = (profile.intro_bars[0] + profile.intro_bars[1]) / 2.0
-  return avg_intro_bars * seconds_per_bar
+  best = min(candidates, key=lambda s: (
+    label_priority.get(s.get("label", "main"), 99),
+    abs(s.get("avg_energy", 50.0) - avg_energy * 0.7),
+  ))
+
+  mix_in = best.get("start_time", intro_end)
+
+  # --- Quantisierung auf Phrasen-Grenze ---
+  phrase_seconds = seconds_per_bar * profile.phrase_unit
+  if phrase_seconds > 0:
+    mix_in = round(mix_in / phrase_seconds) * phrase_seconds
+
+  # --- Guard: NIEMALS vor Intro-Ende ---
+  mix_in = max(mix_in, intro_end)
+
+  return mix_in
 
 
 def _find_mix_out_point(
@@ -383,22 +379,50 @@ def _find_mix_out_point(
   duration: float,
 ) -> float:
   """
-  Findet den optimalen Mix-Out-Punkt. Vermeidet Energie-Abfaelle im Mix.
+  ADAPTIVES MIX-OUT: Findet den optimalen Ausstiegspunkt.
+
+  REGEL: Mix-Out NIEMALS in einer Outro-Sektion.
+
+  Strategie:
+  1. Bestimme Outro-Start aus Sektionen
+  2. Suche die letzte starke Sektion VOR dem Outro
+  3. Setze Mix-Out an deren Ende, quantisiert auf Phrasen-Grenze
   """
-  all_energies = [s.get("avg_energy", 50.0) for s in sections]
-  avg_total_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
+  if not sections:
+    avg_outro_bars = (profile.outro_bars[0] + profile.outro_bars[1]) / 2.0
+    return duration - (avg_outro_bars * seconds_per_bar)
 
-  for section in reversed(sections):
-    label = section.get("label", "main")
-    energy = section.get("avg_energy", 0.0)
-    start = section.get("start_time", duration)
-    
-    if label == "outro" or (energy < avg_total_energy * 0.75 and start < duration * 0.9):
-      if start < duration - seconds_per_bar * 16:
-        return start
+  # --- Outro-Start bestimmen ---
+  outro_start = _get_outro_start_from_sections(sections, duration)
 
-  avg_outro_bars = (profile.outro_bars[0] + profile.outro_bars[1]) / 2.0
-  return duration - (avg_outro_bars * seconds_per_bar)
+  # --- Kandidaten: Sektionen vor Outro, nicht Intro ---
+  candidates = [
+    s for s in sections
+    if s.get("end_time", 0.0) <= outro_start
+    and s.get("label", "main") not in ("intro", "outro")
+  ]
+
+  if not candidates:
+    # Kein nutzbarer Bereich vor Outro
+    phrase_seconds = seconds_per_bar * profile.phrase_unit
+    if phrase_seconds > 0:
+      mix_out = (outro_start // phrase_seconds) * phrase_seconds
+      return max(0.0, min(mix_out, outro_start))
+    return outro_start
+
+  # --- Letzte starke Sektion VOR Outro ---
+  last_strong = candidates[-1]
+  mix_out = last_strong.get("end_time", outro_start)
+
+  # --- Quantisierung auf Phrasen-Grenze ---
+  phrase_seconds = seconds_per_bar * profile.phrase_unit
+  if phrase_seconds > 0:
+    mix_out = (mix_out // phrase_seconds) * phrase_seconds
+
+  # --- Guard: NIEMALS nach Outro-Start ---
+  mix_out = min(mix_out, outro_start)
+
+  return max(0.0, mix_out)
 
 
 # === DJ Empfehlungen ===
@@ -649,11 +673,6 @@ def calculate_paired_mix_points(
     (adjusted_mix_out_a, adjusted_mix_in_b) in Sekunden
   """
   profile_b = get_mix_profile(track_b.detected_genre or "Unknown")
-
-  # Nur fuer Genres mit Intro-Start-Technik (Psytrance, Trance)
-  # Andere Genres: gespeicherte Werte behalten
-  if not profile_b.mix_in_at_intro_start:
-    return track_a.mix_out_point, track_b.mix_in_point
 
   # --- Intro-Dauer von Track B ---
   intro_end_b = _get_intro_end(track_b)  # Sekunden (absoluter Zeitpunkt)
