@@ -870,3 +870,182 @@ class TestIntroOutroSectionHelpers:
   def test_outro_start_empty_sections(self):
     """Leere Sektionen: Gibt duration zurueck."""
     assert _get_outro_start_from_sections([], 300.0) == 300.0
+
+
+# === Mix-In/Out Intro/Outro Guard Tests ===
+
+class TestMixInNeverInIntro:
+  """Mix-In darf NIEMALS in einer Intro-Sektion liegen."""
+
+  def test_standard_track_mix_in_after_intro(self):
+    """Standard-Track: Mix-In >= 60s (Intro endet bei 60s)."""
+    sections = _standard_sections()
+    profile = get_mix_profile("Psytrance")
+    spb = (60.0 / 140.0) * 4
+    mix_in = _find_mix_in_point(sections, profile, spb)
+    assert mix_in >= 60.0, f"Mix-In {mix_in}s liegt im Intro (endet bei 60s)"
+
+  def test_trance_track_mix_in_after_intro(self):
+    """Trance: Mix-In nach Intro, nicht bei 0.0."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 53.0, "start_bar": 0, "end_bar": 32, "avg_energy": 20.0},
+      {"label": "build", "start_time": 53.0, "end_time": 106.0, "start_bar": 32, "end_bar": 64, "avg_energy": 55.0},
+      {"label": "drop", "start_time": 106.0, "end_time": 300.0, "start_bar": 64, "end_bar": 180, "avg_energy": 85.0},
+      {"label": "outro", "start_time": 300.0, "end_time": 360.0, "start_bar": 180, "end_bar": 216, "avg_energy": 20.0},
+    ]
+    profile = get_mix_profile("Trance")
+    spb = (60.0 / 138.0) * 4
+    mix_in = _find_mix_in_point(sections, profile, spb)
+    assert mix_in >= 53.0, f"Mix-In {mix_in}s liegt im Intro (endet bei 53s)"
+
+  def test_no_intro_track(self):
+    """Track ohne Intro: Mix-In kann bei 0.0 sein."""
+    sections = [
+      {"label": "drop", "start_time": 0.0, "end_time": 200.0, "start_bar": 0, "end_bar": 100, "avg_energy": 85.0},
+      {"label": "outro", "start_time": 200.0, "end_time": 300.0, "start_bar": 100, "end_bar": 150, "avg_energy": 20.0},
+    ]
+    profile = get_mix_profile("Techno")
+    spb = (60.0 / 130.0) * 4
+    mix_in = _find_mix_in_point(sections, profile, spb)
+    assert mix_in >= 0.0
+    assert mix_in < 200.0
+
+  def test_multi_intro_mix_in_after_all(self):
+    """Multi-Intro: Mix-In nach ALLEN Intro-Sektionen."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 30.0, "start_bar": 0, "end_bar": 16, "avg_energy": 15.0},
+      {"label": "intro", "start_time": 30.0, "end_time": 60.0, "start_bar": 16, "end_bar": 32, "avg_energy": 25.0},
+      {"label": "build", "start_time": 60.0, "end_time": 90.0, "start_bar": 32, "end_bar": 48, "avg_energy": 55.0},
+      {"label": "drop", "start_time": 90.0, "end_time": 250.0, "start_bar": 48, "end_bar": 133, "avg_energy": 85.0},
+      {"label": "outro", "start_time": 250.0, "end_time": 300.0, "start_bar": 133, "end_bar": 160, "avg_energy": 20.0},
+    ]
+    profile = get_mix_profile("Deep House")
+    spb = (60.0 / 124.0) * 4
+    mix_in = _find_mix_in_point(sections, profile, spb)
+    assert mix_in >= 60.0, f"Mix-In {mix_in}s liegt im Intro (endet bei 60s)"
+
+
+class TestMixOutNeverInOutro:
+  """Mix-Out darf NIEMALS in einer Outro-Sektion liegen."""
+
+  def test_standard_track_mix_out_before_outro(self):
+    """Standard-Track: Mix-Out < 360s (Outro startet bei 360s)."""
+    sections = _standard_sections()
+    profile = get_mix_profile("Psytrance")
+    spb = (60.0 / 140.0) * 4
+    mix_out = _find_mix_out_point(sections, profile, spb, 420.0)
+    assert mix_out < 360.0, f"Mix-Out {mix_out}s liegt im Outro (startet bei 360s)"
+
+  def test_multi_outro_mix_out_before_first(self):
+    """Multi-Outro: Mix-Out vor der ERSTEN Outro-Sektion."""
+    sections = [
+      {"label": "drop", "start_time": 0.0, "end_time": 200.0, "start_bar": 0, "end_bar": 100, "avg_energy": 85.0},
+      {"label": "main", "start_time": 200.0, "end_time": 250.0, "start_bar": 100, "end_bar": 125, "avg_energy": 60.0},
+      {"label": "outro", "start_time": 250.0, "end_time": 275.0, "start_bar": 125, "end_bar": 138, "avg_energy": 30.0},
+      {"label": "outro", "start_time": 275.0, "end_time": 300.0, "start_bar": 138, "end_bar": 150, "avg_energy": 15.0},
+    ]
+    profile = get_mix_profile("Techno")
+    spb = (60.0 / 130.0) * 4
+    mix_out = _find_mix_out_point(sections, profile, spb, 300.0)
+    assert mix_out <= 250.0, f"Mix-Out {mix_out}s liegt im Outro (startet bei 250s)"
+
+  def test_no_outro_track(self):
+    """Track ohne Outro: Mix-Out basierend auf Genre-Profil."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 30.0, "start_bar": 0, "end_bar": 16, "avg_energy": 20.0},
+      {"label": "drop", "start_time": 30.0, "end_time": 300.0, "start_bar": 16, "end_bar": 160, "avg_energy": 85.0},
+    ]
+    profile = get_mix_profile("Drum & Bass")
+    spb = (60.0 / 174.0) * 4
+    mix_out = _find_mix_out_point(sections, profile, spb, 300.0)
+    assert mix_out > 0.0
+    assert mix_out <= 300.0
+
+
+class TestGenreAwareMixPointsGuard:
+  """calculate_genre_aware_mix_points respektiert Intro/Outro-Grenzen."""
+
+  @pytest.mark.parametrize("genre", [
+    "Psytrance", "Trance", "Tech House", "Techno",
+    "Deep House", "Progressive", "Melodic Techno",
+    "Drum & Bass", "Minimal",
+  ])
+  def test_mix_in_after_intro_all_genres(self, genre):
+    """Mix-In nach Intro fuer alle Genres."""
+    sections = _standard_sections()
+    bpm = 140.0 if genre in ("Psytrance", "Trance") else 128.0
+    mi, mo, _, _ = calculate_genre_aware_mix_points(sections, bpm, 420.0, genre)
+    assert mi >= 60.0, f"{genre}: Mix-In {mi}s im Intro (endet bei 60s)"
+
+  @pytest.mark.parametrize("genre", [
+    "Psytrance", "Trance", "Tech House", "Techno",
+    "Deep House", "Progressive", "Melodic Techno",
+    "Drum & Bass", "Minimal",
+  ])
+  def test_mix_out_before_outro_all_genres(self, genre):
+    """Mix-Out vor Outro fuer alle Genres."""
+    sections = _standard_sections()
+    bpm = 140.0 if genre in ("Psytrance", "Trance") else 128.0
+    mi, mo, _, _ = calculate_genre_aware_mix_points(sections, bpm, 420.0, genre)
+    assert mo <= 360.0, f"{genre}: Mix-Out {mo}s im Outro (startet bei 360s)"
+
+  def test_different_structures_different_points(self):
+    """Verschiedene Track-Strukturen erzeugen verschiedene Mix-Punkte."""
+    sections_a = [
+      {"label": "intro", "start_time": 0.0, "end_time": 90.0, "start_bar": 0, "end_bar": 48, "avg_energy": 20.0},
+      {"label": "drop", "start_time": 90.0, "end_time": 380.0, "start_bar": 48, "end_bar": 203, "avg_energy": 85.0},
+      {"label": "outro", "start_time": 380.0, "end_time": 420.0, "start_bar": 203, "end_bar": 224, "avg_energy": 20.0},
+    ]
+    sections_b = [
+      {"label": "intro", "start_time": 0.0, "end_time": 30.0, "start_bar": 0, "end_bar": 16, "avg_energy": 20.0},
+      {"label": "drop", "start_time": 30.0, "end_time": 300.0, "start_bar": 16, "end_bar": 160, "avg_energy": 85.0},
+      {"label": "outro", "start_time": 300.0, "end_time": 420.0, "start_bar": 160, "end_bar": 224, "avg_energy": 20.0},
+    ]
+    mi_a, mo_a, _, _ = calculate_genre_aware_mix_points(sections_a, 140.0, 420.0, "Techno")
+    mi_b, mo_b, _, _ = calculate_genre_aware_mix_points(sections_b, 140.0, 420.0, "Techno")
+    assert mi_a != mi_b or mo_a != mo_b, "Verschiedene Strukturen haben gleiche Mix-Punkte!"
+
+
+class TestMixPointIntegration:
+  """Ende-zu-Ende Tests: DJ Brain + Mix-Punkte + Empfehlungen."""
+
+  def test_full_recommendation_respects_intro_outro(self):
+    """generate_dj_recommendation nutzt Mix-Punkte die nicht in Intro/Outro liegen."""
+    a = _make_track(
+      genre="Psytrance", bpm=140.0, duration=420.0,
+      mix_in=60.0, mix_out=350.0,
+      sections=_standard_sections(),
+    )
+    b = _make_track(
+      genre="Trance", bpm=138.0, duration=360.0,
+      mix_in=53.0, mix_out=300.0,
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 53.0, "start_bar": 0, "end_bar": 32, "avg_energy": 20.0},
+        {"label": "build", "start_time": 53.0, "end_time": 106.0, "start_bar": 32, "end_bar": 64, "avg_energy": 55.0},
+        {"label": "drop", "start_time": 106.0, "end_time": 300.0, "start_bar": 64, "end_bar": 180, "avg_energy": 85.0},
+        {"label": "outro", "start_time": 300.0, "end_time": 360.0, "start_bar": 180, "end_bar": 216, "avg_energy": 20.0},
+      ],
+    )
+    rec = generate_dj_recommendation(a, b)
+    assert rec.genre_pair
+    assert rec.mix_technique
+    assert rec.transition_bars > 0
+
+  @pytest.mark.parametrize("genre_pair", [
+    ("Psytrance", "Psytrance"),
+    ("Trance", "Trance"),
+    ("Tech House", "Techno"),
+    ("Deep House", "Progressive"),
+    ("Drum & Bass", "Drum & Bass"),
+  ])
+  def test_recommendations_for_all_genre_pairs(self, genre_pair):
+    """DJ Empfehlungen fuer verschiedene Genre-Paare funktionieren."""
+    g_a, g_b = genre_pair
+    bpm_a = 140.0 if g_a in ("Psytrance", "Trance") else 128.0
+    bpm_b = 140.0 if g_b in ("Psytrance", "Trance") else 128.0
+    a = _make_track(genre=g_a, bpm=bpm_a, sections=_standard_sections())
+    b = _make_track(genre=g_b, bpm=bpm_b, sections=_standard_sections())
+    rec = generate_dj_recommendation(a, b)
+    assert rec.genre_pair
+    assert rec.mix_technique
+    assert rec.transition_bars > 0
