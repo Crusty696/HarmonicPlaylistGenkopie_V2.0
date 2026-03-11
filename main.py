@@ -1207,7 +1207,7 @@ class PlaylistPanel(QWidget):
 
         # Tabelle
         self.table = QTableWidget()
-        self.table.setColumnCount(13)
+        self.table.setColumnCount(15)
         self.table.setHorizontalHeaderLabels(
             [
                 "#",
@@ -1222,6 +1222,8 @@ class PlaylistPanel(QWidget):
                 "Genre %",
                 "Mix In",
                 "Mix Out",
+                "Bass %",
+                "Texture",
                 "Transition Score",
             ]
         )
@@ -1455,11 +1457,31 @@ class PlaylistPanel(QWidget):
             self.table.setItem(i, 10, mix_in_item)
             self.table.setItem(i, 11, mix_out_item)
 
-            # Transition-Score
+            # Advanced Features (Phase 3)
+            bass_val = getattr(track, 'avg_bass', 0)
+            bass_item = QTableWidgetItem(f"{bass_val:.0f}%")
+            self.table.setItem(i, 12, bass_item)
+            
+            # Texture Match Score
+            texture_val = 0.0
+            if i > 0:
+                from hpg_core.dj_brain import _calculate_texture_similarity
+                texture_val = _calculate_texture_similarity(
+                    getattr(self.playlist[i-1], 'timbre_fingerprint', []),
+                    getattr(track, 'timbre_fingerprint', [])
+                )
+            
+            texture_item = QTableWidgetItem(f"{texture_val:.2f}" if i > 0 else "-")
+            if i > 0:
+                # Color code texture similarity
+                texture_item.setForeground(QColor(score_color(texture_val)))
+            self.table.setItem(i, 13, texture_item)
+
+            # Transition-Score (moved to column 14)
             score_item = QTableWidgetItem(f"{transition_score}%")
             score_item.setBackground(QColor(score_color(transition_score / 100)))
             score_item.setForeground(QColor("white"))
-            self.table.setItem(i, 12, score_item)
+            self.table.setItem(i, 14, score_item)
 
         self.table.setUpdatesEnabled(True)
 
