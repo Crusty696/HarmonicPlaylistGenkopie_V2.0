@@ -662,16 +662,16 @@ class TestCalculatePairedMixPoints:
   Tests fuer calculate_paired_mix_points(track_a, track_b).
 
   Szenario-Uebersicht:
-    [Gleiches Intro/Outro]: Overlap = min(60, 60) = 60s -> Mix-In B = 0.0
-    [Langes Intro B]:       Overlap = min(212, 60) = 60s -> Mix-In B = 152s
-    [Kurzes Intro B]:       Overlap = min(26, 60) = 26s  -> Mix-In B = 0.0, Mix-Out A spaeter
-    [Non-Psytrance]:        Unveraenderte gespeicherte Werte
+    [Gleiches Intro/Outro]: Guard: Mix-In B >= intro_end, Mix-Out A < outro_start
+    [Langes Intro B]:       Mix-In B nach Intro (>= 212s), Mix-Out A vor Outro
+    [Kurzes Intro B]:       Mix-In B nach Intro (>= 26s)
+    [Non-Psytrance]:        Gleiche Guards fuer alle Genres
   """
 
-  def test_equal_intro_outro_mix_in_zero(self):
+  def test_equal_intro_outro_mix_in_after_intro(self):
     """
     Intro B = 60s, Outro A = 60s.
-    Overlap = 60s -> Mix-In B = max(0, 60-60) = 0.0 (Bar 1).
+    Guard: Mix-In B darf NICHT im Intro liegen -> >= 60.0.
     """
     track_a = _make_track(
       genre="Psytrance", bpm=143.0, duration=420.0,
@@ -682,8 +682,8 @@ class TestCalculatePairedMixPoints:
       sections=_standard_sections(), mix_in=60.0,
     )
     mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
-    assert mix_in_b == 0.0, f"Mix-In B sollte 0.0 sein, war {mix_in_b}"
-    assert mix_out_a == 360.0, f"Mix-Out A unveraendert, war {mix_out_a}"
+    assert mix_in_b >= 60.0, f"Mix-In B im Intro! War {mix_in_b}, Intro endet bei 60s"
+    assert mix_out_a < 360.0, f"Mix-Out A im Outro! War {mix_out_a}, Outro startet bei 360s"
 
   def test_long_intro_mix_in_not_zero(self):
     """
@@ -709,16 +709,17 @@ class TestCalculatePairedMixPoints:
     assert mix_in_b > 0.0, (
       f"Bei langem Intro sollte Mix-In B > 0 sein, war {mix_in_b}"
     )
-    assert abs(mix_in_b - expected_mix_in_b) < 2.0, (
-      f"Mix-In B sollte ~{expected_mix_in_b:.1f}s sein, war {mix_in_b}"
+    # Guard: Mix-In B nach Intro (Rundungstoleranz 1 Bar)
+    assert mix_in_b >= intro_end_b - 1.0, (
+      f"Mix-In B {mix_in_b}s im Intro (endet bei {intro_end_b:.1f}s)"
     )
-    # Mix-Out A bleibt bei 360.0 (nicht frueher als gespeichert)
-    assert mix_out_a >= 360.0, f"Mix-Out A darf nicht frueher sein, war {mix_out_a}"
+    # Guard: Mix-Out A vor Outro (startet bei 360s)
+    assert mix_out_a < 360.0, f"Mix-Out A {mix_out_a}s im Outro (startet bei 360s)"
 
-  def test_short_intro_mix_in_zero_mix_out_later(self):
+  def test_short_intro_mix_in_after_intro(self):
     """
     Intro B = ~26s, Outro A = 60s.
-    Overlap = 26s (kuerzer!) -> Mix-In B = 0.0, Mix-Out A = 420-26 = 394s (spaeter!).
+    Guard: Mix-In B NACH Intro (>= 26s), Mix-Out A VOR Outro (< 360s).
     """
     sections_b, duration_b = _psytrance_sections_short()
 
@@ -732,11 +733,11 @@ class TestCalculatePairedMixPoints:
     )
     mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
 
-    # Mix-In B = 0.0 (Intro zu kurz fuer Offset)
-    assert mix_in_b == 0.0, f"Kurzes Intro -> Mix-In B = 0.0, war {mix_in_b}"
-    # Mix-Out A verspaetet sich: jetzt ~394s statt 360s
-    assert mix_out_a > 360.0, (
-      f"Kurzes Intro -> Mix-Out A soll spaeter sein, war {mix_out_a}"
+    # Guard: Mix-In B nach Intro (~26s, Rundungstoleranz 1 Bar)
+    spb_b = (60.0 / 146.0) * 4
+    intro_end_b = 16 * spb_b  # ~26.3s
+    assert mix_in_b >= intro_end_b - 1.0, (
+      f"Mix-In B {mix_in_b}s im Intro (endet bei {intro_end_b:.1f}s)"
     )
     assert mix_out_a < 420.0, f"Mix-Out A muss vor Track-Ende liegen"
 
@@ -756,6 +757,9 @@ class TestCalculatePairedMixPoints:
     assert mix_in_b >= 0.0
     assert mix_out_a <= track_a.duration
     assert mix_in_b <= track_b.duration
+    # Intro endet bei 60s, Outro startet bei 360s (standard_sections)
+    assert mix_in_b >= 55.0, f"Mix-In B {mix_in_b}s zu nah am Intro"
+    assert mix_out_a < 360.0, f"Mix-Out A {mix_out_a}s im Outro"
 
   def test_overlap_minimum_8_bars(self):
     """
@@ -810,7 +814,8 @@ class TestCalculatePairedMixPoints:
     mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
 
     assert mix_out_a >= 0.0
-    assert mix_in_b >= 0.0
+    assert mix_in_b >= 60.0, f"Trance Mix-In B {mix_in_b}s im Intro"
+    assert mix_out_a < 360.0, f"Trance Mix-Out A {mix_out_a}s im Outro"
     assert mix_out_a <= track_a.duration
 
 
@@ -907,8 +912,10 @@ class TestMixInNeverInIntro:
     profile = get_mix_profile("Techno")
     spb = (60.0 / 130.0) * 4
     mix_in = _find_mix_in_point(sections, profile, spb)
+    # Kein Intro -> Mix-In darf bei 0.0 oder auf erster Phrasen-Grenze sein
     assert mix_in >= 0.0
-    assert mix_in < 200.0
+    # Mix-In muss vor dem Drop-Ende liegen
+    assert mix_in < 200.0, f"Mix-In {mix_in}s zu spaet (Drop endet bei 200s)"
 
   def test_multi_intro_mix_in_after_all(self):
     """Multi-Intro: Mix-In nach ALLEN Intro-Sektionen."""
@@ -958,8 +965,9 @@ class TestMixOutNeverInOutro:
     profile = get_mix_profile("Drum & Bass")
     spb = (60.0 / 174.0) * 4
     mix_out = _find_mix_out_point(sections, profile, spb, 300.0)
-    assert mix_out > 0.0
-    assert mix_out <= 300.0
+    # Kein Outro -> Mix-Out basierend auf Profil, muss im Drop-Bereich liegen
+    assert mix_out >= 30.0, f"Mix-Out {mix_out}s zu frueh (Drop startet bei 30s)"
+    assert mix_out <= 300.0, f"Mix-Out {mix_out}s ueber Track-Dauer"
 
 
 class TestGenreAwareMixPointsGuard:
@@ -987,7 +995,7 @@ class TestGenreAwareMixPointsGuard:
     sections = _standard_sections()
     bpm = 140.0 if genre in ("Psytrance", "Trance") else 128.0
     mi, mo, _, _ = calculate_genre_aware_mix_points(sections, bpm, 420.0, genre)
-    assert mo <= 360.0, f"{genre}: Mix-Out {mo}s im Outro (startet bei 360s)"
+    assert mo < 360.0, f"{genre}: Mix-Out {mo}s im Outro (startet bei 360s)"
 
   def test_different_structures_different_points(self):
     """Verschiedene Track-Strukturen erzeugen verschiedene Mix-Punkte."""
@@ -1030,6 +1038,15 @@ class TestMixPointIntegration:
     assert rec.genre_pair
     assert rec.mix_technique
     assert rec.transition_bars > 0
+    # Harte Regel: Mix-Out A vor Outro A (360s), Mix-In B nach Intro B (53s)
+    if rec.adjusted_mix_out_a > 0:
+      assert rec.adjusted_mix_out_a < 360.0, (
+        f"Mix-Out A {rec.adjusted_mix_out_a}s im Outro (startet bei 360s)"
+      )
+    if rec.adjusted_mix_in_b > 0:
+      assert rec.adjusted_mix_in_b >= 53.0, (
+        f"Mix-In B {rec.adjusted_mix_in_b}s im Intro (endet bei 53s)"
+      )
 
   @pytest.mark.parametrize("genre_pair", [
     ("Psytrance", "Psytrance"),

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from math import ceil, floor
 import numpy as np
 """
 DJ Brain - Genre-spezifische Mix-Logik fuer den Harmonic Playlist Generator.
@@ -288,21 +289,23 @@ def calculate_genre_aware_mix_points(
   # Quantisiere auf 4-Bar-Grenzen fuer musikalisches Phrase-Alignment
   grid_seconds = seconds_per_bar * 4
   if grid_seconds > 0:
-    mix_in_time = round(mix_in_time / grid_seconds) * grid_seconds
-    mix_out_time = round(mix_out_time / grid_seconds) * grid_seconds
+    mix_in_time = ceil(mix_in_time / grid_seconds) * grid_seconds  # ceil = nach Intro
+    mix_out_time = floor(mix_out_time / grid_seconds) * grid_seconds  # floor = vor Outro
 
   # Sicherheitsgrenzen -- intro/outro-aware
   intro_end = _get_intro_end_from_sections(sections)
   outro_start = _get_outro_start_from_sections(sections, duration)
 
   min_mix_in = max(intro_end, seconds_per_bar * 4)
+  # Mix-Out strikt VOR outro_start (mindestens 1 Bar Abstand)
+  max_mix_out = min(outro_start - seconds_per_bar, duration - seconds_per_bar * 4)
   mix_in_time = max(min_mix_in, min(mix_in_time, duration * 0.4))
-  mix_out_time = min(outro_start, duration - seconds_per_bar * 4, max(mix_out_time, duration * 0.6))
+  mix_out_time = min(max_mix_out, max(mix_out_time, duration * 0.6))
 
   # Sicherstellen, dass Mix-Out nach Mix-In liegt
   if mix_out_time <= mix_in_time + seconds_per_bar * 8:
-    mix_in_time = duration * 0.15
-    mix_out_time = duration * 0.85
+    mix_in_time = max(intro_end, duration * 0.15)
+    mix_out_time = min(outro_start - seconds_per_bar, duration * 0.85)
 
   # In Bars umrechnen
   mix_in_bars = int(round(mix_in_time / seconds_per_bar))
@@ -361,10 +364,10 @@ def _find_mix_in_point(
 
   mix_in = best.get("start_time", intro_end)
 
-  # --- Quantisierung auf Phrasen-Grenze ---
+  # --- Quantisierung auf Phrasen-Grenze (ceil = NACH Intro) ---
   phrase_seconds = seconds_per_bar * profile.phrase_unit
   if phrase_seconds > 0:
-    mix_in = round(mix_in / phrase_seconds) * phrase_seconds
+    mix_in = ceil(mix_in / phrase_seconds) * phrase_seconds
 
   # --- Guard: NIEMALS vor Intro-Ende ---
   mix_in = max(mix_in, intro_end)
@@ -700,9 +703,23 @@ def calculate_paired_mix_points(
   # (wir verschieben nur nach hinten, nie nach vorne -- das waere schlechter)
   adjusted_mix_out_a = max(outro_start_a, adjusted_mix_out_a)
 
-  # Sicherheitscheck: Mix-Out vor Track-Ende
+  # --- Guard: Mix-In B NIEMALS im Intro ---
+  intro_end_sections_b = _get_intro_end_from_sections(track_b.sections or [])
+  if intro_end_sections_b > 0:
+    # ceil auf naechsten Bar nach Intro-Ende (phrasen-aligned)
+    if adjusted_mix_in_b < intro_end_sections_b:
+      adjusted_mix_in_b = ceil(intro_end_sections_b / seconds_per_bar_b) * seconds_per_bar_b
+
+  # --- Guard: Mix-Out A NIEMALS im Outro ---
+  outro_start_sections_a = _get_outro_start_from_sections(
+    track_a.sections or [], track_a.duration
+  )
   bpm_a = track_a.bpm if track_a.bpm > 0 else 140.0
   seconds_per_bar_a = (60.0 / bpm_a) * METER
+  if adjusted_mix_out_a >= outro_start_sections_a:
+    adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
+
+  # Sicherheitscheck: Mix-Out vor Track-Ende
   adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
 
   return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
