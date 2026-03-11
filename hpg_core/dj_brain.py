@@ -576,6 +576,47 @@ def _get_intro_end(track: Track) -> float:
   return track.mix_in_point if track.mix_in_point > 0 else 0.0
 
 
+def _get_intro_end_from_sections(sections: list[dict]) -> float:
+  """Ende aller zusammenhaengenden Intro-Sektionen am Track-Anfang.
+
+  Gibt 0.0 zurueck wenn kein Intro erkannt wurde.
+  """
+  if not sections:
+    return 0.0
+
+  last_intro_end = 0.0
+  for section in sections:
+    if section.get("label", "main") == "intro":
+      last_intro_end = section.get("end_time", section.get("start_time", 0.0))
+    else:
+      if last_intro_end > 0.0:
+        break
+
+  return last_intro_end
+
+
+def _get_outro_start_from_sections(sections: list[dict], duration: float) -> float:
+  """Start aller zusammenhaengenden Outro-Sektionen am Track-Ende.
+
+  Gibt duration zurueck wenn kein Outro erkannt wurde.
+  """
+  if not sections:
+    return duration
+
+  # Von hinten nach vorne suchen
+  first_outro_start = duration
+  found_outro = False
+  for section in reversed(sections):
+    if section.get("label", "main") == "outro":
+      first_outro_start = section.get("start_time", duration)
+      found_outro = True
+    else:
+      if found_outro:
+        break
+
+  return first_outro_start if found_outro else duration
+
+
 def calculate_paired_mix_points(
   track_a: Track,
   track_b: Track,

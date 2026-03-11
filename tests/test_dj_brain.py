@@ -24,6 +24,8 @@ from hpg_core.dj_brain import (
   _find_mix_in_point,
   _find_mix_out_point,
   _get_intro_end,
+  _get_intro_end_from_sections,
+  _get_outro_start_from_sections,
   _get_section_at_mix_out,
   _get_section_at_mix_in,
   _build_structure_note,
@@ -811,3 +813,61 @@ class TestCalculatePairedMixPoints:
     # Intro B = 60s, Outro A = 400 - 340 = 60s -> Mix-In B = 0.0
     assert mix_in_b == 0.0, f"Trance Mix-In B = 0.0, war {mix_in_b}"
     assert mix_out_a >= 340.0
+
+
+# === Intro/Outro Section Helpers ===
+
+class TestIntroOutroSectionHelpers:
+  """Tests fuer _get_intro_end_from_sections und _get_outro_start_from_sections."""
+
+  def test_intro_end_standard_track(self):
+    """Standard-Track: Intro endet bei 60s."""
+    sections = _standard_sections()
+    assert _get_intro_end_from_sections(sections) == 60.0
+
+  def test_intro_end_multi_intro(self):
+    """Multi-Intro: Zwei Intro-Sektionen hintereinander."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 30.0},
+      {"label": "intro", "start_time": 30.0, "end_time": 60.0},
+      {"label": "build", "start_time": 60.0, "end_time": 90.0},
+    ]
+    assert _get_intro_end_from_sections(sections) == 60.0
+
+  def test_intro_end_no_intro(self):
+    """Kein Intro: Gibt 0.0 zurueck."""
+    sections = [
+      {"label": "drop", "start_time": 0.0, "end_time": 90.0},
+      {"label": "outro", "start_time": 90.0, "end_time": 120.0},
+    ]
+    assert _get_intro_end_from_sections(sections) == 0.0
+
+  def test_intro_end_empty_sections(self):
+    """Leere Sektionen: Gibt 0.0 zurueck."""
+    assert _get_intro_end_from_sections([]) == 0.0
+
+  def test_outro_start_standard_track(self):
+    """Standard-Track: Outro startet bei 360s."""
+    sections = _standard_sections()
+    assert _get_outro_start_from_sections(sections, 420.0) == 360.0
+
+  def test_outro_start_multi_outro(self):
+    """Multi-Outro: Zwei Outro-Sektionen am Ende."""
+    sections = [
+      {"label": "drop", "start_time": 0.0, "end_time": 200.0},
+      {"label": "outro", "start_time": 200.0, "end_time": 250.0},
+      {"label": "outro", "start_time": 250.0, "end_time": 300.0},
+    ]
+    assert _get_outro_start_from_sections(sections, 300.0) == 200.0
+
+  def test_outro_start_no_outro(self):
+    """Kein Outro: Gibt duration zurueck."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 30.0},
+      {"label": "drop", "start_time": 30.0, "end_time": 300.0},
+    ]
+    assert _get_outro_start_from_sections(sections, 300.0) == 300.0
+
+  def test_outro_start_empty_sections(self):
+    """Leere Sektionen: Gibt duration zurueck."""
+    assert _get_outro_start_from_sections([], 300.0) == 300.0
