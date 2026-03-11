@@ -6,7 +6,7 @@ import librosa
 import mutagen
 import os
 import re
-from math import floor
+from math import ceil, floor
 
 logger = logging.getLogger(__name__)
 from .models import Track, CAMELOT_MAP
@@ -630,25 +630,29 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         seconds_per_bar = seconds_per_beat * METER
         seconds_per_phrase = seconds_per_bar * 8  # Standard 8-bar phrase
 
-        # 1. Align Intro End to nearest phrase boundary
-        # DJs rarely mix at random times; they mix at 8, 16, or 32 bar marks.
-        intro_phrase_count = round(intro_end_time / seconds_per_phrase)
-        # Ensure we have at least some intro, but not too much
+        # 1. Align Intro End to nearest phrase boundary AFTER intro
+        # ceil() ensures we land AFTER the intro, never inside it
+        intro_phrase_count = ceil(intro_end_time / seconds_per_phrase)
         if intro_phrase_count < 1:
             intro_phrase_count = 1
         mix_in_point = intro_phrase_count * seconds_per_phrase
 
-        # 2. Align Outro Start to phrase boundary
-        # We want to mix out BEFORE the energy drops completely.
-        # Typically 16 or 32 bars before the very end of the track.
+        # 2. Align Outro Start to phrase boundary BEFORE outro
+        # floor() and -1 ensures we land BEFORE the outro, never inside it
         total_phrases = duration / seconds_per_phrase
         outro_phrase_index = floor(outro_start_time / seconds_per_phrase)
+        # Subtract 1 to guarantee we're before the outro section
+        if outro_phrase_index * seconds_per_phrase >= outro_start_time:
+            outro_phrase_index -= 1
 
         # If the detected outro is too late, pull it back to a phrase boundary
         if outro_phrase_index >= floor(total_phrases) - 1:
             outro_phrase_index = max(
                 1, floor(total_phrases) - 4
             )  # 32 bars before end as fallback
+
+        if outro_phrase_index < 1:
+            outro_phrase_index = 1
 
         mix_out_point = outro_phrase_index * seconds_per_phrase
 
@@ -660,9 +664,10 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
             mix_out_point = round((duration * 0.85) / seconds_per_bar) * seconds_per_bar
 
         # Ensure points are within bounds
-        mix_in_point = max(seconds_per_bar, min(mix_in_point, duration * 0.4))
+        # Guard: mix_in AFTER intro, mix_out BEFORE outro
+        mix_in_point = max(intro_end_time, seconds_per_bar, min(mix_in_point, duration * 0.4))
         mix_out_point = min(
-            duration - seconds_per_bar, max(mix_out_point, duration * 0.6)
+            outro_start_time, duration - seconds_per_bar, max(mix_out_point, duration * 0.6)
         )
 
         # Calculate bars
