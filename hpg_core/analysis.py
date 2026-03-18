@@ -665,10 +665,12 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
 
         # Ensure points are within bounds
         # Guard: mix_in AFTER intro, mix_out BEFORE outro
-        mix_in_point = max(intro_end_time, seconds_per_bar, min(mix_in_point, duration * 0.4))
-        mix_out_point = min(
+        # Use max with an iterable to ensure we get the maximum of intro_end_time and seconds_per_bar,
+        # but capped at duration * 0.4.
+        mix_in_point = max([intro_end_time, seconds_per_bar, min(mix_in_point, duration * 0.4)])
+        mix_out_point = min([
             outro_start_time, duration - seconds_per_bar, max(mix_out_point, duration * 0.6)
-        )
+        ])
 
         # Calculate bars
         mix_in_bars = int(round(mix_in_point / seconds_per_bar))
