@@ -326,8 +326,6 @@ def _apply_eq_crossfade(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import sys
-
     print("transition_renderer — Smoke-Test mit synthetischen Daten")
 
     # Synthetischen Stereo-Sinus erzeugen und als WAV schreiben
