@@ -12,9 +12,8 @@ Einmalig beim App-Start:
 """
 
 import logging
-import logging.handlers
-import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # === Konfiguration ===
@@ -111,7 +110,7 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
   # Datei-Handler (mit Rotation)
   if log_to_file:
     LOG_DIR.mkdir(exist_ok=True)
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = RotatingFileHandler(
       LOG_FILE,
       maxBytes=LOG_MAX_BYTES,
       backupCount=LOG_BACKUP_COUNT,
