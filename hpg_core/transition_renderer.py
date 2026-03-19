@@ -14,7 +14,6 @@ Aufbau eines gerenderten Clips:
 import os
 import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import soundfile as sf
