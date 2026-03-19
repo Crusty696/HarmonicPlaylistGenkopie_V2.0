@@ -13,8 +13,7 @@ Aufbau eines gerenderten Clips:
 
 import os
 import tempfile
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
 import numpy as np
 import soundfile as sf
