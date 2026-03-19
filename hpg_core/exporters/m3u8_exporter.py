@@ -71,14 +71,17 @@ class M3U8Exporter(BaseExporter):
                 for track in playlist:
                     # Extended info: duration, artist - title
                     duration = int(track.duration) if track.duration else 0
-                    artist = track.artist or "Unknown Artist"
-                    title = track.title or os.path.basename(track.filePath)
+
+                    # M10: Sanitize metadata to prevent newline injection
+                    artist = (track.artist or "Unknown Artist").replace("\n", " ").replace("\r", "")
+                    title = (track.title or os.path.basename(track.filePath)).replace("\n", " ").replace("\r", "")
 
                     # EXTINF format: #EXTINF:duration,artist - title
                     f.write(f"#EXTINF:{duration},{artist} - {title}\n")
 
                     # M5: Pfade mit Forward-Slashes fuer Cross-Platform-Kompatibilitaet
-                    normalized_path = track.filePath.replace("\\", "/")
+                    # M10: Sanitize path to prevent path traversal/newline injection
+                    normalized_path = track.filePath.replace("\n", "").replace("\r", "").replace("\\", "/")
                     f.write(f"{normalized_path}\n\n")
 
             logger.info(f"M3U8 exportiert: {output_path} ({len(playlist)} Tracks)")
