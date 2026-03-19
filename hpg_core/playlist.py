@@ -55,7 +55,7 @@ class TransitionRecommendation:
     risk_level: str
     notes: str
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
-    dj_rec: "DJRecommendation | None" = None  # Paar-spezifische DJ-Brain-Empfehlung
+    dj_rec: DJRecommendation | None = None  # Paar-spezifische DJ-Brain-Empfehlung
 
 
 class EnergyDirection(Enum):
