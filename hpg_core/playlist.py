@@ -169,7 +169,7 @@ def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     return min(candidates, key=lambda x: x[0])
 
 
-def calculate_compatibility(
+def _calculate_compatibility_inner(
     track1: Track, track2: Track, bpm_tolerance: float, **kwargs
 ) -> int:
     """Calculates a compatibility score between two tracks, including advanced harmonic rules.
@@ -242,6 +242,33 @@ def calculate_compatibility(
 
     # Return low score (affected by strictness - stricter = lower fallback)
     return max(5, int((15 - strictness) * penalty))
+
+# Global thread-local-like cache container for the current playlist generation session
+# Avoids mutating dictionaries while keeping cache simple.
+_COMPAT_CACHE = None
+
+def calculate_compatibility(
+    track1: Track, track2: Track, bpm_tolerance: float, **kwargs
+) -> int:
+    """Wrapper around _calculate_compatibility_inner that uses a global dictionary cache
+    if one is currently set up by generate_playlist or benchmark."""
+    global _COMPAT_CACHE
+    if _COMPAT_CACHE is not None:
+        cache_key = (
+            id(track1),
+            id(track2),
+            bpm_tolerance,
+            kwargs.get("harmonic_strictness", 7),
+            kwargs.get("allow_experimental", True)
+        )
+        if cache_key in _COMPAT_CACHE:
+            return _COMPAT_CACHE[cache_key]
+
+        score = _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
+        _COMPAT_CACHE[cache_key] = score
+        return score
+
+    return _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
 
 
 def _sort_harmonic_flow(
@@ -1415,8 +1442,17 @@ def generate_playlist(
     # Get the sorting function from the strategy map
     sorter = STRATEGIES.get(mode, _sort_harmonic_flow)  # Default to harmonic flow
 
-    # Call the selected sorting strategy with advanced params
-    result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **advanced_params)
+    # Initialize thread-local-like cache container
+    global _COMPAT_CACHE
+    old_cache = _COMPAT_CACHE
+    _COMPAT_CACHE = {}
+
+    try:
+        # Call the selected sorting strategy with advanced params
+        result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **advanced_params)
+    finally:
+        # Restore old cache container (usually None)
+        _COMPAT_CACHE = old_cache
 
     # Log quality metrics for analysis
     quality = calculate_playlist_quality(result, bpm_tolerance)
