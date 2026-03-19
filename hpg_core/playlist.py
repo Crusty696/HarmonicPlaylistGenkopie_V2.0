@@ -1508,38 +1508,10 @@ class SetTimelineEntry:
     energy_phase: str  # "intro", "build", "peak", "sustain", "cooldown"
 
 
-def compute_set_timeline(
-    tracks: list[Track],
-    target_minutes: float = 60.0,
-    peak_position_pct: float = 0.65,
-    default_overlap: float = 16.0,
-) -> SetTimeline:
-    """
-    Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
-
-    Jeder Track bekommt einen Start/Ende-Zeitpunkt. Overlaps werden
-    von der Gesamtdauer abgezogen. Der Peak-Track wird identifiziert.
-
-    Args:
-      tracks: Sortierte Playlist
-      target_minutes: Gewuenschte Set-Laenge in Minuten
-      peak_position_pct: Peak-Position als Anteil (0.0-1.0, default 0.65)
-      default_overlap: Standard-Overlap in Sekunden wenn keine Mix-Points
-
-    Returns:
-      SetTimeline mit allen Eintraegen
-    """
-    if not tracks:
-        return SetTimeline(
-            total_duration_minutes=0.0,
-            target_duration_minutes=target_minutes,
-            peak_position_minutes=0.0,
-            entries=[],
-            overflow_minutes=0.0,
-        )
-
-    peak_position_pct = max(0.1, min(0.9, peak_position_pct))
-
+def _calculate_timeline_entries(
+    tracks: list[Track], default_overlap: float
+) -> tuple[list[SetTimelineEntry], float]:
+    """Berechnet Start- und Endzeiten fuer jeden Track."""
     entries: list[SetTimelineEntry] = []
     current_time = 0.0
 
@@ -1574,10 +1546,16 @@ def compute_set_timeline(
 
         current_time = end_time
 
-    total_seconds = current_time
-    total_minutes = total_seconds / 60.0
+    return entries, current_time
 
-    # Peak-Track identifizieren (hoechste Energie nahe peak_position_pct)
+
+def _identify_peak_track(
+    entries: list[SetTimelineEntry], total_seconds: float, peak_position_pct: float
+) -> int:
+    """Findet den Index des Peak-Tracks."""
+    if not entries:
+        return 0
+
     peak_time = total_seconds * peak_position_pct
     best_peak_idx = 0
     best_peak_score = -1.0
@@ -1592,32 +1570,74 @@ def compute_set_timeline(
             best_peak_score = score
             best_peak_idx = i
 
-    if entries:
-        entries[best_peak_idx].is_peak = True
+    entries[best_peak_idx].is_peak = True
+    return best_peak_idx
 
-    # Energy-Phasen zuweisen
+
+def _assign_energy_phases(entries: list[SetTimelineEntry], best_peak_idx: int) -> None:
+    """Weist jedem Track eine Energy-Phase zu."""
     n = len(entries)
-    if n > 0:
-        peak_pos = best_peak_idx / max(n - 1, 1)
-        for i, entry in enumerate(entries):
-            relative_pos = i / max(n - 1, 1)
-            if entry.is_peak:
-                entry.energy_phase = "peak"
-            elif i == 0:
-                entry.energy_phase = "intro"
-            elif i == n - 1:
-                entry.energy_phase = "cooldown"
-            elif relative_pos < peak_pos * 0.5:
-                entry.energy_phase = "build"
-            elif relative_pos <= peak_pos:
-                entry.energy_phase = "build"
-            elif relative_pos <= peak_pos + 0.15:
-                entry.energy_phase = "sustain"
-            elif relative_pos > peak_pos + 0.15:
-                entry.energy_phase = "cooldown"
-            else:
-                entry.energy_phase = "build"
+    if n == 0:
+        return
 
+    peak_pos = best_peak_idx / max(n - 1, 1)
+    for i, entry in enumerate(entries):
+        relative_pos = i / max(n - 1, 1)
+        if entry.is_peak:
+            entry.energy_phase = "peak"
+        elif i == 0:
+            entry.energy_phase = "intro"
+        elif i == n - 1:
+            entry.energy_phase = "cooldown"
+        elif relative_pos < peak_pos * 0.5:
+            entry.energy_phase = "build"
+        elif relative_pos <= peak_pos:
+            entry.energy_phase = "build"
+        elif relative_pos <= peak_pos + 0.15:
+            entry.energy_phase = "sustain"
+        elif relative_pos > peak_pos + 0.15:
+            entry.energy_phase = "cooldown"
+        else:
+            entry.energy_phase = "build"
+
+
+def compute_set_timeline(
+    tracks: list[Track],
+    target_minutes: float = 60.0,
+    peak_position_pct: float = 0.65,
+    default_overlap: float = 16.0,
+) -> SetTimeline:
+    """
+    Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
+
+    Jeder Track bekommt einen Start/Ende-Zeitpunkt. Overlaps werden
+    von der Gesamtdauer abgezogen. Der Peak-Track wird identifiziert.
+
+    Args:
+      tracks: Sortierte Playlist
+      target_minutes: Gewuenschte Set-Laenge in Minuten
+      peak_position_pct: Peak-Position als Anteil (0.0-1.0, default 0.65)
+      default_overlap: Standard-Overlap in Sekunden wenn keine Mix-Points
+
+    Returns:
+      SetTimeline mit allen Eintraegen
+    """
+    if not tracks:
+        return SetTimeline(
+            total_duration_minutes=0.0,
+            target_duration_minutes=target_minutes,
+            peak_position_minutes=0.0,
+            entries=[],
+            overflow_minutes=0.0,
+        )
+
+    peak_position_pct = max(0.1, min(0.9, peak_position_pct))
+
+    entries, total_seconds = _calculate_timeline_entries(tracks, default_overlap)
+    best_peak_idx = _identify_peak_track(entries, total_seconds, peak_position_pct)
+    _assign_energy_phases(entries, best_peak_idx)
+
+    total_minutes = total_seconds / 60.0
     peak_minutes = entries[best_peak_idx].start_time / 60.0 if entries else 0.0
 
     return SetTimeline(
