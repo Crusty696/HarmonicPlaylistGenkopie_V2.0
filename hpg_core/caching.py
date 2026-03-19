@@ -9,7 +9,8 @@ Works on both Windows (msvcrt) and Unix/Linux (fcntl).
 
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
-import shelve
+import sqlite3
+import json
 import os
 import sys
 import hashlib
@@ -17,12 +18,13 @@ import time
 import logging
 import errno
 from contextlib import contextmanager
-from .models import Track
+from dataclasses import asdict
+from .models import Track, TrackSection
 from .config import CACHE_LOCK_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-CACHE_FILE = "hpg_cache_v10.dbm"
+CACHE_FILE = "hpg_cache_v10.db"
 CACHE_VERSION = 10
 LOCK_FILE = "hpg_cache_v10.lock"
 
@@ -111,15 +113,28 @@ def init_cache() -> None:
 
     try:
         with file_lock(LOCK_FILE):
-            with shelve.open(CACHE_FILE) as db:
-                current_version = db.get('cache_version')
-                if current_version is None:
-                    db['cache_version'] = CACHE_VERSION
+            with sqlite3.connect(CACHE_FILE) as conn:
+                cur = conn.cursor()
+                cur.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT)")
+
+                cur.execute("SELECT value FROM cache WHERE key = ?", ("cache_version",))
+                row = cur.fetchone()
+
+                if row is None:
+                    cur.execute("INSERT INTO cache (key, value) VALUES (?, ?)", ("cache_version", str(CACHE_VERSION)))
+                    conn.commit()
                     logger.info(f"Cache initialisiert (Version {CACHE_VERSION})")
-                elif current_version != CACHE_VERSION:
-                    logger.warning(f"Cache-Version veraltet. Cache geleert.")
-                    db.clear()
-                    db['cache_version'] = CACHE_VERSION
+                else:
+                    try:
+                        current_version = int(row[0])
+                    except ValueError:
+                        current_version = -1
+
+                    if current_version != CACHE_VERSION:
+                        logger.warning(f"Cache-Version veraltet. Cache geleert.")
+                        cur.execute("DELETE FROM cache")
+                        cur.execute("INSERT INTO cache (key, value) VALUES (?, ?)", ("cache_version", str(CACHE_VERSION)))
+                        conn.commit()
     except Exception as e:
         logger.error(f"Init-Fehler: {e}")
 
@@ -128,6 +143,11 @@ def generate_cache_key(file_path: str) -> str | None:
     """Generates a cache key based on file path, size, and modification time."""
     if not file_path:
         return None
+
+    # If the file doesn't exist, return None
+    if not os.path.exists(file_path):
+        return None
+
     identifier = str(file_path)
     try:
         stat = os.stat(identifier)
@@ -144,8 +164,19 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
     try:
         # Increase timeout slightly for reading to reduce collision risk
         with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT + 2.0):
-            with shelve.open(CACHE_FILE) as db:
-                track = db.get(cache_key)
+            with sqlite3.connect(CACHE_FILE) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM cache WHERE key = ?", (cache_key,))
+                row = cur.fetchone()
+
+                track = None
+                if row:
+                    track_data = json.loads(row[0])
+                    # Reconstruct nested objects (e.g. TrackSection)
+                    sections_data = track_data.pop("sections", [])
+                    track = Track(**track_data)
+                    track.sections = [TrackSection(**sec) if isinstance(sec, dict) else sec for sec in sections_data]
+
                 if track and file_path:
                     try:
                         stat = os.stat(file_path)
@@ -155,8 +186,9 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
                     except OSError:
                         pass
                 return track
-    except Exception:
+    except Exception as e:
         # Fail silently on cache miss due to lock
+        logger.debug(f"Cache miss or error: {e}")
         return None
 
 
@@ -166,8 +198,11 @@ def cache_track(cache_key: str, track: Track) -> None:
         return
 
     try:
+        track_data = json.dumps(asdict(track))
         with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT + 2.0):
-            with shelve.open(CACHE_FILE) as db:
-                db[cache_key] = track
+            with sqlite3.connect(CACHE_FILE) as conn:
+                cur = conn.cursor()
+                cur.execute("INSERT OR REPLACE INTO cache (key, value) VALUES (?, ?)", (cache_key, track_data))
+                conn.commit()
     except Exception as e:
         logger.debug(f"Caching skipped due to lock: {e}")

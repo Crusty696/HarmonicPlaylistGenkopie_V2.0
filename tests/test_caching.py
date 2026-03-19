@@ -171,19 +171,21 @@ class TestCacheIntegration:
   """Integration: Cache-Key + Track speichern/laden."""
 
   def test_track_is_serializable(self, sample_track):
-    """Track-Objekt kann serialisiert werden (fuer shelve)."""
-    import pickle
-    data = pickle.dumps(sample_track)
-    restored = pickle.loads(data)
+    """Track-Objekt kann serialisiert werden (fuer sqlite/json)."""
+    import json
+    from dataclasses import asdict
+    data = json.dumps(asdict(sample_track))
+    restored = Track(**json.loads(data))
     assert restored.bpm == sample_track.bpm
     assert restored.camelotCode == sample_track.camelotCode
     assert restored.title == sample_track.title
 
   def test_track_round_trip(self, sample_track):
     """Track-Objekt uebersteht Serialisierung/Deserialisierung."""
-    import pickle
-    data = pickle.dumps(sample_track)
-    restored = pickle.loads(data)
+    import json
+    from dataclasses import asdict
+    data = json.dumps(asdict(sample_track))
+    restored = Track(**json.loads(data))
     assert restored.filePath == sample_track.filePath
     assert restored.fileName == sample_track.fileName
     assert restored.artist == sample_track.artist
