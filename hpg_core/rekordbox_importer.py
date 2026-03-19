@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 try:
     from pyrekordbox import Rekordbox6Database
+    from pyrekordbox.db6 import tables
+    from sqlalchemy.orm import joinedload
 
     REKORDBOX_AVAILABLE = True
 except ImportError:
@@ -99,7 +101,23 @@ class RekordboxImporter:
             return
 
         try:
-            for content in self.db.get_content():
+            # Query the database directly to eagerly load related tables
+            # This avoids the N+1 problem when accessing properties like Cues, KeyName, etc.
+            if hasattr(self.db, "query"):
+                query = self.db.query(tables.DjmdContent).options(
+                    joinedload(tables.DjmdContent.Cues),
+                    joinedload(tables.DjmdContent.Key),
+                    joinedload(tables.DjmdContent.Artist),
+                    joinedload(tables.DjmdContent.Genre),
+                    joinedload(tables.DjmdContent.Album),
+                    joinedload(tables.DjmdContent.Color),
+                )
+                content_iterator = query
+            else:
+                # Fallback if DB layout changes
+                content_iterator = self.db.get_content()
+
+            for content in content_iterator:
                 # Build full file path
                 folder_path = content.FolderPath or ""
                 file_name = content.FileNameL or content.FileNameS or ""
@@ -118,9 +136,9 @@ class RekordboxImporter:
                     key=content.KeyName if hasattr(content, "KeyName") else None,
                     duration=float(content.Length) if content.Length else None,
                     title=content.Title,
-                    artist=content.ArtistName
-                    if hasattr(content, "ArtistName")
-                    else None,
+                    artist=(
+                        content.ArtistName if hasattr(content, "ArtistName") else None
+                    ),
                     genre=content.GenreName if hasattr(content, "GenreName") else None,
                     album=content.AlbumName if hasattr(content, "AlbumName") else None,
                     rating=content.Rating if content.Rating else None,
@@ -182,14 +200,16 @@ class RekordboxImporter:
         try:
             for cue in cues:
                 cue_data = {
-                    "position": float(cue.InMsec) / 1000.0
-                    if hasattr(cue, "InMsec")
-                    else None,
+                    "position": (
+                        float(cue.InMsec) / 1000.0 if hasattr(cue, "InMsec") else None
+                    ),
                     "name": cue.Comment if hasattr(cue, "Comment") else None,
                     "type": cue.Kind if hasattr(cue, "Kind") else None,
-                    "hot_cue_number": cue.HotCueBankNumber
-                    if hasattr(cue, "HotCueBankNumber")
-                    else None,
+                    "hot_cue_number": (
+                        cue.HotCueBankNumber
+                        if hasattr(cue, "HotCueBankNumber")
+                        else None
+                    ),
                     "color": cue.ColorID if hasattr(cue, "ColorID") else None,
                 }
                 cue_list.append(cue_data)
