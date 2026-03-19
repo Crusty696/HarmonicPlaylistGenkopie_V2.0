@@ -1240,9 +1240,11 @@ class PlaylistPanel(QWidget):
             "Energie-Level des Tracks (0-100).",
             "Automatisch erkanntes Genre.",
             "Konfidenz der Genre-Erkennung (0-100%).",
-            "Mix-In-Punkt: Wo der naechste Track eingeblendet werden sollte.",
-            "Mix-Out-Punkt: Wo dieser Track ausgeblendet werden sollte.",
-            "Kompatibilitaets-Score zum vorherigen Track (0-100%).",
+            "Mix-In-Punkt: Dynamisch berechneter Startpunkt für den Mix (nach Intro).",
+            "Mix-Out-Punkt: Dynamisch berechneter Endpunkt für den Mix (vor Outro).",
+            "Bass %: Subbass-Anteil (20-150Hz) für Genre-Flow und EQing.",
+            "Textur: Klangliche Ähnlichkeit für fließende Übergänge.",
+            "Kompatibilität zum vorherigen Track (0-100%).",
         ]
         for col, tip in enumerate(header_tooltips):
             item = self.table.horizontalHeaderItem(col)

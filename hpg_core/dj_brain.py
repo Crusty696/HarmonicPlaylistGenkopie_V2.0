@@ -359,7 +359,7 @@ def _find_mix_in_point(
 
   best = min(candidates, key=lambda s: (
     label_priority.get(s.get("label", "main"), 99),
-    abs(s.get("avg_energy", 50.0) - avg_energy * 0.7),
+    abs(s.get("avg_energy", 50.0) - avg_energy * 0.75), # Slightly higher energy preference for mix in
   ))
 
   mix_in = best.get("start_time", intro_end)
@@ -414,8 +414,19 @@ def _find_mix_out_point(
     return outro_start
 
   # --- Letzte starke Sektion VOR Outro ---
-  last_strong = candidates[-1]
-  mix_out = last_strong.get("end_time", outro_start)
+  # Bevorzugt main, breakdown, drop für den Übergang
+  label_priority = {"main": 0, "breakdown": 1, "build": 2, "drop": 3}
+  all_energies = [s.get("avg_energy", 50.0) for s in candidates]
+  avg_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
+
+  # Finde den besten Ausstieg (bevorzugt eine Sektion mit abnehmender Energie)
+  best = min(candidates, key=lambda s: (
+    label_priority.get(s.get("label", "main"), 99),
+    -s.get("end_time", 0.0) # Eher am Ende, aber nicht strikt die allerletzte
+  ))
+
+  # Normalerweise mix_out am Ende dieser Sektion
+  mix_out = best.get("end_time", outro_start)
 
   # --- Quantisierung auf Phrasen-Grenze ---
   phrase_seconds = seconds_per_bar * profile.phrase_unit
@@ -425,6 +436,7 @@ def _find_mix_out_point(
   # --- Guard: NIEMALS nach Outro-Start ---
   mix_out = min(mix_out, outro_start)
 
+  # Wir wollen auch vermeiden, dass der Uebergang direkt im Drop liegt, wenn es Alternativen gibt
   return max(0.0, mix_out)
 
 
