@@ -1,12 +1,14 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
-from .models import Track, CAMELOT_MAP, key_to_camelot
+from .models import Track, key_to_camelot
+from typing import TYPE_CHECKING
 from .dj_brain import (
     get_genre_compatibility,
     generate_dj_recommendation,
-    get_mix_profile,
-    DJRecommendation,
 )
+
+if TYPE_CHECKING:
+    from .dj_brain import DJRecommendation
 from .config import (
     GENRE_WEIGHT_WITH_DJ_BRAIN,
     GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
@@ -1183,7 +1185,6 @@ def compute_transition_recommendations(
 
         fade_out_start = max(0.0, current_mix_out - transition_duration)
         fade_in_start = next_mix_in
-        mix_entry = next_mix_in
         overlap = transition_duration
 
         metrics = calculate_enhanced_compatibility(current, upcoming, bpm_tolerance)
@@ -1501,7 +1502,6 @@ def compute_set_timeline(
             overflow_minutes=0.0,
         )
 
-    target_seconds = target_minutes * 60.0
     peak_position_pct = max(0.1, min(0.9, peak_position_pct))
 
     entries: list[SetTimelineEntry] = []
