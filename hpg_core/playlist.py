@@ -1141,6 +1141,67 @@ def _build_transition_description(
     return "; ".join(parts)
 
 
+
+def _process_dj_brain_recommendations(
+    current: Track,
+    upcoming: Track,
+    current_mix_out: float,
+) -> tuple["DJRecommendation | None", list[str], float | None, float | None]:
+    """
+    Processes DJ Brain recommendations and returns the updated transition details.
+
+    Returns:
+        tuple containing:
+        - dj_rec: The DJRecommendation object if successful, else None
+        - notes_parts: Additional notes from the DJ Brain
+        - overlap: Adjusted overlap if DJ Brain provided transition bars
+        - fade_out_start: Adjusted fade out start based on overlap
+    """
+    dj_rec = None
+    notes_parts = []
+    overlap = None
+    fade_out_start = None
+
+    current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
+    upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
+    has_dj_data = current_genre != "Unknown" and upcoming_genre != "Unknown"
+
+    if has_dj_data:
+        try:
+            dj_rec = generate_dj_recommendation(current, upcoming)
+            if dj_rec.mix_technique:
+                notes_parts.append(f"Mix: {dj_rec.mix_technique}")
+            if dj_rec.eq_advice:
+                notes_parts.append(f"EQ: {dj_rec.eq_advice}")
+            if dj_rec.transition_bars > 0:
+                notes_parts.append(f"Transition: {dj_rec.transition_bars} bars")
+            # Nur anzeigen wenn echte Struktur-Daten vorhanden
+            if dj_rec.structure_note:
+                notes_parts.append(dj_rec.structure_note)
+            if dj_rec.genre_pair:
+                notes_parts.append(f"[{dj_rec.genre_pair}]")
+            for risk in dj_rec.risk_notes:
+                notes_parts.append(f"! {risk}")
+            # Konkrete Track-Empfehlungen mit echten Messwerten
+            if dj_rec.bpm_advice:
+                notes_parts.append(f"BPM: {dj_rec.bpm_advice}")
+            if dj_rec.key_advice:
+                notes_parts.append(f"Key: {dj_rec.key_advice}")
+            if dj_rec.energy_advice:
+                notes_parts.append(f"Energy: {dj_rec.energy_advice}")
+
+            # DJ Brain Transition-Laenge uebernehmen
+            if dj_rec.transition_bars > 0 and current.bpm > 0:
+                seconds_per_bar = (60.0 / current.bpm) * 4
+                overlap = seconds_per_bar * dj_rec.transition_bars
+                fade_out_start = max(0.0, current_mix_out - overlap)
+        except Exception as e:
+            logger.warning(f"DJ-Brain Transition-Verarbeitung fehlgeschlagen: {e}")
+            # Fallback auf Standard-Notes
+
+    return dj_rec, notes_parts, overlap, fade_out_start
+
+
 def compute_transition_recommendations(
     playlist: List[Track], bpm_tolerance: float = 3.0, default_overlap: float = 12.0
 ) -> List[TransitionRecommendation]:
@@ -1203,43 +1264,14 @@ def compute_transition_recommendations(
         notes_parts = []
 
         # DJ Brain Empfehlungen wenn Genre-Daten vorhanden
-        dj_rec = None
-        current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
-        upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
-        has_dj_data = current_genre != "Unknown" and upcoming_genre != "Unknown"
-
-        if has_dj_data:
-            try:
-                dj_rec = generate_dj_recommendation(current, upcoming)
-                if dj_rec.mix_technique:
-                    notes_parts.append(f"Mix: {dj_rec.mix_technique}")
-                if dj_rec.eq_advice:
-                    notes_parts.append(f"EQ: {dj_rec.eq_advice}")
-                if dj_rec.transition_bars > 0:
-                    notes_parts.append(f"Transition: {dj_rec.transition_bars} bars")
-                # Nur anzeigen wenn echte Struktur-Daten vorhanden
-                if dj_rec.structure_note:
-                    notes_parts.append(dj_rec.structure_note)
-                if dj_rec.genre_pair:
-                    notes_parts.append(f"[{dj_rec.genre_pair}]")
-                for risk in dj_rec.risk_notes:
-                    notes_parts.append(f"! {risk}")
-                # Konkrete Track-Empfehlungen mit echten Messwerten
-                if dj_rec.bpm_advice:
-                    notes_parts.append(f"BPM: {dj_rec.bpm_advice}")
-                if dj_rec.key_advice:
-                    notes_parts.append(f"Key: {dj_rec.key_advice}")
-                if dj_rec.energy_advice:
-                    notes_parts.append(f"Energy: {dj_rec.energy_advice}")
-
-                # DJ Brain Transition-Laenge uebernehmen
-                if dj_rec.transition_bars > 0 and current.bpm > 0:
-                    seconds_per_bar = (60.0 / current.bpm) * 4
-                    overlap = seconds_per_bar * dj_rec.transition_bars
-                    fade_out_start = max(0.0, current_mix_out - overlap)
-            except Exception as e:
-                logger.warning(f"DJ-Brain Transition-Verarbeitung fehlgeschlagen: {e}")
-                # Fallback auf Standard-Notes
+        dj_rec, dj_notes_parts, dj_overlap, dj_fade_out_start = _process_dj_brain_recommendations(
+            current, upcoming, current_mix_out
+        )
+        notes_parts.extend(dj_notes_parts)
+        if dj_overlap is not None:
+            overlap = dj_overlap
+        if dj_fade_out_start is not None:
+            fade_out_start = dj_fade_out_start
 
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen
