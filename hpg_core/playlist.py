@@ -1762,8 +1762,12 @@ def cluster_tracks_by_similarity(
 
         # Update: Centroids neu berechnen
         dim = len(centroids[0])
+        cluster_to_members = [[] for _ in range(n_clusters)]
+        for i, k_idx in enumerate(assignments):
+            cluster_to_members[k_idx].append(with_mfcc[i])
+
         for k in range(n_clusters):
-            members = [with_mfcc[i] for i, a in enumerate(assignments) if a == k]
+            members = cluster_to_members[k]
             if not members:
                 continue
             new_centroid = [0.0] * dim
