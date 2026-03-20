@@ -10,7 +10,6 @@ Intelligentere, musik-informed Bonuses und Penalties basierend auf:
 """
 
 import logging
-from typing import List
 from .models import Track
 from .scoring_context import PlaylistContext
 from .genre_compatibility import GenreCompatibilityMatrix
