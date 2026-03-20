@@ -52,7 +52,7 @@ def techno_track():
       title="Techno Deep",
       genre="Techno",
       detected_genre="Techno",
-      bpm=130,
+      bpm=135,
       keyNote="E",
       keyMode="Minor",
       camelotCode="9A",
@@ -193,7 +193,7 @@ class TestEnhancedBonusCalculator:
     # Techno mit Camelot sehr nah dran aber anderes Genre
     techno_track = Track(
         "/techno", "techno", artist="DJ", title="Tech", genre="Techno",
-        detected_genre="Techno", bpm=128, keyNote="E", keyMode="Minor",
+        detected_genre="Techno", bpm=130, keyNote="E", keyMode="Minor",
         camelotCode="8A",  # Abstand zu House 7A = 1
         energy=75, brightness=40, danceability=80,
         duration=300
@@ -210,7 +210,7 @@ class TestEnhancedBonusCalculator:
   def test_flow_bonus_energy_rising(self, house_track, techno_track):
     """Flow Bonus: Energy steigt schön an."""
     playlist = [
-        Track("/1", "1", bpm=120, energy=50, detected_genre="House", genre="House",
+        Track("/1", "1", bpm=124, energy=50, detected_genre="House", genre="House",
               camelotCode="7A", brightness=50, danceability=80),
         Track("/2", "2", bpm=122, energy=60, detected_genre="House", genre="House",
               camelotCode="8A", brightness=50, danceability=80),
@@ -382,7 +382,7 @@ class TestFlowAnalyzer:
               camelotCode="7A", brightness=50, danceability=80),
         Track("/2", "2", energy=60, bpm=122, detected_genre="House", genre="House",
               camelotCode="8A", brightness=50, danceability=80),
-        Track("/3", "3", energy=70, bpm=124, detected_genre="House", genre="House",
+        Track("/3", "3", energy=70, bpm=120, detected_genre="House", genre="House",
               camelotCode="8A", brightness=50, danceability=80),
     ]
 
@@ -498,3 +498,150 @@ class TestPhase2Integration:
     # GENRE_FLOW sollte kompatible Genres bevorzugen
     # (möglicherweise höherer Score, aber mindestens nicht niedriger)
     assert score_genre_flow >= score_harmonic * 0.9
+
+  def test_calculate_all_bonuses_max_cap(self, house_track, techno_track):
+    """Testet, dass die Summe aller Boni den Maximalwert von 0.2 nicht überschreitet."""
+    # Wir erstellen ein Szenario, in dem viele Boni greifen.
+    playlist = [
+        Track("/1", "1", energy=50, bpm=120, detected_genre="House", genre="House", camelotCode="7A", brightness=50, danceability=80, vocal_instrumental="instrumental"),
+        Track("/2", "2", energy=60, bpm=124, detected_genre="House", genre="House", camelotCode="7A", brightness=50, danceability=80, vocal_instrumental="instrumental"),
+        Track("/3", "3", energy=70, bpm=128, detected_genre="House", genre="House", camelotCode="7A", brightness=50, danceability=80, vocal_instrumental="instrumental"),
+    ]
+
+    # Kontext ist im BUILD_UP (3/10 = 0.3) oder PEAK, wenn wir die Länge anpassen
+    # Energy steigt, bpm steigt
+    context = PlaylistContext(playlist, 5) # 3/5 = 0.6 = PEAK
+
+    current = playlist[-1]
+    # Kandidat hat:
+    # - höhere Energie (Flow: +0.05)
+    # - hellere Brightness (Spectral: +0.03)
+    # - ähnliche Danceability im Peak (+0.05)
+    # - sehr ähnliche Energie und BPM (+0.06 Momentum)
+    # Das ergibt > 0.19. Fügen wir noch Emotional Journey und Genre Flow hinzu.
+    candidate = Track(
+        "/4", "4", energy=73, bpm=130, detected_genre="Deep House", genre="Deep House",
+        camelotCode="7A", brightness=75, danceability=82, vocal_instrumental="instrumental"
+    )
+
+    # EMOTIONAL_JOURNEY bringt +0.05 (weil vocal_instrumental gleich)
+    bonus1 = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "EMOTIONAL_JOURNEY"
+    )
+    assert bonus1 == 0.2  # Gekappt auf 0.2
+
+    # GENRE_FLOW bringt +0.08 (weil House -> Deep House = 0.95 Kompatibilität, aber nicht gleich)
+    bonus2 = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "GENRE_FLOW"
+    )
+    assert bonus2 == 0.2  # Gekappt auf 0.2
+
+  def test_calculate_all_bonuses_emotional_journey(self, house_track):
+    """Testet die spezifischen Boni für EMOTIONAL_JOURNEY."""
+    context = PlaylistContext([house_track], 10)
+    candidate = Track(
+        "/5", "5", energy=70, bpm=128, detected_genre="House", genre="House",
+        camelotCode="7A", brightness=60, danceability=85, vocal_instrumental="instrumental"
+    )
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        house_track, candidate, context, "EMOTIONAL_JOURNEY"
+    )
+    # _emotional_journey_bonus bringt +0.05
+    assert bonus >= 0.05
+
+  def test_calculate_all_bonuses_genre_flow(self, house_track, deep_house_track):
+    """Testet die spezifischen Boni für GENRE_FLOW."""
+    context = PlaylistContext([house_track], 10)
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        house_track, deep_house_track, context, "GENRE_FLOW"
+    )
+    # _genre_storytelling_bonus bringt +0.08 für House -> Deep House (0.95)
+    assert bonus >= 0.08
+
+  def test_calculate_all_bonuses_build_up_danceability(self):
+    """Testet Tanzbarkeits-Konsistenz in der BUILD_UP Phase."""
+    playlist = [
+        Track("/1", "1", energy=50, bpm=120, detected_genre="House", genre="House", camelotCode="7A", danceability=60),
+    ]
+    # 1/5 = 0.2 = BUILD_UP
+    context = PlaylistContext(playlist, 5)
+    current = playlist[-1]
+    candidate = Track("/2", "2", energy=60, bpm=122, detected_genre="House", genre="House", camelotCode="7A", danceability=75)
+
+    # _danceability_bonus im BUILD_UP mit steigender Tanzbarkeit bringt +0.04
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "HARMONIC_FLOW"
+    )
+    assert bonus >= 0.04
+
+  def test_calculate_all_bonuses_flow_falling(self):
+    """Testet Flow Bonus für fallende Energie und BPM."""
+    playlist = [
+        Track("/1", "1", energy=80, bpm=135, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/2", "2", energy=70, bpm=130, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/3", "3", energy=60, bpm=125, detected_genre="House", genre="House", camelotCode="7A"),
+    ]
+    context = PlaylistContext(playlist, 10)
+    current = playlist[-1]
+    candidate = Track("/4", "4", energy=50, bpm=120, detected_genre="House", genre="House", camelotCode="7A")
+
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "HARMONIC_FLOW"
+    )
+    # Energy falling (+0.05), BPM falling (+0.04) -> +0.09
+    assert bonus >= 0.08
+
+  def test_surprise_bonus_energy_trend_rising(self):
+    """Testet Überraschungs-Bonus bei steigender Energie und unerwartetem Übergang."""
+    playlist = [
+        Track("/1", "1", energy=50, bpm=120, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/2", "2", energy=60, bpm=122, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/3", "3", energy=70, bpm=124, detected_genre="House", genre="House", camelotCode="7A"),
+    ]
+    context = PlaylistContext(playlist, 10)
+    current = playlist[-1]
+
+    # Alles unerwartet (Camelot 7A -> 9A = dist 2), aber Energy Trend Rising und candidate.energy > current.energy
+    candidate = Track("/4", "4", energy=80, bpm=124, detected_genre="Techno", genre="Techno", camelotCode="9A")
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "HARMONIC_FLOW"
+    )
+    # Sollte Bonus 3 auslösen (+0.04)
+    assert bonus >= 0.04
+
+  def test_surprise_bonus_genre_compat_far_camelot(self):
+    """Testet Überraschungs-Bonus für kompatibles Genre aber weiten Camelot Abstand."""
+    playlist = [
+        Track("/1", "1", energy=70, bpm=128, detected_genre="House", genre="House", camelotCode="7A")
+    ]
+    context = PlaylistContext(playlist, 10)
+    current = playlist[-1]
+
+    # House zu Deep House = kompatibel, aber Camelot 7A zu 11A (Distanz 4)
+    candidate = Track("/2", "2", energy=70, bpm=128, detected_genre="Deep House", genre="Deep House", camelotCode="11A")
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "HARMONIC_FLOW"
+    )
+    # Sollte Bonus 2 auslösen (+0.06)
+    assert bonus >= 0.06
+
+  def test_flow_bonus_genre_streak(self):
+    """Testet Flow Bonus bei einem Genre Streak und sanftem Wechsel."""
+    playlist = [
+        Track("/1", "1", energy=70, bpm=128, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/2", "2", energy=70, bpm=128, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/3", "3", energy=70, bpm=128, detected_genre="House", genre="House", camelotCode="7A"),
+        Track("/4", "4", energy=70, bpm=128, detected_genre="House", genre="House", camelotCode="7A"),
+    ]
+    # Streak von 4 House Tracks
+    context = PlaylistContext(playlist, 10)
+    current = playlist[-1]
+
+    # Wechsel zu Techno (Compat 0.65-0.75, was in 0.6 < compat < 1.0 fällt)
+    candidate = Track("/5", "5", energy=70, bpm=128, detected_genre="Techno", genre="Techno", camelotCode="7A")
+
+    #_flow_bonus sollte für Genre Flow +0.04 geben
+    bonus = EnhancedBonusCalculator.calculate_all_bonuses(
+        current, candidate, context, "HARMONIC_FLOW"
+    )
+    assert bonus >= 0.04
