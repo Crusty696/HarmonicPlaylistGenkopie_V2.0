@@ -311,8 +311,13 @@ def _sort_harmonic_flow_enhanced(
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.bpm)
 
+    # Create a local cache specifically to avoid repeated function calls during lookahead
+    # and pass it to _find_best_starting_track as well.
+    compat_cache = {}
+
     # Capture kwargs in closure for nested function
-    compat_kwargs = kwargs
+    compat_kwargs = kwargs.copy()
+    compat_kwargs['compat_cache'] = compat_cache
 
     def _lookahead_score(
         current: Track, remaining: List[Track], depth: int = 2
@@ -325,15 +330,21 @@ def _sort_harmonic_flow_enhanced(
         best_total_score = -1
 
         for candidate in remaining:
-            immediate_score = calculate_compatibility(
-                current, candidate, bpm_tolerance, **compat_kwargs
-            )
+            cache_key = (id(current), id(candidate))
+            if cache_key in compat_cache:
+                immediate_score = compat_cache[cache_key]
+            else:
+                immediate_score = calculate_compatibility(
+                    current, candidate, bpm_tolerance, **kwargs
+                )
+                compat_cache[cache_key] = immediate_score
+
             if immediate_score == 0:  # Skip incompatible tracks
                 continue
 
             future_score = 0.0
             if depth > 1 and len(remaining) > 1:
-                next_remaining = [t for t in remaining if t != candidate]
+                next_remaining = [t for t in remaining if t is not candidate]
                 _, future_score = _lookahead_score(candidate, next_remaining, depth - 1)
 
             total_score = (
@@ -347,7 +358,7 @@ def _sort_harmonic_flow_enhanced(
 
     unprocessed = list(tracks)
     # Start with a track that has good overall connectivity
-    start_track = _find_best_starting_track(tracks, bpm_tolerance, **kwargs)
+    start_track = _find_best_starting_track(tracks, bpm_tolerance, **compat_kwargs)
     final_playlist = [start_track]
     unprocessed.remove(start_track)
 
@@ -363,11 +374,17 @@ def _sort_harmonic_flow_enhanced(
             current_track = best_next
         else:
             # Fallback: choose track with best single compatibility
+            def get_compat(t):
+                cache_key = (id(current_track), id(t))
+                if cache_key in compat_cache:
+                    return compat_cache[cache_key]
+                score = calculate_compatibility(current_track, t, bpm_tolerance, **kwargs)
+                compat_cache[cache_key] = score
+                return score
+
             fallback = max(
                 unprocessed,
-                key=lambda t: calculate_compatibility(
-                    current_track, t, bpm_tolerance, **compat_kwargs
-                ),
+                key=get_compat,
             )
             final_playlist.append(fallback)
             unprocessed.remove(fallback)
@@ -387,6 +404,11 @@ def _find_best_starting_track(
         return None
     if len(tracks) <= 1:
         return tracks[0]
+
+    # Allow passing a compat_cache dictionary to avoid redundant compatibility calculations
+    compat_cache = kwargs.pop('compat_cache', None)
+    if compat_cache is None:
+        compat_cache = {}
 
     # Optimization: For large playlists, sample max 30 candidates and check against max 20 others
     # This keeps the complexity O(1) for very large N
@@ -413,7 +435,14 @@ def _find_best_starting_track(
         for j in comparison_indices:
             if i == j:
                 continue
-            score = calculate_compatibility(track, tracks[j], bpm_tolerance, **kwargs)
+
+            cache_key = (id(track), id(tracks[j]))
+            if cache_key in compat_cache:
+                score = compat_cache[cache_key]
+            else:
+                score = calculate_compatibility(track, tracks[j], bpm_tolerance, **kwargs)
+                compat_cache[cache_key] = score
+
             if score > 0:
                 total_compatibility += score
                 connections += 1
