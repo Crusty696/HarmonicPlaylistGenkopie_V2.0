@@ -1,7 +1,7 @@
-# Harmonic Playlist Generator (HPG) v3.5.3
+# Harmonic Playlist Generator (HPG) v3.6.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)]()
 
 > **Professional DJ Tool for Harmonically Perfect Playlists**
@@ -12,9 +12,9 @@
 
 ### Windows Standalone Executable
 
-**Latest Release: v3.5.3**
+**Latest Release: v3.6.0**
 
-[**DOWNLOAD HarmonicPlaylistGenerator.exe**](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/latest)
+[**DOWNLOAD HarmonicPlaylistGenerator.exe**](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/latest/download/HarmonicPlaylistGenerator.exe)
 
 **No installation required - Just download and run!**
 
@@ -63,7 +63,7 @@
 ## Installation (Developers)
 
 ### Prerequisites
-- Python 3.9+ (3.12 recommended)
+- Python 3.11+ (3.12 recommended)
 - Windows 10/11
 
 ### Setup
