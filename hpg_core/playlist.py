@@ -1,5 +1,3 @@
-from __future__ import annotations  # Python 3.9 compatibility for | type hints
-
 from .models import Track, key_to_camelot
 from typing import TYPE_CHECKING
 from .dj_brain import (
@@ -55,7 +53,7 @@ class TransitionRecommendation:
     risk_level: str
     notes: str
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
-    dj_rec: "DJRecommendation | None" = None  # Paar-spezifische DJ-Brain-Empfehlung
+    dj_rec: Optional["DJRecommendation"] = None  # Paar-spezifische DJ-Brain-Empfehlung
 
 
 class EnergyDirection(Enum):
@@ -482,7 +480,7 @@ def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list
         range(count), key=lambda idx: math.sin((idx / (count - 1)) * math.pi)
     )
 
-    ordered_tracks: list[Track | None] = [None] * count
+    ordered_tracks: list[Optional[Track]] = [None] * count
     for (track, *_), position in zip(scored_tracks, waveform_positions):
         ordered_tracks[position] = track
 
@@ -558,7 +556,7 @@ def _sort_peak_time_enhanced(
     waveform_positions = sorted(range(count), key=lambda idx: peak_curve[idx])
 
     # Assign tracks to positions with harmonic consideration
-    ordered_tracks: list[Track | None] = [None] * count
+    ordered_tracks: list[Optional[Track]] = [None] * count
 
     for position_idx, track_idx in enumerate(zip(scored_tracks, waveform_positions)):
         track, score, norm_bpm, norm_energy = track_idx[0]
@@ -1715,7 +1713,7 @@ def find_similar_tracks(
     reference: Track,
     candidates: list[Track],
     max_results: int = 10,
-    max_distance: float | None = None,
+    max_distance: Optional[float] = None,
 ) -> list[tuple[Track, float]]:
     """Findet die aehnlichsten Tracks basierend auf MFCC-Fingerprints.
 
