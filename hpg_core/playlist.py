@@ -4,7 +4,6 @@ from .models import Track, CAMELOT_MAP, key_to_camelot
 from .dj_brain import (
     get_genre_compatibility,
     generate_dj_recommendation,
-    get_mix_profile,
     DJRecommendation,
 )
 from .config import (
