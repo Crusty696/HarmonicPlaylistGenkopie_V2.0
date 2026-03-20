@@ -1,0 +1,127 @@
+name: Test One-Click Installer
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Ermöglicht manuelles Ausführen
+
+jobs:
+  test-windows-installer:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Display Python Version
+      run: python --version
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install PyInstaller
+      run: pip install pyinstaller
+
+    - name: Run Build Script
+      run: |
+        cmd /c build.bat
+      shell: cmd
+
+    - name: Check if EXE was created
+      run: |
+        Write-Host "=== Searching for EXE files ==="
+        $exeFile = Get-ChildItem -Recurse -Filter "HarmonicPlaylistGenerator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if ($exeFile) {
+          Write-Host "✅ EXE found: $($exeFile.FullName)"
+          Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
+
+          # Ensure dist/ directory exists
+          if (-not (Test-Path "dist")) {
+            New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          }
+
+          # Define target path
+          $targetPath = Join-Path (Get-Location) "dist\HarmonicPlaylistGenerator.exe"
+
+          # Only copy if source and target are different
+          if ($exeFile.FullName -ne $targetPath) {
+            Copy-Item $exeFile.FullName $targetPath -Force
+            Write-Host "✅ Copied to dist/"
+          } else {
+            Write-Host "✅ EXE already in dist/"
+          }
+
+          Get-Item $targetPath | Select-Object Name, Length, LastWriteTime
+        } else {
+          Write-Host "❌ EXE was not created!"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Upload Build Artifact
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: HarmonicPlaylistGenerator-Windows
+        path: dist/HarmonicPlaylistGenerator.exe
+        retention-days: 7
+
+    - name: Test Import of Core Modules
+      run: |
+        python -c "import hpg_core.playlist; print('playlist OK')"
+        python -c "import hpg_core.analysis; print('analysis OK')"
+        python -c "import hpg_core.rekordbox_importer; print('rekordbox_importer OK')"
+        python -c "import hpg_core.parallel_analyzer; print('parallel_analyzer OK')"
+        python -c "import hpg_core.models; print('models OK')"
+
+  test-python-code:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+
+    - name: Run Tests (if available)
+      run: |
+        if (Test-Path "tests") {
+          python -m pytest tests/ -v
+        } else {
+          Write-Host "⚠️ No tests directory found, skipping tests"
+        }
+      shell: pwsh
+      continue-on-error: true
+
+    - name: Check Code Quality
+      run: |
+        Write-Host "Checking Python file compilation..."
+        Get-ChildItem -Path "hpg_core" -Filter "*.py" -File | ForEach-Object {
+          Write-Host "  Checking: $($_.Name)"
+          python -m py_compile $_.FullName
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to compile $($_.Name)"
+            exit 1
+          }
+        }
+        Write-Host "✅ All Python files compile successfully"
+      shell: pwsh
