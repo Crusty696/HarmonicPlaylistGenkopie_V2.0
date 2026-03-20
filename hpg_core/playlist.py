@@ -1,6 +1,6 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
-from .models import Track, CAMELOT_MAP, key_to_camelot
+from .models import Track, key_to_camelot
 from .dj_brain import (
     get_genre_compatibility,
     generate_dj_recommendation,
@@ -1813,9 +1813,9 @@ def get_cluster_summary(clusters: list[list[Track]]) -> list[dict]:
             "cluster_id": i,
             "size": len(cluster),
             "avg_bpm": round(sum(bpms) / len(bpms), 1) if bpms else 0.0,
-            "bpm_range": (round(min(bpms), 1), round(max(bpms), 1))
-            if bpms
-            else (0.0, 0.0),
+            "bpm_range": (
+                (round(min(bpms), 1), round(max(bpms), 1)) if bpms else (0.0, 0.0)
+            ),
             "avg_energy": round(sum(energies) / len(energies), 1) if energies else 0.0,
             "top_genres": sorted(genres.items(), key=lambda x: -x[1])[:3],
             "tracks": [t.title for t in cluster[:5]],  # Erste 5 Titel als Preview
