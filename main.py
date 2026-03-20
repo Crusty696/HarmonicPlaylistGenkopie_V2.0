@@ -71,8 +71,6 @@ from hpg_core.playlist import (
     compute_transition_recommendations,
     compute_set_timeline,
     get_set_timing_summary,
-    TRANSITION_TYPE_LABELS,
-    TRANSITION_TYPE_DESCRIPTIONS,
 )
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
@@ -89,6 +87,8 @@ from hpg_core.theme import (
     PHASE_COLORS,
     PHASE_LABELS,
     TRANSITION_TYPE_COLORS,
+    TRANSITION_TYPE_LABELS,
+    TRANSITION_TYPE_DESCRIPTIONS,
     score_color,
     html_style_block,
     apply_dark_theme,

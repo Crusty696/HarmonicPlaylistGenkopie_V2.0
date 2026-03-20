@@ -1055,64 +1055,6 @@ def predict_transition_type(
     return "cold_cut"
 
 
-# Transition-Typ Beschreibungen fuer UI
-TRANSITION_TYPE_LABELS: dict[str, str] = {
-    "smooth_blend": "Smooth Blend",
-    "bass_swap": "Bass Swap",
-    "breakdown_bridge": "Breakdown Bridge",
-    "drop_cut": "Drop Cut",
-    "filter_ride": "Filter Ride",
-    "halftime_switch": "Halftime Switch",
-    "echo_out": "Echo Out",
-    "cold_cut": "Cold Cut",
-}
-
-TRANSITION_TYPE_DESCRIPTIONS: dict[str, str] = {
-    "smooth_blend": (
-        "Langer EQ-Blend ueber 16-32 Bars.\n"
-        "Beide Tracks laufen parallel, Bass und\n"
-        "Mids werden sanft uebergeblendet."
-    ),
-    "bass_swap": (
-        "Schneller Bass-Tausch an einem Phrase-Anfang.\n"
-        "Bass vom ausgehenden Track cutten,\n"
-        "gleichzeitig Bass vom eingehenden Track reinbringen."
-    ),
-    "breakdown_bridge": (
-        "Transition ueber den Breakdown eines Tracks.\n"
-        "Nutze den ruhigen Teil um BPM oder\n"
-        "Energie-Unterschiede zu ueberbruecken."
-    ),
-    "drop_cut": (
-        "Harter Schnitt direkt am Drop.\n"
-        "Der neue Track startet mit voller Energie\n"
-        "fuer maximalen Impact auf dem Dancefloor."
-    ),
-    "filter_ride": (
-        "Filter-basierter Uebergang.\n"
-        "Highpass/Lowpass Filter nutzen um\n"
-        "melodische Elemente ein- und auszublenden."
-    ),
-    "halftime_switch": (
-        "Half/Double-Time Wechsel.\n"
-        "Tempo-Verhaeltnis 2:1 — der Beat aendert sich,\n"
-        "aber der Groove bleibt kompatibel.\n"
-        "Am besten am Breakdown oder Build-Up."
-    ),
-    "echo_out": (
-        "Echo/Delay-basierter Ausklang.\n"
-        "Den ausgehenden Track mit Echo/Delay\n"
-        "ausklingen lassen, waehrend der neue Track\n"
-        "langsam eingeblendet wird."
-    ),
-    "cold_cut": (
-        "Harter Cut ohne Blend.\n"
-        "Die Tracks passen harmonisch nicht zusammen —\n"
-        "kurzer Stop oder Effekt, dann neuer Track starten."
-    ),
-}
-
-
 def _build_transition_description(
     compatibility_score: int,
     bpm_delta: float,

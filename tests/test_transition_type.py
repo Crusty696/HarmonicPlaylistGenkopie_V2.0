@@ -7,6 +7,8 @@ import pytest
 from unittest.mock import patch
 from hpg_core.playlist import (
     predict_transition_type,
+)
+from hpg_core.theme import (
     TRANSITION_TYPE_LABELS,
     TRANSITION_TYPE_DESCRIPTIONS,
 )
