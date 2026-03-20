@@ -174,6 +174,18 @@ class TestPlaylistContextPhase1:
     # Die letzten Tracks sind beide House, aber deep_house_track_120 hat detected_genre "Deep House"
     assert context.get_genre_streak() == 1
 
+  def test_camelot_distance_exception_handling(self):
+    """Testet, dass _camelot_distance malformed strings sicher behandelt."""
+
+    # Test completely invalid strings
+    assert PlaylistContext._camelot_distance("invalid", "string") == 999
+
+    # Test strings that don't conform to camelot pattern
+    assert PlaylistContext._camelot_distance("12C", "8A") == 999
+
+    # Test strings that are empty
+    assert PlaylistContext._camelot_distance("", "9A") == 999
+
 
 class TestDynamicWeightCalculatorPhase1:
   """Tests für DynamicWeightCalculator (Schicht 2: Dynamische Gewichte)"""
