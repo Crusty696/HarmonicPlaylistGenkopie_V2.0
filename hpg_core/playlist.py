@@ -56,6 +56,20 @@ class TransitionRecommendation:
     dj_rec: Optional["DJRecommendation"] = None  # Paar-spezifische DJ-Brain-Empfehlung
 
 
+@dataclass
+class TransitionDescriptionParams:
+    """Parameters for building a transition description."""
+
+    compatibility_score: int
+    bpm_delta: float
+    bpm_tolerance: float
+    energy_delta: int
+    metrics: "TransitionMetrics"
+    from_track: Track
+    to_track: Track
+    has_dj_brain: bool = False
+
+
 class EnergyDirection(Enum):
     """Direction of energy flow in transitions."""
 
@@ -241,9 +255,11 @@ def _calculate_compatibility_inner(
     # Return low score (affected by strictness - stricter = lower fallback)
     return max(5, int((15 - strictness) * penalty))
 
+
 # Global thread-local-like cache container for the current playlist generation session
 # Avoids mutating dictionaries while keeping cache simple.
 _COMPAT_CACHE = None
+
 
 def calculate_compatibility(
     track1: Track, track2: Track, bpm_tolerance: float, **kwargs
@@ -257,7 +273,7 @@ def calculate_compatibility(
             id(track2),
             bpm_tolerance,
             kwargs.get("harmonic_strictness", 7),
-            kwargs.get("allow_experimental", True)
+            kwargs.get("allow_experimental", True),
         )
         if cache_key in _COMPAT_CACHE:
             return _COMPAT_CACHE[cache_key]
@@ -317,7 +333,7 @@ def _sort_harmonic_flow_enhanced(
 
     # Capture kwargs in closure for nested function
     compat_kwargs = kwargs.copy()
-    compat_kwargs['compat_cache'] = compat_cache
+    compat_kwargs["compat_cache"] = compat_cache
 
     def _lookahead_score(
         current: Track, remaining: List[Track], depth: int = 2
@@ -378,7 +394,9 @@ def _sort_harmonic_flow_enhanced(
                 cache_key = (id(current_track), id(t))
                 if cache_key in compat_cache:
                     return compat_cache[cache_key]
-                score = calculate_compatibility(current_track, t, bpm_tolerance, **kwargs)
+                score = calculate_compatibility(
+                    current_track, t, bpm_tolerance, **kwargs
+                )
                 compat_cache[cache_key] = score
                 return score
 
@@ -406,7 +424,7 @@ def _find_best_starting_track(
         return tracks[0]
 
     # Allow passing a compat_cache dictionary to avoid redundant compatibility calculations
-    compat_cache = kwargs.pop('compat_cache', None)
+    compat_cache = kwargs.pop("compat_cache", None)
     if compat_cache is None:
         compat_cache = {}
 
@@ -440,7 +458,9 @@ def _find_best_starting_track(
             if cache_key in compat_cache:
                 score = compat_cache[cache_key]
             else:
-                score = calculate_compatibility(track, tracks[j], bpm_tolerance, **kwargs)
+                score = calculate_compatibility(
+                    track, tracks[j], bpm_tolerance, **kwargs
+                )
                 compat_cache[cache_key] = score
 
             if score > 0:
@@ -1056,31 +1076,24 @@ def predict_transition_type(
 
 
 def _build_transition_description(
-    compatibility_score: int,
-    bpm_delta: float,
-    bpm_tolerance: float,
-    energy_delta: int,
-    metrics: "TransitionMetrics",
-    from_track: Track,
-    to_track: Track,
-    has_dj_brain: bool = False,
+    params: TransitionDescriptionParams,
 ) -> str:
     """
     Erzeugt eine aussagekraeftige DJ-Beschreibung der Transition.
     Gibt konkrete, nuetzliche Infos fuer den DJ - keine generischen Phrasen.
 
-    Wenn has_dj_brain=True, werden BPM- und Key-Details uebersprungen,
+    Wenn params.has_dj_brain=True, werden BPM- und Key-Details uebersprungen,
     weil der DJ Brain diese schon als Risk-Notes liefert.
     """
     parts: list[str] = []
 
     # --- 1. Harmonic Bewertung ---
-    harmonic = metrics.harmonic_score
-    key_a = getattr(from_track, "camelotCode", "") or ""
-    key_b = getattr(to_track, "camelotCode", "") or ""
+    harmonic = params.metrics.harmonic_score
+    key_a = getattr(params.from_track, "camelotCode", "") or ""
+    key_b = getattr(params.to_track, "camelotCode", "") or ""
     key_info = f" ({key_a}->{key_b})" if key_a and key_b else ""
 
-    if has_dj_brain:
+    if params.has_dj_brain:
         # DJ Brain liefert Key-Risks -- nur Kurzform mit Camelot-Codes
         if harmonic >= 90:
             parts.append(f"Perfekte Tonart{key_info}")
@@ -1100,36 +1113,38 @@ def _build_transition_description(
 
     # --- 2. BPM Situation ---
     # Ueberspringe wenn DJ Brain schon BPM-Risk liefert
-    if not has_dj_brain:
-        abs_bpm = abs(bpm_delta)
+    if not params.has_dj_brain:
+        abs_bpm = abs(params.bpm_delta)
         if abs_bpm < 0.5:
             pass  # Perfektes BPM-Match braucht keinen Kommentar
-        elif abs_bpm <= bpm_tolerance:
-            parts.append(f"BPM-Anpassung {bpm_delta:+.1f} -- Pitch Fader korrigieren")
+        elif abs_bpm <= params.bpm_tolerance:
+            parts.append(
+                f"BPM-Anpassung {params.bpm_delta:+.1f} -- Pitch Fader korrigieren"
+            )
         else:
             parts.append(
-                f"BPM-Sprung {bpm_delta:+.1f} -- harter Cut oder Breakdown nutzen"
+                f"BPM-Sprung {params.bpm_delta:+.1f} -- harter Cut oder Breakdown nutzen"
             )
 
     # --- 3. Energie-Verlauf (nur ohne DJ Brain -- DJ Brain liefert energy_advice) ---
-    if not has_dj_brain:
-        if energy_delta > 25:
+    if not params.has_dj_brain:
+        if params.energy_delta > 25:
             parts.append("Grosser Energie-Push [++] -- Drop-Einstieg ideal")
-        elif energy_delta > 12:
+        elif params.energy_delta > 12:
             parts.append("Energie steigt [+] -- im Build reinmixen")
-        elif energy_delta < -25:
+        elif params.energy_delta < -25:
             parts.append("Starker Energie-Drop [--] -- Breakdown-Uebergang planen")
-        elif energy_delta < -12:
+        elif params.energy_delta < -12:
             parts.append("Energie faellt [-] -- im Outro sanft ueberblenden")
         else:
             parts.append("Energie stabil [=] -- nahtlose Ueberblendung moeglich")
 
     # --- 4. Gesamtbewertung als klarer Satz ---
-    if compatibility_score >= 85:
+    if params.compatibility_score >= 85:
         parts.append("Sichere Transition -- laeuft fast von allein")
-    elif compatibility_score >= 70:
+    elif params.compatibility_score >= 70:
         parts.append("Solide Transition -- mit Aufmerksamkeit sauber mixbar")
-    elif compatibility_score >= 55:
+    elif params.compatibility_score >= 55:
         parts.append("Machbar, aber anspruchsvoll -- Timing und EQ muessen stimmen")
     else:
         parts.append(
@@ -1137,7 +1152,6 @@ def _build_transition_description(
         )
 
     return "; ".join(parts)
-
 
 
 def _process_dj_brain_recommendations(
@@ -1261,8 +1275,8 @@ def compute_transition_recommendations(
         notes_parts = []
 
         # DJ Brain Empfehlungen wenn Genre-Daten vorhanden
-        dj_rec, dj_notes_parts, dj_overlap, dj_fade_out_start = _process_dj_brain_recommendations(
-            current, upcoming, current_mix_out
+        dj_rec, dj_notes_parts, dj_overlap, dj_fade_out_start = (
+            _process_dj_brain_recommendations(current, upcoming, current_mix_out)
         )
         notes_parts.extend(dj_notes_parts)
         if dj_overlap is not None:
@@ -1272,16 +1286,17 @@ def compute_transition_recommendations(
 
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen
-        transition_desc = _build_transition_description(
-            compatibility_score,
-            bpm_delta,
-            bpm_tolerance,
-            energy_delta,
-            metrics,
-            current,
-            upcoming,
+        desc_params = TransitionDescriptionParams(
+            compatibility_score=compatibility_score,
+            bpm_delta=bpm_delta,
+            bpm_tolerance=bpm_tolerance,
+            energy_delta=energy_delta,
+            metrics=metrics,
+            from_track=current,
+            to_track=upcoming,
             has_dj_brain=(dj_rec is not None),
         )
+        transition_desc = _build_transition_description(desc_params)
         notes_parts.append(transition_desc)
 
         notes = "; ".join(notes_parts)
@@ -1874,9 +1889,9 @@ def get_cluster_summary(clusters: list[list[Track]]) -> list[dict]:
             "cluster_id": i,
             "size": len(cluster),
             "avg_bpm": round(sum(bpms) / len(bpms), 1) if bpms else 0.0,
-            "bpm_range": (round(min(bpms), 1), round(max(bpms), 1))
-            if bpms
-            else (0.0, 0.0),
+            "bpm_range": (
+                (round(min(bpms), 1), round(max(bpms), 1)) if bpms else (0.0, 0.0)
+            ),
             "avg_energy": round(sum(energies) / len(energies), 1) if energies else 0.0,
             "top_genres": sorted(genres.items(), key=lambda x: -x[1])[:3],
             "tracks": [t.title for t in cluster[:5]],  # Erste 5 Titel als Preview
