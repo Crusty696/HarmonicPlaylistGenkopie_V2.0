@@ -16,7 +16,6 @@ Features:
 import logging
 import os
 from typing import Optional, Dict, List
-from pathlib import Path
 from dataclasses import dataclass
 from .models import CAMELOT_MAP
 
@@ -71,6 +70,7 @@ class RekordboxImporter:
         """Initialize Rekordbox Importer"""
         self.db = None
         self.track_cache: Dict[str, RekordboxTrackData] = {}
+        self.basename_cache: Dict[str, RekordboxTrackData] = {}
 
         if REKORDBOX_AVAILABLE:
             try:
@@ -156,6 +156,12 @@ class RekordboxImporter:
                 # Cache by normalized path
                 self.track_cache[full_path] = data
 
+                # Cache by basename for O(1) fallback lookups.
+                # Use lower() on basename as paths are normalized and lowercase.
+                basename = os.path.basename(full_path)
+                if basename not in self.basename_cache:
+                    self.basename_cache[basename] = data
+
         except Exception as e:
             logger.warning(f"Fehler beim Aufbau des Rekordbox-Track-Cache: {e}")
 
@@ -240,10 +246,9 @@ class RekordboxImporter:
 
         # Try filename-only match (fallback for moved files)
         filename = os.path.basename(normalized_path)
-        for cached_path, data in self.track_cache.items():
-            if os.path.basename(cached_path) == filename:
-                logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
-                return data
+        if filename in self.basename_cache:
+            logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
+            return self.basename_cache[filename]
 
         return None
 
