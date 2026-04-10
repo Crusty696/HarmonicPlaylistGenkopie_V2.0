@@ -25,6 +25,15 @@ from scipy.signal import butter, sosfiltfilt
 # ---------------------------------------------------------------------------
 
 @dataclass
+class EqCrossfadeConfig:
+    """Parameter fuer den EQ-Crossfade."""
+    cf_frames: int
+    sr: int
+    bass_cutoff_hz: float
+    transition_type: str
+
+
+@dataclass
 class TransitionClipSpec:
     """Parameter fuer einen Transition-Preview-Clip."""
     track_a_path: str            # Voller Dateipfad zu Track A
@@ -90,10 +99,13 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     a_cf      = seg_a[pre_frames:]             # Track A im Crossfade-Bereich
     b_cf      = seg_b[:cf_frames]              # Track B im Crossfade-Bereich
 
-    part_cf   = _apply_eq_crossfade(
-        a_cf, b_cf, cf_frames, sr,
-        spec.bass_cutoff_hz, spec.transition_type
+    config = EqCrossfadeConfig(
+        cf_frames=cf_frames,
+        sr=sr,
+        bass_cutoff_hz=spec.bass_cutoff_hz,
+        transition_type=spec.transition_type,
     )
+    part_cf   = _apply_eq_crossfade(a_cf, b_cf, config)
     part_post = seg_b[cf_frames:]              # Nur Track B nach dem Mix
 
     # Zusammenfuegen
@@ -265,10 +277,7 @@ def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
 def _apply_eq_crossfade(
     seg_a: np.ndarray,       # (cf_frames, 2) float32 — Track A im Crossfade
     seg_b: np.ndarray,       # (cf_frames, 2) float32 — Track B im Crossfade
-    cf_frames: int,
-    sr: int,
-    bass_cutoff_hz: float,
-    transition_type: str,
+    config: EqCrossfadeConfig,
 ) -> np.ndarray:
     """
     Wendet EQ-basierten Crossfade an.
@@ -282,13 +291,13 @@ def _apply_eq_crossfade(
       filter_ride  — Hochpass-Filter auf Track A, dann normaler Crossfade
       alle anderen — einfacher linearer Crossfade (safe)
     """
-    fo = np.linspace(1.0, 0.0, cf_frames, dtype=np.float32)[:, np.newaxis]
-    fi = np.linspace(0.0, 1.0, cf_frames, dtype=np.float32)[:, np.newaxis]
+    fo = np.linspace(1.0, 0.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
+    fi = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
 
-    if transition_type == "bass_swap":
+    if config.transition_type == "bass_swap":
         # Bass (Tief) und Hoehen separat faden
-        sos_lp = _make_sos(bass_cutoff_hz, sr, 'low')
-        sos_hp = _make_sos(bass_cutoff_hz, sr, 'high')
+        sos_lp = _make_sos(config.bass_cutoff_hz, config.sr, 'low')
+        sos_hp = _make_sos(config.bass_cutoff_hz, config.sr, 'high')
 
         # sosfiltfilt: zero-phase (vorwaerts + rueckwaerts) — kein Phasenfehler
         highs_a = sosfiltfilt(sos_hp, seg_a, axis=0)
@@ -305,10 +314,10 @@ def _apply_eq_crossfade(
         bass_b_fi = np.clip(fi * 1.5 - 0.5, 0.0, 1.0)
         mixed += bass_a * bass_a_fo + bass_b * bass_b_fi
 
-    elif transition_type == "filter_ride":
+    elif config.transition_type == "filter_ride":
         # Hochpass auf Track A simuliert einen Filter-Sweep beim Ausblenden
         # (vereinfacht: fester 800 Hz HP statt dynamisch sweepender Cutoff)
-        sos_hp_a = _make_sos(800.0, sr, 'high')
+        sos_hp_a = _make_sos(800.0, config.sr, 'high')
         filtered_a = sosfiltfilt(sos_hp_a, seg_a, axis=0)
         mixed = filtered_a * fo + seg_b * fi
 
