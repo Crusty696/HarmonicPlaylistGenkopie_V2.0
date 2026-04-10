@@ -1,14 +1,11 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
 from .models import Track, key_to_camelot
-from typing import TYPE_CHECKING
 from .dj_brain import (
     get_genre_compatibility,
     generate_dj_recommendation,
 )
 
-if TYPE_CHECKING:
-    from .dj_brain import DJRecommendation
 from .config import (
     GENRE_WEIGHT_WITH_DJ_BRAIN,
     GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
@@ -19,7 +16,7 @@ import logging
 import re
 import random
 import math
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -55,7 +52,7 @@ class TransitionRecommendation:
     risk_level: str
     notes: str
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
-    dj_rec: "DJRecommendation | None" = None  # Paar-spezifische DJ-Brain-Empfehlung
+    dj_rec: Any | None = None  # Paar-spezifische DJ-Brain-Empfehlung
 
 
 class EnergyDirection(Enum):
