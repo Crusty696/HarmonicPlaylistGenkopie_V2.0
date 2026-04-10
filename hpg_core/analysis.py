@@ -936,8 +936,13 @@ def analyze_track(file_path: str) -> Track | None:
 
     try:
         # K2 Audit-Fix: Safety-Net gegen extrem lange Dateien (>10 Min)
+        duration = float(librosa.get_duration(path=file_path))
+        if duration > LIBROSA_MAX_DURATION:
+            logger.warning(
+                f"Datei ist extrem lang ({duration:.1f}s). Schneide nach {LIBROSA_MAX_DURATION}s ab."
+            )
+
         y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
-        duration = librosa.get_duration(y=y, sr=sr)
 
         # --- BPM-Erkennung: ID3-Tags haben Vorrang vor Librosa --- #
         # Beatport/Rekordbox-exportierte Dateien enthalten immer korrekte BPM-Werte.
