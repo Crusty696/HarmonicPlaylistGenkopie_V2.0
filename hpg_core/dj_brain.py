@@ -443,6 +443,17 @@ def _find_mix_out_point(
 # === DJ Empfehlungen ===
 
 @dataclass
+class TransitionContext:
+  """Kontextobjekt fuer Transition-Berechnungen, buendelt verwandte Parameter."""
+  bpm_a: float
+  bpm_b: float
+  energy_a: float
+  energy_b: float
+  profile_a: GenreMixProfile
+  profile_b: GenreMixProfile
+
+
+@dataclass
 class DJRecommendation:
   """Erweiterte DJ-Empfehlung fuer einen Transition zwischen zwei Tracks."""
   # Genre-Kontext
@@ -508,11 +519,15 @@ def generate_dj_recommendation(
   profile_a = get_mix_profile(genre_a)
 
   # Transition-Laenge: Dynamisch basierend auf tatsaechlichem BPM/Energy-Delta
-  transition_bars = _dynamic_transition_bars(
-    track_a.bpm, track_b.bpm,
-    float(track_a.energy), float(track_b.energy),
-    profile_a, profile_b,
+  ctx = TransitionContext(
+    bpm_a=track_a.bpm,
+    bpm_b=track_b.bpm,
+    energy_a=float(track_a.energy),
+    energy_b=float(track_b.energy),
+    profile_a=profile_a,
+    profile_b=profile_b,
   )
+  transition_bars = _dynamic_transition_bars(ctx)
 
   # Mix-Technik: Verwende die des eingehenden Tracks (der DJ passt sich an)
   mix_technique = profile_b.mix_technique
@@ -923,14 +938,7 @@ def _energy_advice(energy_a: float, energy_b: float) -> str:
     )
 
 
-def _dynamic_transition_bars(
-  bpm_a: float,
-  bpm_b: float,
-  energy_a: float,
-  energy_b: float,
-  profile_a: GenreMixProfile,
-  profile_b: GenreMixProfile,
-) -> int:
+def _dynamic_transition_bars(ctx: TransitionContext) -> int:
   """
   Berechnet die optimale Transition-Laenge in Bars.
 
@@ -940,12 +948,12 @@ def _dynamic_transition_bars(
   """
   # Basis: Durchschnitt aus beiden Genre-Profilen
   base = int(
-    (profile_a.transition_bars[0] + profile_a.transition_bars[1] +
-     profile_b.transition_bars[0] + profile_b.transition_bars[1]) / 4.0
+    (ctx.profile_a.transition_bars[0] + ctx.profile_a.transition_bars[1] +
+     ctx.profile_b.transition_bars[0] + ctx.profile_b.transition_bars[1]) / 4.0
   )
 
-  bpm_diff = abs(bpm_a - bpm_b)
-  energy_diff = abs(energy_a - energy_b)
+  bpm_diff = abs(ctx.bpm_a - ctx.bpm_b)
+  energy_diff = abs(ctx.energy_a - ctx.energy_b)
 
   # Mehr Zeit fuer grosse Abweichungen
   if bpm_diff > 8:
