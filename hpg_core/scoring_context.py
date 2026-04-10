@@ -25,6 +25,7 @@ class PlaylistContext:
     self.position = len(playlist_so_far)
     self.total_tracks = total_tracks if total_tracks > 0 else 1
     self.strategy = strategy
+    self._cache = {}
 
   def get_playlist_phase(self) -> str:
     """
@@ -105,8 +106,13 @@ class PlaylistContext:
       "LOOSE" (> 4 halftones),
       oder "UNDEFINED" wenn nicht genug Daten
     """
+    if "camelot_stability" in self._cache:
+      return self._cache["camelot_stability"]
+
     if len(self.playlist) < 2:
-      return "UNDEFINED"
+      res = "UNDEFINED"
+      self._cache["camelot_stability"] = res
+      return res
 
     distances = []
 
@@ -119,16 +125,19 @@ class PlaylistContext:
       distances.append(dist)
 
     if not distances:
-      return "UNDEFINED"
-
-    avg_distance = sum(distances) / len(distances)
-
-    if avg_distance < 2:
-      return "TIGHT"          # Enger harmonischer Flow
-    elif avg_distance < 4:
-      return "MEDIUM"         # Mittlere harmonische Sprünge
+      res = "UNDEFINED"
     else:
-      return "LOOSE"          # Große harmonische Sprünge
+      avg_distance = sum(distances) / len(distances)
+
+      if avg_distance < 2:
+        res = "TIGHT"          # Enger harmonischer Flow
+      elif avg_distance < 4:
+        res = "MEDIUM"         # Mittlere harmonische Sprünge
+      else:
+        res = "LOOSE"          # Große harmonische Sprünge
+
+    self._cache["camelot_stability"] = res
+    return res
 
   def get_bpm_trend(self) -> str:
     """
@@ -137,18 +146,26 @@ class PlaylistContext:
     Returns:
       "ACCELERATING", "DECELERATING", "STABLE", oder "UNDEFINED"
     """
+    if "bpm_trend" in self._cache:
+      return self._cache["bpm_trend"]
+
     if len(self.playlist) < 3:
-      return "UNDEFINED"
+      res = "UNDEFINED"
+      self._cache["bpm_trend"] = res
+      return res
 
     recent_bpms = [t.bpm for t in self.playlist[-3:]]
     bpm_change = recent_bpms[-1] - recent_bpms[0]
 
     if bpm_change > 5:
-      return "ACCELERATING"
+      res = "ACCELERATING"
     elif bpm_change < -5:
-      return "DECELERATING"
+      res = "DECELERATING"
     else:
-      return "STABLE"
+      res = "STABLE"
+
+    self._cache["bpm_trend"] = res
+    return res
 
   def get_last_track_feature(self, feature: str):
     """
