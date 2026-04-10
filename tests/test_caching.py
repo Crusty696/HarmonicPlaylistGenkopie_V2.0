@@ -95,10 +95,11 @@ class TestGenerateCacheKey:
     """Leerer String = None."""
     assert generate_cache_key("") is None
 
-  def test_nonexistent_file_returns_none(self):
-    """Nicht-existente Datei = None."""
+  def test_nonexistent_file_returns_hash(self):
+    """Nicht-existente Datei = Hash-Fallback."""
     key = generate_cache_key("/nonexistent/path/file.mp3")
-    assert key is None
+    assert key is not None
+    assert len(key) == 64  # SHA-256 hash length
 
   def test_key_format(self, temp_audio_file):
     """Key hat Format: path-size-mtime."""
@@ -208,3 +209,94 @@ class TestCacheIntegration:
       assert isinstance(key, str)
     finally:
       os.unlink(path)
+
+class TestInitCache:
+  """Tests fuer init_cache Funktion."""
+
+  @pytest.fixture
+  def setup_cache_files(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cache_file = os.path.join(tmpdir, "test_cache.dbm")
+      lock_file = os.path.join(tmpdir, "test_cache.lock")
+
+      from unittest.mock import patch
+      with patch('hpg_core.caching.CACHE_FILE', cache_file), \
+           patch('hpg_core.caching.LOCK_FILE', lock_file), \
+           patch('hpg_core.caching.CACHE_VERSION', 99):
+
+        yield cache_file, lock_file, 99
+
+  def test_init_cache_creates_directory(self, setup_cache_files):
+    """Verifiziert, dass das Cache-Verzeichnis erstellt wird, falls es nicht existiert."""
+    cache_file, lock_file, version = setup_cache_files
+    from unittest.mock import patch
+    from hpg_core import caching
+
+    # Verwende ein geschachteltes Verzeichnis, das noch nicht existiert
+    nested_dir = os.path.join(os.path.dirname(cache_file), "nested_dir")
+    nested_cache_file = os.path.join(nested_dir, "test_cache.dbm")
+
+    with patch('hpg_core.caching.CACHE_FILE', nested_cache_file):
+      assert not os.path.exists(nested_dir)
+      caching.init_cache()
+      assert os.path.exists(nested_dir)
+
+  def test_init_cache_sets_initial_version(self, setup_cache_files):
+    """Verifiziert, dass ein leerer/neuer Cache mit der aktuellen Version initialisiert wird."""
+    cache_file, lock_file, version = setup_cache_files
+    from hpg_core import caching
+    import shelve
+
+    caching.init_cache()
+
+    with shelve.open(cache_file) as db:
+      assert db.get('cache_version') == version
+
+  def test_init_cache_clears_outdated_version(self, setup_cache_files):
+    """Verifiziert, dass der Cache geleert wird, wenn die Version veraltet ist."""
+    cache_file, lock_file, version = setup_cache_files
+    from hpg_core import caching
+    import shelve
+
+    # Pre-populate mit alter Version und einigen Daten
+    with shelve.open(cache_file) as db:
+      db['cache_version'] = version - 1
+      db['some_data'] = 'test'
+
+    caching.init_cache()
+
+    with shelve.open(cache_file) as db:
+      assert db.get('cache_version') == version
+      assert 'some_data' not in db
+
+  def test_init_cache_keeps_current_version(self, setup_cache_files):
+    """Verifiziert, dass Daten erhalten bleiben, wenn die Cache-Version aktuell ist."""
+    cache_file, lock_file, version = setup_cache_files
+    from hpg_core import caching
+    import shelve
+
+    # Pre-populate mit aktueller Version und einigen Daten
+    with shelve.open(cache_file) as db:
+      db['cache_version'] = version
+      db['some_data'] = 'test'
+
+    caching.init_cache()
+
+    with shelve.open(cache_file) as db:
+      assert db.get('cache_version') == version
+      assert db.get('some_data') == 'test'
+
+  def test_init_cache_handles_exceptions(self, setup_cache_files):
+    """Verifiziert, dass Exceptions waehrend der Initialisierung gefangen und geloggt werden."""
+    from unittest.mock import patch
+    from hpg_core import caching
+
+    with patch('hpg_core.caching.logger.error') as mock_logger_error, \
+         patch('hpg_core.caching.shelve.open') as mock_shelve_open:
+
+      mock_shelve_open.side_effect = Exception("Test exception")
+
+      caching.init_cache()
+
+      mock_logger_error.assert_called_once()
+      assert "Init-Fehler: Test exception" in mock_logger_error.call_args[0][0]
