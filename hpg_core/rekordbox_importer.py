@@ -71,6 +71,7 @@ class RekordboxImporter:
         """Initialize Rekordbox Importer"""
         self.db = None
         self.track_cache: Dict[str, RekordboxTrackData] = {}
+        self.basename_cache: Dict[str, RekordboxTrackData] = {}
 
         if REKORDBOX_AVAILABLE:
             try:
@@ -156,6 +157,12 @@ class RekordboxImporter:
                 # Cache by normalized path
                 self.track_cache[full_path] = data
 
+                # Cache by basename for fast fallback (only if not already present)
+                # to maintain "first-found" behavior of the original O(N) loop
+                filename_only = os.path.basename(full_path)
+                if filename_only not in self.basename_cache:
+                    self.basename_cache[filename_only] = data
+
         except Exception as e:
             logger.warning(f"Fehler beim Aufbau des Rekordbox-Track-Cache: {e}")
 
@@ -240,10 +247,9 @@ class RekordboxImporter:
 
         # Try filename-only match (fallback for moved files)
         filename = os.path.basename(normalized_path)
-        for cached_path, data in self.track_cache.items():
-            if os.path.basename(cached_path) == filename:
-                logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
-                return data
+        if filename in self.basename_cache:
+            logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
+            return self.basename_cache[filename]
 
         return None
 
