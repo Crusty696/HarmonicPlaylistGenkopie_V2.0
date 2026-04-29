@@ -74,7 +74,6 @@ from hpg_core.playlist import (
 )
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
-import shelve
 from hpg_core.caching import init_cache, CACHE_FILE
 from hpg_core.logging_config import setup_logging
 from hpg_core.theme import (
