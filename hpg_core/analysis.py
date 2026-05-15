@@ -56,6 +56,9 @@ def analyze_rhythm_complexity(y: np.ndarray, sr: int) -> tuple[float, float]:
 
 def generate_timbre_fingerprint(y: np.ndarray, sr: int) -> list[float]:
     if y is None or len(y) == 0: return []
+    # Handle NaN/Inf values
+    if not np.all(np.isfinite(y)):
+        y = np.nan_to_num(y)
     mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     return [round(float(v), 3) for v in np.mean(mfccs, axis=1)]
 
