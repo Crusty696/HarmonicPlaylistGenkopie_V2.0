@@ -6,13 +6,13 @@ Verwenden synthetische Numpy-Arrays — kein echtes Audiomaterial noetig.
 """
 
 import os
-import tempfile
 
 import numpy as np
 import pytest
 import soundfile as sf
 
 from hpg_core.transition_renderer import (
+    EqCrossfadeConfig,
     TransitionClipSpec,
     _apply_compressor,
     _apply_eq_crossfade,
@@ -140,63 +140,71 @@ class TestApplyEqCrossfade:
         self.seg_b = _make_stereo_signal(self.CF_FRAMES, self.SR, freq=528.0)
 
     def test_output_hat_richtige_form(self):
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config
         )
         assert result.shape == (self.CF_FRAMES, 2)
         assert result.dtype == np.float32
 
     def test_smooth_blend_am_anfang_ist_track_a(self):
         """Erster Frame soll hauptsaechlich Track A sein (fo=1.0, fi=0.0)."""
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config
         )
         # Erster Frame: fo=1.0, fi≈0 → result ≈ seg_a[0]
         np.testing.assert_allclose(result[0], self.seg_a[0], atol=0.01)
 
     def test_smooth_blend_am_ende_ist_track_b(self):
         """Letzter Frame soll hauptsaechlich Track B sein (fo=0.0, fi=1.0)."""
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config
         )
         # Letzter Frame: fo≈0, fi=1.0 → result ≈ seg_b[-1]
         np.testing.assert_allclose(result[-1], self.seg_b[-1], atol=0.01)
 
     def test_bass_swap_output_hat_richtige_form(self):
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "bass_swap")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "bass_swap"
+            config
         )
         assert result.shape == (self.CF_FRAMES, 2)
         assert result.dtype == np.float32
 
     def test_filter_ride_output_hat_richtige_form(self):
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "filter_ride")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "filter_ride"
+            config
         )
         assert result.shape == (self.CF_FRAMES, 2)
 
     def test_unbekannter_typ_verwendet_smooth_blend(self):
         """Unbekannte transition_type soll als linearer Crossfade behandelt werden."""
+        config_unknown = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "totally_unknown_type")
         result_unknown = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "totally_unknown_type"
+            config_unknown
         )
+        config_smooth = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result_smooth = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config_smooth
         )
         np.testing.assert_array_equal(result_unknown, result_smooth)
 
     def test_kein_clipping_bei_bass_swap(self):
         """Bass-Swap darf nicht ueber 1.0 gehen (wegen Doppel-Addition)."""
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "bass_swap")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "bass_swap"
+            config
         )
         # Peaks koennen durch Bass-Dopplung groeßer sein, aber der Soft-Limiter
         # in render_transition_clip() wird sie begrenzen — hier nur pruefen
@@ -607,7 +615,6 @@ class TestApplyCompressor:
 
     def test_fallback_bei_fehlendem_pedalboard(self):
         """Ohne pedalboard soll das unveraenderte Eingangssignal zurueckkommen."""
-        import sys
         import unittest.mock
 
         sig = self._make_signal(self.SR * 2)
