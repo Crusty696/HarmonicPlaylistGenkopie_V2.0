@@ -12,20 +12,14 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QComboBox,
-    QSpinBox,
     QMessageBox,
     QGroupBox,
     QSlider,
     QCheckBox,
-    QTabWidget,
     QTextEdit,
-    QSplitter,
     QHeaderView,
     QFrame,
-    QGridLayout,
     QScrollArea,
-    QToolTip,
-    QSizePolicy,
     QStyledItemDelegate,
     QStyle,
 )
@@ -33,20 +27,12 @@ from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
     QThread,
-    QTimer,
-    QPropertyAnimation,
-    QEasingCurve,
     QUrl,
     QSize,
     QRect,
 )
 from PyQt6.QtGui import (
-    QFont,
     QColor,
-    QPalette,
-    QPixmap,
-    QPainter,
-    QBrush,
     QKeySequence,
     QShortcut,
 )
@@ -59,23 +45,19 @@ import multiprocessing  # CRITICAL: Required for freeze_support()
 
 from hpg_core.transition_renderer import TransitionClipSpec, render_transition_clip
 
-from hpg_core.models import Track
-from hpg_core.analysis import analyze_track
 from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.playlist import (
     generate_playlist,
     STRATEGIES,
     calculate_playlist_quality,
     calculate_enhanced_compatibility,
-    EnergyDirection,
     compute_transition_recommendations,
     compute_set_timeline,
     get_set_timing_summary,
 )
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
-import shelve
-from hpg_core.caching import init_cache, CACHE_FILE
+from hpg_core.caching import init_cache
 from hpg_core.logging_config import setup_logging
 from hpg_core.theme import (
     COLORS,
@@ -93,11 +75,7 @@ from hpg_core.theme import (
     html_style_block,
     apply_dark_theme,
     FONT_FAMILY,
-    FONT_SIZE,
-    FONT_SIZE_SMALL,
-    FONT_SIZE_HEADER,
 )
-import json
 import time
 from datetime import datetime
 
@@ -1487,7 +1465,7 @@ class PlaylistPanel(QWidget):
 
         self.table.setUpdatesEnabled(True)
 
-    def _on_rows_moved(self, parent, start, end, destination, row):
+    def _on_rows_moved(self, *args):
         """Drag-and-Drop Reorder Handler."""
         if not self.playlist:
             return
