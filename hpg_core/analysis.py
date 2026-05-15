@@ -535,9 +535,7 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
                     if 20.0 < bpm < 300.0:
                         return round(bpm, 2)
     except Exception as e:
-        # M4 Audit-Fix: Nicht mehr still verschlucken
-        logger.debug(f"Kein BPM in ID3-Tags fuer {file_path}: {e}")
-        pass  # Librosa-Fallback
+        logger.warning(f"Fehler beim Lesen der BPM in ID3-Tags fuer {file_path}: {e}", exc_info=True)
     return None
 
 
@@ -931,7 +929,7 @@ def analyze_track(file_path: str) -> Track | None:
         return track
 
     # No Rekordbox data - fallback to full librosa analysis
-    logger.info(f"Volle Librosa-Analyse (keine Rekordbox-Daten)")
+    logger.info("Volle Librosa-Analyse (keine Rekordbox-Daten)")
     artist, title, genre = extract_metadata(file_path)
 
     try:
