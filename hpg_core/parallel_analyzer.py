@@ -12,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Callable, Optional
 from .models import Track
 from .analysis import analyze_track
-from .config import PARALLEL_ANALYSIS_TIMEOUT, PARALLEL_MAX_WORKERS
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +31,9 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     Returns:
         int: Optimal number of workers (minimum 2, scales with CPU)
     """
-    # M3 Audit-Fix: Konfigurierbar ueber config.py (PARALLEL_MAX_WORKERS)
-    if PARALLEL_MAX_WORKERS is not None:
-        return max(1, PARALLEL_MAX_WORKERS)
+    # M3 Audit-Fix: Konfigurierbar ueber config.py (config.PARALLEL_MAX_WORKERS)
+    if config.PARALLEL_MAX_WORKERS is not None:
+        return max(1, config.PARALLEL_MAX_WORKERS)
 
     cpu_count = mp.cpu_count()
 
@@ -143,7 +143,7 @@ class ParallelAnalyzer:
 
                 try:
                     # W5: Konfigurierbarer Timeout (schuetzt gegen korrupte Dateien)
-                    track = future.result(timeout=PARALLEL_ANALYSIS_TIMEOUT)
+                    track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
                     analyzed_tracks[idx] = track
 
                     if track:
