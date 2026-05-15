@@ -255,3 +255,28 @@ class TestFlowAnalyzer:
     with patch('hpg_core.scoring_flow.logger.debug') as mock_debug:
       FlowAnalyzer.log_flow_analysis(context)
       mock_debug.assert_called_once()
+
+  def test_calculate_variance_empty(self):
+    """Variance: Leere Liste sollte 0.0 zurückgeben."""
+    assert FlowAnalyzer._calculate_variance([]) == 0.0
+
+  def test_calculate_variance_single_element(self):
+    """Variance: Ein Element sollte 0.0 zurückgeben."""
+    assert FlowAnalyzer._calculate_variance([10.0]) == 0.0
+
+  def test_calculate_variance_identical_elements(self):
+    """Variance: Identische Elemente sollten 0.0 zurückgeben."""
+    assert FlowAnalyzer._calculate_variance([1.0, 1.0, 1.0]) == 0.0
+
+  def test_calculate_variance_normal_case(self):
+    """Variance: Normalfall mit bekannten Werten."""
+    # [1.0, 2.0, 3.0] -> Mean = 2.0
+    # Variance = ((1-2)^2 + (2-2)^2 + (3-2)^2) / 3 = (1 + 0 + 1) / 3 = 0.666...
+    result = FlowAnalyzer._calculate_variance([1.0, 2.0, 3.0])
+    assert abs(result - 0.6666666666666666) < 1e-9
+
+  def test_calculate_variance_large_values(self):
+    """Variance: Größere Werte (BPM/Energy)."""
+    # [120, 130] -> Mean = 125
+    # Variance = ((120-125)^2 + (130-125)^2) / 2 = (25 + 25) / 2 = 25.0
+    assert FlowAnalyzer._calculate_variance([120.0, 130.0]) == 25.0
