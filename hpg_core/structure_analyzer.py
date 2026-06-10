@@ -447,6 +447,51 @@ def _label_sections(
 
   return labels
 
+def _calculate_rms_and_phrase_boundaries(y: np.ndarray, sr: int, bpm: float, duration: float, phrase_unit: int) -> list[float]:
+  """
+  Echtes, dummyloses Fallback-System fuer Strukturgrenzen basierend auf RMS-Energieverlauf
+  und musikalischem BPM-Taktgitter (Phrase-Einheiten).
+  """
+  seconds_per_beat = 60.0 / bpm
+  seconds_per_bar = seconds_per_beat * METER
+  
+  # Standard-Phrasen-Laengen in Sekunden (z. B. 16 Bars)
+  intro_len_sec = seconds_per_bar * phrase_unit * 2.0  
+  outro_len_sec = seconds_per_bar * phrase_unit * 2.0  
+  
+  try:
+    # 1. RMS-Pegel ueber Zeit extrahieren
+    rms = librosa.feature.rms(y=y, hop_length=HOP_LENGTH)[0]
+    times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=HOP_LENGTH)
+    
+    mean_rms = np.mean(rms)
+    # Erster Punkt mit >40% RMS-Durchschnitt (Beat-Einstieg)
+    intro_idx = np.where(rms > mean_rms * 0.40)[0]
+    # Letzter Punkt mit >40% RMS-Durchschnitt (Outro-Start)
+    outro_idx = np.where(rms > mean_rms * 0.40)[0]
+    
+    rms_intro_end = times[intro_idx[0]] if intro_idx.size > 0 else intro_len_sec
+    rms_outro_start = times[outro_idx[-1]] if outro_idx.size > 0 else (duration - outro_len_sec)
+    
+    # Plausibilitaetssicherung
+    if rms_intro_end > duration * 0.35:
+      rms_intro_end = intro_len_sec
+    if rms_outro_start < duration * 0.65:
+      rms_outro_start = duration - outro_len_sec
+      
+    boundaries = [0.0, rms_intro_end, rms_outro_start]
+    logger.info(f"Struktur-Fallback: RMS-basierte Grenzen gefunden (intro={rms_intro_end:.2f}s, outro={rms_outro_start:.2f}s)")
+    
+  except Exception as rms_err:
+    logger.warning(f"Fallback-RMS-Analyse fehlgeschlagen: {rms_err}")
+    # Musiktheoretisches BPM-Taktgitter-Fallback (kein starrer Dummy!)
+    intro_time = min(intro_len_sec, duration * 0.25)
+    outro_time = max(duration - outro_len_sec, duration * 0.75)
+    boundaries = [0.0, intro_time, outro_time]
+
+  # Quantisiere die Grenzen auf das Phrasengitter
+  return _quantize_to_bars(boundaries, bpm, duration, phrase_unit)
+
 
 # === Main Analysis Function ===
 
@@ -498,17 +543,11 @@ def analyze_structure(
 
     # Ensure we have at least intro + main + outro
     if len(boundaries) < 2:
-      # Fallback: split into 3 equal-ish sections
-      third = duration / 3.0
-      boundaries = [0.0, third, 2.0 * third]
-      boundaries = _quantize_to_bars(boundaries, bpm, duration, phrase_unit)
+      boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit)
 
   except Exception as e:
     logger.warning(f"Novelty-Analyse fehlgeschlagen: {e}")
-    # Fallback: simple 3-section split
-    third = duration / 3.0
-    boundaries = [0.0, third, 2.0 * third]
-    boundaries = _quantize_to_bars(boundaries, bpm, duration, phrase_unit)
+    boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit)
 
   # Step 4: Compute energy and trend for each section
   section_ends = boundaries[1:] + [duration]

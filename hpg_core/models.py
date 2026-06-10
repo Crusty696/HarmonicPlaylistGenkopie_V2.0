@@ -61,7 +61,7 @@ class Track:
     mix_in_point: float = 0.0
     mix_out_point: float = 0.0
 
-    # Mix Points in Bars (für DJ-Anzeige)
+    # Mix Points in Bars (fuer DJ-Anzeige)
     mix_in_bars: int = 0
     mix_out_bars: int = 0
 
@@ -80,8 +80,9 @@ class Track:
     danceability: int = 0  # Tanzbarkeit 0-100
     spectral_flatness: float = 0.0
     percussive_ratio: float = 0.0
-    mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor für Similarity
+    mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor fuer Similarity
     timbre_fingerprint: list = field(default_factory=list)  # Gemittelter MFCC-Fingerabdruck
+    ai_metadata: dict = field(default_factory=dict)  # LLM Analysis Results
 
 def key_to_camelot(track: Track):
     """Assigns a Camelot code to a track based on its key."""

@@ -155,8 +155,12 @@ class TestApplyEqCrossfade:
             self.seg_a, self.seg_b,
             config
         )
-        # Erster Frame: fo=1.0, fi≈0 → result ≈ seg_a[0]
-        np.testing.assert_allclose(result[0], self.seg_a[0], atol=0.01)
+        # Erster Frame: fo=1.0, fi=0.0 -> result entspricht gefiltertem seg_a[0]
+        from hpg_core.transition_renderer import _make_sos
+        from scipy.signal import sosfiltfilt
+        sos_lp = _make_sos(300.0, self.SR, 'low')
+        expected_a = sosfiltfilt(sos_lp, self.seg_a, axis=0)
+        np.testing.assert_allclose(result[0], expected_a[0], atol=0.01)
 
     def test_smooth_blend_am_ende_ist_track_b(self):
         """Letzter Frame soll hauptsaechlich Track B sein (fo=0.0, fi=1.0)."""
@@ -185,19 +189,18 @@ class TestApplyEqCrossfade:
         )
         assert result.shape == (self.CF_FRAMES, 2)
 
-    def test_unbekannter_typ_verwendet_smooth_blend(self):
+    def test_unbekannter_typ_verwendet_linear_crossfade(self):
         """Unbekannte transition_type soll als linearer Crossfade behandelt werden."""
         config_unknown = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "totally_unknown_type")
         result_unknown = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
             config_unknown
         )
-        config_smooth = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
-        result_smooth = _apply_eq_crossfade(
-            self.seg_a, self.seg_b,
-            config_smooth
-        )
-        np.testing.assert_array_equal(result_unknown, result_smooth)
+        # Erstelle manuell einen linearen Crossfade
+        fo = np.linspace(1.0, 0.0, self.CF_FRAMES, dtype=np.float32)[:, np.newaxis]
+        fi = np.linspace(0.0, 1.0, self.CF_FRAMES, dtype=np.float32)[:, np.newaxis]
+        expected = self.seg_a * fo + self.seg_b * fi
+        np.testing.assert_array_equal(result_unknown, expected)
 
     def test_kein_clipping_bei_bass_swap(self):
         """Bass-Swap darf nicht ueber 1.0 gehen (wegen Doppel-Addition)."""

@@ -752,3 +752,48 @@ def apply_dark_theme(app) -> None:
 
   app.setPalette(palette)
   app.setStyleSheet(get_app_stylesheet())
+
+
+def get_7_scale_color(value: float) -> str:
+  """
+  Liefert eine feine 7-stufige Farbskala fuer Scores/Kompatibilitaeten (0.0 bis 1.0).
+  Unterstuetzt edle HSL-Farben von Dunkelrot bis Dunkelgruehn.
+  """
+  if value > 1.0:
+    value = value / 100.0
+  value = max(0.0, min(1.0, value))
+  
+  if value >= 0.90:
+    return "#0f5223"  # Dunkelgruen (Exzellent)
+  elif value >= 0.80:
+    return "#248a3d"  # Gruen (Sehr passend)
+  elif value >= 0.70:
+    return "#5cd65c"  # Hellgruen (Milde harmonisch)
+  elif value >= 0.55:
+    return "#e6c300"  # Gelb (Neutral / Kompatibel)
+  elif value >= 0.40:
+    return "#ff8c00"  # Orange (Mittel-Kontrast)
+  elif value >= 0.25:
+    return "#ff4500"  # Orange-Rot (Kontrastierend)
+  else:
+    return "#ff3b30"  # Dunkelrot / Rot (Starker Kontrast)
+
+
+def get_texture_label(value: float) -> str:
+  """
+  Uebersetzt den nackten Texture-Similarity Wert (0.0 bis 1.0) 
+  in eine fuer DJs verstaendliche, qualitative Bezeichnung.
+  """
+  value = max(0.0, min(1.0, value))
+  if value >= 0.85:
+    return "Klang: Identisch"
+  elif value >= 0.70:
+    return "Klang: Aehnlich"
+  elif value >= 0.55:
+    return "Klang: Harmonisch"
+  elif value >= 0.40:
+    return "Klang: Passend"
+  elif value >= 0.25:
+    return "Klang: Kontrast"
+  else:
+    return "Klang: Discord"  # Unruhiger Kontrast

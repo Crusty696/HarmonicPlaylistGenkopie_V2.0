@@ -18,14 +18,23 @@ mocks = {
     'librosa.display': MagicMock(),
     'scipy.spatial': MagicMock()
 }
+
+# Save original modules to prevent contamination in sequential test runs
+original_modules = {}
+for mod in mocks:
+    if mod in sys.modules:
+        original_modules[mod] = sys.modules[mod]
+
 sys.modules.update(mocks)
 
 from hpg_core.scoring_context import PlaylistContext
 from hpg_core.models import Track
 
-def teardown_module(module):
-    """Clean up sys.modules modifications."""
-    for mod in mocks:
+# Restore original modules immediately after imports to prevent import-time contamination
+for mod in mocks:
+    if mod in original_modules:
+        sys.modules[mod] = original_modules[mod]
+    else:
         sys.modules.pop(mod, None)
 
 @pytest.fixture

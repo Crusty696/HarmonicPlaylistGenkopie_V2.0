@@ -380,10 +380,10 @@ def test_cooperative_cancel():
     # (Wir koennen es nicht GUI-maessig starten, aber Code pruefen)
     import importlib
     spec = importlib.util.spec_from_file_location(
-        "main", os.path.join(os.path.dirname(__file__), "main.py"))
+        "main", os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py"))
 
     # Einfacher Code-Check
-    with open(os.path.join(os.path.dirname(__file__), "main.py"), "r", encoding="utf-8") as f:
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py"), "r", encoding="utf-8") as f:
         source = f.read()
 
     check("_should_cancel in AnalysisWorker", "_should_cancel" in source)

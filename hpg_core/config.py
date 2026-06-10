@@ -65,7 +65,7 @@ DNB_MINIMUM_BPM = 155.0
 # Halftime-Korrektur: Maximales Ergebnis nach Verdoppelung
 # Wenn bpm*2 > BPM_HALFTIME_MAX_RESULT, wird NICHT verdoppelt
 # (verhindert z.B. ~92 BPM -> 184 BPM -> falsche DnB-Klassifikation)
-BPM_HALFTIME_MAX_RESULT = 155.0
+BPM_HALFTIME_MAX_RESULT = 185.0
 
 # Genre BPM Ranges (min, max)
 PSYTRANCE_BPM_RANGE = (135, 150)
@@ -86,7 +86,7 @@ GENRE_WEIGHT_WITHOUT_DJ_BRAIN = 0.1  # Fallback ohne DJ Brain Daten
 # Maximale Lade-Dauer in Sekunden — begrenzt RAM-Verbrauch bei langen Tracks.
 # Rekordbox Fast-Path: BPM/Key kommt aus DB, daher reichen 120s fuer Energy/Genre.
 # Volle Analyse: 600s (10 Min) als Sicherheitsnetz gegen riesige Dateien.
-LIBROSA_FAST_PATH_DURATION = 120  # Sekunden (fuer Rekordbox-Pfad)
+LIBROSA_FAST_PATH_DURATION = 360  # Sekunden (fuer Rekordbox-Pfad)
 LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
 
 # === Parallel Analysis ===
@@ -107,3 +107,21 @@ BPM_HALF_DOUBLE_PENALTY = 0.85  # Leichter Abzug fuer Half/Double Transitions (0
 LOG_LEVEL = "INFO"  # Standard-Level: DEBUG, INFO, WARNING, ERROR
 LOG_TO_FILE = True  # Logdatei unter logs/hpg.log (mit Rotation)
 LOG_TO_CONSOLE = True  # Konsolenausgabe auf stderr
+
+# === AI Intelligence Layer ===
+AI_ENABLED = True
+AI_PROVIDER = "Ollama"  # "Ollama" or "LM Studio"
+AI_API_URL_OLLAMA = "http://localhost:11434/v1/chat/completions"
+AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default Ollama
+AI_MODEL = "llama3" # Oder mistral, etc.
+AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
+AI_SYSTEM_PROMPT = (
+    "You are a professional electronic music curator and DJ. Analyze tracks with focus on "
+    "sub-genres (like Forest Psy, Peak-time Techno, Deep Progressive), atmosphere, and mix "
+    "compatibility. Respond ONLY with a JSON object using EXACTLY these keys: "
+    '"sub_genre" (string, precise sub-genre), '
+    '"moods" (array of 2-3 short mood tag strings, e.g. ["mystic","industrial","hypnotic"]), '
+    '"description" (string, one-sentence mixing tip). '
+    'Example: {"sub_genre":"Peak-time Techno","moods":["driving","dark"],"description":"Blend the intro over 32 bars."}'
+)
+AI_MODELS_AVAILABLE = ["llama3", "mistral", "mixtral", "phi3", "gemma"]

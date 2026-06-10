@@ -1,6 +1,10 @@
 # Direkte Dependencies — gepinnt auf getestete Versionen (H1 Audit-Fix)
 librosa==0.11.0
-numpy==2.3.5
+numpy==1.26.4
+numba==0.59.1
+llvmlite==0.42.0
 PyQt6==6.10.2
 mutagen==1.47.0
 pyrekordbox>=0.4.4  # Optional: Rekordbox database import (v3.0+)
+scipy==1.13.1  # Required for transition_renderer
+pedalboard>=0.9.14  # Required for professional transition effects & dynamics compression

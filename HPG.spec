@@ -1,128 +1,56 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""
-PyInstaller Spec File for Harmonic Playlist Generator v3.0
-Builds standalone Windows executable with all dependencies
-"""
+import sys
+import os
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
 
 block_cipher = None
+
+binaries = collect_dynamic_libs('soundfile')
+
+# Hiddenimports gezielt sammeln, um dynamische Importfehler zur Laufzeit (z. B. scipy oder librosa) auszuschließen
+hidden_imports = [
+    'scipy',
+    'scipy.signal',
+    'scipy.signal._spectral',
+    'scipy.special',
+    'scipy.special.cython_special',
+    'librosa',
+    'librosa.effects',
+    'librosa.feature',
+    'librosa.beat',
+    'soundfile',
+    'mutagen',
+    'pyrekordbox',
+    'numpy',
+    'PyQt6',
+    'pedalboard',
+]
+
+# Automatische Submodule für Stabilität sammeln
+hidden_imports += collect_submodules('scipy')
+hidden_imports += collect_submodules('librosa')
+hidden_imports += collect_submodules('soundfile')
+hidden_imports += collect_submodules('pedalboard')
+
+# Daten- und DLL-Dateien für Librosa und Rekordbox sammeln
+datas = collect_data_files('librosa')
+datas += collect_data_files('pyrekordbox')
+
+# Icon Pfad festlegen
+icon_file = 'icon.ico'
+if not os.path.exists(icon_file):
+    icon_file = None
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
-    datas=[
-        # Include hpg_core package as data (backup for imports)
-        ('hpg_core', 'hpg_core'),
-    ],
-    hiddenimports=[
-        # HPG Core modules (CRITICAL - must be explicit!)
-        'hpg_core',
-        'hpg_core.models',
-        'hpg_core.config',
-        'hpg_core.analysis',
-        'hpg_core.playlist',
-        'hpg_core.caching',
-        'hpg_core.parallel_analyzer',
-        'hpg_core.rekordbox_importer',
-        'hpg_core.exporters',
-        'hpg_core.exporters.base_exporter',
-        'hpg_core.exporters.m3u8_exporter',
-        'hpg_core.exporters.rekordbox_xml_exporter',
-
-        # Core dependencies
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtWidgets',
-
-        # Audio analysis
-        'librosa',
-        'librosa.core',
-        'librosa.core.audio',
-        'librosa.core.spectrum',
-        'librosa.core.pitch',
-        'librosa.core.constantq',
-        'librosa.feature',
-        'librosa.feature.spectral',
-        'librosa.feature.rhythm',
-        'librosa.beat',
-        'librosa.onset',
-        'librosa.util',
-        'numpy',
-        'numpy.core',
-        'numpy.fft',
-        'numpy.testing',
-        'scipy',
-        'scipy.signal',
-        'scipy.spatial',
-        'scipy.sparse',
-        'scipy.fft',
-        'soundfile',
-        'audioread',
-
-        # Metadata
-        'mutagen',
-        'mutagen.mp3',
-        'mutagen.flac',
-        'mutagen.wave',
-        'mutagen.aiff',
-        'mutagen.id3',
-        'mutagen.mp4',
-
-        # Optional: Rekordbox integration
-        'pyrekordbox',
-        'pyrekordbox.db6',
-        'sqlalchemy',
-        'sqlalchemy.orm',
-        'sqlalchemy.engine',
-        'bidict',
-
-        # Caching
-        'sqlite3',
-        'shelve',
-        'dbm',
-        'dbm.dumb',
-
-        # Multiprocessing (CRITICAL for parallel analysis)
-        'multiprocessing',
-        'multiprocessing.pool',
-        'multiprocessing.queues',
-        'multiprocessing.managers',
-        'concurrent.futures',
-        'concurrent.futures.process',
-
-        # System
-        'platform',
-        'pathlib',
-        'typing',
-        'dataclasses',
-        'enum',
-        'hashlib',
-        'contextlib',
-
-        # Standard library (needed by numpy.testing)
-        'unittest',
-        'unittest.mock',
-        'doctest',
-        'pprint',
-        'tempfile',
-        'warnings',
-    ],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        # Exclude unnecessary modules to reduce size
-        'matplotlib',
-        'pandas',
-        'IPython',
-        'jupyter',
-        'notebook',
-        'tkinter',
-        'scipy.optimize',
-        'scipy.stats',
-        'scipy.integrate',
-        'scipy.interpolate',
-    ],
+    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -142,15 +70,14 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,  # Compress executable (optional, may cause issues)
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # No console window (GUI app) - freeze_support() now handles multiprocessing
+    console=False,  # Setze auf False, damit beim Öffnen der GUI kein störendes DOS-Fenster erscheint
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico',  # App icon (create this file)
-    version_file='version_info.txt',  # Version info (create this file)
+    icon=icon_file,
 )

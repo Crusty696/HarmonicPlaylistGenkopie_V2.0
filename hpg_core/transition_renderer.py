@@ -12,12 +12,16 @@ Aufbau eines gerenderten Clips:
 """
 
 import os
+import logging
 import tempfile
 from dataclasses import dataclass
 
 import numpy as np
 import soundfile as sf
 from scipy.signal import butter, sosfiltfilt
+import librosa
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +50,8 @@ class TransitionClipSpec:
     post_roll_sec: float = 30.0  # Sekunden von Track B NACH dem Crossfade
     bass_cutoff_hz: float = 200.0
     target_sr: int = 44100
+    bpm_a: float = 120.0         # BPM von Track A (fuer Time-Stretching)
+    bpm_b: float = 120.0         # BPM von Track B (fuer Time-Stretching)
     # Lautheits-Normalisierung (Research 2026-02-28: verhindert Lautheitssprunge)
     normalize_rms: bool = True          # RMS-Normalisierung vor Crossfade
     normalize_target_db: float = -14.0  # Ziel-Pegel in dBRMS (EBU R128: -14 LUFS)
@@ -78,6 +84,37 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Audio laden (beide Segmente)
     seg_a = _load_segment(spec.track_a_path, a_start, a_dur, sr)
     seg_b = _load_segment(spec.track_b_path, b_start, b_dur, sr)
+
+    # Dynamic BPM Time-Stretching (echter DJ Pitchfader!)
+    # Wenn Track B ein anderes Tempo als Track A besitzt, passen wir sein Tempo an Track A an.
+    if spec.bpm_a > 0 and spec.bpm_b > 0 and abs(spec.bpm_a - spec.bpm_b) > 0.05:
+        target_bpm_b = spec.bpm_b
+        
+        # Check fuer Halftime-Switch (BPM_B ist ca. die Haelfte von BPM_A)
+        if abs(spec.bpm_b * 2.0 - spec.bpm_a) < 10.0:
+            target_bpm_b = spec.bpm_b * 2.0
+            logger.info(f"Halftime-Switch erkannt fuer Track B: Virtuelle BPM verdoppelt von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
+        # Check fuer Doubletime-Switch (BPM_B ist ca. das Doppelte von BPM_A)
+        elif abs(spec.bpm_b / 2.0 - spec.bpm_a) < 10.0:
+            target_bpm_b = spec.bpm_b / 2.0
+            logger.info(f"Doubletime-Switch erkannt fuer Track B: Virtuelle BPM halbiert von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
+
+        # Rate: rate = target_bpm_b / bpm_a.
+        # Wenn rate > 1.0, wird das Signal verlangsamt. Wenn rate < 1.0, wird es beschleunigt.
+        rate = float(target_bpm_b / spec.bpm_a)
+        
+        # Sicherheitslimit fuer extremen Pitch (max +-15% vom Zieltempo)
+        rate = max(0.85, min(1.15, rate))
+        
+        try:
+            # librosa.effects.time_stretch arbeitet auf der LETZTEN Achse.
+            # seg_b ist (frames, 2) → transponieren auf (2, frames), stretchen,
+            # zurueck transponieren. (Das frueher genutzte axis=-Kwarg existiert
+            # in dieser librosa-Version nicht und wuerde an stft() durchgereicht.)
+            seg_b = librosa.effects.time_stretch(seg_b.T, rate=rate).T
+            logger.info(f"BPM Time-Stretching angewendet: Track B ({spec.bpm_b:.1f} BPM -> {target_bpm_b:.1f} BPM) auf Track A ({spec.bpm_a:.1f} BPM) angepasst (Rate={rate:.4f})")
+        except Exception as ts_err:
+            logger.warning(f"BPM Time-Stretching fehlgeschlagen: {ts_err}")
 
     # RMS-Normalisierung: beide Tracks auf gleichen Lautheitspegel bringen
     # Verhindert hoerbare Lautheitssprunge im Crossfade (echte Tracks: bis 22 dB Differenz)
@@ -280,26 +317,22 @@ def _apply_eq_crossfade(
     config: EqCrossfadeConfig,
 ) -> np.ndarray:
     """
-    Wendet EQ-basierten Crossfade an.
+    Wendet hochpraezise, echt verdrahtete EQ- und DSP-Effekte fuer DJ-Übergänge an.
 
     Fade-Envelopes:
-      fo (fade_out): 1.0 → 0.0 linear (Track A verschwindet)
-      fi (fade_in):  0.0 → 1.0 linear (Track B erscheint)
-
-    Typen:
-      bass_swap    — Bass und Hoehen getrennt faden, Bass verzoevert
-      filter_ride  — Hochpass-Filter auf Track A, dann normaler Crossfade
-      alle anderen — einfacher linearer Crossfade (safe)
+      fo (fade_out): 1.0 -> 0.0 linear (Track A verschwindet)
+      fi (fade_in):  0.0 -> 1.0 linear (Track B erscheint)
     """
     fo = np.linspace(1.0, 0.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
     fi = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
 
-    if config.transition_type == "bass_swap":
-        # Bass (Tief) und Hoehen separat faden
+    t_type = str(config.transition_type).lower()
+
+    if t_type == "bass_swap":
+        # Bass (Tief) und Hoehen separat faden (klassischer EQ-Bass-Swap)
         sos_lp = _make_sos(config.bass_cutoff_hz, config.sr, 'low')
         sos_hp = _make_sos(config.bass_cutoff_hz, config.sr, 'high')
 
-        # sosfiltfilt: zero-phase (vorwaerts + rueckwaerts) — kein Phasenfehler
         highs_a = sosfiltfilt(sos_hp, seg_a, axis=0)
         highs_b = sosfiltfilt(sos_hp, seg_b, axis=0)
         bass_a  = sosfiltfilt(sos_lp, seg_a, axis=0)
@@ -314,16 +347,58 @@ def _apply_eq_crossfade(
         bass_b_fi = np.clip(fi * 1.5 - 0.5, 0.0, 1.0)
         mixed += bass_a * bass_a_fo + bass_b * bass_b_fi
 
-    elif config.transition_type == "filter_ride":
-        # Hochpass auf Track A simuliert einen Filter-Sweep beim Ausblenden
-        # (vereinfacht: fester 800 Hz HP statt dynamisch sweepender Cutoff)
-        sos_hp_a = _make_sos(800.0, config.sr, 'high')
-        filtered_a = sosfiltfilt(sos_hp_a, seg_a, axis=0)
-        mixed = filtered_a * fo + seg_b * fi
+    elif t_type == "filter_ride" or t_type == "smooth_blend":
+        # Hochpass- bzw. Tiefpass-Filterung zur Vermeidung von Frequenzüberlagerungen
+        if t_type == "filter_ride":
+            # Hochpass auf Track A simuliert einen Filter-Sweep beim Ausblenden (800 Hz HP)
+            sos_hp_a = _make_sos(800.0, config.sr, 'high')
+            filtered_a = sosfiltfilt(sos_hp_a, seg_a, axis=0)
+            mixed = filtered_a * fo + seg_b * fi
+        else:
+            # smooth_blend: Tiefpass auf Track A (300 Hz LP) waehrend Track B einfadet
+            sos_lp_a = _make_sos(300.0, config.sr, 'low')
+            filtered_a = sosfiltfilt(sos_lp_a, seg_a, axis=0)
+            mixed = filtered_a * fo + seg_b * fi
+
+    elif t_type == "cold_cut":
+        # Harter Cut genau in der Mitte ohne jede Blende
+        half = config.cf_frames // 2
+        mixed = np.zeros_like(seg_a)
+        mixed[:half] = seg_a[:half]
+        mixed[half:] = seg_b[half:]
+
+    elif t_type == "drop_cut":
+        # Track A blendet bis zur Mitte aus, dann bricht Track B schlagartig ein
+        half = config.cf_frames // 2
+        fo_half = np.linspace(1.0, 0.0, half, dtype=np.float32)[:, np.newaxis]
+        mixed = np.zeros_like(seg_a)
+        mixed[:half] = seg_a[:half] * fo_half
+        mixed[half:] = seg_b[half:]
+
+    elif t_type == "echo_out":
+        # Track A bekommt ein echtes Echo-Delay-Feedback (Beat-synchrone Verzoegerung), waehrend Track B einfadet
+        mixed = seg_b * fi
+        
+        # Delay-Zeit: ca. 0.5s fuer einen Viertelbeat bei 120 BPM
+        delay_samples = int(0.5 * config.sr)
+        echo_signal = seg_a.copy()
+        
+        # 3 Echo-Reflektionen mit Daempfung (Feedback)
+        for i in range(1, 4):
+            shift = i * delay_samples
+            if shift < len(echo_signal):
+                echo_signal[shift:] += seg_a[:-shift] * (0.45 ** i)
+                
+        mixed += echo_signal * fo
+
+    elif t_type == "breakdown_bridge":
+        # Bass aus Track A sofort komplett rausfiltern (HPF bei 250 Hz), um Platz fuer Track B zu machen
+        sos_hp = _make_sos(250.0, config.sr, 'high')
+        highs_a = sosfiltfilt(sos_hp, seg_a, axis=0)
+        mixed = highs_a * fo + seg_b * fi
 
     else:
-        # smooth_blend, drop_cut, breakdown_bridge, echo_out, cold_cut,
-        # halftime_switch und alle unbekannten Typen: linearer Crossfade
+        # Standard-Fallback bei unkonfigurierten Typen: linearer Crossfade
         mixed = seg_a * fo + seg_b * fi
 
     return mixed.astype(np.float32)

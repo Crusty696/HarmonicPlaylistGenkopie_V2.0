@@ -297,7 +297,7 @@ def _sort_harmonic_flow(
     current_track = start_track
     while unprocessed:
         best_next = None
-        highest_score = -1
+        highest_score = -999999  # Extrem niedriger Wert statt -1, um auch negative Scores korrekt zu erfassen
         for candidate in unprocessed:
             score = calculate_compatibility(
                 current_track, candidate, bpm_tolerance, **kwargs
@@ -306,16 +306,19 @@ def _sort_harmonic_flow(
                 highest_score = score
                 best_next = candidate
 
-        if best_next:
+        if best_next and highest_score > -9999:
             final_playlist.append(best_next)
             unprocessed.remove(best_next)
             current_track = best_next
         else:
-            # If no compatible track is found, pick a random one to avoid getting stuck
-            random_pick = random.choice(unprocessed)
-            final_playlist.append(random_pick)
-            unprocessed.remove(random_pick)
-            current_track = random_pick
+            # Echtes, dummyloses Fallback-System: Wähle den Track mit dem geringsten BPM-Abstand
+            best_fallback = min(
+                unprocessed,
+                key=lambda t: abs(t.bpm - current_track.bpm)
+            )
+            final_playlist.append(best_fallback)
+            unprocessed.remove(best_fallback)
+            current_track = best_fallback
 
     return final_playlist
 

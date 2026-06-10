@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QStyledItemDelegate,
     QStyle,
+    QRadioButton,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -30,6 +31,7 @@ from PyQt6.QtCore import (
     QUrl,
     QSize,
     QRect,
+    QTimer,
 )
 from PyQt6.QtGui import (
     QColor,
@@ -39,11 +41,13 @@ from PyQt6.QtGui import (
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import html as html_mod
 import os
+import re
 import sys
 import tempfile
 import multiprocessing  # CRITICAL: Required for freeze_support()
 
 from hpg_core.transition_renderer import TransitionClipSpec, render_transition_clip
+from hpg_core.ai_engine import fetch_ai_analysis
 
 from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.playlist import (
@@ -79,6 +83,84 @@ from hpg_core.theme import (
 import time
 from datetime import datetime
 
+
+
+class AIAnalysisWorker(QThread):
+    """Worker thread for running AI analysis in the background."""
+    ai_finished = pyqtSignal(str, dict)  # (track_path, metadata)
+
+    def __init__(self, playlist: list, provider: str = None, model: str = None,
+                 base_url: str = None, parent=None):
+        super().__init__(parent)
+        self.playlist = playlist
+        self.provider = provider
+        self.model = model
+        self.base_url = base_url  # Voller Endpoint vom ai_launcher (Port dynamisch)
+        self._should_cancel = False
+
+    def request_cancel(self):
+        self._should_cancel = True
+
+    def _ensure_ready(self):
+        """
+        Stellt sicher dass der Provider laeuft und ein Modell gewaehlt ist.
+        Laeuft bereits im Worker-Thread → blockierend erlaubt, blockiert UI nicht.
+        Wird nur aufgerufen wenn der Detect-Worker beim Start nichts geliefert hat
+        (z.B. Server war aus) oder der Endpoint inzwischen weggefallen ist.
+        """
+        if self.base_url:
+            return
+        try:
+            from hpg_core import ai_launcher
+            status = ai_launcher.detect_and_start(
+                preferred=self.provider, preferred_model=self.model
+            )
+            if status and status.running:
+                self.base_url = status.base_url
+                self.provider = status.name
+                if status.active_model:
+                    self.model = status.active_model
+        except Exception:
+            pass
+
+    def run(self):
+        self._ensure_ready()
+        for track in self.playlist:
+            if self._should_cancel:
+                break
+            try:
+                from hpg_core.ai_engine import fetch_ai_analysis
+                ai_data = fetch_ai_analysis(
+                    track, provider=self.provider, model=self.model, url=self.base_url
+                )
+                if ai_data:
+                    self.ai_finished.emit(track.filePath, ai_data)
+            except Exception:
+                pass
+
+
+class AIDetectWorker(QThread):
+    """
+    Erkennt & startet AI-Provider im Hintergrund (Ollama -> LM Studio),
+    fragt real installierte Modelle ab. Blockiert die UI nie.
+    """
+    detected = pyqtSignal(object)  # AIProviderStatus oder None
+
+    def __init__(self, preferred: str = None, preferred_model: str = None, parent=None):
+        super().__init__(parent)
+        self.preferred = preferred
+        self.preferred_model = preferred_model
+
+    def run(self):
+        status = None
+        try:
+            from hpg_core import ai_launcher
+            status = ai_launcher.detect_and_start(
+                preferred=self.preferred, preferred_model=self.preferred_model
+            )
+        except Exception:
+            status = None
+        self.detected.emit(status)
 
 class AnalysisWorker(QThread):
     """Worker thread for running the analysis in the background."""
@@ -278,6 +360,8 @@ class TransitionRenderWorker(QThread):
                     mix_in_sec=mix_in,
                     crossfade_sec=crossfade,
                     transition_type=transition.transition_type or "smooth_blend",
+                    bpm_a=float(transition.from_track.bpm or 120.0),
+                    bpm_b=float(transition.to_track.bpm or 120.0),
                 )
 
                 render_transition_clip(spec, out_path)
@@ -474,6 +558,56 @@ class AdvancedParametersWidget(QWidget):
 
         layout.addWidget(energy_group)
 
+        # AI Provider Selection — Auto-Detect & Auto-Start (Ollama / LM Studio)
+        # Vom ai_launcher erkannte Werte; vom Detect-Worker befuellt.
+        self.detected_base_url = None
+        self.detected_provider = None
+        self.detected_active_model = None
+        self._ai_detect_worker = None
+
+        self.provider_group = QGroupBox("AI Intelligence Provider")
+        provider_outer = QVBoxLayout(self.provider_group)
+        provider_layout = QHBoxLayout()
+
+        self.ollama_radio = QRadioButton("Ollama")
+        self.lmstudio_radio = QRadioButton("LM Studio")
+
+        from hpg_core import config as hpg_config
+        if hpg_config.AI_PROVIDER == "LM Studio":
+            self.lmstudio_radio.setChecked(True)
+        else:
+            self.ollama_radio.setChecked(True)
+
+        provider_layout.addWidget(self.ollama_radio)
+        provider_layout.addWidget(self.lmstudio_radio)
+
+        # AI Model Selection (wird vom Detect-Worker mit REAL installierten Modellen gefuellt)
+        model_label = QLabel("Active AI Model:")
+        self.model_combo = QComboBox()
+        # Platzhalter bis Detect fertig ist
+        self.model_combo.addItems(hpg_config.AI_MODELS_AVAILABLE)
+        if hpg_config.AI_MODEL in hpg_config.AI_MODELS_AVAILABLE:
+            self.model_combo.setCurrentText(hpg_config.AI_MODEL)
+
+        provider_layout.addWidget(model_label)
+        provider_layout.addWidget(self.model_combo)
+
+        # Status + manueller Refresh
+        status_row = QHBoxLayout()
+        self.ai_status_label = QLabel("AI: noch nicht geprueft")
+        self.ai_refresh_btn = QPushButton("AI erkennen / starten")
+        self.ai_refresh_btn.clicked.connect(self.refresh_ai_providers)
+        status_row.addWidget(self.ai_status_label, 1)
+        status_row.addWidget(self.ai_refresh_btn)
+
+        provider_outer.addLayout(provider_layout)
+        provider_outer.addLayout(status_row)
+        layout.addWidget(self.provider_group)
+
+        # Auto-Detect beim Start (nicht-blockierend, kurz verzoegert bis UI steht)
+        QTimer.singleShot(300, self.refresh_ai_providers)
+
+
         # Harmonic Strictness
         harmony_group = QGroupBox("Harmonic Mixing")
         harmony_group.setToolTip(
@@ -546,6 +680,65 @@ class AdvancedParametersWidget(QWidget):
         genre_layout.addWidget(self.genre_weight)
 
         layout.addWidget(genre_group)
+
+    # ----- AI Provider Auto-Detect / Auto-Start -----
+
+    def refresh_ai_providers(self):
+        """Startet den Hintergrund-Detect-Worker (kein UI-Block)."""
+        if self._ai_detect_worker and self._ai_detect_worker.isRunning():
+            return
+        preferred = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        preferred_model = self.model_combo.currentText().strip() or None
+
+        self.ai_status_label.setText("AI: suche & starte Provider ...")
+        self.ai_refresh_btn.setEnabled(False)
+
+        self._ai_detect_worker = AIDetectWorker(
+            preferred=preferred, preferred_model=preferred_model
+        )
+        self._ai_detect_worker.detected.connect(self._on_ai_detected)
+        self._ai_detect_worker.start()
+
+    def _on_ai_detected(self, status):
+        """Befuellt UI mit erkanntem Provider + real installierten Modellen."""
+        self.ai_refresh_btn.setEnabled(True)
+
+        if not status or not getattr(status, "running", False):
+            self.ai_status_label.setText(
+                "AI: kein Provider erreichbar (Ollama/LM Studio nicht installiert/gestartet)"
+            )
+            self.detected_base_url = None
+            return
+
+        # Provider-Radio passend setzen
+        if status.name == "LM Studio":
+            self.lmstudio_radio.setChecked(True)
+        else:
+            self.ollama_radio.setChecked(True)
+
+        # Combo mit echten Modellen fuellen
+        if status.models:
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.addItems(status.models)
+            if status.active_model and status.active_model in status.models:
+                self.model_combo.setCurrentText(status.active_model)
+            self.model_combo.blockSignals(False)
+
+        # Erkannte Werte merken (vom AIAnalysisWorker genutzt)
+        self.detected_base_url = status.base_url
+        self.detected_provider = status.name
+        self.detected_active_model = status.active_model or self.model_combo.currentText()
+
+        # Port aus Endpoint extrahieren fuer Statusanzeige
+        port = ""
+        m = re.search(r":(\d+)/", status.base_url or "")
+        if m:
+            port = f" :{m.group(1)}"
+        self.ai_status_label.setText(
+            f"AI bereit — {status.name}{port} · {len(status.models)} Modelle · "
+            f"aktiv: {self.detected_active_model}"
+        )
 
     def get_parameters(self):
         """Return current parameter values as dict."""
@@ -1185,7 +1378,7 @@ class PlaylistPanel(QWidget):
 
         # Tabelle
         self.table = QTableWidget()
-        self.table.setColumnCount(15)
+        self.table.setColumnCount(16)
         self.table.setHorizontalHeaderLabels(
             [
                 "#",
@@ -1202,7 +1395,7 @@ class PlaylistPanel(QWidget):
                 "Mix Out",
                 "Bass %",
                 "Texture",
-                "Transition Score",
+                "Transition Score", "AI Insights",
             ]
         )
 
@@ -1412,6 +1605,7 @@ class PlaylistPanel(QWidget):
             ]
 
             for col, item in enumerate(items):
+                item.setData(Qt.ItemDataRole.UserRole, track.filePath)
                 self.table.setItem(i, col, item)
 
             # Genre-Badge
@@ -1451,15 +1645,20 @@ class PlaylistPanel(QWidget):
                     getattr(track, 'timbre_fingerprint', [])
                 )
             
-            texture_item = QTableWidgetItem(f"{texture_val:.2f}" if i > 0 else "-")
             if i > 0:
-                # Color code texture similarity
-                texture_item.setForeground(QColor(score_color(texture_val)))
+                from hpg_core.theme import get_7_scale_color, get_texture_label
+                texture_text = get_texture_label(texture_val)
+                texture_item = QTableWidgetItem(texture_text)
+                texture_item.setForeground(QColor(get_7_scale_color(texture_val)))
+            else:
+                texture_item = QTableWidgetItem("-")
+            
             self.table.setItem(i, 13, texture_item)
 
             # Transition-Score (moved to column 14)
+            from hpg_core.theme import get_7_scale_color
             score_item = QTableWidgetItem(f"{transition_score}%")
-            score_item.setBackground(QColor(score_color(transition_score / 100)))
+            score_item.setBackground(QColor(get_7_scale_color(transition_score / 100)))
             score_item.setForeground(QColor("white"))
             self.table.setItem(i, 14, score_item)
 
@@ -1485,11 +1684,12 @@ class PlaylistPanel(QWidget):
         self.playlist_reordered.emit()
 
     def _update_table_after_reorder(self):
-        """Nummerierung und Transition-Scores aktualisieren."""
+        """Nummerierung, Textur-Klangwerte und Transition-Scores fehlerfrei aktualisieren."""
         for i in range(self.table.rowCount()):
             self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
 
             transition_score = 0
+            texture_val = 0.0
             if i > 0 and i < len(self.playlist):
                 prev_track = self.playlist[i - 1]
                 current_track = self.playlist[i]
@@ -1497,11 +1697,30 @@ class PlaylistPanel(QWidget):
                     prev_track, current_track, self.bpm_tolerance
                 )
                 transition_score = int(compatibility.overall_score * 100)
+                
+                # Textur nach Reordering ebenfalls neu berechnen
+                from hpg_core.dj_brain import _calculate_texture_similarity
+                texture_val = _calculate_texture_similarity(
+                    getattr(prev_track, 'timbre_fingerprint', []),
+                    getattr(current_track, 'timbre_fingerprint', [])
+                )
 
+            # Spalte 13: Textur-Klangwert aktualisieren
+            if i > 0:
+                from hpg_core.theme import get_7_scale_color, get_texture_label
+                texture_text = get_texture_label(texture_val)
+                texture_item = QTableWidgetItem(texture_text)
+                texture_item.setForeground(QColor(get_7_scale_color(texture_val)))
+            else:
+                texture_item = QTableWidgetItem("-")
+            self.table.setItem(i, 13, texture_item)
+
+            # Spalte 14: Transition-Score aktualisieren (Korrektur des Spaltenbugs!)
+            from hpg_core.theme import get_7_scale_color
             score_item = QTableWidgetItem(f"{transition_score}%")
-            score_item.setBackground(QColor(score_color(transition_score / 100)))
-            score_item.setForeground(QColor(COLORS["text_bright"]))
-            self.table.setItem(i, 12, score_item)
+            score_item.setBackground(QColor(get_7_scale_color(transition_score / 100)))
+            score_item.setForeground(QColor("white"))
+            self.table.setItem(i, 14, score_item)
 
         # Quality neu berechnen
         self.quality_metrics = calculate_playlist_quality(
@@ -2035,9 +2254,45 @@ class MainWindow(QMainWindow):
         self.current_playlist_mode = "Harmonic Flow Enhanced"
         self.current_bpm_tolerance = 3.0
         self.worker = None
+        self.ai_worker = None
 
         self.init_ui()
         self.connect_signals()
+        self.check_dependencies_and_warn()
+
+    def check_dependencies_and_warn(self):
+        """Ueberprueft wichtige Abhaengigkeiten und warnt den Benutzer aktiv vor eingeschraenkten System-Diensten."""
+        pedalboard_installed = True
+        try:
+            import pedalboard
+        except ImportError:
+            pedalboard_installed = False
+
+        import requests
+        from hpg_core import config
+        
+        ai_provider = config.AI_PROVIDER
+        url = config.AI_API_URL_LMSTUDIO if ai_provider == "LM Studio" else config.AI_API_URL_OLLAMA
+        
+        ai_online = False
+        try:
+            # Schneller Verbindungs-Check mit 0.3s Timeout
+            requests.get(url.replace("/chat/completions", ""), timeout=0.3)
+            ai_online = True
+        except Exception:
+            ai_online = False
+
+        warnings = []
+        if not pedalboard_installed:
+            warnings.append("• Spotify-Pedalboard fehlt: Frequenzweichen (EQ-Swap) werden ueber eine Scipy-Alternative berechnet. Der echte Dynamik-Compressor ist inaktiv.")
+        if not ai_online:
+            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Der AI-Layer ist inaktiv. Moods und Mixing-Tips bleiben leer. Bitte starten Sie Ollama auf Port 11434.")
+
+        if warnings:
+            warn_text = "System-Hinweis: Einige Dienste sind eingeschraenkt (Fuer Details hier hovern)"
+            self.status_bar.set_status(warn_text)
+            self.status_bar.setToolTip("\n".join(warnings))
+            self.status_bar.setStyleSheet("QStatusBar { background-color: #2b1f1a; color: #ffaa00; font-weight: bold; }")
 
     def init_ui(self):
         # Zentrales Widget
@@ -2191,6 +2446,30 @@ class MainWindow(QMainWindow):
         self.status_bar.hide_progress()
         self.status_bar.set_status("Analysis cancelled.")
 
+
+    def on_ai_finished(self, track_path, ai_data):
+        """Update the playlist table with AI data."""
+        # Moods extrahieren
+        moods = ai_data.get("moods", [])
+        if isinstance(moods, list):
+            mood_str = ", ".join(str(m) for m in moods)
+        else:
+            mood_str = str(moods)
+
+        # Sub-Genre voranstellen falls vorhanden (z.B. "[Peak-time Techno] dark, driving")
+        sub_genre = ai_data.get("sub_genre", "")
+        if sub_genre:
+            mood_str = f"[{sub_genre}] {mood_str}".strip()
+
+        # Zeile finden
+        for row in range(self.playlist_panel.table.rowCount()):
+            item = self.playlist_panel.table.item(row, 1) # Artist/Title column has filePath in UserRole
+            if item and item.data(Qt.ItemDataRole.UserRole) == track_path:
+                ai_item = QTableWidgetItem(mood_str)
+                ai_item.setToolTip(ai_data.get("description", ""))
+                self.playlist_panel.table.setItem(row, 15, ai_item)
+                break
+
     def analysis_finished(self, playlist, quality_metrics):
         """Analyse fertig — Daten an alle Panels verteilen."""
         # Buttons wieder aktivieren
@@ -2208,6 +2487,7 @@ class MainWindow(QMainWindow):
                 pass
             self.worker.deleteLater()
             self.worker = None
+        self.ai_worker = None
 
         # Leere Playlist? Fehler anzeigen.
         if not playlist:
@@ -2248,6 +2528,28 @@ class MainWindow(QMainWindow):
 
         # Automatisch zum Playlist-Panel wechseln
         self.sidebar.set_active(1)
+        
+        # AI Analysis starten
+        if self.ai_worker and self.ai_worker.isRunning():
+            self.ai_worker.request_cancel()
+            self.ai_worker.wait()
+            
+        
+        ap = self.library_panel.advanced_params
+        provider = ap.detected_provider or (
+            "LM Studio" if ap.lmstudio_radio.isChecked() else "Ollama"
+        )
+        model = ap.model_combo.currentText()
+        # base_url vom Auto-Detect (LM-Studio-Port dynamisch). Wenn None, startet der
+        # Worker den Provider selbst nach (ensure_ready im Worker-Thread).
+        base_url = ap.detected_base_url
+        self.ai_worker = AIAnalysisWorker(
+            playlist, provider=provider, model=model, base_url=base_url
+        )
+
+        self.ai_worker.ai_finished.connect(self.on_ai_finished)
+        self.ai_worker.start()
+
 
     def _on_playlist_reordered(self):
         """Nach Drag-Drop: Quality und andere Panels aktualisieren."""

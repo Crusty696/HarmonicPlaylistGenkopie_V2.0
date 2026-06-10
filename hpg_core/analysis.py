@@ -594,6 +594,12 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         # Find start of main body (Intro End)
         main_body_indices = np.where(rms_smooth > threshold)[0]
 
+        # Musiktheoretische Taktkonstanten fuer Fallbacks (z. B. 16 Bars fuer Intro/Outro)
+        seconds_per_beat = 60.0 / bpm
+        seconds_per_bar = seconds_per_beat * METER
+        fallback_intro_len = seconds_per_bar * 16
+        fallback_outro_len = seconds_per_bar * 16
+
         if main_body_indices.size > 0:
             # Intro ends at the first index where energy is significant
             intro_end_idx = main_body_indices[0]
@@ -603,24 +609,20 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
             outro_start_idx = main_body_indices[-1]
             outro_start_time = times[outro_start_idx]
         else:
-            # Fallback if track is very quiet
-            intro_end_time = duration * INTRO_PERCENTAGE
-            outro_start_time = duration * OUTRO_PERCENTAGE
+            # Echtes Takt-basiertes Fallback-System statt prozentualer Dummys
+            intro_end_time = min(fallback_intro_len, duration * 0.2)
+            outro_start_time = max(duration - fallback_outro_len, duration * 0.8)
 
         # Sanity checks using configured thresholds
         if intro_end_time > duration * INTRO_MAX_PERCENTAGE:
-            intro_end_time = (
-                duration * INTRO_PERCENTAGE
-            )  # Fallback if intro detected as too long
+            intro_end_time = min(fallback_intro_len, duration * 0.2)  # Fallback if intro detected as too long
 
         if outro_start_time < duration * OUTRO_MIN_PERCENTAGE:
-            outro_start_time = (
-                duration * OUTRO_PERCENTAGE
-            )  # Fallback if outro detected as too early
+            outro_start_time = max(duration - fallback_outro_len, duration * 0.8)  # Fallback if outro detected as too early
 
         if intro_end_time >= outro_start_time:
-            intro_end_time = duration * INTRO_PERCENTAGE
-            outro_start_time = duration * OUTRO_PERCENTAGE
+            intro_end_time = min(fallback_intro_len, duration * 0.2)
+            outro_start_time = max(duration - fallback_outro_len, duration * 0.8)
 
         # --- Mix Point Calculation ---
         # Optimized for DJ mixing:
