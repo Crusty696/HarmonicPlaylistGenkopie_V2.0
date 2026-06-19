@@ -80,7 +80,7 @@ class EnergyDirection(Enum):
 
 def _get_camelot_components(camelot_code: str) -> tuple[int, str]:
     """Parses a Camelot code into its number and letter components."""
-    match = re.match(r"(\d+)([A|B])", camelot_code)
+    match = re.fullmatch(r"(1[0-2]|[1-9])([AB])", camelot_code or "")
     if match:
         return int(match.group(1)), match.group(2)
     return 0, ""
@@ -314,7 +314,7 @@ def _sort_harmonic_flow(
             # Echtes, dummyloses Fallback-System: Wähle den Track mit dem geringsten BPM-Abstand
             best_fallback = min(
                 unprocessed,
-                key=lambda t: abs(t.bpm - current_track.bpm)
+                key=lambda t: effective_bpm_diff(t.bpm, current_track.bpm)[0]
             )
             final_playlist.append(best_fallback)
             unprocessed.remove(best_fallback)
@@ -915,7 +915,9 @@ def _sort_consistent(
     )
 
     def _center_distance(track: Track) -> float:
-        bpm_deviation = abs(getattr(track, "bpm", average_bpm) - average_bpm)
+        bpm_deviation = effective_bpm_diff(
+            getattr(track, "bpm", average_bpm), average_bpm
+        )[0]
         energy_deviation = (
             abs(getattr(track, "energy", average_energy) - average_energy) / 5.0
         )
@@ -1286,6 +1288,15 @@ def compute_transition_recommendations(
             overlap = dj_overlap
         if dj_fade_out_start is not None:
             fade_out_start = dj_fade_out_start
+        if dj_rec is not None:
+            if dj_rec.adjusted_mix_out_a >= 0.0:
+                current_mix_out = dj_rec.adjusted_mix_out_a
+            if dj_rec.adjusted_mix_in_b >= 0.0:
+                next_mix_in = dj_rec.adjusted_mix_in_b
+                fade_in_start = next_mix_in
+            if dj_rec.overlap_seconds > 0.0:
+                overlap = dj_rec.overlap_seconds
+                fade_out_start = max(0.0, current_mix_out - overlap)
 
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen

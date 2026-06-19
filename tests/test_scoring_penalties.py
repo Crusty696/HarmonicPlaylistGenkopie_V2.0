@@ -63,6 +63,26 @@ class TestEnhancedPenaltyCalculator:
         penalty = EnhancedPenaltyCalculator._jarring_penalty(base_track, candidate, context)
         assert penalty == expected_penalty
 
+    def test_jarring_penalty_uses_effective_bpm_for_half_double_time(self, base_track):
+        playlist = [
+            Track("/t1", "t1", energy=50, bpm=120, camelotCode="8A"),
+            Track("/t2", "t2", energy=50, bpm=120, camelotCode="8A"),
+            base_track,
+        ]
+        context = PlaylistContext(playlist, 10)
+        candidate = Track("/cand.mp3", "cand.mp3", bpm=60, energy=50, camelotCode="8A")
+
+        penalty = EnhancedPenaltyCalculator._jarring_penalty(base_track, candidate, context)
+
+        assert penalty == 0.0
+
+    def test_camelot_distance_rejects_malformed_partial_codes(self):
+        malformed_codes = ["8|", "13A", "0B", "8ABC", "8a", " 8A"]
+
+        for code in malformed_codes:
+            assert EnhancedPenaltyCalculator._camelot_distance(code, "9A") == 999
+            assert EnhancedPenaltyCalculator._camelot_distance("9A", code) == 999
+
     def test_repetition_penalty(self, base_track):
         # Exact same attributes -> -0.20
         playlist = [base_track]

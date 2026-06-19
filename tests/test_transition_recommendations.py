@@ -7,6 +7,15 @@ from hpg_core.playlist import compute_transition_recommendations
 from tests.fixtures.track_factories import make_track
 
 
+def _sections(intro_end=60.0, outro_start=360.0, duration=420.0):
+  return [
+    {"label": "intro", "start_time": 0.0, "end_time": intro_end, "avg_energy": 20.0},
+    {"label": "build", "start_time": intro_end, "end_time": 90.0, "avg_energy": 55.0},
+    {"label": "drop", "start_time": 90.0, "end_time": outro_start, "avg_energy": 85.0},
+    {"label": "outro", "start_time": outro_start, "end_time": duration, "avg_energy": 20.0},
+  ]
+
+
 def _make_pair(code1="8A", code2="9A", bpm=128.0, duration=300.0):
   """Erstellt ein kompatibles Track-Paar."""
   return [
@@ -106,6 +115,25 @@ class TestTimingValues:
     assert 2.0 <= recs[0].overlap <= 120.0, (
       f"Overlap {recs[0].overlap}s nicht realistisch"
     )
+
+  def test_dj_brain_adjusted_mix_points_are_applied(self):
+    """TransitionRecommendation nutzt paarspezifische DJ-Brain Mixpunkte."""
+    current = make_track(
+      camelotCode="8A", bpm=143.0, duration=420.0, energy=75,
+      detected_genre="Psytrance", mix_in_point=60.0, mix_out_point=360.0,
+      sections=_sections(),
+    )
+    upcoming = make_track(
+      camelotCode="8A", bpm=143.0, duration=420.0, energy=78,
+      detected_genre="Psytrance", mix_in_point=0.0, mix_out_point=360.0,
+      sections=_sections(),
+    )
+
+    rec = compute_transition_recommendations([current, upcoming], bpm_tolerance=3.0)[0]
+
+    assert rec.dj_rec is not None
+    assert rec.fade_out_end == round(rec.dj_rec.adjusted_mix_out_a, 2)
+    assert rec.mix_entry == round(rec.dj_rec.adjusted_mix_in_b, 2)
 
 
 class TestCompatibilityScore:

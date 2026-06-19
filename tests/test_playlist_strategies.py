@@ -3,7 +3,7 @@ Tests fuer alle 10 Playlist-Sortierstrategien.
 Prueft ob jede Strategie korrekt sortiert und keine Tracks verliert.
 """
 import pytest
-from hpg_core.playlist import generate_playlist, STRATEGIES
+from hpg_core.playlist import generate_playlist, STRATEGIES, _sort_harmonic_flow
 from tests.fixtures.track_factories import (
   make_track, make_house_track, make_techno_track,
   make_dnb_track, make_minimal_track, make_dj_set,
@@ -193,3 +193,19 @@ class TestEdgeCases:
     result = generate_playlist(tracks, "Harmonic Flow", bpm_tolerance=3.0)
     valid_bpms = [t.bpm for t in result if t.bpm > 0]
     assert len(valid_bpms) >= 1
+
+  def test_harmonic_flow_fallback_prefers_half_time(self, monkeypatch):
+    """Fallback wählt Half-Time statt nur rohe BPM-Distanz."""
+    tracks = [
+      make_track(camelotCode="8A", bpm=120.0, energy=60, title="A"),
+      make_track(camelotCode="8A", bpm=60.0, energy=60, title="B"),
+      make_track(camelotCode="8A", bpm=90.0, energy=60, title="C"),
+    ]
+
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_compatibility",
+      lambda *args, **kwargs: -10000,
+    )
+
+    result = _sort_harmonic_flow(tracks, bpm_tolerance=3.0)
+    assert result[0].bpm == 60.0

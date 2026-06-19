@@ -31,6 +31,12 @@ class TestCamelotComponents:
     assert num == 0
     assert letter == ""
 
+  @pytest.mark.parametrize("code", ["8|", "13A", "0B", "8ABC", "8a", " 8A"])
+  def test_malformed_codes_rejected(self, code):
+    """Parser akzeptiert nur echte Camelot-Codes 1-12A/B."""
+    num, letter = _get_camelot_components(code)
+    assert (num, letter) == (0, "")
+
   def test_empty_code(self):
     """Leerer Code ergibt (0, '')."""
     num, letter = _get_camelot_components("")

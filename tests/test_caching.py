@@ -213,6 +213,21 @@ class TestCacheIntegration:
     finally:
       os.unlink(path)
 
+  def test_cache_track_lazy_initializes_schema(self, tmp_path, sample_track, monkeypatch):
+    """cache_track/get_cached_track funktionieren auch ohne vorheriges init_cache()."""
+    from hpg_core import caching
+
+    cache_file = tmp_path / "lazy_cache.db"
+    monkeypatch.setattr(caching, "CACHE_FILE", str(cache_file))
+
+    key = "lazy-key"
+    caching.cache_track(key, sample_track)
+    restored = caching.get_cached_track(key)
+
+    assert restored is not None
+    assert restored.filePath == sample_track.filePath
+    assert restored.camelotCode == sample_track.camelotCode
+
 class TestInitCache:
   """Tests fuer init_cache Funktion."""
 

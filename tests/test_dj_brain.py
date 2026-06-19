@@ -31,6 +31,7 @@ from hpg_core.dj_brain import (
   _build_structure_note,
   _get_cross_genre_technique,
   _get_cross_genre_eq,
+  _key_advice,
   _assess_transition_risks,
   _extract_camelot_number,
 )
@@ -311,14 +312,33 @@ class TestMixPointCalculation:
   def test_phrase_quantization_psytrance(self):
     """Psytrance Mix-Punkte sollten auf 16-bar Phrasen quantisiert sein."""
     sections = _standard_sections()
-    _, _, bars_in, bars_out = calculate_genre_aware_mix_points(
+    mix_in, mix_out, bars_in, bars_out = calculate_genre_aware_mix_points(
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
-    # 16-bar phrase unit fuer Psytrance
-    # Mix-In bei Bar 1 (Index 0) = korrekt fuer Psytrance
-    # (DJ spielt Track B ab dem allerersten Beat)
-    assert bars_in >= 0  # Bar 1 = 0 ist korrekt
+    seconds_per_bar = (60.0 / 140.0) * 4
+    phrase_seconds = seconds_per_bar * 16
+
+    def aligned(value: float) -> bool:
+      remainder = value % phrase_seconds
+      return remainder < 0.05 or (phrase_seconds - remainder) < 0.05
+
+    assert aligned(mix_in)
+    assert aligned(mix_out)
+    assert bars_in > 0
     assert bars_out > bars_in
+
+  def test_paired_mix_points_psytrance_keep_16_bar_overlap(self):
+    """Psytrance-Transitions sollten mindestens eine 16-Bar-Overlap haben."""
+    a = _make_track(genre="Psytrance", bpm=140.0, sections=_standard_sections(), mix_out=360.0)
+    b = _make_track(genre="Psytrance", bpm=140.0, sections=_standard_sections(), mix_in=60.0)
+
+    mix_out_a, mix_in_b = calculate_paired_mix_points(a, b)
+    seconds_per_bar = (60.0 / 140.0) * 4
+    overlap_bars = (a.duration - mix_out_a) / seconds_per_bar
+
+    assert mix_in_b >= 0.0
+    assert mix_out_a < a.duration
+    assert overlap_bars >= 16 - 0.5
 
   def test_tech_house_shorter_transitions(self):
     """Tech House sollte kuerzer Transitions haben als Progressive."""
@@ -533,6 +553,14 @@ class TestHelperFunctions:
     assert _extract_camelot_number("") == 0
     assert _extract_camelot_number("X") == 0
 
+  def test_key_advice_rejects_malformed_partial_camelot_codes(self):
+    """DJ Notes duerfen ungültige Camelot-Codes nicht durch strip/partial parsing harmonisch bewerten."""
+    malformed_codes = ["8|", "13A", "0B", "8ABC", "8a", " 8A"]
+
+    for code in malformed_codes:
+      assert _key_advice(code, "9A") == ""
+      assert _key_advice("9A", code) == ""
+
   def test_assess_risks_no_issues(self):
     a = _make_track(bpm=128.0, energy=70, camelot="8A")
     b = _make_track(bpm=128.0, energy=72, camelot="8A")
@@ -544,6 +572,15 @@ class TestHelperFunctions:
     b = _make_track(bpm=126.0, energy=30, camelot="7A")
     risks = _assess_transition_risks(a, b, 0.3)
     assert len(risks) >= 3  # BPM, Energy, Genre + evtl. Key
+
+  def test_halftime_bpm_pair_does_not_get_large_jump_risk(self):
+    """87 ↔ 174 BPM ist Half/Double-Time, kein roher 87-BPM-Sprung."""
+    a = _make_track(bpm=87.0, energy=70, camelot="8A")
+    b = _make_track(bpm=174.0, energy=72, camelot="8A")
+    risks = _assess_transition_risks(a, b, 1.0)
+    joined = " ".join(risks)
+    assert "Grosser BPM-Sprung" not in joined
+    assert "Half/Double-Time" in joined
 
 
 # === Integration mit Playlist ===

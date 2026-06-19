@@ -17,6 +17,25 @@ from .genre_compatibility import GenreCompatibilityMatrix
 logger = logging.getLogger(__name__)
 
 
+def _effective_bpm_diff(bpm_a: float, bpm_b: float) -> tuple[float, str]:
+  """Musikalische BPM-Distanz inklusive Half/Double-Time-Verhaeltnis."""
+  if bpm_a <= 0 or bpm_b <= 0:
+    return abs(bpm_a - bpm_b), "direct"
+
+  direct = (abs(bpm_a - bpm_b), "direct")
+  candidates = [
+      direct,
+      (abs(bpm_a - bpm_b * 2), "half"),
+      (abs(bpm_a * 2 - bpm_b), "half"),
+      (abs(bpm_a - bpm_b / 2), "double"),
+      (abs(bpm_a / 2 - bpm_b), "double"),
+  ]
+  best = min(candidates, key=lambda item: item[0])
+  if best[1] != "direct" and best[0] <= 8.0:
+    return best
+  return direct
+
+
 class EnhancedBonusCalculator:
   """Berechnet intelligente Bonuses."""
 
@@ -85,7 +104,7 @@ class EnhancedBonusCalculator:
     candidate_genre = candidate.detected_genre or candidate.genre
     genre_compat = GenreCompatibilityMatrix.get_compatibility(current_genre, candidate_genre)
 
-    bpm_diff = abs(current.bpm - candidate.bpm)
+    bpm_diff, _ = _effective_bpm_diff(current.bpm, candidate.bpm)
 
     # Überraschung 1: Harmonisch eng, Genre-Wechsel, BPM-ähnlich
     # → "Wie passt das?! Aber es passt!"
@@ -204,7 +223,7 @@ class EnhancedBonusCalculator:
     bonus = 0.0
 
     energy_diff = abs(candidate.energy - current.energy)
-    bpm_diff = abs(candidate.bpm - current.bpm)
+    bpm_diff, _ = _effective_bpm_diff(current.bpm, candidate.bpm)
 
     # PEAK: Enge Energy + BPM = Momentum halten
     if energy_diff < 5 and bpm_diff < 3:
@@ -260,8 +279,8 @@ class EnhancedBonusCalculator:
 
     import re
     try:
-      match1 = re.match(r'(\d+)([AB])', code1)
-      match2 = re.match(r'(\d+)([AB])', code2)
+      match1 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code1)
+      match2 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code2)
 
       if not match1 or not match2:
         return 999
@@ -274,7 +293,7 @@ class EnhancedBonusCalculator:
 
       return num_distance + mode_distance
 
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
       return 999
 
 
@@ -326,7 +345,7 @@ class EnhancedPenaltyCalculator:
         current.camelotCode,
         candidate.camelotCode
     )
-    bpm_diff = abs(current.bpm - candidate.bpm)
+    bpm_diff, _ = _effective_bpm_diff(current.bpm, candidate.bpm)
     energy_diff = abs(candidate.energy - current.energy)
 
     # Zu großer BPM-Sprung bei stabiler Energie = merkwürdig
@@ -357,7 +376,8 @@ class EnhancedPenaltyCalculator:
 
     last_track = context.playlist[-1]
 
-    same_bpm = abs(last_track.bpm - candidate.bpm) < 2
+    bpm_diff, _ = _effective_bpm_diff(last_track.bpm, candidate.bpm)
+    same_bpm = bpm_diff < 2
     same_energy = abs(last_track.energy - candidate.energy) < 3
     same_brightness = abs(
         getattr(last_track, 'brightness', 50) - getattr(candidate, 'brightness', 50)
@@ -447,8 +467,8 @@ class EnhancedPenaltyCalculator:
 
     import re
     try:
-      match1 = re.match(r'(\d+)([AB])', code1)
-      match2 = re.match(r'(\d+)([AB])', code2)
+      match1 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code1)
+      match2 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code2)
 
       if not match1 or not match2:
         return 999
@@ -461,5 +481,5 @@ class EnhancedPenaltyCalculator:
 
       return num_distance + mode_distance
 
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
       return 999

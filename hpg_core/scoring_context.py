@@ -196,9 +196,9 @@ class PlaylistContext:
       return 999  # Keine Daten = unbekannt
 
     try:
-      # Parse "8A" → (8, 'A')
-      match1 = re.match(r'(\d+)([AB])', code1)
-      match2 = re.match(r'(\d+)([AB])', code2)
+      # Parse strict Camelot code "8A" → (8, 'A')
+      match1 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code1)
+      match2 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code2)
 
       if not match1 or not match2:
         return 999
@@ -214,7 +214,7 @@ class PlaylistContext:
 
       return num_distance + mode_distance
 
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
       return 999
 
   def __repr__(self) -> str:

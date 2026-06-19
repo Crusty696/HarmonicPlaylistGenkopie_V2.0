@@ -181,6 +181,35 @@ def test_score_structure_combinations(engine):
     # Both Bad
     assert engine._score_structure(t_bad_out, t_bad_in) == 0.40
 
+def test_score_structure_accepts_genre_aware_intro_end_mix_in(engine):
+    """Ein sauberer Mix-In nach langem Intro darf nicht schlechter sein als Bar-1-Mix-In."""
+    current = Track(
+        filePath="", fileName="", bpm=140, energy=70, camelotCode="8A",
+        duration=420, mix_out_point=330,
+        sections=[
+            {"label": "drop", "start_time": 0.0, "end_time": 360.0},
+            {"label": "outro", "start_time": 360.0, "end_time": 420.0},
+        ],
+    )
+    intro_end_candidate = Track(
+        filePath="", fileName="", bpm=140, energy=72, camelotCode="8A",
+        duration=420, mix_in_point=60,
+        sections=[
+            {"label": "intro", "start_time": 0.0, "end_time": 60.0},
+            {"label": "build", "start_time": 60.0, "end_time": 90.0},
+            {"label": "drop", "start_time": 90.0, "end_time": 360.0},
+            {"label": "outro", "start_time": 360.0, "end_time": 420.0},
+        ],
+    )
+    bar_one_candidate = Track(
+        filePath="", fileName="", bpm=140, energy=72, camelotCode="8A",
+        duration=420, mix_in_point=5,
+        sections=intro_end_candidate.sections,
+    )
+
+    assert engine._score_structure(current, intro_end_candidate) >= 0.90
+    assert engine._score_structure(current, intro_end_candidate) >= engine._score_structure(current, bar_one_candidate)
+
 def test_deprecated_bonuses_penalties(engine, dummy_track):
     context = PlaylistContext([], 10)
     # Test they don't crash
@@ -208,6 +237,13 @@ def test_camelot_distance_edge_cases(engine):
     # like an int instead of string
     assert engine._camelot_distance(8, "8A") == 999
 
+def test_engine_camelot_distance_rejects_malformed_partial_codes(engine):
+    malformed_codes = ["8|", "13A", "0B", "8ABC", "8a", " 8A"]
+
+    for code in malformed_codes:
+        assert engine._camelot_distance(code, "9A") == 999
+        assert engine._camelot_distance("9A", code) == 999
+
 def test_score_bpm_rising_build_up_large_diff(engine, dummy_track):
     class MockContext:
         def get_energy_trend(self): return "RISING"
@@ -220,6 +256,17 @@ def test_score_bpm_rising_build_up_large_diff(engine, dummy_track):
     # diff = 10. base = 1 - 0.1 = 0.9
     # diff > 5 -> base *= 1.3 = 1.17 -> clamped 1.0
     assert score == 1.0
+
+def test_score_bpm_uses_half_double_time_distance(engine, dummy_track):
+    class MockContext:
+        def get_energy_trend(self): return "STABLE"
+        def get_playlist_phase(self): return "STABLE"
+        def get_bpm_trend(self): return "STABLE"
+
+    context = MockContext()
+    cand = Track(filePath="", fileName="", bpm=60.0, energy=50, camelotCode="8A")
+
+    assert engine._score_bpm(dummy_track, cand, context) >= 0.95
 
 def test_score_bpm_accelerating(engine, dummy_track):
     class MockContext:

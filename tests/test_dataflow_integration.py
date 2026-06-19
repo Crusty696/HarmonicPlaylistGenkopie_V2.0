@@ -11,7 +11,10 @@ import traceback
 # Projekt-Pfad
 sys.path.insert(0, os.path.dirname(__file__))
 
-AUDIO_DIR = r"D:\beatport_tracks_2025-08"
+AUDIO_DIR = os.environ.get(
+    "HPG_TEST_AUDIO_DIR",
+    r"D:\beatport_tracks_2025-08",
+)
 RESULTS = {"pass": 0, "fail": 0, "warn": 0}
 
 

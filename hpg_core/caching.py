@@ -19,6 +19,18 @@ CACHE_VERSION = 11
 LOCK_FILE = "hpg_cache_v11.lock"
 
 
+def _ensure_cache_schema(conn: sqlite3.Connection) -> None:
+    """Creates the cache schema on an open SQLite connection if missing."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cache ("
+        "key TEXT PRIMARY KEY, "
+        "filepath TEXT, "
+        "version INTEGER, "
+        "data TEXT"
+        ")"
+    )
+
+
 def track_to_dict(track: Track) -> dict:
     """Converts a Track object to a serializable dictionary, handling NumPy types."""
     d = {}
@@ -67,14 +79,7 @@ def init_cache() -> None:
         conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
         # Enable WAL mode for high concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS cache ("
-            "key TEXT PRIMARY KEY, "
-            "filepath TEXT, "
-            "version INTEGER, "
-            "data TEXT"
-            ")"
-        )
+        _ensure_cache_schema(conn)
         conn.commit()
 
         # Check version and clear cache if it was created with an old version
@@ -123,6 +128,7 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
     try:
         conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
         conn.execute("PRAGMA journal_mode=WAL;")
+        _ensure_cache_schema(conn)
         cursor = conn.cursor()
         cursor.execute("SELECT data FROM cache WHERE key = ?", (cache_key,))
         row = cursor.fetchone()
@@ -159,6 +165,7 @@ def cache_track(cache_key: str, track: Track) -> None:
 
         conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
         conn.execute("PRAGMA journal_mode=WAL;")
+        _ensure_cache_schema(conn)
         conn.execute(
             "INSERT OR REPLACE INTO cache (key, filepath, version, data) VALUES (?, ?, ?, ?)",
             (cache_key, track.filePath, CACHE_VERSION, data_json)

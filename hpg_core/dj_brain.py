@@ -1,6 +1,7 @@
 from __future__ import annotations
 from math import ceil, floor
 import numpy as np
+import re
 """
 DJ Brain - Genre-spezifische Mix-Logik fuer den Harmonic Playlist Generator.
 
@@ -286,8 +287,8 @@ def calculate_genre_aware_mix_points(
   # --- Mix-Out: Wo faengt der Track an auszuklingen? ---
   mix_out_time = _find_mix_out_point(sections, profile, seconds_per_bar, duration)
 
-  # Quantisiere auf 4-Bar-Grenzen fuer musikalisches Phrase-Alignment
-  grid_seconds = seconds_per_bar * 4
+  # Genre-spezifisches Phrase-Gitter fuer musikalisches Phrase-Alignment
+  grid_seconds = seconds_per_bar * profile.phrase_unit
   if grid_seconds > 0:
     mix_in_time = ceil(mix_in_time / grid_seconds) * grid_seconds  # ceil = nach Intro
     mix_out_time = floor(mix_out_time / grid_seconds) * grid_seconds  # floor = vor Outro
@@ -296,11 +297,12 @@ def calculate_genre_aware_mix_points(
   intro_end = _get_intro_end_from_sections(sections)
   outro_start = _get_outro_start_from_sections(sections, duration)
 
-  min_mix_in = max(intro_end, seconds_per_bar * 4)
-  # Mix-Out strikt VOR outro_start (mindestens 1 Bar Abstand)
-  max_mix_out = min(outro_start - seconds_per_bar, duration - seconds_per_bar * 4)
-  mix_in_time = max(min_mix_in, min(mix_in_time, duration * 0.4))
-  mix_out_time = min(max_mix_out, max(mix_out_time, duration * 0.6))
+  min_mix_in = max(intro_end, seconds_per_bar * profile.phrase_unit)
+  # Mix-Out strikt VOR outro_start (mindestens 1 Phrase Abstand)
+  max_mix_out = min(outro_start - seconds_per_bar, duration - seconds_per_bar * profile.phrase_unit)
+  mix_in_time = max(min_mix_in, min(mix_in_time, floor((duration * 0.4) / grid_seconds) * grid_seconds if grid_seconds > 0 else duration * 0.4))
+  mix_out_lower_bound = ceil((duration * 0.6) / grid_seconds) * grid_seconds if grid_seconds > 0 else duration * 0.6
+  mix_out_time = min(max_mix_out, max(mix_out_time, mix_out_lower_bound))
 
   # Sicherstellen, dass Mix-Out nach Mix-In liegt
   if mix_out_time <= mix_in_time + seconds_per_bar * 8:
@@ -538,9 +540,13 @@ def generate_dj_recommendation(
     mix_technique = _get_cross_genre_technique(genre_a, genre_b)
     eq_advice = _get_cross_genre_eq(genre_a, genre_b)
 
-  # Struktur-Kontext
-  outgoing_section = _get_section_at_mix_out(track_a)
-  incoming_section = _get_section_at_mix_in(track_b)
+  # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
+  adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
+  overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+
+  # Struktur-Kontext auf Basis der wirklich empfohlenen paarspezifischen Punkte
+  outgoing_section = _get_section_at_time(track_a, adjusted_mix_out_a, "out")
+  incoming_section = _get_section_at_time(track_b, adjusted_mix_in_b, "in")
   structure_note = _build_structure_note(outgoing_section, incoming_section)
 
 
@@ -571,10 +577,6 @@ def generate_dj_recommendation(
   bass_match_advice: str = ""
   rhythm_advice: str = ""
   
-  # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
-  adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
-  overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
-
   return DJRecommendation(
     genre_pair=genre_pair,
     genre_compatibility=round(compat, 2),
@@ -713,10 +715,11 @@ def calculate_paired_mix_points(
     outro_start_a = track_a.duration * 0.8  # Fallback: letzte 20%
   outro_duration_a = max(0.0, track_a.duration - outro_start_a)
 
-  # --- Minimaler Overlap: mindestens 8 Bars (fuer BPM-Anpassung) ---
+  # --- Minimaler Overlap: genre-spezifisch nach Startwert des Transition-Bereichs ---
   bpm_b = track_b.bpm if track_b.bpm > 0 else 140.0
   seconds_per_bar_b = (60.0 / bpm_b) * METER
-  min_overlap = seconds_per_bar_b * 8  # mind. 8 Bars Overlap
+  min_overlap_bars = max(8, int(profile_b.transition_bars[0]))
+  min_overlap = seconds_per_bar_b * min_overlap_bars
 
   # --- Target Overlap: das Minimum beider Seiten (nicht mehr als das Kuerzere) ---
   target_overlap = max(min_overlap, min(intro_end_b, outro_duration_a))
@@ -788,6 +791,37 @@ def _get_section_at_mix_in(track: Track) -> str:
   return "unknown"
 
 
+def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) -> str:
+  """Findet die Sektion an einem beliebigen Mix-Zeitpunkt."""
+  if not track.sections or time_seconds < 0:
+    return "unknown"
+
+  for section in track.sections:
+    start = section.get("start_time", 0.0)
+    end = section.get("end_time", 0.0)
+    if start <= time_seconds <= end:
+      return section.get("label", "unknown")
+
+  if fallback_edge == "in":
+    return track.sections[0].get("label", "unknown")
+  return track.sections[-1].get("label", "unknown")
+
+
+def _effective_bpm_diff(bpm_a: float, bpm_b: float) -> tuple[float, str]:
+  """Kleinste musikalische BPM-Differenz inkl. Half/Double-Time."""
+  if bpm_a <= 0 or bpm_b <= 0:
+    return abs(bpm_a - bpm_b), "direct"
+
+  candidates = [
+    (abs(bpm_a - bpm_b), "direct"),
+    (abs(bpm_a - bpm_b * 2), "half"),
+    (abs(bpm_a * 2 - bpm_b), "half"),
+    (abs(bpm_a - bpm_b / 2), "double"),
+    (abs(bpm_a / 2 - bpm_b), "double"),
+  ]
+  return min(candidates, key=lambda item: item[0])
+
+
 def _build_structure_note(outgoing: str, incoming: str) -> str:
   """Erzeugt einen menschenlesbaren Hinweis zur Struktur-Ausrichtung.
 
@@ -826,8 +860,14 @@ def _bpm_advice(bpm_a: float, bpm_b: float) -> str:
     return ""
 
   diff = bpm_b - bpm_a
-  abs_diff = abs(diff)
+  abs_diff, relation = _effective_bpm_diff(bpm_a, bpm_b)
   pct = abs(diff / bpm_a) * 100  # Pitch-Prozent-Aenderung
+
+  if relation in ("half", "double") and abs_diff <= 2.0:
+    return (
+      f"{bpm_a:.1f} → {bpm_b:.1f} — Half/Double-Time kompatibel, "
+      f"Downbeat exakt auf Phrase setzen"
+    )
 
   if abs_diff < 0.3:
     return f"{bpm_a:.1f} → {bpm_b:.1f} — Match, kein Pitching noetig"
@@ -853,22 +893,22 @@ def _key_advice(code_a: str, code_b: str) -> str:
   Camelot Wheel: 1-12A/B (kreisfoermig), harmonisch = Distanz 1 gleicher Buchstabe.
   Wird als Prefix "Key: ..." in die Transition-Notes injiziert.
   """
-  code_a = (code_a or "").strip()
-  code_b = (code_b or "").strip()
+  code_a = code_a or ""
+  code_b = code_b or ""
   if not code_a or not code_b:
+    return ""
+
+  num_a = _extract_camelot_number(code_a)
+  num_b = _extract_camelot_number(code_b)
+  if num_a <= 0 or num_b <= 0:
     return ""
 
   # Gleiche Tonart = perfekt
   if code_a == code_b:
     return f"{code_a} → {code_b} — Gleiche Tonart, perfekt harmonisch"
 
-  num_a = _extract_camelot_number(code_a)
-  num_b = _extract_camelot_number(code_b)
   letter_a = code_a[-1].upper() if len(code_a) >= 2 else ""
   letter_b = code_b[-1].upper() if len(code_b) >= 2 else ""
-
-  if num_a <= 0 or num_b <= 0:
-    return f"{code_a} → {code_b}"
 
   # Camelot-Distanz: Kreis 1-12, kuerzester Weg
   dist = min(abs(num_a - num_b), 12 - abs(num_a - num_b))
@@ -952,7 +992,7 @@ def _dynamic_transition_bars(ctx: TransitionContext) -> int:
      ctx.profile_b.transition_bars[0] + ctx.profile_b.transition_bars[1]) / 4.0
   )
 
-  bpm_diff = abs(ctx.bpm_a - ctx.bpm_b)
+  bpm_diff, bpm_relation = _effective_bpm_diff(ctx.bpm_a, ctx.bpm_b)
   energy_diff = abs(ctx.energy_a - ctx.energy_b)
 
   # Mehr Zeit fuer grosse Abweichungen
@@ -963,6 +1003,9 @@ def _dynamic_transition_bars(ctx: TransitionContext) -> int:
 
   if energy_diff > 25:
     base += 4   # Mehr Zeit fuer grossen Energie-Shift
+
+  if bpm_relation in ("half", "double"):
+    base += 4   # Half/Double-Time braucht saubere Phrasen-Ausrichtung
 
   # Kuerzer wenn beides gut passt
   if bpm_diff < 1.0 and energy_diff < 10:
@@ -1099,9 +1142,13 @@ def _assess_transition_risks(
   """Bewertet Risiken einer Transition."""
   risks = []
 
-  # BPM-Check
-  bpm_diff = abs(track_a.bpm - track_b.bpm)
-  if bpm_diff > 8:
+  # BPM-Check mit Half/Double-Time-Erkennung
+  bpm_diff, bpm_relation = _effective_bpm_diff(track_a.bpm, track_b.bpm)
+  if bpm_relation in ("half", "double") and bpm_diff <= 2.0:
+    risks.append(
+      f"Half/Double-Time ({track_a.bpm:.1f}↔{track_b.bpm:.1f}) -- exakt auf Phrase/Downbeat cutten"
+    )
+  elif bpm_diff > 8:
     risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")
   elif bpm_diff > 4:
     risks.append(f"BPM-Differenz {bpm_diff:.1f} -- langsam angleichen")
@@ -1169,7 +1216,7 @@ def _calculate_texture_similarity(fp_a: list, fp_b: list) -> float:
 
 def _extract_camelot_number(code: str) -> int:
   """Extrahiert die Nummer aus einem Camelot-Code (z.B. '8A' -> 8)."""
-  try:
-    return int(code[:-1])
-  except (ValueError, IndexError):
+  match = re.fullmatch(r"(1[0-2]|[1-9])[AB]", code or "")
+  if not match:
     return 0
+  return int(match.group(1))

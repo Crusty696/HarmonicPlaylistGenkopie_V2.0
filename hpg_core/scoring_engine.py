@@ -10,7 +10,7 @@ import math
 from .models import Track
 from .scoring_context import PlaylistContext
 from .scoring_weights import DynamicWeightCalculator
-from .scoring_bonuses import EnhancedBonusCalculator, EnhancedPenaltyCalculator
+from .scoring_bonuses import EnhancedBonusCalculator, EnhancedPenaltyCalculator, _effective_bpm_diff
 from .genre_compatibility import GenreCompatibilityMatrix
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ class IntelligentScoreEngine:
     - Wenn Energie stabil: halte BPM ähnlich (smooth)
     - Phase-abhängig: BUILD_UP erlaubt Tempo-Steigerung
     """
-    bpm_diff = abs(current.bpm - candidate.bpm)
+    bpm_diff, _ = _effective_bpm_diff(current.bpm, candidate.bpm)
 
     # Base Score: je näher, desto besser
     # 0 Unterschied = 1.0, 100 Unterschied = 0.0
@@ -228,14 +228,18 @@ class IntelligentScoreEngine:
 
   def _score_structure(self, current: Track, candidate: Track) -> float:
     """
-    Structure Score: Können wir an guten Punkten mixen?
+    Structure Score: Können wir an DJ-tauglichen Punkten mixen?
 
-    Ideal: Current hat Fade-Out bei > 3:00,
-           Candidate hat Fade-In bei < 10 Sekunden
+    Legacy-Fallback ohne Dauer/Sektionsdaten:
+    - Current hat Fade-Out bei > 3:00
+    - Candidate hat Fade-In bei < 10 Sekunden
+
+    Mit Struktur-/Dauerdaten:
+    - Mix-Out liegt im hinteren Teil, aber nicht im Outro
+    - Mix-In liegt im frühen Teil und darf auch am Ende eines langen Intros liegen
     """
-    # Diese Werte werden gesetzt in analysis.py oder sind default
-    fade_out_ok = getattr(current, 'mix_out_point', 0) > 180  # > 3 Minuten
-    fade_in_ok = getattr(candidate, 'mix_in_point', 999) < 10  # < 10 Sekunden
+    fade_out_ok = self._is_good_mix_out(current)
+    fade_in_ok = self._is_good_mix_in(candidate)
 
     if fade_out_ok and fade_in_ok:
       return 0.95                    # Perfekt
@@ -243,6 +247,55 @@ class IntelligentScoreEngine:
       return 0.70                    # Okay
     else:
       return 0.40                    # Schwierig
+
+  @staticmethod
+  def _section_label_at(track: Track, time_seconds: float) -> str:
+    """Findet die Section an einem Zeitpunkt oder unknown."""
+    sections = getattr(track, 'sections', None) or []
+    if time_seconds < 0:
+      return "unknown"
+
+    for section in sections:
+      start = section.get('start_time', 0.0)
+      end = section.get('end_time', 0.0)
+      if start <= time_seconds <= end:
+        return section.get('label', 'unknown')
+    return "unknown"
+
+  def _is_good_mix_out(self, track: Track) -> bool:
+    """Bewertet Mix-Out als brauchbar: spaet genug, aber nicht im Outro."""
+    mix_out = getattr(track, 'mix_out_point', 0.0) or 0.0
+    duration = getattr(track, 'duration', 0.0) or 0.0
+    sections = getattr(track, 'sections', None) or []
+
+    if duration <= 0 and not sections:
+      return mix_out > 180
+    if duration <= 0 or mix_out <= 0 or mix_out >= duration:
+      return False
+
+    label = self._section_label_at(track, mix_out)
+    if label == "outro":
+      return False
+
+    position = mix_out / duration
+    return position >= 0.45
+
+  def _is_good_mix_in(self, track: Track) -> bool:
+    """Bewertet Mix-In als brauchbar: frueh im Track, nicht im Outro."""
+    mix_in = getattr(track, 'mix_in_point', 999.0)
+    duration = getattr(track, 'duration', 0.0) or 0.0
+    sections = getattr(track, 'sections', None) or []
+
+    if duration <= 0 and not sections:
+      return mix_in < 10
+    if duration <= 0 or mix_in < 0 or mix_in >= duration:
+      return False
+
+    label = self._section_label_at(track, mix_in)
+    if label == "outro":
+      return False
+
+    return mix_in <= duration * 0.4
 
   def _calculate_bonuses(
       self,
@@ -285,9 +338,9 @@ class IntelligentScoreEngine:
       return 999                     # Keine Daten = unbekannt
 
     try:
-      # Parse "8A" → (8, 'A')
-      match1 = re.match(r'(\d+)([AB])', code1)
-      match2 = re.match(r'(\d+)([AB])', code2)
+      # Parse strict Camelot code "8A" → (8, 'A')
+      match1 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code1)
+      match2 = re.fullmatch(r'(1[0-2]|[1-9])([AB])', code2)
 
       if not match1 or not match2:
         return 999

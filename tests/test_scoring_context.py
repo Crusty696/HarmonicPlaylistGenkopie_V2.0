@@ -168,6 +168,13 @@ def test_camelot_distance():
     assert PlaylistContext._camelot_distance("8A", None) == 999
     assert PlaylistContext._camelot_distance("XX", "9A") == 999
 
+def test_camelot_distance_rejects_malformed_partial_codes():
+    malformed_codes = ["8|", "13A", "0B", "8ABC", "8a", " 8A"]
+
+    for code in malformed_codes:
+        assert PlaylistContext._camelot_distance(code, "9A") == 999
+        assert PlaylistContext._camelot_distance("9A", code) == 999
+
 def test_repr(populated_context):
     r = repr(populated_context)
     assert "PlaylistContext" in r
