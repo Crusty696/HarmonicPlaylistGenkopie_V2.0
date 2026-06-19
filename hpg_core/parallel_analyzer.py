@@ -104,7 +104,7 @@ class ParallelAnalyzer:
         progress_callback: Optional[Callable[[int, int, str], None]] = None
     ) -> List[Track]:
         """
-        Analyze multiple audio files in parallel.
+        Analyze multiple audio files in parallel, with robust recovery from C-level worker crashes.
 
         Args:
             file_paths: List of file paths to analyze
@@ -118,51 +118,125 @@ class ParallelAnalyzer:
 
         total_files = len(file_paths)
         analyzed_tracks = [None] * total_files  # Pre-allocate result list
+        finished_count = 0
         completed_count = 0
 
-        # Determine optimal worker count for this batch
+        # Define batch size to isolate crashes and prevent memory leaks/bloat
+        BATCH_SIZE = 24
         worker_count = get_optimal_worker_count(total_files)
 
         if progress_callback:
             progress_callback(0, total_files, f"Starting analysis with {worker_count} cores...")
 
-        logger.info(f"Verarbeite {total_files} Dateien mit {worker_count} Workers...")
+        logger.info(f"Verarbeite {total_files} Dateien mit {worker_count} Workers in Batches von {BATCH_SIZE}...")
 
-        # Use ProcessPoolExecutor for true parallel processing (bypasses GIL)
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
-            # Submit all tasks
-            future_to_index = {
-                executor.submit(_analyze_track_wrapper, path): idx
-                for idx, path in enumerate(file_paths)
-            }
+        from concurrent.futures.process import BrokenProcessPool
 
-            # Collect results as they complete
-            for future in as_completed(future_to_index):
-                idx = future_to_index[future]
-                file_path = file_paths[idx]
+        # Process in batches
+        for batch_start in range(0, total_files, BATCH_SIZE):
+            batch_paths = file_paths[batch_start : batch_start + BATCH_SIZE]
+            batch_indices = list(range(batch_start, min(batch_start + BATCH_SIZE, total_files)))
 
-                try:
-                    # W5: Konfigurierbarer Timeout (schuetzt gegen korrupte Dateien)
-                    track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
-                    analyzed_tracks[idx] = track
+            logger.info(f"Starte Batch {batch_start // BATCH_SIZE + 1} ({len(batch_paths)} Dateien)...")
 
-                    if track:
-                        completed_count += 1
-                        status_msg = f"Analyzed: {os.path.basename(file_path)}"
-                    else:
-                        status_msg = f"[FAILED] {os.path.basename(file_path)}"
+            pool_broken = False
+            batch_results = {}  # index -> Track or None
 
-                except TimeoutError:
-                    logger.warning(f"Timeout bei Analyse von {os.path.basename(file_path)}")
-                    status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
+            try:
+                # Use ProcessPoolExecutor for true parallel processing (bypasses GIL)
+                with ProcessPoolExecutor(max_workers=worker_count) as executor:
+                    # Submit all tasks in this batch
+                    future_to_idx = {
+                        executor.submit(_analyze_track_wrapper, path): idx
+                        for path, idx in zip(batch_paths, batch_indices)
+                    }
 
-                except Exception as e:
-                    logger.error(f"Worker-Crash fuer {os.path.basename(file_path)}: {e}")
-                    status_msg = f"[ERROR] {os.path.basename(file_path)}"
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        file_path = file_paths[idx]
+                        status_msg = ""
+                        
+                        try:
+                            # W5: Konfigurierbarer Timeout (schuetzt gegen korrupte Dateien)
+                            track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
+                            batch_results[idx] = track
+                            finished_count += 1
+                            if track:
+                                completed_count += 1
+                                status_msg = f"Analyzed: {os.path.basename(file_path)}"
+                            else:
+                                status_msg = f"[FAILED] {os.path.basename(file_path)}"
+                        except TimeoutError:
+                            logger.warning(f"Timeout bei Analyse von {os.path.basename(file_path)}")
+                            status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
+                            batch_results[idx] = None
+                            finished_count += 1
+                        except (BrokenProcessPool, RuntimeError) as e:
+                            # Process pool crashed abruptly!
+                            logger.error(f"Worker-Crash (Pool beschaedigt) bei {os.path.basename(file_path)}: {e}")
+                            pool_broken = True
+                            # Break out to trigger recovery for unprocessed files in this batch
+                            break
+                        except Exception as e:
+                            logger.error(f"Fehler bei {os.path.basename(file_path)}: {e}")
+                            status_msg = f"[ERROR] {os.path.basename(file_path)}"
+                            batch_results[idx] = None
+                            finished_count += 1
 
-                # Report progress
-                if progress_callback:
-                    progress_callback(idx + 1, total_files, status_msg)
+                        if not pool_broken and progress_callback and status_msg:
+                            progress_callback(finished_count, total_files, status_msg)
+
+                    if pool_broken:
+                        # Abort execution of pending tasks in this broken pool
+                        executor.shutdown(wait=False)
+
+            except Exception as pool_err:
+                logger.error(f"Genereller Pool-Fehler in Batch: {pool_err}")
+                pool_broken = True
+
+            # Recovery mode for unprocessed files in this batch if the pool crashed
+            if pool_broken:
+                unprocessed_indices = [idx for idx in batch_indices if idx not in batch_results]
+                logger.warning(f"Prozess-Pool abgestuerzt. Starte sicheren Recovery-Modus fuer {len(unprocessed_indices)} Dateien...")
+
+                for idx in unprocessed_indices:
+                    file_path = file_paths[idx]
+                    logger.info(f"Analysiere im Safe-Modus: {os.path.basename(file_path)}")
+                    
+                    track = None
+                    status_msg = ""
+                    try:
+                        # Process individual file in a fresh single-worker pool
+                        with ProcessPoolExecutor(max_workers=1) as recovery_executor:
+                            future = recovery_executor.submit(_analyze_track_wrapper, file_path)
+                            track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
+                            if track:
+                                completed_count += 1
+                                status_msg = f"Analyzed (Safe Mode): {os.path.basename(file_path)}"
+                            else:
+                                status_msg = f"[FAILED] {os.path.basename(file_path)}"
+                    except (BrokenProcessPool, RuntimeError) as e:
+                        # This specific file caused the worker to crash!
+                        logger.error(f"CRITICAL: Datei verursacht C-Level Absturz! Ueberspringe: {os.path.basename(file_path)}: {e}")
+                        status_msg = f"[CRASHED/SKIPPED] {os.path.basename(file_path)}"
+                        track = None
+                    except TimeoutError:
+                        logger.warning(f"Timeout im Safe-Modus bei {os.path.basename(file_path)}")
+                        status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
+                        track = None
+                    except Exception as e:
+                        logger.error(f"Fehler im Safe-Modus bei {os.path.basename(file_path)}: {e}")
+                        status_msg = f"[ERROR] {os.path.basename(file_path)}"
+                        track = None
+
+                    batch_results[idx] = track
+                    finished_count += 1
+                    if progress_callback and status_msg:
+                        progress_callback(finished_count, total_files, status_msg)
+
+            # Apply batch results to master list
+            for idx, track in batch_results.items():
+                analyzed_tracks[idx] = track
 
         # Filter out None values (failed analyses)
         successful_tracks = [track for track in analyzed_tracks if track is not None]

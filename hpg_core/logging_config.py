@@ -123,7 +123,10 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
   # Modul-spezifische Levels setzen
   for module_name, module_level in MODULE_LEVELS.items():
     mod_logger = logging.getLogger(module_name)
-    mod_logger.setLevel(getattr(logging, module_level.upper(), numeric_level))
+    mod_level = getattr(logging, module_level.upper(), numeric_level)
+    if numeric_level < mod_level:
+      mod_level = numeric_level
+    mod_logger.setLevel(mod_level)
 
   # Externe Bibliotheken ruhigstellen
   logging.getLogger("librosa").setLevel(logging.WARNING)

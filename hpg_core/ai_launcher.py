@@ -159,6 +159,16 @@ def ollama_models():
     return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
 
 
+def ollama_active_model():
+    """Gibt das aktuell im VRAM geladene Modell von Ollama zurueck oder ''."""
+    ok, data = _http_json(_OLLAMA_HOST + "/api/ps")
+    if ok and data and "models" in data:
+        models = data["models"]
+        if models:
+            return models[0].get("name", "")
+    return ""
+
+
 def ollama_start():
     """Startet Ollama headless (ollama serve), GUI-App als Fallback. Bool zurueck."""
     if ollama_running():
@@ -202,7 +212,13 @@ def _prepare_ollama(preferred_model):
         return AIProviderStatus("Ollama", _OLLAMA_HOST + "/v1/chat/completions",
                                 [], "", running=False)
     models = ollama_models()
-    active = _pick_model(models, preferred_model)
+    
+    # Pruefen, was Ollama wirklich gerade im Speicher geladen hat
+    active = ollama_active_model()
+    if not active or active not in models:
+        # Falls nichts geladen ist (oder das geladene nicht in der Liste der installierten ist),
+        # waehle das bevorzugte Modell oder Fallback
+        active = _pick_model(models, preferred_model)
 
     # Auto-Pull: gewuenschtes Modell fehlt -> ziehen (nur wenn ueberhaupt eins gewuenscht)
     if preferred_model and not active:

@@ -5,7 +5,7 @@
 [Setup]
 ; Application Information
 AppName=Harmonic Playlist Generator
-AppVersion=3.5.3
+AppVersion=3.6.0
 AppPublisher=HPG Team
 AppPublisherURL=https://github.com/yourusername/HPG
 AppSupportURL=https://github.com/yourusername/HPG/issues
@@ -15,7 +15,7 @@ DefaultGroupName=Harmonic Playlist Generator
 AllowNoIcons=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
-OutputBaseFilename=HPG_v3.5.3_Setup
+OutputBaseFilename=HPG_v3.6.0_Setup
 SetupIconFile=icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -28,15 +28,15 @@ PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 
 ; Visual Style
-WizardImageFile=compiler:WizModernImage-IS.bmp
-WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp
+;WizardImageFile=compiler:WizModernImage-IS.bmp
+;WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [Files]
@@ -79,7 +79,7 @@ Type: filesandordirs; Name: "{app}\*.log"
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  MsgBox('Welcome to Harmonic Playlist Generator v3.5.3 Setup!' + #13#10 + #13#10 +
+  MsgBox('Welcome to Harmonic Playlist Generator v3.6.0 Setup!' + #13#10 + #13#10 +
          'This installer will install HPG on your computer.' + #13#10 + #13#10 +
          'Features:' + #13#10 +
          '  - 4-6x faster audio analysis (multi-core)' + #13#10 +

@@ -33,6 +33,7 @@ class TransitionMetrics:
     energy_flow: float
     genre_compatibility: float
     overall_score: float
+    ai_bonus: float = 0.0
 
 
 @dataclass
@@ -140,12 +141,42 @@ def calculate_enhanced_compatibility(
         + genre_weight * genre_compatibility
     )
 
+    # Calculate AI Mood & Sub-Genre Bonus
+    ai_bonus = 0.0
+    ai_meta1 = getattr(track1, "ai_metadata", {})
+    ai_meta2 = getattr(track2, "ai_metadata", {})
+    if isinstance(ai_meta1, dict) and isinstance(ai_meta2, dict) and ai_meta1 and ai_meta2:
+        # 1. Moods
+        moods1 = ai_meta1.get("moods", [])
+        moods2 = ai_meta2.get("moods", [])
+        if isinstance(moods1, list) and isinstance(moods2, list):
+            moods1_set = {str(m).strip().lower() for m in moods1 if m}
+            moods2_set = {str(m).strip().lower() for m in moods2 if m}
+            if moods1_set and moods2_set:
+                intersect = moods1_set.intersection(moods2_set)
+                # Up to 0.08 bonus for matching moods
+                ai_bonus += 0.08 * (len(intersect) / max(len(moods1_set), len(moods2_set)))
+
+        # 2. Sub-genres
+        sub1 = ai_meta1.get("sub_genre", "")
+        sub2 = ai_meta2.get("sub_genre", "")
+        if isinstance(sub1, str) and isinstance(sub2, str) and sub1 and sub2:
+            s1 = sub1.strip().lower()
+            s2 = sub2.strip().lower()
+            if s1 == s2:
+                ai_bonus += 0.06
+            elif s1 in s2 or s2 in s1:
+                ai_bonus += 0.03
+
+    overall_score = min(1.0, overall_score + ai_bonus)
+
     return TransitionMetrics(
         harmonic_score=harmonic_score,
         bpm_smoothness=bpm_smoothness,
         energy_flow=energy_flow,
         genre_compatibility=genre_compatibility,
         overall_score=overall_score,
+        ai_bonus=ai_bonus,
     )
 
 
@@ -267,6 +298,41 @@ def calculate_compatibility(
     """Wrapper around _calculate_compatibility_inner that uses a global dictionary cache
     if one is currently set up by generate_playlist or benchmark."""
     global _COMPAT_CACHE
+
+    # Inner helper to apply AI metadata bonus
+    def _apply_ai_bonus(t1: Track, t2: Track, base_score: int) -> int:
+        if base_score <= 0:
+            return base_score
+
+        ai_bonus = 0
+        ai_meta1 = getattr(t1, "ai_metadata", {})
+        ai_meta2 = getattr(t2, "ai_metadata", {})
+
+        if isinstance(ai_meta1, dict) and isinstance(ai_meta2, dict) and ai_meta1 and ai_meta2:
+            # 1. Compare moods
+            moods1 = ai_meta1.get("moods", [])
+            moods2 = ai_meta2.get("moods", [])
+            if isinstance(moods1, list) and isinstance(moods2, list):
+                moods1_set = {str(m).strip().lower() for m in moods1 if m}
+                moods2_set = {str(m).strip().lower() for m in moods2 if m}
+                if moods1_set and moods2_set:
+                    intersect = moods1_set.intersection(moods2_set)
+                    # Up to +8 bonus points for overlapping moods
+                    ai_bonus += int(8 * (len(intersect) / max(len(moods1_set), len(moods2_set))))
+
+            # 2. Compare sub-genres
+            sub1 = ai_meta1.get("sub_genre", "")
+            sub2 = ai_meta2.get("sub_genre", "")
+            if isinstance(sub1, str) and isinstance(sub2, str) and sub1 and sub2:
+                s1 = sub1.strip().lower()
+                s2 = sub2.strip().lower()
+                if s1 == s2:
+                    ai_bonus += 6
+                elif s1 in s2 or s2 in s1:
+                    ai_bonus += 3
+
+        return min(100, base_score + ai_bonus)
+
     if _COMPAT_CACHE is not None:
         cache_key = (
             id(track1),
@@ -279,10 +345,12 @@ def calculate_compatibility(
             return _COMPAT_CACHE[cache_key]
 
         score = _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
+        score = _apply_ai_bonus(track1, track2, score)
         _COMPAT_CACHE[cache_key] = score
         return score
 
-    return _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
+    score = _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
+    return _apply_ai_bonus(track1, track2, score)
 
 
 def _sort_harmonic_flow(

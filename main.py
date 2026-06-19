@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QSlider,
     QCheckBox,
     QTextEdit,
+    QPlainTextEdit,
     QHeaderView,
     QFrame,
     QScrollArea,
@@ -32,11 +33,13 @@ from PyQt6.QtCore import (
     QSize,
     QRect,
     QTimer,
+    QObject,
 )
 from PyQt6.QtGui import (
     QColor,
     QKeySequence,
     QShortcut,
+    QTextCursor,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import html as html_mod
@@ -124,19 +127,29 @@ class AIAnalysisWorker(QThread):
             pass
 
     def run(self):
+        import logging
+        import os
+        logger = logging.getLogger("hpg_core.ai_engine")
         self._ensure_ready()
-        for track in self.playlist:
+        logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
+        for i, track in enumerate(self.playlist):
             if self._should_cancel:
+                logger.info("AI Mood Tagging cancelled by user.")
                 break
             try:
+                filename = os.path.basename(track.filePath)
+                logger.info(f"[{i+1}/{len(self.playlist)}] AI analyzing track: '{filename}'...")
                 from hpg_core.ai_engine import fetch_ai_analysis
                 ai_data = fetch_ai_analysis(
                     track, provider=self.provider, model=self.model, url=self.base_url
                 )
                 if ai_data:
                     self.ai_finished.emit(track.filePath, ai_data)
-            except Exception:
-                pass
+                else:
+                    logger.warning(f"AI returned empty result for track '{filename}'.")
+            except Exception as e:
+                logger.error(f"Error during AI analysis for track '{os.path.basename(track.filePath)}': {e}")
+        logger.info("AI Mood Tagging complete.")
 
 
 class AIDetectWorker(QThread):
@@ -162,11 +175,85 @@ class AIDetectWorker(QThread):
             status = None
         self.detected.emit(status)
 
+
+class AITestWorker(QThread):
+    """
+    Worker thread for testing the AI provider connection and model response.
+    Sends a test request and measures latency.
+    """
+    test_finished = pyqtSignal(bool, str, str, float)  # (success, response_or_error, model_name, latency)
+
+    def __init__(self, provider: str, model: str, base_url: str, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.model = model
+        self.base_url = base_url
+
+    def run(self):
+        import time
+        import requests
+        start_time = time.time()
+
+        url = self.base_url
+        if not url:
+            if self.provider == "LM Studio":
+                url = "http://localhost:1234/v1/chat/completions"
+            else:
+                url = "http://localhost:11434/v1/chat/completions"
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": "Respond with the word OK and nothing else."}
+            ]
+        }
+
+        try:
+            # timeout=(connect timeout, read timeout). Modell laden kann dauern, daher 30s.
+            resp = requests.post(url, json=payload, timeout=(3.0, 30.0))
+            resp.raise_for_status()
+            resp_json = resp.json()
+            latency = time.time() - start_time
+
+            if "choices" in resp_json and len(resp_json["choices"]) > 0:
+                response_content = resp_json["choices"][0]["message"]["content"].strip()
+                responded_model = resp_json.get("model", self.model)
+                self.test_finished.emit(True, response_content, responded_model, latency)
+            else:
+                self.test_finished.emit(False, "Keine 'choices' in der Antwort des Providers.", self.model, latency)
+        except Exception as e:
+            latency = time.time() - start_time
+            self.test_finished.emit(False, str(e), self.model, latency)
+
+
+class AIPullWorker(QThread):
+    """
+    Worker thread for pulling a model from Ollama in the background.
+    """
+    pull_finished = pyqtSignal(bool, str)  # (success, error_message)
+
+    def __init__(self, model: str, parent=None):
+        super().__init__(parent)
+        self.model = model
+
+    def run(self):
+        try:
+            from hpg_core import ai_launcher
+            success = ai_launcher.ollama_pull(self.model)
+            if success:
+                self.pull_finished.emit(True, "")
+            else:
+                self.pull_finished.emit(False, f"Modell '{self.model}' konnte nicht geladen werden. Bitte stelle sicher, dass Ollama läuft und der Modellname korrekt ist.")
+        except Exception as e:
+            self.pull_finished.emit(False, str(e))
+
+
 class AnalysisWorker(QThread):
     """Worker thread for running the analysis in the background."""
 
     progress = pyqtSignal(int)
     status_update = pyqtSignal(str)
+    phase_changed = pyqtSignal(int, str)  # step_index, state ("inactive", "working", "completed")
     finished = pyqtSignal(list, dict)  # playlist, quality_metrics
 
     def __init__(
@@ -190,27 +277,40 @@ class AnalysisWorker(QThread):
 
     def run(self):
         """The main work of the thread - now with multi-core processing."""
+        import logging
+        logger = logging.getLogger("hpg_core.analysis")
         try:
+            self.phase_changed.emit(0, "working")
             self.status_update.emit("Scanning for audio files...")
+            logger.info(f"Scanning directory: {self.folder_path}")
+            logger.info("Scanning for audio files...")
 
             # Scan for audio files
             audio_files = []
             for root, _, files in os.walk(self.folder_path):
+                if self._should_cancel:
+                    raise InterruptedError("Analysis cancelled by user")
                 for file in files:
                     if file.lower().endswith(self.supported_formats):
                         audio_files.append(os.path.join(root, file))
 
             total_files = len(audio_files)
             if total_files == 0:
+                self.phase_changed.emit(0, "inactive")
                 self.status_update.emit(
                     "ERROR: No audio files found in selected folder!"
                 )
+                logger.error(f"No compatible audio files ({', '.join(self.supported_formats)}) found in selected folder!")
                 self.finished.emit([], {})
                 return
 
+            self.phase_changed.emit(0, "completed")
+            self.phase_changed.emit(1, "working")
             self.status_update.emit(
                 f"Found {total_files} audio files. Starting analysis..."
             )
+            logger.info(f"Scan complete: Found {total_files} audio files.")
+            logger.info("Starting parallel feature extraction...")
 
             # Progress callback for parallel analyzer
             last_update_time = 0
@@ -220,9 +320,15 @@ class AnalysisWorker(QThread):
                 nonlocal last_update_time
                 current_time = time.time() * 1000  # Convert to ms
 
+                # Detail-Log ins Terminal schreiben
+                import logging
+                logger = logging.getLogger("hpg_core.parallel_analyzer")
+                logger.info(f"[{current}/{total}] {status_msg}")
+
                 # Throttle updates: Max every 100ms or on completion
                 if (current_time - last_update_time > 100) or (current >= total):
-                    self.progress.emit(int((current / total) * 100))
+                    float_percent = (current / total) * 100.0
+                    self.progress.emit(int(float_percent * 100))
                     self.status_update.emit(status_msg)
                     last_update_time = current_time
 
@@ -239,22 +345,29 @@ class AnalysisWorker(QThread):
                     audio_files, progress_callback=progress_callback
                 )
             except InterruptedError:
+                self.phase_changed.emit(1, "inactive")
                 self.status_update.emit("Analysis cancelled.")
                 self.finished.emit([], {})
                 return
             except Exception as e:
+                self.phase_changed.emit(1, "inactive")
                 self.status_update.emit(f"ERROR during analysis: {str(e)}")
                 self.finished.emit([], {})
                 return
 
             if not analyzed_tracks:
+                self.phase_changed.emit(1, "inactive")
                 self.status_update.emit("ERROR: No tracks were successfully analyzed.")
                 self.finished.emit([], {})
                 return
 
+            logger.info(f"Feature extraction complete: {len(analyzed_tracks)} tracks successfully analyzed.")
+            self.phase_changed.emit(1, "completed")
+            self.phase_changed.emit(2, "working")
             self.status_update.emit(
                 f"Analyzed {len(analyzed_tracks)} tracks. Generating playlist..."
             )
+            logger.info(f"Generating playlist using mode: '{self.mode}' (BPM Tolerance: {self.bpm_tolerance})...")
 
             try:
                 sorted_playlist = generate_playlist(
@@ -264,27 +377,40 @@ class AnalysisWorker(QThread):
                     advanced_params=self.advanced_params,
                 )
             except Exception as e:
+                self.phase_changed.emit(2, "inactive")
                 self.status_update.emit(f"ERROR generating playlist: {str(e)}")
+                logger.error(f"Playlist generation failed: {e}")
                 self.finished.emit([], {})
                 return
 
             if not sorted_playlist:
+                self.phase_changed.emit(2, "inactive")
                 self.status_update.emit(
                     "ERROR: Playlist generation returned empty result."
                 )
+                logger.error("Playlist generation returned an empty result.")
                 self.finished.emit([], {})
                 return
 
+            logger.info(f"Playlist successfully generated with {len(sorted_playlist)} tracks.")
+            self.phase_changed.emit(2, "completed")
+            self.phase_changed.emit(3, "working")
             # Calculate quality metrics
             self.status_update.emit("Calculating quality metrics...")
+            logger.info("Calculating transition quality metrics...")
             try:
                 quality_metrics = calculate_playlist_quality(
                     sorted_playlist, self.bpm_tolerance
                 )
             except Exception as e:
                 self.status_update.emit(f"Warning: Quality metrics failed: {str(e)}")
+                logger.warning(f"Failed to calculate quality metrics: {e}")
                 quality_metrics = {}
 
+            overall_score = quality_metrics.get("overall_score", 0.0)
+            logger.info(f"Quality analysis complete. Overall playlist score: {overall_score:.2f}%")
+            logger.info(f"Analysis process complete! {len(sorted_playlist)} tracks ready.")
+            self.phase_changed.emit(3, "completed")
             self.status_update.emit(
                 f"Complete! {len(sorted_playlist)} tracks in playlist."
             )
@@ -315,6 +441,8 @@ class TransitionRenderWorker(QThread):
         self._transitions = transitions
         self._should_cancel = False
         self._temp_files: list[str] = []  # Fuer Cleanup
+        import uuid
+        self._run_id = uuid.uuid4().hex[:8]
 
     def request_cancel(self):
         """Kooperatives Cancel — setzt Flag das in run() geprueft wird."""
@@ -332,7 +460,7 @@ class TransitionRenderWorker(QThread):
             try:
                 # Temp-Ausgabedatei im System-Temp-Verzeichnis
                 tmp_dir = tempfile.gettempdir()
-                out_path = os.path.join(tmp_dir, f"hpg_preview_{i:03d}.wav")
+                out_path = os.path.join(tmp_dir, f"hpg_preview_{self._run_id}_{i:03d}.wav")
                 self._temp_files.append(out_path)
 
                 # TransitionClipSpec aus TransitionRecommendation aufbauen
@@ -386,32 +514,123 @@ class TransitionRenderWorker(QThread):
 class TransitionPreviewWidget(QWidget):
     """
     Player-Widget fuer einen einzelnen Transitions-Preview-Clip.
-    Zeigt: Play/Stop-Button, Fortschritts-Slider, Zeitanzeige.
+    Zeigt: Play/Stop-Button, Fortschritts-Slider, Zeitanzeige, 
+    proportionale Visualisierung von Track A/B/Mix sowie genaue Mix-Punkte.
     Ist deaktiviert bis set_wav_path() aufgerufen wird.
     """
 
-    def __init__(self, index: int, transition_title: str, parent=None):
+    def __init__(self, index: int, transition, parent=None):
         super().__init__(parent)
         self._index = index
+        self._tr = transition
         self._wav_path: str | None = None
         self._player = QMediaPlayer()
         self._audio_out = QAudioOutput()
         self._player.setAudioOutput(self._audio_out)
         self._audio_out.setVolume(0.85)
 
-        self._setup_ui(transition_title)
+        self._setup_ui()
         self._connect_signals()
 
-    def _setup_ui(self, title: str):
+    def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
 
-        # Titel-Label
-        self._title_label = QLabel(title)
-        self._title_label.setStyleSheet("QLabel { font-size: 11px; color: #8b949e; }")
+        # 1. Titel-Label
+        self._title_label = QLabel(f"▶ Hör-Vorschau Übergang {self._index + 1}")
+        self._title_label.setStyleSheet("QLabel { font-size: 11px; font-weight: bold; color: #8b949e; }")
+        layout.addWidget(self._title_label)
 
-        # Kontrollzeile: Play-Button + Slider + Zeit
+        # 2. Segmentierter Balken
+        from_track = self._tr.from_track
+        to_track = self._tr.to_track
+        dj = self._tr.dj_rec
+        
+        mix_out = (
+            dj.adjusted_mix_out_a
+            if dj and dj.adjusted_mix_out_a > 0
+            else float(from_track.mix_out_point or 0)
+        )
+        mix_in = (
+            dj.adjusted_mix_in_b
+            if dj and dj.adjusted_mix_in_b >= 0 and dj.adjusted_mix_in_b > -0.5
+            else float(to_track.mix_in_point or 0)
+        )
+        crossfade = (
+            dj.overlap_seconds
+            if dj and dj.overlap_seconds > 0
+            else float(self._tr.overlap or 16.0)
+        )
+        
+        t_type = getattr(self._tr, "transition_type", "blend")
+        t_label = TRANSITION_TYPE_LABELS.get(t_type, t_type)
+
+        def truncate_filename(name, max_len=18):
+            if len(name) <= max_len:
+                return name
+            return name[:max_len-3] + "..."
+
+        from_name = truncate_filename(from_track.fileName)
+        to_name = truncate_filename(to_track.fileName)
+
+        self.segments_layout = QHBoxLayout()
+        self.segments_layout.setSpacing(2)
+        self.segments_layout.setContentsMargins(0, 2, 0, 2)
+        
+        self.lbl_a = QLabel(f"A: {from_name}\n(Out: {mix_out:.1f}s)")
+        self.lbl_a.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_a.setStyleSheet(f"""
+            QLabel {{
+                background-color: #1E3A8A; 
+                color: #93C5FD; 
+                font-size: 10px; 
+                font-weight: bold;
+                border: 1px solid #3B82F6;
+                border-radius: 4px;
+                padding: 4px 6px;
+            }}
+        """)
+        self.lbl_a.setToolTip(f"Track A: {from_track.fileName}\nSpielt von 0s bis 30s in dieser Vorschau.\nÜbergang startet bei Sekunde {mix_out:.1f} des Original-Tracks A.")
+        
+        self.lbl_mix = QLabel(f"⇄ MIX ({crossfade:.1f}s)\n{t_label}")
+        self.lbl_mix.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_mix.setStyleSheet(f"""
+            QLabel {{
+                background-color: #5B21B6; 
+                color: #DDD6FE; 
+                font-size: 10px; 
+                font-weight: bold;
+                border: 1px solid #8B5CF6;
+                border-radius: 4px;
+                padding: 4px 6px;
+            }}
+        """)
+        self.lbl_mix.setToolTip(f"Mischbereich (Crossfade) für {crossfade:.1f} Sekunden.\nSpielt von 30.0s bis {30.0+crossfade:.1f}s in dieser Vorschau.")
+        
+        self.lbl_b = QLabel(f"B: {to_name}\n(In: {mix_in:.1f}s)")
+        self.lbl_b.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_b.setStyleSheet(f"""
+            QLabel {{
+                background-color: #064E3B; 
+                color: #A7F3D0; 
+                font-size: 10px; 
+                font-weight: bold;
+                border: 1px solid #10B981;
+                border-radius: 4px;
+                padding: 4px 6px;
+            }}
+        """)
+        self.lbl_b.setToolTip(f"Track B: {to_track.fileName}\nSpielt ab Sekunde {30.0+crossfade:.1f} der Vorschau bis zum Ende.\nÜbergang startet bei Sekunde {mix_in:.1f} des Original-Tracks B.")
+        
+        # Proportionale Weiten: 30s vor dem Mix, crossfade Sekunden mixen, 30s nach dem Mix
+        self.segments_layout.addWidget(self.lbl_a, 300)
+        self.segments_layout.addWidget(self.lbl_mix, int(crossfade * 10))
+        self.segments_layout.addWidget(self.lbl_b, 300)
+        
+        layout.addLayout(self.segments_layout)
+
+        # 3. Kontrollzeile: Play-Button + Slider + Zeit
         ctrl_layout = QHBoxLayout()
         ctrl_layout.setSpacing(6)
 
@@ -433,8 +652,14 @@ class TransitionPreviewWidget(QWidget):
         ctrl_layout.addWidget(self._slider, 1)
         ctrl_layout.addWidget(self._time_label)
 
-        layout.addWidget(self._title_label)
         layout.addLayout(ctrl_layout)
+
+        # 4. Info-Struktur-Zeile
+        self._info_timeline_label = QLabel(
+            f"Vorschau-Struktur: 0:00-0:30: Nur Track A | 0:30-{30.0+crossfade:.1f}s: Mix ({t_label}) | ab {30.0+crossfade:.1f}s: Nur Track B"
+        )
+        self._info_timeline_label.setStyleSheet("QLabel { font-size: 10px; color: #8b949e; font-style: italic; }")
+        layout.addWidget(self._info_timeline_label)
 
     def _connect_signals(self):
         self._play_btn.clicked.connect(self._toggle_play)
@@ -516,6 +741,8 @@ class AdvancedParametersWidget(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         # Energy Direction Control
         energy_group = QGroupBox("Energy Direction (Emotional Journey)")
@@ -567,8 +794,10 @@ class AdvancedParametersWidget(QWidget):
 
         self.provider_group = QGroupBox("AI Intelligence Provider")
         provider_outer = QVBoxLayout(self.provider_group)
-        provider_layout = QHBoxLayout()
+        provider_outer.setSpacing(8)
 
+        # Row 1: Radios (Ollama / LM Studio)
+        radio_layout = QHBoxLayout()
         self.ollama_radio = QRadioButton("Ollama")
         self.lmstudio_radio = QRadioButton("LM Studio")
 
@@ -578,30 +807,47 @@ class AdvancedParametersWidget(QWidget):
         else:
             self.ollama_radio.setChecked(True)
 
-        provider_layout.addWidget(self.ollama_radio)
-        provider_layout.addWidget(self.lmstudio_radio)
+        # Connect signals to automatically refresh when switching provider
+        self.ollama_radio.toggled.connect(lambda checked: self.refresh_ai_providers() if checked else None)
+        self.lmstudio_radio.toggled.connect(lambda checked: self.refresh_ai_providers() if checked else None)
 
-        # AI Model Selection (wird vom Detect-Worker mit REAL installierten Modellen gefuellt)
+        radio_layout.addWidget(self.ollama_radio)
+        radio_layout.addWidget(self.lmstudio_radio)
+        provider_outer.addLayout(radio_layout)
+
+        # Row 2: Model Selection Label & ComboBox
+        model_layout = QHBoxLayout()
         model_label = QLabel("Active AI Model:")
         self.model_combo = QComboBox()
         # Platzhalter bis Detect fertig ist
         self.model_combo.addItems(hpg_config.AI_MODELS_AVAILABLE)
         if hpg_config.AI_MODEL in hpg_config.AI_MODELS_AVAILABLE:
             self.model_combo.setCurrentText(hpg_config.AI_MODEL)
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
 
-        provider_layout.addWidget(model_label)
-        provider_layout.addWidget(self.model_combo)
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_combo, 1)
+        provider_outer.addLayout(model_layout)
 
-        # Status + manueller Refresh
-        status_row = QHBoxLayout()
+        # Row 3: Status label
         self.ai_status_label = QLabel("AI: noch nicht geprueft")
+        self.ai_status_label.setWordWrap(True)
+        self.ai_status_label.setStyleSheet("font-size: 11px;")
+        provider_outer.addWidget(self.ai_status_label)
+
+        # Row 4: Buttons (AI erkennen / starten + Modell testen)
+        btn_layout = QHBoxLayout()
         self.ai_refresh_btn = QPushButton("AI erkennen / starten")
         self.ai_refresh_btn.clicked.connect(self.refresh_ai_providers)
-        status_row.addWidget(self.ai_status_label, 1)
-        status_row.addWidget(self.ai_refresh_btn)
 
-        provider_outer.addLayout(provider_layout)
-        provider_outer.addLayout(status_row)
+        self.test_ai_btn = QPushButton("Modell testen")
+        self.test_ai_btn.clicked.connect(self.test_ai_connection)
+        self.test_ai_btn.setEnabled(False) # Initial deaktiviert, bis AI bereit ist
+
+        btn_layout.addWidget(self.ai_refresh_btn)
+        btn_layout.addWidget(self.test_ai_btn)
+        provider_outer.addLayout(btn_layout)
+
         layout.addWidget(self.provider_group)
 
         # Auto-Detect beim Start (nicht-blockierend, kurz verzoegert bis UI steht)
@@ -708,13 +954,20 @@ class AdvancedParametersWidget(QWidget):
                 "AI: kein Provider erreichbar (Ollama/LM Studio nicht installiert/gestartet)"
             )
             self.detected_base_url = None
+            self.test_ai_btn.setEnabled(False)
             return
 
-        # Provider-Radio passend setzen
+        self.test_ai_btn.setEnabled(True)
+
+        # Provider-Radio passend setzen (Signale blockieren, um unendliche Worker-Loops zu vermeiden)
+        self.lmstudio_radio.blockSignals(True)
+        self.ollama_radio.blockSignals(True)
         if status.name == "LM Studio":
             self.lmstudio_radio.setChecked(True)
         else:
             self.ollama_radio.setChecked(True)
+        self.lmstudio_radio.blockSignals(False)
+        self.ollama_radio.blockSignals(False)
 
         # Combo mit echten Modellen fuellen
         if status.models:
@@ -739,6 +992,139 @@ class AdvancedParametersWidget(QWidget):
             f"AI bereit — {status.name}{port} · {len(status.models)} Modelle · "
             f"aktiv: {self.detected_active_model}"
         )
+
+    def _on_model_changed(self, model_name):
+        """Wird aufgerufen, wenn der Benutzer ein anderes Modell auswaehlt."""
+        if not model_name:
+            return
+        self.detected_active_model = model_name
+        provider = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        port = ""
+        if self.detected_base_url:
+            m = re.search(r":(\d+)/", self.detected_base_url)
+            if m:
+                port = f" :{m.group(1)}"
+        
+        num_models = self.model_combo.count()
+        self.ai_status_label.setText(
+            f"AI bereit — {provider}{port} · {num_models} Modelle · "
+            f"aktiv: {self.detected_active_model}"
+        )
+
+    def test_ai_connection(self):
+        """Sendet eine Test-Anfrage an den ausgewaehlten Provider."""
+        provider = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        model = self.model_combo.currentText().strip()
+        if not model:
+            QMessageBox.warning(self, "Modell testen", "Bitte waehle zuerst ein Modell aus.")
+            return
+
+        self.test_ai_btn.setEnabled(False)
+        self.ai_refresh_btn.setEnabled(False)
+        self.ai_status_label.setText("AI: Testanfrage laeuft...")
+
+        base_url = self.detected_base_url
+        self._test_worker = AITestWorker(provider, model, base_url, parent=self)
+        self._test_worker.test_finished.connect(self._on_test_finished)
+        self._test_worker.start()
+
+    def _on_test_finished(self, success, response_text, responded_model, latency):
+        """Verarbeitet das Ergebnis des AI-Verbindungstests."""
+        self.test_ai_btn.setEnabled(True)
+        self.ai_refresh_btn.setEnabled(True)
+
+        provider = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        port = ""
+        if self.detected_base_url:
+            m = re.search(r":(\d+)/", self.detected_base_url)
+            if m:
+                port = f" :{m.group(1)}"
+
+        # Statustext aktualisieren
+        num_models = self.model_combo.count()
+        self.ai_status_label.setText(
+            f"AI bereit — {provider}{port} · {num_models} Modelle · "
+            f"aktiv: {responded_model}"
+        )
+
+        if success:
+            QMessageBox.information(
+                self,
+                "AI-Verbindungstest erfolgreich",
+                f"Echte Antwort vom lokalen LLM erhalten!\n\n"
+                f"Provider: {provider}\n"
+                f"Modell: {responded_model}\n"
+                f"Antwort: \"{response_text}\"\n"
+                f"Antwortzeit (Latenz): {latency:.2f} s\n\n"
+                f"Du kannst jetzt mit der Playlist-Generierung beginnen!"
+            )
+        else:
+            # Pruefen, ob das Modell auf Ollama fehlt
+            is_not_found = False
+            if provider == "Ollama":
+                err_lower = response_text.lower()
+                if "not found" in err_lower or "404" in err_lower or "does not exist" in err_lower:
+                    is_not_found = True
+
+            if is_not_found:
+                reply = QMessageBox.question(
+                    self,
+                    "Modell herunterladen?",
+                    f"Das Modell '{responded_model}' wurde auf deinem Ollama-Server nicht gefunden.\n\n"
+                    f"Möchtest du, dass die App das Modell automatisch über Ollama herunterlädt (pull)?\n"
+                    f"(Dies kann je nach Modellgröße und Internetgeschwindigkeit 2-10 Minuten dauern. "
+                    f"Die App bleibt währenddessen bedienbar, der Fortschritt wird angezeigt.)",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._start_model_pull(responded_model)
+                    return
+
+            QMessageBox.critical(
+                self,
+                "AI-Verbindungstest fehlgeschlagen",
+                f"Fehler beim Testen des Providers {provider}!\n\n"
+                f"Fehlerbeschreibung:\n{response_text}\n\n"
+                f"Dauer: {latency:.2f} s\n\n"
+                f"Bitte ueberpruefe, ob {provider} gestartet ist und das Modell '{responded_model}' geladen werden kann."
+            )
+
+    def _start_model_pull(self, model):
+        """Startet den Download des Modells über Ollama im Hintergrund."""
+        self.test_ai_btn.setEnabled(False)
+        self.ai_refresh_btn.setEnabled(False)
+        self.ai_status_label.setText(f"AI: Lade '{model}' herunter (bitte warten)...")
+
+        self._pull_worker = AIPullWorker(model, parent=self)
+        self._pull_worker.pull_finished.connect(self._on_pull_finished)
+        self._pull_worker.start()
+
+    def _on_pull_finished(self, success, error_msg):
+        """Verarbeitet das Ende des Model-Downloads."""
+        self.test_ai_btn.setEnabled(True)
+        self.ai_refresh_btn.setEnabled(True)
+
+        if success:
+            self.ai_status_label.setText("AI: Download abgeschlossen. Teste Verbindung...")
+            # Nach erfolgreichem Pull automatisch erneut testen
+            self.test_ai_connection()
+            # Nach erfolgreichem Pull die Modellliste aktualisieren
+            self.refresh_ai_providers()
+            QMessageBox.information(
+                self,
+                "Download erfolgreich",
+                f"Das Modell '{self._pull_worker.model}' wurde erfolgreich heruntergeladen und installiert!\n\n"
+                f"Der Verbindungstest wird nun automatisch gestartet. Sobald dieser erfolgreich ist, kannst du beginnen!"
+            )
+        else:
+            self.ai_status_label.setText("AI bereit (Fehler beim Download)")
+            QMessageBox.critical(
+                self,
+                "Download fehlgeschlagen",
+                f"Fehler beim Herunterladen des Modells über Ollama!\n\n"
+                f"Details:\n{error_msg}"
+            )
 
     def get_parameters(self):
         """Return current parameter values as dict."""
@@ -1004,11 +1390,28 @@ class StatusBarWidget(QWidget):
         """)
         layout.addWidget(self.status_label, 1)
 
-        # Progress-Bar (anfangs versteckt)
+        # Progress-Bar (konstant sichtbar)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedWidth(200)
-        self.progress_bar.setFixedHeight(14)
-        self.progress_bar.hide()
+        self.progress_bar.setFixedWidth(240)
+        self.progress_bar.setFixedHeight(22)
+        self.progress_bar.setRange(0, 10000)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("0.00%")
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {COLORS["bg_card"]};
+                border: 1px solid {COLORS["border"]};
+                border-radius: 4px;
+                text-align: center;
+                color: #FFFFFF;
+                font-family: {FONT_FAMILY};
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background-color: {COLORS["accent_primary"]};
+            }}
+        """)
         layout.addWidget(self.progress_bar)
 
         # Cancel-Button (anfangs versteckt)
@@ -1026,17 +1429,221 @@ class StatusBarWidget(QWidget):
 
     def set_progress(self, value):
         self.progress_bar.setValue(value)
+        percentage = value / 100.0
+        self.progress_bar.setFormat(f"{percentage:.2f}%")
 
     def show_progress(self):
         """Analyse gestartet — Progress und Cancel sichtbar."""
         self.progress_bar.setValue(0)
-        self.progress_bar.show()
+        self.progress_bar.setFormat("0.00%")
         self.cancel_btn.show()
 
     def hide_progress(self):
         """Analyse beendet — Progress und Cancel verstecken."""
-        self.progress_bar.hide()
-        self.cancel_btn.hide()
+        self.cancel_btn.show()
+
+
+class QtLogSignalEmitter(QObject):
+    log_written = pyqtSignal(str, str)
+
+
+import logging
+
+class QtLoggingHandler(logging.Handler):
+    def __init__(self, emitter):
+        super().__init__()
+        self.emitter = emitter
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            level = record.levelname
+            if level in ("ERROR", "CRITICAL"):
+                color = "#FF3333"
+            elif level == "WARNING":
+                color = "#FFCC00"
+            elif level == "DEBUG":
+                color = "#A0A0A0" # Dezentes Hellgrau für Traces/Debugs
+            else:
+                color = "#00FF66" # Hellgrün für INFO
+            self.emitter.log_written.emit(msg, color)
+        except Exception:
+            self.handleError(record)
+
+
+# Globale Variable für den Logging-Emitter
+global_log_emitter = QtLogSignalEmitter()
+
+
+class ShortcutsHelpWidget(QGroupBox):
+    """Small widget displaying keyboard shortcuts in a clean grid/list layout."""
+    
+    def __init__(self, parent=None):
+        super().__init__("Keyboard Shortcuts", parent)
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+        
+        shortcuts = [
+            ("Ctrl+G", "Generate Playlist"),
+            ("Ctrl+E", "Export Playlist"),
+            ("1 - 5", "Switch Navigation Panels"),
+            ("Space", "Play / Pause Preview")
+        ]
+        
+        for key, desc in shortcuts:
+            row = QHBoxLayout()
+            
+            key_lbl = QLabel(key)
+            key_lbl.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {COLORS["bg_sidebar"]};
+                    color: {COLORS["accent_primary"]};
+                    font-family: "Consolas", "Courier New", monospace;
+                    font-weight: bold;
+                    font-size: 11px;
+                    border: 1px solid {COLORS["border"]};
+                    border-radius: 3px;
+                    padding: 2px 6px;
+                    min-width: 50px;
+                }}
+            """)
+            key_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet(f"QLabel {{ color: {COLORS['text_secondary']}; font-size: 11px; }}")
+            
+            row.addWidget(key_lbl)
+            row.addWidget(desc_lbl, 1)
+            layout.addLayout(row)
+
+
+class AnalysisProgressWidget(QWidget):
+    """Widget showing a 5-step status indicator, progress bar, and a live terminal log view."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(10)
+        
+        # 1. 5 Steps Horizontal QFrames
+        steps_layout = QHBoxLayout()
+        steps_layout.setSpacing(4)
+        
+        self.steps = []
+        step_labels = [
+            "📁 SCAN",
+            "🔊 AUDIO",
+            "🎛️ SORT",
+            "📊 QUALITY",
+            "🤖 AI MOODS"
+        ]
+        
+        for i, text in enumerate(step_labels):
+            frame = QFrame()
+            frame.setFrameShape(QFrame.Shape.StyledPanel)
+            frame_layout = QVBoxLayout(frame)
+            frame_layout.setContentsMargins(4, 6, 4, 6)
+            
+            lbl = QLabel(text)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #FFFFFF;")
+            frame_layout.addWidget(lbl)
+            
+            # Default state: inactive (gray)
+            frame.setStyleSheet(self._get_step_style("inactive"))
+            
+            steps_layout.addWidget(frame, 1)
+            self.steps.append(frame)
+            
+        layout.addLayout(steps_layout)
+        
+        # 2. Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 10000)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFixedHeight(42)
+        self.progress_bar.setFormat("0.00%")
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {COLORS["bg_card"]};
+                border: 2px solid {COLORS["border"]};
+                border-radius: 6px;
+                text-align: center;
+                color: #FFFFFF;
+                font-family: {FONT_FAMILY};
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background-color: {COLORS["accent_primary"]};
+            }}
+        """)
+        layout.addWidget(self.progress_bar)
+        
+        # 3. Live Terminal
+        self.terminal = QPlainTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setMaximumBlockCount(1000)
+        self.terminal.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: #0E0E0E;
+                color: #DDDDDD;
+                font-family: "Consolas", "Courier New", monospace;
+                font-size: 11px;
+                border: 1px solid {COLORS["border"]};
+                padding: 5px;
+            }}
+        """)
+        self.terminal.setMinimumHeight(180)
+        layout.addWidget(self.terminal)
+
+    def _get_step_style(self, state):
+        if state == "inactive":
+            return f"QFrame {{ background-color: #2D2D2D; border: 1px solid {COLORS['border']}; border-radius: 2px; }}"
+        elif state == "working":
+            return f"QFrame {{ background-color: #D4AF37; border: 1px solid #FFD700; border-radius: 2px; }}"
+        elif state == "completed":
+            return f"QFrame {{ background-color: #00FF66; border: 1px solid #33FF33; border-radius: 2px; }}"
+        return ""
+
+    def set_step_status(self, step_idx, state):
+        """state can be 'inactive', 'working', 'completed'"""
+        if 0 <= step_idx < len(self.steps):
+            self.steps[step_idx].setStyleSheet(self._get_step_style(state))
+            lbl = self.steps[step_idx].layout().itemAt(0).widget()
+            if state == "completed":
+                lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #000000;")
+            elif state == "working":
+                lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #000000;")
+            else:
+                lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #FFFFFF;")
+                
+    def set_progress(self, value):
+        self.progress_bar.setValue(value)
+        percentage = value / 100.0
+        self.progress_bar.setFormat(f"{percentage:.2f}%")
+                
+    def reset_steps(self):
+        for i in range(len(self.steps)):
+            self.set_step_status(i, "inactive")
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("0.00%")
+
+    def append_log(self, text, color=None):
+        if color:
+            self.terminal.appendHtml(f'<span style="color: {color};">{text}</span>')
+        else:
+            self.terminal.appendPlainText(text)
+        self.terminal.moveCursor(QTextCursor.MoveOperation.End)
 
 
 class LibraryPanel(QWidget):
@@ -1182,55 +1789,27 @@ class LibraryPanel(QWidget):
         self.start_button.clicked.connect(self.start_analysis.emit)
         left_layout.addWidget(self.start_button)
 
-        left_layout.addStretch()
+        # Progress & Terminal Widget
+        self.progress_widget = AnalysisProgressWidget()
+        left_layout.addWidget(self.progress_widget)
 
-        # Rechte Seite — Advanced Parameters mit Toggle
+        # Rechte Seite — Advanced Parameters (feste Spalte)
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
+        right_layout.setSpacing(12)
 
-        self.toggle_advanced = QPushButton("▾  Advanced Parameters")
-        self.toggle_advanced.setCheckable(True)
-        self.toggle_advanced.setChecked(True)
-        self.toggle_advanced.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS["bg_card"]};
-                color: {COLORS["text_secondary"]};
-                font-family: {FONT_FAMILY};
-                font-size: 12px;
-                font-weight: 500;
-                border: 1px solid {COLORS["border"]};
-                border-radius: 0px;
-                padding: 7px 12px;
-                text-align: left;
-            }}
-            QPushButton:checked {{
-                color: {COLORS["accent_primary"]};
-                border-color: {COLORS["border_active"]};
-                background-color: {COLORS["accent_primary_bg"]};
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["bg_hover"]};
-                color: {COLORS["text_primary"]};
-            }}
-        """)
-        self.toggle_advanced.clicked.connect(self._toggle_params)
-        right_layout.addWidget(self.toggle_advanced)
-
-        self.advanced_scroll = QScrollArea()
         self.advanced_params = AdvancedParametersWidget()
-        self.advanced_scroll.setWidget(self.advanced_params)
-        self.advanced_scroll.setWidgetResizable(True)
-        right_layout.addWidget(self.advanced_scroll, 1)
+        right_layout.addWidget(self.advanced_params)
 
-        right.setMaximumWidth(380)
+        self.shortcuts_help = ShortcutsHelpWidget()
+        right_layout.addWidget(self.shortcuts_help)
+        right_layout.addStretch()
+
+        right.setFixedWidth(400)
 
         main_layout.addWidget(left, 1)
         main_layout.addWidget(right, 0)
-
-    def _toggle_params(self, checked):
-        self.advanced_scroll.setVisible(checked)
 
     def _update_strategy_description(self):
         strategy = self.strategy_combo.currentText()
@@ -1994,8 +2573,7 @@ class MixTipsPanel(QWidget):
         self._preview_widgets = {}
 
         for i, tr in enumerate(transitions):
-            title = f"▶ Vorschau Uebergang {i + 1}"
-            widget = TransitionPreviewWidget(i, title, self)
+            widget = TransitionPreviewWidget(i, tr, self)
             self._preview_widgets[i] = widget
             self._insert_preview_widget(i, widget)
 
@@ -2013,11 +2591,30 @@ class MixTipsPanel(QWidget):
     def _cleanup_existing_previews(self):
         """Laufenden Worker stoppen, Widgets entfernen, Temp-Dateien loeschen."""
         if self._render_worker is not None:
+            # Signale trennen, damit die UI des Panels nicht mehr beeinflusst wird
+            try:
+                self._render_worker.clip_ready.disconnect(self._on_clip_ready)
+                self._render_worker.clip_error.disconnect(self._on_clip_error)
+            except:
+                pass
+
             self._render_worker.request_cancel()
-            self._render_worker.wait(3000)
-            self._render_worker.cleanup()
+
+            # Alten Thread asynchron im Hintergrund fertigstellen lassen,
+            # um Freezes (durch blockierendes wait()) zu vermeiden.
+            # Da dieser Thread eindeutige Dateinamen hat, gibt es keine Konflikte.
+            old_worker = self._render_worker
+            
+            def clean_and_delete():
+                try:
+                    old_worker.cleanup()
+                except:
+                    pass
+                old_worker.deleteLater()
+                
+            old_worker.finished.connect(clean_and_delete)
             self._render_worker = None
-        # Widgets werden durch _clear_layout (aufgerufen in _populate) via deleteLater entfernt
+            
         self._preview_widgets = {}
 
     def _on_clip_ready(self, index: int, wav_path: str):
@@ -2248,7 +2845,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Harmonic Playlist Generator v3.0")
-        self.resize(1280, 850)
+        self.resize(1100, 750)
         self.playlist = []
         self.quality_metrics = {}
         self.current_playlist_mode = "Harmonic Flow Enhanced"
@@ -2356,6 +2953,11 @@ class MainWindow(QMainWindow):
         # Sidebar → Content-Stack
         self.sidebar.nav_changed.connect(self._on_nav_changed)
 
+        # Logging-Signal mit dem Live-Terminal verbinden
+        global_log_emitter.log_written.connect(
+            self.library_panel.progress_widget.append_log
+        )
+
         # Library-Panel
         self.library_panel.select_folder_button.clicked.connect(self.select_folder)
         self.library_panel.folder_selected.connect(self._on_folder_selected)
@@ -2418,6 +3020,10 @@ class MainWindow(QMainWindow):
         self.status_bar.show_progress()
         self.status_bar.set_status("Starting analysis...")
 
+        # Progress und Steps initialisieren
+        self.library_panel.progress_widget.reset_steps()
+        self.library_panel.progress_widget.set_step_status(0, "working")
+
         # Worker erstellen und starten
         self.worker = AnalysisWorker(
             folder_path=settings["folder"],
@@ -2426,8 +3032,10 @@ class MainWindow(QMainWindow):
             advanced_params=settings["advanced_params"],
         )
 
-        # Worker-Signale an StatusBar
+        # Worker-Signale an StatusBar & progress_widget
         self.worker.progress.connect(self.status_bar.set_progress)
+        self.worker.progress.connect(self.library_panel.progress_widget.set_progress)
+        self.worker.phase_changed.connect(self.library_panel.progress_widget.set_step_status)
         self.worker.status_update.connect(self.status_bar.set_status)
         self.worker.finished.connect(self.analysis_finished)
 
@@ -2445,6 +3053,7 @@ class MainWindow(QMainWindow):
         self.toolbar.set_generate_enabled(True)
         self.status_bar.hide_progress()
         self.status_bar.set_status("Analysis cancelled.")
+        self.library_panel.progress_widget.reset_steps()
 
 
     def on_ai_finished(self, track_path, ai_data):
@@ -2461,14 +3070,110 @@ class MainWindow(QMainWindow):
         if sub_genre:
             mood_str = f"[{sub_genre}] {mood_str}".strip()
 
+        # Logge den Erfolg
+        import logging
+        import os
+        logger = logging.getLogger("hpg_core.ai_engine")
+        logger.info(f"AI result for '{os.path.basename(track_path)}': {mood_str}")
+
+        # Speichere die ai_metadata im Track-Objekt und im Cache!
+        from hpg_core.caching import generate_cache_key, cache_track
+        
+        found_track = None
+        found_row = -1
+        
         # Zeile finden
         for row in range(self.playlist_panel.table.rowCount()):
             item = self.playlist_panel.table.item(row, 1) # Artist/Title column has filePath in UserRole
             if item and item.data(Qt.ItemDataRole.UserRole) == track_path:
-                ai_item = QTableWidgetItem(mood_str)
-                ai_item.setToolTip(ai_data.get("description", ""))
-                self.playlist_panel.table.setItem(row, 15, ai_item)
+                found_row = row
                 break
+
+        for track in self.playlist:
+            if track.filePath == track_path:
+                track.ai_metadata = ai_data
+                
+                # Check for AI recommended mix points
+                ai_mix_in = ai_data.get("mix_in_time")
+                ai_mix_out = ai_data.get("mix_out_time")
+                
+                try:
+                    if ai_mix_in is not None and ai_mix_out is not None:
+                        val_in = float(ai_mix_in)
+                        val_out = float(ai_mix_out)
+                        
+                        if 0 <= val_in < val_out <= track.duration and val_out > 0:
+                            track.mix_in_point = round(val_in, 2)
+                            track.mix_out_point = round(val_out, 2)
+                            
+                            # Recalculate bars
+                            seconds_per_bar = (60.0 / track.bpm) * 4 if track.bpm > 0 else 2.0
+                            track.mix_in_bars = int(round(track.mix_in_point / seconds_per_bar))
+                            track.mix_out_bars = int(round(track.mix_out_point / seconds_per_bar))
+                            logger.info(f"AI updated mix points for '{os.path.basename(track_path)}': in={track.mix_in_bars} bars, out={track.mix_out_bars} bars")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to parse AI mix points: {e}")
+                
+                # Persist to SQLite Cache
+                cache_key = generate_cache_key(track.filePath)
+                if cache_key:
+                    cache_track(cache_key, track)
+                found_track = track
+                break
+
+        if found_row != -1 and found_track:
+            # 1. Update AI Insights column (col 15)
+            ai_item = QTableWidgetItem(mood_str)
+            ai_item.setToolTip(ai_data.get("description", ""))
+            self.playlist_panel.table.setItem(found_row, 15, ai_item)
+            
+            # 2. Update Mix In / Mix Out columns (col 10 & 11)
+            mix_in_item = QTableWidgetItem(
+                f"{int(found_track.mix_in_point // 60):02d}:{int(found_track.mix_in_point % 60):02d} ({found_track.mix_in_bars} bars)"
+            )
+            mix_out_item = QTableWidgetItem(
+                f"{int(found_track.mix_out_point // 60):02d}:{int(found_track.mix_out_point % 60):02d} ({found_track.mix_out_bars} bars)"
+            )
+            self.playlist_panel.table.setItem(found_row, 10, mix_in_item)
+            self.playlist_panel.table.setItem(found_row, 11, mix_out_item)
+            
+            # 3. Recalculate Transition Score for this track and the next track (col 14)
+            from hpg_core.playlist import calculate_enhanced_compatibility, calculate_playlist_quality, compute_transition_recommendations
+            from hpg_core.theme import get_7_scale_color
+            
+            # Recalculate for current row (compatibility to previous track)
+            if found_row > 0:
+                prev_track = self.playlist[found_row - 1]
+                metrics = calculate_enhanced_compatibility(prev_track, found_track, self.playlist_panel.bpm_tolerance)
+                score = int(metrics.overall_score * 100)
+                score_item = QTableWidgetItem(f"{score}%")
+                score_item.setBackground(QColor(get_7_scale_color(score / 100)))
+                score_item.setForeground(QColor("white"))
+                self.playlist_panel.table.setItem(found_row, 14, score_item)
+                
+            # Recalculate for next row (compatibility of next track to current track)
+            if found_row < len(self.playlist) - 1:
+                next_track = self.playlist[found_row + 1]
+                metrics = calculate_enhanced_compatibility(found_track, next_track, self.playlist_panel.bpm_tolerance)
+                score = int(metrics.overall_score * 100)
+                score_item = QTableWidgetItem(f"{score}%")
+                score_item.setBackground(QColor(get_7_scale_color(score / 100)))
+                score_item.setForeground(QColor("white"))
+                self.playlist_panel.table.setItem(found_row + 1, 14, score_item)
+                
+            # 4. Gesamtmetriken neu berechnen und UI-Panels updaten
+            self.playlist_panel.quality_metrics = calculate_playlist_quality(self.playlist, self.playlist_panel.bpm_tolerance)
+            self.playlist_panel.transition_recommendations = compute_transition_recommendations(self.playlist, self.playlist_panel.bpm_tolerance)
+            
+            # Badges im PlaylistPanel aktualisieren
+            self.playlist_panel._update_quality_display()
+            
+            # Andere Panels aktualisieren
+            self._on_playlist_reordered()
+
+    def on_ai_worker_finished(self):
+        """AI Analysis beendet — Phase 5 abschliessen."""
+        self.library_panel.progress_widget.set_step_status(4, "completed")
 
     def analysis_finished(self, playlist, quality_metrics):
         """Analyse fertig — Daten an alle Panels verteilen."""
@@ -2492,6 +3197,7 @@ class MainWindow(QMainWindow):
         # Leere Playlist? Fehler anzeigen.
         if not playlist:
             self.status_bar.set_status("Analysis returned no results.")
+            self.library_panel.progress_widget.reset_steps()
             return
 
         self.playlist = playlist
@@ -2534,7 +3240,6 @@ class MainWindow(QMainWindow):
             self.ai_worker.request_cancel()
             self.ai_worker.wait()
             
-        
         ap = self.library_panel.advanced_params
         provider = ap.detected_provider or (
             "LM Studio" if ap.lmstudio_radio.isChecked() else "Ollama"
@@ -2547,7 +3252,11 @@ class MainWindow(QMainWindow):
             playlist, provider=provider, model=model, base_url=base_url
         )
 
+        # Phase 5: AI MOODS in Arbeit
+        self.library_panel.progress_widget.set_step_status(4, "working")
+
         self.ai_worker.ai_finished.connect(self.on_ai_finished)
+        self.ai_worker.finished.connect(self.on_ai_worker_finished)
         self.ai_worker.start()
 
 
@@ -2722,7 +3431,14 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
 
     # Logging initialisieren (MUSS vor allen anderen Modulen passieren)
-    setup_logging()
+    from hpg_core import config as hpg_config
+    setup_logging(hpg_config.LOG_LEVEL)
+
+    # Qt-Logging-Handler hinzufügen
+    qt_handler = QtLoggingHandler(global_log_emitter)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
+    qt_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(qt_handler)
 
     # Only clear cache if explicitly requested or on major version changes
     # Automatic clearing on every start is inefficient and can cause locking issues

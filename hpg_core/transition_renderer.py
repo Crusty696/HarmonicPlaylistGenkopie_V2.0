@@ -281,6 +281,9 @@ def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
     return (seg * gain).astype(np.float32)
 
 
+_pedalboard_warned = False
+
+
 def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
     """
     Wendet einen sanften pedalboard-Compressor an.
@@ -291,10 +294,16 @@ def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
     Testwert (2026-02-28 PoC): reduziert Lautheitssprung von ~2 dB auf ~0.1 dB
     nach vorheriger RMS-Normalisierung.
     """
+    global _pedalboard_warned
     try:
         from pedalboard import Pedalboard, Compressor  # type: ignore[import]
     except ImportError:
-        # pedalboard nicht installiert — kein Fehler, kein Compressor
+        if not _pedalboard_warned:
+            logger.warning(
+                "Optional library 'pedalboard' is not installed. High-end transition compression is disabled. "
+                "You can install it using 'pip install pedalboard' to enable smooth multi-band compression."
+            )
+            _pedalboard_warned = True
         return mixed
 
     # pedalboard erwartet (channels, frames) — wir haben (frames, channels)
