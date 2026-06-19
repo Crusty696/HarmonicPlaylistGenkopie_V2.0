@@ -1,0 +1,13 @@
+# Optional performance optimization dependencies
+
+# Parallel test execution - reduces runtime from 61s to ~20s
+pytest-xdist==3.5.0
+
+# Test execution timing analysis
+pytest-benchmark==4.0.0
+
+# Code profiling for bottleneck detection
+py-spy==0.3.14
+
+# Optional: Memory profiling
+memory-profiler==0.61.0

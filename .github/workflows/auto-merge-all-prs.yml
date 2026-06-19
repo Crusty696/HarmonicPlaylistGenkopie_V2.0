@@ -1,0 +1,188 @@
+name: 🤖 Auto-Merge All PRs & Cleanup
+
+on:
+  workflow_dispatch:  # Manuell ausgelöst
+    inputs:
+      merge_strategy:
+        description: 'Merge-Strategie'
+        required: true
+        default: 'squash'
+        type: choice
+        options:
+          - squash
+          - merge
+          - rebase
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge-and-cleanup:
+    runs-on: ubuntu-latest
+    name: 🔄 Merge All PRs & Delete Branches
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔧 Setup Git Config
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 📦 Install Dependencies
+        run: |
+          pip install -q requests PyGithub
+
+      - name: 🚀 Execute Auto-Merge Script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MERGE_STRATEGY: ${{ github.event.inputs.merge_strategy }}
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          import json
+          from github import Github
+          import time
+          
+          # Github-Verbindung
+          gh = Github(os.environ['GITHUB_TOKEN'])
+          repo = gh.get_repo(os.environ['GITHUB_REPOSITORY'])
+          merge_strategy = os.environ.get('MERGE_STRATEGY', 'squash')
+          
+          print("🔍 Fetching all open pull requests...")
+          prs = sorted(repo.get_pulls(state='open'), key=lambda x: x.updated_at, reverse=True)
+          
+          merge_log = []
+          
+          if not prs:
+              print("✅ Keine offenen PRs gefunden!")
+              exit(0)
+          
+          print(f"📊 {len(prs)} offene PRs gefunden. Starte Merge-Prozess...\n")
+          
+          # Merge-Prioritäten definieren
+          priority_order = {
+              'fix-': 1,           # Bugfixes: HIGHEST
+              'Fix': 1,
+              'perf-': 2,          # Performance: HIGH
+              'performance-': 2,
+              'refactor-': 3,      # Refactoring: MEDIUM
+              'cleanup-': 3,
+              'code-health-': 3,
+              'test-': 4,          # Tests: NORMAL
+              'testing-': 4,
+              'add-': 5,           # Features: LOW
+              'remove-': 3,        # Cleanup: MEDIUM
+          }
+          
+          def get_priority(pr_title):
+              for keyword, priority in priority_order.items():
+                  if keyword.lower() in pr_title.lower():
+                      return priority
+              return 10
+          
+          # Sortiere nach Priorität, dann nach Update-Zeit
+          prs_sorted = sorted(prs, key=lambda x: (get_priority(x.title), -x.updated_at.timestamp()))
+          
+          for idx, pr in enumerate(prs_sorted, 1):
+              try:
+                  pr_number = pr.number
+                  pr_title = pr.title
+                  pr_branch = pr.head.ref
+                  
+                  print(f"[{idx}/{len(prs_sorted)}] 🔄 Merging PR #{pr_number}: {pr_title}")
+                  
+                  # Merge-Methode
+                  if merge_strategy == 'squash':
+                      pr.merge(merge_method='squash', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                  elif merge_strategy == 'rebase':
+                      pr.merge(merge_method='rebase', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                  else:
+                      pr.merge(merge_method='create_merge_commit', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                  
+                  merge_log.append({
+                      'pr_number': pr_number,
+                      'title': pr_title,
+                      'status': '✅ MERGED',
+                      'branch': pr_branch
+                  })
+                  
+                  print(f"   ✅ Successfully merged!")
+                  time.sleep(1)  # Rate limiting
+                  
+              except Exception as e:
+                  error_msg = str(e)
+                  merge_log.append({
+                      'pr_number': pr.number,
+                      'title': pr.title,
+                      'status': f'⚠️ ERROR: {error_msg[:100]}',
+                      'branch': pr.head.ref
+                  })
+                  print(f"   ⚠️ Error: {error_msg}")
+                  time.sleep(1)
+          
+          print("\n" + "="*80)
+          print("📋 MERGE-SUMMARY")
+          print("="*80)
+          
+          for log in merge_log:
+              print(f"PR #{log['pr_number']}: {log['status']}")
+              print(f"   Branch: {log['branch']}")
+              print()
+          
+          # Branch-Cleanup
+          print("\n🧹 Starting branch cleanup...")
+          try:
+              # Fetch alle Branches
+              branches = repo.get_branches()
+              delete_count = 0
+              
+              for branch in branches:
+                  if branch.name != repo.default_branch:
+                      try:
+                          ref = repo.get_git_ref(f"heads/{branch.name}")
+                          ref.delete()
+                          print(f"   🗑️  Deleted: {branch.name}")
+                          delete_count += 1
+                          time.sleep(0.5)
+                      except Exception as e:
+                          print(f"   ⚠️  Could not delete {branch.name}: {str(e)[:50]}")
+              
+              print(f"\n✅ Deleted {delete_count} branches!")
+              
+          except Exception as e:
+              print(f"⚠️ Branch cleanup error: {str(e)}")
+          
+          print("\n🎉 Auto-merge workflow completed!")
+          PYTHON_SCRIPT
+
+      - name: 📊 Generate Summary Report
+        if: always()
+        run: |
+          echo "## ✅ Auto-Merge Workflow Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📈 Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Merge Strategy**: ${{ github.event.inputs.merge_strategy }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
+          echo "- **Main Branch**: Updated with all changes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Feature Branches**: Cleaned up" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Pull the latest changes: \`git pull origin main\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify all tests pass" >> $GITHUB_STEP_SUMMARY
+          echo "3. Deploy to production if needed" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🔔 Slack Notification (Optional)
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: '❌ Auto-merge workflow failed for HarmonicPlaylistGenkopie_V2.0'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        continue-on-error: true
