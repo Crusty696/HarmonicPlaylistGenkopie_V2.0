@@ -424,6 +424,17 @@ class AnalysisWorker(QThread):
             self.finished.emit([], {})
 
 
+def _render_clip_subprocess_wrapper(args):
+    """
+    Hilfsfunktion zum Rendern eines Transition-Clips in einem separaten Prozess.
+    Muss auf Modulebene liegen, damit sie fuer multiprocessing pickelbar ist.
+    """
+    spec, out_path = args
+    from hpg_core.transition_renderer import render_transition_clip
+    render_transition_clip(spec, out_path)
+    return out_path
+
+
 class TransitionRenderWorker(QThread):
     """
     Rendert alle Transition-Preview-Clips nacheinander im Hintergrund.
@@ -453,6 +464,9 @@ class TransitionRenderWorker(QThread):
 
     def run(self):
         total = len(self._transitions)
+        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures.process import BrokenProcessPool
+
         for i, transition in enumerate(self._transitions):
             if self._should_cancel:
                 break
@@ -492,8 +506,26 @@ class TransitionRenderWorker(QThread):
                     bpm_b=float(transition.to_track.bpm or 120.0),
                 )
 
-                render_transition_clip(spec, out_path)
-                self.clip_ready.emit(i, out_path)
+                # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen
+                render_success = False
+                try:
+                    with ProcessPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(_render_clip_subprocess_wrapper, (spec, out_path))
+                        # Warte maximal 30 Sekunden auf Fertigstellung
+                        future.result(timeout=30.0)
+                        render_success = True
+                except (BrokenProcessPool, RuntimeError) as pool_err:
+                    logger.error(f"Render-Prozess abgestuerzt bei Clip {i}: {pool_err}")
+                    self.clip_error.emit(i, "Format-Absturz (Datei beschaedigt)")
+                except TimeoutError:
+                    logger.error(f"Render-Timeout bei Clip {i}")
+                    self.clip_error.emit(i, "Zeitueberschreitung")
+                except Exception as render_err:
+                    logger.error(f"Fehler bei Transition-Render {i}: {render_err}")
+                    self.clip_error.emit(i, f"Fehler: {render_err}")
+
+                if render_success:
+                    self.clip_ready.emit(i, out_path)
 
             except Exception as e:
                 self.clip_error.emit(i, str(e))
@@ -3161,19 +3193,23 @@ class MainWindow(QMainWindow):
                 score_item.setForeground(QColor("white"))
                 self.playlist_panel.table.setItem(found_row + 1, 14, score_item)
                 
-            # 4. Gesamtmetriken neu berechnen und UI-Panels updaten
+            # 4. Gesamtmetriken neu berechnen (nur lokale Metrik-Werte aktualisieren)
             self.playlist_panel.quality_metrics = calculate_playlist_quality(self.playlist, self.playlist_panel.bpm_tolerance)
-            self.playlist_panel.transition_recommendations = compute_transition_recommendations(self.playlist, self.playlist_panel.bpm_tolerance)
-            
-            # Badges im PlaylistPanel aktualisieren
-            self.playlist_panel._update_quality_display()
-            
-            # Andere Panels aktualisieren
-            self._on_playlist_reordered()
 
     def on_ai_worker_finished(self):
-        """AI Analysis beendet — Phase 5 abschliessen."""
+        """AI Analysis beendet — Phase 5 abschliessen und UI-Panels einmalig aktualisieren."""
         self.library_panel.progress_widget.set_step_status(4, "completed")
+        
+        # 4. Gesamtmetriken neu berechnen und UI-Panels updaten
+        from hpg_core.playlist import calculate_playlist_quality, compute_transition_recommendations
+        self.playlist_panel.quality_metrics = calculate_playlist_quality(self.playlist, self.playlist_panel.bpm_tolerance)
+        self.playlist_panel.transition_recommendations = compute_transition_recommendations(self.playlist, self.playlist_panel.bpm_tolerance)
+        
+        # Badges im PlaylistPanel aktualisieren
+        self.playlist_panel._update_quality_display()
+        
+        # Andere Panels aktualisieren
+        self._on_playlist_reordered()
 
     def analysis_finished(self, playlist, quality_metrics):
         """Analyse fertig — Daten an alle Panels verteilen."""
