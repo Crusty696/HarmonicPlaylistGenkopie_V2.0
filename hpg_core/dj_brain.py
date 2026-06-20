@@ -279,7 +279,7 @@ def calculate_genre_aware_mix_points(
 
   profile = get_mix_profile(genre)
   seconds_per_beat = 60.0 / bpm
-  seconds_per_bar = seconds_per_beat * 4 # METER is 4
+  seconds_per_bar = seconds_per_beat * METER
 
   # --- Mix-In: Wo faengt der optimale Mix-Bereich an? ---
   mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar)
@@ -572,11 +572,6 @@ def generate_dj_recommendation(
   key_advice = _key_advice(track_a.camelotCode, track_b.camelotCode)
   energy_advice = _energy_advice(float(track_a.energy), float(track_b.energy))
 
-  # Advanced Audio Alignment
-  texture_score: float = 0.0
-  bass_match_advice: str = ""
-  rhythm_advice: str = ""
-  
   return DJRecommendation(
     genre_pair=genre_pair,
     genre_compatibility=round(compat, 2),

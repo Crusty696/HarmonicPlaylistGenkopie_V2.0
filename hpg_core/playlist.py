@@ -12,6 +12,7 @@ from .config import (
     GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
     BPM_HALF_DOUBLE_ENABLED,
     BPM_HALF_DOUBLE_PENALTY,
+    METER,
 )
 import logging
 import re
@@ -1318,7 +1319,7 @@ def compute_transition_recommendations(
 
         # Calculate how long the transition should be (e.g., 16 or 32 bars)
         seconds_per_beat = 60.0 / current.bpm if current.bpm > 0 else 0.5
-        seconds_per_bar = seconds_per_beat * 4
+        seconds_per_bar = seconds_per_beat * METER
 
         # Standard DJ transition length: 32 bars (approx 60s at 124bpm)
         transition_duration = seconds_per_bar * 32
@@ -1335,11 +1336,11 @@ def compute_transition_recommendations(
         compatibility_score = int(metrics.overall_score * 100)
 
         energy_delta = upcoming.energy - current.energy
-        eff_bpm_diff, bpm_relation = effective_bpm_diff(current.bpm, upcoming.bpm)
+        eff_bpm_diff, _ = effective_bpm_diff(current.bpm, upcoming.bpm)
         # Vorzeichen-behaftetes Delta fuer Anzeige (positiv = schneller)
         bpm_delta = upcoming.bpm - current.bpm
-        # Fuer Risikobewertung effektive Differenz nutzen
-        risk_bpm_delta = eff_bpm_diff if bpm_relation == "direct" else eff_bpm_diff
+        # Fuer Risikobewertung effektive Differenz nutzen (beruecksichtigt Half/Double-Time)
+        risk_bpm_delta = eff_bpm_diff
 
         risk_level = _categorise_risk_level(
             compatibility_score, risk_bpm_delta, bpm_tolerance, energy_delta

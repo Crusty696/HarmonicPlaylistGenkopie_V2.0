@@ -1472,7 +1472,7 @@ class StatusBarWidget(QWidget):
 
     def hide_progress(self):
         """Analyse beendet — Progress und Cancel verstecken."""
-        self.cancel_btn.show()
+        self.cancel_btn.hide()
 
 
 class QtLogSignalEmitter(QObject):

@@ -74,6 +74,7 @@ def init_cache() -> None:
     if cache_dir and not os.path.exists(cache_dir):
         os.makedirs(cache_dir, exist_ok=True)
 
+    conn = None
     try:
         # Establish connection with a generous timeout for concurrent writes
         conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
@@ -103,9 +104,11 @@ def init_cache() -> None:
             )
             conn.commit()
 
-        conn.close()
     except Exception as e:
         logger.error(f"Init-Fehler des SQLite-Caches: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def generate_cache_key(file_path: str) -> str | None:
@@ -116,7 +119,7 @@ def generate_cache_key(file_path: str) -> str | None:
     try:
         stat = os.stat(identifier)
         return f"{identifier}-{stat.st_size}-{stat.st_mtime}"
-    except:
+    except OSError:
         return hashlib.sha256(identifier.encode("utf-8", "ignore")).hexdigest()
 
 
@@ -125,6 +128,7 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
     if not cache_key:
         return None
 
+    conn = None
     try:
         conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
         conn.execute("PRAGMA journal_mode=WAL;")
@@ -132,7 +136,6 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
         cursor = conn.cursor()
         cursor.execute("SELECT data FROM cache WHERE key = ?", (cache_key,))
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             data_dict = json.loads(row[0])
@@ -151,6 +154,9 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
     except Exception as e:
         logger.debug(f"SQLite cache read error: {e}")
         return None
+    finally:
+        if conn is not None:
+            conn.close()
     return None
 
 
@@ -159,6 +165,7 @@ def cache_track(cache_key: str, track: Track) -> None:
     if not cache_key or not track:
         return
 
+    conn = None
     try:
         data_dict = track_to_dict(track)
         data_json = json.dumps(data_dict)
@@ -171,9 +178,11 @@ def cache_track(cache_key: str, track: Track) -> None:
             (cache_key, track.filePath, CACHE_VERSION, data_json)
         )
         conn.commit()
-        conn.close()
     except Exception as e:
         logger.warning(f"SQLite cache write failed: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 import sys
