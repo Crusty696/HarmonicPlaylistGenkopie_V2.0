@@ -1861,12 +1861,12 @@ class TimelinePanel(QWidget):
         phase_colors = PHASE_COLORS
         phase_labels = PHASE_LABELS
 
-        html = f"{html_style_block()}<h3>Set Timeline</h3>"
+        html_parts = [f"{html_style_block()}<h3>Set Timeline</h3>"]
 
         # Uebersicht
         overflow = summary.get("overflow_seconds", 0)
         overflow_sign = "+" if overflow > 0 else ""
-        html += f"""
+        html_parts.append(f"""
       <table style="margin: 10px 0; border-collapse: collapse;">
         <tr>
           <td style="padding: 4px 12px; font-weight: bold;">Gesamtzeit:</td>
@@ -1897,17 +1897,17 @@ class TimelinePanel(QWidget):
           <td style="padding: 4px 12px;">{summary["avg_track_duration"]}</td>
         </tr>
       </table>
-      """
+      """)
 
         # Phasen-Uebersicht
         phase_breakdown = summary.get("phase_breakdown", {})
         if phase_breakdown:
-            html += "<h4>Energie-Phasen</h4>"
-            html += "<table style='margin: 8px 0; border-collapse: collapse;'>"
+            html_parts.append("<h4>Energie-Phasen</h4>")
+            html_parts.append("<table style='margin: 8px 0; border-collapse: collapse;'>")
             for phase, count in phase_breakdown.items():
                 color = phase_colors.get(phase, COLORS["text_secondary"])
                 label = phase_labels.get(phase, phase)
-                html += (
+                html_parts.append(
                     f"<tr>"
                     f"<td style='padding: 3px 10px;'>"
                     f"<span style='color: {color}; font-weight: bold;'>●</span></td>"
@@ -1916,11 +1916,11 @@ class TimelinePanel(QWidget):
                     f"{count} Track{'s' if count != 1 else ''}</td>"
                     f"</tr>"
                 )
-            html += "</table>"
+            html_parts.append("</table>")
 
         # Timeline-Details
-        html += "<h4>Timeline</h4>"
-        html += (
+        html_parts.append("<h4>Timeline</h4>")
+        html_parts.append(
             "<table style='margin: 8px 0; border-collapse: collapse; width: 100%;'>"
             f"<tr style='background: {COLORS['bg_panel']}; font-weight: bold;'>"
             "<td style='padding: 5px 8px;'>#</td>"
@@ -1955,7 +1955,7 @@ class TimelinePanel(QWidget):
                 if entry.overlap_with_next > 0
                 else "—"
             )
-            html += (
+            html_parts.append(
                 f"<tr style='background: {bg};'>"
                 f"<td style='padding: 4px 8px;'>{i + 1}</td>"
                 f"<td style='padding: 4px 8px;'>{html_mod.escape(str(entry.track.title))}{peak_marker}</td>"
@@ -1969,15 +1969,15 @@ class TimelinePanel(QWidget):
                 f"</tr>"
             )
 
-        html += "</table>"
+        html_parts.append("</table>")
 
         # Legende
-        html += "<hr>"
-        html += f"<p style='color: {COLORS['text_secondary']}; font-size: 11px;'>"
-        html += "* = Peak Track | Overlap = Uebergangszeit zum naechsten Track"
-        html += "</p>"
+        html_parts.append("<hr>")
+        html_parts.append(f"<p style='color: {COLORS['text_secondary']}; font-size: 11px;'>")
+        html_parts.append("* = Peak Track | Overlap = Uebergangszeit zum naechsten Track")
+        html_parts.append("</p>")
 
-        self.text_edit.setHtml(html)
+        self.text_edit.setHtml("".join(html_parts))
 
 
 class AnalyticsPanel(QWidget):
@@ -2379,7 +2379,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        transitions_info = "Transition Analysis:\n\n"
+        lines = ["Transition Analysis:\n\n"]
         for i in range(len(self.playlist) - 1):
             current = self.playlist[i]
             next_track = self.playlist[i + 1]
@@ -2387,19 +2387,16 @@ class MainWindow(QMainWindow):
                 current, next_track, self.current_bpm_tolerance
             )
 
-            transitions_info += (
+            lines.append(
                 f"{i + 1} -> {i + 2}: "
                 f"{os.path.basename(current.fileName)} -> "
                 f"{os.path.basename(next_track.fileName)}\n"
-            )
-            transitions_info += (
                 f"   Score: {compatibility.overall_score:.1%} "
                 f"(Harmonic: {compatibility.harmonic_score}/100)\n"
-            )
-            transitions_info += f"   BPM: {current.bpm:.1f} -> {next_track.bpm:.1f}\n"
-            transitions_info += (
+                f"   BPM: {current.bpm:.1f} -> {next_track.bpm:.1f}\n"
                 f"   Key: {current.camelotCode} -> {next_track.camelotCode}\n\n"
             )
+        transitions_info = "".join(lines)
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Transition Preview")
