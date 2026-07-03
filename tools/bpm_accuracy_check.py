@@ -22,7 +22,6 @@ EXTS = {".mp3", ".aiff", ".aif", ".flac", ".wav", ".m4a", ".ogg"}
 def get_id3_bpm(file_path: str):
     """Liest BPM direkt aus ID3-Tags (kein Librosa)."""
     try:
-        import mutagen
         from mutagen import File as MutagenFile
 
         audio = MutagenFile(file_path, easy=True)
