@@ -80,7 +80,10 @@ LOG_TO_FILE = True  # Logdatei unter logs/hpg.log (mit Rotation)
 LOG_TO_CONSOLE = True  # Konsolenausgabe auf stderr
 
 # === Security & Safety ===
-SECURITY_MAX_FILE_SIZE = 1024 * 1024 * 100  # 100 MB max Dateigröße
+# 500 MB: Lossless-AIFF/WAV ueberschreitet 100 MB schon ab ~10 Minuten
+# (Beatport-AIFF 44.1k/16bit ~ 10.6 MB/min); Dauer-Limit + LIBROSA_MAX_DURATION
+# schuetzen weiterhin vor Ressourcen-Erschoepfung
+SECURITY_MAX_FILE_SIZE = 1024 * 1024 * 500
 SECURITY_MAX_TRACK_DURATION = 7200  # 2 Stunden max Track-Länge (sicherheitsbedingt)
 SECURITY_MAX_PLAYLIST_SIZE = 1000  # 1000 Tracks max pro Playlist
 

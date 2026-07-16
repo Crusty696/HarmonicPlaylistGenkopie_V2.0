@@ -362,3 +362,18 @@ class TestInitCache:
       assert "Init-Fehler" in mock_logger_error.call_args[0][0]
 
 
+
+
+class TestCacheKeyPathNormalization:
+  """Regression: QFileDialog (D:/pfad) vs os.walk (D:\pfad) muessen
+  denselben Cache-Key ergeben -- sonst doppelte Analyse in der GUI."""
+
+  def test_forward_and_backslash_same_key(self, temp_audio_file):
+    key_back = generate_cache_key(temp_audio_file)
+    key_fwd = generate_cache_key(temp_audio_file.replace("\\", "/"))
+    assert key_back == key_fwd
+
+  def test_nonexistent_path_normalized_hash(self):
+    a = generate_cache_key(r"X:\gibt\es\nicht.mp3")
+    b = generate_cache_key("X:/gibt/es/nicht.mp3")
+    assert a == b

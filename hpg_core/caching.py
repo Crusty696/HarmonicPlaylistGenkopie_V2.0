@@ -114,11 +114,14 @@ def generate_cache_key(file_path: str) -> str | None:
     """Generates a cache key based on file path, size, and modification time."""
     if not file_path:
         return None
-    identifier = str(file_path)
+    # normpath: QFileDialog liefert D:/pfad, os.walk D:\pfad -- ohne
+    # Normalisierung entstehen doppelte Cache-Eintraege und die GUI
+    # verfehlt vorhandene Analysen (Cache-Miss trotz identischer Datei)
+    identifier = os.path.normpath(str(file_path))
     try:
         stat = os.stat(identifier)
         return f"{identifier}-{stat.st_size}-{stat.st_mtime}"
-    except:
+    except OSError:
         return hashlib.sha256(identifier.encode("utf-8", "ignore")).hexdigest()
 
 

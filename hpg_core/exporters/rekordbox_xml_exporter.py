@@ -175,13 +175,12 @@ class RekordboxXMLExporter(BaseExporter):
         Uses the internal structure of pyrekordbox track objects to add POSITION_MARKs.
         """
         try:
-            # Mix In Point
+            # pyrekordbox-API: Memory-Cues via Track.add_mark (Num=-1 = Memory Cue)
             if hasattr(track, "mix_in_point") and track.mix_in_point > 0:
-                xml.add_cue(rb_track, name="MIX IN", time=track.mix_in_point, type=0)
+                rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=-1)
 
-            # Mix Out Point
             if hasattr(track, "mix_out_point") and track.mix_out_point > 0:
-                xml.add_cue(rb_track, name="MIX OUT", time=track.mix_out_point, type=0)
+                rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=-1)
         except Exception as e:
             logger.warning(f"Cue Points konnten nicht zur XML hinzugefuegt werden: {e}")
 

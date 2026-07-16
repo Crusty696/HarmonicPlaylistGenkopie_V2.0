@@ -17,8 +17,14 @@ from tests.fixtures.track_factories import make_track
 # ─── Fake-Klassen (Stubs fuer pyrekordbox) ────────────────────────────────────
 
 class FakeRbTrack(dict):
-  """Simuliert ein pyrekordbox Track-Objekt (dict-like)."""
-  pass
+  """Simuliert ein pyrekordbox Track-Objekt (dict-like, mit add_mark)."""
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.owner = None  # FakeRekordboxXml, gesetzt in add_track
+
+  def add_mark(self, Name="", Type="cue", Start=0.0, End=None, Num=-1):
+    self.owner.cues.append({"track": self, "name": Name, "time": Start, "type": Type})
 
 
 class FakePlaylist:
@@ -40,6 +46,7 @@ class FakeRekordboxXml:
 
   def add_track(self, uri):
     t = FakeRbTrack()
+    t.owner = self
     t["Location"] = uri
     self.tracks.append(t)
     return t
@@ -337,9 +344,17 @@ class TestRekordboxCuePunkte:
   def test_cue_exception_wird_geloggt_kein_crash(self, tmp_path):
     """Fehler in _add_cue_points darf Export nicht verhindern."""
 
-    class BrokenXml(FakeRekordboxXml):
-      def add_cue(self, *args, **kwargs):
+    class BrokenTrack(FakeRbTrack):
+      def add_mark(self, *args, **kwargs):
         raise RuntimeError("Cue error")
+
+    class BrokenXml(FakeRekordboxXml):
+      def add_track(self, uri):
+        t = BrokenTrack()
+        t.owner = self
+        t["Location"] = uri
+        self.tracks.append(t)
+        return t
 
     playlist = [make_track(
       title="T1", bpm=128.0, camelotCode="8A", duration=300.0,

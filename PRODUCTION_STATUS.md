@@ -18,7 +18,7 @@ Stand: 2026-07-16 (nach Vollaudit + Fix-Runden, Commits 9b64953/3a4ccf4/a2991bf)
 - **11 Playlist-Strategien** inkl. neu: **Context Flow** (Set-Phasen-Zielenergie,
   Trend-Fortführung, Genre-Fatigue, Repetition-/Cliff-Penalties)
 - **Security-Gate** (aktiv verdrahtet in AnalysisWorker): sanitize + validate,
-  Limits aus config (100 MB/Datei, 2 h/Track, 1000 Tracks), UI-Feedback bei Filterung
+  Limits aus config (500 MB/Datei, 2 h/Track, 1000 Tracks), UI-Feedback bei Filterung
 - **ErrorReporter** (aktiv): JSON-Sink `logs/error_report.json`, Rotation 200 Einträge,
   angebunden an Analyse-, Playlist- und Render-Fehlerpfade
 - **Transition-Preview**: Subprocess-isoliert (C-Crash-sicher), Crossfade bis 64 s,
