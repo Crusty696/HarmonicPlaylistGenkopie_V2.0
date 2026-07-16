@@ -1,4 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
+# WICHTIG (Python 3.12.0): CPython-3.12.0-Bug laesst scipy.stats im Frozen-Build
+# crashen (NameError 'obj', pyinstaller#8186). Workaround ist im Build-venv
+# gepatcht: venv312\...\scipy\stats\_distn_infrastructure.py, letzte Zeile des
+# _doc_-Cleanups -> globals().pop('obj', None). Bei frischem venv312 Patch
+# erneut anwenden oder Python >= 3.12.1 verwenden.
 import sys
 import os
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
