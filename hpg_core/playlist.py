@@ -941,11 +941,14 @@ def _sort_genre_flow(
                 if dj_compat > 0.5:
                     compatibility = dj_compat
                 else:
+                    # Symmetrischer Lookup: eine Richtung ODER die andere --
+                    # Addition beider Richtungen ergab Scores > 1.0 und
+                    # addierte den Default faelschlich mit
                     compatibility = genre_compatibility.get(
-                        (current_genre, genre), 0.5 * (1 - genre_weight)
-                    )
-                    compatibility += genre_compatibility.get(
-                        (genre, current_genre), 0.5 * (1 - genre_weight)
+                        (current_genre, genre),
+                        genre_compatibility.get(
+                            (genre, current_genre), 0.5 * (1 - genre_weight)
+                        ),
                     )
                 if compatibility > best_compatibility:
                     best_compatibility = compatibility
@@ -1469,6 +1472,106 @@ def calculate_playlist_quality(
     }
 
 
+def _sort_context_flow(
+    tracks: list[Track], bpm_tolerance: float, **kwargs
+) -> list[Track]:
+    """
+    Kontext-bewusster Greedy-Sort. Harmonische Basis ist calculate_compatibility
+    (korrektes Camelot-Wheel + BPM-Gate); darauf DJ-Kontext-Modifikatoren,
+    portiert aus der frueheren Intelligent-Scoring-Schicht:
+      - Set-Phase mit Ziel-Energie (Warm-up 30 / Build 60 / Peak 85 / Cool-down 40)
+      - Energie-Trend-Fortfuehrung (steigende Kurve nicht abwuergen)
+      - Genre-Fatigue (nach 4 gleichen Genres Wechsel belohnen)
+      - Repetition-Penalty (Beinahe-Klone nicht back-to-back)
+      - Energie-Cliff-Penalty (Spruenge > 35 Punkte vermeiden)
+    """
+    if len(tracks) <= 2:
+        return sorted(tracks, key=lambda t: t.energy)
+
+    phase_target_energy = {"warmup": 30.0, "build": 60.0, "peak": 85.0, "cooldown": 40.0}
+
+    def _phase(position: int, total: int) -> str:
+        p = position / max(1, total - 1)
+        if p < 0.2:
+            return "warmup"
+        if p < 0.5:
+            return "build"
+        if p < 0.8:
+            return "peak"
+        return "cooldown"
+
+    def _genre(t: Track) -> str:
+        return getattr(t, "detected_genre", "") or t.genre or "Unknown"
+
+    unprocessed = list(tracks)
+    total = len(tracks)
+    # Warm-up: ruhigster Track eroeffnet das Set
+    start = min(unprocessed, key=lambda t: t.energy)
+    final_playlist = [start]
+    unprocessed.remove(start)
+
+    while unprocessed:
+        current = final_playlist[-1]
+        phase = _phase(len(final_playlist), total)
+        target_energy = phase_target_energy[phase]
+
+        # Energie-Trend aus den letzten 3 Tracks
+        recent = [t.energy for t in final_playlist[-3:]]
+        trend = recent[-1] - recent[0] if len(recent) >= 2 else 0.0
+
+        # Genre-Streak am Playlist-Ende
+        streak_genre = _genre(current)
+        streak = 0
+        for t in reversed(final_playlist):
+            if _genre(t) == streak_genre:
+                streak += 1
+            else:
+                break
+
+        best_next = None
+        highest_score = -999999.0
+        for candidate in unprocessed:
+            base = calculate_compatibility(current, candidate, bpm_tolerance, **kwargs)
+            if base == 0:
+                continue  # BPM-Hard-Gate beibehalten
+
+            score = float(base)
+            # Phase: Naehe zur Ziel-Energie (+15 bei Treffer, faellt linear ab)
+            score += 15.0 - min(30.0, abs(candidate.energy - target_energy)) * 0.5
+            # Trend-Fortfuehrung: Kandidat setzt erkennbare Richtung fort
+            if abs(trend) >= 5.0:
+                cand_delta = candidate.energy - current.energy
+                if (trend > 0) == (cand_delta > 0) and abs(cand_delta) <= 25:
+                    score += 8.0
+            # Genre-Fatigue
+            if streak >= 4:
+                score += 10.0 if _genre(candidate) != streak_genre else -10.0
+            # Repetition-Penalty: Beinahe-Klon direkt hintereinander
+            if (
+                abs(candidate.bpm - current.bpm) < 0.5
+                and candidate.camelotCode == current.camelotCode
+                and abs(candidate.energy - current.energy) < 5
+            ):
+                score -= 12.0
+            # Energie-Cliff
+            if abs(candidate.energy - current.energy) > 35:
+                score -= 15.0
+
+            if score > highest_score:
+                highest_score = score
+                best_next = candidate
+
+        if best_next is None:
+            best_next = min(
+                unprocessed,
+                key=lambda t: effective_bpm_diff(t.bpm, current.bpm)[0],
+            )
+        final_playlist.append(best_next)
+        unprocessed.remove(best_next)
+
+    return final_playlist
+
+
 # --- Main Dispatcher --- #
 
 STRATEGIES = {
@@ -1482,6 +1585,7 @@ STRATEGIES = {
     "Emotional Journey": _sort_emotional_journey,
     "Genre Flow": _sort_genre_flow,
     "Consistent": _sort_consistent,
+    "Context Flow": _sort_context_flow,
 }
 
 

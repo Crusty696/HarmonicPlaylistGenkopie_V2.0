@@ -28,18 +28,18 @@ def same_key_set():
 
 
 class TestAllStrategiesExist:
-  """Alle 10 Strategien sind registriert."""
+  """Alle 11 Strategien sind registriert."""
 
-  def test_10_strategies_available(self):
-    """Genau 10 Strategien in STRATEGIES."""
-    assert len(STRATEGIES) == 10
+  def test_11_strategies_available(self):
+    """Genau 11 Strategien in STRATEGIES (inkl. Context Flow, 2026-07)."""
+    assert len(STRATEGIES) == 11
 
   @pytest.mark.parametrize("name", [
     "Harmonic Flow", "Harmonic Flow Enhanced",
     "Warm-Up", "Cool-Down",
     "Peak-Time", "Peak-Time Enhanced",
     "Energy Wave", "Emotional Journey",
-    "Genre Flow", "Consistent",
+    "Genre Flow", "Consistent", "Context Flow",
   ])
   def test_strategy_registered(self, name):
     """Strategie ist in STRATEGIES registriert."""

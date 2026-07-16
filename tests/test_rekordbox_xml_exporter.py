@@ -50,6 +50,16 @@ class FakeRekordboxXml:
       self.playlists[key] = FakePlaylist()
     return self.playlists[key]
 
+  def add_playlist_folder(self, name):
+    # Echte API: Ordner explizit anlegen, Playlist darauf erzeugen
+    parent = self
+
+    class _FakeFolder:
+      def add_playlist(self, playlist_name):
+        return parent.get_playlist(name, playlist_name)
+
+    return _FakeFolder()
+
   def add_cue(self, rb_track, name, time, type):
     self.cues.append({"track": rb_track, "name": name, "time": time})
 

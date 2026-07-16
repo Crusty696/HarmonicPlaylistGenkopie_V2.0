@@ -112,8 +112,10 @@ class RekordboxXMLExporter(BaseExporter):
             for idx, track in enumerate(playlist, start=1):
                 self._add_track_to_collection(xml, track, idx)
 
-            # Create playlist
-            pl = xml.get_playlist("HPG Playlists", playlist_name)
+            # Create playlist -- get_playlist() wirft auf frischem XML ValueError,
+            # Ordner und Playlist muessen explizit angelegt werden
+            folder = xml.add_playlist_folder("HPG Playlists")
+            pl = folder.add_playlist(playlist_name)
             for idx in range(1, len(playlist) + 1):
                 pl.add_track(str(idx))
 
