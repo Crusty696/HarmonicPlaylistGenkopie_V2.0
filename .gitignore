@@ -27,6 +27,9 @@ venv/
 venv312/
 .venv/
 
+# Build-Debug-Artefakte
+hpg_debug_*.txt
+
 # Testing & Coverage
 .pytest_cache/
 .pytest_tmp/
