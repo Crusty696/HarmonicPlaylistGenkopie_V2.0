@@ -15,6 +15,7 @@ import logging
 import logging.handlers
 import sys
 from pathlib import Path
+import os
 
 # === Konfiguration ===
 LOG_DIR = Path(__file__).parent.parent / "logs"
@@ -134,12 +135,16 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
   logging.getLogger("audioread").setLevel(logging.WARNING)
   logging.getLogger("matplotlib").setLevel(logging.WARNING)
   logging.getLogger("PIL").setLevel(logging.WARNING)
+  logging.getLogger("requests").setLevel(logging.WARNING)
 
   logger = logging.getLogger(__name__)
   logger.info(f"Logging initialisiert (Level: {level})")
   if log_to_file:
     logger.debug(f"Log-Datei: {LOG_FILE}")
 
+  # Erstelle Logs-Verzeichnis falls nicht vorhanden
+  LOG_DIR.mkdir(exist_ok=True)
+  
   return root
 
 

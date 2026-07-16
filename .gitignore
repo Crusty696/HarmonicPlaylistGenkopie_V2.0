@@ -24,6 +24,7 @@ dist/
 
 # Virtual Environments
 venv/
+venv312/
 .venv/
 
 # Testing & Coverage
