@@ -10,7 +10,7 @@ from .analysis import analyze_track
 from .playlist import generate_playlist, calculate_playlist_quality, STRATEGIES
 from .parallel_analyzer import ParallelAnalyzer
 
-__version__ = "3.6.0"
+__version__ = "3.7.0"
 __all__ = [
     "Track",
     "CAMELOT_MAP",

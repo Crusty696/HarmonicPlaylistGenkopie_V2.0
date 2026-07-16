@@ -14,9 +14,9 @@ from .models import Track
 
 logger = logging.getLogger(__name__)
 
-# v12: Mixpoint-Logik geaendert (sektionsbasierte Guards, Phrase-Alignment,
-# Genre-Profile) -- gecachte Mixpoints aus v11 sind veraltet
-CACHE_VERSION = 12
+# v13: Unknown-Genre-Tracks laufen jetzt ueber den sektionsbasierten
+# Mixpoint-Pfad (DEFAULT_MIX_PROFILE) statt RMS-Legacy -- Cache invalidieren
+CACHE_VERSION = 13
 CACHE_FILE = f"hpg_cache_v{CACHE_VERSION}.db"
 LOCK_FILE = f"hpg_cache_v{CACHE_VERSION}.lock"
 

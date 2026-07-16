@@ -1333,7 +1333,8 @@ class ToolbarWidget(QWidget):
         layout.setSpacing(16)
 
         # Links: App-Titel
-        self.title_label = QLabel("HPG v3.0")
+        from hpg_core import __version__ as hpg_version
+        self.title_label = QLabel(f"HPG v{hpg_version}")
         self.title_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS["accent_primary"]};
@@ -2905,7 +2906,8 @@ class AnalyticsPanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Harmonic Playlist Generator v3.0")
+        from hpg_core import __version__ as hpg_version
+        self.setWindowTitle(f"Harmonic Playlist Generator v{hpg_version}")
         self.resize(1100, 750)
         self.playlist = []
         self.quality_metrics = {}

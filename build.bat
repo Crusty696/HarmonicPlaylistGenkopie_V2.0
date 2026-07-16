@@ -46,9 +46,9 @@ if defined GITHUB_ACTIONS (
     echo.
 ) else (
     REM Local build - use virtual environment
-    if not exist "venv\" (
+    if not exist "venv312\" (
         echo [2/6] Creating virtual environment...
-        "%PYTHON_EXE%" -m venv venv
+        "%PYTHON_EXE%" -m venv venv312
         echo [SUCCESS] Virtual environment created
         echo.
     ) else (
@@ -57,7 +57,7 @@ if defined GITHUB_ACTIONS (
     )
 
     echo [INFO] Activating virtual environment...
-    call venv\Scripts\activate.bat
+    call venv312\Scripts\activate.bat
     if errorlevel 1 (
         echo [ERROR] Failed to activate virtual environment
         pause

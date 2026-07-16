@@ -774,7 +774,7 @@ def analyze_track(file_path: str) -> Track | None:
             )
 
             # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
-            if DJ_BRAIN_ENABLED and genre_result.genre != "Unknown" and section_dicts:
+            if DJ_BRAIN_ENABLED and section_dicts:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     calculate_genre_aware_mix_points(
                         section_dicts, rekordbox_data.bpm, duration, genre_result.genre
@@ -1003,7 +1003,7 @@ def analyze_track(file_path: str) -> Track | None:
         )
 
         # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
-        if DJ_BRAIN_ENABLED and genre_result.genre != "Unknown" and section_dicts:
+        if DJ_BRAIN_ENABLED and section_dicts:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 calculate_genre_aware_mix_points(
                     section_dicts, bpm, duration, genre_result.genre
