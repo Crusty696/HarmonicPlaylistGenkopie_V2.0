@@ -123,7 +123,8 @@ class TestGenreMixProfiles:
     p = GENRE_MIX_PROFILES["Techno"]
     assert p.phrase_unit == 8
     assert p.intro_bars == (16, 32)
-    assert p.transition_bars == (8, 16)
+    # DJ-Praxis-Recherche 2026-07: 16 Bars Standard-Blend, 32 Bars Sweet Spot
+    assert p.transition_bars == (16, 32)
 
   def test_deep_house_profile(self):
     p = GENRE_MIX_PROFILES["Deep House"]
@@ -135,7 +136,8 @@ class TestGenreMixProfiles:
     p = GENRE_MIX_PROFILES["Trance"]
     assert p.phrase_unit == 16
     assert p.intro_bars == (32, 64)
-    assert p.transition_bars == (16, 32)
+    # DJ-Praxis-Recherche 2026-07: Uplifting Trance blendet 32-64+ Bars
+    assert p.transition_bars == (32, 64)
 
   def test_dnb_profile(self):
     p = GENRE_MIX_PROFILES["Drum & Bass"]

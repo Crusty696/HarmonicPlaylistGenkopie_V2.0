@@ -14,19 +14,19 @@ REM Find Python (explicit path to avoid Windows Store stub)
 set "PYTHON_EXE="
 if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
     set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-) else if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
-    set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-) else if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" (
-    set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
 ) else (
-    REM Fallback to PATH
-    where python >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR] Python not found! Please install Python 3.9+
+    REM Fallback: py-Launcher mit 3.12
+    py -3.12 --version >nul 2>&1
+    if not errorlevel 1 (
+        for /f "delims=" %%P in ('py -3.12 -c "import sys; print(sys.executable)"') do set "PYTHON_EXE=%%P"
+    ) else (
+        echo [ERROR] Python 3.12 nicht gefunden!
+        echo [INFO]  Erwarteter Pfad: %LOCALAPPDATA%\Programs\Python\Python312\python.exe
+        echo [INFO]  Numba ist inkompatibel mit Python 3.13 und hoeher.
+        echo [INFO]  Download: https://www.python.org/downloads/release/python-3120/
         pause
         exit /b 1
     )
-    set "PYTHON_EXE=python"
 )
 
 "%PYTHON_EXE%" --version >nul 2>&1

@@ -83,6 +83,7 @@ class ParallelAnalyzer:
     - Progress callbacks for GUI integration
     - Robust error handling with graceful degradation
     - Timeout protection for corrupted files
+    - Memory optimization for large playlists
     """
 
     def __init__(self, max_workers: Optional[int] = None):
@@ -121,9 +122,11 @@ class ParallelAnalyzer:
         finished_count = 0
         completed_count = 0
 
-        # Define batch size to isolate crashes and prevent memory leaks/bloat
-        BATCH_SIZE = 24
         worker_count = get_optimal_worker_count(total_files)
+        # Batch mindestens 2 Tasks pro Worker, sonst laufen Prozesse leer
+        # (Pool-Start ist teuer: Spawn + librosa-Import pro Prozess);
+        # Obergrenze 48 begrenzt Memory-Bloat bei grossen Playlists
+        BATCH_SIZE = min(48, max(worker_count * 2, total_files // 4))
 
         if progress_callback:
             progress_callback(0, total_files, f"Starting analysis with {worker_count} cores...")

@@ -73,7 +73,9 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     Gibt den output_path zurueck.
     """
     sr = spec.target_sr
-    cf_sec = min(spec.crossfade_sec, 32.0)  # Sicherheitslimit: max 32s Crossfade
+    # Sicherheitslimit: max 64s Crossfade -- Trance/Progressive blenden 32-64 Bars
+    # (~55-110s bei 138 BPM), 32s kappte die Preview systematisch vor dem Mix-Out
+    cf_sec = min(spec.crossfade_sec, 64.0)
 
     # Segmente berechnen
     a_start = max(0.0, spec.mix_out_sec - spec.pre_roll_sec)
@@ -90,12 +92,16 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     if spec.bpm_a > 0 and spec.bpm_b > 0 and abs(spec.bpm_a - spec.bpm_b) > 0.05:
         target_bpm_b = spec.bpm_b
         
+        # Half/Double-Erkennung relativ zum Zieltempo: DJ-Pitchfader-Praxis
+        # erlaubt ~3-4% Anpassung, absolute 10-BPM-Fenster triggerten falsch
+        half_double_tolerance = spec.bpm_a * 0.04
+
         # Check fuer Halftime-Switch (BPM_B ist ca. die Haelfte von BPM_A)
-        if abs(spec.bpm_b * 2.0 - spec.bpm_a) < 10.0:
+        if abs(spec.bpm_b * 2.0 - spec.bpm_a) < half_double_tolerance:
             target_bpm_b = spec.bpm_b * 2.0
             logger.info(f"Halftime-Switch erkannt fuer Track B: Virtuelle BPM verdoppelt von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
         # Check fuer Doubletime-Switch (BPM_B ist ca. das Doppelte von BPM_A)
-        elif abs(spec.bpm_b / 2.0 - spec.bpm_a) < 10.0:
+        elif abs(spec.bpm_b / 2.0 - spec.bpm_a) < half_double_tolerance:
             target_bpm_b = spec.bpm_b / 2.0
             logger.info(f"Doubletime-Switch erkannt fuer Track B: Virtuelle BPM halbiert von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
 

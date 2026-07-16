@@ -14,9 +14,11 @@ from .models import Track
 
 logger = logging.getLogger(__name__)
 
-CACHE_FILE = "hpg_cache_v11.db"
-CACHE_VERSION = 11
-LOCK_FILE = "hpg_cache_v11.lock"
+# v12: Mixpoint-Logik geaendert (sektionsbasierte Guards, Phrase-Alignment,
+# Genre-Profile) -- gecachte Mixpoints aus v11 sind veraltet
+CACHE_VERSION = 12
+CACHE_FILE = f"hpg_cache_v{CACHE_VERSION}.db"
+LOCK_FILE = f"hpg_cache_v{CACHE_VERSION}.lock"
 
 
 def _ensure_cache_schema(conn: sqlite3.Connection) -> None:

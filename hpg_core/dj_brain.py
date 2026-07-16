@@ -17,7 +17,7 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 from dataclasses import dataclass, field
 from .models import Track
-from .config import METER
+from .config import METER, DEFAULT_BPM
 
 
 # === Genre Mix Profiles ===
@@ -80,11 +80,11 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
     name="Techno",
     intro_bars=(16, 32),
     outro_bars=(16, 32),
-    transition_bars=(8, 16),
+    transition_bars=(16, 32),
     phrase_unit=8,
-    eq_strategy="Harter Bass Swap, Mids kontrollieren",
-    mix_technique="Schnelle Cuts, Loop-basiert, harte Uebergaenge",
-    description="Techno: 8-Bar Phrasen, harte Cuts und Bass Swaps",
+    eq_strategy="Bass Swap auf Phrasengrenze: Lows schnell (2-4 Bars), Mids langsam (bis 16 Bars)",
+    mix_technique="16-Bar Standard-Blend, 32 Bars fuer volle Layering-Blends",
+    description="Techno: 8-Bar Phrasen, 16-32 Bar Blends mit hartem Bass Swap",
   ),
   "Deep House": GenreMixProfile(
     name="Deep House",
@@ -100,7 +100,7 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
     name="Trance",
     intro_bars=(32, 64),
     outro_bars=(32, 64),
-    transition_bars=(16, 32),
+    transition_bars=(32, 64),
     phrase_unit=16,
     eq_strategy="Bass Swap am Build, Melodie rein-filtern",
     mix_technique="Breakdown-basiertes Blending, Melodie-Layering",
@@ -213,6 +213,13 @@ GENRE_COMPATIBILITY: dict[tuple[str, str], float] = {
 }
 
 
+# Case-insensitive Lookup-Varianten (ID3-Genres sind oft nicht normalisiert)
+_GENRE_COMPATIBILITY_NORMALIZED = {
+  (a.casefold(), b.casefold()): v for (a, b), v in GENRE_COMPATIBILITY.items()
+}
+_MIX_PROFILES_NORMALIZED = {k.casefold(): v for k, v in GENRE_MIX_PROFILES.items()}
+
+
 def get_genre_compatibility(genre_a: str, genre_b: str) -> float:
   """
   Gibt die Kompatibilitaet zwischen zwei Genres zurueck (0.0-1.0).
@@ -241,6 +248,15 @@ def get_genre_compatibility(genre_a: str, genre_b: str) -> float:
   if score is not None:
     return score
 
+  # Case-insensitiver Fallback: ID3-Genres kommen oft kleingeschrieben
+  # ("tech house" statt "Tech House") -- sonst stiller 0.5-Fallback
+  key = (genre_a.casefold(), genre_b.casefold())
+  score = _GENRE_COMPATIBILITY_NORMALIZED.get(key)
+  if score is None:
+    score = _GENRE_COMPATIBILITY_NORMALIZED.get((key[1], key[0]))
+  if score is not None:
+    return score
+
   # Unbekannte Kombination
   return 0.5
 
@@ -255,7 +271,10 @@ def get_mix_profile(genre: str) -> GenreMixProfile:
   Returns:
     GenreMixProfile fuer das Genre oder Default-Profil
   """
-  return GENRE_MIX_PROFILES.get(genre, DEFAULT_MIX_PROFILE)
+  profile = GENRE_MIX_PROFILES.get(genre)
+  if profile is None and genre:
+    profile = _MIX_PROFILES_NORMALIZED.get(genre.casefold())
+  return profile if profile is not None else DEFAULT_MIX_PROFILE
 
 
 # === Mix-Punkt-Berechnung ===
@@ -293,21 +312,27 @@ def calculate_genre_aware_mix_points(
     mix_in_time = ceil(mix_in_time / grid_seconds) * grid_seconds  # ceil = nach Intro
     mix_out_time = floor(mix_out_time / grid_seconds) * grid_seconds  # floor = vor Outro
 
-  # Sicherheitsgrenzen -- intro/outro-aware
+  # Sicherheitsgrenzen -- sektions- und phrasenbasiert statt Prozent-Schema.
+  # Ein DJ orientiert sich an Struktur-Grenzen (Intro-Ende, Outro-Start) und
+  # Phrasenraster, nicht an festen 40%/60%-Positionen.
   intro_end = _get_intro_end_from_sections(sections)
   outro_start = _get_outro_start_from_sections(sections, duration)
 
-  min_mix_in = max(intro_end, seconds_per_bar * profile.phrase_unit)
-  # Mix-Out strikt VOR outro_start (mindestens 1 Phrase Abstand)
-  max_mix_out = min(outro_start - seconds_per_bar, duration - seconds_per_bar * profile.phrase_unit)
-  mix_in_time = max(min_mix_in, min(mix_in_time, floor((duration * 0.4) / grid_seconds) * grid_seconds if grid_seconds > 0 else duration * 0.4))
-  mix_out_lower_bound = ceil((duration * 0.6) / grid_seconds) * grid_seconds if grid_seconds > 0 else duration * 0.6
-  mix_out_time = min(max_mix_out, max(mix_out_time, mix_out_lower_bound))
+  min_mix_in = max(intro_end, grid_seconds)
+  max_mix_out = min(outro_start - seconds_per_bar, duration - grid_seconds)
+  min_window = grid_seconds * 2  # mind. 2 Phrasen nutzbares Mix-Fenster
 
-  # Sicherstellen, dass Mix-Out nach Mix-In liegt
-  if mix_out_time <= mix_in_time + seconds_per_bar * 8:
+  if max_mix_out - min_mix_in >= min_window:
+    mix_in_time = max(min_mix_in, min(mix_in_time, max_mix_out - min_window))
+    mix_out_time = max(mix_in_time + min_window, min(mix_out_time, max_mix_out))
+  else:
+    # Track zu kurz bzw. Sektionen zu eng: Notfall-Prozente als letzte Instanz
     mix_in_time = max(intro_end, duration * 0.15)
     mix_out_time = min(outro_start - seconds_per_bar, duration * 0.85)
+
+  if mix_out_time <= mix_in_time:
+    mix_in_time = duration * 0.15
+    mix_out_time = duration * 0.85
 
   # In Bars umrechnen
   mix_in_bars = int(round(mix_in_time / seconds_per_bar))
@@ -716,7 +741,7 @@ def calculate_paired_mix_points(
   outro_duration_a = max(0.0, track_a.duration - outro_start_a)
 
   # --- Minimaler Overlap: genre-spezifisch nach Startwert des Transition-Bereichs ---
-  bpm_b = track_b.bpm if track_b.bpm > 0 else 140.0
+  bpm_b = track_b.bpm if track_b.bpm > 0 else DEFAULT_BPM
   seconds_per_bar_b = (60.0 / bpm_b) * METER
   min_overlap_bars = max(8, int(profile_b.transition_bars[0]))
   min_overlap = seconds_per_bar_b * min_overlap_bars
@@ -744,7 +769,7 @@ def calculate_paired_mix_points(
   outro_start_sections_a = _get_outro_start_from_sections(
     track_a.sections or [], track_a.duration
   )
-  bpm_a = track_a.bpm if track_a.bpm > 0 else 140.0
+  bpm_a = track_a.bpm if track_a.bpm > 0 else DEFAULT_BPM
   seconds_per_bar_a = (60.0 / bpm_a) * METER
   if adjusted_mix_out_a >= outro_start_sections_a:
     adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
@@ -753,6 +778,43 @@ def calculate_paired_mix_points(
   adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
 
   return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
+
+
+def align_ai_mix_points(
+  mix_in: float,
+  mix_out: float,
+  bpm: float,
+  duration: float,
+  phrase_unit: int = 8,
+) -> tuple[float, float]:
+  """
+  Quantisiert extern gelieferte Mix-Punkte (z.B. vom LLM) aufs Phrasen-Gitter.
+
+  DJ-Konvention: Mix-In auf die naechste Phrasengrenze NACH dem Vorschlag
+  (ceil, landet hinter dem Intro), Mix-Out auf die Grenze DAVOR (floor,
+  bleibt vor dem Outro). Kollabiert das Fenster dadurch, wird auf das
+  feinere Bar-Gitter ausgewichen; ist auch das ungueltig, bleiben die
+  Originalwerte erhalten (LLM-Intent > kaputte Quantisierung).
+
+  Returns:
+    (aligned_mix_in, aligned_mix_out) in Sekunden
+  """
+  if bpm <= 0 or duration <= 0 or not (0 <= mix_in < mix_out <= duration):
+    return mix_in, mix_out
+
+  seconds_per_bar = (60.0 / bpm) * METER
+  unit = phrase_unit if phrase_unit > 0 else 8
+
+  # Epsilon gegen Float-Rauschen: 30.000001s darf nicht eine volle Phrase
+  # nach hinten springen
+  eps = 1e-6
+  for grid in (seconds_per_bar * unit, seconds_per_bar):
+    aligned_in = ceil((mix_in - eps) / grid) * grid
+    aligned_out = floor((mix_out + eps) / grid) * grid
+    if 0 <= aligned_in < aligned_out <= duration:
+      return round(aligned_in, 2), round(aligned_out, 2)
+
+  return mix_in, mix_out
 
 
 # === Hilfsfunktionen ===
@@ -1179,8 +1241,13 @@ def _assess_transition_risks(
 
   # Bass-Kollisions-Check (Phase 3)
   # Wir schauen uns die Bass-Energie der beteiligten Sektionen an
-  out_sec_data = next((s for s in track_a.sections if s.get('start_time') <= track_a.mix_out_point <= s.get('end_time')), {})
-  in_sec_data = next((s for s in track_b.sections if s.get('start_time') <= track_b.mix_in_point <= s.get('end_time')), {})
+  # Section-Dicts koennen unvollstaendig sein -- fehlende Zeiten nie vergleichen
+  def _section_covers(s: dict, t: float) -> bool:
+    start, end = s.get('start_time'), s.get('end_time')
+    return start is not None and end is not None and start <= t <= end
+
+  out_sec_data = next((s for s in track_a.sections if _section_covers(s, track_a.mix_out_point)), {})
+  in_sec_data = next((s for s in track_b.sections if _section_covers(s, track_b.mix_in_point)), {})
   
   bass_a = out_sec_data.get('avg_bass', track_a.avg_bass)
   bass_b = in_sec_data.get('avg_bass', track_b.avg_bass)

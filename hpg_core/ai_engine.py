@@ -16,7 +16,14 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
          Config-Defaults — noetig weil LM Studio einen dynamischen Port nutzen
          kann (vom ai_launcher erkannt).
     """
-    if not track: return {}
+    if not track: 
+        logger.warning("fetch_ai_analysis called with None track")
+        return {}
+    
+    # Sicherheitsprüfung der Track-Daten
+    if not hasattr(track, 'filePath') or not track.filePath:
+        logger.error("Invalid track object - missing filePath")
+        return {}
 
     current_provider = provider or config.AI_PROVIDER
     if url:
@@ -53,11 +60,24 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
         ],
         "response_format": {"type": "json_object"}
     }
+    
     try:
+        logger.debug(f"Sending AI request to {url} for track: {track.title}")
         resp = requests.post(url, json=payload, timeout=(5.0, config.AI_TIMEOUT))
+        
+        # Überprüfe den Statuscode
+        if resp.status_code != 200:
+            logger.error(f"AI API returned status code {resp.status_code}: {resp.text}")
+            return {}
+            
         resp.raise_for_status()
         resp_json = resp.json()
         
+        # Validierung der Antwortstruktur
+        if not isinstance(resp_json, dict):
+            logger.error(f"Invalid response format from AI: expected dict, got {type(resp_json)}")
+            return {}
+            
         # CRITICAL BUGFIX: Extrahiere und parse den JSON-String aus choices[0].message.content
         if "choices" in resp_json and len(resp_json["choices"]) > 0:
             content_str = resp_json["choices"][0]["message"]["content"]
@@ -69,12 +89,31 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
                 content_str = content_str[:-3]
             content_str = content_str.strip()
             
-            parsed_data = json.loads(content_str)
-            logger.info(f"AI-Analyse erfolgreich geladen fuer {track.title} ({current_provider})")
-            return parsed_data
+            # Sicherheitsprüfung der JSON-Struktur
+            if not content_str:
+                logger.warning(f"Empty AI response for track {track.title}")
+                return {}
+                
+            try:
+                parsed_data = json.loads(content_str)
+                logger.info(f"AI-Analyse erfolgreich geladen fuer {track.title} ({current_provider})")
+                return parsed_data
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing failed for track {track.title}: {e}")
+                logger.debug(f"Raw content: {content_str}")
+                return {}
             
         logger.warning(f"AI-Antwort besass kein 'choices'-Array: {resp_json}")
         return {}
+    except requests.exceptions.Timeout as e:
+        logger.error(f"AI API Timeout for track {track.title}: {e}")
+        return {}
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"AI API Connection Error for track {track.title}: {e}")
+        return {}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"AI API Request Error for track {track.title}: {e}")
+        return {}
     except Exception as e:
-        logger.error(f"AI API Error ({current_provider}): {e}")
+        logger.error(f"Unexpected error during AI analysis for track {track.title}: {e}", exc_info=True)
         return {}

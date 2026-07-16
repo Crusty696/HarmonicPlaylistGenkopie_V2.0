@@ -70,6 +70,10 @@ Filename: "{app}\HarmonicPlaylistGenerator.exe"; Description: "{cm:LaunchProgram
 
 [UninstallDelete]
 ; Clean up cache files on uninstall
+Type: filesandordirs; Name: "{app}\hpg_cache_*.db"
+Type: filesandordirs; Name: "{app}\hpg_cache_*.db-wal"
+Type: filesandordirs; Name: "{app}\hpg_cache_*.db-shm"
+Type: filesandordirs; Name: "{app}\hpg_cache_*.lock"
 Type: filesandordirs; Name: "{app}\hpg_cache_*.dbm*"
 Type: filesandordirs; Name: "{app}\*.log"
 

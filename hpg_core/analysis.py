@@ -13,12 +13,12 @@ from .models import Track, CAMELOT_MAP
 from .config import (
     HOP_LENGTH,
     METER,
-    INTRO_PERCENTAGE,
-    OUTRO_PERCENTAGE,
     INTRO_MAX_PERCENTAGE,
     OUTRO_MIN_PERCENTAGE,
     RMS_THRESHOLD,
+    BARS_PER_PHRASE,
     DEFAULT_BPM,
+    DJ_BRAIN_ENABLED,
     BPM_HALFTIME_MAX_RESULT,
     LIBROSA_FAST_PATH_DURATION,
     LIBROSA_MAX_DURATION,
@@ -631,7 +631,7 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
 
         seconds_per_beat = 60.0 / bpm
         seconds_per_bar = seconds_per_beat * METER
-        seconds_per_phrase = seconds_per_bar * 8  # Standard 8-bar phrase
+        seconds_per_phrase = seconds_per_bar * BARS_PER_PHRASE
 
         # 1. Align Intro End to nearest phrase boundary AFTER intro
         # ceil() ensures we land AFTER the intro, never inside it
@@ -774,7 +774,7 @@ def analyze_track(file_path: str) -> Track | None:
             )
 
             # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
-            if genre_result.genre != "Unknown" and section_dicts:
+            if DJ_BRAIN_ENABLED and genre_result.genre != "Unknown" and section_dicts:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     calculate_genre_aware_mix_points(
                         section_dicts, rekordbox_data.bpm, duration, genre_result.genre
@@ -1003,7 +1003,7 @@ def analyze_track(file_path: str) -> Track | None:
         )
 
         # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
-        if genre_result.genre != "Unknown" and section_dicts:
+        if DJ_BRAIN_ENABLED and genre_result.genre != "Unknown" and section_dicts:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 calculate_genre_aware_mix_points(
                     section_dicts, bpm, duration, genre_result.genre

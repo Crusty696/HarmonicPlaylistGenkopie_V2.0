@@ -51,7 +51,6 @@ import multiprocessing  # CRITICAL: Required for freeze_support()
 
 from hpg_core.transition_renderer import TransitionClipSpec, render_transition_clip
 from hpg_core.ai_engine import fetch_ai_analysis
-
 from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.playlist import (
     generate_playlist,
@@ -83,6 +82,8 @@ from hpg_core.theme import (
     apply_dark_theme,
     FONT_FAMILY,
 )
+from hpg_core.error_reporter import get_error_reporter
+from hpg_core.playlist_security import validate_playlist_security, sanitize_playlist
 import time
 from datetime import datetime
 
@@ -352,8 +353,26 @@ class AnalysisWorker(QThread):
             except Exception as e:
                 self.phase_changed.emit(1, "inactive")
                 self.status_update.emit(f"ERROR during analysis: {str(e)}")
+                get_error_reporter().log_error(
+                    "analysis", str(e), {"folder": self.folder_path}
+                )
                 self.finished.emit([], {})
                 return
+
+            # Security-Gate: defekte Eintraege und Tracks ueber den Limits
+            # (Dateigroesse/Dauer) entfernen, Playlist-Groesse deckeln
+            pre_count = len(analyzed_tracks)
+            analyzed_tracks = sanitize_playlist(analyzed_tracks)
+            if len(analyzed_tracks) < pre_count:
+                removed = pre_count - len(analyzed_tracks)
+                self.status_update.emit(
+                    f"WARNING: {removed} Track(s) durch Security-Filter entfernt (defekt oder ueber Limits)."
+                )
+                logger.warning(f"Security-Filter entfernte {removed} von {pre_count} Tracks.")
+            if analyzed_tracks and not validate_playlist_security(analyzed_tracks):
+                self.status_update.emit(
+                    "WARNING: Playlist verletzt Security-Limits -- Details im Log."
+                )
 
             if not analyzed_tracks:
                 self.phase_changed.emit(1, "inactive")
@@ -380,6 +399,9 @@ class AnalysisWorker(QThread):
                 self.phase_changed.emit(2, "inactive")
                 self.status_update.emit(f"ERROR generating playlist: {str(e)}")
                 logger.error(f"Playlist generation failed: {e}")
+                get_error_reporter().log_error(
+                    "playlist_generation", str(e), {"mode": self.mode}
+                )
                 self.finished.emit([], {})
                 return
 
@@ -482,12 +504,12 @@ class TransitionRenderWorker(QThread):
                 dj = transition.dj_rec
                 mix_out = (
                     dj.adjusted_mix_out_a
-                    if dj and dj.adjusted_mix_out_a > 0
+                    if dj and dj.adjusted_mix_out_a >= 0.0
                     else float(transition.from_track.mix_out_point or 0)
                 )
                 mix_in = (
                     dj.adjusted_mix_in_b
-                    if dj and dj.adjusted_mix_in_b >= 0 and dj.adjusted_mix_in_b > -0.5
+                    if dj and dj.adjusted_mix_in_b >= 0.0
                     else float(transition.to_track.mix_in_point or 0)
                 )
                 crossfade = (
@@ -511,17 +533,23 @@ class TransitionRenderWorker(QThread):
                 try:
                     with ProcessPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(_render_clip_subprocess_wrapper, (spec, out_path))
-                        # Warte maximal 30 Sekunden auf Fertigstellung
-                        future.result(timeout=30.0)
+                        # Timeout grosszuegig fuer lange Trance/Progressive-Blends (bis 64s Crossfade)
+                        future.result(timeout=60.0)
                         render_success = True
                 except (BrokenProcessPool, RuntimeError) as pool_err:
                     logger.error(f"Render-Prozess abgestuerzt bei Clip {i}: {pool_err}")
+                    get_error_reporter().log_error(
+                        "transition_render_crash", str(pool_err), {"clip": i}
+                    )
                     self.clip_error.emit(i, "Format-Absturz (Datei beschaedigt)")
                 except TimeoutError:
                     logger.error(f"Render-Timeout bei Clip {i}")
                     self.clip_error.emit(i, "Zeitueberschreitung")
                 except Exception as render_err:
                     logger.error(f"Fehler bei Transition-Render {i}: {render_err}")
+                    get_error_reporter().log_error(
+                        "transition_render", str(render_err), {"clip": i}
+                    )
                     self.clip_error.emit(i, f"Fehler: {render_err}")
 
                 if render_success:
@@ -581,12 +609,12 @@ class TransitionPreviewWidget(QWidget):
         
         mix_out = (
             dj.adjusted_mix_out_a
-            if dj and dj.adjusted_mix_out_a > 0
+            if dj and dj.adjusted_mix_out_a >= 0.0
             else float(from_track.mix_out_point or 0)
         )
         mix_in = (
             dj.adjusted_mix_in_b
-            if dj and dj.adjusted_mix_in_b >= 0 and dj.adjusted_mix_in_b > -0.5
+            if dj and dj.adjusted_mix_in_b >= 0.0
             else float(to_track.mix_in_point or 0)
         )
         crossfade = (
@@ -1856,6 +1884,7 @@ class LibraryPanel(QWidget):
             "Warm-Up": "Gradual BPM increase from low to high energy.",
             "Cool-Down": "Gradual BPM decrease from high to low energy.",
             "Consistent": "Minimal BPM/energy jumps with harmonic compatibility.",
+            "Context Flow": "Set-phase aware: target energy per phase, trend continuation, genre fatigue, no clone tracks back-to-back.",
         }
         self.strategy_description.setText(
             descriptions.get(strategy, "No description available.")
@@ -2477,7 +2506,7 @@ class MixTipsPanel(QWidget):
 
             # Timing — paar-spezifische Werte wenn verfuegbar, sonst Standard
             dj_rec = rec.dj_rec
-            if dj_rec and dj_rec.adjusted_mix_out_a > 0:
+            if dj_rec and dj_rec.adjusted_mix_out_a >= 0.0:
                 # Angepasste Mix-Points aus calculate_paired_mix_points()
                 timing_text = (
                     f"Mix-Out A: {dj_rec.adjusted_mix_out_a:.1f}s | "
@@ -3135,9 +3164,16 @@ class MainWindow(QMainWindow):
                         val_out = float(ai_mix_out)
                         
                         if 0 <= val_in < val_out <= track.duration and val_out > 0:
+                            # AI-Werte aufs Phrasen-Gitter quantisieren (DJ-Konvention:
+                            # Mix-In ceil nach Intro, Mix-Out floor vor Outro)
+                            from hpg_core.dj_brain import align_ai_mix_points
+                            val_in, val_out = align_ai_mix_points(
+                                val_in, val_out, track.bpm, track.duration,
+                                getattr(track, "phrase_unit", 8) or 8,
+                            )
                             track.mix_in_point = round(val_in, 2)
                             track.mix_out_point = round(val_out, 2)
-                            
+
                             # Recalculate bars
                             seconds_per_bar = (60.0 / track.bpm) * 4 if track.bpm > 0 else 2.0
                             track.mix_in_bars = int(round(track.mix_in_point / seconds_per_bar))

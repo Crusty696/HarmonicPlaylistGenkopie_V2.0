@@ -389,8 +389,8 @@ class TestRenderTransitionClip:
         result = render_transition_clip(spec, out_path)
         assert os.path.exists(result)
 
-    def test_crossfade_sec_wird_auf_32s_begrenzt(self, tmp_path):
-        """crossfade_sec > 32 soll auf 32 reduziert werden."""
+    def test_crossfade_sec_wird_auf_64s_begrenzt(self, tmp_path):
+        """crossfade_sec > 64 soll auf 64 reduziert werden (Trance blendet 32-64 Bars)."""
         path_a = str(tmp_path / "a.wav")
         path_b = str(tmp_path / "b.wav")
         out_path = str(tmp_path / "capped.wav")
@@ -403,15 +403,15 @@ class TestRenderTransitionClip:
             track_b_path    = path_b,
             mix_out_sec     = 60.0,
             mix_in_sec      = 10.0,
-            crossfade_sec   = 99.0,  # Wird auf 32s begrenzt
+            crossfade_sec   = 99.0,  # Wird auf 64s begrenzt
             transition_type = "smooth_blend",
             pre_roll_sec    = 10.0,
             post_roll_sec   = 10.0,
         )
         render_transition_clip(spec, out_path)
         info = sf.info(out_path)
-        # Erwartete Dauer: 10 + 32 + 10 = 52s (nicht 10 + 99 + 10)
-        assert abs(info.duration - 52.0) < 0.5
+        # Erwartete Dauer: 10 + 64 + 10 = 84s (nicht 10 + 99 + 10)
+        assert abs(info.duration - 84.0) < 0.5
 
     def test_gibt_output_pfad_zurueck(self, tmp_path):
         path_a = str(tmp_path / "a.wav")
