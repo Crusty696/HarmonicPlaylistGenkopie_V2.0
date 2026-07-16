@@ -9,10 +9,9 @@ Stand: 2026-07-16 (nach Vollaudit + Fix-Runden, Commits 9b64953/3a4ccf4/a2991bf)
 - Baseline: **1241 Tests grün**
 - `venv\` (Python 3.14) ist defekt und gitignored — nicht verwenden
 - Build: `build.bat` (findet Python 3.12 automatisch, nutzt venv312)
-- **Achtung Python 3.12.0**: CPython-Bug crasht scipy.stats im PyInstaller-Build
-  (NameError 'obj', pyinstaller#8186). Workaround im venv312 gepatcht
-  (`_distn_infrastructure.py`: `globals().pop('obj', None)`), Details im
-  HPG.spec-Kommentar. Sauberste Lösung: Python auf ≥3.12.1 aktualisieren.
+- Python-Basis: **3.12.10** (2026-07-16 aktualisiert; 3.12.0 hatte einen
+  CPython-Bug, der scipy.stats im PyInstaller-Build crashte, pyinstaller#8186 —
+  seit dem Update kein Workaround mehr nötig, scipy läuft unverändert)
 
 ## Aktiver Funktionsumfang
 
