@@ -58,19 +58,14 @@ class TrackStructure:
 
 
 # === Genre-specific Phrase Units ===
+# Audit-Fix 2026-07-17: aus den GENRE_MIX_PROFILES (dj_brain) abgeleitet statt
+# als zweite, manuell synchron zu haltende Tabelle gepflegt — Drift-Risiko weg.
+from .dj_brain import GENRE_MIX_PROFILES, DEFAULT_MIX_PROFILE
 
 GENRE_PHRASE_UNITS: dict[str, int] = {
-  "Psytrance": 16,      # Psytrance uses 16-bar phrases (long builds/drops)
-  "Tech House": 8,       # Tech House uses 8-bar phrases (tight groove loops)
-  "Progressive": 8,      # Progressive uses 8-bar phrases (gradual layers)
-  "Melodic Techno": 8,   # Melodic Techno uses 8-bar phrases
-  "Techno": 8,           # Techno uses 8-bar phrases (driving, repetitive)
-  "Deep House": 8,       # Deep House uses 8-bar phrases (smooth grooves)
-  "Trance": 16,          # Trance uses 16-bar phrases (big builds, long breakdowns)
-  "Drum & Bass": 8,      # DnB uses 8-bar phrases (fast switches)
-  "Minimal": 8,          # Minimal uses 8-bar phrases (hypnotic loops)
-  "Unknown": 8,          # Default to 8 bars
+  genre: profile.phrase_unit for genre, profile in GENRE_MIX_PROFILES.items()
 }
+GENRE_PHRASE_UNITS["Unknown"] = DEFAULT_MIX_PROFILE.phrase_unit
 
 # Speicher-Obergrenze fuer die Self-Similarity-Matrix (dense O(n^2)):
 # 3000 Frames = ~72 MB float64; laengere MFCC-Sequenzen werden dezimiert

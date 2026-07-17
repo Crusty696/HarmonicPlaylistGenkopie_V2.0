@@ -4,10 +4,11 @@ cd /d "%~dp0"
 echo Starte Harmonic Playlist Generator...
 echo.
 
-rem Pruefe zuerst, ob das virtuelle Environment (venv) existiert und nutze es
-if exist "venv\Scripts\python.exe" (
-    echo Nutze virtuelles Environment ^(venv^)...
-    "venv\Scripts\python.exe" main.py
+rem Verbindliches Environment ist venv312 (Python 3.12) — das alte venv/ war
+rem Python 3.14 mit defektem numpy und wurde entfernt (Audit 2026-07-17)
+if exist "venv312\Scripts\python.exe" (
+    echo Nutze virtuelles Environment ^(venv312^)...
+    "venv312\Scripts\python.exe" main.py
 ) else (
     echo Virtuelles Environment nicht gefunden. Nutze globales Python...
     "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" main.py

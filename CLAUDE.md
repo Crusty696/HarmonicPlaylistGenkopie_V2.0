@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# HPG – Harmonic Playlist Generator V2.0
+# HPG ï¿½ Harmonic Playlist Generator V2.0
 
 ## Projektarchitektur
 
@@ -12,7 +12,7 @@ hpg_core/                  # Core analysis modules
   models.py                # Track-Dataclass (25+ Felder), TrackSection
   analysis.py              # Audio-Analyse (librosa): BPM, Key, Energy, Sections
   config.py                # Alle konfigurierbaren Konstanten
-  caching.py               # shelve-basierter Cache
+  caching.py               # SQLite-basierter Cache (WAL, hpg_cache_v14.db)
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Verse/Drop/Outro)
@@ -20,11 +20,10 @@ hpg_core/                  # Core analysis modules
   playlist.py              # Playlist-Generierung und Scoring
   rekordbox_importer.py    # Rekordbox-Datenbank Import (optional)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest (725+ Tests), Integrationstests
+tests/                     # pytest (1200+ Tests), Integrationstests
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
-plans/                     # Entwicklungsplaene und Roadmaps
-scripts/                   # Build- und Utility-Skripte
+docs/archive/              # Erledigte Plaene und historische Dokumente
 `
 
 ## Python-Pfad (WICHTIG!)
@@ -47,8 +46,8 @@ powershell -Command "Set-Location 'C:\Users\david\Dokumente\HarmonicPlaylistGenk
 
 ## Geschuetzte Dateien (NICHT editieren)
 
-- `track_cache.*`, `hpg_cache_v10.*` – Cache-Dateien
-- `*.lock`, `*.coverage` – System-Dateien
+- `track_cache.*`, `hpg_cache_v10.*` ï¿½ Cache-Dateien
+- `*.lock`, `*.coverage` ï¿½ System-Dateien
 
 ## Analyse-Pipeline
 1. **Rekordbox Fast-Path**: Nutzt existierende Metadaten.

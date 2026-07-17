@@ -16,7 +16,7 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 
 from dataclasses import dataclass, field
-from .models import Track
+from .models import Track, effective_bpm_diff, get_camelot_components
 from .config import METER, DEFAULT_BPM, DEFAULT_SECTION_ENERGY
 
 
@@ -298,7 +298,7 @@ def calculate_genre_aware_mix_points(
 
   profile = get_mix_profile(genre)
   seconds_per_beat = 60.0 / bpm
-  seconds_per_bar = seconds_per_beat * 4 # METER is 4
+  seconds_per_bar = seconds_per_beat * METER
 
   # --- Mix-In: Wo faengt der optimale Mix-Bereich an? ---
   mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar)
@@ -886,18 +886,12 @@ def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) 
 
 
 def _effective_bpm_diff(bpm_a: float, bpm_b: float) -> tuple[float, str]:
-  """Kleinste musikalische BPM-Differenz inkl. Half/Double-Time."""
-  if bpm_a <= 0 or bpm_b <= 0:
-    return abs(bpm_a - bpm_b), "direct"
+  """Kleinste musikalische BPM-Differenz inkl. Half/Double-Time.
 
-  candidates = [
-    (abs(bpm_a - bpm_b), "direct"),
-    (abs(bpm_a - bpm_b * 2), "half"),
-    (abs(bpm_a * 2 - bpm_b), "half"),
-    (abs(bpm_a - bpm_b / 2), "double"),
-    (abs(bpm_a / 2 - bpm_b), "double"),
-  ]
-  return min(candidates, key=lambda item: item[0])
+  Delegiert an die zentrale Definition in models — die fruehere lokale Kopie
+  ignorierte das BPM_HALF_DOUBLE_ENABLED-Flag (Audit-Fix 2026-07-17).
+  """
+  return effective_bpm_diff(bpm_a, bpm_b)
 
 
 def _build_structure_note(outgoing: str, incoming: str) -> str:
@@ -1325,8 +1319,8 @@ def _calculate_texture_similarity(fp_a: list, fp_b: list) -> float:
 
 
 def _extract_camelot_number(code: str) -> int:
-  """Extrahiert die Nummer aus einem Camelot-Code (z.B. '8A' -> 8)."""
-  match = re.fullmatch(r"(1[0-2]|[1-9])[AB]", code or "")
-  if not match:
-    return 0
-  return int(match.group(1))
+  """Extrahiert die Nummer aus einem Camelot-Code (z.B. '8A' -> 8).
+
+  Delegiert an die zentrale Parsing-Definition in models (Audit 2026-07-17).
+  """
+  return get_camelot_components(code)[0]

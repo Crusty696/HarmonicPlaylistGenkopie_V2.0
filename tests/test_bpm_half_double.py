@@ -109,7 +109,7 @@ class TestEffectiveBpmDiff:
 
   def test_disabled_flag(self):
     """Bei BPM_HALF_DOUBLE_ENABLED=False nur direkte Differenz."""
-    with patch("hpg_core.playlist.BPM_HALF_DOUBLE_ENABLED", False):
+    with patch("hpg_core.models.BPM_HALF_DOUBLE_ENABLED", False):
       diff, relation = effective_bpm_diff(140.0, 70.0)
       assert diff == pytest.approx(70.0)
       assert relation == "direct"
@@ -143,7 +143,7 @@ class TestCompatibilityHalfDouble:
 
   def test_without_half_double_incompatible(self):
     """Ohne Half/Double: 140 vs 70 BPM bei tolerance=8 → 0."""
-    with patch("hpg_core.playlist.BPM_HALF_DOUBLE_ENABLED", False):
+    with patch("hpg_core.models.BPM_HALF_DOUBLE_ENABLED", False):
       t1 = _make_track(bpm=140.0, camelot="8A")
       t2 = _make_track(bpm=70.0, camelot="8A")
       score = calculate_compatibility(t1, t2, bpm_tolerance=8.0)

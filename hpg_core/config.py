@@ -34,8 +34,6 @@ DJ_BRAIN_ENABLED = True  # Master-Schalter: genre-aware Mix-Punkte (dj_brain) vs
 GENRE_CONFIDENCE_THRESHOLD = (
     0.4  # Minimum Confidence fuer Genre-Akzeptanz (war 0.3 - zu niedrig)
 )
-GENRE_ID3_OVERRIDE = True  # ID3-Tag Genre hat Vorrang wenn es matched
-
 # Drum & Bass: Mindest-BPM fuer Klassifikation (schuetzt gegen BPM-Halftime-Fehler)
 # Tracks unter 155 BPM koennen nicht als DnB klassifiziert werden
 DNB_MINIMUM_BPM = 155.0
@@ -45,16 +43,9 @@ DNB_MINIMUM_BPM = 155.0
 # (verhindert z.B. ~92 BPM -> 184 BPM -> falsche DnB-Klassifikation)
 BPM_HALFTIME_MAX_RESULT = 185.0
 
-# Genre BPM Ranges (min, max)
-PSYTRANCE_BPM_RANGE = (135, 150)
-TECH_HOUSE_BPM_RANGE = (124, 135)
-PROGRESSIVE_BPM_RANGE = (120, 140)
-MELODIC_TECHNO_BPM_RANGE = (120, 130)
-TECHNO_BPM_RANGE = (130, 150)
-DEEP_HOUSE_BPM_RANGE = (118, 128)
-TRANCE_BPM_RANGE = (128, 145)
-DRUM_AND_BASS_BPM_RANGE = (160, 180)
-MINIMAL_BPM_RANGE = (120, 132)
+# Genre-BPM-Bereiche liegen zentral in genre_classifier.GENRE_PROFILES —
+# die frueheren *_BPM_RANGE-Konstanten hier waren ein ungelesenes Duplikat
+# und wurden entfernt (Audit 2026-07-17)
 
 # Genre Weight in Playlist-Kompatibilitaet
 GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2  # Wenn DJ Brain Genre-Daten vorhanden
@@ -71,9 +62,6 @@ LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
 PARALLEL_ANALYSIS_TIMEOUT = 60  # Sekunden pro Track (schuetzt gegen korrupte Dateien)
 PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder feste Zahl
 
-# === Cache Lock ===
-CACHE_LOCK_TIMEOUT = 5.0  # Sekunden (vorher 2.0 — zu kurz bei langsamer Disk/SSD)
-
 # === Structure Analysis ===
 SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung (0.1-0.5)
 
@@ -83,8 +71,6 @@ BPM_HALF_DOUBLE_PENALTY = 0.85  # Leichter Abzug fuer Half/Double Transitions (0
 
 # === Logging & Debugging ===
 LOG_LEVEL = "INFO"  # Standard-Level: DEBUG, INFO, WARNING, ERROR (INFO fuer Produktion)
-LOG_TO_FILE = True  # Logdatei unter logs/hpg.log (mit Rotation)
-LOG_TO_CONSOLE = True  # Konsolenausgabe auf stderr
 
 # === Security & Safety ===
 # 500 MB: Lossless-AIFF/WAV ueberschreitet 100 MB schon ab ~10 Minuten
@@ -95,7 +81,6 @@ SECURITY_MAX_TRACK_DURATION = 7200  # 2 Stunden max Track-Länge (sicherheitsbed
 SECURITY_MAX_PLAYLIST_SIZE = 1000  # 1000 Tracks max pro Playlist
 
 # === AI Intelligence Layer ===
-AI_ENABLED = True
 AI_PROVIDER = "Ollama"  # "Ollama" or "LM Studio"
 AI_API_URL_OLLAMA = "http://localhost:11434/v1/chat/completions"
 AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default Ollama

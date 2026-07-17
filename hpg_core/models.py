@@ -1,5 +1,8 @@
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
+
+from .config import METER, BPM_HALF_DOUBLE_ENABLED
 
 # Mapping from Key and Mode to Camelot Code
 CAMELOT_MAP = {
@@ -13,24 +16,60 @@ CAMELOT_MAP = {
     ('A', 'Major'): '11B', ('A#', 'Major'): '6B', ('B', 'Major'): '1B',
 }
 
-@dataclass
-class TrackSection:
-    """A labeled section of a track with advanced audio features."""
-    label: str        # "intro", "build", "drop", "breakdown", "outro", "main"
-    start_time: float # Seconds
-    end_time: float   # Seconds
-    start_bar: int
-    end_bar: int
-    avg_energy: float = 0.0
-    avg_bass: float = 0.0
-    avg_mids: float = 0.0
-    avg_highs: float = 0.0
-    percussive_ratio: float = 0.0
-    spectral_flatness: float = 0.0
+# Hinweis: TrackSection lebt in structure_analyzer.py (einzige Definition).
+# Das fruehere ungenutzte Duplikat hier wurde entfernt (Audit 2026-07-17);
+# in Track.sections liegen serialisierte Section-Dicts.
 
-    def to_dict(self) -> dict:
-        from dataclasses import asdict
-        return asdict(self)
+
+def seconds_per_bar(bpm: float, meter: int = METER) -> float:
+    """Sekunden pro Takt — zentrale Definition statt 15+ Kopien im Code.
+
+    Audit 2026-07-17: mehrere Stellen umgingen METER mit hartkodierter 4.
+    """
+    if bpm <= 0:
+        return 0.0
+    return (60.0 / bpm) * meter
+
+
+_CAMELOT_RE = re.compile(r"(1[0-2]|[1-9])([AB])")
+
+
+def get_camelot_components(camelot_code: str) -> tuple[int, str]:
+    """Parst einen Camelot-Code in (Nummer, Buchstabe); (0, "") bei ungueltig.
+
+    Zentrale Definition — vorher identische Regexe in playlist und dj_brain.
+    """
+    match = _CAMELOT_RE.fullmatch(camelot_code or "")
+    if match:
+        return int(match.group(1)), match.group(2)
+    return 0, ""
+
+
+def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
+    """Effektive BPM-Differenz mit Half/Double-Time-Erkennung.
+
+    Zentrale Definition (Audit 2026-07-17) — vorher zwei divergierende Kopien:
+    playlist respektierte BPM_HALF_DOUBLE_ENABLED, dj_brain ignorierte das Flag.
+
+    Returns:
+        (effektive_differenz, relation) mit relation in "direct"/"half"/"double"
+    """
+    if bpm1 <= 0 or bpm2 <= 0:
+        return abs(bpm1 - bpm2), "direct"
+
+    candidates = [
+        (abs(bpm1 - bpm2), "direct"),
+        (abs(bpm1 - bpm2 * 2), "half"),   # bpm2 ist Half-Time
+        (abs(bpm1 * 2 - bpm2), "half"),   # bpm1 ist Half-Time
+        (abs(bpm1 - bpm2 / 2), "double"), # bpm2 ist Double-Time
+        (abs(bpm1 / 2 - bpm2), "double"), # bpm1 ist Double-Time
+    ]
+
+    if not BPM_HALF_DOUBLE_ENABLED:
+        return candidates[0]
+
+    return min(candidates, key=lambda x: x[0])
+
 
 @dataclass
 class Track:

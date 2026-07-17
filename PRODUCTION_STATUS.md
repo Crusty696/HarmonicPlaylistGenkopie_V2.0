@@ -1,13 +1,14 @@
 # HPG — Produktionsstatus
 
-Stand: 2026-07-16 (nach Vollaudit + Fix-Runden, Commits 9b64953/3a4ccf4/a2991bf)
+Stand: 2026-07-17 (nach Doppel-Audit b5056a9 + Altlasten-Bereinigung; Details:
+docs/AUDIT_BERICHT_2026-07-17.md und docs/ALTLASTEN_AUDIT_2026-07-17.md)
 
 ## Umgebung (verbindlich)
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
 - Tests: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --no-cov -q`
-- Baseline: **1241 Tests grün**
-- `venv\` (Python 3.14) ist defekt und gitignored — nicht verwenden
+- Baseline: **1246 Tests grün**
+- Das alte defekte `venv\` (Python 3.14) wurde 2026-07-17 geloescht
 - Build: `build.bat` (findet Python 3.12 automatisch, nutzt venv312)
 - Python-Basis: **3.12.10** (2026-07-16 aktualisiert; 3.12.0 hatte einen
   CPython-Bug, der scipy.stats im PyInstaller-Build crashte, pyinstaller#8186 —
@@ -17,7 +18,8 @@ Stand: 2026-07-16 (nach Vollaudit + Fix-Runden, Commits 9b64953/3a4ccf4/a2991bf)
 
 - **Mixpoint-Engine**: sektions-/phrasenbasiert, genre-aware (dj_brain), auf echter
   DJ-Praxis kalibriert (Techno 16-32 Bars, Trance 32-64, Psytrance 16er-Phrasen).
-  LLM-Mixpoints werden phrase-quantisiert. Cache-Version 12.
+  LLM-Mixpoints und Rekordbox-Cues werden phrase-quantisiert. Cache-Version 14.
+  Transition-Preview mit Beat-Phase-Alignment.
 - **11 Playlist-Strategien** inkl. neu: **Context Flow** (Set-Phasen-Zielenergie,
   Trend-Fortführung, Genre-Fatigue, Repetition-/Cliff-Penalties)
 - **Security-Gate** (aktiv verdrahtet in AnalysisWorker): sanitize + validate,
@@ -30,9 +32,9 @@ Stand: 2026-07-16 (nach Vollaudit + Fix-Runden, Commits 9b64953/3a4ccf4/a2991bf)
 
 ## Bekannte offene Punkte
 
-Siehe `.claude/skills/hpg-audit-optimize/SKILL.md`:
+Siehe `.claude/skills/hpg-audit-optimize/SKILL.md` und docs/ALTLASTEN_AUDIT_2026-07-17.md:
 - Mixpoint-Logik-Duplikat (analysis.py-Fallback vs. dj_brain) — Konsolidierung geplant
-- `harmonic_strictness` wirkt nur im Fallback-Zweig
+- Strategien-Konsolidierung (11 → 7-8) und Genre-Wissensquellen-Zentralisierung offen
 
 ## Historie
 

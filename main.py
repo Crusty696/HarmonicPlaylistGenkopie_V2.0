@@ -48,6 +48,35 @@ import logging
 # H1-Fix (Audit 2026-07-17): Modul-Logger — TransitionRenderWorker.run
 # referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
 logger = logging.getLogger(__name__)
+
+
+def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
+    """Loest die effektiven Mix-Punkte einer Transition auf.
+
+    Paar-spezifische DJ-Brain-Werte (adjusted_*, Sentinel -1.0) haben Vorrang
+    vor den per-Track-Werten. Audit 2026-07-17: vorher war dieses Muster
+    dreifach kopiert (Render-Worker, Preview-Widget, Anzeige).
+
+    Returns:
+        (mix_out_a, mix_in_b, crossfade_seconds)
+    """
+    dj = transition.dj_rec
+    mix_out = (
+        dj.adjusted_mix_out_a
+        if dj and dj.adjusted_mix_out_a >= 0.0
+        else float(transition.from_track.mix_out_point or 0)
+    )
+    mix_in = (
+        dj.adjusted_mix_in_b
+        if dj and dj.adjusted_mix_in_b >= 0.0
+        else float(transition.to_track.mix_in_point or 0)
+    )
+    crossfade = (
+        dj.overlap_seconds
+        if dj and dj.overlap_seconds > 0
+        else float(transition.overlap or 16.0)
+    )
+    return mix_out, mix_in, crossfade
 import os
 import re
 import sys
@@ -470,8 +499,7 @@ class TransitionRenderWorker(QThread):
 
     clip_ready = pyqtSignal(int, str)  # (index, wav_pfad)
     clip_error = pyqtSignal(int, str)  # (index, fehler_text)
-    all_done = pyqtSignal()
-    progress = pyqtSignal(int, int)  # (aktuell, gesamt)
+    # Audit 2026-07-17: tote Signale all_done/progress entfernt (nie connected)
 
     def __init__(self, transitions: list, parent=None):
         super().__init__(parent)
@@ -490,14 +518,12 @@ class TransitionRenderWorker(QThread):
         return self._temp_files.copy()
 
     def run(self):
-        total = len(self._transitions)
         from concurrent.futures import ProcessPoolExecutor
         from concurrent.futures.process import BrokenProcessPool
 
         for i, transition in enumerate(self._transitions):
             if self._should_cancel:
                 break
-            self.progress.emit(i + 1, total)
             try:
                 # Temp-Ausgabedatei im System-Temp-Verzeichnis
                 tmp_dir = tempfile.gettempdir()
@@ -505,23 +531,7 @@ class TransitionRenderWorker(QThread):
                 self._temp_files.append(out_path)
 
                 # TransitionClipSpec aus TransitionRecommendation aufbauen
-                # Paar-spezifische Mix-Points bevorzugen wenn vorhanden (adjusted > -1)
-                dj = transition.dj_rec
-                mix_out = (
-                    dj.adjusted_mix_out_a
-                    if dj and dj.adjusted_mix_out_a >= 0.0
-                    else float(transition.from_track.mix_out_point or 0)
-                )
-                mix_in = (
-                    dj.adjusted_mix_in_b
-                    if dj and dj.adjusted_mix_in_b >= 0.0
-                    else float(transition.to_track.mix_in_point or 0)
-                )
-                crossfade = (
-                    dj.overlap_seconds
-                    if dj and dj.overlap_seconds > 0
-                    else float(transition.overlap or 16.0)
-                )
+                mix_out, mix_in, crossfade = resolve_transition_mix_points(transition)
                 spec = TransitionClipSpec(
                     track_a_path=transition.from_track.filePath,
                     track_b_path=transition.to_track.filePath,
@@ -562,8 +572,6 @@ class TransitionRenderWorker(QThread):
 
             except Exception as e:
                 self.clip_error.emit(i, str(e))
-
-        self.all_done.emit()
 
     def cleanup(self):
         """Loescht alle temporaeren WAV-Dateien."""
@@ -610,24 +618,9 @@ class TransitionPreviewWidget(QWidget):
         # 2. Segmentierter Balken
         from_track = self._tr.from_track
         to_track = self._tr.to_track
-        dj = self._tr.dj_rec
-        
-        mix_out = (
-            dj.adjusted_mix_out_a
-            if dj and dj.adjusted_mix_out_a >= 0.0
-            else float(from_track.mix_out_point or 0)
-        )
-        mix_in = (
-            dj.adjusted_mix_in_b
-            if dj and dj.adjusted_mix_in_b >= 0.0
-            else float(to_track.mix_in_point or 0)
-        )
-        crossfade = (
-            dj.overlap_seconds
-            if dj and dj.overlap_seconds > 0
-            else float(self._tr.overlap or 16.0)
-        )
-        
+
+        mix_out, mix_in, crossfade = resolve_transition_mix_points(self._tr)
+
         t_type = getattr(self._tr, "transition_type", "blend")
         t_label = TRANSITION_TYPE_LABELS.get(t_type, t_type)
 
@@ -3190,7 +3183,8 @@ class MainWindow(QMainWindow):
                             track.mix_out_point = round(val_out, 2)
 
                             # Recalculate bars
-                            seconds_per_bar = (60.0 / track.bpm) * 4 if track.bpm > 0 else 2.0
+                            from hpg_core.config import METER
+                            seconds_per_bar = (60.0 / track.bpm) * METER if track.bpm > 0 else 2.0
                             track.mix_in_bars = int(round(track.mix_in_point / seconds_per_bar))
                             track.mix_out_bars = int(round(track.mix_out_point / seconds_per_bar))
                             logger.info(f"AI updated mix points for '{os.path.basename(track_path)}': in={track.mix_in_bars} bars, out={track.mix_out_bars} bars")

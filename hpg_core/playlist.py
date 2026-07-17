@@ -1,4 +1,9 @@
-from .models import Track, key_to_camelot
+from .models import (
+    Track,
+    key_to_camelot,
+    effective_bpm_diff,
+    get_camelot_components,
+)
 from typing import TYPE_CHECKING
 from .dj_brain import (
     get_genre_compatibility,
@@ -10,9 +15,10 @@ if TYPE_CHECKING:
 from .config import (
     GENRE_WEIGHT_WITH_DJ_BRAIN,
     GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
-    BPM_HALF_DOUBLE_ENABLED,
     BPM_HALF_DOUBLE_PENALTY,
     LOOKAHEAD_TOP_K,
+    METER,
+    DEFAULT_BPM,
 )
 import logging
 import re
@@ -81,11 +87,11 @@ class EnergyDirection(Enum):
 
 
 def _get_camelot_components(camelot_code: str) -> tuple[int, str]:
-    """Parses a Camelot code into its number and letter components."""
-    match = re.fullmatch(r"(1[0-2]|[1-9])([AB])", camelot_code or "")
-    if match:
-        return int(match.group(1)), match.group(2)
-    return 0, ""
+    """Parses a Camelot code into its number and letter components.
+
+    Delegiert an die zentrale Definition in models (Audit 2026-07-17).
+    """
+    return get_camelot_components(camelot_code)
 
 
 def calculate_enhanced_compatibility(
@@ -192,36 +198,8 @@ def calculate_enhanced_compatibility(
     )
 
 
-def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
-    """Berechnet die effektive BPM-Differenz unter Beruecksichtigung von Half/Double-Time.
-
-    Erkennt automatisch ob ein Track in Half-Time (z.B. 70 BPM = 140/2)
-    oder Double-Time (z.B. 280 BPM = 140*2) laeuft und gibt die
-    kleinste sinnvolle Differenz zurueck.
-
-    Args:
-        bpm1: BPM von Track 1
-        bpm2: BPM von Track 2
-
-    Returns:
-        Tuple von (effektive_differenz, relation_typ).
-        relation_typ: "direct", "half", oder "double"
-    """
-    if bpm1 <= 0 or bpm2 <= 0:
-        return abs(bpm1 - bpm2), "direct"
-
-    candidates = [
-        (abs(bpm1 - bpm2), "direct"),
-        (abs(bpm1 - bpm2 * 2), "half"),  # bpm2 ist Half-Time
-        (abs(bpm1 * 2 - bpm2), "half"),  # bpm1 ist Half-Time
-        (abs(bpm1 - bpm2 / 2), "double"),  # bpm2 ist Double-Time
-        (abs(bpm1 / 2 - bpm2), "double"),  # bpm1 ist Double-Time
-    ]
-
-    if not BPM_HALF_DOUBLE_ENABLED:
-        return candidates[0]  # Nur direkte Differenz
-
-    return min(candidates, key=lambda x: x[0])
+# effective_bpm_diff lebt jetzt zentral in models.py (Audit 2026-07-17) —
+# hier re-exportiert, damit bestehende Importe/Tests weiter funktionieren.
 
 
 def _calculate_compatibility_inner(
@@ -938,30 +916,10 @@ def _sort_genre_flow(
             genre_groups[genre] = []
         genre_groups[genre].append(track)
 
-    # Genre-Kompatibilitaet via DJ Brain Matrix + Fallback fuer ID3-Genres.
-    # Audit-Fix 2026-07-17: Fallback auf die KANONISCHEN Klassifikator-Labels
-    # umgestellt — die alte Tabelle (Electronic/House/Hip Hop/Rock/Pop) wurde
-    # von detected_genre nie erzeugt und war zu ~78% totes Vokabular.
-    base_genre_compatibility = {
-        ("Tech House", "Techno"): 0.8,
-        ("Tech House", "Deep House"): 0.75,
-        ("Deep House", "Melodic Techno"): 0.7,
-        ("Melodic Techno", "Progressive"): 0.8,
-        ("Melodic Techno", "Techno"): 0.75,
-        ("Progressive", "Trance"): 0.8,
-        ("Minimal", "Techno"): 0.8,
-        ("Minimal", "Tech House"): 0.7,
-        ("Psytrance", "Trance"): 0.6,
-        ("Techno", "Trance"): 0.5,
-    }
-
-    # Apply genre_weight to compatibility scores
-    # Higher weight = stronger preference for same/similar genres
-    genre_compatibility = {}
-    for key, value in base_genre_compatibility.items():
-        # Scale compatibility based on weight (higher weight = more separation)
-        adjusted = value * (1 - genre_weight) + genre_weight
-        genre_compatibility[key] = adjusted
+    # Audit-Fix 2026-07-17 (Runde 2): die frühere lokale Fallback-Tabelle
+    # (base_genre_compatibility) war ein zweites, teils widersprüchliches
+    # Duplikat der DJ-Brain-Matrix — entfernt. Einzige Quelle ist jetzt
+    # get_genre_compatibility (dj_brain), skaliert mit genre_weight.
 
     # Create transitions between genres
     result = []
@@ -985,20 +943,10 @@ def _sort_genre_flow(
 
         for genre in genre_groups:
             if genre not in processed_genres:
-                # DJ Brain Matrix hat Vorrang, Fallback auf alte Kompatibilitaet
+                # Einzige Quelle: DJ-Brain-Matrix (0.5 = unbekannte Kombination),
+                # skaliert mit genre_weight (hoeher = staerkere Genre-Praeferenz)
                 dj_compat = get_genre_compatibility(current_genre, genre)
-                if dj_compat > 0.5:
-                    compatibility = dj_compat
-                else:
-                    # Symmetrischer Lookup: eine Richtung ODER die andere --
-                    # Addition beider Richtungen ergab Scores > 1.0 und
-                    # addierte den Default faelschlich mit
-                    compatibility = genre_compatibility.get(
-                        (current_genre, genre),
-                        genre_compatibility.get(
-                            (genre, current_genre), 0.5 * (1 - genre_weight)
-                        ),
-                    )
+                compatibility = dj_compat * (1 - genre_weight) + genre_weight
                 if compatibility > best_compatibility:
                     best_compatibility = compatibility
                     best_next_genre = genre
@@ -1329,7 +1277,7 @@ def _process_dj_brain_recommendations(
 
             # DJ Brain Transition-Laenge uebernehmen
             if dj_rec.transition_bars > 0 and current.bpm > 0:
-                seconds_per_bar = (60.0 / current.bpm) * 4
+                seconds_per_bar = (60.0 / current.bpm) * METER
                 overlap = seconds_per_bar * dj_rec.transition_bars
                 fade_out_start = max(0.0, current_mix_out - overlap)
         except Exception as e:
@@ -1369,8 +1317,8 @@ def compute_transition_recommendations(
         # We want to align the 'mix_in' of the next track with a phrase in the current track.
 
         # Calculate how long the transition should be (e.g., 16 or 32 bars)
-        seconds_per_beat = 60.0 / current.bpm if current.bpm > 0 else 0.5
-        seconds_per_bar = seconds_per_beat * 4
+        seconds_per_beat = 60.0 / current.bpm if current.bpm > 0 else 60.0 / DEFAULT_BPM
+        seconds_per_bar = seconds_per_beat * METER
 
         # Standard DJ transition length: 32 bars (approx 60s at 124bpm)
         transition_duration = seconds_per_bar * 32
@@ -1968,177 +1916,3 @@ def get_set_timing_summary(timeline: SetTimeline) -> dict:
     }
 
 
-# === Similarity Clustering (MFCC-basiert) ===
-
-
-def mfcc_distance(fp1: list, fp2: list) -> float:
-    """Berechnet euklidische Distanz zwischen zwei MFCC-Fingerprints.
-
-    Args:
-        fp1: MFCC-Vektor von Track 1 (Liste von floats, Laenge 13)
-        fp2: MFCC-Vektor von Track 2
-
-    Returns:
-        Euklidische Distanz. 0.0 = identisch. Groesser = unaehnlicher.
-        Gibt float('inf') zurueck wenn ein Fingerprint leer ist.
-    """
-    if not fp1 or not fp2:
-        return float("inf")
-    if len(fp1) != len(fp2):
-        return float("inf")
-
-    return math.sqrt(sum((a - b) ** 2 for a, b in zip(fp1, fp2)))
-
-
-def find_similar_tracks(
-    reference: Track,
-    candidates: list[Track],
-    max_results: int = 10,
-    max_distance: Optional[float] = None,
-) -> list[tuple[Track, float]]:
-    """Findet die aehnlichsten Tracks basierend auf MFCC-Fingerprints.
-
-    Args:
-        reference: Referenz-Track
-        candidates: Liste von Kandidaten
-        max_results: Maximale Anzahl Ergebnisse
-        max_distance: Optionale maximale Distanz (filtert Ergebnisse)
-
-    Returns:
-        Liste von (Track, Distanz) Tupeln, sortiert nach Aehnlichkeit (kleinste Distanz zuerst).
-    """
-    if not reference.mfcc_fingerprint:
-        return []
-
-    scored = []
-    for track in candidates:
-        if track is reference:
-            continue
-        dist = mfcc_distance(reference.mfcc_fingerprint, track.mfcc_fingerprint)
-        if dist == float("inf"):
-            continue
-        if max_distance is not None and dist > max_distance:
-            continue
-        scored.append((track, dist))
-
-    scored.sort(key=lambda x: x[1])
-    return scored[:max_results]
-
-
-def cluster_tracks_by_similarity(
-    tracks: list[Track],
-    n_clusters: int = 3,
-    max_iterations: int = 50,
-) -> list[list[Track]]:
-    """Gruppiert Tracks in Cluster basierend auf MFCC-Aehnlichkeit (k-Means).
-
-    Einfacher k-Means Algorithmus ohne externe Dependencies (kein sklearn noetig).
-
-    Args:
-        tracks: Liste von Tracks mit MFCC-Fingerprints
-        n_clusters: Anzahl gewuenschter Cluster
-        max_iterations: Maximale Iterationen
-
-    Returns:
-        Liste von Track-Listen (Cluster). Tracks ohne MFCC landen in einem Extra-Cluster.
-    """
-    # Trenne Tracks mit/ohne MFCC
-    with_mfcc = [
-        t for t in tracks if t.mfcc_fingerprint and len(t.mfcc_fingerprint) > 0
-    ]
-    without_mfcc = [
-        t for t in tracks if not t.mfcc_fingerprint or len(t.mfcc_fingerprint) == 0
-    ]
-
-    if len(with_mfcc) <= n_clusters:
-        # Zu wenige Tracks — jeder Track ist sein eigenes Cluster
-        clusters = [[t] for t in with_mfcc]
-        if without_mfcc:
-            clusters.append(without_mfcc)
-        return clusters
-
-    # k-Means: Initialisierung mit gleichmaessig verteilten Tracks
-    step = len(with_mfcc) // n_clusters
-    centroids = [list(with_mfcc[i * step].mfcc_fingerprint) for i in range(n_clusters)]
-
-    assignments = [0] * len(with_mfcc)
-
-    for _ in range(max_iterations):
-        # Assign: Jeden Track dem naechsten Centroid zuweisen
-        new_assignments = []
-        for track in with_mfcc:
-            dists = [mfcc_distance(track.mfcc_fingerprint, c) for c in centroids]
-            new_assignments.append(dists.index(min(dists)))
-
-        # Konvergenz-Check
-        if new_assignments == assignments:
-            break
-        assignments = new_assignments
-
-        # Update: Centroids neu berechnen
-        dim = len(centroids[0])
-        cluster_to_members = [[] for _ in range(n_clusters)]
-        for i, k_idx in enumerate(assignments):
-            cluster_to_members[k_idx].append(with_mfcc[i])
-
-        for k in range(n_clusters):
-            members = cluster_to_members[k]
-            if not members:
-                continue
-            new_centroid = [0.0] * dim
-            for m in members:
-                for d in range(dim):
-                    new_centroid[d] += m.mfcc_fingerprint[d]
-            centroids[k] = [v / len(members) for v in new_centroid]
-
-    # Cluster zusammenbauen
-    clusters = [[] for _ in range(n_clusters)]
-    for i, a in enumerate(assignments):
-        clusters[a].append(with_mfcc[i])
-
-    # Leere Cluster entfernen
-    clusters = [c for c in clusters if c]
-
-    # Tracks ohne MFCC als eigenes Cluster anhaengen
-    if without_mfcc:
-        clusters.append(without_mfcc)
-
-    return clusters
-
-
-def get_cluster_summary(clusters: list[list[Track]]) -> list[dict]:
-    """Erstellt eine Zusammenfassung fuer jedes Cluster.
-
-    Args:
-        clusters: Liste von Track-Listen aus cluster_tracks_by_similarity
-
-    Returns:
-        Liste von Dicts mit Cluster-Infos (size, avg_bpm, genres, avg_energy, etc.)
-    """
-    summaries = []
-    for i, cluster in enumerate(clusters):
-        if not cluster:
-            continue
-
-        bpms = [t.bpm for t in cluster if t.bpm > 0]
-        energies = [t.energy for t in cluster if t.energy > 0]
-        genres = {}
-        for t in cluster:
-            g = t.detected_genre if t.detected_genre != "Unknown" else t.genre
-            if g and g != "Unknown":
-                genres[g] = genres.get(g, 0) + 1
-
-        summary = {
-            "cluster_id": i,
-            "size": len(cluster),
-            "avg_bpm": round(sum(bpms) / len(bpms), 1) if bpms else 0.0,
-            "bpm_range": (
-                (round(min(bpms), 1), round(max(bpms), 1)) if bpms else (0.0, 0.0)
-            ),
-            "avg_energy": round(sum(energies) / len(energies), 1) if energies else 0.0,
-            "top_genres": sorted(genres.items(), key=lambda x: -x[1])[:3],
-            "tracks": [t.title for t in cluster[:5]],  # Erste 5 Titel als Preview
-        }
-        summaries.append(summary)
-
-    return summaries
