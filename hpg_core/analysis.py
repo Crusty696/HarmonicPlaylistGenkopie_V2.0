@@ -86,11 +86,25 @@ def get_key_with_confidence(
     Returns:
         (note, mode, strength, margin, second_note, second_mode)
     """
+    # Cosine-Similarity statt Pearson-Korrelation (Validierungs-Iteration
+    # 2026-07-17): Sha'ath (KeyFinder-Thesis, Kap. 4.3.6) zeigte Cosine auf
+    # EDM als konsistent treffsicherer; empirisch gegen die Beatport-
+    # Ground-Truth gemessen (tools/validation_run.py --no-rekordbox).
+    chroma = np.asarray(chroma_vector, dtype=float)
+    chroma_norm = float(np.linalg.norm(chroma))
+    major = np.asarray(MAJOR_PROFILE, dtype=float)
+    minor = np.asarray(MINOR_PROFILE, dtype=float)
+    major_norm = float(np.linalg.norm(major))
+    minor_norm = float(np.linalg.norm(minor))
+
     correlations: list[tuple[float, str, str]] = []
     for i in range(12):
-        rolled = np.roll(chroma_vector, -i)
-        major_corr = float(np.corrcoef(rolled, MAJOR_PROFILE)[0, 1])
-        minor_corr = float(np.corrcoef(rolled, MINOR_PROFILE)[0, 1])
+        rolled = np.roll(chroma, -i)
+        if chroma_norm > 1e-9:
+            major_corr = float(np.dot(rolled, major) / (chroma_norm * major_norm))
+            minor_corr = float(np.dot(rolled, minor) / (chroma_norm * minor_norm))
+        else:
+            major_corr = minor_corr = 0.0
         correlations.append((major_corr, NOTES[i], "Major"))
         correlations.append((minor_corr, NOTES[i], "Minor"))
 
@@ -886,6 +900,39 @@ def analyze_track(file_path: str) -> Track | None:
                         cue_in = float(cue["position"])
                     elif cue_out is None and out_pattern.search(name_upper):
                         cue_out = float(cue["position"])
+
+                # Fallback heuristic for unlabelled cues (e.g. standard hot/memory cues)
+                if cue_in is None and cue_out is None:
+                    valid_positions = []
+                    for cue in rekordbox_data.cue_points:
+                        if cue["position"] is not None and float(cue["position"]) >= 0:
+                            valid_positions.append(float(cue["position"]))
+                    
+                    valid_positions.sort()
+                    
+                    # Deduplicate cues closer than 2.0 seconds (e.g. duplicate hot/memory markers)
+                    dedup_positions = []
+                    for pos in valid_positions:
+                        if not dedup_positions:
+                            dedup_positions.append(pos)
+                        else:
+                            if pos - dedup_positions[-1] >= 2.0:
+                                dedup_positions.append(pos)
+                                
+                    if len(dedup_positions) >= 2:
+                        cue_in = dedup_positions[1]
+                        
+                        last_cue = dedup_positions[-1]
+                        # If last cue is less than 15s from track end, use the penultimate cue for mix-out
+                        if duration - last_cue < 15.0 and len(dedup_positions) >= 3:
+                            cue_out = dedup_positions[-2]
+                        else:
+                            cue_out = last_cue
+                        
+                        logger.info(
+                            f"Heuristik fuer unbenannte Rekordbox-Cues angewendet: "
+                            f"in={cue_in:.1f}s, out={cue_out:.1f}s aus {len(dedup_positions)} Cues"
+                        )
 
                 candidate_in = cue_in if cue_in is not None else mix_in_point
                 candidate_out = cue_out if cue_out is not None else mix_out_point

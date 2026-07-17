@@ -1846,6 +1846,17 @@ class LibraryPanel(QWidget):
         bpm_row.addWidget(self.bpm_value_label)
         left_layout.addLayout(bpm_row)
 
+        # Force Rekordbox Custom Cue Schema Checkbox
+        self.force_custom_cues = QCheckBox("Erzwinge Cue-Heuristik (2. Cue = In, Letzter/Vorletzter = Out)")
+        self.force_custom_cues.setChecked(False)
+        self.force_custom_cues.setStyleSheet(f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 11px; padding-top: 6px; padding-bottom: 6px; }}")
+        self.force_custom_cues.setToolTip(
+            "Ignoriert 'MIX IN' / 'MIX OUT' Bezeichnungen und setzt die Mixpunkte "
+            "strikt nach deinem Cue-Schema (2. Cue = Mix-In, letzter oder vorletzter Cue = Mix-Out)."
+        )
+        self.force_custom_cues.stateChanged.connect(self._on_force_cues_changed)
+        left_layout.addWidget(self.force_custom_cues)
+
         # Generate-Button
         self.start_button = QPushButton("GENERATE PLAYLIST")
         self.start_button.setObjectName("btn_primary")
@@ -1942,6 +1953,14 @@ class LibraryPanel(QWidget):
             "bpm_tolerance": float(self.bpm_tolerance_slider.value()),
             "advanced_params": self.get_advanced_parameters(),
         }
+
+    def _on_force_cues_changed(self, state):
+        import os
+        # In PyQt6, state is an integer (2 = Checked, 0 = Unchecked)
+        if state == 2:
+            os.environ["HPG_FORCE_CUSTOM_CUE_SCHEMA"] = "1"
+        else:
+            os.environ["HPG_FORCE_CUSTOM_CUE_SCHEMA"] = "0"
 
 
 class EnergyBarDelegate(QStyledItemDelegate):
