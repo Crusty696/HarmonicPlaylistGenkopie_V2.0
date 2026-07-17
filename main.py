@@ -126,6 +126,7 @@ from datetime import datetime
 class AIAnalysisWorker(QThread):
     """Worker thread for running AI analysis in the background."""
     ai_finished = pyqtSignal(str, dict)  # (track_path, metadata)
+    progress = pyqtSignal(int, int)      # (current_track_index, total_tracks)
 
     def __init__(self, playlist: list, provider: str = None, model: str = None,
                  base_url: str = None, parent=None):
@@ -167,13 +168,15 @@ class AIAnalysisWorker(QThread):
         logger = logging.getLogger("hpg_core.ai_engine")
         self._ensure_ready()
         logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
+        total_tracks = len(self.playlist)
         for i, track in enumerate(self.playlist):
             if self._should_cancel:
                 logger.info("AI Mood Tagging cancelled by user.")
                 break
+            self.progress.emit(i, total_tracks)
             try:
                 filename = os.path.basename(track.filePath)
-                logger.info(f"[{i+1}/{len(self.playlist)}] AI analyzing track: '{filename}'...")
+                logger.info(f"[{i+1}/{total_tracks}] AI analyzing track: '{filename}'...")
                 from hpg_core.ai_engine import fetch_ai_analysis
                 ai_data = fetch_ai_analysis(
                     track, provider=self.provider, model=self.model, url=self.base_url
@@ -184,6 +187,7 @@ class AIAnalysisWorker(QThread):
                     logger.warning(f"AI returned empty result for track '{filename}'.")
             except Exception as e:
                 logger.error(f"Error during AI analysis for track '{os.path.basename(track.filePath)}': {e}")
+        self.progress.emit(total_tracks, total_tracks)
         logger.info("AI Mood Tagging complete.")
 
 
@@ -3127,14 +3131,28 @@ class MainWindow(QMainWindow):
             advanced_params=settings["advanced_params"],
         )
 
-        # Worker-Signale an StatusBar & progress_widget
-        self.worker.progress.connect(self.status_bar.set_progress)
-        self.worker.progress.connect(self.library_panel.progress_widget.set_progress)
+        # Worker-Signale an StatusBar & progress_widget (skaliert auf 80%)
+        self.worker.progress.connect(self._on_audio_progress)
         self.worker.phase_changed.connect(self.library_panel.progress_widget.set_step_status)
         self.worker.status_update.connect(self.status_bar.set_status)
         self.worker.finished.connect(self.analysis_finished)
 
         self.worker.start()
+
+    def _on_audio_progress(self, percent):
+        # Audio-Analyse nimmt die ersten 80% des Fortschritts ein
+        scaled = int(percent * 0.8)
+        self.status_bar.set_progress(scaled)
+        self.library_panel.progress_widget.set_progress(scaled)
+
+    def _on_ai_progress(self, current, total):
+        if total > 0:
+            percent = int((current / total) * 100)
+            # AI-Analyse nimmt die verbleibenden 20% ein
+            scaled = 80 + int(percent * 0.2)
+            self.status_bar.set_progress(scaled)
+            self.library_panel.progress_widget.set_progress(scaled)
+            self.status_bar.set_status(f"KI-Anreicherung laeuft... ({current}/{total} Tracks)")
 
     def cancel_analysis(self):
         """Analyse abbrechen — cooperative shutdown."""
@@ -3272,6 +3290,14 @@ class MainWindow(QMainWindow):
     def on_ai_worker_finished(self):
         """AI Analysis beendet — Phase 5 abschliessen und UI-Panels einmalig aktualisieren."""
         self.library_panel.progress_widget.set_step_status(4, "completed")
+        self.library_panel.progress_widget.set_progress(100)
+        self.status_bar.set_progress(100)
+        self.status_bar.hide_progress()
+        self.status_bar.set_status("Bereit — Analyse vollstaendig abgeschlossen")
+        
+        # Buttons erst hier wieder aktivieren wenn alles durchgelaufen ist
+        self.library_panel.start_button.setEnabled(True)
+        self.toolbar.set_generate_enabled(True)
         
         # 4. Gesamtmetriken neu berechnen und UI-Panels updaten
         from hpg_core.playlist import calculate_playlist_quality, compute_transition_recommendations
@@ -3286,10 +3312,9 @@ class MainWindow(QMainWindow):
 
     def analysis_finished(self, playlist, quality_metrics):
         """Analyse fertig — Daten an alle Panels verteilen."""
-        # Buttons wieder aktivieren
-        self.library_panel.start_button.setEnabled(True)
-        self.toolbar.set_generate_enabled(True)
-        self.status_bar.hide_progress()
+        # Audio-Analyse fertig -> Fortschritt steht bei 80% (Rest ist KI-Anreicherung)
+        self.status_bar.set_progress(80)
+        self.library_panel.progress_widget.set_progress(80)
 
         # M4: Worker-Signale trennen und aufraeumen
         if self.worker:
@@ -3367,6 +3392,7 @@ class MainWindow(QMainWindow):
         self.library_panel.progress_widget.set_step_status(4, "working")
 
         self.ai_worker.ai_finished.connect(self.on_ai_finished)
+        self.ai_worker.progress.connect(self._on_ai_progress)
         self.ai_worker.finished.connect(self.on_ai_worker_finished)
         self.ai_worker.start()
 
