@@ -352,46 +352,6 @@ def calculate_compatibility(
 def _sort_harmonic_flow(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
-    """Greedy algorithm to find the most harmonically compatible path."""
-    unprocessed = list(tracks)
-    start_track = min(unprocessed, key=lambda t: t.bpm)
-    final_playlist = [start_track]
-    unprocessed.remove(start_track)
-
-    current_track = start_track
-    while unprocessed:
-        best_next = None
-        highest_score = -1
-        for candidate in unprocessed:
-            score = calculate_compatibility(
-                current_track, candidate, bpm_tolerance, **kwargs
-            )
-            if score > highest_score:
-                highest_score = score
-                best_next = candidate
-
-        # L2-Fix: Score 0 = BPM-Gate fuer ALLE Kandidaten gerissen — vorher war
-        # der BPM-Fallback unerreichbar (Bedingung > -9999 immer wahr)
-        if best_next and highest_score > 0:
-            final_playlist.append(best_next)
-            unprocessed.remove(best_next)
-            current_track = best_next
-        else:
-            # Echtes, dummyloses Fallback-System: Wähle den Track mit dem geringsten BPM-Abstand
-            best_fallback = min(
-                unprocessed,
-                key=lambda t: effective_bpm_diff(t.bpm, current_track.bpm)[0]
-            )
-            final_playlist.append(best_fallback)
-            unprocessed.remove(best_fallback)
-            current_track = best_fallback
-
-    return final_playlist
-
-
-def _sort_harmonic_flow_enhanced(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.bpm)
@@ -467,20 +427,13 @@ def _sort_harmonic_flow_enhanced(
             unprocessed.remove(best_next)
             current_track = best_next
         else:
-            # Fallback: choose track with best single compatibility
-            def get_compat(t):
-                cache_key = (id(current_track), id(t))
-                if cache_key in compat_cache:
-                    return compat_cache[cache_key]
-                score = calculate_compatibility(
-                    current_track, t, bpm_tolerance, **kwargs
-                )
-                compat_cache[cache_key] = score
-                return score
-
-            fallback = max(
+            # Fallback (Strategien-Merge 2026-07-17, portiert aus der frueheren
+            # Plain-Variante): kein harmonisch kompatibler Kandidat mehr —
+            # waehle den Track mit der kleinsten EFFEKTIVEN BPM-Differenz
+            # (Half/Double-Time-bewusst) statt roher Kompatibilitaets-Maxima
+            fallback = min(
                 unprocessed,
-                key=get_compat,
+                key=lambda t: effective_bpm_diff(t.bpm, current_track.bpm)[0],
             )
             final_playlist.append(fallback)
             unprocessed.remove(fallback)
@@ -591,30 +544,6 @@ def _prepare_track_metrics(
     return metrics
 
 
-def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
-    """Arrange tracks to build towards a peak (combined BPM/Energy) before a controlled decline."""
-    if not tracks:
-        return []
-
-    scored_tracks = _prepare_track_metrics(tracks)
-    scored_tracks.sort(key=lambda item: item[1])  # ascending combined score
-
-    count = len(scored_tracks)
-    if count <= 2:
-        return [item[0] for item in scored_tracks]
-
-    waveform_positions = sorted(
-        range(count), key=lambda idx: math.sin((idx / (count - 1)) * math.pi)
-    )
-
-    ordered_tracks: list[Optional[Track]] = [None] * count
-    for (track, *_), position in zip(scored_tracks, waveform_positions):
-        ordered_tracks[position] = track
-
-    # type ignore safe due to population step above
-    return [track for track in ordered_tracks if track is not None]
-
-
 def _sort_energy_wave(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
@@ -650,7 +579,7 @@ def _sort_energy_wave(
     return result
 
 
-def _sort_peak_time_enhanced(
+def _sort_peak_time(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Enhanced peak-time arrangement with harmonic considerations and multiple peaks."""
@@ -743,152 +672,6 @@ def _apply_harmonic_smoothing(
                         improved = True
 
     return result
-
-
-def _sort_emotional_journey(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """Create an emotional journey based on energy, BPM, and harmonic progression."""
-    if len(tracks) <= 3:
-        return sorted(tracks, key=lambda t: (t.energy, t.bpm))
-
-    # Get energy direction from advanced params
-    energy_dir_str = kwargs.get("energy_direction", "Auto")
-
-    # Map user selection to energy directions for each phase
-    if energy_dir_str == "Build Up":
-        # Continuous energy build throughout
-        phase_directions = [
-            EnergyDirection.UP,
-            EnergyDirection.UP,
-            EnergyDirection.UP,
-            EnergyDirection.UP,
-        ]
-    elif energy_dir_str == "Cool Down":
-        # Continuous energy decline throughout
-        phase_directions = [
-            EnergyDirection.DOWN,
-            EnergyDirection.DOWN,
-            EnergyDirection.DOWN,
-            EnergyDirection.DOWN,
-        ]
-    elif energy_dir_str == "Maintain":
-        # Keep energy consistent
-        phase_directions = [
-            EnergyDirection.MAINTAIN,
-            EnergyDirection.MAINTAIN,
-            EnergyDirection.MAINTAIN,
-            EnergyDirection.MAINTAIN,
-        ]
-    else:  # "Auto" - default emotional journey curve
-        phase_directions = [
-            EnergyDirection.UP,
-            EnergyDirection.UP,
-            EnergyDirection.MAINTAIN,
-            EnergyDirection.DOWN,
-        ]
-
-    # Sort tracks by energy and BPM
-    energy_sorted = sorted(tracks, key=lambda t: t.energy)
-    count = len(tracks)
-
-    # Verteile Tracks auf Phasen — Schutz gegen negative Werte bei Mini-Playlisten
-    opening_count = max(1, count // 4)
-    building_count = max(1, int(count * 0.4))
-    peak_count = max(1, int(count * 0.2))
-    # Sicherstellen, dass Phase-Summe nicht > count (passiert bei count < 4)
-    total_allocated = opening_count + building_count + peak_count
-    if total_allocated > count:
-        # Bei Mini-Playlisten: einfache gleichmaessige Verteilung
-        opening_count = min(opening_count, count)
-        building_count = min(building_count, max(0, count - opening_count))
-        peak_count = min(peak_count, max(0, count - opening_count - building_count))
-    resolution_count = max(0, count - opening_count - building_count - peak_count)
-
-    # Select tracks for each phase
-    # M11-Fix: Resolution (Cool-Down) bekommt das untere Mittelfeld, Building
-    # das obere — vorher war der Cool-Down energiereicher als der Build
-    opening_tracks = energy_sorted[:opening_count]
-    resolution_tracks = (
-        energy_sorted[opening_count : opening_count + resolution_count]
-        if resolution_count > 0
-        else []
-    )
-    building_tracks = energy_sorted[
-        opening_count + resolution_count
-        : opening_count + resolution_count + building_count
-    ]
-    # Guard: peak_count kann durch den Mini-Playlist-Clamp 0 werden —
-    # [-0:] waere die GANZE Liste (Track-Duplikation)
-    peak_tracks = energy_sorted[-peak_count:] if peak_count > 0 else []
-
-    # Arrange each phase with harmonic consideration
-    journey = []
-    # M2-Fix: Harmonik-Parameter (strictness/experimental) in die Phasen
-    # durchreichen — energy_direction (String) bleibt draussen, der Enum-Param
-    # wird separat uebergeben
-    compat_kwargs = {
-        k: kwargs[k]
-        for k in ("harmonic_strictness", "allow_experimental")
-        if k in kwargs
-    }
-    journey.extend(_arrange_phase(opening_tracks, bpm_tolerance, phase_directions[0], **compat_kwargs))
-    journey.extend(_arrange_phase(building_tracks, bpm_tolerance, phase_directions[1], **compat_kwargs))
-    journey.extend(_arrange_phase(peak_tracks, bpm_tolerance, phase_directions[2], **compat_kwargs))
-    journey.extend(
-        _arrange_phase(resolution_tracks, bpm_tolerance, phase_directions[3], **compat_kwargs)
-    )
-
-    return journey
-
-
-def _arrange_phase(
-    tracks: list[Track], bpm_tolerance: float, energy_direction: EnergyDirection, **kwargs
-) -> list[Track]:
-    """Arrange tracks within a phase considering energy direction and harmony."""
-    if not tracks:
-        return []
-    if len(tracks) == 1:
-        return tracks
-
-    # Use enhanced compatibility with energy direction preference
-    arranged = []
-    remaining = list(tracks)
-
-    # Start with track that best fits the phase
-    if energy_direction == EnergyDirection.UP:
-        current = min(remaining, key=lambda t: t.energy + t.bpm)
-    elif energy_direction == EnergyDirection.DOWN:
-        current = max(remaining, key=lambda t: t.energy + t.bpm)
-    else:  # MAINTAIN
-        avg_energy = sum(t.energy for t in remaining) / len(remaining)
-        current = min(remaining, key=lambda t: abs(t.energy - avg_energy))
-
-    arranged.append(current)
-    remaining.remove(current)
-
-    # Greedily select best transitions
-    while remaining:
-        best_next = None
-        best_score = -1
-
-        for candidate in remaining:
-            metrics = calculate_enhanced_compatibility(
-                current, candidate, bpm_tolerance, energy_direction, **kwargs
-            )
-            if metrics.overall_score > best_score:
-                best_score = metrics.overall_score
-                best_next = candidate
-
-        if best_next:
-            arranged.append(best_next)
-            remaining.remove(best_next)
-            current = best_next
-        else:
-            # Fallback
-            arranged.append(remaining.pop())
-
-    return arranged
 
 
 def _sort_genre_flow(
@@ -1485,11 +1268,17 @@ def _sort_context_flow(
       - Genre-Fatigue (nach 4 gleichen Genres Wechsel belohnen)
       - Repetition-Penalty (Beinahe-Klone nicht back-to-back)
       - Energie-Cliff-Penalty (Spruenge > 35 Punkte vermeiden)
+
+    Strategien-Merge 2026-07-17: uebernimmt die energy_direction-Presets der
+    frueheren "Emotional Journey"-Strategie — "Build Up"/"Cool Down"/"Maintain"
+    formen die Zielenergie-Kurve, "Auto" = klassische Set-Dramaturgie.
     """
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.energy)
 
     phase_target_energy = {"warmup": 30.0, "build": 60.0, "peak": 85.0, "cooldown": 40.0}
+    energy_dir = str(kwargs.get("energy_direction", "Auto"))
+    pool_avg_energy = sum(t.energy for t in tracks) / len(tracks)
 
     def _phase(position: int, total: int) -> str:
         p = position / max(1, total - 1)
@@ -1501,20 +1290,35 @@ def _sort_context_flow(
             return "peak"
         return "cooldown"
 
+    def _target_energy(position: int, total: int) -> float:
+        progress = position / max(1, total - 1)
+        if energy_dir == "Build Up":
+            return 30.0 + 55.0 * progress
+        if energy_dir == "Cool Down":
+            return 85.0 - 55.0 * progress
+        if energy_dir == "Maintain":
+            return pool_avg_energy
+        return phase_target_energy[_phase(position, total)]
+
     def _genre(t: Track) -> str:
         return getattr(t, "detected_genre", "") or t.genre or "Unknown"
 
     unprocessed = list(tracks)
     total = len(tracks)
-    # Warm-up: ruhigster Track eroeffnet das Set
-    start = min(unprocessed, key=lambda t: t.energy)
+    # Start-Track passend zur Richtung: Build Up/Auto = ruhigster Track,
+    # Cool Down = energiereichster, Maintain = naechster am Durchschnitt
+    if energy_dir == "Cool Down":
+        start = max(unprocessed, key=lambda t: t.energy)
+    elif energy_dir == "Maintain":
+        start = min(unprocessed, key=lambda t: abs(t.energy - pool_avg_energy))
+    else:
+        start = min(unprocessed, key=lambda t: t.energy)
     final_playlist = [start]
     unprocessed.remove(start)
 
     while unprocessed:
         current = final_playlist[-1]
-        phase = _phase(len(final_playlist), total)
-        target_energy = phase_target_energy[phase]
+        target_energy = _target_energy(len(final_playlist), total)
 
         # Energie-Trend aus den letzten 3 Tracks
         recent = [t.energy for t in final_playlist[-3:]]
@@ -1579,18 +1383,29 @@ def _sort_context_flow(
 
 # --- Main Dispatcher --- #
 
+# Strategien-Merge 2026-07-17 (11 -> 8):
+# - "Harmonic Flow" nutzt jetzt die Enhanced-Implementierung (Lookahead war
+#   strikt besser, ~90% Code-Overlap zwischen beiden Varianten)
+# - "Peak-Time" nutzt die Enhanced-Implementierung (peak_position-Regler +
+#   Harmonic Smoothing; die simple sin-Kurve war faktisch redundant)
+# - "Emotional Journey" ist in "Context Flow" aufgegangen (energy_direction-
+#   Presets Build Up / Cool Down / Maintain formen dort die Zielenergie-Kurve)
 STRATEGIES = {
     "Harmonic Flow": _sort_harmonic_flow,
-    "Harmonic Flow Enhanced": _sort_harmonic_flow_enhanced,
     "Warm-Up": _sort_warm_up,
     "Cool-Down": _sort_cool_down,
     "Peak-Time": _sort_peak_time,
-    "Peak-Time Enhanced": _sort_peak_time_enhanced,
     "Energy Wave": _sort_energy_wave,
-    "Emotional Journey": _sort_emotional_journey,
     "Genre Flow": _sort_genre_flow,
     "Consistent": _sort_consistent,
     "Context Flow": _sort_context_flow,
+}
+
+# Alte Namen bleiben gueltig (gespeicherte Settings, Tests, Cache-Metadaten)
+STRATEGY_ALIASES = {
+    "Harmonic Flow Enhanced": "Harmonic Flow",
+    "Peak-Time Enhanced": "Peak-Time",
+    "Emotional Journey": "Context Flow",
 }
 
 
@@ -1646,6 +1461,8 @@ def generate_playlist(
     if not valid_tracks:
         return tracks  # Return original if no tracks are valid
 
+    # Alte Strategie-Namen (vor dem 11->8-Merge) aufloesen
+    mode = STRATEGY_ALIASES.get(mode, mode)
     # Get the sorting function from the strategy map
     sorter = STRATEGIES.get(mode, _sort_harmonic_flow)  # Default to harmonic flow
 

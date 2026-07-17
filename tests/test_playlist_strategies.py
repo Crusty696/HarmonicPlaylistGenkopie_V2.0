@@ -3,7 +3,9 @@ Tests fuer alle 10 Playlist-Sortierstrategien.
 Prueft ob jede Strategie korrekt sortiert und keine Tracks verliert.
 """
 import pytest
-from hpg_core.playlist import generate_playlist, STRATEGIES, _sort_harmonic_flow
+from hpg_core.playlist import (
+  generate_playlist, STRATEGIES, STRATEGY_ALIASES, _sort_harmonic_flow,
+)
 from tests.fixtures.track_factories import (
   make_track, make_house_track, make_techno_track,
   make_dnb_track, make_minimal_track, make_dj_set,
@@ -28,22 +30,38 @@ def same_key_set():
 
 
 class TestAllStrategiesExist:
-  """Alle 11 Strategien sind registriert."""
+  """Alle 8 Strategien sind registriert (Merge 11 -> 8, 2026-07-17)."""
 
-  def test_11_strategies_available(self):
-    """Genau 11 Strategien in STRATEGIES (inkl. Context Flow, 2026-07)."""
-    assert len(STRATEGIES) == 11
+  def test_8_strategies_available(self):
+    """Genau 8 Strategien in STRATEGIES (nach Enhanced/EJ-Merge)."""
+    assert len(STRATEGIES) == 8
 
   @pytest.mark.parametrize("name", [
-    "Harmonic Flow", "Harmonic Flow Enhanced",
-    "Warm-Up", "Cool-Down",
-    "Peak-Time", "Peak-Time Enhanced",
-    "Energy Wave", "Emotional Journey",
-    "Genre Flow", "Consistent", "Context Flow",
+    "Harmonic Flow", "Warm-Up", "Cool-Down", "Peak-Time",
+    "Energy Wave", "Genre Flow", "Consistent", "Context Flow",
   ])
   def test_strategy_registered(self, name):
     """Strategie ist in STRATEGIES registriert."""
     assert name in STRATEGIES, f"Strategie '{name}' fehlt"
+
+  @pytest.mark.parametrize("old_name,new_name", [
+    ("Harmonic Flow Enhanced", "Harmonic Flow"),
+    ("Peak-Time Enhanced", "Peak-Time"),
+    ("Emotional Journey", "Context Flow"),
+  ])
+  def test_alte_namen_als_alias(self, old_name, new_name):
+    """Alte Strategie-Namen bleiben via STRATEGY_ALIASES gueltig."""
+    assert STRATEGY_ALIASES[old_name] == new_name
+    assert new_name in STRATEGIES
+
+  @pytest.mark.parametrize("old_name", [
+    "Harmonic Flow Enhanced", "Peak-Time Enhanced", "Emotional Journey",
+  ])
+  def test_alias_generiert_playlist(self, old_name):
+    """generate_playlist akzeptiert alte Namen (Backward-Compat)."""
+    tracks = make_dj_set()
+    result = generate_playlist(tracks[:], old_name, bpm_tolerance=6.0)
+    assert len(result) > 0
 
 
 class TestStrategyBasicProperties:
@@ -195,7 +213,13 @@ class TestEdgeCases:
     assert len(valid_bpms) >= 1
 
   def test_harmonic_flow_fallback_prefers_half_time(self, monkeypatch):
-    """Fallback wählt Half-Time statt nur rohe BPM-Distanz."""
+    """Fallback wählt Half-Time (effektive BPM-Differenz) statt roher Distanz.
+
+    Strategien-Merge 2026-07-17: der Half/Double-bewusste Fallback wurde aus
+    der Plain-Variante in die Lookahead-Implementierung portiert. Nach dem
+    Start-Track (120) muss der 60-BPM-Track (effektive Diff 0 via Half-Time)
+    vor dem 90-BPM-Track (Diff 30) kommen.
+    """
     tracks = [
       make_track(camelotCode="8A", bpm=120.0, energy=60, title="A"),
       make_track(camelotCode="8A", bpm=60.0, energy=60, title="B"),
@@ -204,8 +228,11 @@ class TestEdgeCases:
 
     monkeypatch.setattr(
       "hpg_core.playlist.calculate_compatibility",
-      lambda *args, **kwargs: -10000,
+      lambda *args, **kwargs: 0,
     )
 
     result = _sort_harmonic_flow(tracks, bpm_tolerance=3.0)
-    assert result[0].bpm == 60.0
+    bpms = [t.bpm for t in result]
+    # Half-Time-Partner (60/120) muessen direkt aufeinander folgen
+    idx_120, idx_60 = bpms.index(120.0), bpms.index(60.0)
+    assert abs(idx_120 - idx_60) == 1, f"Reihenfolge: {bpms}"

@@ -294,7 +294,7 @@ class AnalysisWorker(QThread):
     def __init__(
         self,
         folder_path,
-        mode="Harmonic Flow Enhanced",
+        mode="Harmonic Flow",
         bpm_tolerance=3.0,
         advanced_params=None,
     ):
@@ -803,7 +803,7 @@ class AdvancedParametersWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         # Energy Direction Control
-        energy_group = QGroupBox("Energy Direction (Emotional Journey)")
+        energy_group = QGroupBox("Energy Direction (Context Flow)")
         energy_group.setToolTip(
             "Steuert den Energie-Verlauf der Playlist.\n"
             "Bestimmt, wie sich die Intensitaet der Tracks\n"
@@ -1780,14 +1780,11 @@ class LibraryPanel(QWidget):
         left_layout.addWidget(strategy_label)
 
         self.strategy_combo = QComboBox()
-        enhanced_strategies = [k for k in STRATEGIES.keys() if "Enhanced" in k]
-        basic_strategies = [k for k in STRATEGIES.keys() if "Enhanced" not in k]
-        all_strategies = enhanced_strategies + basic_strategies
-        self.strategy_combo.addItems(all_strategies)
-        self.strategy_combo.setCurrentText("Harmonic Flow Enhanced")
+        self.strategy_combo.addItems(list(STRATEGIES.keys()))
+        self.strategy_combo.setCurrentText("Harmonic Flow")
         self.strategy_combo.setToolTip(
             "Waehle den Algorithmus fuer die Playlist-Generierung.\n"
-            "'Enhanced'-Varianten nutzen Look-Ahead und Backtracking."
+            "Harmonic Flow und Peak-Time nutzen Look-Ahead bzw. Smoothing."
         )
         left_layout.addWidget(self.strategy_combo)
 
@@ -1873,17 +1870,14 @@ class LibraryPanel(QWidget):
     def _update_strategy_description(self):
         strategy = self.strategy_combo.currentText()
         descriptions = {
-            "Harmonic Flow Enhanced": "Advanced harmonic mixing with look-ahead optimization and backtracking.",
-            "Harmonic Flow": "Basic harmonic mixing using Camelot wheel.",
-            "Peak-Time Enhanced": "Multi-peak arrangement with harmonic smoothing.",
-            "Peak-Time": "Single peak arrangement building energy to a climax.",
-            "Emotional Journey": "Four-phase progression (Opening → Building → Peak → Resolution).",
+            "Harmonic Flow": "Harmonic mixing (Camelot wheel) with look-ahead optimization and backtracking.",
+            "Peak-Time": "Peak arrangement with adjustable peak position and harmonic smoothing.",
             "Genre Flow": "Smooth transitions between similar genres while maintaining energy.",
             "Energy Wave": "Alternating high/low energy creates dynamic listening experience.",
             "Warm-Up": "Gradual BPM increase from low to high energy.",
             "Cool-Down": "Gradual BPM decrease from high to low energy.",
             "Consistent": "Minimal BPM/energy jumps with harmonic compatibility.",
-            "Context Flow": "Set-phase aware: target energy per phase, trend continuation, genre fatigue, no clone tracks back-to-back.",
+            "Context Flow": "Set-phase aware: target energy per phase (Energy Direction presets), trend continuation, genre fatigue, no clone tracks back-to-back.",
         }
         self.strategy_description.setText(
             descriptions.get(strategy, "No description available.")
@@ -2885,9 +2879,9 @@ class AnalyticsPanel(QWidget):
             html += "<p><b>Consider adjustments.</b> Try a different algorithm or adjust BPM tolerance.</p>"
 
         if quality_metrics.get("harmonic_flow", 0) < 0.6:
-            html += "<p>Try increasing harmonic strictness or using 'Harmonic Flow Enhanced'.</p>"
+            html += "<p>Try increasing harmonic strictness or using 'Harmonic Flow'..</p>"
         if quality_metrics.get("energy_consistency", 0) < 0.6:
-            html += "<p>Consider 'Emotional Journey' or 'Energy Wave' for better energy flow.</p>"
+            html += "<p>Consider 'Context Flow' or 'Energy Wave' for better energy flow.</p>"
         if quality_metrics.get("bpm_smoothness", 0) < 0.6:
             html += (
                 "<p>Try increasing BPM tolerance or using 'Consistent' algorithm.</p>"
@@ -2909,7 +2903,7 @@ class MainWindow(QMainWindow):
         self.resize(1100, 750)
         self.playlist = []
         self.quality_metrics = {}
-        self.current_playlist_mode = "Harmonic Flow Enhanced"
+        self.current_playlist_mode = "Harmonic Flow"
         self.current_bpm_tolerance = 3.0
         self.worker = None
         self.ai_worker = None
