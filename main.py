@@ -420,61 +420,12 @@ class AnalysisWorker(QThread):
 
             logger.info(f"Feature extraction complete: {len(analyzed_tracks)} tracks successfully analyzed.")
             self.phase_changed.emit(1, "completed")
-            self.phase_changed.emit(2, "working")
-            self.status_update.emit(
-                f"Analyzed {len(analyzed_tracks)} tracks. Generating playlist..."
-            )
-            logger.info(f"Generating playlist using mode: '{self.mode}' (BPM Tolerance: {self.bpm_tolerance})...")
-
-            try:
-                sorted_playlist = generate_playlist(
-                    analyzed_tracks,
-                    mode=self.mode,
-                    bpm_tolerance=self.bpm_tolerance,
-                    advanced_params=self.advanced_params,
-                )
-            except Exception as e:
-                self.phase_changed.emit(2, "inactive")
-                self.status_update.emit(f"ERROR generating playlist: {str(e)}")
-                logger.error(f"Playlist generation failed: {e}")
-                get_error_reporter().log_error(
-                    "playlist_generation", str(e), {"mode": self.mode}
-                )
-                self.finished.emit([], {})
-                return
-
-            if not sorted_playlist:
-                self.phase_changed.emit(2, "inactive")
-                self.status_update.emit(
-                    "ERROR: Playlist generation returned empty result."
-                )
-                logger.error("Playlist generation returned an empty result.")
-                self.finished.emit([], {})
-                return
-
-            logger.info(f"Playlist successfully generated with {len(sorted_playlist)} tracks.")
             self.phase_changed.emit(2, "completed")
-            self.phase_changed.emit(3, "working")
-            # Calculate quality metrics
-            self.status_update.emit("Calculating quality metrics...")
-            logger.info("Calculating transition quality metrics...")
-            try:
-                quality_metrics = calculate_playlist_quality(
-                    sorted_playlist, self.bpm_tolerance
-                )
-            except Exception as e:
-                self.status_update.emit(f"Warning: Quality metrics failed: {str(e)}")
-                logger.warning(f"Failed to calculate quality metrics: {e}")
-                quality_metrics = {}
-
-            overall_score = quality_metrics.get("overall_score", 0.0)
-            logger.info(f"Quality analysis complete. Overall playlist score: {overall_score:.2f}%")
-            logger.info(f"Analysis process complete! {len(sorted_playlist)} tracks ready.")
             self.phase_changed.emit(3, "completed")
             self.status_update.emit(
-                f"Complete! {len(sorted_playlist)} tracks in playlist."
+                f"Audio-Analyse abgeschlossen. Starte KI-Veredelung fuer {len(analyzed_tracks)} Tracks..."
             )
-            self.finished.emit(sorted_playlist, quality_metrics)
+            self.finished.emit(analyzed_tracks, {})
 
         except InterruptedError:
             self.status_update.emit("Analysis cancelled.")
@@ -2938,6 +2889,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Harmonic Playlist Generator v{hpg_version}")
         self.resize(1100, 750)
         self.playlist = []
+        self.analyzed_raw_tracks = []
         self.quality_metrics = {}
         self.current_playlist_mode = "Harmonic Flow"
         self.current_bpm_tolerance = 3.0
@@ -3202,7 +3154,7 @@ class MainWindow(QMainWindow):
                 found_row = row
                 break
 
-        for track in self.playlist:
+        for track in self.analyzed_raw_tracks:
             if track.filePath == track_path:
                 track.ai_metadata = ai_data
                 
@@ -3283,35 +3235,84 @@ class MainWindow(QMainWindow):
                 score_item.setForeground(QColor("white"))
                 self.playlist_panel.table.setItem(found_row + 1, 14, score_item)
                 
-            # M1-Fix: KEINE Gesamtmetrik-Neuberechnung pro Track — das Signal
-            # feuert pro AI-Ergebnis und calculate_playlist_quality ist O(n);
-            # on_ai_worker_finished rechnet am Ende ohnehin einmal komplett
-
     def on_ai_worker_finished(self):
-        """AI Analysis beendet — Phase 5 abschliessen und UI-Panels einmalig aktualisieren."""
+        """AI Analysis beendet — Playlist generieren und UI-Panels einmalig aktualisieren."""
         self.library_panel.progress_widget.set_step_status(4, "completed")
         self.library_panel.progress_widget.set_progress(100)
         self.status_bar.set_progress(100)
         self.status_bar.hide_progress()
-        self.status_bar.set_status("Bereit — Analyse vollstaendig abgeschlossen")
         
-        # Buttons erst hier wieder aktivieren wenn alles durchgelaufen ist
+        # 1. Playlist zum ersten Mal generieren, jetzt wo alle Audio- und AI-Features da sind!
+        settings = self.library_panel.get_current_settings()
+        mode = settings["strategy"]
+        bpm_tolerance = settings["bpm_tolerance"]
+        advanced_params = settings["advanced_params"]
+        
+        from hpg_core.playlist import generate_playlist, calculate_playlist_quality, compute_transition_recommendations
+        
+        # Wir speichern das aktuelle Profil
+        self.current_playlist_mode = mode
+        self.current_bpm_tolerance = bpm_tolerance
+        
+        try:
+            self.playlist = generate_playlist(
+                self.analyzed_raw_tracks,
+                mode=mode,
+                bpm_tolerance=bpm_tolerance,
+                advanced_params=advanced_params
+            )
+        except Exception as e:
+            self.status_bar.set_status(f"ERROR generating playlist: {str(e)}")
+            import logging
+            logger = logging.getLogger("hpg_core.playlist")
+            logger.error(f"Playlist generation failed: {e}")
+            self.library_panel.start_button.setEnabled(True)
+            self.toolbar.set_generate_enabled(True)
+            return
+
+        if not self.playlist:
+            self.status_bar.set_status("ERROR: Playlist generation returned empty result.")
+            self.library_panel.start_button.setEnabled(True)
+            self.toolbar.set_generate_enabled(True)
+            return
+
+        # 2. Metriken und Transition-Empfehlungen berechnen
+        self.quality_metrics = calculate_playlist_quality(self.playlist, bpm_tolerance)
+        transition_plan = compute_transition_recommendations(self.playlist, bpm_tolerance)
+        self.playlist_panel.quality_metrics = self.quality_metrics
+        self.playlist_panel.transition_recommendations = transition_plan
+
+        # 3. Daten an alle Panels verteilen
+        self.playlist_panel.set_playlist_data(
+            self.playlist,
+            self.quality_metrics,
+            transition_recommendations=transition_plan,
+            bpm_tolerance=bpm_tolerance,
+        )
+        self.mix_tips_panel.set_recommendations(transition_plan)
+        # Transition-Audio-Previews rendern (Hintergrund-Worker)
+        self.mix_tips_panel.setup_transition_previews(transition_plan)
+        self.timeline_panel.set_timeline(self.playlist)
+        self.analytics_panel.set_analytics(self.quality_metrics)
+
+        # 4. Toolbar & Status aktualisieren
+        overall = self.quality_metrics.get("overall_score", 0)
+        self.toolbar.set_quality(overall)
+        self.toolbar.set_export_enabled(True)
+        self.toolbar.set_info(f"{len(self.playlist)} tracks | {mode}")
+        self.status_bar.set_status(
+            f"Complete — {len(self.playlist)} tracks, Quality {overall:.0%}"
+        )
+        
+        # Automatisch zum Playlist-Panel wechseln
+        self.sidebar.set_active(1)
+
+        # Buttons wieder aktivieren
         self.library_panel.start_button.setEnabled(True)
         self.toolbar.set_generate_enabled(True)
-        
-        # 4. Gesamtmetriken neu berechnen und UI-Panels updaten
-        from hpg_core.playlist import calculate_playlist_quality, compute_transition_recommendations
-        self.playlist_panel.quality_metrics = calculate_playlist_quality(self.playlist, self.playlist_panel.bpm_tolerance)
-        self.playlist_panel.transition_recommendations = compute_transition_recommendations(self.playlist, self.playlist_panel.bpm_tolerance)
-        
-        # Badges im PlaylistPanel aktualisieren
-        self.playlist_panel._update_quality_display()
-        
-        # Andere Panels aktualisieren
-        self._on_playlist_reordered()
 
     def analysis_finished(self, playlist, quality_metrics):
-        """Analyse fertig — Daten an alle Panels verteilen."""
+        """Audio-Analyse fertig — bereite KI-Veredelung vor, bevor die Playlist generiert wird."""
         # Audio-Analyse fertig -> Fortschritt steht bei 80% (Rest ist KI-Anreicherung)
         self.status_bar.set_progress(80)
         self.library_panel.progress_widget.set_progress(80)
@@ -3326,9 +3327,6 @@ class MainWindow(QMainWindow):
                 pass
             self.worker.deleteLater()
             self.worker = None
-        # H3-Fix: ai_worker hier NICHT auf None setzen — sonst verwaist ein noch
-        # laufender AI-Worker (QThread destroyed while running) und der
-        # isRunning()-Check weiter unten waere toter Code
 
         # Leere Playlist? Fehler anzeigen.
         if not playlist:
@@ -3336,41 +3334,9 @@ class MainWindow(QMainWindow):
             self.library_panel.progress_widget.reset_steps()
             return
 
-        self.playlist = playlist
-        self.quality_metrics = quality_metrics
+        # Speichere die analysierten Roh-Tracks
+        self.analyzed_raw_tracks = playlist
 
-        # Transition-Empfehlungen berechnen
-        transition_plan = compute_transition_recommendations(
-            playlist, bpm_tolerance=self.current_bpm_tolerance
-        )
-
-        # Daten an alle Panels verteilen
-        self.playlist_panel.set_playlist_data(
-            playlist,
-            quality_metrics,
-            transition_recommendations=transition_plan,
-            bpm_tolerance=self.current_bpm_tolerance,
-        )
-        self.mix_tips_panel.set_recommendations(transition_plan)
-        # Transition-Audio-Previews rendern (Hintergrund-Worker)
-        self.mix_tips_panel.setup_transition_previews(transition_plan)
-        self.timeline_panel.set_timeline(playlist)
-        self.analytics_panel.set_analytics(quality_metrics)
-
-        # Toolbar aktualisieren
-        overall = quality_metrics.get("overall_score", 0)
-        self.toolbar.set_quality(overall)
-        self.toolbar.set_export_enabled(True)
-        self.toolbar.set_info(f"{len(playlist)} tracks | {self.current_playlist_mode}")
-
-        # StatusBar
-        self.status_bar.set_status(
-            f"Complete — {len(playlist)} tracks, Quality {overall:.0%}"
-        )
-
-        # Automatisch zum Playlist-Panel wechseln
-        self.sidebar.set_active(1)
-        
         # AI Analysis starten
         if self.ai_worker and self.ai_worker.isRunning():
             self.ai_worker.request_cancel()
@@ -3381,11 +3347,11 @@ class MainWindow(QMainWindow):
             "LM Studio" if ap.lmstudio_radio.isChecked() else "Ollama"
         )
         model = ap.model_combo.currentText()
-        # base_url vom Auto-Detect (LM-Studio-Port dynamisch). Wenn None, startet der
-        # Worker den Provider selbst nach (ensure_ready im Worker-Thread).
         base_url = ap.detected_base_url
+        
+        # Der AI-Worker analysiert alle rohen, importierten Tracks, um deren Moods/Subgenres einzusammeln!
         self.ai_worker = AIAnalysisWorker(
-            playlist, provider=provider, model=model, base_url=base_url
+            self.analyzed_raw_tracks, provider=provider, model=model, base_url=base_url
         )
 
         # Phase 5: AI MOODS in Arbeit
