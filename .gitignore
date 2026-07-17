@@ -95,3 +95,6 @@ desktop.ini
 
 # Installer Output
 installer_output/
+
+# Validierungs-Outputs (lokale Library-Daten, nicht committen)
+validation_output/
