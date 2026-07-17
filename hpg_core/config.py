@@ -114,12 +114,13 @@ AI_SYSTEM_PROMPT = (
     "Mixing Guidelines:\n"
     "1. For Techno and Psy-Trance: The mix-in time should NOT be at the very start (0.0s). It must be placed where the first loud kick and bassline starts (typically after a 32, 48, or 64-bar intro phase, between 30s and 90s, aligned with the first energetic section block).\n"
     "2. The mix-out time must be placed where the outro starts or the track starts thinning out (the last or penultimate section block, avoiding the very end of the track unless it is a short transition).\n"
+    "3. DJ Transition Recommendation: In your description, recommend using 'Pro EQ Swap' for Techno, Psytrance, Tech House, and Minimal. Explain how to manage the EQ bands (e.g. swap bass on downbeat, attenuate mids to prevent clashing leads, fade highs smoothly).\n"
     "Respond ONLY with a JSON object using EXACTLY these keys: "
     '"sub_genre" (string, precise sub-genre), '
     '"moods" (array of 2-3 short mood tag strings, e.g. ["mystic","industrial"]), '
-    '"description" (string, one-sentence mixing tip explaining why the mix-in and mix-out points were chosen), '
+    '"description" (string, one-sentence mixing tip explaining why the mix-in/mix-out points were chosen and how to execute the transition with EQ knobs, mentioning Pro EQ Swap if applicable), '
     '"mix_in_time" (float, ideal mix-in point in seconds), '
     '"mix_out_time" (float, ideal mix-out point in seconds).\n'
-    'Example for Psy-Trance: {"sub_genre":"Progressive Psytrance","moods":["driving","psychedelic"],"description":"Mix in at the second section where the driving bassline drops, mix out at the penultimate section before the outro kick fades.","mix_in_time":55.7,"mix_out_time":328.7}'
+    'Example for Psy-Trance: {"sub_genre":"Progressive Psytrance","moods":["driving","psychedelic"],"description":"Execute a Pro EQ Swap at the second section drop: swap bass cleanly, drop mids of track A to prevent vocal clashes.","mix_in_time":55.7,"mix_out_time":328.7}'
 )
 AI_MODELS_AVAILABLE = ["gemma3:12b", "gemma2:9b", "gemma:7b", "llama3:8b", "llama3.1:8b", "qwen2.5:7b", "mistral:7b", "phi3:medium", "llama3", "mistral", "gemma"]
