@@ -175,14 +175,15 @@ class RekordboxXMLExporter(BaseExporter):
         """
         Schreibt ein TEMPO-Element (Beatgrid-Anker) fuer den Track.
 
-        Anker bei 0.0s — HPG hat (noch) keine Downbeat-Erkennung; Rekordbox
-        analysiert den Grid bei Bedarf selbst nach.
+        Downbeat-Feature 2026-07-17: Anker ist der erkannte erste Downbeat
+        (Track.first_downbeat); 0.0 wenn keiner erkannt wurde.
         """
         if not track.bpm or track.bpm <= 0:
             return
         try:
             if hasattr(rb_track, "add_tempo"):
-                rb_track.add_tempo(Inizio=0.0, Bpm=float(track.bpm), Metro="4/4", Battito=1)
+                inizio = float(getattr(track, "first_downbeat", 0.0) or 0.0)
+                rb_track.add_tempo(Inizio=inizio, Bpm=float(track.bpm), Metro="4/4", Battito=1)
         except Exception as e:
             logger.warning(f"Beat Grid konnte nicht zur XML hinzugefuegt werden: {e}")
 

@@ -257,6 +257,7 @@ def _quantize_to_bars(
   bpm: float,
   duration: float,
   phrase_unit: int = 8,
+  anchor: float = 0.0,
 ) -> list[float]:
   """
   Quantize boundary times to the sub-phrase grid (half phrase_unit in bars).
@@ -286,9 +287,9 @@ def _quantize_to_bars(
 
   quantized = []
   for t in boundaries:
-    # Quantize to nearest sub-phrase boundary
-    grid_index = round(t / grid_seconds)
-    quantized_time = grid_index * grid_seconds
+    # Quantize to nearest sub-phrase boundary (downbeat-verankert)
+    grid_index = round((t - anchor) / grid_seconds)
+    quantized_time = grid_index * grid_seconds + anchor
 
     # Clamp to track bounds
     quantized_time = max(0.0, min(quantized_time, duration))
@@ -476,7 +477,7 @@ def _label_sections(
 
   return labels
 
-def _calculate_rms_and_phrase_boundaries(y: np.ndarray, sr: int, bpm: float, duration: float, phrase_unit: int) -> list[float]:
+def _calculate_rms_and_phrase_boundaries(y: np.ndarray, sr: int, bpm: float, duration: float, phrase_unit: int, anchor: float = 0.0) -> list[float]:
   """
   Echtes, dummyloses Fallback-System fuer Strukturgrenzen basierend auf RMS-Energieverlauf
   und musikalischem BPM-Taktgitter (Phrase-Einheiten).
@@ -519,7 +520,7 @@ def _calculate_rms_and_phrase_boundaries(y: np.ndarray, sr: int, bpm: float, dur
     boundaries = [0.0, intro_time, outro_time]
 
   # Quantisiere die Grenzen auf das Phrasengitter
-  return _quantize_to_bars(boundaries, bpm, duration, phrase_unit)
+  return _quantize_to_bars(boundaries, bpm, duration, phrase_unit, anchor)
 
 
 # === Main Analysis Function ===
@@ -529,6 +530,7 @@ def analyze_structure(
   sr: int,
   bpm: float,
   genre: str = "Unknown",
+  anchor: float = 0.0,
 ) -> TrackStructure:
   """
   Analyze track structure to identify sections.
@@ -567,16 +569,16 @@ def analyze_structure(
       min_distance_sec=max(MIN_SECTION_DURATION, seconds_per_bar * phrase_unit * 0.5),
     )
 
-    # Step 3: Quantize to bar grid
-    boundaries = _quantize_to_bars(boundaries, bpm, duration, phrase_unit)
+    # Step 3: Quantize to bar grid (downbeat-verankert)
+    boundaries = _quantize_to_bars(boundaries, bpm, duration, phrase_unit, anchor)
 
     # Ensure we have at least intro + main + outro
     if len(boundaries) < 2:
-      boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit)
+      boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit, anchor)
 
   except Exception as e:
     logger.warning(f"Novelty-Analyse fehlgeschlagen: {e}")
-    boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit)
+    boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit, anchor)
 
   # Step 4: Compute energy and trend for each section
   section_ends = boundaries[1:] + [duration]

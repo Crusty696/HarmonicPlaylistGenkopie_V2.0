@@ -48,6 +48,9 @@ class RekordboxTrackData:
     rating: Optional[int] = None
     cue_points: Optional[List[Dict]] = None
     color: Optional[str] = None
+    # Downbeat-Feature 2026-07-17: DB-Content-ID fuer den lazy ANLZ-Zugriff
+    # (Beatgrid/PQTZ liegt in den .DAT-Analysedateien, nicht in master.db)
+    content_id: Optional[str] = None
 
 
 class RekordboxImporter:
@@ -71,6 +74,8 @@ class RekordboxImporter:
         self.db = None
         self.track_cache: Dict[str, RekordboxTrackData] = {}
         self.basename_cache: Dict[str, RekordboxTrackData] = {}
+        # Memo fuer lazy geparste ANLZ-Downbeats (content_id -> Sekunden oder None)
+        self._downbeat_cache: Dict[str, Optional[float]] = {}
 
         if REKORDBOX_AVAILABLE:
             try:
@@ -169,6 +174,7 @@ class RekordboxImporter:
                     album=content.AlbumName if hasattr(content, "AlbumName") else None,
                     rating=content.Rating if content.Rating else None,
                     color=content.ColorName if hasattr(content, "ColorName") else None,
+                    content_id=str(content.ID) if hasattr(content, "ID") else None,
                 )
 
                 # Convert Rekordbox key to Camelot
@@ -257,6 +263,53 @@ class RekordboxImporter:
             logger.warning(f"Fehler beim Extrahieren der Cue-Points: {e}")
 
         return cue_list
+
+    def get_first_downbeat(self, file_path: str) -> Optional[float]:
+        """
+        Liest den ersten Downbeat (Sekunden) aus dem Rekordbox-Beatgrid.
+
+        Downbeat-Feature 2026-07-17: Der echte Beatgrid liegt in den
+        ANLZ-Analysedateien (.DAT, PQTZ-Tag) — jeder Tick traegt seine
+        Beat-Nummer 1..4; der erste Tick mit beat==1 ist die erste "1".
+        Lazy geparst (nur bei Bedarf, memoisiert), da ANLZ-Dateien nicht
+        beim Cache-Aufbau geladen werden.
+
+        Returns:
+            Sekunden des ersten Downbeats oder None (nicht verfuegbar).
+        """
+        data = self.get_track_data(file_path)
+        if not data or not data.content_id or self.db is None:
+            return None
+
+        if data.content_id in self._downbeat_cache:
+            return self._downbeat_cache[data.content_id]
+
+        result: Optional[float] = None
+        try:
+            anlz_file = self.db.read_anlz_file(data.content_id, "DAT")
+            if anlz_file is not None:
+                for tag_key in ("PQTZ", "beat_grid"):
+                    try:
+                        tag = anlz_file.get_tag(tag_key)
+                    except Exception:
+                        tag = None
+                    if tag is None:
+                        continue
+                    beats = getattr(tag, "beats", None)
+                    times = getattr(tag, "times", None)
+                    if beats is None or times is None:
+                        continue
+                    for beat_num, time_ms in zip(beats, times):
+                        if int(beat_num) == 1 and time_ms is not None and time_ms >= 0:
+                            result = round(float(time_ms) / 1000.0, 4)
+                            break
+                    if result is not None:
+                        break
+        except Exception as e:
+            logger.debug(f"ANLZ-Beatgrid nicht lesbar fuer {file_path}: {e}")
+
+        self._downbeat_cache[data.content_id] = result
+        return result
 
     def get_track_data(self, file_path: str) -> Optional[RekordboxTrackData]:
         """

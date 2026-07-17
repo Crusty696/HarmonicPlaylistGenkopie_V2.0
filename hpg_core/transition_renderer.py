@@ -57,6 +57,11 @@ class TransitionClipSpec:
     target_sr: int = 44100
     bpm_a: float = 120.0         # BPM von Track A (fuer Time-Stretching)
     bpm_b: float = 120.0         # BPM von Track B (fuer Time-Stretching)
+    # Downbeat-Feature 2026-07-17: bekannte erste Downbeats (Sekunden) beider
+    # Tracks — ermoeglicht exaktes Beat-Alignment ohne Laufzeit-Schaetzung.
+    # 0.0 = unbekannt -> Fallback auf _estimate_first_beat
+    first_downbeat_a: float = 0.0
+    first_downbeat_b: float = 0.0
     # Lautheits-Normalisierung (Research 2026-02-28: verhindert Lautheitssprunge)
     normalize_rms: bool = True          # RMS-Normalisierung vor Crossfade
     normalize_target_db: float = -14.0  # Ziel-Pegel in dBRMS (EBU R128: -14 LUFS)
@@ -94,6 +99,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
 
     # Dynamic BPM Time-Stretching (echter DJ Pitchfader!)
     # Wenn Track B ein anderes Tempo als Track A besitzt, passen wir sein Tempo an Track A an.
+    applied_stretch_rate = 1.0  # fuer die Downbeat-Phasen-Umrechnung unten
     if spec.bpm_a > 0 and spec.bpm_b > 0 and abs(spec.bpm_a - spec.bpm_b) > 0.05:
         target_bpm_b = spec.bpm_b
         
@@ -130,6 +136,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
             # zurueck transponieren. (Das frueher genutzte axis=-Kwarg existiert
             # in dieser librosa-Version nicht und wuerde an stft() durchgereicht.)
             seg_b = librosa.effects.time_stretch(seg_b.T, rate=rate).T
+            applied_stretch_rate = rate
             logger.info(f"BPM Time-Stretching angewendet: Track B ({spec.bpm_b:.1f} BPM -> {target_bpm_b:.1f} BPM) auf Track A ({spec.bpm_a:.1f} BPM) angepasst (Rate={rate:.4f})")
         except Exception as ts_err:
             logger.warning(f"BPM Time-Stretching fehlgeschlagen: {ts_err}")
@@ -145,13 +152,26 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     pre_frames  = int(spec.pre_roll_sec * sr)
     post_frames = int(spec.post_roll_sec * sr)
 
-    # H2-Fix: Beat-Phase-Alignment — die Mixpunkte sind nur arithmetisch
-    # (Raster ab t=0) phrasen-aligned; die echten Kicks beider Tracks koennen
-    # im Crossfade beliebig gegeneinander versetzt sein. Track B wird um den
-    # gemessenen Phasenversatz (< 1 Beat) verschoben.
+    # H2-Fix: Beat-Phase-Alignment — Track B wird um den Phasenversatz
+    # (< 1 Beat) verschoben, damit die Kicks im Crossfade uebereinander liegen.
+    # Downbeat-Feature 2026-07-17: sind die ersten Downbeats beider Tracks
+    # bekannt, wird der Versatz EXAKT aus den Beatgrids berechnet statt zur
+    # Renderzeit geschaetzt (schneller und praeziser).
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
-            seg_b = _align_beat_phase(seg_a[pre_frames:], seg_b, spec.bpm_a, sr)
+            known_a = known_b = None
+            if spec.first_downbeat_a > 0 and spec.first_downbeat_b > 0:
+                beat_sec_a = 60.0 / spec.bpm_a
+                # Zeit vom Segmentstart bis zum naechsten Grid-Beat
+                known_a = (spec.first_downbeat_a - spec.mix_out_sec) % beat_sec_a
+                beat_sec_b = 60.0 / spec.bpm_b if spec.bpm_b > 0 else beat_sec_a
+                phase_b = (spec.first_downbeat_b - spec.mix_in_sec) % beat_sec_b
+                # Track B wurde ggf. gestretcht: Zeitpunkte skalieren mit 1/rate
+                known_b = phase_b / applied_stretch_rate
+            seg_b = _align_beat_phase(
+                seg_a[pre_frames:], seg_b, spec.bpm_a, sr,
+                known_first_beat_a=known_a, known_first_beat_b=known_b,
+            )
         except Exception as align_err:
             logger.warning(f"Beat-Phase-Alignment fehlgeschlagen: {align_err}")
 
@@ -205,10 +225,16 @@ def _estimate_first_beat(seg: np.ndarray, sr: int, bpm: float) -> float:
 
 
 def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
-                      bpm: float, sr: int) -> np.ndarray:
+                      bpm: float, sr: int,
+                      known_first_beat_a: float | None = None,
+                      known_first_beat_b: float | None = None) -> np.ndarray:
     """
     Verschiebt seg_b um weniger als einen Beat, sodass sein erster Beat auf
     das Beat-Raster von ref_seg (Track A im Crossfade-Bereich) faellt.
+
+    Downbeat-Feature 2026-07-17: sind die ersten Beat-Zeitpunkte beider
+    Segmente aus den Beatgrids bekannt, entfaellt die (teurere und
+    unsicherere) Laufzeit-Schaetzung via librosa.beat.beat_track.
 
     Verschiebung nach vorne = Samples am Anfang verwerfen, nach hinten =
     Null-Padding (< 1/2 Beat, unhoerbar da im Fade-In).
@@ -219,8 +245,12 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
     if beat_len <= 0:
         return seg_b
 
-    t_a = _estimate_first_beat(ref_seg, sr, bpm)
-    t_b = _estimate_first_beat(seg_b, sr, bpm)
+    if known_first_beat_a is not None and known_first_beat_b is not None:
+        t_a = float(known_first_beat_a)
+        t_b = float(known_first_beat_b)
+    else:
+        t_a = _estimate_first_beat(ref_seg, sr, bpm)
+        t_b = _estimate_first_beat(seg_b, sr, bpm)
     offset = int(round((t_b - t_a) * sr)) % beat_len
     if offset == 0:
         return seg_b

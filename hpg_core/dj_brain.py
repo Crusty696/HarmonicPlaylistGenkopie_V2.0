@@ -16,7 +16,7 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 
 from dataclasses import dataclass, field
-from .models import Track, effective_bpm_diff, get_camelot_components
+from .models import Track, effective_bpm_diff, get_camelot_components, quantize_to_grid
 from .config import METER, DEFAULT_BPM, DEFAULT_SECTION_ENERGY
 
 
@@ -98,6 +98,7 @@ def calculate_genre_aware_mix_points(
   bpm: float,
   duration: float,
   genre: str,
+  anchor: float = 0.0,
 ) -> tuple[float, float, int, int]:
   """
   Berechnet genre-spezifische Mix-In/Out-Punkte basierend auf Track-Struktur.
@@ -105,7 +106,12 @@ def calculate_genre_aware_mix_points(
   Logik:
   - Mix-In: Sektion mit Substanz (Energie-Dichte-Check)
   - Mix-Out: Punkt, an dem der Track "ausduennt"
-  - Quantisiert auf 4-Bar-Grenzen fuer musikalisches Phrase-Alignment
+  - Quantisiert aufs Phrasen-Gitter fuer musikalisches Phrase-Alignment
+
+  Args:
+    anchor: Downbeat-Anker in Sekunden (Track.first_downbeat) — das
+      Phrasen-Gitter liegt auf anchor + k*grid statt auf k*grid.
+      0.0 = bisheriges Verhalten (Raster ab t=0).
   """
   if not sections or bpm <= 0 or duration <= 0:
     return 0.0, duration, 0, 0
@@ -115,16 +121,17 @@ def calculate_genre_aware_mix_points(
   seconds_per_bar = seconds_per_beat * METER
 
   # --- Mix-In: Wo faengt der optimale Mix-Bereich an? ---
-  mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar)
+  mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar, anchor)
 
   # --- Mix-Out: Wo faengt der Track an auszuklingen? ---
-  mix_out_time = _find_mix_out_point(sections, profile, seconds_per_bar, duration)
+  mix_out_time = _find_mix_out_point(sections, profile, seconds_per_bar, duration, anchor)
 
   # Genre-spezifisches Phrase-Gitter fuer musikalisches Phrase-Alignment
+  # (Downbeat-Feature 2026-07-17: Gitter am ersten Downbeat verankert)
   grid_seconds = seconds_per_bar * profile.phrase_unit
   if grid_seconds > 0:
-    mix_in_time = ceil(mix_in_time / grid_seconds) * grid_seconds  # ceil = nach Intro
-    mix_out_time = floor(mix_out_time / grid_seconds) * grid_seconds  # floor = vor Outro
+    mix_in_time = quantize_to_grid(mix_in_time, grid_seconds, anchor, "ceil")
+    mix_out_time = quantize_to_grid(mix_out_time, grid_seconds, anchor, "floor")
 
   # Sicherheitsgrenzen -- sektions- und phrasenbasiert statt Prozent-Schema.
   # Ein DJ orientiert sich an Struktur-Grenzen (Intro-Ende, Outro-Start) und
@@ -132,7 +139,7 @@ def calculate_genre_aware_mix_points(
   intro_end = _get_intro_end_from_sections(sections)
   outro_start = _get_outro_start_from_sections(sections, duration)
 
-  min_mix_in = max(intro_end, grid_seconds)
+  min_mix_in = max(intro_end, anchor + grid_seconds)
   # Mix-Out AUF der Outro-Grenze ist DJ-Standard (Ausstieg wenn das Outro
   # beginnt) — floor-Quantisierung garantiert bereits mix_out <= outro_start
   max_mix_out = min(outro_start, duration - grid_seconds)
@@ -145,10 +152,10 @@ def calculate_genre_aware_mix_points(
     # schieben — zurueck aufs Gitter quantisieren, solange die Grenzen halten
     # (reale DJ-Cues liegen auf Phrasengrenzen, arXiv 2407.06823)
     if grid_seconds > 0:
-      aligned_out = floor(mix_out_time / grid_seconds) * grid_seconds
+      aligned_out = quantize_to_grid(mix_out_time, grid_seconds, anchor, "floor")
       if aligned_out - mix_in_time >= min_window:
         mix_out_time = aligned_out
-      aligned_in = ceil(mix_in_time / grid_seconds) * grid_seconds
+      aligned_in = quantize_to_grid(mix_in_time, grid_seconds, anchor, "ceil")
       if mix_out_time - aligned_in >= min_window:
         mix_in_time = aligned_in
   else:
@@ -176,6 +183,7 @@ def _find_mix_in_point(
   sections: list[dict],
   profile: GenreMixProfile,
   seconds_per_bar: float,
+  anchor: float = 0.0,
 ) -> float:
   """
   ADAPTIVES MIX-IN: Sucht den musikalisch sinnvollsten Einstiegspunkt.
@@ -208,7 +216,7 @@ def _find_mix_in_point(
     # Kein nutzbarer Bereich nach Intro gefunden
     phrase_seconds = seconds_per_bar * profile.phrase_unit
     if phrase_seconds > 0:
-      return max(intro_end, round(intro_end / phrase_seconds) * phrase_seconds)
+      return max(intro_end, quantize_to_grid(intro_end, phrase_seconds, anchor))
     return intro_end
 
   # --- Beste Sektion waehlen ---
@@ -222,10 +230,10 @@ def _find_mix_in_point(
 
   mix_in = best.get("start_time", intro_end)
 
-  # --- Quantisierung auf Phrasen-Grenze (ceil = NACH Intro) ---
+  # --- Quantisierung auf Phrasen-Grenze (ceil = NACH Intro), downbeat-verankert ---
   phrase_seconds = seconds_per_bar * profile.phrase_unit
   if phrase_seconds > 0:
-    mix_in = ceil(mix_in / phrase_seconds) * phrase_seconds
+    mix_in = quantize_to_grid(mix_in, phrase_seconds, anchor, "ceil")
 
   # --- Guard: NIEMALS vor Intro-Ende ---
   mix_in = max(mix_in, intro_end)
@@ -238,6 +246,7 @@ def _find_mix_out_point(
   profile: GenreMixProfile,
   seconds_per_bar: float,
   duration: float,
+  anchor: float = 0.0,
 ) -> float:
   """
   ADAPTIVES MIX-OUT: Findet den optimalen Ausstiegspunkt.
@@ -267,7 +276,7 @@ def _find_mix_out_point(
     # Kein nutzbarer Bereich vor Outro
     phrase_seconds = seconds_per_bar * profile.phrase_unit
     if phrase_seconds > 0:
-      mix_out = (outro_start // phrase_seconds) * phrase_seconds
+      mix_out = quantize_to_grid(outro_start, phrase_seconds, anchor, "floor")
       return max(0.0, min(mix_out, outro_start))
     return outro_start
 
@@ -286,10 +295,10 @@ def _find_mix_out_point(
   # Normalerweise mix_out am Ende dieser Sektion
   mix_out = best.get("end_time", outro_start)
 
-  # --- Quantisierung auf Phrasen-Grenze ---
+  # --- Quantisierung auf Phrasen-Grenze (floor = VOR Outro), downbeat-verankert ---
   phrase_seconds = seconds_per_bar * profile.phrase_unit
   if phrase_seconds > 0:
-    mix_out = (mix_out // phrase_seconds) * phrase_seconds
+    mix_out = quantize_to_grid(mix_out, phrase_seconds, anchor, "floor")
 
   # --- Guard: NIEMALS nach Outro-Start ---
   mix_out = min(mix_out, outro_start)
@@ -600,9 +609,12 @@ def calculate_paired_mix_points(
   # --- Guard: Mix-In B NIEMALS im Intro ---
   intro_end_sections_b = _get_intro_end_from_sections(track_b.sections or [])
   if intro_end_sections_b > 0:
-    # ceil auf naechsten Bar nach Intro-Ende (phrasen-aligned)
+    # ceil auf naechsten Bar nach Intro-Ende (downbeat-verankert)
     if adjusted_mix_in_b < intro_end_sections_b:
-      adjusted_mix_in_b = ceil(intro_end_sections_b / seconds_per_bar_b) * seconds_per_bar_b
+      anchor_b = getattr(track_b, "first_downbeat", 0.0) or 0.0
+      adjusted_mix_in_b = quantize_to_grid(
+        intro_end_sections_b, seconds_per_bar_b, anchor_b, "ceil"
+      )
 
   # --- Guard: Mix-Out A NIEMALS im Outro ---
   outro_start_sections_a = _get_outro_start_from_sections(
@@ -628,6 +640,7 @@ def align_ai_mix_points(
   bpm: float,
   duration: float,
   phrase_unit: int = 8,
+  anchor: float = 0.0,
 ) -> tuple[float, float]:
   """
   Quantisiert extern gelieferte Mix-Punkte (z.B. vom LLM) aufs Phrasen-Gitter.
@@ -651,8 +664,9 @@ def align_ai_mix_points(
   # nach hinten springen
   eps = 1e-6
   for grid in (seconds_per_bar * unit, seconds_per_bar):
-    aligned_in = ceil((mix_in - eps) / grid) * grid
-    aligned_out = floor((mix_out + eps) / grid) * grid
+    # Downbeat-verankertes Gitter (anchor=0.0 = bisheriges Verhalten)
+    aligned_in = quantize_to_grid(mix_in - eps, grid, anchor, "ceil")
+    aligned_out = quantize_to_grid(mix_out + eps, grid, anchor, "floor")
     if 0 <= aligned_in < aligned_out <= duration:
       return round(aligned_in, 2), round(aligned_out, 2)
 

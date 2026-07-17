@@ -29,6 +29,7 @@ from .rekordbox_importer import get_rekordbox_importer
 from .genre_classifier import classify_genre, GenreClassification
 from .structure_analyzer import analyze_structure, TrackStructure
 from .dj_brain import calculate_genre_aware_mix_points, align_ai_mix_points
+from .downbeat import estimate_first_downbeat
 
 def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float]:
     if y is None or len(y) == 0: return 0.0, 0.0, 0.0
@@ -540,7 +541,7 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
     return None
 
 
-def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown") -> tuple[float, float, int, int]:
+def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown", anchor: float = 0.0) -> tuple[float, float, int, int]:
     """
     RMS-Fallback fuer Mix-Punkte, wenn keine Struktur-Analyse (Sections) vorliegt.
 
@@ -654,7 +655,9 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
             },
         ]
 
-        return calculate_genre_aware_mix_points(pseudo_sections, bpm, duration, genre)
+        return calculate_genre_aware_mix_points(
+            pseudo_sections, bpm, duration, genre, anchor=anchor
+        )
 
     except Exception as e:
         logger.error(f"Fehler in analyze_structure_and_mix_points: {e}")
@@ -735,8 +738,21 @@ def analyze_track(file_path: str) -> Track | None:
                 f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
             )
 
-            # DJ Brain: Struktur-Analyse
-            structure = analyze_structure(y, sr, rekordbox_data.bpm, genre_result.genre)
+            # Downbeat-Anker (2026-07-17): zuerst der exakte Rekordbox-Beatgrid
+            # (ANLZ/PQTZ, Konfidenz 1.0), sonst eigene Schaetzung (Phase-Voting)
+            anlz_downbeat = rekordbox_importer.get_first_downbeat(file_path)
+            if anlz_downbeat is not None:
+                first_downbeat, downbeat_confidence = anlz_downbeat, 1.0
+                logger.info(f"Downbeat aus Rekordbox-Beatgrid: {first_downbeat:.3f}s")
+            else:
+                first_downbeat, downbeat_confidence = estimate_first_downbeat(
+                    y, sr, rekordbox_data.bpm
+                )
+
+            # DJ Brain: Struktur-Analyse (downbeat-verankert)
+            structure = analyze_structure(
+                y, sr, rekordbox_data.bpm, genre_result.genre, anchor=first_downbeat
+            )
             section_dicts = [s.to_dict() for s in structure.sections]
             section_labels = [s.label for s in structure.sections]
             logger.info(
@@ -748,7 +764,8 @@ def analyze_track(file_path: str) -> Track | None:
             if section_dicts:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     calculate_genre_aware_mix_points(
-                        section_dicts, rekordbox_data.bpm, duration, genre_result.genre
+                        section_dicts, rekordbox_data.bpm, duration,
+                        genre_result.genre, anchor=first_downbeat,
                     )
                 )
                 logger.info(
@@ -759,6 +776,7 @@ def analyze_track(file_path: str) -> Track | None:
                     analyze_structure_and_mix_points(
                         y, sr, duration, energy, rekordbox_data.bpm,
                         genre=genre_result.genre,
+                        anchor=first_downbeat,
                     )
                 )
 
@@ -791,6 +809,7 @@ def analyze_track(file_path: str) -> Track | None:
                         rekordbox_data.bpm,
                         duration,
                         structure.phrase_unit,
+                        anchor=first_downbeat,
                     )
                     seconds_per_bar = (60.0 / rekordbox_data.bpm) * METER
                     mix_in_bars = int(mix_in_point / seconds_per_bar)
@@ -822,6 +841,7 @@ def analyze_track(file_path: str) -> Track | None:
             vocal_instrumental = "unknown"
             danceability = 0
             mfcc_fingerprint = []
+            first_downbeat, downbeat_confidence = 0.0, 0.0
             # K1 Audit-Fix: Richtige Dataclasses statt fragiler Dummy-Objekte
             genre_result = GenreClassification(
                 genre="Unknown", confidence=0.0, source="fallback",
@@ -930,6 +950,8 @@ def analyze_track(file_path: str) -> Track | None:
             vocal_instrumental=vocal_instrumental,
             danceability=danceability,
             mfcc_fingerprint=mfcc_fingerprint,
+            first_downbeat=first_downbeat,
+            downbeat_confidence=downbeat_confidence,
         )
 
         cache_track(cache_key, track)
@@ -1001,8 +1023,12 @@ def analyze_track(file_path: str) -> Track | None:
             f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
         )
 
-        # DJ Brain: Struktur-Analyse
-        structure = analyze_structure(y, sr, bpm, genre_result.genre)
+        # Downbeat-Anker (2026-07-17): eigene Schaetzung (Phase-Voting nach
+        # Vande Veire), BPM ist an dieser Stelle final
+        first_downbeat, downbeat_confidence = estimate_first_downbeat(y, sr, bpm)
+
+        # DJ Brain: Struktur-Analyse (downbeat-verankert)
+        structure = analyze_structure(y, sr, bpm, genre_result.genre, anchor=first_downbeat)
         section_dicts = [s.to_dict() for s in structure.sections]
         section_labels = [s.label for s in structure.sections]
         logger.info(
@@ -1014,7 +1040,8 @@ def analyze_track(file_path: str) -> Track | None:
         if section_dicts:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 calculate_genre_aware_mix_points(
-                    section_dicts, bpm, duration, genre_result.genre
+                    section_dicts, bpm, duration, genre_result.genre,
+                    anchor=first_downbeat,
                 )
             )
             logger.info(
@@ -1025,6 +1052,7 @@ def analyze_track(file_path: str) -> Track | None:
                 analyze_structure_and_mix_points(
                     y, sr, duration, energy, bpm,
                     genre=genre_result.genre,
+                    anchor=first_downbeat,
                 )
             )
 
@@ -1096,7 +1124,9 @@ def analyze_track(file_path: str) -> Track | None:
             brightness=brightness,
             vocal_instrumental=vocal_instrumental,
             danceability=danceability,
-            mfcc_fingerprint=mfcc_fingerprint
+            mfcc_fingerprint=mfcc_fingerprint,
+            first_downbeat=first_downbeat,
+            downbeat_confidence=downbeat_confidence,
         )
 
         cache_track(cache_key, track)

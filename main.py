@@ -541,6 +541,9 @@ class TransitionRenderWorker(QThread):
                     transition_type=transition.transition_type or "smooth_blend",
                     bpm_a=float(transition.from_track.bpm or 120.0),
                     bpm_b=float(transition.to_track.bpm or 120.0),
+                    # Downbeat-Feature 2026-07-17: exaktes Beat-Alignment
+                    first_downbeat_a=float(getattr(transition.from_track, "first_downbeat", 0.0) or 0.0),
+                    first_downbeat_b=float(getattr(transition.to_track, "first_downbeat", 0.0) or 0.0),
                 )
 
                 # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen
@@ -3172,6 +3175,7 @@ class MainWindow(QMainWindow):
                             val_in, val_out = align_ai_mix_points(
                                 val_in, val_out, track.bpm, track.duration,
                                 getattr(track, "phrase_unit", 8) or 8,
+                                anchor=getattr(track, "first_downbeat", 0.0) or 0.0,
                             )
                             track.mix_in_point = round(val_in, 2)
                             track.mix_out_point = round(val_out, 2)

@@ -21,6 +21,29 @@ CAMELOT_MAP = {
 # in Track.sections liegen serialisierte Section-Dicts.
 
 
+def quantize_to_grid(
+    t: float, grid: float, anchor: float = 0.0, mode: str = "round"
+) -> float:
+    """Quantisiert einen Zeitpunkt auf ein Raster mit optionalem Anker.
+
+    Downbeat-Feature 2026-07-17: das Takt-/Phrasen-Raster ist am ersten
+    Downbeat verankert statt an t=0. Formel: (t - anchor)/grid quantisieren,
+    dann + anchor. Bei anchor=0.0 bit-identisch zum bisherigen Verhalten.
+    """
+    if grid <= 0:
+        return t
+    rel = (t - anchor) / grid
+    if mode == "ceil":
+        from math import ceil as _ceil
+        idx = _ceil(rel)
+    elif mode == "floor":
+        from math import floor as _floor
+        idx = _floor(rel)
+    else:
+        idx = round(rel)
+    return idx * grid + anchor
+
+
 def seconds_per_bar(bpm: float, meter: int = METER) -> float:
     """Sekunden pro Takt — zentrale Definition statt 15+ Kopien im Code.
 
@@ -99,6 +122,13 @@ class Track:
     # Structural Info
     mix_in_point: float = 0.0
     mix_out_point: float = 0.0
+
+    # Downbeat-Anker (2026-07-17): Zeitpunkt der ersten "1" in Sekunden.
+    # Verankert das Phrasen-Raster der Mixpoint-Quantisierung; 0.0 = kein
+    # Anker (Verhalten wie frueher, Raster ab t=0). Die Bar-Anzeige
+    # (mix_in_bars/mix_out_bars) zaehlt weiterhin ab Track-Start.
+    first_downbeat: float = 0.0
+    downbeat_confidence: float = 0.0  # 0-1; 1.0 = aus Rekordbox-Beatgrid
 
     # Mix Points in Bars (fuer DJ-Anzeige)
     mix_in_bars: int = 0
