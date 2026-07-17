@@ -57,9 +57,13 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
         "messages": [
             {"role": "system", "content": config.AI_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
-        ],
-        "response_format": {"type": "json_object"}
+        ]
     }
+    
+    # LM Studio 0.3+ does not support type 'json_object' and throws HTTP 400.
+    # We only enforce json_object for Ollama.
+    if current_provider == "Ollama":
+        payload["response_format"] = {"type": "json_object"}
     
     try:
         logger.debug(f"Sending AI request to {url} for track: {track.title}")
