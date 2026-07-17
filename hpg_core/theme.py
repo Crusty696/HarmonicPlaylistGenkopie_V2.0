@@ -155,6 +155,7 @@ PHASE_LABELS = {
 TRANSITION_TYPE_LABELS: dict[str, str] = {
     "smooth_blend": "Smooth Blend",
     "bass_swap": "Bass Swap",
+    "pro_eq_swap": "Pro EQ Swap",
     "breakdown_bridge": "Breakdown Bridge",
     "drop_cut": "Drop Cut",
     "filter_ride": "Filter Ride",
@@ -173,6 +174,12 @@ TRANSITION_TYPE_DESCRIPTIONS: dict[str, str] = {
         "Schneller Bass-Tausch an einem Phrase-Anfang.\n"
         "Bass vom ausgehenden Track cutten,\n"
         "gleichzeitig Bass vom eingehenden Track reinbringen."
+    ),
+    "pro_eq_swap": (
+        "Profi 3-Band-Isolator EQ Transition.\n"
+        "Baesse werden in der Mitte (Phrasengrenze) getauscht,\n"
+        "Mitten komplementaer gedrosselt (-6 dB Rule),\n"
+        "Hoehen asymmetrisch und phasenrein uebergeblendet."
     ),
     "breakdown_bridge": (
         "Transition ueber den Breakdown eines Tracks.\n"
@@ -211,6 +218,7 @@ TRANSITION_TYPE_DESCRIPTIONS: dict[str, str] = {
 TRANSITION_TYPE_COLORS = {
   "smooth_blend":      "#00E676",  # Neon Gruen
   "bass_swap":         "#448AFF",  # Neon Blau
+  "pro_eq_swap":       "#FF4081",  # Neon Pink
   "breakdown_bridge":  "#FFD740",  # Neon Gold
   "drop_cut":          "#FF5252",  # Neon Rot
   "filter_ride":       "#18FFFF",  # Neon Cyan

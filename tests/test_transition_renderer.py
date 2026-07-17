@@ -333,6 +333,29 @@ class TestRenderTransitionClip:
         assert info.channels == 2
         assert info.samplerate == 44100
 
+    def test_pro_eq_swap_render_erstellt_gueltige_wav(self, tmp_path):
+        path_a = str(tmp_path / "track_a.wav")
+        path_b = str(tmp_path / "track_b.wav")
+        out_path = str(tmp_path / "pro_eq_swap_preview.wav")
+
+        _write_test_wav(path_a, duration_sec=60.0, freq=440.0)
+        _write_test_wav(path_b, duration_sec=60.0, freq=528.0)
+
+        spec = TransitionClipSpec(
+            track_a_path    = path_a,
+            track_b_path    = path_b,
+            mix_out_sec     = 30.0,
+            mix_in_sec      = 5.0,
+            crossfade_sec   = 8.0,
+            transition_type = "pro_eq_swap",
+            pre_roll_sec    = 5.0,
+            post_roll_sec   = 5.0,
+        )
+        render_transition_clip(spec, out_path)
+        info = sf.info(out_path)
+        assert info.channels == 2
+        assert info.samplerate == 44100
+
     def test_soft_limiter_verhindert_clipping(self, tmp_path):
         """Peak-Amplitude im Output soll <= 0.95 sein."""
         path_a = str(tmp_path / "loud_a.wav")

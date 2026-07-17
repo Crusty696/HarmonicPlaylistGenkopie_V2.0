@@ -207,25 +207,25 @@ class TestGoodHarmony:
   """Tests fuer gute harmonische Uebergaenge."""
 
   def test_tech_house_bass_swap(self):
-    """Tech House mit guter Harmonie = bass_swap."""
+    """Tech House mit guter Harmonie = pro_eq_swap."""
     t1 = _make_track(bpm=128.0, camelot="8A", energy=60, genre="Tech House")
     t2 = _make_track(bpm=129.0, camelot="9A", energy=65, genre="Tech House")
     result = predict_transition_type(t1, t2)
-    assert result == "bass_swap"
+    assert result == "pro_eq_swap"
 
   def test_techno_bass_swap(self):
-    """Techno mit guter Harmonie = bass_swap."""
+    """Techno mit guter Harmonie = pro_eq_swap."""
     t1 = _make_track(bpm=135.0, camelot="8A", energy=70, genre="Techno")
     t2 = _make_track(bpm=136.0, camelot="9A", energy=65, genre="Techno")
     result = predict_transition_type(t1, t2)
-    assert result == "bass_swap"
+    assert result == "pro_eq_swap"
 
   def test_minimal_bass_swap(self):
-    """Minimal mit guter Harmonie = bass_swap."""
+    """Minimal mit guter Harmonie = pro_eq_swap."""
     t1 = _make_track(bpm=126.0, camelot="8A", energy=55, genre="Minimal")
     t2 = _make_track(bpm=126.0, camelot="9A", energy=50, genre="Minimal")
     result = predict_transition_type(t1, t2)
-    assert result == "bass_swap"
+    assert result == "pro_eq_swap"
 
   def test_dnb_bass_swap(self):
     """Drum & Bass mit guter Harmonie = bass_swap."""

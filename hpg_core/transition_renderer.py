@@ -481,7 +481,74 @@ def _apply_eq_crossfade(
             bass_b_env[half:ramp_end] = np.linspace(0.0, 1.0, n_ramp, dtype=np.float32)[:, np.newaxis]
         bass_a_env[ramp_end:] = 0.0
         bass_b_env[ramp_end:] = 1.0
-        mixed += bass_a * bass_a_env + bass_b * bass_b_env
+        mixed = bass_a * bass_a_env + bass_b * bass_b_env + highs_a * fo + highs_b * fi
+
+    elif t_type == "pro_eq_swap":
+        # 3-Band Linkwitz-Riley EQ Simulation mit Zero-Phase Filtering (sosfiltfilt)
+        fc1 = 120.0   # Low-to-Mid Crossover
+        fc2 = 2500.0  # Mid-to-High Crossover
+
+        # Filter design
+        sos_lp_low  = _make_sos(fc1, config.sr, 'low', order=2)
+        sos_hp_mid  = _make_sos(fc1, config.sr, 'high', order=2)
+        sos_lp_mid  = _make_sos(fc2, config.sr, 'low', order=2)
+        sos_hp_high = _make_sos(fc2, config.sr, 'high', order=2)
+
+        # Trennung fuer Track A
+        bass_a = sosfiltfilt(sos_lp_low, seg_a, axis=0)
+        mids_a_tmp = sosfiltfilt(sos_hp_mid, seg_a, axis=0)
+        mids_a = sosfiltfilt(sos_lp_mid, mids_a_tmp, axis=0)
+        highs_a = sosfiltfilt(sos_hp_high, seg_a, axis=0)
+
+        # Trennung fuer Track B
+        bass_b = sosfiltfilt(sos_lp_low, seg_b, axis=0)
+        mids_b_tmp = sosfiltfilt(sos_hp_mid, seg_b, axis=0)
+        mids_b = sosfiltfilt(sos_lp_mid, mids_b_tmp, axis=0)
+        highs_b = sosfiltfilt(sos_hp_high, seg_b, axis=0)
+
+        # Envelopes
+        # Lows (Bass-Swap auf der Haelfte mit 50ms Rampe)
+        half = config.cf_frames // 2
+        ramp = max(1, int(0.05 * config.sr))
+        ramp_end = min(half + ramp, config.cf_frames)
+        n_ramp = ramp_end - half
+
+        bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
+        bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+        if n_ramp > 0:
+            bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+            bass_b_env[half:ramp_end] = np.linspace(0.0, 1.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+        bass_a_env[ramp_end:] = 0.0
+        bass_b_env[ramp_end:] = 1.0
+
+        # Mids (Complementary -6 dB Rule: 1.0 -> 0.5 in der Mitte, dann 0.5 -> 0.0)
+        mids_a_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+        mids_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+
+        mids_a_env[:half] = np.linspace(1.0, 0.5, half, dtype=np.float32)[:, np.newaxis]
+        mids_a_env[half:] = np.linspace(0.5, 0.0, config.cf_frames - half, dtype=np.float32)[:, np.newaxis]
+
+        mids_b_env[:half] = np.linspace(0.0, 0.5, half, dtype=np.float32)[:, np.newaxis]
+        mids_b_env[half:] = np.linspace(0.5, 1.0, config.cf_frames - half, dtype=np.float32)[:, np.newaxis]
+
+        # Highs (Asymmetrischer Tausch: A bleibt bis 3/4 voll da, blendet dann aus. B blendet ab 1/4 ein)
+        quarter = config.cf_frames // 4
+        three_quarters = 3 * quarter
+
+        highs_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
+        highs_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+
+        len_out = config.cf_frames - three_quarters
+        highs_a_env[three_quarters:] = np.linspace(1.0, 0.0, len_out, dtype=np.float32)[:, np.newaxis]
+
+        len_in = three_quarters - quarter
+        highs_b_env[quarter:three_quarters] = np.linspace(0.0, 1.0, len_in, dtype=np.float32)[:, np.newaxis]
+        highs_b_env[three_quarters:] = 1.0
+
+        # Rekonstruktion
+        mixed = (bass_a * bass_a_env + bass_b * bass_b_env +
+                 mids_a * mids_a_env + mids_b * mids_b_env +
+                 highs_a * highs_a_env + highs_b * highs_b_env)
 
     elif t_type == "filter_ride" or t_type == "smooth_blend":
         # Hochpass- bzw. Tiefpass-Filterung zur Vermeidung von Frequenzüberlagerungen

@@ -906,8 +906,11 @@ def predict_transition_type(
         # Melodische Genres bevorzugen Filter Rides
         melodic_genres = {"Melodic Techno", "Progressive", "Trance", "Deep House"}
         hard_genres = {"Tech House", "Techno", "Drum & Bass", "Minimal", "Psytrance"}
+        pro_eq_genres = {"Tech House", "Techno", "Minimal", "Psytrance"}
         if genre_a in melodic_genres or genre_b in melodic_genres:
             return "filter_ride"
+        if genre_a in pro_eq_genres or genre_b in pro_eq_genres:
+            return "pro_eq_swap"
         if genre_a in hard_genres or genre_b in hard_genres:
             return "bass_swap"
         return "smooth_blend"
@@ -916,6 +919,9 @@ def predict_transition_type(
     if harmonic_score >= 70 and eff_diff <= bpm_tolerance:
         # Harte Genres bevorzugen Bass Swap
         hard_genres = {"Tech House", "Techno", "Drum & Bass", "Minimal", "Psytrance"}
+        pro_eq_genres = {"Tech House", "Techno", "Minimal", "Psytrance"}
+        if genre_a in pro_eq_genres or genre_b in pro_eq_genres:
+            return "pro_eq_swap"
         if genre_a in hard_genres or genre_b in hard_genres:
             return "bass_swap"
         return "smooth_blend"
