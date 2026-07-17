@@ -17,6 +17,13 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# --no-rekordbox: HPG-eigene Erkennung testen (BPM/Key/Downbeat via librosa
+# statt Rekordbox-DB). Muss VOR dem ersten hpg_core-Import gesetzt sein,
+# damit auch die ProcessPool-Worker den Schalter erben.
+OWN_DETECTION = "--no-rekordbox" in sys.argv
+if OWN_DETECTION:
+    os.environ["HPG_DISABLE_REKORDBOX"] = "1"
+
 FOLDERS = {
     "Techno": r"D:\neue techno sammlung nur beatport musik",
     "Psytrance": r"D:\neue Psy-Trance, Progressive nur Beatport musik",
@@ -155,7 +162,12 @@ def main() -> None:
 
         # --- 3 Previews rendern (Anfang / Mitte / Ende der Playlist) ---
         preview_files = []
-        idxs = [1, len(recs) // 2, len(recs) - 2] if len(recs) >= 4 else list(range(len(recs)))
+        if OWN_DETECTION:
+            idxs = []  # Erkennungs-Test: keine Previews noetig
+        elif len(recs) >= 4:
+            idxs = [1, len(recs) // 2, len(recs) - 2]
+        else:
+            idxs = list(range(len(recs)))
         for i in sorted(set(max(0, i) for i in idxs)):
             rec = recs[i]
             dj = rec.dj_rec
@@ -184,6 +196,8 @@ def main() -> None:
                     bpm_b=float(rec.to_track.bpm or 120.0),
                     first_downbeat_a=float(rec.from_track.first_downbeat or 0.0),
                     first_downbeat_b=float(rec.to_track.first_downbeat or 0.0),
+                    downbeat_reliable_a=rec.from_track.downbeat_confidence >= 0.9,
+                    downbeat_reliable_b=rec.to_track.downbeat_confidence >= 0.9,
                 )
                 render_transition_clip(spec, out_path)
                 preview_files.append({
@@ -221,9 +235,13 @@ def main() -> None:
         }
 
     report["runtime_seconds"] = round(time.time() - t0, 1)
-    out_json = os.path.join(OUT_DIR, "validation_report.json")
+    report["mode"] = "eigene Erkennung (ohne Rekordbox)" if OWN_DETECTION else "Fast-Path (Rekordbox)"
+    suffix = "_own" if OWN_DETECTION else ""
+    out_json = os.path.join(OUT_DIR, f"validation_report{suffix}.json")
     with open(out_json, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
+    # Marker fuer detachte Ausfuehrung
+    open(os.path.join(OUT_DIR, f"DONE{suffix}.marker"), "w").write("ok")
     print(f"\nFERTIG in {report['runtime_seconds']}s -> {out_json}", flush=True)
 
 

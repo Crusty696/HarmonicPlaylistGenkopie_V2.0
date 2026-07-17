@@ -541,9 +541,19 @@ class TransitionRenderWorker(QThread):
                     transition_type=transition.transition_type or "smooth_blend",
                     bpm_a=float(transition.from_track.bpm or 120.0),
                     bpm_b=float(transition.to_track.bpm or 120.0),
-                    # Downbeat-Feature 2026-07-17: exaktes Beat-Alignment
+                    # Downbeat-Feature 2026-07-17: exaktes Beat-Alignment NUR
+                    # bei hoher Konfidenz (ANLZ-Beatgrid, auch Anker 0.0 ist
+                    # dann legitim). Validierung auf echter Musik zeigte: die
+                    # eigene Schaetzung liegt 30-380ms neben der Beat-Phase —
+                    # dann ist die Laufzeit-Schaetzung am Segment praeziser.
                     first_downbeat_a=float(getattr(transition.from_track, "first_downbeat", 0.0) or 0.0),
                     first_downbeat_b=float(getattr(transition.to_track, "first_downbeat", 0.0) or 0.0),
+                    downbeat_reliable_a=(
+                        getattr(transition.from_track, "downbeat_confidence", 0.0) >= 0.9
+                    ),
+                    downbeat_reliable_b=(
+                        getattr(transition.to_track, "downbeat_confidence", 0.0) >= 0.9
+                    ),
                 )
 
                 # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen

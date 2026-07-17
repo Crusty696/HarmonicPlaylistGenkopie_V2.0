@@ -77,6 +77,12 @@ class RekordboxImporter:
         # Memo fuer lazy geparste ANLZ-Downbeats (content_id -> Sekunden oder None)
         self._downbeat_cache: Dict[str, Optional[float]] = {}
 
+        # Debug-/Validierungs-Schalter (2026-07-17): erzwingt die volle
+        # Librosa-Analyse, auch wenn Tracks in der Rekordbox-DB stehen
+        if os.environ.get("HPG_DISABLE_REKORDBOX"):
+            logger.info("Rekordbox-Import per HPG_DISABLE_REKORDBOX deaktiviert")
+            return
+
         if REKORDBOX_AVAILABLE:
             try:
                 self.db = Rekordbox6Database()

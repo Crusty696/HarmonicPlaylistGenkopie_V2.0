@@ -59,9 +59,14 @@ class TransitionClipSpec:
     bpm_b: float = 120.0         # BPM von Track B (fuer Time-Stretching)
     # Downbeat-Feature 2026-07-17: bekannte erste Downbeats (Sekunden) beider
     # Tracks — ermoeglicht exaktes Beat-Alignment ohne Laufzeit-Schaetzung.
-    # 0.0 = unbekannt -> Fallback auf _estimate_first_beat
+    # downbeat_reliable_* = True nur bei hoher Konfidenz (ANLZ-Beatgrid);
+    # 0.0 ist dann ein LEGITIMER Anker (Track startet auf der "1").
+    # Validierung 2026-07-17: die eigene Schaetzung ist fuers sample-genaue
+    # Alignment zu ungenau (30-380ms Phasenfehler) -> dort Segment-Schaetzung.
     first_downbeat_a: float = 0.0
     first_downbeat_b: float = 0.0
+    downbeat_reliable_a: bool = False
+    downbeat_reliable_b: bool = False
     # Lautheits-Normalisierung (Research 2026-02-28: verhindert Lautheitssprunge)
     normalize_rms: bool = True          # RMS-Normalisierung vor Crossfade
     normalize_target_db: float = -14.0  # Ziel-Pegel in dBRMS (EBU R128: -14 LUFS)
@@ -160,7 +165,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
             known_a = known_b = None
-            if spec.first_downbeat_a > 0 and spec.first_downbeat_b > 0:
+            if spec.downbeat_reliable_a and spec.downbeat_reliable_b:
                 beat_sec_a = 60.0 / spec.bpm_a
                 # Zeit vom Segmentstart bis zum naechsten Grid-Beat
                 known_a = (spec.first_downbeat_a - spec.mix_out_sec) % beat_sec_a
