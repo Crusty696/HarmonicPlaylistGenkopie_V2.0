@@ -30,7 +30,7 @@ from .caching import generate_cache_key, get_cached_track, cache_track
 from .rekordbox_importer import get_rekordbox_importer
 from .genre_classifier import classify_genre, GenreClassification
 from .structure_analyzer import analyze_structure, TrackStructure
-from .dj_brain import calculate_genre_aware_mix_points
+from .dj_brain import calculate_genre_aware_mix_points, align_ai_mix_points
 
 def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float]:
     if y is None or len(y) == 0: return 0.0, 0.0, 0.0
@@ -542,7 +542,7 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
     return None
 
 
-def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float) -> tuple[float, float, int, int]:
+def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, phrase_unit: int | None = None) -> tuple[float, float, int, int]:
     """
     Analyzes the audio structure to find intro/outro and calculates optimal mix points.
 
@@ -631,7 +631,10 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
 
         seconds_per_beat = 60.0 / bpm
         seconds_per_bar = seconds_per_beat * METER
-        seconds_per_phrase = seconds_per_bar * BARS_PER_PHRASE
+        # M4-Fix: genre-abhaengige Phrasenlaenge (Trance/Psytrance=16) statt fix 8,
+        # damit Fallback-Pfad und DJ-Brain-Pfad dasselbe Gitter nutzen
+        effective_phrase = phrase_unit if phrase_unit and phrase_unit > 0 else BARS_PER_PHRASE
+        seconds_per_phrase = seconds_per_bar * effective_phrase
 
         # 1. Align Intro End to nearest phrase boundary AFTER intro
         # ceil() ensures we land AFTER the intro, never inside it
@@ -786,23 +789,49 @@ def analyze_track(file_path: str) -> Track | None:
             else:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     analyze_structure_and_mix_points(
-                        y, sr, duration, energy, rekordbox_data.bpm
+                        y, sr, duration, energy, rekordbox_data.bpm,
+                        phrase_unit=structure.phrase_unit,
                     )
                 )
 
             # Override mix points if Rekordbox has cue points
+            # H1-Fix: Cues validieren + phrase-quantisieren statt roh uebernehmen.
+            # Wortgrenzen-Match statt Substring ("BREAKDOWN" darf kein OUT ausloesen),
+            # erster Treffer gewinnt (deterministisch statt letzter-gewinnt).
             if rekordbox_data.cue_points:
+                cue_in, cue_out = None, None
+                # "OUTRO" ist ein gaengiger Mix-Out-Cue-Name; "INTRO" markiert
+                # dagegen den Intro-START und ist KEIN Mix-In-Punkt
+                in_pattern = re.compile(r"\b(MIX[- ]?IN|IN|START)\b")
+                out_pattern = re.compile(r"\b(MIX[- ]?OUT|OUT|OUTRO|END)\b")
                 for cue in rekordbox_data.cue_points:
-                    if cue["name"] and cue["position"]:
-                        if (
-                            "IN" in cue["name"].upper()
-                            or "START" in cue["name"].upper()
-                        ):
-                            mix_in_point = cue["position"]
-                        elif (
-                            "OUT" in cue["name"].upper() or "END" in cue["name"].upper()
-                        ):
-                            mix_out_point = cue["position"]
+                    if not cue["name"] or cue["position"] is None:
+                        continue
+                    name_upper = cue["name"].upper()
+                    if cue_in is None and in_pattern.search(name_upper):
+                        cue_in = float(cue["position"])
+                    elif cue_out is None and out_pattern.search(name_upper):
+                        cue_out = float(cue["position"])
+
+                candidate_in = cue_in if cue_in is not None else mix_in_point
+                candidate_out = cue_out if cue_out is not None else mix_out_point
+                if 0 <= candidate_in < candidate_out <= duration:
+                    # Gleiche Quantisierungs-Pipeline wie der AI-Override
+                    mix_in_point, mix_out_point = align_ai_mix_points(
+                        candidate_in,
+                        candidate_out,
+                        rekordbox_data.bpm,
+                        duration,
+                        structure.phrase_unit,
+                    )
+                    seconds_per_bar = (60.0 / rekordbox_data.bpm) * METER
+                    mix_in_bars = int(mix_in_point / seconds_per_bar)
+                    mix_out_bars = int(mix_out_point / seconds_per_bar)
+                else:
+                    logger.warning(
+                        f"Rekordbox-Cues ungueltig (in={cue_in}, out={cue_out}, "
+                        f"duration={duration:.1f}) — behalte berechnete Mix-Punkte"
+                    )
 
             # Audio Feature Extensions
             brightness = calculate_brightness(y, sr)
@@ -848,61 +877,66 @@ def analyze_track(file_path: str) -> Track | None:
                 elif "B" in rekordbox_data.camelot_code:
                     key_mode = "Major"
 
-        # Create Track object with Rekordbox data
-        
-            # --- Advanced Audio Analysis (Phase 2) ---
-            try:
-                # Load full audio for detailed section analysis (if not already loaded fully)
-                y_full, _ = librosa.load(file_path, sr=sr, duration=LIBROSA_MAX_DURATION)
-                
-                # Calculate Timbre Fingerprint for the whole track
-                timbre_fp = generate_timbre_fingerprint(y_full, sr)
-                
-                # Update each section with detailed frequency and rhythm data
-                updated_sections = []
-                for sec_dict in section_dicts:
-                    start_s = sec_dict['start_time']
-                    end_s = sec_dict['end_time']
-                    
-                    # Extract segment
-                    start_sample = int(start_s * sr)
-                    end_sample = int(end_s * sr)
-                    y_seg = y_full[start_sample:end_sample]
-                    
-                    if len(y_seg) > sr: # At least 1 second
-                        # Frequency Bands
-                        b, m, h = analyze_frequency_bands(y_seg, sr)
-                        sec_dict['avg_bass'] = b
-                        sec_dict['avg_mids'] = m
-                        sec_dict['avg_highs'] = h
-                        
-                        # Rhythm & Texture
-                        pr, sf = analyze_rhythm_complexity(y_seg, sr)
-                        sec_dict['percussive_ratio'] = pr
-                        sec_dict['spectral_flatness'] = sf
-                    else:
-                        sec_dict['avg_bass'] = sec_dict.get('avg_bass', 0.0)
-                        sec_dict['avg_mids'] = 0.0
-                        sec_dict['avg_highs'] = 0.0
-                        sec_dict['percussive_ratio'] = 0.0
-                        sec_dict['spectral_flatness'] = 0.0
-                    
-                    updated_sections.append(sec_dict)
-                
-                section_dicts = updated_sections
-                
-                # Overall Track Averages for Advanced Features
-                avg_b, avg_m, avg_h = analyze_frequency_bands(y_full, sr)
-                track_pr, track_sf = analyze_rhythm_complexity(y_full, sr)
-                
-            except Exception as e:
-                logger.warning(f"Erweiterte Analyse fehlgeschlagen: {e}")
-                timbre_fp = []
-                avg_b = avg_m = avg_h = 0.0
-                track_pr = track_sf = 0.0
+        # --- Advanced Audio Analysis (Phase 2) ---
+        # C1-Fix: Block darf NICHT im camelot_code-Zweig haengen, sonst wird
+        # `track` bei Tracks ohne Key nie erzeugt (UnboundLocalError).
+        # C2-Fix: bereits geladenes Fast-Path-Audio (y) wiederverwenden statt
+        # die Datei erneut in voller Laenge zu laden.
+        try:
+            # Timbre-Fingerprint fuer den Fast-Path-Ausschnitt
+            timbre_fp = generate_timbre_fingerprint(y, sr)
 
-            track = Track(
-        avg_bass=avg_b, avg_mids=avg_m, avg_highs=avg_h, spectral_flatness=track_sf, percussive_ratio=track_pr, timbre_fingerprint=timbre_fp, 
+            # Update each section with detailed frequency and rhythm data
+            updated_sections = []
+            for sec_dict in section_dicts:
+                start_s = sec_dict['start_time']
+                end_s = sec_dict['end_time']
+
+                # Extract segment
+                start_sample = int(start_s * sr)
+                end_sample = int(end_s * sr)
+                y_seg = y[start_sample:end_sample]
+
+                if len(y_seg) > sr: # At least 1 second
+                    # Frequency Bands
+                    b, m, h = analyze_frequency_bands(y_seg, sr)
+                    sec_dict['avg_bass'] = b
+                    sec_dict['avg_mids'] = m
+                    sec_dict['avg_highs'] = h
+
+                    # Rhythm & Texture
+                    pr, sf = analyze_rhythm_complexity(y_seg, sr)
+                    sec_dict['percussive_ratio'] = pr
+                    sec_dict['spectral_flatness'] = sf
+                else:
+                    sec_dict['avg_bass'] = sec_dict.get('avg_bass', 0.0)
+                    sec_dict['avg_mids'] = 0.0
+                    sec_dict['avg_highs'] = 0.0
+                    sec_dict['percussive_ratio'] = 0.0
+                    sec_dict['spectral_flatness'] = 0.0
+
+                updated_sections.append(sec_dict)
+
+            section_dicts = updated_sections
+
+            # Overall Track Averages for Advanced Features
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr)
+            track_pr, track_sf = analyze_rhythm_complexity(y, sr)
+
+        except Exception as e:
+            logger.warning(f"Erweiterte Analyse fehlgeschlagen: {e}")
+            timbre_fp = []
+            avg_b = avg_m = avg_h = 0.0
+            track_pr = track_sf = 0.0
+
+        # Create Track object with Rekordbox data
+        track = Track(
+            avg_bass=avg_b,
+            avg_mids=avg_m,
+            avg_highs=avg_h,
+            spectral_flatness=track_sf,
+            percussive_ratio=track_pr,
+            timbre_fingerprint=timbre_fp,
             filePath=file_path,
             fileName=os.path.basename(file_path),
             artist=artist,
@@ -976,6 +1010,11 @@ def analyze_track(file_path: str) -> Track | None:
                 doubled = round(bpm * 2, 2)
                 if doubled <= BPM_HALFTIME_MAX_RESULT:
                     bpm = doubled
+            # M8-Fix: Doubletime-Korrektur als Gegenstueck — Librosa liefert bei
+            # schnellen Genres (Psytrance ~145) manchmal die doppelte BPM (~290).
+            # Elektronische Musik liegt praktisch nie ueber 200 BPM.
+            elif bpm > 200:
+                bpm = round(bpm / 2, 2)
             logger.info(f"BPM via Librosa: {bpm:.2f} (keine BPM-Tags gefunden)")
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
@@ -1014,7 +1053,10 @@ def analyze_track(file_path: str) -> Track | None:
             )
         else:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
-                analyze_structure_and_mix_points(y, sr, duration, energy, bpm)
+                analyze_structure_and_mix_points(
+                    y, sr, duration, energy, bpm,
+                    phrase_unit=structure.phrase_unit,
+                )
             )
 
         # Audio Feature Extensions

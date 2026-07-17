@@ -72,6 +72,10 @@ GENRE_PHRASE_UNITS: dict[str, int] = {
   "Unknown": 8,          # Default to 8 bars
 }
 
+# Speicher-Obergrenze fuer die Self-Similarity-Matrix (dense O(n^2)):
+# 3000 Frames = ~72 MB float64; laengere MFCC-Sequenzen werden dezimiert
+MAX_SSM_FRAMES = 3000
+
 # Minimum number of sections to detect (prevents over-segmentation)
 MIN_SECTIONS = 3
 # Maximum number of sections (prevents over-segmentation on noisy tracks)
@@ -115,11 +119,24 @@ def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH)
     times = librosa.frames_to_time(np.arange(num_frames), sr=sr, hop_length=hop_length)
     return novelty, times
 
+  # Speicher-Guard (Audit 2026-07-17): recurrence_matrix ist DENSE O(n^2) —
+  # 10 Min Audio ergaben ~12.900 Frames = ~1,3 GB pro Track. MFCC-Sequenz
+  # wird auf max. MAX_SSM_FRAMES dezimiert (Zeitaufloesung bleibt fuer
+  # Sektions-Grenzen mehr als ausreichend, Grenzen werden ohnehin auf Bars
+  # quantisiert).
+  step = 1
+  if num_frames > MAX_SSM_FRAMES:
+    step = -(-num_frames // MAX_SSM_FRAMES)
+    mfcc = mfcc[:, ::step]
+    num_frames = mfcc.shape[1]
+  effective_hop = hop_length * step
+
   # Compute self-similarity using recurrence matrix
   # This creates a matrix where similar frames have high values
   # Width must be strictly less than (num_frames - 1) // 2 (safety margin for edge cases)
   max_width = max(4, (num_frames - 1) // 2 - 1)  # Strict limit with safety margin
-  width = min(int(sr / hop_length * 4), max_width)  # ~4 second context window, but capped
+  width = min(int(sr / effective_hop * 4), max_width)  # ~4 second context window, but capped
+  width = max(1, width)
   try:
     rec = librosa.segment.recurrence_matrix(
       mfcc,
@@ -131,13 +148,13 @@ def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH)
     # Audio signal is empty or too quiet for recurrence matrix (sparse/empty graph)
     # This can happen with silent or very short audio files
     novelty = np.zeros(num_frames)
-    times = librosa.frames_to_time(np.arange(num_frames), sr=sr, hop_length=hop_length)
+    times = librosa.frames_to_time(np.arange(num_frames), sr=sr, hop_length=effective_hop)
     return novelty, times
 
   # Compute novelty from the recurrence matrix
   # Novelty is high where the local structure changes
   novelty = np.zeros(rec.shape[0])
-  kernel_size = int(sr / hop_length * 2)  # ~2 second kernel
+  kernel_size = int(sr / effective_hop * 2)  # ~2 second kernel
   kernel_size = max(4, kernel_size)
 
   # Checkerboard kernel for novelty detection
@@ -158,7 +175,7 @@ def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH)
     kernel /= kernel.sum()
     novelty = np.convolve(novelty, kernel, mode='same')
 
-  times = librosa.frames_to_time(np.arange(len(novelty)), sr=sr, hop_length=hop_length)
+  times = librosa.frames_to_time(np.arange(len(novelty)), sr=sr, hop_length=effective_hop)
 
   return novelty, times
 
@@ -247,7 +264,13 @@ def _quantize_to_bars(
   phrase_unit: int = 8,
 ) -> list[float]:
   """
-  Quantize boundary times to the nearest bar or phrase boundary.
+  Quantize boundary times to the sub-phrase grid (half phrase_unit in bars).
+
+  Audit-Fix 2026-07-17: vorher wurde phrase_unit ignoriert und nur auf
+  einzelne Bars quantisiert — Sektionsgrenzen (und damit Mix-Punkte) lagen
+  nicht auf musikalischen Phrasenanfaengen. Halbe Phrase als Gitter
+  (Psytrance/Trance: 8 Bars, sonst 4) balanciert Musikalitaet gegen
+  Aufloesung der Sektions-Erkennung.
 
   Args:
     boundaries: Section boundary times
@@ -263,12 +286,14 @@ def _quantize_to_bars(
 
   seconds_per_beat = 60.0 / bpm
   seconds_per_bar = seconds_per_beat * METER
+  grid_bars = min(8, max(2, phrase_unit // 2))
+  grid_seconds = seconds_per_bar * grid_bars
 
   quantized = []
   for t in boundaries:
-    # Quantize to nearest bar
-    bar_index = round(t / seconds_per_bar)
-    quantized_time = bar_index * seconds_per_bar
+    # Quantize to nearest sub-phrase boundary
+    grid_index = round(t / grid_seconds)
+    quantized_time = grid_index * grid_seconds
 
     # Clamp to track bounds
     quantized_time = max(0.0, min(quantized_time, duration))
@@ -312,8 +337,15 @@ def _compute_section_energy(y: np.ndarray, sr: int, start: float, end: float) ->
     return 0.0
 
   rms = float(np.sqrt(np.mean(segment ** 2)))
-  # Scale to 0-100 (typical audio RMS is 0.0 to ~0.4)
-  energy = float(np.interp(rms, [0.0, 0.4], [0.0, 100.0]))
+  # Skala am Track selbst kalibrieren — die fixe 0.4-Obergrenze liess laut
+  # gemasterte Tracks (RMS > 0.4) alle Sektionen auf 100 saettigen und
+  # zerstoerte die Drop-vs-Main-Unterscheidung (Audit-Fix 2026-07-17).
+  # np.dot statt y**2 vermeidet ein grosses temporaeres Array.
+  track_rms = float(np.sqrt(np.dot(y, y) / len(y))) if len(y) else 0.0
+  # Faktor 1.6: durchschnittliche Sektion landet bei ~62, Drops (1.2-1.5x
+  # Track-RMS) behalten Headroom bis 100 statt zu saettigen
+  scale = max(0.4, track_rms * 1.6)
+  energy = float(np.interp(rms, [0.0, scale], [0.0, 100.0]))
   return min(max(energy, 0.0), 100.0)
 
 
@@ -395,7 +427,9 @@ def _label_sections(
 
   is_intro = (
     energies[0] < low_threshold           # Klassisch: Niedrige Energie
-    or trends[0] == "rising"               # Steigende Energie = Aufbau
+    # "rising" allein reicht nicht — fast jeder Track-Anfang steigt; ein Track,
+    # der "hot" (nahe Peak-Energie) startet, hat kein Intro (Audit-Fix 2026-07-17)
+    or (trends[0] == "rising" and energies[0] < intro_relative_threshold)
     or (n >= 3 and energies[0] < intro_relative_threshold
         and boundaries[0] < duration * 0.15)  # Unter Peak-Niveau UND frueh im Track
   )

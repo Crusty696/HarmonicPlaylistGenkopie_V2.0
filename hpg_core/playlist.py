@@ -12,6 +12,7 @@ from .config import (
     GENRE_WEIGHT_WITHOUT_DJ_BRAIN,
     BPM_HALF_DOUBLE_ENABLED,
     BPM_HALF_DOUBLE_PENALTY,
+    LOOKAHEAD_TOP_K,
 )
 import logging
 import re
@@ -92,11 +93,14 @@ def calculate_enhanced_compatibility(
     track2: Track,
     bpm_tolerance: float,
     energy_direction: Optional[EnergyDirection] = None,
+    **kwargs,
 ) -> TransitionMetrics:
     """Enhanced compatibility calculation with multiple factors."""
 
     # Basic harmonic compatibility
-    harmonic_score = calculate_compatibility(track1, track2, bpm_tolerance)
+    # M2-Fix: kwargs (harmonic_strictness, allow_experimental) durchreichen —
+    # vorher fielen die UI-Parameter im Enhanced-Pfad auf Defaults zurueck
+    harmonic_score = calculate_compatibility(track1, track2, bpm_tolerance, **kwargs)
 
     # BPM smoothness (exponential decay, mit Half/Double-Erkennung)
     bpm_diff, _ = effective_bpm_diff(track1.bpm, track2.bpm)
@@ -107,14 +111,16 @@ def calculate_enhanced_compatibility(
 
     # Energy flow analysis
     energy_diff = track2.energy - track1.energy
+    # M12-Fix: alle Zweige liefern [0,1] — vorher lief UP/DOWN bis 2.0 und
+    # MAINTAIN unter 0, was die Gewichtung im overall_score verzerrte
     if energy_direction == EnergyDirection.UP:
-        energy_flow = max(0, energy_diff) / 50.0  # Normalize to 0-2 range
+        energy_flow = min(1.0, max(0.0, energy_diff) / 50.0)
     elif energy_direction == EnergyDirection.DOWN:
-        energy_flow = max(0, -energy_diff) / 50.0
+        energy_flow = min(1.0, max(0.0, -energy_diff) / 50.0)
     elif energy_direction == EnergyDirection.MAINTAIN:
-        energy_flow = 1.0 - abs(energy_diff) / 50.0
+        energy_flow = max(0.0, 1.0 - abs(energy_diff) / 50.0)
     else:
-        energy_flow = 1.0 - abs(energy_diff) / 100.0  # Gentle energy preference
+        energy_flow = max(0.0, 1.0 - abs(energy_diff) / 100.0)  # Gentle energy preference
 
     # Genre compatibility - DJ Brain Matrix wenn detected_genre vorhanden
     genre_a = getattr(track1, "detected_genre", "") or track1.genre
@@ -169,6 +175,12 @@ def calculate_enhanced_compatibility(
                 ai_bonus += 0.03
 
     overall_score = min(1.0, overall_score + ai_bonus)
+
+    # BPM-Hard-Gate (Audit 2026-07-17): ein am Pitchfader unmixbarer Sprung
+    # darf nicht ueber Genre/Energie auf ~40% "gerettet" werden — die 0-100-
+    # Strategien gaten hart, Enhanced muss dieselbe Grundentscheidung treffen
+    if bpm_diff > bpm_tolerance:
+        overall_score = 0.0
 
     return TransitionMetrics(
         harmonic_score=harmonic_score,
@@ -251,7 +263,12 @@ def _calculate_compatibility_inner(
     if num1 == num2 and letter1 == letter2:
         return int(100 * penalty)  # Same key
     if num1 == num2 and letter1 != letter2:
-        return int(90 * penalty)  # Relative major/minor
+        # H4-Fix: richtungsabhaengig — Moll->Dur (A->B) wirkt als Energy-Boost,
+        # Dur->Moll (B->A) als leichter Energy-Drop. Vorher fing diese Regel
+        # beide Richtungen mit 90 ab und der Boost/Drop-Code weiter unten war tot.
+        if letter1 == "A" and letter2 == "B":
+            return int(90 * penalty)  # Relative minor -> major (Energy Boost)
+        return int(85 * penalty)  # Relative major -> minor (Energy Drop)
 
     # Adjacent keys (Camelot wheel)
     next_num_cw = (num1 % 12) + 1
@@ -261,27 +278,28 @@ def _calculate_compatibility_inner(
         if num2 == next_num_cw or num2 == next_num_ccw:
             return int(80 * penalty)
 
+    # H5-Fix: strictness wirkt jetzt auch auf die lockeren Kategorien
+    # (experimentell/diagonal), nicht nur auf den Fallback-Score.
+    # Default 7 = neutral (Faktor 1.0), 10 = streng, 1 = locker.
+    loose_factor = max(0.4, min(1.2, 1.0 - (strictness - 7) * 0.08))
+
     # Experimental techniques (can be disabled)
     if allow_experimental:
         # Plus Four Technique (e.g., 8A -> 12A)
         plus_four_num = (num1 + 4 - 1) % 12 + 1
         if num2 == plus_four_num and letter1 == letter2:
-            return int(70 * penalty)
+            return int(70 * penalty * loose_factor)
 
-        # Plus Seven Technique (circle of fifths)
+        # Plus Seven Technique (+7 Camelot-Positionen — energetischer
+        # "Mood-Shift", deutlich dissonanter als der ±1-Quintschritt)
         plus_seven_num = (num1 + 7 - 1) % 12 + 1
         if num2 == plus_seven_num and letter1 == letter2:
-            return int(65 * penalty)
+            return int(65 * penalty * loose_factor)
 
     # Diagonal Mixing
     if letter1 != letter2:
         if num2 == next_num_cw or num2 == next_num_ccw:
-            return int(60 * penalty)
-        # Energy Boost/Drop techniques
-        if num1 == num2 and letter1 == "A" and letter2 == "B":
-            return int(85 * penalty)
-        if num1 == num2 and letter1 == "B" and letter2 == "A":
-            return int(75 * penalty)
+            return int(60 * penalty * loose_factor)
 
     # Return low score (affected by strictness - stricter = lower fallback)
     return max(5, int((15 - strictness) * penalty))
@@ -365,7 +383,7 @@ def _sort_harmonic_flow(
     current_track = start_track
     while unprocessed:
         best_next = None
-        highest_score = -999999  # Extrem niedriger Wert statt -1, um auch negative Scores korrekt zu erfassen
+        highest_score = -1
         for candidate in unprocessed:
             score = calculate_compatibility(
                 current_track, candidate, bpm_tolerance, **kwargs
@@ -374,7 +392,9 @@ def _sort_harmonic_flow(
                 highest_score = score
                 best_next = candidate
 
-        if best_next and highest_score > -9999:
+        # L2-Fix: Score 0 = BPM-Gate fuer ALLE Kandidaten gerissen — vorher war
+        # der BPM-Fallback unerreichbar (Bedingung > -9999 immer wahr)
+        if best_next and highest_score > 0:
             final_playlist.append(best_next)
             unprocessed.remove(best_next)
             current_track = best_next
@@ -413,9 +433,9 @@ def _sort_harmonic_flow_enhanced(
         if not remaining or depth <= 0:
             return None, 0.0
 
-        best_candidate = None
-        best_total_score = -1
-
+        # H6-Fix: Immediate-Scores zuerst berechnen, Rekursion nur fuer die
+        # Top-K Kandidaten — reduziert O(n^3) auf O(n^2 * K) bei grossen Listen
+        scored = []
         for candidate in remaining:
             cache_key = (id(current), id(candidate))
             if cache_key in compat_cache:
@@ -428,7 +448,16 @@ def _sort_harmonic_flow_enhanced(
 
             if immediate_score == 0:  # Skip incompatible tracks
                 continue
+            scored.append((immediate_score, candidate))
 
+        if not scored:
+            return None, -1
+
+        scored.sort(key=lambda item: -item[0])
+
+        best_candidate = None
+        best_total_score = -1
+        for immediate_score, candidate in scored[:LOOKAHEAD_TOP_K]:
             future_score = 0.0
             if depth > 1 and len(remaining) > 1:
                 next_remaining = [t for t in remaining if t is not candidate]
@@ -799,29 +828,44 @@ def _sort_emotional_journey(
     resolution_count = max(0, count - opening_count - building_count - peak_count)
 
     # Select tracks for each phase
+    # M11-Fix: Resolution (Cool-Down) bekommt das untere Mittelfeld, Building
+    # das obere — vorher war der Cool-Down energiereicher als der Build
     opening_tracks = energy_sorted[:opening_count]
-    building_tracks = energy_sorted[opening_count : opening_count + building_count]
-    peak_tracks = energy_sorted[-peak_count:]
     resolution_tracks = (
-        energy_sorted[opening_count + building_count : -peak_count]
+        energy_sorted[opening_count : opening_count + resolution_count]
         if resolution_count > 0
         else []
     )
+    building_tracks = energy_sorted[
+        opening_count + resolution_count
+        : opening_count + resolution_count + building_count
+    ]
+    # Guard: peak_count kann durch den Mini-Playlist-Clamp 0 werden —
+    # [-0:] waere die GANZE Liste (Track-Duplikation)
+    peak_tracks = energy_sorted[-peak_count:] if peak_count > 0 else []
 
     # Arrange each phase with harmonic consideration
     journey = []
-    journey.extend(_arrange_phase(opening_tracks, bpm_tolerance, phase_directions[0]))
-    journey.extend(_arrange_phase(building_tracks, bpm_tolerance, phase_directions[1]))
-    journey.extend(_arrange_phase(peak_tracks, bpm_tolerance, phase_directions[2]))
+    # M2-Fix: Harmonik-Parameter (strictness/experimental) in die Phasen
+    # durchreichen — energy_direction (String) bleibt draussen, der Enum-Param
+    # wird separat uebergeben
+    compat_kwargs = {
+        k: kwargs[k]
+        for k in ("harmonic_strictness", "allow_experimental")
+        if k in kwargs
+    }
+    journey.extend(_arrange_phase(opening_tracks, bpm_tolerance, phase_directions[0], **compat_kwargs))
+    journey.extend(_arrange_phase(building_tracks, bpm_tolerance, phase_directions[1], **compat_kwargs))
+    journey.extend(_arrange_phase(peak_tracks, bpm_tolerance, phase_directions[2], **compat_kwargs))
     journey.extend(
-        _arrange_phase(resolution_tracks, bpm_tolerance, phase_directions[3])
+        _arrange_phase(resolution_tracks, bpm_tolerance, phase_directions[3], **compat_kwargs)
     )
 
     return journey
 
 
 def _arrange_phase(
-    tracks: list[Track], bpm_tolerance: float, energy_direction: EnergyDirection
+    tracks: list[Track], bpm_tolerance: float, energy_direction: EnergyDirection, **kwargs
 ) -> list[Track]:
     """Arrange tracks within a phase considering energy direction and harmony."""
     if not tracks:
@@ -852,7 +896,7 @@ def _arrange_phase(
 
         for candidate in remaining:
             metrics = calculate_enhanced_compatibility(
-                current, candidate, bpm_tolerance, energy_direction
+                current, candidate, bpm_tolerance, energy_direction, **kwargs
             )
             if metrics.overall_score > best_score:
                 best_score = metrics.overall_score
@@ -894,16 +938,21 @@ def _sort_genre_flow(
             genre_groups[genre] = []
         genre_groups[genre].append(track)
 
-    # Genre-Kompatibilitaet via DJ Brain Matrix + Fallback fuer ID3-Genres
+    # Genre-Kompatibilitaet via DJ Brain Matrix + Fallback fuer ID3-Genres.
+    # Audit-Fix 2026-07-17: Fallback auf die KANONISCHEN Klassifikator-Labels
+    # umgestellt — die alte Tabelle (Electronic/House/Hip Hop/Rock/Pop) wurde
+    # von detected_genre nie erzeugt und war zu ~78% totes Vokabular.
     base_genre_compatibility = {
-        ("Electronic", "House"): 0.9,
-        ("House", "Techno"): 0.8,
-        ("Hip Hop", "R&B"): 0.8,
-        ("Rock", "Alternative"): 0.8,
-        ("Pop", "Electronic"): 0.7,
-        ("Techno", "Electronic"): 0.85,
-        ("Trance", "Electronic"): 0.85,
-        ("Drum & Bass", "Electronic"): 0.75,
+        ("Tech House", "Techno"): 0.8,
+        ("Tech House", "Deep House"): 0.75,
+        ("Deep House", "Melodic Techno"): 0.7,
+        ("Melodic Techno", "Progressive"): 0.8,
+        ("Melodic Techno", "Techno"): 0.75,
+        ("Progressive", "Trance"): 0.8,
+        ("Minimal", "Techno"): 0.8,
+        ("Minimal", "Tech House"): 0.7,
+        ("Psytrance", "Trance"): 0.6,
+        ("Techno", "Trance"): 0.5,
     }
 
     # Apply genre_weight to compatibility scores
@@ -1341,8 +1390,9 @@ def compute_transition_recommendations(
         eff_bpm_diff, bpm_relation = effective_bpm_diff(current.bpm, upcoming.bpm)
         # Vorzeichen-behaftetes Delta fuer Anzeige (positiv = schneller)
         bpm_delta = upcoming.bpm - current.bpm
-        # Fuer Risikobewertung effektive Differenz nutzen
-        risk_bpm_delta = eff_bpm_diff if bpm_relation == "direct" else eff_bpm_diff
+        # Fuer Risikobewertung effektive Differenz nutzen (L1-Fix: toter
+        # Ternary entfernt — beide Zweige waren identisch)
+        risk_bpm_delta = eff_bpm_diff
 
         risk_level = _categorise_risk_level(
             compatibility_score, risk_bpm_delta, bpm_tolerance, energy_delta
@@ -1362,6 +1412,9 @@ def compute_transition_recommendations(
         if dj_rec is not None:
             if dj_rec.adjusted_mix_out_a >= 0.0:
                 current_mix_out = dj_rec.adjusted_mix_out_a
+                # L4-Fix: fade_out_start gegen den AKTUALISIERTEN Mix-Out
+                # rechnen — dj_fade_out_start basierte noch auf dem alten Wert
+                fade_out_start = max(0.0, current_mix_out - overlap)
             if dj_rec.adjusted_mix_in_b >= 0.0:
                 next_mix_in = dj_rec.adjusted_mix_in_b
                 fade_in_start = next_mix_in
@@ -1536,16 +1589,20 @@ def _sort_context_flow(
                 continue  # BPM-Hard-Gate beibehalten
 
             score = float(base)
-            # Phase: Naehe zur Ziel-Energie (+15 bei Treffer, faellt linear ab)
-            score += 15.0 - min(30.0, abs(candidate.energy - target_energy)) * 0.5
+            # Kalibrierung (Audit 2026-07-17): Boni in Summe max +19 — knapp
+            # UNTER einer 20-Punkte-Camelot-Stufe. Kontext darf zwischen gleich
+            # guten Harmonik-Kandidaten entscheiden, aber keinen Diagonal-Mix
+            # (60) ueber einen Adjacent-Mix (80) heben.
+            # Phase: Naehe zur Ziel-Energie (+10 bei Treffer, faellt linear ab)
+            score += 10.0 - min(30.0, abs(candidate.energy - target_energy)) / 3.0
             # Trend-Fortfuehrung: Kandidat setzt erkennbare Richtung fort
             if abs(trend) >= 5.0:
                 cand_delta = candidate.energy - current.energy
                 if (trend > 0) == (cand_delta > 0) and abs(cand_delta) <= 25:
-                    score += 8.0
+                    score += 5.0
             # Genre-Fatigue
             if streak >= 4:
-                score += 10.0 if _genre(candidate) != streak_genre else -10.0
+                score += 4.0 if _genre(candidate) != streak_genre else -6.0
             # Repetition-Penalty: Beinahe-Klon direkt hintereinander
             if (
                 abs(candidate.bpm - current.bpm) < 0.5
@@ -1707,7 +1764,7 @@ class SetTimelineEntry:
     playing_duration: float  # Effektive Spieldauer in Sekunden
     overlap_with_next: float  # Overlap in Sekunden zum naechsten Track
     is_peak: bool  # Ist dieser Track am Peak-Punkt?
-    energy_phase: str  # "intro", "build", "peak", "sustain", "cooldown"
+    energy_phase: str  # "intro", "warmup", "build", "peak", "sustain", "cooldown"
 
 
 def _calculate_timeline_entries(
@@ -1792,15 +1849,15 @@ def _assign_energy_phases(entries: list[SetTimelineEntry], best_peak_idx: int) -
         elif i == n - 1:
             entry.energy_phase = "cooldown"
         elif relative_pos < peak_pos * 0.5:
-            entry.energy_phase = "build"
+            # L3-Fix: echte Warm-up-Phase — vorher lieferten beide Branches
+            # "build" und der finale else-Zweig war unerreichbar
+            entry.energy_phase = "warmup"
         elif relative_pos <= peak_pos:
             entry.energy_phase = "build"
         elif relative_pos <= peak_pos + 0.15:
             entry.energy_phase = "sustain"
-        elif relative_pos > peak_pos + 0.15:
-            entry.energy_phase = "cooldown"
         else:
-            entry.energy_phase = "build"
+            entry.energy_phase = "cooldown"
 
 
 def compute_set_timeline(

@@ -14,9 +14,10 @@ from .models import Track
 
 logger = logging.getLogger(__name__)
 
-# v13: Unknown-Genre-Tracks laufen jetzt ueber den sektionsbasierten
-# Mixpoint-Pfad (DEFAULT_MIX_PROFILE) statt RMS-Legacy -- Cache invalidieren
-CACHE_VERSION = 13
+# v14: Audit-Fixes 2026-07-17 — Fast-Path Track-Konstruktion (C1), Advanced-
+# Analyse nutzt Fast-Path-Audio (C2), Cue-Override validiert+quantisiert (H1),
+# Doubletime-Korrektur (M8), genre-abhaengige Phrase im Fallback-Pfad (M4)
+CACHE_VERSION = 14
 CACHE_FILE = f"hpg_cache_v{CACHE_VERSION}.db"
 LOCK_FILE = f"hpg_cache_v{CACHE_VERSION}.lock"
 
@@ -106,8 +107,38 @@ def init_cache() -> None:
             conn.commit()
 
         conn.close()
+    except sqlite3.DatabaseError as e:
+        # M14-Fix: korrupte DB ("database disk image is malformed") nicht nur
+        # loggen, sondern loeschen und neu anlegen — sonst bleibt der Cache tot
+        logger.error(f"SQLite-Cache beschaedigt, wird neu erstellt: {e}")
+        _recreate_cache()
     except Exception as e:
         logger.error(f"Init-Fehler des SQLite-Caches: {e}")
+
+
+def _recreate_cache() -> None:
+    """Loescht eine beschaedigte Cache-DB (inkl. WAL/SHM) und legt sie neu an."""
+    for suffix in ("", "-wal", "-shm"):
+        path = CACHE_FILE + suffix
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError as e:
+            logger.error(f"Konnte beschaedigte Cache-Datei nicht loeschen ({path}): {e}")
+            return
+    try:
+        conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        _ensure_cache_schema(conn)
+        conn.execute(
+            "INSERT INTO cache (key, filepath, version, data) VALUES ('version', 'system', ?, 'metadata')",
+            (CACHE_VERSION,)
+        )
+        conn.commit()
+        conn.close()
+        logger.info(f"Cache neu erstellt (Version {CACHE_VERSION})")
+    except Exception as e:
+        logger.error(f"Cache-Neuanlage fehlgeschlagen: {e}")
 
 
 def generate_cache_key(file_path: str) -> str | None:
@@ -146,13 +177,20 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
             # Validate cache key against physical file changes
             if file_path:
                 try:
-                    stat = os.stat(file_path)
-                    expected_key = f"{file_path}-{stat.st_size}-{stat.st_mtime}"
+                    # H8-Fix: gleiche Normalisierung wie generate_cache_key,
+                    # sonst False-Cache-Miss bei Forward-Slash-Pfaden
+                    identifier = os.path.normpath(str(file_path))
+                    stat = os.stat(identifier)
+                    expected_key = f"{identifier}-{stat.st_size}-{stat.st_mtime}"
                     if expected_key != cache_key:
                         return None
                 except OSError:
                     pass
             return track
+    except sqlite3.DatabaseError as e:
+        logger.error(f"SQLite-Cache beschaedigt, wird neu erstellt: {e}")
+        _recreate_cache()
+        return None
     except Exception as e:
         logger.debug(f"SQLite cache read error: {e}")
         return None
@@ -177,6 +215,9 @@ def cache_track(cache_key: str, track: Track) -> None:
         )
         conn.commit()
         conn.close()
+    except sqlite3.DatabaseError as e:
+        logger.error(f"SQLite-Cache beschaedigt, wird neu erstellt: {e}")
+        _recreate_cache()
     except Exception as e:
         logger.warning(f"SQLite cache write failed: {e}")
 

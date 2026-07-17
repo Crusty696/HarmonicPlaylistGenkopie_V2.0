@@ -154,45 +154,80 @@ class ParallelAnalyzer:
                         for path, idx in zip(batch_paths, batch_indices)
                     }
 
-                    for future in as_completed(future_to_idx):
-                        idx = future_to_idx[future]
-                        file_path = file_paths[idx]
-                        status_msg = ""
-                        
-                        try:
-                            # W5: Konfigurierbarer Timeout (schuetzt gegen korrupte Dateien)
-                            track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
-                            batch_results[idx] = track
-                            finished_count += 1
-                            if track:
-                                completed_count += 1
-                                status_msg = f"Analyzed: {os.path.basename(file_path)}"
-                            else:
-                                status_msg = f"[FAILED] {os.path.basename(file_path)}"
-                        except TimeoutError:
-                            logger.warning(f"Timeout bei Analyse von {os.path.basename(file_path)}")
-                            status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
-                            batch_results[idx] = None
-                            finished_count += 1
-                        except (BrokenProcessPool, RuntimeError) as e:
-                            # Process pool crashed abruptly!
-                            logger.error(f"Worker-Crash (Pool beschaedigt) bei {os.path.basename(file_path)}: {e}")
-                            pool_broken = True
-                            # Break out to trigger recovery for unprocessed files in this batch
-                            break
-                        except Exception as e:
-                            logger.error(f"Fehler bei {os.path.basename(file_path)}: {e}")
-                            status_msg = f"[ERROR] {os.path.basename(file_path)}"
-                            batch_results[idx] = None
-                            finished_count += 1
+                    # M10-Fix: Gesamtdeadline fuer den Batch — ein im C-Level
+                    # haengender Worker wird sonst nie von as_completed geyieldet
+                    # und der per-Future-Timeout greift nie
+                    batch_timeout = (
+                        config.PARALLEL_ANALYSIS_TIMEOUT
+                        * max(1, -(-len(batch_paths) // worker_count))
+                        + 30
+                    )
+                    try:
+                        for future in as_completed(future_to_idx, timeout=batch_timeout):
+                            idx = future_to_idx[future]
+                            file_path = file_paths[idx]
+                            status_msg = ""
 
-                        if not pool_broken and progress_callback and status_msg:
-                            progress_callback(finished_count, total_files, status_msg)
+                            try:
+                                # W5: Konfigurierbarer Timeout (schuetzt gegen korrupte Dateien)
+                                track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
+                                batch_results[idx] = track
+                                finished_count += 1
+                                if track:
+                                    completed_count += 1
+                                    status_msg = f"Analyzed: {os.path.basename(file_path)}"
+                                else:
+                                    status_msg = f"[FAILED] {os.path.basename(file_path)}"
+                            except TimeoutError:
+                                logger.warning(f"Timeout bei Analyse von {os.path.basename(file_path)}")
+                                status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
+                                batch_results[idx] = None
+                                finished_count += 1
+                            except (BrokenProcessPool, RuntimeError) as e:
+                                # Process pool crashed abruptly!
+                                logger.error(f"Worker-Crash (Pool beschaedigt) bei {os.path.basename(file_path)}: {e}")
+                                pool_broken = True
+                                # Break out to trigger recovery for unprocessed files in this batch
+                                break
+                            except Exception as e:
+                                logger.error(f"Fehler bei {os.path.basename(file_path)}: {e}")
+                                status_msg = f"[ERROR] {os.path.basename(file_path)}"
+                                batch_results[idx] = None
+                                finished_count += 1
+
+                            if not pool_broken and progress_callback and status_msg:
+                                # H7-Fix: Cancel (InterruptedError) aus dem Callback darf
+                                # nicht als Pool-Crash interpretiert werden
+                                try:
+                                    progress_callback(finished_count, total_files, status_msg)
+                                except InterruptedError:
+                                    executor.shutdown(wait=False, cancel_futures=True)
+                                    raise
+                    except TimeoutError:
+                        # M10-Fix: Batch-Deadline gerissen (haengender C-Level-Worker,
+                        # den as_completed nie yielded). Restliche Futures verwerfen und
+                        # Worker-Prozesse hart beenden — sonst blockiert der
+                        # Executor-Shutdown beim Verlassen des with-Blocks endlos.
+                        logger.error(
+                            "Batch-Timeout: haengender Worker erkannt — verbleibende Dateien uebersprungen"
+                        )
+                        for fut, idx in future_to_idx.items():
+                            if idx not in batch_results:
+                                fut.cancel()
+                                batch_results[idx] = None
+                                finished_count += 1
+                        for proc in getattr(executor, "_processes", {}).values():
+                            proc.terminate()
 
                     if pool_broken:
                         # Abort execution of pending tasks in this broken pool
                         executor.shutdown(wait=False)
 
+            except InterruptedError:
+                # H7-Fix: sauberer User-Abbruch — nach oben durchreichen,
+                # KEINE Safe-Mode-Reanalyse ausloesen
+                logger.info("Analyse durch Benutzer abgebrochen")
+                raise
             except Exception as pool_err:
                 logger.error(f"Genereller Pool-Fehler in Batch: {pool_err}")
                 pool_broken = True

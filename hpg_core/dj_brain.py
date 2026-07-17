@@ -17,7 +17,7 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 from dataclasses import dataclass, field
 from .models import Track
-from .config import METER, DEFAULT_BPM
+from .config import METER, DEFAULT_BPM, DEFAULT_SECTION_ENERGY
 
 
 # === Genre Mix Profiles ===
@@ -331,8 +331,13 @@ def calculate_genre_aware_mix_points(
     mix_out_time = min(outro_start - seconds_per_bar, duration * 0.85)
 
   if mix_out_time <= mix_in_time:
-    mix_in_time = duration * 0.15
-    mix_out_time = duration * 0.85
+    # M7-Fix: auch der Notfall-Fallback respektiert Intro/Outro-Grenzen,
+    # reine Prozente nur als allerletzte Instanz
+    mix_in_time = max(intro_end, duration * 0.15)
+    mix_out_time = min(max(outro_start - seconds_per_bar, 0.0), duration * 0.85)
+    if mix_out_time <= mix_in_time:
+      mix_in_time = duration * 0.15
+      mix_out_time = duration * 0.85
 
   # In Bars umrechnen
   mix_in_bars = int(round(mix_in_time / seconds_per_bar))
@@ -363,8 +368,8 @@ def _find_mix_in_point(
   intro_end = _get_intro_end_from_sections(sections)
 
   # --- Energetischen Kontext berechnen ---
-  all_energies = [s.get("avg_energy", 50.0) for s in sections]
-  avg_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
+  all_energies = [s.get("avg_energy", DEFAULT_SECTION_ENERGY) for s in sections]
+  avg_energy = sum(all_energies) / len(all_energies) if all_energies else DEFAULT_SECTION_ENERGY
 
   # --- Kandidaten: Sektionen nach Intro, nicht Outro ---
   candidates = [
@@ -386,7 +391,7 @@ def _find_mix_in_point(
 
   best = min(candidates, key=lambda s: (
     label_priority.get(s.get("label", "main"), 99),
-    abs(s.get("avg_energy", 50.0) - avg_energy * 0.75), # Slightly higher energy preference for mix in
+    abs(s.get("avg_energy", DEFAULT_SECTION_ENERGY) - avg_energy * 0.75), # Slightly higher energy preference for mix in
   ))
 
   mix_in = best.get("start_time", intro_end)
@@ -443,8 +448,8 @@ def _find_mix_out_point(
   # --- Letzte starke Sektion VOR Outro ---
   # Bevorzugt main, breakdown, drop für den Übergang
   label_priority = {"main": 0, "breakdown": 1, "build": 2, "drop": 3}
-  all_energies = [s.get("avg_energy", 50.0) for s in candidates]
-  avg_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
+  all_energies = [s.get("avg_energy", DEFAULT_SECTION_ENERGY) for s in candidates]
+  avg_energy = sum(all_energies) / len(all_energies) if all_energies else DEFAULT_SECTION_ENERGY
 
   # Finde den besten Ausstieg (bevorzugt eine Sektion mit abnehmender Energie)
   best = min(candidates, key=lambda s: (
@@ -568,6 +573,11 @@ def generate_dj_recommendation(
   # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
   adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
   overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+  # M1-Fix: Overlap darf nicht ueber das Intro-Ende von Track B hinauslaufen,
+  # sonst laeuft der Crossfade in den Body von B (Bass-Kollision)
+  intro_window_b = _get_intro_end(track_b) - adjusted_mix_in_b
+  if intro_window_b > 0:
+    overlap_seconds = min(overlap_seconds, intro_window_b)
 
   # Struktur-Kontext auf Basis der wirklich empfohlenen paarspezifischen Punkte
   outgoing_section = _get_section_at_time(track_a, adjusted_mix_out_a, "out")
@@ -748,6 +758,9 @@ def calculate_paired_mix_points(
 
   # --- Target Overlap: das Minimum beider Seiten (nicht mehr als das Kuerzere) ---
   target_overlap = max(min_overlap, min(intro_end_b, outro_duration_a))
+  # M3-Fix: harte Obergrenze — min_overlap darf bei kurzen Intros/Outros den
+  # Overlap nicht ueber die halbe Laenge eines der beiden Tracks ziehen
+  target_overlap = min(target_overlap, track_a.duration * 0.5, track_b.duration * 0.5)
 
   # --- Track B Mix-In: Starte so spaet, dass noch genau target_overlap bleibt ---
   adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
@@ -776,6 +789,9 @@ def calculate_paired_mix_points(
 
   # Sicherheitscheck: Mix-Out vor Track-Ende
   adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
+  # M2-Fix: Lower-Bound — Outro-Guard kann den Wert sonst negativ/nahe 0
+  # druecken; negativer Wert wuerde den Sentinel-Check (>= 0.0) fehlleiten
+  adjusted_mix_out_a = max(adjusted_mix_out_a, seconds_per_bar_a)
 
   return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
 
@@ -991,6 +1007,10 @@ def _key_advice(code_a: str, code_b: str) -> str:
     return f"{code_a} → {code_b} — Distanz {dist}, Filter-Ride empfohlen"
   elif dist == 3:
     return f"{code_a} → {code_b} — Distanz {dist}, dezenter Clash — kein Melodie-Overlap"
+  elif dist in (4, 5) and letter_a == letter_b:
+    # Konsistenz mit calculate_compatibility: +4 (Energy Mix) und +7 (Mood
+    # Shift, Distanz 5) sind dort bewusst erlaubte Techniken, kein Clash
+    return f"{code_a} → {code_b} — Distanz {dist}, experimentelle Technik (+4/+7) — Energie-/Mood-Shift, kurz blenden"
   else:
     return f"{code_a} → {code_b} — Distanz {dist}, Key-Clash — nur Bass Swap"
 
@@ -1067,7 +1087,10 @@ def _dynamic_transition_bars(ctx: TransitionContext) -> int:
     base += 4   # Mehr Zeit fuer grossen Energie-Shift
 
   if bpm_relation in ("half", "double"):
-    base += 4   # Half/Double-Time braucht saubere Phrasen-Ausrichtung
+    # Audit-Fix 2026-07-17: Half/Double-Uebergaenge werden als KURZER Cut auf
+    # den Downbeat gefahren, nicht als langer Blend — langer Overlap legt
+    # Kick auf Doppel-Kick. Vorher wurde hier faelschlich +4 addiert.
+    base = min(base, 16)
 
   # Kuerzer wenn beides gut passt
   if bpm_diff < 1.0 and energy_diff < 10:
@@ -1134,6 +1157,14 @@ def _get_cross_genre_technique(genre_a: str, genre_b: str) -> str:
   if pair == frozenset({"Drum & Bass", "Trance"}):
     return "Breakdown-Bridge, harter Tempo-Wechsel"
 
+  # Audit-Fix 2026-07-17: Fallback nutzt die Kompatibilitaets-Matrix statt
+  # eines generischen Texts — schwer kompatible Paare (z.B. Psytrance/Deep
+  # House 0.15) verdienen eine explizite Bridge-Warnung
+  compat = get_genre_compatibility(genre_a, genre_b)
+  if compat < 0.3:
+    return "Schwierige Kombination -- Breakdown-Bridge oder Cold Cut, kein langer Blend"
+  if compat < 0.6:
+    return "Vorsichtiger Uebergang -- kurzer Blend am Phrasen-Ende, Energie angleichen"
   return "Standard cross-genre blend - match energy levels"
 
 
@@ -1193,6 +1224,9 @@ def _get_cross_genre_eq(genre_a: str, genre_b: str) -> str:
   if pair == frozenset({"Drum & Bass", "Trance"}):
     return "Full Cut am Drop, keine Bass-Ueberlappung"
 
+  compat = get_genre_compatibility(genre_a, genre_b)
+  if compat < 0.3:
+    return "Bass von Track A komplett cutten BEVOR Track B einsetzt -- keine Ueberlappung"
   return "Standard bass swap at phrase boundary"
 
 
@@ -1252,23 +1286,32 @@ def _assess_transition_risks(
   bass_a = out_sec_data.get('avg_bass', track_a.avg_bass)
   bass_b = in_sec_data.get('avg_bass', track_b.avg_bass)
   
+  # Audit-Fix 2026-07-17: unabhaengige Checks — der alte elif-Zweig war bei
+  # bass_a > 60 unerreichbar (bass_b > 80 impliziert bass_b > 60)
   if bass_a > 60 and bass_b > 60:
       risks.append(f"Bass-Kollision droht! (A:{bass_a:.0f}%, B:{bass_b:.0f}%) -- Bass von Track A hart cutten")
-  elif bass_b > 80:
-      risks.append(f"Incoming Track hat sehr dominanten Bass -- Bass-Swap am Phrasen-Ende empfohlen")
+  if bass_b > 80:
+      risks.append("Incoming Track hat sehr dominanten Bass -- Bass-Swap am Phrasen-Ende empfohlen")
 
   return risks
 
 
 
 def _calculate_texture_similarity(fp_a: list, fp_b: list) -> float:
-    """Calculates cosine similarity between two MFCC fingerprints."""
+    """Calculates cosine similarity between two MFCC fingerprints.
+
+    Audit-Fix 2026-07-17: MFCC-0 (Gesamtlautheit) wird verworfen — er
+    dominierte die Cosine-Similarity, sodass "Textur" faktisch Lautheit mass.
+    """
     if not fp_a or not fp_b or len(fp_a) != len(fp_b):
         return 0.0
-    
+
     a = np.array(fp_a)
     b = np.array(fp_b)
-    
+    if len(a) > 2:
+        a = a[1:]
+        b = b[1:]
+
     # Cosine Similarity
     dot = np.dot(a, b)
     norm_a = np.linalg.norm(a)

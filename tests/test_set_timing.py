@@ -247,13 +247,13 @@ class TestEnergyPhases:
     # Einer muss Peak sein
     assert "peak" in phases
     # Beide muessen gueltige Phasen haben
-    valid = {"intro", "build", "peak", "sustain", "cooldown"}
+    valid = {"intro", "warmup", "build", "peak", "sustain", "cooldown"}
     for entry in tl.entries:
       assert entry.energy_phase in valid
 
   def test_valid_phase_names(self):
     """Alle Phasen haben gueltige Namen."""
-    valid = {"intro", "build", "peak", "sustain", "cooldown"}
+    valid = {"intro", "warmup", "build", "peak", "sustain", "cooldown"}
     tracks = [_make_track(title=f"T{i}", energy=30+i*5) for i in range(12)]
     tl = compute_set_timeline(tracks)
     for entry in tl.entries:

@@ -43,6 +43,11 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import html as html_mod
+import logging
+
+# H1-Fix (Audit 2026-07-17): Modul-Logger — TransitionRenderWorker.run
+# referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
+logger = logging.getLogger(__name__)
 import os
 import re
 import sys
@@ -2946,7 +2951,9 @@ class MainWindow(QMainWindow):
         if not pedalboard_installed:
             warnings.append("• Spotify-Pedalboard fehlt: Frequenzweichen (EQ-Swap) werden ueber eine Scipy-Alternative berechnet. Der echte Dynamik-Compressor ist inaktiv.")
         if not ai_online:
-            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Der AI-Layer ist inaktiv. Moods und Mixing-Tips bleiben leer. Bitte starten Sie Ollama auf Port 11434.")
+            # M4-Fix: Hinweis passend zum gewaehlten Provider statt hardcodiert Ollama
+            port = "1234" if ai_provider == "LM Studio" else "11434"
+            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Der AI-Layer ist inaktiv. Moods und Mixing-Tips bleiben leer. Bitte starten Sie {ai_provider} auf Port {port}.")
 
         if warnings:
             warn_text = "System-Hinweis: Einige Dienste sind eingeschraenkt (Fuer Details hier hovern)"
@@ -3067,6 +3074,12 @@ class MainWindow(QMainWindow):
 
     def start_analysis(self):
         """Analyse starten — Progress in StatusBar, aktueller Content bleibt."""
+        # H2-Fix: Doppelstart-Schutz — Ctrl+G umgeht den deaktivierten Button;
+        # ohne Guard wuerde der laufende Worker verwaisen (zweiter ProcessPool)
+        if self.worker is not None and self.worker.isRunning():
+            self.status_bar.set_status("Analyse laeuft bereits...")
+            return
+
         settings = self.library_panel.get_current_settings()
 
         if not settings["folder"]:
@@ -3231,8 +3244,9 @@ class MainWindow(QMainWindow):
                 score_item.setForeground(QColor("white"))
                 self.playlist_panel.table.setItem(found_row + 1, 14, score_item)
                 
-            # 4. Gesamtmetriken neu berechnen (nur lokale Metrik-Werte aktualisieren)
-            self.playlist_panel.quality_metrics = calculate_playlist_quality(self.playlist, self.playlist_panel.bpm_tolerance)
+            # M1-Fix: KEINE Gesamtmetrik-Neuberechnung pro Track — das Signal
+            # feuert pro AI-Ergebnis und calculate_playlist_quality ist O(n);
+            # on_ai_worker_finished rechnet am Ende ohnehin einmal komplett
 
     def on_ai_worker_finished(self):
         """AI Analysis beendet — Phase 5 abschliessen und UI-Panels einmalig aktualisieren."""
@@ -3266,7 +3280,9 @@ class MainWindow(QMainWindow):
                 pass
             self.worker.deleteLater()
             self.worker = None
-        self.ai_worker = None
+        # H3-Fix: ai_worker hier NICHT auf None setzen — sonst verwaist ein noch
+        # laufender AI-Worker (QThread destroyed while running) und der
+        # isRunning()-Check weiter unten waere toter Code
 
         # Leere Playlist? Fehler anzeigen.
         if not playlist:
@@ -3426,7 +3442,8 @@ class MainWindow(QMainWindow):
                 "Library Missing",
                 "pyrekordbox not installed! Falling back to M3U8...",
             )
-            m3u8_path = file_path.replace(".xml", ".m3u8")
+            # L2-Fix: nur die Endung ersetzen, nicht jedes ".xml" im Pfad
+            m3u8_path = os.path.splitext(file_path)[0] + ".m3u8"
             self._export_m3u8(m3u8_path)
         except Exception as e:
             raise Exception(f"Rekordbox XML export failed: {e}")
@@ -3494,6 +3511,13 @@ class MainWindow(QMainWindow):
             if not self.worker.wait(3000):
                 self.worker.terminate()
                 self.worker.wait()
+        # H4-Fix: auch den AI-Tagging-Worker beenden — sonst Crash/Hang
+        # ("QThread destroyed while running") beim App-Close waehrend Tagging
+        if self.ai_worker and self.ai_worker.isRunning():
+            self.ai_worker.request_cancel()
+            if not self.ai_worker.wait(3000):
+                self.ai_worker.terminate()
+                self.ai_worker.wait()
         # Transition-Render-Worker stoppen und Temp-Dateien loeschen
         self.mix_tips_panel._cleanup_existing_previews()
         event.accept()

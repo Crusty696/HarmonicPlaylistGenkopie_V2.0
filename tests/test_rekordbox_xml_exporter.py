@@ -379,5 +379,7 @@ class TestRekordboxCuePunkte:
     fake_xml = FakeRekordboxXml()
     make_export(playlist, out, fake_xml=fake_xml)
     mix_in_cues = [c for c in fake_xml.cues if c["name"] == "MIX IN"]
-    assert len(mix_in_cues) == 1
-    assert mix_in_cues[0]["time"] == pytest.approx(45.0)
+    # M9-Fix: Mix-In wird doppelt geschrieben — Hot Cue A (Num=0) + Memory Cue (Num=-1)
+    assert len(mix_in_cues) == 2
+    for cue in mix_in_cues:
+      assert cue["time"] == pytest.approx(45.0)

@@ -23,6 +23,11 @@ import librosa
 
 logger = logging.getLogger(__name__)
 
+# EQ-Cutoffs der Transition-Typen (L2-Fix: zentral statt hartkodiert im Code)
+FILTER_RIDE_HP_HZ = 800.0    # Hochpass-Sweep beim Ausblenden (filter_ride)
+SMOOTH_BLEND_LP_HZ = 300.0   # Tiefpass auf Track A (smooth_blend)
+BREAKDOWN_HP_HZ = 250.0      # Bass-Kill auf Track A (breakdown_bridge)
+
 
 # ---------------------------------------------------------------------------
 # Daten-Klassen
@@ -107,11 +112,18 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
 
         # Rate: rate = target_bpm_b / bpm_a.
         # Wenn rate > 1.0, wird das Signal verlangsamt. Wenn rate < 1.0, wird es beschleunigt.
-        rate = float(target_bpm_b / spec.bpm_a)
-        
+        raw_rate = float(target_bpm_b / spec.bpm_a)
+
         # Sicherheitslimit fuer extremen Pitch (max +-15% vom Zieltempo)
-        rate = max(0.85, min(1.15, rate))
-        
+        rate = max(0.85, min(1.15, raw_rate))
+        # H3-Fix: geclampter Stretch bedeutet, dass der Preview NICHT
+        # tempo-synchron laeuft — das muss sichtbar geloggt werden
+        if abs(rate - raw_rate) > 1e-6:
+            logger.warning(
+                f"Time-Stretch geclamped (benoetigt Rate {raw_rate:.3f}, erlaubt 0.85-1.15): "
+                f"Preview laeuft NICHT tempo-synchron ({spec.bpm_b:.1f} vs {spec.bpm_a:.1f} BPM)"
+            )
+
         try:
             # librosa.effects.time_stretch arbeitet auf der LETZTEN Achse.
             # seg_b ist (frames, 2) → transponieren auf (2, frames), stretchen,
@@ -132,6 +144,16 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     cf_frames   = int(cf_sec * sr)
     pre_frames  = int(spec.pre_roll_sec * sr)
     post_frames = int(spec.post_roll_sec * sr)
+
+    # H2-Fix: Beat-Phase-Alignment — die Mixpunkte sind nur arithmetisch
+    # (Raster ab t=0) phrasen-aligned; die echten Kicks beider Tracks koennen
+    # im Crossfade beliebig gegeneinander versetzt sein. Track B wird um den
+    # gemessenen Phasenversatz (< 1 Beat) verschoben.
+    if spec.bpm_a > 0 and len(seg_a) > pre_frames:
+        try:
+            seg_b = _align_beat_phase(seg_a[pre_frames:], seg_b, spec.bpm_a, sr)
+        except Exception as align_err:
+            logger.warning(f"Beat-Phase-Alignment fehlgeschlagen: {align_err}")
 
     # Sicherstellen dass Segmente lang genug sind (Null-Padding falls noetig)
     seg_a = _ensure_len(seg_a, pre_frames + cf_frames)
@@ -169,6 +191,55 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     return output_path
 
 
+def _estimate_first_beat(seg: np.ndarray, sr: int, bpm: float) -> float:
+    """Schaetzt den Zeitpunkt (Sekunden) des ersten Beats im Segment (max. 8s Fenster)."""
+    mono = seg.mean(axis=1)
+    window = mono[: int(min(len(mono), sr * 8))]
+    if len(window) < sr:
+        return 0.0
+    _, beats = librosa.beat.beat_track(y=window, sr=sr, start_bpm=bpm, trim=False)
+    beats = np.atleast_1d(beats)
+    if beats.size == 0:
+        return 0.0
+    return float(librosa.frames_to_time(beats[0], sr=sr))
+
+
+def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
+                      bpm: float, sr: int) -> np.ndarray:
+    """
+    Verschiebt seg_b um weniger als einen Beat, sodass sein erster Beat auf
+    das Beat-Raster von ref_seg (Track A im Crossfade-Bereich) faellt.
+
+    Verschiebung nach vorne = Samples am Anfang verwerfen, nach hinten =
+    Null-Padding (< 1/2 Beat, unhoerbar da im Fade-In).
+    """
+    if bpm <= 0 or len(ref_seg) < sr or len(seg_b) < sr:
+        return seg_b
+    beat_len = int(round(60.0 / bpm * sr))
+    if beat_len <= 0:
+        return seg_b
+
+    t_a = _estimate_first_beat(ref_seg, sr, bpm)
+    t_b = _estimate_first_beat(seg_b, sr, bpm)
+    offset = int(round((t_b - t_a) * sr)) % beat_len
+    if offset == 0:
+        return seg_b
+
+    if offset <= beat_len // 2:
+        shifted = seg_b[offset:]
+        shift_info = -offset
+    else:
+        pad = beat_len - offset
+        shifted = np.concatenate(
+            [np.zeros((pad, seg_b.shape[1]), dtype=seg_b.dtype), seg_b], axis=0
+        )
+        shift_info = pad
+    logger.info(
+        f"Beat-Phase-Alignment: Track B um {shift_info / sr * 1000:.0f}ms verschoben"
+    )
+    return shifted
+
+
 def make_temp_output_path(index: int) -> str:
     """Erstellt einen temporaeren Pfad fuer eine Preview-WAV-Datei."""
     tmp_dir = tempfile.gettempdir()
@@ -201,6 +272,11 @@ def _load_segment(path: str, start_sec: float, duration_sec: float,
             num_frames  = int(duration_sec * sr_file)
             # Seek jenseits Dateiende → leeres Array zurueckgeben (kein Fehler)
             if start_frame >= f.frames:
+                # L5-Fix: hoerbar stiller Preview braucht eine sichtbare Ursache im Log
+                logger.warning(
+                    f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
+                    f"stilles Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
+                )
                 return np.zeros((0, 2), dtype=np.float32)
             f.seek(max(0, start_frame))
             audio = f.read(num_frames, dtype='float32', always_2d=True)
@@ -356,22 +432,32 @@ def _apply_eq_crossfade(
         # Hoehen: normaler linearer Crossfade
         mixed = highs_a * fo + highs_b * fi
 
-        # Bass von Track A bleibt laenger (spaeter abfaden)
-        bass_a_fo = np.clip(fo * 1.5, 0.0, 1.0)
-        # Bass von Track B kommt spaeter (verspaetetes Einblenden)
-        bass_b_fi = np.clip(fi * 1.5 - 0.5, 0.0, 1.0)
-        mixed += bass_a * bass_a_fo + bass_b * bass_b_fi
+        # M6-Fix: echter Bass-Handover — harter Swap am Crossfade-Mittelpunkt
+        # mit kurzer 50ms-Rampe gegen Klicks. Vorher ueberlappten beide Baesse
+        # (A~0.75 / B~0.25 am Mittelpunkt) — doppelter Sub-Bass.
+        half = config.cf_frames // 2
+        ramp = max(1, int(0.05 * config.sr))
+        ramp_end = min(half + ramp, config.cf_frames)
+        n_ramp = ramp_end - half
+        bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
+        bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+        if n_ramp > 0:
+            bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+            bass_b_env[half:ramp_end] = np.linspace(0.0, 1.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+        bass_a_env[ramp_end:] = 0.0
+        bass_b_env[ramp_end:] = 1.0
+        mixed += bass_a * bass_a_env + bass_b * bass_b_env
 
     elif t_type == "filter_ride" or t_type == "smooth_blend":
         # Hochpass- bzw. Tiefpass-Filterung zur Vermeidung von Frequenzüberlagerungen
         if t_type == "filter_ride":
-            # Hochpass auf Track A simuliert einen Filter-Sweep beim Ausblenden (800 Hz HP)
-            sos_hp_a = _make_sos(800.0, config.sr, 'high')
+            # Hochpass auf Track A simuliert einen Filter-Sweep beim Ausblenden
+            sos_hp_a = _make_sos(FILTER_RIDE_HP_HZ, config.sr, 'high')
             filtered_a = sosfiltfilt(sos_hp_a, seg_a, axis=0)
             mixed = filtered_a * fo + seg_b * fi
         else:
-            # smooth_blend: Tiefpass auf Track A (300 Hz LP) waehrend Track B einfadet
-            sos_lp_a = _make_sos(300.0, config.sr, 'low')
+            # smooth_blend: Tiefpass auf Track A waehrend Track B einfadet
+            sos_lp_a = _make_sos(SMOOTH_BLEND_LP_HZ, config.sr, 'low')
             filtered_a = sosfiltfilt(sos_lp_a, seg_a, axis=0)
             mixed = filtered_a * fo + seg_b * fi
 
@@ -407,8 +493,8 @@ def _apply_eq_crossfade(
         mixed += echo_signal * fo
 
     elif t_type == "breakdown_bridge":
-        # Bass aus Track A sofort komplett rausfiltern (HPF bei 250 Hz), um Platz fuer Track B zu machen
-        sos_hp = _make_sos(250.0, config.sr, 'high')
+        # Bass aus Track A sofort komplett rausfiltern, um Platz fuer Track B zu machen
+        sos_hp = _make_sos(BREAKDOWN_HP_HZ, config.sr, 'high')
         highs_a = sosfiltfilt(sos_hp, seg_a, axis=0)
         mixed = highs_a * fo + seg_b * fi
 

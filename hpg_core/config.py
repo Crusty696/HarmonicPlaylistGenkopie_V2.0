@@ -20,6 +20,13 @@ BARS_PER_PHRASE = 8  # Standard phrase length (8 bars)
 # Default BPM for fallback when BPM detection fails
 DEFAULT_BPM = 120.0
 
+# Fallback-Energie fuer Sektionen ohne avg_energy-Feld (Skala 0-100)
+DEFAULT_SECTION_ENERGY = 50.0
+
+# Enhanced-Harmonic-Flow: Lookahead-Rekursion nur fuer die K besten
+# Kandidaten (begrenzt O(n^3) auf O(n^2 * K) bei grossen Playlists)
+LOOKAHEAD_TOP_K = 8
+
 # === DJ Brain Configuration ===
 DJ_BRAIN_ENABLED = True  # Master-Schalter: genre-aware Mix-Punkte (dj_brain) vs. generischer RMS-Fallback
 
@@ -92,7 +99,8 @@ AI_ENABLED = True
 AI_PROVIDER = "Ollama"  # "Ollama" or "LM Studio"
 AI_API_URL_OLLAMA = "http://localhost:11434/v1/chat/completions"
 AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default Ollama
-AI_MODEL = "gemma4:12b" # Oder mistral, etc.
+# "gemma4" existiert nicht als Ollama-Modell — gemeint ist Gemma 3 12B
+AI_MODEL = "gemma3:12b" # Oder mistral, etc.
 AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
 AI_SYSTEM_PROMPT = (
     "You are a professional electronic music curator and DJ. Analyze tracks with focus on "
@@ -107,4 +115,4 @@ AI_SYSTEM_PROMPT = (
     '"mix_out_time" (float, ideal mix-out point in seconds). '
     'Example: {"sub_genre":"Peak-time Techno","moods":["driving","dark"],"description":"Blend the intro after the first drop fades out.","mix_in_time":32.5,"mix_out_time":240.0}'
 )
-AI_MODELS_AVAILABLE = ["gemma4:12b", "gemma2:9b", "gemma:7b", "llama3:8b", "llama3.1:8b", "qwen2.5:7b", "mistral:7b", "phi3:medium", "llama3", "mistral", "gemma"]
+AI_MODELS_AVAILABLE = ["gemma3:12b", "gemma2:9b", "gemma:7b", "llama3:8b", "llama3.1:8b", "qwen2.5:7b", "mistral:7b", "phi3:medium", "llama3", "mistral", "gemma"]

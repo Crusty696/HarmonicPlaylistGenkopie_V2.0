@@ -131,6 +131,7 @@ RISK_LABELS = {
 
 PHASE_COLORS = {
   "intro":    "#00E676",  # Neon Gruen
+  "warmup":   "#69F0AE",  # Helles Gruen
   "build":    "#FFD740",  # Neon Gold
   "peak":     "#FF5252",  # Neon Rot
   "sustain":  "#7C4DFF",  # Neon Violett
@@ -139,6 +140,7 @@ PHASE_COLORS = {
 
 PHASE_LABELS = {
   "intro":    "Intro \u2014 Sanfter Einstieg",
+  "warmup":   "Warm-up \u2014 Behutsam anheizen",
   "build":    "Build-Up \u2014 Steigende Energie",
   "peak":     "Peak \u2014 Hoechste Intensitaet",
   "sustain":  "Sustain \u2014 Energie halten",

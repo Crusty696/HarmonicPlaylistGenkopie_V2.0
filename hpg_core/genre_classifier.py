@@ -338,8 +338,10 @@ ID3_GENRE_MAP: dict[str, str] = {
     "melodic house": "Melodic Techno",
     "melodic house/techno": "Melodic Techno",
     "indie dance": "Melodic Techno",
-    "organic house": "Melodic Techno",
-    "afro house": "Melodic Techno",
+    # Audit-Fix 2026-07-17: Afro/Organic House teilen mit Melodic Techno nur
+    # das BPM — Groove/Timbre liegen naeher an Deep House (Mix-Profil passt)
+    "organic house": "Deep House",
+    "afro house": "Deep House",
     # Techno variants
     "techno": "Techno",
     "hard techno": "Techno",
@@ -384,7 +386,8 @@ ID3_GENRE_MAP: dict[str, str] = {
     "neurofunk": "Drum & Bass",
     "liquid funk": "Drum & Bass",
     "jump up": "Drum & Bass",
-    "breakbeat": "Drum & Bass",
+    # "breakbeat" (~130-140 BPM) ist KEIN DnB (~170) — Mapping entfernt,
+    # Audio-Klassifikation entscheidet (Audit-Fix 2026-07-17)
     # Minimal variants
     "minimal": "Minimal",
     "minimal techno": "Minimal",
@@ -418,10 +421,13 @@ def match_id3_genre(id3_genre: str) -> str | None:
     if genre_lower in ID3_GENRE_MAP:
         return ID3_GENRE_MAP[genre_lower]
 
-    # Substring match (e.g., "Psytrance / Full On" contains "psytrance")
-    for tag, target_genre in ID3_GENRE_MAP.items():
-        if tag in genre_lower or genre_lower in tag:
-            return target_genre
+    # Substring match (e.g., "Psytrance / Full On" contains "psytrance").
+    # M13-Fix: nur noch tag-in-genre — die Rueckrichtung band generische Tags
+    # ("house", "tech") greedy an das erste spezifische Genre. Laengste Tags
+    # zuerst, damit "tech house" vor "house" gewinnt.
+    for tag in sorted(ID3_GENRE_MAP, key=len, reverse=True):
+        if tag in genre_lower:
+            return ID3_GENRE_MAP[tag]
 
     return None
 

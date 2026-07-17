@@ -2,9 +2,10 @@
 Rekordbox XML Exporter - Professional DJ Integration
 
 Exports playlists in Rekordbox XML format with full metadata:
-- BPM, Key, Genre, Rating
-- Cue Points & Memory Cues (Mix In/Out)
-- Beat Grid Information
+- BPM, Key, Genre
+- Hot Cues A/B + Memory Cues fuer Mix In/Out
+- Memory Cues fuer erkannte Sektionen (Drop/Breakdown)
+- Beat Grid (TEMPO-Element, Anker bei 0.0s)
 - Playlist Hierarchy
 
 Compatible with Rekordbox 5.x, 6.x, 7.x
@@ -32,9 +33,9 @@ class RekordboxXMLExporter(BaseExporter):
     Rekordbox XML Exporter - Professional DJ Integration
 
     Features:
-    - Full metadata (BPM, Key, Genre, Rating)
-    - Cue Points & Memory Cues
-    - Beat Grid support
+    - Metadata (BPM, Key, Genre)
+    - Hot Cues A/B + Memory Cues (Mix In/Out), Sektions-Cues (Drop/Breakdown)
+    - Beat Grid (TEMPO-Element)
     - Playlist hierarchy
     - Rekordbox 5.x, 6.x, 7.x compatible
     """
@@ -164,23 +165,55 @@ class RekordboxXMLExporter(BaseExporter):
             if rb_key:
                 rb_track["Tonality"] = rb_key
 
-        # Add Cue Points (Mix In/Out markers)
+        # Add Beat Grid (TEMPO element)
+        self._add_beat_grid(rb_track, track)
+
+        # Add Cue Points (Mix In/Out markers + Sektions-Cues)
         self._add_cue_points(xml, rb_track, track)
+
+    def _add_beat_grid(self, rb_track: dict, track: Track) -> None:
+        """
+        Schreibt ein TEMPO-Element (Beatgrid-Anker) fuer den Track.
+
+        Anker bei 0.0s — HPG hat (noch) keine Downbeat-Erkennung; Rekordbox
+        analysiert den Grid bei Bedarf selbst nach.
+        """
+        if not track.bpm or track.bpm <= 0:
+            return
+        try:
+            if hasattr(rb_track, "add_tempo"):
+                rb_track.add_tempo(Inizio=0.0, Bpm=float(track.bpm), Metro="4/4", Battito=1)
+        except Exception as e:
+            logger.warning(f"Beat Grid konnte nicht zur XML hinzugefuegt werden: {e}")
 
     def _add_cue_points(
         self, xml: "RekordboxXml", rb_track: dict, track: Track
     ) -> None:
         """
-        Add Cue Points (Memory Cues) to track.
-        Uses the internal structure of pyrekordbox track objects to add POSITION_MARKs.
+        Add Cue Points to track (POSITION_MARKs).
+
+        Mix In/Out werden doppelt geschrieben: als Hot Cue A/B (Num=0/1, direkt
+        anspringbar) UND als Memory Cue (Num=-1, sichtbar in der Waveform).
+        Erkannte Drop-/Breakdown-Sektionen werden als Memory Cues exportiert.
         """
         try:
-            # pyrekordbox-API: Memory-Cues via Track.add_mark (Num=-1 = Memory Cue)
+            # pyrekordbox-API: Hot Cue = Num>=0, Memory Cue = Num=-1
             if hasattr(track, "mix_in_point") and track.mix_in_point > 0:
+                rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=0)
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=-1)
 
             if hasattr(track, "mix_out_point") and track.mix_out_point > 0:
+                rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=1)
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=-1)
+
+            # Sektions-Cues: erkannte Drops/Breakdowns als Memory Cues
+            for section in (track.sections or []):
+                label = str(section.get("label", "")).lower()
+                start = section.get("start_time")
+                if label in ("drop", "breakdown") and start and start > 0:
+                    rb_track.add_mark(
+                        Name=label.upper(), Type="cue", Start=float(start), Num=-1
+                    )
         except Exception as e:
             logger.warning(f"Cue Points konnten nicht zur XML hinzugefuegt werden: {e}")
 
@@ -236,10 +269,10 @@ class RekordboxXMLExporter(BaseExporter):
             "features": [
                 "Track paths (URI format)",
                 "Artist, Title, Genre metadata",
-                "BPM & Tempo information",
+                "BPM & Beat Grid (TEMPO)",
                 "Key (Musical Key)",
-                "Cue Points (Memory Cues)",
-                "Mix In/Out markers",
+                "Hot Cues A/B + Memory Cues (Mix In/Out)",
+                "Sektions-Cues (Drop/Breakdown)",
                 "Playlist hierarchy",
                 "Duration",
             ],

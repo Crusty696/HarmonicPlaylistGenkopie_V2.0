@@ -78,7 +78,21 @@ class RekordboxImporter:
                 self._build_track_cache()
                 logger.info(f"Rekordbox-DB geladen: {len(self.track_cache)} Tracks")
             except Exception as e:
-                logger.warning(f"Rekordbox-DB konnte nicht geladen werden: {e}")
+                # Audit-Fix 2026-07-17: die zwei haeufigsten Realfaelle
+                # differenziert melden statt nur generisch loggen
+                msg = str(e).lower()
+                if "locked" in msg or "database is locked" in msg:
+                    logger.warning(
+                        "Rekordbox-DB ist gesperrt — laeuft Rekordbox gerade? "
+                        "Bitte Rekordbox schliessen und neu analysieren."
+                    )
+                elif "cipher" in msg or "encrypted" in msg or "key" in msg or "no such table" in msg:
+                    logger.warning(
+                        "Rekordbox-DB verschluesselt / Key fehlt — pyrekordbox benoetigt "
+                        "den Datenbank-Key (siehe pyrekordbox-Doku: 'python -m pyrekordbox download-key')."
+                    )
+                else:
+                    logger.warning(f"Rekordbox-DB konnte nicht geladen werden: {e}")
                 self.db = None
 
     def is_available(self) -> bool:
@@ -87,11 +101,23 @@ class RekordboxImporter:
 
     @staticmethod
     def _safe_bpm(raw_bpm) -> Optional[float]:
-        """Sicherer BPM-Wert aus Rekordbox (BPM * 100 gespeichert)."""
+        """Sicherer BPM-Wert aus Rekordbox (BPM * 100 gespeichert).
+
+        Audit-Fix 2026-07-17: Sanity-Range — ein Feld, das ausnahmsweise schon
+        in BPM steht (oder Muell enthaelt), darf nicht als 1.36-BPM-Track
+        durchrutschen und spaeter jeden BPM-Gate reissen.
+        """
         if not raw_bpm:
             return None
         try:
-            return float(raw_bpm) / 100.0
+            bpm = float(raw_bpm) / 100.0
+            if 40.0 <= bpm <= 250.0:
+                return bpm
+            # Vielleicht war der Rohwert bereits in BPM?
+            raw = float(raw_bpm)
+            if 40.0 <= raw <= 250.0:
+                return raw
+            return None
         except (ValueError, TypeError):
             return None
 
@@ -148,6 +174,11 @@ class RekordboxImporter:
                 # Convert Rekordbox key to Camelot
                 if data.key:
                     data.camelot_code = self._convert_key_to_camelot(data.key)
+                    if not data.camelot_code:
+                        # Audit-Fix 2026-07-17: stille Key-Verluste sichtbar machen
+                        logger.debug(
+                            f"Rekordbox-Key nicht konvertierbar: {data.key!r} ({file_name})"
+                        )
 
                 # Extract cue points
                 if hasattr(content, "Cues") and content.Cues:
@@ -205,10 +236,13 @@ class RekordboxImporter:
 
         try:
             for cue in cues:
+                # Audit-Fix 2026-07-17: Memory-Cues ohne Position liefern
+                # InMsec = -1/None — nicht als Cue bei -0.001s durchreichen
+                raw_msec = getattr(cue, "InMsec", None)
+                if raw_msec is None or float(raw_msec) < 0:
+                    continue
                 cue_data = {
-                    "position": (
-                        float(cue.InMsec) / 1000.0 if hasattr(cue, "InMsec") else None
-                    ),
+                    "position": float(raw_msec) / 1000.0,
                     "name": cue.Comment if hasattr(cue, "Comment") else None,
                     "type": cue.Kind if hasattr(cue, "Kind") else None,
                     "hot_cue_number": (
