@@ -17,7 +17,14 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 from dataclasses import dataclass, field
 from .models import Track, effective_bpm_diff, get_camelot_components, quantize_to_grid
-from .config import METER, DEFAULT_BPM, DEFAULT_SECTION_ENERGY
+from .config import (
+  METER,
+  DEFAULT_BPM,
+  DEFAULT_SECTION_ENERGY,
+  GAIN_DIFF_SHOW_DB,
+  GAIN_DIFF_WARN_DB,
+  KEY_CONFIDENCE_UNCERTAIN,
+)
 
 
 # === Genre-Wissen ===
@@ -344,6 +351,7 @@ class DJRecommendation:
   bpm_advice: str = ""        # Konkrete BPM/Pitching-Empfehlung
   key_advice: str = ""        # Camelot-basierte Tonart-Empfehlung
   energy_advice: str = ""     # Energie-Empfehlung basierend auf tatsaechlicher Differenz
+  gain_advice: str = ""       # LUFS-basierte Gain-Angleichung (2026-07-17)
   transition_type: str = "smooth_blend"  # Transition-Typ (fuer Farben in UI)
 
   # Advanced Audio Alignment
@@ -441,6 +449,9 @@ def generate_dj_recommendation(
   bpm_advice = _bpm_advice(track_a.bpm, track_b.bpm)
   key_advice = _key_advice(track_a.camelotCode, track_b.camelotCode)
   energy_advice = _energy_advice(float(track_a.energy), float(track_b.energy))
+  gain_advice = _gain_advice(
+    getattr(track_a, "lufs", 0.0), getattr(track_b, "lufs", 0.0)
+  )
 
   # Advanced Audio Alignment
   texture_score: float = 0.0
@@ -462,6 +473,7 @@ def generate_dj_recommendation(
     bpm_advice=bpm_advice,
     key_advice=key_advice,
     energy_advice=energy_advice,
+    gain_advice=gain_advice,
     adjusted_mix_out_a=adjusted_mix_out_a,
     adjusted_mix_in_b=adjusted_mix_in_b,
     overlap_seconds=round(overlap_seconds, 2),
@@ -849,6 +861,26 @@ def _key_advice(code_a: str, code_b: str) -> str:
     return f"{code_a} → {code_b} — Distanz {dist}, Key-Clash — nur Bass Swap"
 
 
+def _gain_advice(lufs_a: float, lufs_b: float) -> str:
+  """LUFS-basierte Gain-Angleichung zwischen zwei Tracks (2026-07-17).
+
+  0.0 = LUFS unbekannt (Alt-Cache/Messung fehlgeschlagen) -> kein Advice.
+  Anzeige ab GAIN_DIFF_SHOW_DB (1 dB = JND), Richtungsangabe fuer den
+  Trim/Gain-Regler des eingehenden Decks.
+  """
+  if lufs_a >= 0.0 or lufs_b >= 0.0:
+    return ""
+  diff = lufs_a - lufs_b  # positiv = Track B ist leiser
+  if abs(diff) < GAIN_DIFF_SHOW_DB:
+    return f"{lufs_a:.1f} → {lufs_b:.1f} LUFS — Pegel passt, kein Gain noetig"
+  direction = "rauf" if diff > 0 else "runter"
+  hint = " (deutlich — vor dem Mix angleichen!)" if abs(diff) >= GAIN_DIFF_WARN_DB else ""
+  return (
+    f"{lufs_a:.1f} → {lufs_b:.1f} LUFS — Track B Gain {abs(diff):.1f} dB "
+    f"{direction}{hint}"
+  )
+
+
 def _energy_advice(energy_a: float, energy_b: float) -> str:
   """
   Gibt eine Energie-Empfehlung basierend auf den tatsaechlichen Track-Werten.
@@ -1126,6 +1158,26 @@ def _assess_transition_risks(
       risks.append(f"Bass-Kollision droht! (A:{bass_a:.0f}%, B:{bass_b:.0f}%) -- Bass von Track A hart cutten")
   if bass_b > 80:
       risks.append("Incoming Track hat sehr dominanten Bass -- Bass-Swap am Phrasen-Ende empfohlen")
+
+  # Key-Confidence (2026-07-17): unsichere Tonart = Harmonik-Empfehlung
+  # mit Vorsicht geniessen (0.0 = unbekannt/Alt-Cache -> keine Warnung)
+  for label, tr in (("A", track_a), ("B", track_b)):
+      kc = getattr(tr, "key_confidence", 0.0)
+      if 0.0 < kc < KEY_CONFIDENCE_UNCERTAIN:
+          risks.append(
+              f"Key von Track {label} unsicher erkannt ({kc:.0%}) -- "
+              f"Harmonik-Empfehlung pruefen, im Zweifel Bass Swap"
+          )
+
+  # Loudness (2026-07-17): grosser LUFS-Unterschied ohne Gain-Angleichung
+  # zerstoert den Uebergang hoerbar
+  lufs_a = getattr(track_a, "lufs", 0.0)
+  lufs_b = getattr(track_b, "lufs", 0.0)
+  if lufs_a < 0.0 and lufs_b < 0.0 and abs(lufs_a - lufs_b) >= GAIN_DIFF_WARN_DB:
+      risks.append(
+          f"Lautheits-Sprung {abs(lufs_a - lufs_b):.1f} dB "
+          f"({lufs_a:.1f} vs {lufs_b:.1f} LUFS) -- Gain vor dem Mix angleichen"
+      )
 
   return risks
 

@@ -130,6 +130,13 @@ class Track:
     first_downbeat: float = 0.0
     downbeat_confidence: float = 0.0  # 0-1; 1.0 = aus Rekordbox-Beatgrid
 
+    # Key-Confidence (2026-07-17): 0-1 nach Essentia-Muster (strength+margin);
+    # 0.0 = unbekannt (Alt-Cache), 1.0 = Key aus Rekordbox-DB
+    key_confidence: float = 0.0
+
+    # Integrated Loudness nach EBU R128 (2026-07-17); 0.0 = nicht gemessen
+    lufs: float = 0.0
+
     # Mix Points in Bars (fuer DJ-Anzeige)
     mix_in_bars: int = 0
     mix_out_bars: int = 0

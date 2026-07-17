@@ -9,7 +9,7 @@ import re
 from math import ceil, floor
 
 logger = logging.getLogger(__name__)
-from .models import Track, CAMELOT_MAP
+from .models import Track, CAMELOT_MAP, get_camelot_components
 from .config import (
     HOP_LENGTH,
     METER,
@@ -69,31 +69,114 @@ MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.3
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
+def get_key_with_confidence(
+    chroma_vector: np.ndarray,
+) -> tuple[str, str, float, float, str, str]:
+    """Bestimmt die Tonart per Krumhansl-Schmuckler-Korrelation MIT Konfidenz.
+
+    Key-Confidence-Feature 2026-07-17 nach dem Essentia-Muster (key.cpp):
+      - strength: absolute Pearson-Korrelation des Gewinners (passt das
+        Profil ueberhaupt?)
+      - margin: (max - max2) / max — relative Erst-zu-Zweit-Marge (wie
+        eindeutig ist der Sieg?)
+    Beide zusammen sind die publizierte Standard-Metrik; der Zweitkandidat
+    wird mitgeliefert, weil "nahe" Fehler (Quinte, relative Dur/Moll)
+    fuers Harmonic Mixing harmlos sind (MIREX-Fehlerklassen).
+
+    Returns:
+        (note, mode, strength, margin, second_note, second_mode)
+    """
+    correlations: list[tuple[float, str, str]] = []
+    for i in range(12):
+        rolled = np.roll(chroma_vector, -i)
+        major_corr = float(np.corrcoef(rolled, MAJOR_PROFILE)[0, 1])
+        minor_corr = float(np.corrcoef(rolled, MINOR_PROFILE)[0, 1])
+        correlations.append((major_corr, NOTES[i], "Major"))
+        correlations.append((minor_corr, NOTES[i], "Minor"))
+
+    correlations.sort(key=lambda item: item[0], reverse=True)
+    best_corr, key_note, key_mode = correlations[0]
+    second_corr, second_note, second_mode = correlations[1]
+
+    strength = best_corr if np.isfinite(best_corr) else 0.0
+    margin = 0.0
+    if np.isfinite(second_corr) and abs(strength) > 1e-9:
+        margin = (strength - second_corr) / abs(strength)
+
+    return (
+        key_note,
+        key_mode,
+        round(max(0.0, strength), 4),
+        round(max(0.0, margin), 4),
+        second_note,
+        second_mode,
+    )
+
+
 def get_key(chroma_vector: np.ndarray) -> tuple[str, str]:
     """Determines the key from a chroma vector by correlating with major/minor profiles."""
-    major_correlations = []
-    minor_correlations = []
+    note, mode, _, _, _, _ = get_key_with_confidence(chroma_vector)
+    return note, mode
 
-    for i in range(12):
-        # Correlate with major and minor profiles, rolling the chroma vector
-        major_corr = np.corrcoef(np.roll(chroma_vector, -i), MAJOR_PROFILE)[0, 1]
-        minor_corr = np.corrcoef(np.roll(chroma_vector, -i), MINOR_PROFILE)[0, 1]
-        major_correlations.append(major_corr)
-        minor_correlations.append(minor_corr)
 
-    # Find the best match
-    max_major_corr = max(major_correlations)
-    max_minor_corr = max(minor_correlations)
+def key_confidence_score(
+    strength: float, margin: float,
+    key_note: str, key_mode: str,
+    second_note: str, second_mode: str,
+) -> float:
+    """Verdichtet strength/margin zu einer 0-1-Konfidenz fuers Harmonic Mixing.
 
-    if max_major_corr > max_minor_corr:
-        key_index = np.argmax(major_correlations)
-        key_mode = "Major"
-    else:
-        key_index = np.argmax(minor_correlations)
-        key_mode = "Minor"
+    Schwellwerte heuristisch (nirgends offiziell publiziert, siehe Research):
+    strength >= 0.6 UND margin >= 0.05 = sicher. Bei knapper Marge wird
+    geprueft, ob der Zweitkandidat ein Camelot-Nachbar ist (Quinte = +-1,
+    relative Dur/Moll = gleiche Nummer) — solche Fehler sind fuers Mixing
+    harmlos und werten die Konfidenz nur leicht ab.
+    """
+    base = min(1.0, max(0.0, strength))
+    if strength >= 0.6 and margin >= 0.05:
+        return round(max(base, 0.6), 3)
 
-    key_note = NOTES[key_index]
-    return key_note, key_mode
+    # Zweitkandidat harmonisch benachbart? (Camelot-Distanz via CAMELOT_MAP)
+    first_code = CAMELOT_MAP.get((key_note, key_mode), "")
+    second_code = CAMELOT_MAP.get((second_note, second_mode), "")
+    if first_code and second_code:
+        num1, let1 = get_camelot_components(first_code)
+        num2, let2 = get_camelot_components(second_code)
+        if num1 and num2:
+            dist = min(abs(num1 - num2), 12 - abs(num1 - num2))
+            relative = num1 == num2 and let1 != let2
+            quint = dist == 1 and let1 == let2
+            if relative or quint:
+                # Verwechslung waere ein kompatibler Nachbar — quasi-sicher
+                return round(max(0.5, base * 0.9), 3)
+
+    return round(min(base, 0.4), 3)
+
+
+def calculate_lufs(y: np.ndarray, sr: int) -> float:
+    """Integrated Loudness nach ITU-R BS.1770-4 / EBU R128 in LUFS.
+
+    LUFS-Feature 2026-07-17: pyloudnorm mit "DeMan"-Filterklasse (laut
+    Paper voll BS.1770-konform bei jeder Samplerate). Referenz fuer
+    Gain-Matching ist LUFS_REFERENCE (config, -18 = ReplayGain 2.0).
+
+    Returns:
+        Integrated LUFS (negativ, z.B. -9.5) oder 0.0 als Sentinel
+        (unbekannt/Messung fehlgeschlagen — 0 LUFS kommt bei Musik nicht vor).
+    """
+    if y is None or sr <= 0 or len(y) < sr:  # mind. 1s (Gating braucht Bloecke)
+        return 0.0
+    try:
+        import pyloudnorm as pyln
+
+        meter = pyln.Meter(sr, filter_class="DeMan")
+        lufs = float(meter.integrated_loudness(np.asarray(y, dtype=np.float64)))
+        if not np.isfinite(lufs) or lufs >= 0.0 or lufs < -70.0:
+            return 0.0
+        return round(lufs, 2)
+    except Exception as e:
+        logger.warning(f"LUFS-Messung fehlgeschlagen: {e}")
+        return 0.0
 
 
 def calculate_energy(y: np.ndarray) -> int:
@@ -730,6 +813,11 @@ def analyze_track(file_path: str) -> Track | None:
             energy = calculate_energy(y)
             bass_intensity = calculate_bass_intensity(y, sr)
 
+            # LUFS-Feature 2026-07-17: Integrated Loudness (EBU R128)
+            lufs = calculate_lufs(y, sr)
+            # Key aus der Rekordbox-DB = verlaesslich analysiert
+            key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
+
             # DJ Brain: Genre-Klassifikation
             genre_result = classify_genre(
                 y, sr, rekordbox_data.bpm, bass_intensity, genre
@@ -842,6 +930,8 @@ def analyze_track(file_path: str) -> Track | None:
             danceability = 0
             mfcc_fingerprint = []
             first_downbeat, downbeat_confidence = 0.0, 0.0
+            lufs = 0.0
+            key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
             # K1 Audit-Fix: Richtige Dataclasses statt fragiler Dummy-Objekte
             genre_result = GenreClassification(
                 genre="Unknown", confidence=0.0, source="fallback",
@@ -952,6 +1042,8 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            key_confidence=key_confidence,
+            lufs=lufs,
         )
 
         cache_track(cache_key, track)
@@ -1009,13 +1101,26 @@ def analyze_track(file_path: str) -> Track | None:
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         chroma_vector = np.mean(chroma, axis=1)
-        key_note, key_mode = get_key(chroma_vector)
+        # Key-Confidence-Feature 2026-07-17: Essentia-Muster (strength + margin)
+        key_note, key_mode, key_strength, key_margin, second_note, second_mode = (
+            get_key_with_confidence(chroma_vector)
+        )
+        key_confidence = key_confidence_score(
+            key_strength, key_margin, key_note, key_mode, second_note, second_mode
+        )
+        logger.info(
+            f"Key: {key_note} {key_mode} (Konfidenz {key_confidence:.2f}, "
+            f"strength={key_strength:.2f}, margin={key_margin:.3f})"
+        )
 
         # Get Camelot code from key
         camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
 
         energy = calculate_energy(y)
         bass_intensity = calculate_bass_intensity(y, sr)
+
+        # LUFS-Feature 2026-07-17: Integrated Loudness (EBU R128)
+        lufs = calculate_lufs(y, sr)
 
         # DJ Brain: Genre-Klassifikation
         genre_result = classify_genre(y, sr, bpm, bass_intensity, genre)
@@ -1127,6 +1232,8 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            key_confidence=key_confidence,
+            lufs=lufs,
         )
 
         cache_track(cache_key, track)

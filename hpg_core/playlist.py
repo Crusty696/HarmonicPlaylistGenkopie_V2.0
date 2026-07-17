@@ -1057,6 +1057,8 @@ def _process_dj_brain_recommendations(
                 notes_parts.append(f"Key: {dj_rec.key_advice}")
             if dj_rec.energy_advice:
                 notes_parts.append(f"Energy: {dj_rec.energy_advice}")
+            if getattr(dj_rec, "gain_advice", ""):
+                notes_parts.append(f"Gain: {dj_rec.gain_advice}")
 
             # DJ Brain Transition-Laenge uebernehmen
             if dj_rec.transition_bars > 0 and current.bpm > 0:

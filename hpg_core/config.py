@@ -32,6 +32,20 @@ DEFAULT_SECTION_ENERGY = 50.0
 # Kandidaten (begrenzt O(n^3) auf O(n^2 * K) bei grossen Playlists)
 LOOKAHEAD_TOP_K = 8
 
+# === Loudness / Gain-Matching (2026-07-17, EBU R128) ===
+# Referenz-Loudness fuer Gain-Angleichung: -18 LUFS = ReplayGain-2.0-Standard
+# (Mixxx-kompatibel, genug Headroom fuer EDM; rekordbox-Zielwert unbekannt)
+LUFS_REFERENCE = -18.0
+# Anzeige-Schwelle: Differenzen >= 1 dB sind hoerbar (JND)
+GAIN_DIFF_SHOW_DB = 1.0
+# Warn-Schwelle: >= 3 dB gilt als korrekturbeduerftig
+GAIN_DIFF_WARN_DB = 3.0
+
+# Key-Confidence: unterhalb dieser Schwelle gilt die Tonart als unsicher
+# (Schwellwerte heuristisch — offiziell publiziert ist keiner, siehe
+# docs/plans/2026-07-17-key-confidence-lufs.md)
+KEY_CONFIDENCE_UNCERTAIN = 0.5
+
 # === DJ Brain Configuration ===
 # DJ_BRAIN_ENABLED entfernt (Konsolidierung 2026-07-17): der RMS-Fallback
 # delegiert jetzt selbst an calculate_genre_aware_mix_points — es gibt nur

@@ -14,10 +14,10 @@ from .models import Track
 
 logger = logging.getLogger(__name__)
 
-# v16: Downbeat-Erkennung 2026-07-17 — Track.first_downbeat verankert das
-# Phrasen-Raster (Rekordbox-ANLZ-Beatgrid oder Phase-Voting nach Vande Veire);
-# alle Mixpoints/Sektionsgrenzen liegen jetzt auf dem echten Downbeat-Gitter
-CACHE_VERSION = 16
+# v17: Key-Confidence (Essentia-Muster strength+margin) + LUFS-Loudness
+# (EBU R128 via pyloudnorm/DeMan) 2026-07-17 — neue Track-Felder
+# key_confidence und lufs werden bei der Analyse gefuellt
+CACHE_VERSION = 17
 CACHE_FILE = f"hpg_cache_v{CACHE_VERSION}.db"
 LOCK_FILE = f"hpg_cache_v{CACHE_VERSION}.lock"
 
