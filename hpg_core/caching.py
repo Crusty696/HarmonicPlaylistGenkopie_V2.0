@@ -14,10 +14,10 @@ from .models import Track
 
 logger = logging.getLogger(__name__)
 
-# v14: Audit-Fixes 2026-07-17 — Fast-Path Track-Konstruktion (C1), Advanced-
-# Analyse nutzt Fast-Path-Audio (C2), Cue-Override validiert+quantisiert (H1),
-# Doubletime-Korrektur (M8), genre-abhaengige Phrase im Fallback-Pfad (M4)
-CACHE_VERSION = 14
+# v15: Mixpoint-Pfad-B-Konsolidierung 2026-07-17 — RMS-Fallback delegiert an
+# calculate_genre_aware_mix_points (Pseudo-Sektionen), Aktivitaets-Schwelle
+# 0.4 x Max (Zehren), Suchfenster 20%/75% (Bittner) — Fallback-Mixpoints aendern sich
+CACHE_VERSION = 15
 CACHE_FILE = f"hpg_cache_v{CACHE_VERSION}.db"
 LOCK_FILE = f"hpg_cache_v{CACHE_VERSION}.lock"
 

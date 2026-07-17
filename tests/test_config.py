@@ -8,10 +8,9 @@ u.a.) wurden 2026-07-16 entfernt -- gruene Existenz-Tests hatten Aktivitaet vorg
 import pytest
 from hpg_core.config import (
   HOP_LENGTH, METER,
-  INTRO_MAX_PERCENTAGE, OUTRO_MIN_PERCENTAGE,
+  MIX_IN_SEARCH_WINDOW_PCT, MIX_OUT_SEARCH_WINDOW_PCT,
   RMS_THRESHOLD,
   BARS_PER_PHRASE, DEFAULT_BPM,
-  DJ_BRAIN_ENABLED,
   SECURITY_MAX_FILE_SIZE, SECURITY_MAX_TRACK_DURATION, SECURITY_MAX_PLAYLIST_SIZE,
 )
 
@@ -42,28 +41,19 @@ class TestMeterAndTiming:
 class TestIntroOutroThresholds:
   """Intro/Outro Detection Schwellenwerte (produktiv in analysis.py genutzt)."""
 
-  def test_intro_max_before_outro_min(self):
-    """Max-Intro muss vor Min-Outro liegen."""
-    assert INTRO_MAX_PERCENTAGE < OUTRO_MIN_PERCENTAGE
+  def test_search_windows_disjunkt(self):
+    """Mix-In-Suchfenster muss vor dem Mix-Out-Suchfenster enden.
 
-  def test_intro_max_reasonable(self):
-    """Intro kann maximal 40% sein (mehr waere kein Intro)."""
-    assert INTRO_MAX_PERCENTAGE <= 0.40
-
-  def test_outro_min_reasonable(self):
-    """Outro startet fruehestens bei 60%."""
-    assert OUTRO_MIN_PERCENTAGE >= 0.60
+    Research-Basis: Bittner et al. (ISMIR 2017) — Mix-In in den ersten 20%,
+    Mix-Out in den letzten 25% des Tracks.
+    """
+    assert MIX_IN_SEARCH_WINDOW_PCT < MIX_OUT_SEARCH_WINDOW_PCT
+    assert MIX_IN_SEARCH_WINDOW_PCT <= 0.40
+    assert MIX_OUT_SEARCH_WINDOW_PCT >= 0.60
 
   def test_rms_threshold_between_0_and_1(self):
-    """RMS-Schwelle muss zwischen 0 und 1 liegen."""
+    """RMS-Schwelle (Zehren-Salience, 0.4 x Max) muss zwischen 0 und 1 liegen."""
     assert 0.0 < RMS_THRESHOLD < 1.0
-
-
-class TestDJBrainConfig:
-  """DJ-Brain Master-Schalter (verdrahtet in analysis.py)."""
-
-  def test_dj_brain_enabled_is_bool(self):
-    assert isinstance(DJ_BRAIN_ENABLED, bool)
 
 
 class TestSecurityLimits:

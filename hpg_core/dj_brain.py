@@ -133,12 +133,24 @@ def calculate_genre_aware_mix_points(
   outro_start = _get_outro_start_from_sections(sections, duration)
 
   min_mix_in = max(intro_end, grid_seconds)
-  max_mix_out = min(outro_start - seconds_per_bar, duration - grid_seconds)
+  # Mix-Out AUF der Outro-Grenze ist DJ-Standard (Ausstieg wenn das Outro
+  # beginnt) — floor-Quantisierung garantiert bereits mix_out <= outro_start
+  max_mix_out = min(outro_start, duration - grid_seconds)
   min_window = grid_seconds * 2  # mind. 2 Phrasen nutzbares Mix-Fenster
 
   if max_mix_out - min_mix_in >= min_window:
     mix_in_time = max(min_mix_in, min(mix_in_time, max_mix_out - min_window))
     mix_out_time = max(mix_in_time + min_window, min(mix_out_time, max_mix_out))
+    # Konsolidierung 2026-07-17: Clamps koennen die Punkte vom Phrasen-Gitter
+    # schieben — zurueck aufs Gitter quantisieren, solange die Grenzen halten
+    # (reale DJ-Cues liegen auf Phrasengrenzen, arXiv 2407.06823)
+    if grid_seconds > 0:
+      aligned_out = floor(mix_out_time / grid_seconds) * grid_seconds
+      if aligned_out - mix_in_time >= min_window:
+        mix_out_time = aligned_out
+      aligned_in = ceil(mix_in_time / grid_seconds) * grid_seconds
+      if mix_out_time - aligned_in >= min_window:
+        mix_in_time = aligned_in
   else:
     # Track zu kurz bzw. Sektionen zu eng: Notfall-Prozente als letzte Instanz
     mix_in_time = max(intro_end, duration * 0.15)

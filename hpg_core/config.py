@@ -7,11 +7,16 @@ Centralizes all magic numbers and configurable parameters.
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)
 
-# === Intro/Outro Detection Thresholds ===
-INTRO_MAX_PERCENTAGE = 0.25  # Intro can't be longer than 25%
-OUTRO_MIN_PERCENTAGE = 0.75  # Outro can't start before 75%
+# === Intro/Outro Detection (RMS-Fallback, research-basiert 2026-07-17) ===
+# Suchfenster-Pruning nach Bittner et al. (ISMIR 2017, Spotify):
+# Mix-In-Kandidaten liegen in den ersten 20%, Mix-Out in den letzten 25%
+MIX_IN_SEARCH_WINDOW_PCT = 0.20
+MIX_OUT_SEARCH_WINDOW_PCT = 0.75
 
-RMS_THRESHOLD = 0.4  # Segment RMS must be < 40% of average (intro/outro detection)
+# Aktivitaets-Schwelle nach Zehren et al. (arXiv 2007.08411 / CMJ 2022):
+# Abschnitt gilt als "aktiv/tragfaehig", wenn die ueber ein 4-Takt-Fenster
+# geglaettete RMS >= 0.4 x Track-Maximum liegt
+RMS_THRESHOLD = 0.4
 
 # === Phrase Detection ===
 BARS_PER_PHRASE = 8  # Standard phrase length (8 bars)
@@ -28,7 +33,9 @@ DEFAULT_SECTION_ENERGY = 50.0
 LOOKAHEAD_TOP_K = 8
 
 # === DJ Brain Configuration ===
-DJ_BRAIN_ENABLED = True  # Master-Schalter: genre-aware Mix-Punkte (dj_brain) vs. generischer RMS-Fallback
+# DJ_BRAIN_ENABLED entfernt (Konsolidierung 2026-07-17): der RMS-Fallback
+# delegiert jetzt selbst an calculate_genre_aware_mix_points — es gibt nur
+# noch eine Mixpoint-Logik, der Master-Schalter schaltete nichts mehr.
 
 # Genre Classification
 GENRE_CONFIDENCE_THRESHOLD = (

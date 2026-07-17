@@ -13,12 +13,10 @@ from .models import Track, CAMELOT_MAP
 from .config import (
     HOP_LENGTH,
     METER,
-    INTRO_MAX_PERCENTAGE,
-    OUTRO_MIN_PERCENTAGE,
+    MIX_IN_SEARCH_WINDOW_PCT,
+    MIX_OUT_SEARCH_WINDOW_PCT,
     RMS_THRESHOLD,
-    BARS_PER_PHRASE,
     DEFAULT_BPM,
-    DJ_BRAIN_ENABLED,
     BPM_HALFTIME_MAX_RESULT,
     LIBROSA_FAST_PATH_DURATION,
     LIBROSA_MAX_DURATION,
@@ -542,16 +540,22 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
     return None
 
 
-def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, phrase_unit: int | None = None) -> tuple[float, float, int, int]:
+def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown") -> tuple[float, float, int, int]:
     """
-    Analyzes the audio structure to find intro/outro and calculates optimal mix points.
+    RMS-Fallback fuer Mix-Punkte, wenn keine Struktur-Analyse (Sections) vorliegt.
 
-    Refactored to remove ruptures dependency. Uses RMS energy thresholding for
-    faster and more robust intro/outro detection.
+    Konsolidierung 2026-07-17 (docs/plans/2026-07-17-mixpoint-pfad-b-konsolidierung.md):
+    Diese Funktion berechnet KEINE eigenen Mix-Punkte mehr — sie erkennt nur
+    Intro-Ende und Outro-Start per RMS-Aktivitaet, baut daraus 3 Pseudo-
+    Sektionen (intro/main/outro) und delegiert an calculate_genre_aware_mix_points.
+    Damit existiert nur noch EINE Quantisierungs-/Clamp-Logik (Pfad A).
 
-    Logic:
-    - Intro ends when energy consistently exceeds 40% of average energy.
-    - Outro starts when energy consistently drops below 40% of average energy.
+    Research-Basis (Web-Recherche 2026-07-17, Volltexte):
+    - Zehren et al. (arXiv 2007.08411 / CMJ 2022): Abschnitt "aktiv/tragfaehig"
+      wenn mittlere Energie ueber ein 4-Takt-Fenster >= 0.4 x Track-Maximum
+    - Bittner et al. (ISMIR 2017, Spotify): Mix-In-Kandidaten nur in den
+      ersten 20%, Mix-Out nur in den letzten 25% des Tracks
+    - Vande Veire & De Bie (EURASIP 2018): 16 Takte als Standard-Fade/Fallback
 
     Returns:
         tuple: (mix_in_point, mix_out_point, mix_in_bars, mix_out_bars)
@@ -573,121 +577,84 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         )
 
     try:
-        # Calculate RMS energy profile using configured hop length
+        seconds_per_bar = (60.0 / bpm) * METER
+        # 16 Takte: Standard-Fade-/Fallback-Laenge (Vande Veire, EURASIP 2018)
+        fallback_len = seconds_per_bar * 16
+
+        # --- RMS-Aktivitaetserkennung ---
         rms = librosa.feature.rms(y=y, hop_length=HOP_LENGTH)[0]
         times = librosa.frames_to_time(
             np.arange(len(rms)), sr=sr, hop_length=HOP_LENGTH
         )
 
-        # Determine energy threshold using configured RMS threshold
-        avg_energy = np.mean(rms)
-        threshold = avg_energy * RMS_THRESHOLD
-
-        # --- Intro Detection ---
-        # Find first point where energy stays above threshold for a sustained period
-        # Smoothing window ~2 seconds
-        window_size = int(2.0 * sr / HOP_LENGTH)
-
-        # Smooth the RMS curve
-        rms_smooth = np.convolve(rms, np.ones(window_size) / window_size, mode="same")
-
-        # Find start of main body (Intro End)
-        main_body_indices = np.where(rms_smooth > threshold)[0]
-
-        # Musiktheoretische Taktkonstanten fuer Fallbacks (z. B. 16 Bars fuer Intro/Outro)
-        seconds_per_beat = 60.0 / bpm
-        seconds_per_bar = seconds_per_beat * METER
-        fallback_intro_len = seconds_per_bar * 16
-        fallback_outro_len = seconds_per_bar * 16
-
-        if main_body_indices.size > 0:
-            # Intro ends at the first index where energy is significant
-            intro_end_idx = main_body_indices[0]
-            intro_end_time = times[intro_end_idx]
-
-            # Outro starts at the last index where energy is significant
-            outro_start_idx = main_body_indices[-1]
-            outro_start_time = times[outro_start_idx]
-        else:
-            # Echtes Takt-basiertes Fallback-System statt prozentualer Dummys
-            intro_end_time = min(fallback_intro_len, duration * 0.2)
-            outro_start_time = max(duration - fallback_outro_len, duration * 0.8)
-
-        # Sanity checks using configured thresholds
-        if intro_end_time > duration * INTRO_MAX_PERCENTAGE:
-            intro_end_time = min(fallback_intro_len, duration * 0.2)  # Fallback if intro detected as too long
-
-        if outro_start_time < duration * OUTRO_MIN_PERCENTAGE:
-            outro_start_time = max(duration - fallback_outro_len, duration * 0.8)  # Fallback if outro detected as too early
-
-        if intro_end_time >= outro_start_time:
-            intro_end_time = min(fallback_intro_len, duration * 0.2)
-            outro_start_time = max(duration - fallback_outro_len, duration * 0.8)
-
-        # --- Mix Point Calculation ---
-        # Optimized for DJ mixing:
-        # Mix-in: Usually at the end of the intro, aligned to an 8-bar phrase.
-        # Mix-out: Usually at the start of the outro, aligned to an 8-bar phrase.
-
-        seconds_per_beat = 60.0 / bpm
-        seconds_per_bar = seconds_per_beat * METER
-        # M4-Fix: genre-abhaengige Phrasenlaenge (Trance/Psytrance=16) statt fix 8,
-        # damit Fallback-Pfad und DJ-Brain-Pfad dasselbe Gitter nutzen
-        effective_phrase = phrase_unit if phrase_unit and phrase_unit > 0 else BARS_PER_PHRASE
-        seconds_per_phrase = seconds_per_bar * effective_phrase
-
-        # 1. Align Intro End to nearest phrase boundary AFTER intro
-        # ceil() ensures we land AFTER the intro, never inside it
-        intro_phrase_count = ceil(intro_end_time / seconds_per_phrase)
-        if intro_phrase_count < 1:
-            intro_phrase_count = 1
-        mix_in_point = intro_phrase_count * seconds_per_phrase
-
-        # 2. Align Outro Start to phrase boundary BEFORE outro
-        # floor() and -1 ensures we land BEFORE the outro, never inside it
-        total_phrases = duration / seconds_per_phrase
-        outro_phrase_index = floor(outro_start_time / seconds_per_phrase)
-        # Subtract 1 to guarantee we're before the outro section
-        if outro_phrase_index * seconds_per_phrase >= outro_start_time:
-            outro_phrase_index -= 1
-
-        # If the detected outro is too late, pull it back to a phrase boundary
-        if outro_phrase_index >= floor(total_phrases) - 1:
-            outro_phrase_index = max(
-                1, floor(total_phrases) - 4
-            )  # 32 bars before end as fallback
-
-        if outro_phrase_index < 1:
-            outro_phrase_index = 1
-
-        mix_out_point = outro_phrase_index * seconds_per_phrase
-
-        # 3. Refinement: Ensure mix-in is after the first beat and mix-out is before the last
-        # Also ensure there's enough space between them
-        if mix_in_point >= mix_out_point - (seconds_per_phrase * 2):
-            # If track is short, use 15% / 85% marks but still align to bars
-            mix_in_point = round((duration * 0.15) / seconds_per_bar) * seconds_per_bar
-            mix_out_point = round((duration * 0.85) / seconds_per_bar) * seconds_per_bar
-
-        # Ensure points are within bounds
-        # Guard: mix_in AFTER intro, mix_out BEFORE outro
-        # Use max with an iterable to ensure we get the maximum of intro_end_time and seconds_per_bar,
-        # but capped at duration * 0.4.
-        mix_in_point = max([intro_end_time, seconds_per_bar, min(mix_in_point, duration * 0.4)])
-        mix_out_point = min([
-            outro_start_time, duration - seconds_per_bar, max(mix_out_point, duration * 0.6)
-        ])
-
-        # Calculate bars
-        mix_in_bars = int(round(mix_in_point / seconds_per_bar))
-        mix_out_bars = int(round(mix_out_point / seconds_per_bar))
-
-        return (
-            round(float(mix_in_point), 2),
-            round(float(mix_out_point), 2),
-            mix_in_bars,
-            mix_out_bars,
+        # Glaettung ueber ein 4-Takt-Fenster (Zehren: Salience ueber 4 Takte)
+        window_frames = max(1, int((seconds_per_bar * 4) * sr / HOP_LENGTH))
+        rms_smooth = np.convolve(
+            rms, np.ones(window_frames) / window_frames, mode="same"
         )
+
+        rms_max = float(np.max(rms_smooth)) if rms_smooth.size else 0.0
+        if rms_max > 1e-6:
+            # aktiv = >= 0.4 x Track-Maximum (Zehren-Salience, RMS_THRESHOLD)
+            active = np.where(rms_smooth >= rms_max * RMS_THRESHOLD)[0]
+        else:
+            active = np.array([], dtype=int)  # Stille: nur Fallbacks
+
+        if active.size > 0:
+            intro_end_time = float(times[active[0]])
+            outro_start_time = float(times[active[-1]])
+        else:
+            intro_end_time = min(fallback_len, duration * MIX_IN_SEARCH_WINDOW_PCT)
+            outro_start_time = max(
+                duration - fallback_len, duration * MIX_OUT_SEARCH_WINDOW_PCT
+            )
+
+        # --- Suchfenster-Pruning (Bittner, ISMIR 2017) ---
+        # Mix-In-Kandidaten liegen in den ersten 20%, Mix-Out in den letzten 25%
+        if intro_end_time > duration * MIX_IN_SEARCH_WINDOW_PCT:
+            intro_end_time = min(fallback_len, duration * MIX_IN_SEARCH_WINDOW_PCT)
+        if outro_start_time < duration * MIX_OUT_SEARCH_WINDOW_PCT:
+            outro_start_time = max(
+                duration - fallback_len, duration * MIX_OUT_SEARCH_WINDOW_PCT
+            )
+        if intro_end_time >= outro_start_time:
+            intro_end_time = min(fallback_len, duration * MIX_IN_SEARCH_WINDOW_PCT)
+            outro_start_time = max(
+                duration - fallback_len, duration * MIX_OUT_SEARCH_WINDOW_PCT
+            )
+
+        # --- Pseudo-Sektionen bauen und an Pfad A delegieren ---
+        def _range_energy(start_s: float, end_s: float) -> float:
+            """Mittlere geglaettete RMS im Bereich, skaliert 0-100 relativ zum Max."""
+            if rms_max <= 1e-6 or times.size == 0:
+                return 0.0
+            mask = (times >= start_s) & (times < end_s)
+            if not np.any(mask):
+                return 0.0
+            return float(np.mean(rms_smooth[mask]) / rms_max * 100.0)
+
+        pseudo_sections = [
+            {
+                "label": "intro",
+                "start_time": 0.0,
+                "end_time": intro_end_time,
+                "avg_energy": _range_energy(0.0, intro_end_time),
+            },
+            {
+                "label": "main",
+                "start_time": intro_end_time,
+                "end_time": outro_start_time,
+                "avg_energy": _range_energy(intro_end_time, outro_start_time),
+            },
+            {
+                "label": "outro",
+                "start_time": outro_start_time,
+                "end_time": duration,
+                "avg_energy": _range_energy(outro_start_time, duration),
+            },
+        ]
+
+        return calculate_genre_aware_mix_points(pseudo_sections, bpm, duration, genre)
 
     except Exception as e:
         logger.error(f"Fehler in analyze_structure_and_mix_points: {e}")
@@ -776,8 +743,9 @@ def analyze_track(file_path: str) -> Track | None:
                 f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
             )
 
-            # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
-            if DJ_BRAIN_ENABLED and section_dicts:
+            # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
+            # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
+            if section_dicts:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     calculate_genre_aware_mix_points(
                         section_dicts, rekordbox_data.bpm, duration, genre_result.genre
@@ -790,7 +758,7 @@ def analyze_track(file_path: str) -> Track | None:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     analyze_structure_and_mix_points(
                         y, sr, duration, energy, rekordbox_data.bpm,
-                        phrase_unit=structure.phrase_unit,
+                        genre=genre_result.genre,
                     )
                 )
 
@@ -1041,8 +1009,9 @@ def analyze_track(file_path: str) -> Track | None:
             f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
         )
 
-        # DJ Brain: Genre-spezifische Mix-Punkte (oder Fallback auf generische Analyse)
-        if DJ_BRAIN_ENABLED and section_dicts:
+        # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
+        # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
+        if section_dicts:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 calculate_genre_aware_mix_points(
                     section_dicts, bpm, duration, genre_result.genre
@@ -1055,7 +1024,7 @@ def analyze_track(file_path: str) -> Track | None:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 analyze_structure_and_mix_points(
                     y, sr, duration, energy, bpm,
-                    phrase_unit=structure.phrase_unit,
+                    genre=genre_result.genre,
                 )
             )
 
