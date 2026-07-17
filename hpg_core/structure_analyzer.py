@@ -58,9 +58,9 @@ class TrackStructure:
 
 
 # === Genre-specific Phrase Units ===
-# Audit-Fix 2026-07-17: aus den GENRE_MIX_PROFILES (dj_brain) abgeleitet statt
-# als zweite, manuell synchron zu haltende Tabelle gepflegt — Drift-Risiko weg.
-from .dj_brain import GENRE_MIX_PROFILES, DEFAULT_MIX_PROFILE
+# Audit-Fix 2026-07-17: aus den GENRE_MIX_PROFILES (genres.py, Single Source
+# of Truth) abgeleitet statt als zweite Tabelle manuell synchron gepflegt.
+from .genres import GENRE_MIX_PROFILES, DEFAULT_MIX_PROFILE
 
 GENRE_PHRASE_UNITS: dict[str, int] = {
   genre: profile.phrase_unit for genre, profile in GENRE_MIX_PROFILES.items()

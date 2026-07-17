@@ -12,6 +12,7 @@ hpg_core/                  # Core analysis modules
   models.py                # Track-Dataclass (25+ Felder), TrackSection
   analysis.py              # Audio-Analyse (librosa): BPM, Key, Energy, Sections
   config.py                # Alle konfigurierbaren Konstanten
+  genres.py                # Single Source of Truth: alle Genre-Tabellen + Drift-Validierung
   caching.py               # SQLite-basierter Cache (WAL, hpg_cache_v14.db)
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
