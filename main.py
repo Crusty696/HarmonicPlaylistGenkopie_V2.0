@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate,
     QStyle,
     QRadioButton,
+    QToolTip,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -34,12 +35,14 @@ from PyQt6.QtCore import (
     QRect,
     QTimer,
     QObject,
+    QEvent,
 )
 from PyQt6.QtGui import (
     QColor,
     QKeySequence,
     QShortcut,
     QTextCursor,
+    QCursor,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import html as html_mod
@@ -874,6 +877,14 @@ class AdvancedParametersWidget(QWidget):
         btn_layout.addWidget(self.test_ai_btn)
         provider_outer.addLayout(btn_layout)
 
+        # Tooltips fuer AI Provider Widget
+        self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) fuer das Mood-Tagging und Mix-Empfehlungen.")
+        self.ollama_radio.setToolTip("Nutze Ollama als lokalen KI-Dienst. Läuft sehr stabil auf AMD-Grafikkarten unter Windows.")
+        self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt fuer detaillierte Modellkonfigurationen.")
+        self.model_combo.setToolTip("Waehle das aktive KI-Modell (z. B. gemma3:12b) fuer die asynchrone Veredelung.")
+        self.ai_refresh_btn.setToolTip("Sucht nach aktiven lokalen KI-Instanzen auf deinem Rechner und laedt die verfuegbaren Modelle.")
+        self.test_ai_btn.setToolTip("Fuehrt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu pruefen.")
+
         layout.addWidget(self.provider_group)
 
         # Auto-Detect beim Start (nicht-blockierend, kurz verzoegert bis UI steht)
@@ -1201,11 +1212,19 @@ class SidebarWidget(QWidget):
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(2)
 
+        sidebar_tips = {
+            "LIBRARY": "Bibliothek / Import:\nOrdner einlesen, Parameter einstellen, Audio-Features & KI-Analyse starten.",
+            "PLAYLIST": "Generierte Playlist:\nTabelle mit Tonarten (Camelot), Tempo (BPM), Uebergangstypen und KI-Stimmungen.",
+            "MIX TIPS": "Misch-Empfehlungen & Vorschau:\nDetaillierte Uebergangs-Tipps (EQ, Filter) und 70s-Audio-Previews abspielen.",
+            "TIMELINE": "Visuelle Playlist-Zeitleiste:\nVerlauf von Energie, BPM und Tonartkompatibilitaet ueber die gesamte Playlist.",
+            "QUALITY": "Playlist-Qualitaetsanalyse:\nMetriken fuer harmonischen Fluss, Tempo-Stetigkeit, Energie-Verlauf und Genre-Mix."
+        }
+
         for i, (icon, label) in enumerate(self.NAV_ITEMS):
             btn = QPushButton()
             btn.setFixedSize(72, 56)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(label)
+            btn.setToolTip(sidebar_tips.get(label, label))
             btn.clicked.connect(lambda checked, idx=i: self._on_nav_click(idx))
             self.buttons.append(btn)
             layout.addWidget(btn)
@@ -2877,6 +2896,20 @@ class AnalyticsPanel(QWidget):
         self.text_edit.setHtml(html)
 
 
+class ToolTipEventFilter(QObject):
+    """
+    Globaler EventFilter, der Tooltips unendlich lange (bis zu 10 Minuten) 
+    anzeigt, solange die Maus still auf dem Widget verweilt.
+    """
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.ToolTip:
+            if isinstance(obj, QWidget) and obj.toolTip():
+                # Zeige den Tooltip manuell an der Cursor-Position mit 600.000 ms (10 Minuten)
+                QToolTip.showText(QCursor.pos(), obj.toolTip(), obj, QRect(), 600000)
+                return True
+        return super().eventFilter(obj, event)
+
+
 # ══════════════════════════════════════════════════════════════════
 # MainWindow — Sidebar-Layout mit 5 Content-Panels
 # ══════════════════════════════════════════════════════════════════
@@ -3559,6 +3592,10 @@ if __name__ == "__main__":
     init_cache()
 
     app = QApplication(sys.argv)
+
+    # Globaler EventFilter, um Tooltips unendlich lange anzuzeigen (Kundenwunsch)
+    tooltip_filter = ToolTipEventFilter(app)
+    app.installEventFilter(tooltip_filter)
 
     # Set application style
     app.setStyle("Fusion")
