@@ -848,6 +848,7 @@ class AdvancedParametersWidget(QWidget):
 
         # Energy Direction Control
         energy_group = QGroupBox("Energy Direction (Context Flow)")
+        self.energy_group = energy_group
         energy_group.setToolTip(
             "Steuert den Energie-Verlauf der Playlist.\n"
             "Bestimmt, wie sich die Intensitaet der Tracks\n"
@@ -884,6 +885,10 @@ class AdvancedParametersWidget(QWidget):
 
         energy_layout.addWidget(self.peak_position_label)
         energy_layout.addWidget(self.peak_position_slider)
+
+        self.energy_strategy_hint = QLabel()
+        self.energy_strategy_hint.setWordWrap(True)
+        energy_layout.addWidget(self.energy_strategy_hint)
 
         layout.addWidget(energy_group)
 
@@ -971,12 +976,16 @@ class AdvancedParametersWidget(QWidget):
             self.test_ai_btn,
         ]
         self.ai_enabled_checkbox.toggled.connect(self._set_ai_enabled)
+        self.ai_strategy_hint = QLabel()
+        self.ai_strategy_hint.setWordWrap(True)
+        provider_outer.insertWidget(1, self.ai_strategy_hint)
         self._set_ai_enabled(False)
 
         layout.addWidget(self.provider_group)
 
         # Harmonic Strictness
         harmony_group = QGroupBox("Harmonic Mixing")
+        self.harmony_group = harmony_group
         harmony_group.setToolTip(
             "Einstellungen fuer harmonisches Mixing.\n"
             "Harmonisches Mixing nutzt den Camelot-Wheel,\n"
@@ -1010,10 +1019,15 @@ class AdvancedParametersWidget(QWidget):
         )
         harmony_layout.addWidget(self.allow_experimental)
 
+        self.harmony_strategy_hint = QLabel()
+        self.harmony_strategy_hint.setWordWrap(True)
+        harmony_layout.addWidget(self.harmony_strategy_hint)
+
         layout.addWidget(harmony_group)
 
         # Genre Mixing
         genre_group = QGroupBox("Genre Flow")
+        self.genre_group = genre_group
         genre_group.setToolTip(
             "Steuert, wie Genres in der Playlist gemischt werden.\n"
             "Die App erkennt automatisch das Genre jedes Tracks\n"
@@ -1046,6 +1060,10 @@ class AdvancedParametersWidget(QWidget):
         genre_layout.addWidget(self.genre_weight_label)
         genre_layout.addWidget(self.genre_weight)
 
+        self.genre_strategy_hint = QLabel()
+        self.genre_strategy_hint.setWordWrap(True)
+        genre_layout.addWidget(self.genre_strategy_hint)
+
         layout.addWidget(genre_group)
 
     # ----- AI Provider Auto-Detect / Auto-Start -----
@@ -1054,10 +1072,69 @@ class AdvancedParametersWidget(QWidget):
         for control in self._ai_controls:
             control.setEnabled(enabled)
         if not enabled:
+            self._set_ai_hint(False)
             self.test_ai_btn.setEnabled(False)
             self.ai_status_label.setText("KI deaktiviert (deterministischer Kernlauf)")
             return
+        self._set_ai_hint(True)
         self.refresh_ai_providers()
+
+    def _set_ai_hint(self, enabled):
+        """Kennzeichnet den optionalen KI-Bereich eindeutig als aktiv oder gesperrt."""
+        if enabled:
+            self.ai_strategy_hint.setText(
+                "<span style='color: #00E676;'>● AKTIV</span> "
+                "Lokale KI kann konfiguriert werden."
+            )
+            self.provider_group.setStyleSheet(
+                "QGroupBox { border: 1px solid #00E676; background: #0a2e1a; }"
+                "QGroupBox::title { color: #00E676; }"
+            )
+        else:
+            self.ai_strategy_hint.setText(
+                "<span style='color: #FFD740;'>● OPTIONAL / GESPERRT</span> "
+                "Aktiviere oben die KI-Metadaten, um Provider und Modell zu wählen."
+            )
+            self.provider_group.setStyleSheet(
+                "QGroupBox { border: 1px solid #FFD740; background: #2a1a0a; }"
+                "QGroupBox::title { color: #FFD740; }"
+            )
+
+    @staticmethod
+    def _strategies_for_parameter(parameter):
+        """Liefert die Strategien, welche einen Parameter tatsaechlich auswerten."""
+        return [
+            name for name, supported in SUPPORTED_STRATEGY_PARAMETERS.items()
+            if parameter in supported
+        ]
+
+    def _set_strategy_control_state(self, group, hint, controls, parameter, strategy):
+        """Setzt Bedienbarkeit, Farbe und begruendenden Hinweis eines Bereichs."""
+        enabled = parameter in SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
+        for control in controls:
+            control.setEnabled(enabled)
+
+        compatible = ", ".join(self._strategies_for_parameter(parameter))
+        if enabled:
+            hint.setText(
+                "<span style='color: #00E676;'>● AKTIV</span> "
+                f"Wird von <b>{strategy}</b> verwendet."
+            )
+            group.setStyleSheet(
+                "QGroupBox { border: 1px solid #00E676; background: #0a2e1a; }"
+                "QGroupBox::title { color: #00E676; }"
+            )
+        else:
+            reason = (
+                f"<span style='color: #FFD740;'>● IN DIESER STRATEGIE GESPERRT</span> "
+                f"<b>{strategy}</b> wertet diese Einstellung nicht aus. "
+                f"Verfügbar mit: {compatible}."
+            )
+            hint.setText(reason)
+            group.setStyleSheet(
+                "QGroupBox { border: 1px solid #FFD740; background: #2a1a0a; }"
+                "QGroupBox::title { color: #FFD740; }"
+            )
 
     def refresh_ai_providers(self):
         """Startet den Hintergrund-Detect-Worker (kein UI-Block)."""
@@ -1287,18 +1364,31 @@ class AdvancedParametersWidget(QWidget):
         }
 
     def apply_strategy_support(self, strategy):
-        """Deaktiviert Parameter, die die gewaehlte Strategie nicht konsumiert."""
-        supported = SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
-        energy_enabled = "energy_direction" in supported
-        peak_enabled = "peak_position" in supported
-        harmonic_enabled = "harmonic_strictness" in supported
-        genre_enabled = "genre_mixing" in supported
-        self.energy_direction.setEnabled(energy_enabled)
+        """Zeigt eindeutig, welche Einstellungen die Strategie auswertet."""
+        self._set_strategy_control_state(
+            self.energy_group,
+            self.energy_strategy_hint,
+            [self.energy_direction],
+            "energy_direction",
+            strategy,
+        )
+        peak_enabled = "peak_position" in SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
         self.peak_position_slider.setEnabled(peak_enabled)
-        self.harmonic_strictness.setEnabled(harmonic_enabled)
-        self.allow_experimental.setEnabled("allow_experimental" in supported)
-        self.genre_mixing.setEnabled(genre_enabled)
-        self.genre_weight.setEnabled("genre_weight" in supported)
+        self.peak_position_label.setEnabled(peak_enabled)
+        self._set_strategy_control_state(
+            self.harmony_group,
+            self.harmony_strategy_hint,
+            [self.harmonic_strictness, self.allow_experimental],
+            "harmonic_strictness",
+            strategy,
+        )
+        self._set_strategy_control_state(
+            self.genre_group,
+            self.genre_strategy_hint,
+            [self.genre_mixing, self.genre_weight],
+            "genre_mixing",
+            strategy,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════

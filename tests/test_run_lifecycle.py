@@ -155,7 +155,11 @@ def test_strategy_ui_disables_parameters_that_are_not_consumed(qtbot):
   widget.apply_strategy_support("Warm-Up")
   assert widget.peak_position_slider.isEnabled() is False
   assert widget.genre_weight.isEnabled() is False
+  assert "<b>Warm-Up</b> wertet diese Einstellung nicht aus" in widget.energy_strategy_hint.text()
+  assert "#FFD740" in widget.energy_group.styleSheet()
 
   widget.apply_strategy_support("Peak-Time")
   assert widget.peak_position_slider.isEnabled() is True
   assert widget.genre_weight.isEnabled() is False
+  assert "Peak-Time" in widget.harmony_strategy_hint.text()
+  assert "#00E676" in widget.harmony_group.styleSheet()
