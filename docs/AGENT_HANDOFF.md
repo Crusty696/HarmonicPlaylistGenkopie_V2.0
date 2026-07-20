@@ -1,6 +1,6 @@
 # Agent Handoff – aktueller Hauptstand
 
-Stand: 2026-07-20  
+Stand: 2026-07-20
 Autoritativer Branch: `main`
 
 ## Aktueller Zustand
