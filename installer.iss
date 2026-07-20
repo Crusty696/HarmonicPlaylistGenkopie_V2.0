@@ -25,7 +25,8 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\HarmonicPlaylistGenerator.exe
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 
 ; Privileges
 PrivilegesRequired=admin
@@ -41,7 +42,6 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [Files]
 ; Main executable
@@ -64,9 +64,6 @@ Name: "{group}\Uninstall HPG"; Filename: "{uninstallexe}"; Comment: "Uninstall H
 
 ; Desktop Icon
 Name: "{autodesktop}\Harmonic Playlist Generator"; Filename: "{app}\HarmonicPlaylistGenerator.exe"; IconFilename: "{app}\HarmonicPlaylistGenerator.exe"; Tasks: desktopicon; Comment: "Professional DJ Playlist Generator"
-
-; Quick Launch (Windows 7 and earlier)
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\Harmonic Playlist Generator"; Filename: "{app}\HarmonicPlaylistGenerator.exe"; Tasks: quicklaunchicon
 
 [Run]
 ; Offer to launch app after installation
