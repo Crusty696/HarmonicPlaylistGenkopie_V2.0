@@ -93,6 +93,23 @@ def test_ollama_audio_capability_rejects_unconfirmed_models(monkeypatch):
   assert launcher._is_audio_capable_ollama_model("text-only") is False
 
 
+def test_lmstudio_audio_model_detection_uses_capabilities_and_metadata():
+  assert launcher._is_lms_audio_model(
+    {"type": "llm", "key": "future/audio-model", "capabilities": {"audio": True}}
+  ) is True
+  assert launcher._is_lms_audio_model(
+    {
+      "type": "llm",
+      "key": "google/gemma-4-e4b",
+      "architecture": "gemma4",
+      "capabilities": {"vision": True},
+    }
+  ) is True
+  assert launcher._is_lms_audio_model(
+    {"type": "llm", "key": "stable-audio-generator", "architecture": "sa3-dit"}
+  ) is False
+
+
 def test_pick_model_priority_and_fallbacks():
   models = ["nomic-embed", "llama3:latest", "google/gemma-4-e4b"]
 
@@ -231,9 +248,22 @@ def test_lms_models_load_get_and_prepare(monkeypatch):
   monkeypatch.setattr(
     launcher,
     "_http_json",
-    lambda _url: (True, {"data": [{"id": "google/gemma"}, {}]}),
+    lambda _url: (
+      True,
+      {
+        "models": [
+          {
+            "type": "llm",
+            "key": "google/gemma-4-e2b",
+            "architecture": "gemma4",
+            "capabilities": {"vision": True},
+          },
+          {"type": "llm", "key": "text-only", "capabilities": {}},
+        ]
+      },
+    ),
   )
-  assert launcher.lms_models(1234) == []
+  assert launcher.lms_models(1234) == ["google/gemma-4-e2b"]
 
   monkeypatch.setattr(launcher, "_lms_exe", lambda: "lms.exe")
   monkeypatch.setattr(launcher.os.path, "exists", lambda _path: True)

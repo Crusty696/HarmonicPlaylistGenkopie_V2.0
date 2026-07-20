@@ -141,6 +141,43 @@ def _is_audio_capable_ollama_model(model_id):
     return "audio" in capabilities and "completion" in capabilities
 
 
+def _contains_audio_capability(value):
+    """Erkennt Audio-Capabilities in Listen oder verschachtelten Provider-Metadaten."""
+    if isinstance(value, str):
+        return value.lower() in {"audio", "audio_input", "audio-understanding"}
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_audio_capability(item) for item in value)
+    if isinstance(value, dict):
+        return any(
+            "audio" in str(key).lower() and bool(item)
+            or _contains_audio_capability(item)
+            for key, item in value.items()
+        )
+    return False
+
+
+def _is_lms_audio_model(model):
+    """Prueft LM-Studio-Metadaten ohne aus dem Modellnamen zu raten."""
+    if not isinstance(model, dict) or model.get("type") != "llm":
+        return False
+
+    capabilities = model.get("capabilities", {})
+    if _contains_audio_capability(capabilities):
+        return True
+
+    # LM Studio meldet bei Gemma 4 derzeit Vision, aber kein separates
+    # Audio-Flag. Laut Modellvertrag haben ausschliesslich die kleinen
+    # E2B/E4B-Varianten einen Audio-Encoder. Beide Metadaten muessen passen.
+    model_key = str(model.get("key") or model.get("id") or "").lower()
+    architecture = str(model.get("architecture") or model.get("arch") or "").lower()
+    has_vision = bool(capabilities.get("vision")) if isinstance(capabilities, dict) else False
+    return (
+        architecture == "gemma4"
+        and has_vision
+        and ("gemma-4-e2b" in model_key or "gemma-4-e4b" in model_key)
+    )
+
+
 def _pick_model(installed, preferred):
     """
     Waehlt das aktive Modell:
@@ -327,15 +364,21 @@ def lms_start():
 
 
 def lms_models(port):
-    """LM Studio liefert keine Audio-Capabilities; unbestaetigte Modelle ausblenden."""
-    ok, data = _http_json(f"http://localhost:{port}/v1/models")
+    """Gibt nur anhand nativer Metadaten bestaetigte Audio-Modelle zurueck."""
+    ok, data = _http_json(f"http://localhost:{port}/api/v1/models")
     if not ok or not data:
         return []
+    inventory = data.get("models", [])
+    audio_models = [
+        model.get("key", "")
+        for model in inventory
+        if _is_lms_audio_model(model) and model.get("key")
+    ]
     logger.info(
-        "LM Studio meldet keine Audio-Capabilities ueber /v1/models; "
-        "Modelle werden deshalb nicht als audiofaehig angeboten."
+        "LM Studio: %d/%d Modelle als audiofaehig bestaetigt",
+        len(audio_models), len(inventory),
     )
-    return []
+    return audio_models
 
 
 def lms_load(model, port):
