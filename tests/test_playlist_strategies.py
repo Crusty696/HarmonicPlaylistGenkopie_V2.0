@@ -7,8 +7,7 @@ from hpg_core.playlist import (
   generate_playlist, STRATEGIES, STRATEGY_ALIASES, _sort_harmonic_flow,
 )
 from tests.fixtures.track_factories import (
-  make_track, make_house_track, make_techno_track,
-  make_dnb_track, make_minimal_track, make_dj_set,
+  make_track, make_house_track, make_dj_set,
 )
 
 

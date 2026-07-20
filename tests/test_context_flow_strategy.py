@@ -4,7 +4,6 @@ geloeschten Intelligent-Scoring-Schicht portierte Mehrwert: Set-Phasen,
 Energie-Trend, Genre-Fatigue, Repetition-/Cliff-Penalties auf korrekter
 Camelot-Basis (calculate_compatibility).
 """
-import pytest
 
 from hpg_core.playlist import STRATEGIES, _sort_context_flow, generate_playlist
 from tests.fixtures.track_factories import make_track

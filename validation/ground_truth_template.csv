@@ -1,0 +1,1 @@
+track_id,audio_path,audio_sha256,label_status,label_source,annotator_1,annotator_2,adjudicator,truth_bpm,truth_key_note,truth_key_mode,truth_genre,truth_mix_in_seconds,truth_mix_out_seconds,truth_sections_json,notes

@@ -16,7 +16,6 @@ from hpg_core.dj_brain import (
   calculate_genre_aware_mix_points,
   calculate_paired_mix_points,
   generate_dj_recommendation,
-  GenreMixProfile,
   DJRecommendation,
   GENRE_MIX_PROFILES,
   GENRE_COMPATIBILITY,
@@ -746,7 +745,6 @@ class TestCalculatePairedMixPoints:
     mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
 
     # Mix-In B = intro_end - outro_dauer_A = 211.7 - 60 = ~151.7s
-    expected_mix_in_b = intro_end_b - 60.0
     assert mix_in_b > 0.0, (
       f"Bei langem Intro sollte Mix-In B > 0 sein, war {mix_in_b}"
     )
@@ -780,7 +778,7 @@ class TestCalculatePairedMixPoints:
     assert mix_in_b >= intro_end_b - 1.0, (
       f"Mix-In B {mix_in_b}s im Intro (endet bei {intro_end_b:.1f}s)"
     )
-    assert mix_out_a < 420.0, f"Mix-Out A muss vor Track-Ende liegen"
+    assert mix_out_a < 420.0, "Mix-Out A muss vor Track-Ende liegen"
 
   def test_tech_house_paired_points(self):
     """Tech House: Paired Mix Points werden berechnet (nicht mehr Sonderbehandlung)."""

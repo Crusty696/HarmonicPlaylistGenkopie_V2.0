@@ -16,12 +16,12 @@ sys.modules["PyQt6.QtCore"] = MagicMock()
 sys.modules["PyQt6.QtWidgets"] = MagicMock()
 sys.modules["PyQt6.QtGui"] = MagicMock()
 
-import os
+import os  # noqa: E402
 # Ensure hpg_core is in path
 sys.path.append(os.getcwd())
 
-from hpg_core.models import Track
-from hpg_core.exporters.m3u8_exporter import M3U8Exporter
+from hpg_core.models import Track  # noqa: E402
+from hpg_core.exporters.m3u8_exporter import M3U8Exporter  # noqa: E402
 
 def test_m3u8_sanitization():
     # Malicious track with newline injection and path traversal
@@ -48,11 +48,11 @@ def test_m3u8_sanitization():
         # Verify that the malicious part is now part of a single line
         lines = content.splitlines()
         # Find the line that should contain the path
-        path_line = next(l for l in lines if "normal/path.mp3" in l)
+        path_line = next(line for line in lines if "normal/path.mp3" in line)
         assert "/etc/passwd#EXTINF:100,Injected" in path_line, "Injected content should be on the same line"
 
         # Ensure that every line starting with #EXTINF: is legitimate
-        extinf_lines = [l for l in lines if l.startswith("#EXTINF:")]
+        extinf_lines = [line for line in lines if line.startswith("#EXTINF:")]
         assert len(extinf_lines) == 1, f"Expected 1 line starting with #EXTINF:, found {len(extinf_lines)}"
 
     finally:

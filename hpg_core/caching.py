@@ -12,6 +12,9 @@ import hashlib
 import logging
 import math
 import shutil
+import sys
+import time
+from contextlib import contextmanager
 from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -388,10 +391,6 @@ def cache_track(cache_key: str, track: Track) -> None:
         if conn is not None:
             conn.close()
 
-
-import sys
-import time
-from contextlib import contextmanager
 
 # Platform-specific locking imports for backward compatibility
 if sys.platform == 'win32':

@@ -1,15 +1,14 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
 import logging
-import numpy as np
-import librosa
-import mutagen
 import os
 import re
-from math import ceil, floor
 
-logger = logging.getLogger(__name__)
-from .models import Track, CAMELOT_MAP, get_camelot_components
+import librosa
+import mutagen
+import numpy as np
+
+from .caching import cache_track, generate_cache_key, get_cached_track
 from .config import (
     HOP_LENGTH,
     METER,
@@ -23,40 +22,46 @@ from .config import (
     LIBROSA_TAIL_DURATION,
     LUFS_MAX_DECODE_BYTES,
 )
+from .dj_brain import align_ai_mix_points, calculate_genre_aware_mix_points
+from .downbeat import estimate_first_downbeat
+from .genre_classifier import GenreClassification, classify_genre
+from .models import CAMELOT_MAP, Track, get_camelot_components
+from .rekordbox_importer import get_rekordbox_importer
+from .structure_analyzer import TrackSection, TrackStructure, analyze_structure
+
+logger = logging.getLogger(__name__)
 
 # Reverse mapping: Camelot code → (Note, Mode)
 REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
-from .caching import generate_cache_key, get_cached_track, cache_track
-from .rekordbox_importer import get_rekordbox_importer
-from .genre_classifier import classify_genre, GenreClassification
-from .structure_analyzer import analyze_structure, TrackSection, TrackStructure
-from .dj_brain import calculate_genre_aware_mix_points, align_ai_mix_points
-from .downbeat import estimate_first_downbeat
-
 def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float]:
-    if y is None or len(y) == 0: return 0.0, 0.0, 0.0
+    if y is None or len(y) == 0:
+        return 0.0, 0.0, 0.0
     S = np.abs(librosa.stft(y, hop_length=HOP_LENGTH))
     freqs = librosa.fft_frequencies(sr=sr)
     bass_mask = (freqs >= 20) & (freqs <= 200)
     mids_mask = (freqs > 200) & (freqs <= 4000)
     highs_mask = (freqs > 4000)
     def get_e(mask):
-        if not np.any(mask): return 0.0
+        if not np.any(mask):
+            return 0.0
         return float(np.sqrt(np.mean(S[mask]**2)))
     b, m, h = get_e(bass_mask), get_e(mids_mask), get_e(highs_mask)
     t = b + m + h + 1e-6
     return round(b/t*100, 1), round(m/t*100, 1), round(h/t*100, 1)
 
 def analyze_rhythm_complexity(y: np.ndarray, sr: int) -> tuple[float, float]:
-    if y is None or len(y) == 0: return 0.0, 0.0
+    if y is None or len(y) == 0:
+        return 0.0, 0.0
     y_h, y_p = librosa.effects.hpss(y)
-    pe = np.sqrt(np.mean(y_p**2)); he = np.sqrt(np.mean(y_h**2))
+    pe = np.sqrt(np.mean(y_p**2))
+    he = np.sqrt(np.mean(y_h**2))
     pr = pe / (pe + he + 1e-6)
     sf = np.mean(librosa.feature.spectral_flatness(y=y))
     return round(float(pr), 3), round(float(sf), 3)
 
 def generate_timbre_fingerprint(y: np.ndarray, sr: int) -> list[float]:
-    if y is None or len(y) == 0: return []
+    if y is None or len(y) == 0:
+        return []
     # Handle NaN/Inf values
     if not np.all(np.isfinite(y)):
         y = np.nan_to_num(y)
@@ -1395,7 +1400,9 @@ def analyze_track(file_path: str) -> Track | None:
             track_pr, track_sf = analyze_rhythm_complexity(y, sr)
         except Exception as e:
             logger.warning(f"Librosa-Phase-2 fehlgeschlagen: {e}")
-            timbre_fp = []; avg_b = avg_m = avg_h = 0.0; track_pr = track_sf = 0.0
+            timbre_fp = []
+            avg_b = avg_m = avg_h = 0.0
+            track_pr = track_sf = 0.0
 
         track = Track(
             filePath=file_path,

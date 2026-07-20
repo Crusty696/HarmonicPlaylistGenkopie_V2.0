@@ -8,15 +8,11 @@ import numpy as np
 from hpg_core.genre_classifier import (
   GenreClassification,
   GenreFeatures,
-  GenreProfile,
   GENRE_PROFILES,
-  ID3_GENRE_MAP,
   match_id3_genre,
   classify_genre,
-  extract_genre_features,
   _score_range,
   _score_genre,
-  MIN_CONFIDENCE,
 )
 
 

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import librosa
 from .config import GENRE_CONFIDENCE_THRESHOLD, DNB_MINIMUM_BPM
+from .genres import GENRE_PROFILES, ID3_GENRE_MAP, GenreProfile
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +136,6 @@ def extract_genre_features(
 # === Genre Profiles ===
 # GenreProfile + GENRE_PROFILES leben zentral in genres.py (Single Source of
 # Truth mit Import-Validierung, Audit-Refactoring 2026-07-17)
-from .genres import GenreProfile, GENRE_PROFILES, ID3_GENRE_MAP, CANONICAL_GENRES
-
-
 # Feature weights for scoring
 WEIGHT_BPM = 0.35  # BPM is the strongest discriminator
 WEIGHT_SPECTRAL = 0.20  # Brightness + rolloff

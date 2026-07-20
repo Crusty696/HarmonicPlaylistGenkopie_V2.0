@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List
 from .models import Track
 from .config import SECURITY_MAX_FILE_SIZE, SECURITY_MAX_TRACK_DURATION, SECURITY_MAX_PLAYLIST_SIZE
 

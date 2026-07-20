@@ -3,12 +3,13 @@
 
 import sys
 import io
+from pathlib import Path
 
 # UTF-8 Ausgabe erzwingen fuer Windows
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-import os; from pathlib import Path; sys.path.insert(0, str(Path(__file__).parent.parent))
-from hpg_core.analysis import analyze_track
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from hpg_core.analysis import analyze_track  # noqa: E402
 
 OK = "[OK]"
 WARN = "[!] "
@@ -48,7 +49,7 @@ print(f"  Mix-Grid        : {seconds_per_grid:.2f}s (4 Bars, DJ Brain-Raster)")
 
 mix_in = track.mix_in_point
 mix_out = track.mix_out_point
-print(f"\n[3] Mix-Punkte")
+print("\n[3] Mix-Punkte")
 print(f"  Mix-In  : {mix_in:.1f}s")
 print(f"  Mix-Out : {mix_out:.1f}s")
 print(f"  Overlap : {mix_out - mix_in:.1f}s Platz zum Mixen")
@@ -64,7 +65,7 @@ phrase_deviation = abs(phrase_at_mix_in - round(phrase_at_mix_in)) * seconds_per
 bars_at_mix_out = mix_out / seconds_per_bar
 outro_bars = (track.duration - mix_out) / seconds_per_bar
 
-print(f"\n[4] Phrase-Alignment Check")
+print("\n[4] Phrase-Alignment Check")
 print(
     f"  Mix-In bei Bar  : {bars_at_mix_in:.1f} (4-Bar-Grid: {grid_at_mix_in:.2f}, 8-Bar-Phrase: {phrase_at_mix_in:.2f})"
 )

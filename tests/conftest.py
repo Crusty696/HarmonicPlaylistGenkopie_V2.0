@@ -8,7 +8,6 @@ import hashlib
 import shutil
 import tempfile
 import pytest
-import numpy as np
 
 # Projekt-Root zum Path hinzufuegen
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,10 +37,9 @@ def _file_fingerprint(path: str) -> tuple[int, int, str] | None:
 
 _PRODUCTION_CACHE_BEFORE = _file_fingerprint(_PRODUCTION_CACHE)
 
-from hpg_core.models import Track, CAMELOT_MAP
-from tests.fixtures.audio_generators import (
+from hpg_core.models import CAMELOT_MAP, Track  # noqa: E402
+from tests.fixtures.audio_generators import (  # noqa: E402
   generate_click_track,
-  generate_tone,
   generate_silence,
   generate_noise,
   generate_track_with_structure,
@@ -49,7 +47,7 @@ from tests.fixtures.audio_generators import (
   generate_minor_chord,
   DEFAULT_SR,
 )
-from tests.fixtures.track_factories import (
+from tests.fixtures.track_factories import (  # noqa: E402
   make_track,
   make_house_track,
   make_techno_track,

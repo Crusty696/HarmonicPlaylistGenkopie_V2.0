@@ -2,7 +2,7 @@
 Track-Factory fuer schnelle Test-Erstellung.
 Erzeugt vorkonfigurierte Track-Objekte mit DJ-realistischen Werten.
 """
-from hpg_core.models import Track, CAMELOT_MAP, key_to_camelot
+from hpg_core.models import Track, CAMELOT_MAP
 
 
 def make_track(**overrides) -> Track:

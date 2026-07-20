@@ -1,7 +1,3 @@
-from __future__ import annotations
-from math import ceil, floor
-import numpy as np
-import re
 """
 DJ Brain - Genre-spezifische Mix-Logik fuer den Harmonic Playlist Generator.
 
@@ -13,9 +9,28 @@ Berechnet intelligente, genre-spezifische Mix-Punkte basierend auf:
 Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 """
 
-
+from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+import numpy as np
+
+from .config import (
+  DEFAULT_BPM,
+  DEFAULT_SECTION_ENERGY,
+  GAIN_DIFF_SHOW_DB,
+  GAIN_DIFF_WARN_DB,
+  KEY_CONFIDENCE_UNCERTAIN,
+  METER,
+)
+from .genres import (
+  DEFAULT_MIX_PROFILE,
+  GENRE_COMPATIBILITY,
+  GENRE_MIX_PROFILES,
+  GenreMixProfile,
+  _GENRE_COMPATIBILITY_NORMALIZED,
+  _MIX_PROFILES_NORMALIZED,
+)
 from .models import (
   Track,
   effective_bpm_diff,
@@ -23,30 +38,12 @@ from .models import (
   quantize_to_grid,
   seconds_to_bars,
 )
-from .config import (
-  METER,
-  DEFAULT_BPM,
-  DEFAULT_SECTION_ENERGY,
-  GAIN_DIFF_SHOW_DB,
-  GAIN_DIFF_WARN_DB,
-  KEY_CONFIDENCE_UNCERTAIN,
-)
 
 
 # === Genre-Wissen ===
 # Audit-Refactoring 2026-07-17: alle Genre-Tabellen leben zentral in genres.py
 # (Single Source of Truth mit Import-Validierung). Hier re-exportiert, damit
 # bestehende Importe (analysis, structure_analyzer, main, Tests) stabil bleiben.
-from .genres import (
-  GenreMixProfile,
-  GENRE_MIX_PROFILES,
-  DEFAULT_MIX_PROFILE,
-  GENRE_COMPATIBILITY,
-  _GENRE_COMPATIBILITY_NORMALIZED,
-  _MIX_PROFILES_NORMALIZED,
-)
-
-
 def get_genre_compatibility(genre_a: str, genre_b: str) -> float:
   """
   Gibt die Kompatibilitaet zwischen zwei Genres zurueck (0.0-1.0).
@@ -296,9 +293,6 @@ def _find_mix_out_point(
   # --- Letzte starke Sektion VOR Outro ---
   # Bevorzugt main, breakdown, drop für den Übergang
   label_priority = {"main": 0, "breakdown": 1, "build": 2, "drop": 3}
-  all_energies = [s.get("avg_energy", DEFAULT_SECTION_ENERGY) for s in candidates]
-  avg_energy = sum(all_energies) / len(all_energies) if all_energies else DEFAULT_SECTION_ENERGY
-
   # Finde den besten Ausstieg (bevorzugt eine Sektion mit abnehmender Energie)
   best = min(candidates, key=lambda s: (
     label_priority.get(s.get("label", "main"), 99),
@@ -459,11 +453,6 @@ def generate_dj_recommendation(
     getattr(track_a, "lufs", 0.0), getattr(track_b, "lufs", 0.0)
   )
 
-  # Advanced Audio Alignment
-  texture_score: float = 0.0
-  bass_match_advice: str = ""
-  rhythm_advice: str = ""
-  
   return DJRecommendation(
     genre_pair=genre_pair,
     genre_compatibility=round(compat, 2),

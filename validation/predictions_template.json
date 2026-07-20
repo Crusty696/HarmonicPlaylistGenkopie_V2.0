@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "app_version": "",
+    "source_commit": "",
+    "config_sha256": "",
+    "created_at": ""
+  },
+  "predictions": [
+    {
+      "track_id": "",
+      "audio_sha256": "",
+      "bpm": null,
+      "key_note": "",
+      "key_mode": "",
+      "genre": "",
+      "mix_in_seconds": null,
+      "mix_out_seconds": null,
+      "sections": []
+    }
+  ]
+}

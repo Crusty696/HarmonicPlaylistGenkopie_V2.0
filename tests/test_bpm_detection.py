@@ -5,7 +5,6 @@ Verwendet synthetische Click-Tracks mit bekanntem Tempo.
 import pytest
 import numpy as np
 import librosa
-from hpg_core.config import DEFAULT_BPM
 from tests.fixtures.audio_generators import (
   generate_click_track, generate_silence, generate_noise,
   generate_tone, DEFAULT_SR,

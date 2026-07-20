@@ -40,7 +40,7 @@ def test_apply_dark_theme():
     args, _ = mock_app.setStyleSheet.call_args
     stylesheet = args[0]
 
-    assert type(stylesheet) == str
+    assert isinstance(stylesheet, str)
     assert len(stylesheet) > 0
     assert stylesheet == get_app_stylesheet()
 

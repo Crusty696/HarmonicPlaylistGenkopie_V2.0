@@ -7,7 +7,6 @@ Zeigt wo die Abweichungen herkommen.
 import sys
 import io
 import re
-import os
 from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -22,7 +21,6 @@ EXTS = {".mp3", ".aiff", ".aif", ".flac", ".wav", ".m4a", ".ogg"}
 def get_id3_bpm(file_path: str):
     """Liest BPM direkt aus ID3-Tags (kein Librosa)."""
     try:
-        import mutagen
         from mutagen import File as MutagenFile
 
         audio = MutagenFile(file_path, easy=True)
@@ -48,7 +46,7 @@ def get_id3_bpm(file_path: str):
                     return float(val.strip())
                 except Exception:
                     pass
-    except Exception as e:
+    except Exception:
         return None
     return None
 
@@ -76,7 +74,7 @@ print(
 print("=" * 90)
 
 # Lade Analyse-BPMs aus Cache (wenn vorhanden) oder frische Analyse
-from hpg_core.analysis import analyze_track
+from hpg_core.analysis import analyze_track  # noqa: E402
 
 abweichungen = []
 
@@ -114,7 +112,7 @@ for i, t in enumerate(tracks, 1):
     print(f"{i:>3}  {fname_str:>9}  {id3_str:>7}  {ana_str:>11}  {short}{flag}")
 
 print("=" * 90)
-print(f"\nBPM-Abweichungen (Dateiname vs. Analyse, nicht Halftime/Doubletime):")
+print("\nBPM-Abweichungen (Dateiname vs. Analyse, nicht Halftime/Doubletime):")
 print(f"  Abweichungen: {len(abweichungen)}/{len(tracks)}")
 
 if abweichungen:

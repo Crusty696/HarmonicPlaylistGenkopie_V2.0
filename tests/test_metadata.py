@@ -2,7 +2,6 @@
 Tests fuer Metadata-Parsing (Dateiname + ID3 Tags).
 Prueft parse_filename_for_metadata und extract_metadata.
 """
-import pytest
 from hpg_core.analysis import parse_filename_for_metadata
 
 

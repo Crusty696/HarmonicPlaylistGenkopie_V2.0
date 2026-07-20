@@ -3,8 +3,6 @@ Tests fuer Transition Type Prediction.
 Prueft ob der optimale Transition-Typ korrekt vorhergesagt wird
 basierend auf BPM-Relation, Energie-Delta, Harmonie und Genre.
 """
-import pytest
-from unittest.mock import patch
 from hpg_core.playlist import (
     predict_transition_type,
 )

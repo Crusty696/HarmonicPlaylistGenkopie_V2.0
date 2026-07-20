@@ -19,7 +19,6 @@ Stellt bereit:
 """
 
 from PyQt6.QtGui import QPalette, QColor
-from PyQt6.QtCore import Qt
 
 # ──────────────────────────────────────────────────────────────
 # Schriftarten — Monospace fuer DAW-Look

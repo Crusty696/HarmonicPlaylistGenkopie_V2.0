@@ -2,7 +2,8 @@
 Zeigt Coverage-Bericht fuer die wichtigsten Module.
 Laeuft OHNE xdist um Coverage korrekt zu messen.
 """
-import subprocess, sys
+import subprocess
+import sys
 
 result = subprocess.run(
     [

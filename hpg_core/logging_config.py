@@ -15,7 +15,6 @@ import logging
 import logging.handlers
 import sys
 from pathlib import Path
-import os
 
 # === Konfiguration ===
 LOG_DIR = Path(__file__).parent.parent / "logs"

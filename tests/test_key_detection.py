@@ -8,7 +8,6 @@ from hpg_core.analysis import get_key, MAJOR_PROFILE, MINOR_PROFILE, NOTES
 from hpg_core.models import CAMELOT_MAP
 from tests.fixtures.audio_generators import (
   generate_major_chord, generate_minor_chord,
-  generate_tone, generate_silence, NOTE_FREQUENCIES,
   DEFAULT_SR,
 )
 
@@ -202,7 +201,6 @@ class TestCorrelationQuality:
   def test_major_minor_distinguishable(self):
     """Major und Minor Profile sind unterscheidbar."""
     major_chroma = np.array(MAJOR_PROFILE, dtype=np.float64)
-    minor_chroma = np.array(MINOR_PROFILE, dtype=np.float64)
     # Major-Profil sollte hoehere Major-Korrelation haben
     major_corr = np.corrcoef(major_chroma, MAJOR_PROFILE)[0, 1]
     minor_corr = np.corrcoef(major_chroma, MINOR_PROFILE)[0, 1]

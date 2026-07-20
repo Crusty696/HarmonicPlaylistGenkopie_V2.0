@@ -1,3 +1,16 @@
+import html as html_mod
+import importlib
+import logging
+import multiprocessing
+import os
+import re
+import sys
+import tempfile
+import time
+from collections import OrderedDict, deque
+from datetime import datetime
+from enum import Enum
+
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -45,10 +58,41 @@ from PyQt6.QtGui import (
     QCursor,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-import html as html_mod
-import logging
-from collections import OrderedDict, deque
-from enum import Enum
+
+from hpg_core.transition_renderer import TransitionClipSpec
+from hpg_core.parallel_analyzer import ParallelAnalyzer
+from hpg_core.playlist import (
+    STRATEGIES,
+    calculate_playlist_quality,
+    calculate_enhanced_compatibility,
+    compute_transition_recommendations,
+    compute_set_timeline,
+    get_set_timing_summary,
+    SUPPORTED_STRATEGY_PARAMETERS,
+)
+from hpg_core.exporters.m3u8_exporter import M3U8Exporter
+from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
+from hpg_core.caching import init_cache
+from hpg_core.logging_config import setup_logging
+from hpg_core.theme import (
+    COLORS,
+    GENRE_COLORS,
+    GENRE_DEFAULT,
+    RISK_STYLES,
+    RISK_DEFAULT,
+    RISK_LABELS,
+    PHASE_COLORS,
+    PHASE_LABELS,
+    TRANSITION_TYPE_COLORS,
+    TRANSITION_TYPE_LABELS,
+    TRANSITION_TYPE_DESCRIPTIONS,
+    score_color,
+    html_style_block,
+    apply_dark_theme,
+    FONT_FAMILY,
+)
+from hpg_core.error_reporter import get_error_reporter
+from hpg_core.playlist_security import validate_playlist_security, sanitize_playlist
 
 # H1-Fix (Audit 2026-07-17): Modul-Logger — TransitionRenderWorker.run
 # referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
@@ -115,50 +159,6 @@ def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
         else float(transition.overlap or 16.0)
     )
     return mix_out, mix_in, crossfade
-import os
-import re
-import sys
-import tempfile
-import multiprocessing  # CRITICAL: Required for freeze_support()
-
-from hpg_core.transition_renderer import TransitionClipSpec, render_transition_clip
-from hpg_core.ai_engine import fetch_ai_analysis
-from hpg_core.parallel_analyzer import ParallelAnalyzer
-from hpg_core.playlist import (
-    generate_playlist,
-    STRATEGIES,
-    calculate_playlist_quality,
-    calculate_enhanced_compatibility,
-    compute_transition_recommendations,
-    compute_set_timeline,
-    get_set_timing_summary,
-    SUPPORTED_STRATEGY_PARAMETERS,
-)
-from hpg_core.exporters.m3u8_exporter import M3U8Exporter
-from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
-from hpg_core.caching import init_cache
-from hpg_core.logging_config import setup_logging
-from hpg_core.theme import (
-    COLORS,
-    GENRE_COLORS,
-    GENRE_DEFAULT,
-    RISK_STYLES,
-    RISK_DEFAULT,
-    RISK_LABELS,
-    PHASE_COLORS,
-    PHASE_LABELS,
-    TRANSITION_TYPE_COLORS,
-    TRANSITION_TYPE_LABELS,
-    TRANSITION_TYPE_DESCRIPTIONS,
-    score_color,
-    html_style_block,
-    apply_dark_theme,
-    FONT_FAMILY,
-)
-from hpg_core.error_reporter import get_error_reporter
-from hpg_core.playlist_security import validate_playlist_security, sanitize_playlist
-import time
-from datetime import datetime
 
 
 
@@ -676,8 +676,8 @@ class TransitionPreviewWidget(QWidget):
         
         self.lbl_a = QLabel(f"A: {from_name}\n(Out: {mix_out:.1f}s)")
         self.lbl_a.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_a.setStyleSheet(f"""
-            QLabel {{
+        self.lbl_a.setStyleSheet("""
+            QLabel {
                 background-color: #1E3A8A; 
                 color: #93C5FD; 
                 font-size: 10px; 
@@ -685,14 +685,14 @@ class TransitionPreviewWidget(QWidget):
                 border: 1px solid #3B82F6;
                 border-radius: 4px;
                 padding: 4px 6px;
-            }}
+            }
         """)
         self.lbl_a.setToolTip(f"Track A: {from_track.fileName}\nSpielt von 0s bis 30s in dieser Vorschau.\nÜbergang startet bei Sekunde {mix_out:.1f} des Original-Tracks A.")
         
         self.lbl_mix = QLabel(f"⇄ MIX ({crossfade:.1f}s)\n{t_label}")
         self.lbl_mix.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_mix.setStyleSheet(f"""
-            QLabel {{
+        self.lbl_mix.setStyleSheet("""
+            QLabel {
                 background-color: #5B21B6; 
                 color: #DDD6FE; 
                 font-size: 10px; 
@@ -700,14 +700,14 @@ class TransitionPreviewWidget(QWidget):
                 border: 1px solid #8B5CF6;
                 border-radius: 4px;
                 padding: 4px 6px;
-            }}
+            }
         """)
         self.lbl_mix.setToolTip(f"Mischbereich (Crossfade) für {crossfade:.1f} Sekunden.\nSpielt von 30.0s bis {30.0+crossfade:.1f}s in dieser Vorschau.")
         
         self.lbl_b = QLabel(f"B: {to_name}\n(In: {mix_in:.1f}s)")
         self.lbl_b.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_b.setStyleSheet(f"""
-            QLabel {{
+        self.lbl_b.setStyleSheet("""
+            QLabel {
                 background-color: #064E3B; 
                 color: #A7F3D0; 
                 font-size: 10px; 
@@ -715,7 +715,7 @@ class TransitionPreviewWidget(QWidget):
                 border: 1px solid #10B981;
                 border-radius: 4px;
                 padding: 4px 6px;
-            }}
+            }
         """)
         self.lbl_b.setToolTip(f"Track B: {to_track.fileName}\nSpielt ab Sekunde {30.0+crossfade:.1f} der Vorschau bis zum Ende.\nÜbergang startet bei Sekunde {mix_in:.1f} des Original-Tracks B.")
         
@@ -1601,9 +1601,6 @@ class StatusBarWidget(QWidget):
 class QtLogSignalEmitter(QObject):
     log_written = pyqtSignal(str, str)
 
-
-import logging
-
 class QtLoggingHandler(logging.Handler):
     def __init__(self, emitter):
         super().__init__()
@@ -1765,9 +1762,9 @@ class AnalysisProgressWidget(QWidget):
         if state == "inactive":
             return f"QFrame {{ background-color: #2D2D2D; border: 1px solid {COLORS['border']}; border-radius: 2px; }}"
         elif state == "working":
-            return f"QFrame {{ background-color: #D4AF37; border: 1px solid #FFD700; border-radius: 2px; }}"
+            return "QFrame { background-color: #D4AF37; border: 1px solid #FFD700; border-radius: 2px; }"
         elif state == "completed":
-            return f"QFrame {{ background-color: #00FF66; border: 1px solid #33FF33; border-radius: 2px; }}"
+            return "QFrame { background-color: #00FF66; border: 1px solid #33FF33; border-radius: 2px; }"
         return ""
 
     def set_step_status(self, step_idx, state):
@@ -3139,10 +3136,10 @@ class MainWindow(QMainWindow):
 
     def check_dependencies_and_warn(self):
         """Ueberprueft wichtige Abhaengigkeiten und warnt den Benutzer aktiv vor eingeschraenkten System-Diensten."""
-        pedalboard_installed = True
         try:
-            import pedalboard
-        except ImportError:
+            importlib.import_module("pedalboard")
+            pedalboard_installed = True
+        except (ImportError, OSError):
             pedalboard_installed = False
 
         import requests
@@ -3483,7 +3480,7 @@ class MainWindow(QMainWindow):
             self.playlist_panel.table.setItem(found_row, 11, mix_out_item)
             
             # 3. Recalculate Transition Score for this track and the next track (col 14)
-            from hpg_core.playlist import calculate_enhanced_compatibility, calculate_playlist_quality, compute_transition_recommendations
+            from hpg_core.playlist import calculate_enhanced_compatibility
             from hpg_core.theme import get_7_scale_color
             
             # Recalculate for current row (compatibility to previous track)

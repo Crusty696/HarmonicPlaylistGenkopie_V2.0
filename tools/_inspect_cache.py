@@ -1,9 +1,13 @@
 """Zeigt alle gecachten Track-Einträge mit BPM/Genre."""
 
-import sys, io, shelve
+import sys
+import io
+import os
+import shelve
+from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-import os; from pathlib import Path; sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 CACHE_FILE = os.path.join(str(Path(__file__).parent.parent), 'hpg_cache_v10.dbm')
 

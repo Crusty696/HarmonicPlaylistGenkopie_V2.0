@@ -1,8 +1,6 @@
 import logging
 import logging.handlers
 import sys
-import os
-from pathlib import Path
 
 import pytest
 
@@ -12,9 +10,6 @@ from hpg_core.logging_config import (
     get_debug_logger,
     _CompactFormatter,
     _FileFormatter,
-    LOG_DIR,
-    LOG_FILE,
-    DEFAULT_LEVEL,
     MODULE_LEVELS,
 )
 

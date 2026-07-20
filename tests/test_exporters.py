@@ -5,8 +5,6 @@ Prueft Export-Formate, Key-Mapping und Cue-Points.
 import os
 import pytest
 import tempfile
-from hpg_core.models import Track
-from hpg_core.exporters.base_exporter import BaseExporter
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from tests.fixtures.track_factories import make_track
 

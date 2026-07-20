@@ -2,7 +2,6 @@
 Tests fuer Playlist-Qualitaetsmetriken.
 Prueft overall_score, harmonic_flow, energy_consistency, bpm_smoothness.
 """
-import pytest
 from hpg_core.playlist import calculate_playlist_quality
 from tests.fixtures.track_factories import make_track
 

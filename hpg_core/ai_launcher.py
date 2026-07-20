@@ -92,17 +92,21 @@ def _popen_hidden(args):
 
 
 def _run_hidden(args, timeout):
-    """Fuehrt ein CLI-Kommando aus und gibt stdout (str) zurueck; '' bei Fehler."""
+    """Fuehrt ein CLI-Kommando aus; gibt Ausgabe oder None bei Fehler zurueck."""
     try:
         res = subprocess.run(
             args, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             creationflags=_CREATE_NO_WINDOW, timeout=timeout,
         )
-        return (res.stdout or "") + (res.stderr or "")
+        output = (res.stdout or "") + (res.stderr or "")
+        if res.returncode != 0:
+            logger.debug(f"CLI-Aufruf fehlgeschlagen ({res.returncode}) {args}: {output}")
+            return None
+        return output
     except Exception as e:
         logger.debug(f"CLI-Aufruf fehlgeschlagen {args}: {e}")
-        return ""
+        return None
 
 
 def _is_embedding_model(model_id):
@@ -251,7 +255,7 @@ def lms_detect_port():
     exe = _lms_exe()
     if not exe or not os.path.exists(exe):
         return None
-    out = _run_hidden([exe, "server", "status"], timeout=10)
+    out = _run_hidden([exe, "server", "status"], timeout=10) or ""
     if "running" in out.lower():
         m = re.search(r"port\s+(\d+)", out)
         if m:
@@ -305,8 +309,7 @@ def lms_load(model, port):
     if not exe or not os.path.exists(exe):
         return False
     logger.info(f"LM Studio: load {model} ...")
-    _run_hidden([exe, "load", model, "--yes"], timeout=180)
-    return True
+    return _run_hidden([exe, "load", model, "--yes"], timeout=180) is not None
 
 
 def lms_get(model):
@@ -315,8 +318,7 @@ def lms_get(model):
     if not exe or not os.path.exists(exe):
         return False
     logger.info(f"LM Studio: get {model} ...")
-    _run_hidden([exe, "get", model, "--yes"], timeout=1800)
-    return True
+    return _run_hidden([exe, "get", model, "--yes"], timeout=1800) is not None
 
 
 def _prepare_lmstudio(preferred_model):
@@ -336,8 +338,8 @@ def _prepare_lmstudio(preferred_model):
             active = _pick_model(models, preferred_model)
 
     # Modell in den Speicher laden (LM Studio bedient /v1 erst nach load)
-    if active:
-        lms_load(active, port)
+    if active and not lms_load(active, port):
+        active = ""
 
     return AIProviderStatus("LM Studio", base, models, active, running=True)
 
@@ -369,10 +371,15 @@ def detect_and_start(preferred=None, preferred_model=None):
     for prov in order:
         status = prepare_provider(prov, preferred_model)
         last = status
-        if status.running and status.models:
+        if status.running and status.models and status.active_model:
             logger.info(f"AI-Provider bereit: {status}")
             return status
         logger.info(f"AI-Provider {prov} nicht nutzbar: {status}")
 
-    return last or AIProviderStatus("Ollama", _OLLAMA_HOST + "/v1/chat/completions",
-                                    [], "", running=False)
+    if last:
+        return AIProviderStatus(
+            last.name, last.base_url, last.models, "", running=False
+        )
+    return AIProviderStatus(
+        "Ollama", _OLLAMA_HOST + "/v1/chat/completions", [], "", running=False
+    )

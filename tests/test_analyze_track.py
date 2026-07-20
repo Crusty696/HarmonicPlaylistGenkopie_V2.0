@@ -16,7 +16,6 @@ from hpg_core.models import Track
 def _create_test_wav(path: str, duration: float = 5.0, sr: int = 22050):
   """Erstellt eine minimale WAV-Datei mit Sinuswelle."""
   import wave
-  import struct
 
   n_samples = int(duration * sr)
   t = np.linspace(0, duration, n_samples, endpoint=False)
@@ -360,17 +359,11 @@ class TestAnalyzeTrackCaching:
   def test_second_call_uses_cache(self, simple_wav):
     """Zweiter Aufruf nutzt Cache (schneller)."""
     from hpg_core.analysis import analyze_track
-    import time
-
     # Erster Aufruf (erzeugt Cache)
-    start1 = time.time()
     track1 = analyze_track(simple_wav)
-    time1 = time.time() - start1
 
     # Zweiter Aufruf (aus Cache)
-    start2 = time.time()
     track2 = analyze_track(simple_wav)
-    time2 = time.time() - start2
 
     # Cache-Hit sollte deutlich schneller sein
     assert track1.bpm == track2.bpm

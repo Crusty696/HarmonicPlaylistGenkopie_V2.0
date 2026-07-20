@@ -5,7 +5,6 @@ Validiert dass alle produktiv genutzten Magic Numbers im sinnvollen Bereich lieg
 Hinweis: Tote Konstanten (MIX_POINT_BUFFER, FALLBACK_*, RUPTURES_*, ONSET/CENTROID_THRESHOLD
 u.a.) wurden 2026-07-16 entfernt -- gruene Existenz-Tests hatten Aktivitaet vorgetaeuscht.
 """
-import pytest
 from hpg_core.config import (
   HOP_LENGTH, METER,
   MIX_IN_SEARCH_WINDOW_PCT, MIX_OUT_SEARCH_WINDOW_PCT,

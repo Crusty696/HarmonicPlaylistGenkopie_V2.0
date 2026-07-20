@@ -19,7 +19,7 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hpg_core.analysis import analyze_track
+from hpg_core.analysis import analyze_track  # noqa: E402
 
 # ── Konfiguration ────────────────────────────────────────────────────────────
 DEFAULT_FOLDER = r"D:\beatport_tracks_2025-08"
@@ -95,7 +95,7 @@ def dj_report(track_path: str) -> None:
     # Mix-Punkte
     mix_in = track.mix_in_point
     mix_out = track.mix_out_point
-    print(f"\n[3] Mix-Punkte")
+    print("\n[3] Mix-Punkte")
     print(f"  Mix-In  : {mix_in:.1f}s  ({mix_in / seconds_per_bar:.1f} Bars)")
     print(f"  Mix-Out : {mix_out:.1f}s  ({mix_out / seconds_per_bar:.1f} Bars)")
     print(f"  Overlap : {mix_out - mix_in:.1f}s Platz zum Mixen")
@@ -113,7 +113,7 @@ def dj_report(track_path: str) -> None:
         abs(phrase_at_mix_in - round(phrase_at_mix_in)) * seconds_per_phrase
     )
 
-    print(f"\n[4] Phrase-Alignment Check")
+    print("\n[4] Phrase-Alignment Check")
     print(
         f"  Mix-In bei Bar  : {bars_at_mix_in:.1f}  "
         f"(4-Bar-Grid: {grid_at_mix_in:.2f}, 8-Bar-Phrase: {phrase_at_mix_in:.2f})"
@@ -177,7 +177,7 @@ def dj_report(track_path: str) -> None:
         if track.genre and track.genre != "Unknown"
         else (detected_genre or "Unknown")
     )
-    print(f"\n[6] Genre-Info")
+    print("\n[6] Genre-Info")
     print(
         f"  Genre     : {display_genre}  (ID3: {track.genre}, Audio: {detected_genre or 'n/a'})"
     )

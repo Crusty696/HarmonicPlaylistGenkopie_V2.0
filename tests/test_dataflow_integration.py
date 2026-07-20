@@ -315,10 +315,13 @@ def test_config_imports():
           f"got {PARALLEL_ANALYSIS_TIMEOUT}")
 
     from hpg_core.parallel_analyzer import ParallelAnalyzer
-    check("ParallelAnalyzer importierbar", True)
+    check("ParallelAnalyzer importierbar", ParallelAnalyzer is not None)
 
-    from hpg_core.caching import get_cached_track, generate_cache_key, cache_track
-    check("Cache-Funktionen importierbar", True)
+    from hpg_core.caching import cache_track, generate_cache_key, get_cached_track
+    check(
+        "Cache-Funktionen importierbar",
+        all(callable(item) for item in (cache_track, generate_cache_key, get_cached_track)),
+    )
 
     # Signatur-Check: get_cached_track akzeptiert file_path
     import inspect
@@ -381,10 +384,6 @@ def test_cooperative_cancel():
 
     # Pruefe ob AnalysisWorker._should_cancel existiert
     # (Wir koennen es nicht GUI-maessig starten, aber Code pruefen)
-    import importlib
-    spec = importlib.util.spec_from_file_location(
-        "main", os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py"))
-
     # Einfacher Code-Check
     with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py"), "r", encoding="utf-8") as f:
         source = f.read()

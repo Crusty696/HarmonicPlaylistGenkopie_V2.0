@@ -2,7 +2,6 @@
 Tests fuer GUI-Anzeigeformate (kein Qt noetig).
 Prueft Format-Strings fuer Mix-Points, BPM, Duration.
 """
-import pytest
 
 
 def format_time(seconds: float) -> str:

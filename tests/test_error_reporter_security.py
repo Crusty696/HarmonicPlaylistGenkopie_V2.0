@@ -4,7 +4,6 @@ Tests fuer ErrorReporter (JSON-Fehler-Sink) und playlist_security
 """
 import json
 
-import pytest
 
 from hpg_core.error_reporter import ErrorReporter, MAX_ENTRIES, get_error_reporter
 from hpg_core.playlist_security import (

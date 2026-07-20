@@ -2,7 +2,6 @@
 Tests fuer Energy und Bass Intensity Berechnung.
 Prueft Skalierung 0-100 und korrekte Frequenzerkennung.
 """
-import pytest
 import numpy as np
 from hpg_core.analysis import calculate_energy, calculate_bass_intensity
 from tests.fixtures.audio_generators import (

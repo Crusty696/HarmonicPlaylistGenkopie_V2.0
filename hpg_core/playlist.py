@@ -22,8 +22,6 @@ from .config import (
     MAX_TRANSITION_OVERLAP_SECONDS,
 )
 import logging
-import re
-import random
 import math
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass

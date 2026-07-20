@@ -4,7 +4,6 @@ Prueft ob Uebergangsempfehlungen DJ-taugliche Werte liefern.
 """
 from types import SimpleNamespace
 
-import pytest
 from hpg_core.playlist import compute_set_timeline, compute_transition_recommendations
 from hpg_core.transition_renderer import TransitionClipSpec
 from tests.fixtures.track_factories import make_track

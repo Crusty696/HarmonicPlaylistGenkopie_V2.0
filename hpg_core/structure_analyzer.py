@@ -26,6 +26,7 @@ import numpy as np
 import librosa
 
 from .config import HOP_LENGTH, METER, SECTION_ENERGY_THRESHOLD
+from .genres import DEFAULT_MIX_PROFILE, GENRE_MIX_PROFILES
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,6 @@ class TrackStructure:
 # === Genre-specific Phrase Units ===
 # Audit-Fix 2026-07-17: aus den GENRE_MIX_PROFILES (genres.py, Single Source
 # of Truth) abgeleitet statt als zweite Tabelle manuell synchron gepflegt.
-from .genres import GENRE_MIX_PROFILES, DEFAULT_MIX_PROFILE
-
 GENRE_PHRASE_UNITS: dict[str, int] = {
   genre: profile.phrase_unit for genre, profile in GENRE_MIX_PROFILES.items()
 }

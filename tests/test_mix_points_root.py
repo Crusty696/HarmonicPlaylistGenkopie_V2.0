@@ -13,10 +13,6 @@ Da beide analysis.py identische Imports haben, testen wir die hpg_core
 Version mit den strikteren Erwartungen der Root-Version.
 """
 import pytest
-import sys
-import os
-import numpy as np
-from math import ceil, floor
 
 # Root analysis.py hat relative Imports (.models, .config) - nutze hpg_core
 from hpg_core.analysis import analyze_structure_and_mix_points as analyze_root
