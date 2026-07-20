@@ -112,8 +112,8 @@ SECURITY_MAX_PLAYLIST_SIZE = 1000  # 1000 Tracks max pro Playlist
 AI_PROVIDER = "Ollama"  # "Ollama" or "LM Studio"
 AI_API_URL_OLLAMA = "http://localhost:11434/v1/chat/completions"
 AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default Ollama
-# "gemma4" existiert nicht als Ollama-Modell — gemeint ist Gemma 3 12B
-AI_MODEL = "gemma3:12b" # Oder mistral, etc.
+# Standardmodell mit vom lokalen Ollama-Server gemeldeter Audio-Faehigkeit.
+AI_MODEL = "gemma4:12b"
 AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
 # KI-Mixpunkte bleiben bis zu einer unabhaengigen Cue-Validierung advisory.
 AI_AUTO_APPLY_MIXPOINTS = False
@@ -132,4 +132,5 @@ AI_SYSTEM_PROMPT = (
     '"mix_out_time" (float, ideal mix-out point in seconds).\n'
     'Example for Psy-Trance: {"sub_genre":"Progressive Psytrance","moods":["driving","psychedelic"],"description":"Execute a Pro EQ Swap at the second section drop: swap bass cleanly, drop mids of track A to prevent vocal clashes.","mix_in_time":55.7,"mix_out_time":328.7}'
 )
-AI_MODELS_AVAILABLE = ["gemma3:12b", "gemma2:9b", "gemma:7b", "llama3:8b", "llama3.1:8b", "qwen2.5:7b", "mistral:7b", "phi3:medium", "llama3", "mistral", "gemma"]
+# Die UI befuellt die Liste ausschliesslich aus verifizierten Provider-Metadaten.
+AI_MODELS_AVAILABLE = []

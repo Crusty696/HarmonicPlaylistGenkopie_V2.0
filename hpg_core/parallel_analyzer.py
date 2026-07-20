@@ -267,8 +267,10 @@ class ParallelAnalyzer:
                             else:
                                 status_msg = f"[FAILED] {os.path.basename(file_path)}"
                     except (BrokenProcessPool, RuntimeError) as e:
-                        # This specific file caused the worker to crash!
-                        logger.error(f"CRITICAL: Datei verursacht C-Level Absturz! Ueberspringe: {os.path.basename(file_path)}: {e}")
+                        # Ein einzelner Worker-Crash beweist keine Dateikorruption:
+                        # Auch der eingefrorene Prozessstart oder eine native Bibliothek
+                        # kann vor der eigentlichen Analyse abgestuerzt sein.
+                        logger.error(f"CRITICAL: C-Level Worker-Absturz im Safe-Modus; Datei wird uebersprungen: {os.path.basename(file_path)}: {e}")
                         status_msg = f"[CRASHED/SKIPPED] {os.path.basename(file_path)}"
                         track = None
                     except TimeoutError:

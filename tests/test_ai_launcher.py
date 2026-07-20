@@ -73,6 +73,26 @@ def test_embedding_models_are_detected(model):
   assert launcher._is_embedding_model(model) is True
 
 
+def test_ollama_audio_capability_is_confirmed_by_provider(monkeypatch):
+  response = SimpleNamespace(
+    status_code=200,
+    json=lambda: {"capabilities": ["completion", "audio", "thinking"]},
+  )
+  monkeypatch.setattr(launcher.requests, "post", lambda *args, **kwargs: response)
+
+  assert launcher._is_audio_capable_ollama_model("gemma4:12b") is True
+
+
+def test_ollama_audio_capability_rejects_unconfirmed_models(monkeypatch):
+  response = SimpleNamespace(
+    status_code=200,
+    json=lambda: {"capabilities": ["completion", "tools"]},
+  )
+  monkeypatch.setattr(launcher.requests, "post", lambda *args, **kwargs: response)
+
+  assert launcher._is_audio_capable_ollama_model("text-only") is False
+
+
 def test_pick_model_priority_and_fallbacks():
   models = ["nomic-embed", "llama3:latest", "google/gemma-4-e4b"]
 
@@ -88,18 +108,21 @@ def test_ollama_queries(monkeypatch):
   payloads = {
     launcher._OLLAMA_HOST + "/api/tags": (
       True,
-      {"models": [{"name": "llama3:latest"}, {"missing": "ignored"}]},
+      {"models": [{"name": "llama3:latest"}, {"name": "gemma4:12b"}, {"missing": "ignored"}]},
     ),
     launcher._OLLAMA_HOST + "/api/ps": (
       True,
-      {"models": [{"name": "llama3:latest"}]},
+      {"models": [{"name": "gemma4:12b"}]},
     ),
   }
   monkeypatch.setattr(launcher, "_http_json", lambda url: payloads[url])
+  monkeypatch.setattr(
+    launcher, "_is_audio_capable_ollama_model", lambda model: model == "gemma4:12b"
+  )
 
   assert launcher.ollama_running() is True
-  assert launcher.ollama_models() == ["llama3:latest"]
-  assert launcher.ollama_active_model() == "llama3:latest"
+  assert launcher.ollama_models() == ["gemma4:12b"]
+  assert launcher.ollama_active_model() == "gemma4:12b"
 
 
 def test_ollama_empty_responses(monkeypatch):
@@ -210,7 +233,7 @@ def test_lms_models_load_get_and_prepare(monkeypatch):
     "_http_json",
     lambda _url: (True, {"data": [{"id": "google/gemma"}, {}]}),
   )
-  assert launcher.lms_models(1234) == ["google/gemma"]
+  assert launcher.lms_models(1234) == []
 
   monkeypatch.setattr(launcher, "_lms_exe", lambda: "lms.exe")
   monkeypatch.setattr(launcher.os.path, "exists", lambda _path: True)

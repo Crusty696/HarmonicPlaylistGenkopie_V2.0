@@ -2,6 +2,12 @@ import html as html_mod
 import importlib
 import logging
 import multiprocessing
+
+# PyInstaller muss eingefrorene Multiprocessing-Worker vor Qt- und Audio-Imports
+# in den Worker-Einstieg umleiten. Andernfalls initialisieren sie die GUI- und
+# Native-Audio-Stacks und können auf Windows mit einem C-Level-Crash abbrechen.
+multiprocessing.freeze_support()
+
 import os
 import re
 import sys
@@ -921,12 +927,9 @@ class AdvancedParametersWidget(QWidget):
 
         # Row 2: Model Selection Label & ComboBox
         model_layout = QHBoxLayout()
-        model_label = QLabel("Active AI Model:")
+        model_label = QLabel("Audiofaehiges KI-Modell:")
         self.model_combo = QComboBox()
-        # Platzhalter bis Detect fertig ist
-        self.model_combo.addItems(hpg_config.AI_MODELS_AVAILABLE)
-        if hpg_config.AI_MODEL in hpg_config.AI_MODELS_AVAILABLE:
-            self.model_combo.setCurrentText(hpg_config.AI_MODEL)
+        self.model_combo.setPlaceholderText("KI erkennen, um Audio-Modelle zu laden")
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
 
         model_layout.addWidget(model_label)
@@ -956,8 +959,8 @@ class AdvancedParametersWidget(QWidget):
         self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) fuer das Mood-Tagging und Mix-Empfehlungen.")
         self.ollama_radio.setToolTip("Nutze Ollama als lokalen KI-Dienst. Läuft sehr stabil auf AMD-Grafikkarten unter Windows.")
         self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt fuer detaillierte Modellkonfigurationen.")
-        self.model_combo.setToolTip("Waehle das aktive KI-Modell (z. B. gemma3:12b) fuer die asynchrone Veredelung.")
-        self.ai_refresh_btn.setToolTip("Sucht nach aktiven lokalen KI-Instanzen auf deinem Rechner und laedt die verfuegbaren Modelle.")
+        self.model_combo.setToolTip("Zeigt nur Modelle, deren lokaler Provider die Audio-Faehigkeit bestaetigt.")
+        self.ai_refresh_btn.setToolTip("Sucht lokale KI-Instanzen und laedt nur verifizierte audiofaehige Modelle.")
         self.test_ai_btn.setToolTip("Fuehrt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu pruefen.")
 
         self._ai_controls = [
@@ -1063,7 +1066,7 @@ class AdvancedParametersWidget(QWidget):
         if self._ai_detect_worker and self._ai_detect_worker.isRunning():
             return
         preferred = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
-        preferred_model = self.model_combo.currentText().strip() or None
+        preferred_model = self.model_combo.currentText().strip() or hpg_config.AI_MODEL
 
         self.ai_status_label.setText("AI: suche & starte Provider ...")
         self.ai_refresh_btn.setEnabled(False)
@@ -1098,14 +1101,28 @@ class AdvancedParametersWidget(QWidget):
         self.lmstudio_radio.blockSignals(False)
         self.ollama_radio.blockSignals(False)
 
-        # Combo mit echten Modellen fuellen
-        if status.models:
+        if not status.models:
             self.model_combo.blockSignals(True)
             self.model_combo.clear()
-            self.model_combo.addItems(status.models)
-            if status.active_model and status.active_model in status.models:
-                self.model_combo.setCurrentText(status.active_model)
+            self.model_combo.setPlaceholderText("Keine verifizierten Audio-Modelle")
             self.model_combo.blockSignals(False)
+            self.detected_base_url = status.base_url
+            self.detected_provider = status.name
+            self.detected_active_model = None
+            self.test_ai_btn.setEnabled(False)
+            self.ai_status_label.setText(
+                f"AI bereit — {status.name}: keine verifizierten Audio-Modelle. "
+                "Fuer Ollama werden nur Modelle mit gemeldeter Audio-Faehigkeit angezeigt."
+            )
+            return
+
+        # Combo mit echten, audiofaehigen Modellen fuellen
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItems(status.models)
+        if status.active_model and status.active_model in status.models:
+            self.model_combo.setCurrentText(status.active_model)
+        self.model_combo.blockSignals(False)
 
         # Erkannte Werte merken (vom AIAnalysisWorker genutzt)
         self.detected_base_url = status.base_url
@@ -1118,7 +1135,7 @@ class AdvancedParametersWidget(QWidget):
         if m:
             port = f" :{m.group(1)}"
         self.ai_status_label.setText(
-            f"AI bereit — {status.name}{port} · {len(status.models)} Modelle · "
+            f"AI bereit — {status.name}{port} · {len(status.models)} Audio-Modelle · "
             f"aktiv: {self.detected_active_model}"
         )
 
@@ -1136,7 +1153,7 @@ class AdvancedParametersWidget(QWidget):
         
         num_models = self.model_combo.count()
         self.ai_status_label.setText(
-            f"AI bereit — {provider}{port} · {num_models} Modelle · "
+            f"AI bereit — {provider}{port} · {num_models} Audio-Modelle · "
             f"aktiv: {self.detected_active_model}"
         )
 
@@ -1174,7 +1191,7 @@ class AdvancedParametersWidget(QWidget):
         # Statustext aktualisieren
         num_models = self.model_combo.count()
         self.ai_status_label.setText(
-            f"AI bereit — {provider}{port} · {num_models} Modelle · "
+            f"AI bereit — {provider}{port} · {num_models} Audio-Modelle · "
             f"aktiv: {responded_model}"
         )
 
@@ -3873,10 +3890,6 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    # CRITICAL: Required for PyInstaller + multiprocessing on Windows
-    # This MUST be the first line to prevent infinite process spawning
-    multiprocessing.freeze_support()
-
     # Logging initialisieren (MUSS vor allen anderen Modulen passieren)
     from hpg_core import config as hpg_config
     setup_logging(hpg_config.LOG_LEVEL)
@@ -3893,6 +3906,13 @@ if __name__ == "__main__":
     pass
 
     init_cache()
+
+    if len(sys.argv) >= 3 and sys.argv[1] == "--worker-smoke":
+        smoke_paths = sys.argv[2:]
+        smoke_tracks = ParallelAnalyzer(
+            max_workers=min(len(smoke_paths), 4)
+        ).analyze_files(smoke_paths)
+        sys.exit(0 if len(smoke_tracks) == len(smoke_paths) else 1)
 
     app = QApplication(sys.argv)
 

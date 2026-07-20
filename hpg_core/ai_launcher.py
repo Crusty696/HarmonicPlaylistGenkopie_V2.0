@@ -115,6 +115,32 @@ def _is_embedding_model(model_id):
     return "embed" in mid or "bert" in mid
 
 
+def _ollama_model_capabilities(model_id):
+    """Liest die vom lokalen Ollama-Server gemeldeten Modellfaehigkeiten."""
+    try:
+        response = requests.post(
+            _OLLAMA_HOST + "/api/show",
+            json={"name": model_id},
+            timeout=5,
+        )
+        if response.status_code != 200:
+            return set()
+        payload = response.json()
+        return {
+            str(capability).lower()
+            for capability in payload.get("capabilities", [])
+        }
+    except Exception as error:
+        logger.debug("Ollama-Faehigkeiten fuer %s nicht lesbar: %s", model_id, error)
+        return set()
+
+
+def _is_audio_capable_ollama_model(model_id):
+    """Akzeptiert nur Modelle, deren Server-Metadaten Audio bestaetigen."""
+    capabilities = _ollama_model_capabilities(model_id)
+    return "audio" in capabilities and "completion" in capabilities
+
+
 def _pick_model(installed, preferred):
     """
     Waehlt das aktive Modell:
@@ -157,10 +183,12 @@ def ollama_running():
 
 
 def ollama_models():
+    """Gibt nur lokal installierte, vom Server als audiofaehig bestaetigte Modelle zurueck."""
     ok, data = _http_json(_OLLAMA_HOST + "/api/tags")
     if not ok or not data:
         return []
-    return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+    installed = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+    return [model for model in installed if _is_audio_capable_ollama_model(model)]
 
 
 def ollama_active_model():
@@ -169,7 +197,9 @@ def ollama_active_model():
     if ok and data and "models" in data:
         models = data["models"]
         if models:
-            return models[0].get("name", "")
+            active = models[0].get("name", "")
+            if active and _is_audio_capable_ollama_model(active):
+                return active
     return ""
 
 
@@ -297,10 +327,15 @@ def lms_start():
 
 
 def lms_models(port):
+    """LM Studio liefert keine Audio-Capabilities; unbestaetigte Modelle ausblenden."""
     ok, data = _http_json(f"http://localhost:{port}/v1/models")
     if not ok or not data:
         return []
-    return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+    logger.info(
+        "LM Studio meldet keine Audio-Capabilities ueber /v1/models; "
+        "Modelle werden deshalb nicht als audiofaehig angeboten."
+    )
+    return []
 
 
 def lms_load(model, port):
