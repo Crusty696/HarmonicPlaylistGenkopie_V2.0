@@ -82,6 +82,18 @@ class TestOptimalWorkerCount:
     count = get_optimal_worker_count()
     assert count <= mp.cpu_count()
 
+  def test_configured_workers_are_capped_at_cpu_count(self, monkeypatch):
+    """Auch ein zu hoher Konfigurationswert darf CPU-Limit nicht brechen."""
+    from hpg_core import parallel_analyzer
+
+    monkeypatch.setattr(
+      parallel_analyzer.config,
+      "PARALLEL_MAX_WORKERS",
+      mp.cpu_count() + 100,
+    )
+
+    assert get_optimal_worker_count(file_count=50) == mp.cpu_count()
+
   def test_small_file_count(self):
     """Wenige Dateien = weniger Workers."""
     count_small = get_optimal_worker_count(file_count=3)

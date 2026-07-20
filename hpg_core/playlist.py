@@ -155,15 +155,17 @@ class EnergyDirection(Enum):
 
 
 def calculate_ai_compatibility_bonus(track1: Track, track2: Track) -> float:
-    """Liefert den einzigen KI-Bonus als normierten Wert von 0 bis 0.14."""
+    """Liefert den einzigen KI-Bonus als normierten Wert von 0 bis 0.14.
+
+    HPG-002-Fix: Bonus nur bei gueltiger, aktueller Provenienz beider Tracks —
+    beliebige oder veraltete ai_metadata ergeben deterministisch 0.0.
+    """
+    # Lazy-Import: ai_engine zieht requests, das Core-Scoring soll ohne laufen
+    from .ai_engine import has_valid_provenance
+
     ai_meta1 = getattr(track1, "ai_metadata", {})
     ai_meta2 = getattr(track2, "ai_metadata", {})
-    if not (
-        isinstance(ai_meta1, dict)
-        and isinstance(ai_meta2, dict)
-        and ai_meta1
-        and ai_meta2
-    ):
+    if not (has_valid_provenance(ai_meta1) and has_valid_provenance(ai_meta2)):
         return 0.0
 
     bonus = 0.0
@@ -1146,11 +1148,22 @@ def _process_dj_brain_recommendations(
 
 
 def compute_transition_recommendations(
-    playlist: List[Track], bpm_tolerance: float = 3.0, default_overlap: float = 12.0
+    playlist: List[Track],
+    bpm_tolerance: float = 3.0,
+    default_overlap: float = 12.0,
+    scoring_context: Optional[Dict] = None,
 ) -> List[TransitionRecommendation]:
-    """Build actionable mix recommendations between consecutive tracks."""
+    """Build actionable mix recommendations between consecutive tracks.
+
+    scoring_context (HPG-001): die bei der Generierung gewaehlten
+    Scoring-Parameter (harmonic_strictness/allow_experimental). Ohne Kontext
+    faellt die Bewertung auf die Defaults zurueck — dann muessen aber auch
+    Sortierung und Anzeige denselben Default nutzen.
+    """
     if len(playlist) < 2:
         return []
+
+    ctx = scoring_context or {}
 
     recommendations: List[TransitionRecommendation] = []
 
@@ -1189,7 +1202,9 @@ def compute_transition_recommendations(
         fade_in_start = next_mix_in
         overlap = transition_duration
 
-        metrics = calculate_enhanced_compatibility(current, upcoming, bpm_tolerance)
+        metrics = calculate_enhanced_compatibility(
+            current, upcoming, bpm_tolerance, **ctx
+        )
         compatibility_score = int(metrics.overall_score * 100)
 
         energy_delta = upcoming.energy - current.energy
@@ -1292,9 +1307,15 @@ def compute_transition_recommendations(
 
 
 def calculate_playlist_quality(
-    tracks: list[Track], bpm_tolerance: float
+    tracks: list[Track],
+    bpm_tolerance: float,
+    scoring_context: Optional[Dict] = None,
 ) -> Dict[str, float]:
-    """Calculate comprehensive quality metrics for a playlist."""
+    """Calculate comprehensive quality metrics for a playlist.
+
+    scoring_context (HPG-001): identischer Scoring-Vertrag wie bei der
+    Generierung, damit die angezeigte Qualitaet zum Sortierziel passt.
+    """
     if len(tracks) < 2:
         return {
             "overall_score": 1.0,
@@ -1303,6 +1324,7 @@ def calculate_playlist_quality(
             "bpm_smoothness": 1.0,
         }
 
+    ctx = scoring_context or {}
     harmonic_scores = []
     energy_diffs = []
     bpm_diffs = []
@@ -1311,7 +1333,9 @@ def calculate_playlist_quality(
         current, next_track = tracks[i], tracks[i + 1]
 
         # Harmonic compatibility
-        harmonic_score = calculate_compatibility(current, next_track, bpm_tolerance)
+        harmonic_score = calculate_compatibility(
+            current, next_track, bpm_tolerance, **ctx
+        )
         harmonic_scores.append(harmonic_score)
 
         # Energy differences
@@ -1499,6 +1523,12 @@ STRATEGIES = {
     "Context Flow": _sort_context_flow,
 }
 
+# HPG-001: Nur diese Parameter beeinflussen die Kompatibilitaets-Zielfunktion
+# (calculate_enhanced_compatibility -> _calculate_compatibility_inner). Der
+# Scoring-Kontext, der durch Reorder/Preview/Quality/Recommendations gereicht
+# wird, besteht genau aus dieser Teilmenge.
+SCORING_PARAMETERS = {"harmonic_strictness", "allow_experimental"}
+
 SUPPORTED_STRATEGY_PARAMETERS = {
     "Harmonic Flow": {"harmonic_strictness", "allow_experimental"},
     "Warm-Up": set(),
@@ -1523,6 +1553,25 @@ STRATEGY_ALIASES = {
     "Peak-Time Enhanced": "Peak-Time",
     "Emotional Journey": "Context Flow",
 }
+
+
+def resolve_scoring_context(
+    mode: str, advanced_params: Optional[Dict] = None
+) -> Dict:
+    """Liefert den Scoring-Kontext (HPG-001) fuer eine Strategie.
+
+    Genau die Scoring-Parameter, die die gewaehlte Strategie beim Sortieren
+    tatsaechlich nutzt. Strategien ohne harmonic_strictness (z.B. Warm-Up)
+    liefern {} — dann bewerten Sortierung UND Anzeige einheitlich mit Defaults.
+    Anzeige, Reorder, Preview, Quality und Empfehlungen muessen genau diesen
+    Kontext verwenden, damit sie denselben Optimierungsvertrag darstellen wie
+    die Generierung.
+    """
+    resolved_mode = STRATEGY_ALIASES.get(mode, mode)
+    effective = StrategyConfig.from_mapping(advanced_params).effective_kwargs(
+        resolved_mode
+    )
+    return {k: v for k, v in effective.items() if k in SCORING_PARAMETERS}
 
 
 def generate_playlist(
@@ -1604,8 +1653,11 @@ def generate_playlist(
         # Restore old cache container (usually None)
         _COMPAT_CACHE = old_cache
 
-    # Log quality metrics for analysis
-    quality = calculate_playlist_quality(result, bpm_tolerance)
+    # Log quality metrics for analysis — mit demselben Scoring-Kontext (HPG-001)
+    scoring_context = {
+        k: v for k, v in effective_config.items() if k in SCORING_PARAMETERS
+    }
+    quality = calculate_playlist_quality(result, bpm_tolerance, scoring_context)
     logger.info(
         f"Playlist-Qualitaet ({mode}): "
         f"Score={quality['overall_score']:.2f}, "

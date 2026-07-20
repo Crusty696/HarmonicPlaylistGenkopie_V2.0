@@ -19,6 +19,7 @@ import re
 import shutil
 import logging
 import subprocess
+import time
 
 import requests
 
@@ -268,13 +269,40 @@ def ollama_start():
     return ollama_running()
 
 
-def ollama_pull(model):
-    """Laedt ein Ollama-Modell (blockierend, grosser Download). Bool zurueck."""
+def ollama_pull(model, cancel_check=None):
+    """Laedt ein Ollama-Modell (blockierend, grosser Download). Bool zurueck.
+
+    cancel_check: optionale Callable ohne Argumente. Liefert sie True, wird
+    der laufende Pull-Prozess terminiert (HPG-003: kooperativer Abbruch —
+    vorher konnte der Pull bis 1800s unbeeinflussbar blockieren).
+    """
     exe = _ollama_exe()
     if not exe or not os.path.exists(exe):
         return False
     logger.info(f"Ollama: pull {model} ...")
-    _run_hidden([exe, "pull", model], timeout=1800)  # bis 30 Min fuer grosse Modelle
+    if cancel_check is None:
+        _run_hidden([exe, "pull", model], timeout=1800)  # bis 30 Min fuer grosse Modelle
+    else:
+        try:
+            proc = subprocess.Popen(
+                [exe, "pull", model],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            deadline = time.time() + 1800
+            while proc.poll() is None:
+                if cancel_check() or time.time() > deadline:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    logger.info(f"Ollama-Pull abgebrochen: {model}")
+                    return False
+                time.sleep(0.5)
+        except Exception as e:
+            logger.debug(f"Ollama-Pull fehlgeschlagen {model}: {e}")
+            return False
     return any(m.split(":")[0] == model.split(":")[0] for m in ollama_models())
 
 

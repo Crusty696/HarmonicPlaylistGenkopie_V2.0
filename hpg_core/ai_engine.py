@@ -34,6 +34,25 @@ AI_JSON_SCHEMA = {
 }
 
 
+def has_valid_provenance(metadata) -> bool:
+    """Prueft, ob KI-Metadaten eine gueltige, aktuelle Provenienz tragen.
+
+    HPG-002-Fix: Nur Daten, die durch validate_ai_analysis gelaufen sind
+    (aktuelle Prompt-/Schema-Version), duerfen Scoring beeinflussen.
+    """
+    if not isinstance(metadata, dict) or not metadata:
+        return False
+    provenance = metadata.get("_provenance")
+    if not isinstance(provenance, dict):
+        return False
+    return (
+        bool(provenance.get("provider"))
+        and bool(provenance.get("model"))
+        and provenance.get("prompt_version") == AI_PROMPT_VERSION
+        and provenance.get("schema_version") == AI_SCHEMA_VERSION
+    )
+
+
 def ai_metadata_matches(track: Track, provider: str, model: str) -> bool:
     """Prueft, ob vorhandene KI-Daten exakt zum aktuellen Vertrag passen."""
     metadata = getattr(track, "ai_metadata", {})

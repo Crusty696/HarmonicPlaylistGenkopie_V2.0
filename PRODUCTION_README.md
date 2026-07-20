@@ -5,7 +5,7 @@ Audio-Analyse (librosa), genre-bewussten Mixpoints und Transition-Previews.
 
 ## Systemvoraussetzungen
 
-- **Python 3.10-3.12** (NICHT 3.13+ — numba-Inkompatibilität)
+- **Python 3.12** (mindestens 3.12.1, NICHT 3.13+ — numba-Inkompatibilität)
 - Windows (primäre Zielplattform)
 - Abhängigkeiten: `requirements.txt` (PyQt6, librosa, numpy, soundfile, pyrekordbox, …)
 
@@ -29,7 +29,7 @@ venv312\Scripts\python.exe -m pytest tests/ --no-cov -q
 ## Kern-Workflow
 
 1. Musikordner wählen → parallele Analyse (BPM, Key, Energy, Struktur, Genre; Rekordbox-Fast-Path falls DB vorhanden)
-2. Strategie wählen (11 Modi, Standard: Harmonic Flow Enhanced) → Playlist generieren
+2. Strategie wählen (8 Modi, Standard: Harmonic Flow) → Playlist generieren
 3. Transition-Empfehlungen + Audio-Previews (subprocess-gerendert)
 4. Export: m3u8 oder Rekordbox XML
 

@@ -40,11 +40,11 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     Returns:
         int: Optimal number of workers (minimum 2, scales with CPU)
     """
+    cpu_count = mp.cpu_count()
+
     # M3 Audit-Fix: Konfigurierbar ueber config.py (config.PARALLEL_MAX_WORKERS)
     if config.PARALLEL_MAX_WORKERS is not None:
-        return max(1, config.PARALLEL_MAX_WORKERS)
-
-    cpu_count = mp.cpu_count()
+        return min(cpu_count, max(1, int(config.PARALLEL_MAX_WORKERS)))
 
     # Smart scaling: use the better of the two strategies
     # - Small CPU strategy: min(6, cpu_count)

@@ -74,6 +74,7 @@ from hpg_core.playlist import (
     compute_transition_recommendations,
     compute_set_timeline,
     get_set_timing_summary,
+    resolve_scoring_context,
     SUPPORTED_STRATEGY_PARAMETERS,
 )
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
@@ -285,6 +286,9 @@ class AIDetectWorker(QThread):
             )
         except Exception:
             status = None
+        # HPG-003: bei Abbruch (App-Close) kein Signal mehr in die sterbende UI
+        if self.isInterruptionRequested():
+            return
         self.detected.emit(status)
 
 
@@ -327,6 +331,9 @@ class AITestWorker(QThread):
             resp_json = resp.json()
             latency = time.time() - start_time
 
+            # HPG-003: bei Abbruch (App-Close) kein Signal mehr emittieren
+            if self.isInterruptionRequested():
+                return
             if "choices" in resp_json and len(resp_json["choices"]) > 0:
                 response_content = resp_json["choices"][0]["message"]["content"].strip()
                 responded_model = resp_json.get("model", self.model)
@@ -335,6 +342,8 @@ class AITestWorker(QThread):
                 self.test_finished.emit(False, "Keine 'choices' in der Antwort des Providers.", self.model, latency)
         except Exception as e:
             latency = time.time() - start_time
+            if self.isInterruptionRequested():
+                return
             self.test_finished.emit(False, str(e), self.model, latency)
 
 
@@ -351,12 +360,19 @@ class AIPullWorker(QThread):
     def run(self):
         try:
             from hpg_core import ai_launcher
-            success = ai_launcher.ollama_pull(self.model)
+            # HPG-003: cancel_check macht den bis zu 30-minuetigen Pull abbrechbar
+            success = ai_launcher.ollama_pull(
+                self.model, cancel_check=self.isInterruptionRequested
+            )
+            if self.isInterruptionRequested():
+                return
             if success:
                 self.pull_finished.emit(True, "")
             else:
                 self.pull_finished.emit(False, f"Modell '{self.model}' konnte nicht geladen werden. Bitte stelle sicher, dass Ollama läuft und der Modellname korrekt ist.")
         except Exception as e:
+            if self.isInterruptionRequested():
+                return
             self.pull_finished.emit(False, str(e))
 
 
@@ -533,12 +549,31 @@ class TransitionRenderWorker(QThread):
         self._transitions = transitions
         self._should_cancel = False
         self._temp_files: list[str] = []  # Fuer Cleanup
+        self._executor = None  # HPG-004: aktiver ProcessPoolExecutor (fuer Terminate)
         import uuid
         self._run_id = uuid.uuid4().hex[:8]
 
     def request_cancel(self):
-        """Kooperatives Cancel — setzt Flag das in run() geprueft wird."""
+        """Kooperatives Cancel — setzt Flag und beendet laufende Child-Prozesse."""
         self._should_cancel = True
+        # HPG-004: laufenden Render-Prozess sofort terminieren statt bis zu
+        # 60s auf future.result() zu warten
+        self._terminate_executor(self._executor)
+
+    @staticmethod
+    def _terminate_executor(executor):
+        """Beendet Child-Prozesse eines Executors hart und raeumt ihn ab."""
+        if executor is None:
+            return
+        try:
+            for proc in list(getattr(executor, "_processes", {}).values()):
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
     def get_temp_files(self) -> list[str]:
         return self._temp_files.copy()
@@ -587,15 +622,21 @@ class TransitionRenderWorker(QThread):
                     ),
                     )
 
-                # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen
+                # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen.
+                # HPG-004: Executor manuell verwalten — bei Timeout/Cancel wird der
+                # Child-Prozess terminiert statt beim Context-Exit blockierend zu warten.
                 render_success = False
+                executor = ProcessPoolExecutor(max_workers=1)
+                self._executor = executor
                 try:
-                    with ProcessPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(_render_clip_subprocess_wrapper, (spec, out_path))
-                        # Timeout grosszuegig fuer lange Trance/Progressive-Blends (bis 64s Crossfade)
-                        future.result(timeout=60.0)
-                        render_success = True
+                    future = executor.submit(_render_clip_subprocess_wrapper, (spec, out_path))
+                    # Timeout grosszuegig fuer lange Trance/Progressive-Blends (bis 64s Crossfade)
+                    future.result(timeout=60.0)
+                    render_success = True
                 except (BrokenProcessPool, RuntimeError) as pool_err:
+                    if self._should_cancel:
+                        # Terminate durch request_cancel — kein echter Absturz
+                        break
                     logger.error(f"Render-Prozess abgestuerzt bei Clip {i}: {pool_err}")
                     get_error_reporter().log_error(
                         "transition_render_crash", str(pool_err), {"clip": i}
@@ -603,6 +644,7 @@ class TransitionRenderWorker(QThread):
                     self.clip_error.emit(i, "Format-Absturz (Datei beschaedigt)")
                 except TimeoutError:
                     logger.error(f"Render-Timeout bei Clip {i}")
+                    self._terminate_executor(executor)
                     self.clip_error.emit(i, "Zeitueberschreitung")
                 except Exception as render_err:
                     logger.error(f"Fehler bei Transition-Render {i}: {render_err}")
@@ -610,6 +652,9 @@ class TransitionRenderWorker(QThread):
                         "transition_render", str(render_err), {"clip": i}
                     )
                     self.clip_error.emit(i, f"Fehler: {render_err}")
+                finally:
+                    self._executor = None
+                    self._terminate_executor(executor)
 
                 if render_success:
                     self.clip_ready.emit(i, out_path)
@@ -2219,6 +2264,7 @@ class PlaylistPanel(QWidget):
         self.quality_metrics = {}
         self.transition_recommendations = []
         self.bpm_tolerance = 3.0
+        self.scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.init_ui()
 
     def init_ui(self):
@@ -2356,14 +2402,20 @@ class PlaylistPanel(QWidget):
         quality_metrics,
         transition_recommendations=None,
         bpm_tolerance=3.0,
+        scoring_context=None,
     ):
         """Playlist-Daten setzen und Tabelle fuellen."""
         self.playlist = playlist
         self.quality_metrics = quality_metrics
         self.bpm_tolerance = bpm_tolerance
+        # HPG-001: Scoring-Kontext merken, damit Tabelle/Reorder/Quality
+        # denselben Vertrag nutzen wie die Generierung
+        self.scoring_context = scoring_context or {}
         if transition_recommendations is None:
             self.transition_recommendations = compute_transition_recommendations(
-                playlist, bpm_tolerance=self.bpm_tolerance
+                playlist,
+                bpm_tolerance=self.bpm_tolerance,
+                scoring_context=self.scoring_context,
             )
         else:
             self.transition_recommendations = transition_recommendations
@@ -2441,7 +2493,7 @@ class PlaylistPanel(QWidget):
             if i > 0:
                 prev_track = self.playlist[i - 1]
                 compatibility = calculate_enhanced_compatibility(
-                    prev_track, track, self.bpm_tolerance
+                    prev_track, track, self.bpm_tolerance, **self.scoring_context
                 )
                 transition_score = int(compatibility.overall_score * 100)
 
@@ -2557,7 +2609,8 @@ class PlaylistPanel(QWidget):
                 prev_track = self.playlist[i - 1]
                 current_track = self.playlist[i]
                 compatibility = calculate_enhanced_compatibility(
-                    prev_track, current_track, self.bpm_tolerance
+                    prev_track, current_track, self.bpm_tolerance,
+                    **self.scoring_context
                 )
                 transition_score = int(compatibility.overall_score * 100)
                 
@@ -2585,13 +2638,15 @@ class PlaylistPanel(QWidget):
             score_item.setForeground(QColor("white"))
             self.table.setItem(i, 14, score_item)
 
-        # Quality neu berechnen
+        # Quality neu berechnen — mit aktivem Scoring-Kontext (HPG-001)
         self.quality_metrics = calculate_playlist_quality(
-            self.playlist, self.bpm_tolerance
+            self.playlist, self.bpm_tolerance, self.scoring_context
         )
         self._update_quality_display()
         self.transition_recommendations = compute_transition_recommendations(
-            self.playlist, bpm_tolerance=self.bpm_tolerance
+            self.playlist,
+            bpm_tolerance=self.bpm_tolerance,
+            scoring_context=self.scoring_context,
         )
 
 
@@ -3231,6 +3286,7 @@ class MainWindow(QMainWindow):
         self.quality_metrics = {}
         self.current_playlist_mode = "Harmonic Flow"
         self.current_bpm_tolerance = 3.0
+        self.current_scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.worker = None
         self.ai_worker = None
         self.run_state = RunState.IDLE
@@ -3590,20 +3646,22 @@ class MainWindow(QMainWindow):
             from hpg_core.playlist import calculate_enhanced_compatibility
             from hpg_core.theme import get_7_scale_color
             
+            # HPG-001: Scoring-Kontext des Panels wiederverwenden
+            scoring_context = getattr(self.playlist_panel, "scoring_context", {})
             # Recalculate for current row (compatibility to previous track)
             if found_row > 0:
                 prev_track = self.playlist[found_row - 1]
-                metrics = calculate_enhanced_compatibility(prev_track, found_track, self.playlist_panel.bpm_tolerance)
+                metrics = calculate_enhanced_compatibility(prev_track, found_track, self.playlist_panel.bpm_tolerance, **scoring_context)
                 score = int(metrics.overall_score * 100)
                 score_item = QTableWidgetItem(f"{score}%")
                 score_item.setBackground(QColor(get_7_scale_color(score / 100)))
                 score_item.setForeground(QColor("white"))
                 self.playlist_panel.table.setItem(found_row, 14, score_item)
-                
+
             # Recalculate for next row (compatibility of next track to current track)
             if found_row < len(self.playlist) - 1:
                 next_track = self.playlist[found_row + 1]
-                metrics = calculate_enhanced_compatibility(found_track, next_track, self.playlist_panel.bpm_tolerance)
+                metrics = calculate_enhanced_compatibility(found_track, next_track, self.playlist_panel.bpm_tolerance, **scoring_context)
                 score = int(metrics.overall_score * 100)
                 score_item = QTableWidgetItem(f"{score}%")
                 score_item.setBackground(QColor(get_7_scale_color(score / 100)))
@@ -3643,7 +3701,10 @@ class MainWindow(QMainWindow):
         # Wir speichern das aktuelle Profil
         self.current_playlist_mode = mode
         self.current_bpm_tolerance = bpm_tolerance
-        
+        # HPG-001: EINEN Scoring-Kontext fuer Generierung, Anzeige, Reorder,
+        # Preview, Quality und Empfehlungen festhalten
+        self.current_scoring_context = resolve_scoring_context(mode, advanced_params)
+
         try:
             self.playlist = generate_playlist(
                 self.analyzed_raw_tracks,
@@ -3665,9 +3726,15 @@ class MainWindow(QMainWindow):
         self.library_panel.progress_widget.set_step_status(2, "completed")
         self.library_panel.progress_widget.set_step_status(3, "working")
 
-        # 2. Metriken und Transition-Empfehlungen berechnen
-        self.quality_metrics = calculate_playlist_quality(self.playlist, bpm_tolerance)
-        transition_plan = compute_transition_recommendations(self.playlist, bpm_tolerance)
+        # 2. Metriken und Transition-Empfehlungen berechnen — mit demselben
+        # Scoring-Kontext wie die Generierung (HPG-001)
+        scoring_context = self.current_scoring_context
+        self.quality_metrics = calculate_playlist_quality(
+            self.playlist, bpm_tolerance, scoring_context
+        )
+        transition_plan = compute_transition_recommendations(
+            self.playlist, bpm_tolerance, scoring_context=scoring_context
+        )
         self.playlist_panel.quality_metrics = self.quality_metrics
         self.playlist_panel.transition_recommendations = transition_plan
         self.library_panel.progress_widget.set_step_status(3, "completed")
@@ -3680,6 +3747,7 @@ class MainWindow(QMainWindow):
             self.quality_metrics,
             transition_recommendations=transition_plan,
             bpm_tolerance=bpm_tolerance,
+            scoring_context=scoring_context,
         )
         self.mix_tips_panel.set_recommendations(transition_plan)
         # Transition-Audio-Previews rendern (Hintergrund-Worker)
@@ -3900,12 +3968,14 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # HPG-001: gleicher Scoring-Kontext wie Generierung/Anzeige
+        scoring_context = getattr(self, "current_scoring_context", {})
         transitions_info = "Transition Analysis:\n\n"
         for i in range(len(self.playlist) - 1):
             current = self.playlist[i]
             next_track = self.playlist[i + 1]
             compatibility = calculate_enhanced_compatibility(
-                current, next_track, self.current_bpm_tolerance
+                current, next_track, self.current_bpm_tolerance, **scoring_context
             )
 
             transitions_info += (
@@ -3967,6 +4037,13 @@ class MainWindow(QMainWindow):
                 auxiliary.requestInterruption()
                 running_workers.append(auxiliary)
 
+        # HPG-004: Preview-Render-Worker in den Close-Lifecycle aufnehmen —
+        # request_cancel terminiert dessen Child-Prozess, Thread endet schnell
+        render_worker = getattr(self.mix_tips_panel, "_render_worker", None)
+        if render_worker and render_worker.isRunning():
+            render_worker.request_cancel()
+            running_workers.append(render_worker)
+
         if running_workers:
             self._close_pending = True
             self._set_run_state(RunState.CANCELLING)
@@ -3993,8 +4070,6 @@ if __name__ == "__main__":
     # Only clear cache if explicitly requested or on major version changes
     # Automatic clearing on every start is inefficient and can cause locking issues
     # init_cache() already handles version-based clearing safely with file locks
-    pass
-
     init_cache()
 
     if len(sys.argv) >= 3 and sys.argv[1] == "--worker-smoke":

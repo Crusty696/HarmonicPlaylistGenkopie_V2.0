@@ -142,7 +142,11 @@ def test_ai_test_worker_success_empty_and_error(monkeypatch):
 
 @pytest.mark.parametrize("outcome", [True, False])
 def test_ai_pull_worker_reports_outcome(monkeypatch, outcome):
-  monkeypatch.setattr("hpg_core.ai_launcher.ollama_pull", lambda _model: outcome)
+  # HPG-003: ollama_pull akzeptiert jetzt cancel_check (kooperativer Abbruch)
+  monkeypatch.setattr(
+    "hpg_core.ai_launcher.ollama_pull",
+    lambda _model, cancel_check=None: outcome,
+  )
   worker = main.AIPullWorker("model")
   emitted = []
   worker.pull_finished.connect(lambda *args: emitted.append(args))
@@ -153,7 +157,10 @@ def test_ai_pull_worker_reports_outcome(monkeypatch, outcome):
 
 
 def test_ai_pull_worker_real_qthread_lifecycle(qtbot, monkeypatch):
-  monkeypatch.setattr("hpg_core.ai_launcher.ollama_pull", lambda _model: True)
+  monkeypatch.setattr(
+    "hpg_core.ai_launcher.ollama_pull",
+    lambda _model, cancel_check=None: True,
+  )
   worker = main.AIPullWorker("model")
 
   with qtbot.waitSignal(worker.pull_finished, timeout=2000) as signal:

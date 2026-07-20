@@ -9,3 +9,4 @@ pyrekordbox>=0.4.4  # Optional: Rekordbox database import (v3.0+)
 scipy==1.13.1  # Required for transition_renderer
 pedalboard>=0.9.14  # Required for professional transition effects & dynamics compression
 pyloudnorm>=0.1.1  # EBU R128 / ITU-R BS.1770 Loudness (LUFS-Feature 2026-07-17)
+requests==2.34.2  # HTTP-Client fuer ai_engine/ai_launcher (LM Studio API)

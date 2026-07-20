@@ -132,5 +132,3 @@ AI_SYSTEM_PROMPT = (
     '"mix_out_time" (float, ideal mix-out point in seconds).\n'
     'Example for Psy-Trance: {"sub_genre":"Progressive Psytrance","moods":["driving","psychedelic"],"description":"Execute a Pro EQ Swap at the second section drop: swap bass cleanly, drop mids of track A to prevent vocal clashes.","mix_in_time":55.7,"mix_out_time":328.7}'
 )
-# Die UI befuellt die Liste ausschliesslich aus verifizierten Provider-Metadaten.
-AI_MODELS_AVAILABLE = []
