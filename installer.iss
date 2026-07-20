@@ -1,15 +1,19 @@
-; Inno Setup Script for Harmonic Playlist Generator v3.0
+; Inno Setup Script for Harmonic Playlist Generator v3.7.0
 ; Creates professional Windows installer with Desktop icon and Start Menu entry
 ; Download Inno Setup: https://jrsoftware.org/isdl.php
+
+#ifndef SourceExe
+  #define SourceExe "HarmonicPlaylistGenerator.exe"
+#endif
 
 [Setup]
 ; Application Information
 AppName=Harmonic Playlist Generator
 AppVersion=3.7.0
 AppPublisher=HPG Team
-AppPublisherURL=https://github.com/yourusername/HPG
-AppSupportURL=https://github.com/yourusername/HPG/issues
-AppUpdatesURL=https://github.com/yourusername/HPG/releases
+AppPublisherURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0
+AppSupportURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/issues
+AppUpdatesURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases
 DefaultDirName={autopf}\HarmonicPlaylistGenerator
 DefaultGroupName=Harmonic Playlist Generator
 AllowNoIcons=yes
@@ -41,7 +45,7 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 
 [Files]
 ; Main executable
-Source: "HarmonicPlaylistGenerator.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "HarmonicPlaylistGenerator.exe"; Flags: ignoreversion
 
 ; Documentation
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -88,7 +92,7 @@ begin
          'Features:' + #13#10 +
          '  - 4-6x faster audio analysis (multi-core)' + #13#10 +
          '  - Optional Rekordbox integration (12x speedup)' + #13#10 +
-         '  - 10 advanced playlist algorithms' + #13#10 +
+         '  - 8 advanced playlist algorithms' + #13#10 +
          '  - DJ-optimized mix points (phrase-aligned)' + #13#10 +
          '  - M3U8 and Rekordbox XML export' + #13#10 + #13#10 +
          'Click Next to continue.',
@@ -108,7 +112,7 @@ begin
            '  4. Click Generate Playlist' + #13#10 + #13#10 +
            'For Rekordbox integration, install pyrekordbox:' + #13#10 +
            '  pip install pyrekordbox' + #13#10 + #13#10 +
-           'Enjoy harmonically perfect playlists!',
+         'Enjoy harmonically optimized playlists!',
            mbInformation, MB_OK);
   end;
 end;

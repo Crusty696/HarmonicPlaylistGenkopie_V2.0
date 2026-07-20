@@ -19,6 +19,7 @@ from .config import (
     LOOKAHEAD_TOP_K,
     METER,
     DEFAULT_BPM,
+    MAX_TRANSITION_OVERLAP_SECONDS,
 )
 import logging
 import re
@@ -29,6 +30,54 @@ from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StrategyConfig:
+    """Typisierter, validierter Vertrag der sichtbaren Strategieparameter."""
+
+    energy_direction: str = "Auto"
+    peak_position: int = 70
+    harmonic_strictness: int = 7
+    allow_experimental: bool = True
+    genre_mixing: bool = True
+    genre_weight: float = 0.3
+    target_energy: Optional[float] = None
+    overlap: float = 16.0
+
+    @classmethod
+    def from_mapping(cls, values: Optional[Dict]) -> "StrategyConfig":
+        source = values or {}
+        return cls(
+            energy_direction=str(source.get("energy_direction", "Auto")),
+            peak_position=max(40, min(80, int(source.get("peak_position", 70)))),
+            harmonic_strictness=max(
+                1, min(10, int(source.get("harmonic_strictness", 7)))
+            ),
+            allow_experimental=bool(source.get("allow_experimental", True)),
+            genre_mixing=bool(source.get("genre_mixing", True)),
+            genre_weight=max(0.0, min(1.0, float(source.get("genre_weight", 0.3)))),
+            target_energy=(
+                None
+                if source.get("target_energy") is None
+                else max(0.0, min(100.0, float(source["target_energy"])))
+            ),
+            overlap=max(4.0, min(64.0, float(source.get("overlap", 16.0)))),
+        )
+
+    def effective_kwargs(self, strategy: str) -> Dict:
+        supported = SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
+        values = {
+            "energy_direction": self.energy_direction,
+            "peak_position": self.peak_position,
+            "harmonic_strictness": self.harmonic_strictness,
+            "allow_experimental": self.allow_experimental,
+            "genre_mixing": self.genre_mixing,
+            "genre_weight": self.genre_weight,
+            "target_energy": self.target_energy,
+            "overlap": self.overlap,
+        }
+        return {key: value for key, value in values.items() if key in supported}
 
 
 @dataclass
@@ -62,6 +111,27 @@ class TransitionRecommendation:
     notes: str
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
     dj_rec: Optional["DJRecommendation"] = None  # Paar-spezifische DJ-Brain-Empfehlung
+    plan: Optional["TransitionPlan"] = None
+
+
+@dataclass(frozen=True)
+class TransitionPlan:
+    """Unveraenderlicher Zeit- und Rendervertrag eines Uebergangs."""
+
+    mix_out_a: float
+    mix_in_b: float
+    fade_out_start: float
+    fade_out_end: float
+    overlap: float
+    transition_type: str
+    curve: str = "linear"
+    eq_mode: str = "default"
+    tempo_ratio: float = 1.0
+    target_sr: int = 44100
+
+    @property
+    def crossfade_frames(self) -> int:
+        return int(round(self.overlap * self.target_sr))
 
 
 @dataclass
@@ -86,6 +156,42 @@ class EnergyDirection(Enum):
     MAINTAIN = "maintain"
 
 
+def calculate_ai_compatibility_bonus(track1: Track, track2: Track) -> float:
+    """Liefert den einzigen KI-Bonus als normierten Wert von 0 bis 0.14."""
+    ai_meta1 = getattr(track1, "ai_metadata", {})
+    ai_meta2 = getattr(track2, "ai_metadata", {})
+    if not (
+        isinstance(ai_meta1, dict)
+        and isinstance(ai_meta2, dict)
+        and ai_meta1
+        and ai_meta2
+    ):
+        return 0.0
+
+    bonus = 0.0
+    moods1 = ai_meta1.get("moods", [])
+    moods2 = ai_meta2.get("moods", [])
+    if isinstance(moods1, list) and isinstance(moods2, list):
+        moods1_set = {str(m).strip().lower() for m in moods1 if m}
+        moods2_set = {str(m).strip().lower() for m in moods2 if m}
+        if moods1_set and moods2_set:
+            overlap = moods1_set.intersection(moods2_set)
+            bonus += 0.08 * (
+                len(overlap) / max(len(moods1_set), len(moods2_set))
+            )
+
+    sub1 = ai_meta1.get("sub_genre", "")
+    sub2 = ai_meta2.get("sub_genre", "")
+    if isinstance(sub1, str) and isinstance(sub2, str) and sub1 and sub2:
+        normalized1 = sub1.strip().lower()
+        normalized2 = sub2.strip().lower()
+        if normalized1 == normalized2:
+            bonus += 0.06
+        elif normalized1 in normalized2 or normalized2 in normalized1:
+            bonus += 0.03
+    return min(0.14, bonus)
+
+
 def _get_camelot_components(camelot_code: str) -> tuple[int, str]:
     """Parses a Camelot code into its number and letter components.
 
@@ -106,7 +212,9 @@ def calculate_enhanced_compatibility(
     # Basic harmonic compatibility
     # M2-Fix: kwargs (harmonic_strictness, allow_experimental) durchreichen —
     # vorher fielen die UI-Parameter im Enhanced-Pfad auf Defaults zurueck
-    harmonic_score = calculate_compatibility(track1, track2, bpm_tolerance, **kwargs)
+    harmonic_score = _calculate_compatibility_inner(
+        track1, track2, bpm_tolerance, **kwargs
+    )
 
     # BPM smoothness (exponential decay, mit Half/Double-Erkennung)
     bpm_diff, _ = effective_bpm_diff(track1.bpm, track2.bpm)
@@ -153,33 +261,7 @@ def calculate_enhanced_compatibility(
         + genre_weight * genre_compatibility
     )
 
-    # Calculate AI Mood & Sub-Genre Bonus
-    ai_bonus = 0.0
-    ai_meta1 = getattr(track1, "ai_metadata", {})
-    ai_meta2 = getattr(track2, "ai_metadata", {})
-    if isinstance(ai_meta1, dict) and isinstance(ai_meta2, dict) and ai_meta1 and ai_meta2:
-        # 1. Moods
-        moods1 = ai_meta1.get("moods", [])
-        moods2 = ai_meta2.get("moods", [])
-        if isinstance(moods1, list) and isinstance(moods2, list):
-            moods1_set = {str(m).strip().lower() for m in moods1 if m}
-            moods2_set = {str(m).strip().lower() for m in moods2 if m}
-            if moods1_set and moods2_set:
-                intersect = moods1_set.intersection(moods2_set)
-                # Up to 0.08 bonus for matching moods
-                ai_bonus += 0.08 * (len(intersect) / max(len(moods1_set), len(moods2_set)))
-
-        # 2. Sub-genres
-        sub1 = ai_meta1.get("sub_genre", "")
-        sub2 = ai_meta2.get("sub_genre", "")
-        if isinstance(sub1, str) and isinstance(sub2, str) and sub1 and sub2:
-            s1 = sub1.strip().lower()
-            s2 = sub2.strip().lower()
-            if s1 == s2:
-                ai_bonus += 0.06
-            elif s1 in s2 or s2 in s1:
-                ai_bonus += 0.03
-
+    ai_bonus = calculate_ai_compatibility_bonus(track1, track2)
     overall_score = min(1.0, overall_score + ai_bonus)
 
     # BPM-Hard-Gate (Audit 2026-07-17): ein am Pitchfader unmixbarer Sprung
@@ -196,6 +278,16 @@ def calculate_enhanced_compatibility(
         overall_score=overall_score,
         ai_bonus=ai_bonus,
     )
+
+
+def calculate_transition_objective(
+    track1: Track, track2: Track, bpm_tolerance: float, **kwargs
+) -> int:
+    """Gemeinsame Zielfunktion fuer Sortierung, Anzeige und Empfehlungen."""
+    metrics = calculate_enhanced_compatibility(
+        track1, track2, bpm_tolerance, **kwargs
+    )
+    return int(round(metrics.overall_score * 100))
 
 
 # effective_bpm_diff lebt jetzt zentral in models.py (Audit 2026-07-17) —
@@ -295,39 +387,13 @@ def calculate_compatibility(
     if one is currently set up by generate_playlist or benchmark."""
     global _COMPAT_CACHE
 
-    # Inner helper to apply AI metadata bonus
     def _apply_ai_bonus(t1: Track, t2: Track, base_score: int) -> int:
         if base_score <= 0:
             return base_score
-
-        ai_bonus = 0
-        ai_meta1 = getattr(t1, "ai_metadata", {})
-        ai_meta2 = getattr(t2, "ai_metadata", {})
-
-        if isinstance(ai_meta1, dict) and isinstance(ai_meta2, dict) and ai_meta1 and ai_meta2:
-            # 1. Compare moods
-            moods1 = ai_meta1.get("moods", [])
-            moods2 = ai_meta2.get("moods", [])
-            if isinstance(moods1, list) and isinstance(moods2, list):
-                moods1_set = {str(m).strip().lower() for m in moods1 if m}
-                moods2_set = {str(m).strip().lower() for m in moods2 if m}
-                if moods1_set and moods2_set:
-                    intersect = moods1_set.intersection(moods2_set)
-                    # Up to +8 bonus points for overlapping moods
-                    ai_bonus += int(8 * (len(intersect) / max(len(moods1_set), len(moods2_set))))
-
-            # 2. Compare sub-genres
-            sub1 = ai_meta1.get("sub_genre", "")
-            sub2 = ai_meta2.get("sub_genre", "")
-            if isinstance(sub1, str) and isinstance(sub2, str) and sub1 and sub2:
-                s1 = sub1.strip().lower()
-                s2 = sub2.strip().lower()
-                if s1 == s2:
-                    ai_bonus += 6
-                elif s1 in s2 or s2 in s1:
-                    ai_bonus += 3
-
-        return min(100, base_score + ai_bonus)
+        return min(
+            100,
+            base_score + int(100 * calculate_ai_compatibility_bonus(t1, t2)),
+        )
 
     if _COMPAT_CACHE is not None:
         cache_key = (
@@ -379,7 +445,7 @@ def _sort_harmonic_flow(
             if cache_key in compat_cache:
                 immediate_score = compat_cache[cache_key]
             else:
-                immediate_score = calculate_compatibility(
+                immediate_score = calculate_transition_objective(
                     current, candidate, bpm_tolerance, **kwargs
                 )
                 compat_cache[cache_key] = immediate_score
@@ -489,7 +555,7 @@ def _find_best_starting_track(
             if cache_key in compat_cache:
                 score = compat_cache[cache_key]
             else:
-                score = calculate_compatibility(
+                score = calculate_transition_objective(
                     track, tracks[j], bpm_tolerance, **kwargs
                 )
                 compat_cache[cache_key] = score
@@ -646,20 +712,20 @@ def _apply_harmonic_smoothing(
         iterations += 1
 
         for i in range(len(result) - 1):
-            current_score = calculate_compatibility(
+            current_score = calculate_transition_objective(
                 result[i], result[i + 1], bpm_tolerance, **kwargs
             )
 
             # Try swapping with next track if it improves harmony
             if i + 2 < len(result):
-                swap_score = calculate_compatibility(
+                swap_score = calculate_transition_objective(
                     result[i], result[i + 2], bpm_tolerance, **kwargs
                 )
-                next_swap_score = calculate_compatibility(
+                next_swap_score = calculate_transition_objective(
                     result[i + 1], result[i + 2], bpm_tolerance, **kwargs
                 )
                 # Calculate what score would be AFTER swap: [i]->[i+1] becomes [i]->[i+2], [i+2]->[i+1]
-                new_pair_score = calculate_compatibility(
+                new_pair_score = calculate_transition_objective(
                     result[i + 2], result[i + 1], bpm_tolerance, **kwargs
                 )
 
@@ -791,7 +857,7 @@ def _sort_consistent(
                 )
                 / 5.0
             )
-            compatibility = calculate_compatibility(
+            compatibility = calculate_transition_objective(
                 current, candidate, bpm_tolerance, **compat_kwargs
             )
             compatibility_penalty = (100 - compatibility) / 8.0
@@ -1164,6 +1230,10 @@ def compute_transition_recommendations(
                 overlap = dj_rec.overlap_seconds
                 fade_out_start = max(0.0, current_mix_out - overlap)
 
+        # Empfehlung, Timeline und Renderer muessen dieselbe Dauer verwenden.
+        overlap = min(float(overlap), MAX_TRANSITION_OVERLAP_SECONDS)
+        fade_out_start = max(0.0, current_mix_out - overlap)
+
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen
         desc_params = TransitionDescriptionParams(
@@ -1181,6 +1251,24 @@ def compute_transition_recommendations(
 
         notes = "; ".join(notes_parts)
 
+        transition_type = predict_transition_type(
+            current, upcoming, bpm_tolerance
+        )
+        tempo_ratio = (
+            float(upcoming.bpm / current.bpm)
+            if current.bpm > 0 and upcoming.bpm > 0
+            else 1.0
+        )
+        plan = TransitionPlan(
+            mix_out_a=round(current_mix_out, 2),
+            mix_in_b=round(next_mix_in, 2),
+            fade_out_start=round(fade_out_start, 2),
+            fade_out_end=round(current_mix_out, 2),
+            overlap=round(overlap, 2),
+            transition_type=transition_type,
+            eq_mode=transition_type,
+            tempo_ratio=tempo_ratio,
+        )
         recommendations.append(
             TransitionRecommendation(
                 index=index,
@@ -1196,10 +1284,9 @@ def compute_transition_recommendations(
                 compatibility_score=compatibility_score,
                 risk_level=risk_level,
                 notes=notes,
-                transition_type=predict_transition_type(
-                    current, upcoming, bpm_tolerance
-                ),
+                transition_type=transition_type,
                 dj_rec=dj_rec,
+                plan=plan,
             )
         )
 
@@ -1347,7 +1434,9 @@ def _sort_context_flow(
         best_next = None
         highest_score = -999999.0
         for candidate in unprocessed:
-            base = calculate_compatibility(current, candidate, bpm_tolerance, **kwargs)
+            base = calculate_transition_objective(
+                current, candidate, bpm_tolerance, **kwargs
+            )
             if base == 0:
                 continue  # BPM-Hard-Gate beibehalten
 
@@ -1412,6 +1501,24 @@ STRATEGIES = {
     "Context Flow": _sort_context_flow,
 }
 
+SUPPORTED_STRATEGY_PARAMETERS = {
+    "Harmonic Flow": {"harmonic_strictness", "allow_experimental"},
+    "Warm-Up": set(),
+    "Cool-Down": set(),
+    "Peak-Time": {"peak_position", "harmonic_strictness", "allow_experimental"},
+    "Energy Wave": set(),
+    "Genre Flow": {"genre_mixing", "genre_weight"},
+    "Consistent": {"harmonic_strictness", "allow_experimental"},
+    "Context Flow": {
+        "energy_direction",
+        "peak_position",
+        "harmonic_strictness",
+        "allow_experimental",
+        "genre_mixing",
+        "genre_weight",
+    },
+}
+
 # Alte Namen bleiben gueltig (gespeicherte Settings, Tests, Cache-Metadaten)
 STRATEGY_ALIASES = {
     "Harmonic Flow Enhanced": "Harmonic Flow",
@@ -1444,30 +1551,38 @@ def generate_playlist(
     if not tracks:
         return []
 
-    # Default advanced params if not provided
-    if advanced_params is None:
-        advanced_params = {}
+    strategy_config = StrategyConfig.from_mapping(advanced_params)
 
     # Ensure all tracks have a camelot code before sorting
     for track in tracks:
         key_to_camelot(track)
 
-    # Filter out tracks that couldn't be analyzed properly
+    # Nur unbrauchbare BPM-Werte ausschliessen. Fehlende Keys bleiben erhalten
+    # und nutzen den dokumentierten neutralen Harmonic-Fallback.
     valid_tracks: list[Track] = []
+    unresolved_keys = []
     for candidate in tracks:
         bpm_value = getattr(candidate, "bpm", None)
-        camelot = getattr(candidate, "camelotCode", "")
-
         try:
             bpm_numeric = float(bpm_value)
         except (TypeError, ValueError):
+            logger.warning("Track ohne gueltige BPM ausgeschlossen: %s", candidate.filePath)
             continue
 
-        if bpm_numeric <= 0 or not camelot:
+        if bpm_numeric <= 0:
+            logger.warning("Track ohne positive BPM ausgeschlossen: %s", candidate.filePath)
             continue
 
         candidate.bpm = bpm_numeric
         valid_tracks.append(candidate)
+        if not getattr(candidate, "camelotCode", ""):
+            unresolved_keys.append(candidate.filePath)
+
+    if unresolved_keys:
+        logger.warning(
+            "%s Tracks ohne aufloesbaren Key bleiben mit neutralem Fallback enthalten.",
+            len(unresolved_keys),
+        )
 
     if not valid_tracks:
         return tracks  # Return original if no tracks are valid
@@ -1484,7 +1599,9 @@ def generate_playlist(
 
     try:
         # Call the selected sorting strategy with advanced params
-        result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **advanced_params)
+        effective_config = strategy_config.effective_kwargs(mode)
+        logger.info("Effektive Strategieparameter %s: %s", mode, effective_config)
+        result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **effective_config)
     finally:
         # Restore old cache container (usually None)
         _COMPAT_CACHE = old_cache
@@ -1544,7 +1661,8 @@ class SetTimelineEntry:
 
 
 def _calculate_timeline_entries(
-    tracks: list[Track], default_overlap: float
+    tracks: list[Track], default_overlap: float,
+    transition_plans: Optional[list[TransitionPlan]] = None,
 ) -> tuple[list[SetTimelineEntry], float]:
     """Berechnet Start- und Endzeiten fuer jeden Track."""
     entries: list[SetTimelineEntry] = []
@@ -1555,12 +1673,14 @@ def _calculate_timeline_entries(
 
         # Overlap zum naechsten Track berechnen
         if i < len(tracks) - 1:
-            # Nutze Mix-Points wenn vorhanden, sonst Default
-            mix_out = (
-                track.mix_out_point if track.mix_out_point > 0 else track_dur * 0.85
-            )
-            overlap = track_dur - mix_out
-            overlap = max(4.0, min(overlap, default_overlap, track_dur * 0.3))
+            if transition_plans and i < len(transition_plans):
+                overlap = transition_plans[i].overlap
+            else:
+                mix_out = (
+                    track.mix_out_point if track.mix_out_point > 0 else track_dur * 0.85
+                )
+                overlap = track_dur - mix_out
+                overlap = max(4.0, min(overlap, default_overlap, track_dur * 0.3))
         else:
             overlap = 0.0  # Letzter Track hat keinen Overlap
 
@@ -1641,6 +1761,7 @@ def compute_set_timeline(
     target_minutes: float = 60.0,
     peak_position_pct: float = 0.65,
     default_overlap: float = 16.0,
+    transition_plans: Optional[list[TransitionPlan]] = None,
 ) -> SetTimeline:
     """
     Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
@@ -1668,7 +1789,9 @@ def compute_set_timeline(
 
     peak_position_pct = max(0.1, min(0.9, peak_position_pct))
 
-    entries, total_seconds = _calculate_timeline_entries(tracks, default_overlap)
+    entries, total_seconds = _calculate_timeline_entries(
+        tracks, default_overlap, transition_plans
+    )
     best_peak_idx = _identify_peak_track(entries, total_seconds, peak_position_pct)
     _assign_energy_phases(entries, best_peak_idx)
 

@@ -21,6 +21,8 @@ import soundfile as sf
 from scipy.signal import butter, sosfiltfilt
 import librosa
 
+from .config import MAX_TRANSITION_OVERLAP_SECONDS
+
 logger = logging.getLogger(__name__)
 
 # EQ-Cutoffs der Transition-Typen (L2-Fix: zentral statt hartkodiert im Code)
@@ -72,6 +74,29 @@ class TransitionClipSpec:
     normalize_target_db: float = -14.0  # Ziel-Pegel in dBRMS (EBU R128: -14 LUFS)
     use_compressor: bool = False        # Optionaler pedalboard Compressor (experimentell)
 
+    @classmethod
+    def from_plan(cls, plan, from_track, to_track):
+        """Erzeugt eine Render-Spezifikation ohne zweite Timing-Berechnung."""
+        return cls(
+            track_a_path=from_track.filePath,
+            track_b_path=to_track.filePath,
+            mix_out_sec=plan.mix_out_a,
+            mix_in_sec=plan.mix_in_b,
+            crossfade_sec=plan.overlap,
+            transition_type=plan.transition_type,
+            target_sr=plan.target_sr,
+            bpm_a=float(from_track.bpm or 120.0),
+            bpm_b=float(to_track.bpm or 120.0),
+            first_downbeat_a=float(getattr(from_track, "first_downbeat", 0.0) or 0.0),
+            first_downbeat_b=float(getattr(to_track, "first_downbeat", 0.0) or 0.0),
+            downbeat_reliable_a=(
+                getattr(from_track, "downbeat_confidence", 0.0) >= 0.9
+            ),
+            downbeat_reliable_b=(
+                getattr(to_track, "downbeat_confidence", 0.0) >= 0.9
+            ),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Oeffentliche Hauptfunktion
@@ -90,7 +115,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     sr = spec.target_sr
     # Sicherheitslimit: max 64s Crossfade -- Trance/Progressive blenden 32-64 Bars
     # (~55-110s bei 138 BPM), 32s kappte die Preview systematisch vor dem Mix-Out
-    cf_sec = min(spec.crossfade_sec, 64.0)
+    cf_sec = min(spec.crossfade_sec, MAX_TRANSITION_OVERLAP_SECONDS)
 
     # Segmente berechnen
     a_start = max(0.0, spec.mix_out_sec - spec.pre_roll_sec)

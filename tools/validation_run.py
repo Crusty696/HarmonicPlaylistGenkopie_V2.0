@@ -96,7 +96,14 @@ def main() -> None:
     )
     from hpg_core.transition_renderer import TransitionClipSpec, render_transition_clip
 
-    report: dict = {"folders": {}, "started": time.strftime("%Y-%m-%d %H:%M")}
+    report: dict = {
+        "folders": {},
+        "started": time.strftime("%Y-%m-%d %H:%M"),
+        "ground_truth_scope": {
+            "independent": ["bpm", "key", "filename_genre"],
+            "not_independently_labeled": ["sections", "mixpoints", "transition_quality"],
+        },
+    }
 
     for label, folder in FOLDERS.items():
         files = sample_folder(folder, SAMPLE_PER_FOLDER)
@@ -170,34 +177,11 @@ def main() -> None:
             idxs = list(range(len(recs)))
         for i in sorted(set(max(0, i) for i in idxs)):
             rec = recs[i]
-            dj = rec.dj_rec
-            mix_out = (
-                dj.adjusted_mix_out_a if dj and dj.adjusted_mix_out_a >= 0.0
-                else float(rec.from_track.mix_out_point or 0)
-            )
-            mix_in = (
-                dj.adjusted_mix_in_b if dj and dj.adjusted_mix_in_b >= 0.0
-                else float(rec.to_track.mix_in_point or 0)
-            )
-            crossfade = (
-                dj.overlap_seconds if dj and dj.overlap_seconds > 0
-                else float(rec.overlap or 16.0)
-            )
+            crossfade = rec.plan.overlap
             out_path = os.path.join(OUT_DIR, f"preview_{label}_{i:02d}.wav")
             try:
-                spec = TransitionClipSpec(
-                    track_a_path=rec.from_track.filePath,
-                    track_b_path=rec.to_track.filePath,
-                    mix_out_sec=mix_out,
-                    mix_in_sec=mix_in,
-                    crossfade_sec=crossfade,
-                    transition_type=(dj.transition_type if dj else "smooth_blend"),
-                    bpm_a=float(rec.from_track.bpm or 120.0),
-                    bpm_b=float(rec.to_track.bpm or 120.0),
-                    first_downbeat_a=float(rec.from_track.first_downbeat or 0.0),
-                    first_downbeat_b=float(rec.to_track.first_downbeat or 0.0),
-                    downbeat_reliable_a=rec.from_track.downbeat_confidence >= 0.9,
-                    downbeat_reliable_b=rec.to_track.downbeat_confidence >= 0.9,
+                spec = TransitionClipSpec.from_plan(
+                    rec.plan, rec.from_track, rec.to_track
                 )
                 render_transition_clip(spec, out_path)
                 preview_files.append({

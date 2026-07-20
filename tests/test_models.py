@@ -3,7 +3,14 @@ Tests fuer hpg_core.models - Track Dataclass und Camelot-Mapping.
 Validiert alle 24 Camelot-Codes und Track-Defaults.
 """
 import pytest
-from hpg_core.models import Track, CAMELOT_MAP, key_to_camelot
+from hpg_core.models import (
+  ANALYSIS_FIELD_CONSUMERS,
+  CAMELOT_MAP,
+  Track,
+  bars_to_seconds,
+  key_to_camelot,
+  seconds_to_bars,
+)
 from tests.fixtures.camelot_test_data import EXPECTED_CAMELOT_MAP
 
 
@@ -200,3 +207,17 @@ class TestTrackDataclass:
     assert isinstance(track.mix_out_point, float)
     assert isinstance(track.mix_in_bars, int)
     assert isinstance(track.mix_out_bars, int)
+
+
+def test_bar_conversion_has_explicit_rounding_contract():
+  assert bars_to_seconds(16, 120.0) == 32.0
+  assert seconds_to_bars(31.2, 120.0, rounding="floor") == 15
+  assert seconds_to_bars(31.2, 120.0, rounding="round") == 16
+  assert seconds_to_bars(31.2, 120.0, rounding="ceil") == 16
+
+
+def test_every_audited_persisted_feature_has_a_declared_consumer_or_diagnostic_role():
+  assert set(ANALYSIS_FIELD_CONSUMERS) == {
+    "bass_intensity", "avg_mids", "avg_highs", "brightness",
+    "vocal_instrumental", "danceability", "genre_source", "mfcc_fingerprint",
+  }

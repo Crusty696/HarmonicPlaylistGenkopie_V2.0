@@ -16,7 +16,13 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 
 from dataclasses import dataclass, field
-from .models import Track, effective_bpm_diff, get_camelot_components, quantize_to_grid
+from .models import (
+  Track,
+  effective_bpm_diff,
+  get_camelot_components,
+  quantize_to_grid,
+  seconds_to_bars,
+)
 from .config import (
   METER,
   DEFAULT_BPM,
@@ -180,8 +186,8 @@ def calculate_genre_aware_mix_points(
       mix_out_time = duration * 0.85
 
   # In Bars umrechnen
-  mix_in_bars = int(round(mix_in_time / seconds_per_bar))
-  mix_out_bars = int(round(mix_out_time / seconds_per_bar))
+  mix_in_bars = seconds_to_bars(mix_in_time, bpm)
+  mix_out_bars = seconds_to_bars(mix_out_time, bpm)
 
   return round(mix_in_time, 2), round(mix_out_time, 2), mix_in_bars, mix_out_bars
 
@@ -689,36 +695,16 @@ def align_ai_mix_points(
 
 def _get_section_at_mix_out(track: Track) -> str:
   """Findet die Sektion am Mix-Out-Punkt eines Tracks."""
-  if not track.sections or track.mix_out_point <= 0:
+  if track.mix_out_point <= 0:
     return "unknown"
-
-  for section in track.sections:
-    start = section.get("start_time", 0.0)
-    end = section.get("end_time", 0.0)
-    if start <= track.mix_out_point <= end:
-      return section.get("label", "unknown")
-
-  # Letzte Sektion als Fallback
-  if track.sections:
-    return track.sections[-1].get("label", "unknown")
-  return "unknown"
+  return _get_section_at_time(track, track.mix_out_point, "out")
 
 
 def _get_section_at_mix_in(track: Track) -> str:
   """Findet die Sektion am Mix-In-Punkt eines Tracks."""
-  if not track.sections or track.mix_in_point <= 0:
+  if track.mix_in_point <= 0:
     return "unknown"
-
-  for section in track.sections:
-    start = section.get("start_time", 0.0)
-    end = section.get("end_time", 0.0)
-    if start <= track.mix_in_point <= end:
-      return section.get("label", "unknown")
-
-  # Erste Sektion als Fallback
-  if track.sections:
-    return track.sections[0].get("label", "unknown")
-  return "unknown"
+  return _get_section_at_time(track, track.mix_in_point, "in")
 
 
 def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) -> str:

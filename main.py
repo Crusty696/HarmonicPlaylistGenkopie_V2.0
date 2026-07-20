@@ -47,10 +47,42 @@ from PyQt6.QtGui import (
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 import html as html_mod
 import logging
+from collections import OrderedDict, deque
+from enum import Enum
 
 # H1-Fix (Audit 2026-07-17): Modul-Logger — TransitionRenderWorker.run
 # referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
 logger = logging.getLogger(__name__)
+
+
+class RunState(str, Enum):
+    """Einzige Wahrheit fuer den Lebenszyklus eines Analyse-Laufs."""
+
+    IDLE = "idle"
+    AUDIO = "audio"
+    AI = "ai"
+    PLAYLIST = "playlist"
+    PREVIEW = "preview"
+    CANCELLING = "cancelling"
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+ACTIVE_RUN_STATES = {
+    RunState.AUDIO,
+    RunState.AI,
+    RunState.PLAYLIST,
+    RunState.PREVIEW,
+    RunState.CANCELLING,
+}
+
+
+def map_phase_progress(percent: float, start: float, end: float) -> int:
+    """Mappt lokale 0..100-Prozente monoton in einen globalen Abschnitt."""
+    bounded = max(0.0, min(100.0, float(percent)))
+    return int(round(start + (end - start) * bounded / 100.0))
 
 
 def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
@@ -63,6 +95,9 @@ def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
     Returns:
         (mix_out_a, mix_in_b, crossfade_seconds)
     """
+    plan = getattr(transition, "plan", None)
+    if plan is not None:
+        return plan.mix_out_a, plan.mix_in_b, plan.overlap
     dj = transition.dj_rec
     mix_out = (
         dj.adjusted_mix_out_a
@@ -97,6 +132,7 @@ from hpg_core.playlist import (
     compute_transition_recommendations,
     compute_set_timeline,
     get_set_timing_summary,
+    SUPPORTED_STRATEGY_PARAMETERS,
 )
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from hpg_core.exporters.rekordbox_xml_exporter import RekordboxXMLExporter
@@ -130,6 +166,7 @@ class AIAnalysisWorker(QThread):
     """Worker thread for running AI analysis in the background."""
     ai_finished = pyqtSignal(str, dict)  # (track_path, metadata)
     progress = pyqtSignal(int, int)      # (current_track_index, total_tracks)
+    failed = pyqtSignal(str)
 
     def __init__(self, playlist: list, provider: str = None, model: str = None,
                  base_url: str = None, parent=None):
@@ -139,6 +176,7 @@ class AIAnalysisWorker(QThread):
         self.model = model
         self.base_url = base_url  # Voller Endpoint vom ai_launcher (Port dynamisch)
         self._should_cancel = False
+        self.failure_reason = ""
 
     def request_cancel(self):
         self._should_cancel = True
@@ -151,7 +189,7 @@ class AIAnalysisWorker(QThread):
         (z.B. Server war aus) oder der Endpoint inzwischen weggefallen ist.
         """
         if self.base_url:
-            return
+            return True
         try:
             from hpg_core import ai_launcher
             status = ai_launcher.detect_and_start(
@@ -162,14 +200,24 @@ class AIAnalysisWorker(QThread):
                 self.provider = status.name
                 if status.active_model:
                     self.model = status.active_model
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger("hpg_core.ai_engine").error(
+                "AI provider setup failed: %s", exc
+            )
+        return bool(self.base_url and self.provider and self.model)
+
+    def _fail(self, reason):
+        self.failure_reason = reason
+        self.failed.emit(reason)
 
     def run(self):
         import logging
         import os
         logger = logging.getLogger("hpg_core.ai_engine")
-        self._ensure_ready()
+        if not self._ensure_ready():
+            self._fail("Kein einsatzbereiter KI-Provider oder kein Modell verfuegbar.")
+            self.progress.emit(len(self.playlist), len(self.playlist))
+            return
         logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
         total_tracks = len(self.playlist)
         for i, track in enumerate(self.playlist):
@@ -178,18 +226,34 @@ class AIAnalysisWorker(QThread):
                 break
             self.progress.emit(i, total_tracks)
             try:
+                from hpg_core.ai_engine import ai_metadata_matches, fetch_ai_analysis
+                if ai_metadata_matches(track, self.provider, self.model):
+                    logger.info(
+                        "[%s/%s] Passende KI-Metadaten bereits vorhanden; uebersprungen.",
+                        i + 1,
+                        total_tracks,
+                    )
+                    continue
                 filename = os.path.basename(track.filePath)
                 logger.info(f"[{i+1}/{total_tracks}] AI analyzing track: '{filename}'...")
-                from hpg_core.ai_engine import fetch_ai_analysis
                 ai_data = fetch_ai_analysis(
                     track, provider=self.provider, model=self.model, url=self.base_url
                 )
                 if ai_data:
                     self.ai_finished.emit(track.filePath, ai_data)
                 else:
-                    logger.warning(f"AI returned empty result for track '{filename}'.")
+                    reason = (
+                        f"KI-Verarbeitung bei '{filename}' gestoppt: Provider- oder "
+                        "Schemafehler. Bereits erzeugte Ergebnisse bleiben erhalten."
+                    )
+                    logger.warning(reason)
+                    self._fail(reason)
+                    break
             except Exception as e:
-                logger.error(f"Error during AI analysis for track '{os.path.basename(track.filePath)}': {e}")
+                reason = f"KI-Verarbeitung gestoppt: {e}"
+                logger.error(reason, exc_info=True)
+                self._fail(reason)
+                break
         self.progress.emit(total_tracks, total_tracks)
         logger.info("AI Mood Tagging complete.")
 
@@ -370,7 +434,7 @@ class AnalysisWorker(QThread):
                 # Throttle updates: Max every 100ms or on completion
                 if (current_time - last_update_time > 100) or (current >= total):
                     float_percent = (current / total) * 100.0
-                    self.progress.emit(int(float_percent * 100))
+                    self.progress.emit(int(float_percent))
                     self.status_update.emit(status_msg)
                     last_update_time = current_time
 
@@ -423,8 +487,6 @@ class AnalysisWorker(QThread):
 
             logger.info(f"Feature extraction complete: {len(analyzed_tracks)} tracks successfully analyzed.")
             self.phase_changed.emit(1, "completed")
-            self.phase_changed.emit(2, "completed")
-            self.phase_changed.emit(3, "completed")
             self.status_update.emit(
                 f"Audio-Analyse abgeschlossen. Starte KI-Veredelung fuer {len(analyzed_tracks)} Tracks..."
             )
@@ -488,9 +550,14 @@ class TransitionRenderWorker(QThread):
                 out_path = os.path.join(tmp_dir, f"hpg_preview_{self._run_id}_{i:03d}.wav")
                 self._temp_files.append(out_path)
 
-                # TransitionClipSpec aus TransitionRecommendation aufbauen
-                mix_out, mix_in, crossfade = resolve_transition_mix_points(transition)
-                spec = TransitionClipSpec(
+                plan = getattr(transition, "plan", None)
+                if plan is not None:
+                    spec = TransitionClipSpec.from_plan(
+                        plan, transition.from_track, transition.to_track
+                    )
+                else:
+                    mix_out, mix_in, crossfade = resolve_transition_mix_points(transition)
+                    spec = TransitionClipSpec(
                     track_a_path=transition.from_track.filePath,
                     track_b_path=transition.to_track.filePath,
                     mix_out_sec=mix_out,
@@ -512,7 +579,7 @@ class TransitionRenderWorker(QThread):
                     downbeat_reliable_b=(
                         getattr(transition.to_track, "downbeat_confidence", 0.0) >= 0.9
                     ),
-                )
+                    )
 
                 # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen
                 render_success = False
@@ -825,6 +892,14 @@ class AdvancedParametersWidget(QWidget):
         provider_outer = QVBoxLayout(self.provider_group)
         provider_outer.setSpacing(8)
 
+        self.ai_enabled_checkbox = QCheckBox("Optionale KI-Metadaten aktivieren")
+        self.ai_enabled_checkbox.setChecked(False)
+        self.ai_enabled_checkbox.setToolTip(
+            "Optionales lokales LLM fuer Mood/Subgenre. Die Audioanalyse und "
+            "Playlist-Erzeugung funktionieren vollstaendig ohne KI."
+        )
+        provider_outer.addWidget(self.ai_enabled_checkbox)
+
         # Row 1: Radios (Ollama / LM Studio)
         radio_layout = QHBoxLayout()
         self.ollama_radio = QRadioButton("Ollama")
@@ -885,11 +960,17 @@ class AdvancedParametersWidget(QWidget):
         self.ai_refresh_btn.setToolTip("Sucht nach aktiven lokalen KI-Instanzen auf deinem Rechner und laedt die verfuegbaren Modelle.")
         self.test_ai_btn.setToolTip("Fuehrt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu pruefen.")
 
+        self._ai_controls = [
+            self.ollama_radio,
+            self.lmstudio_radio,
+            self.model_combo,
+            self.ai_refresh_btn,
+            self.test_ai_btn,
+        ]
+        self.ai_enabled_checkbox.toggled.connect(self._set_ai_enabled)
+        self._set_ai_enabled(False)
+
         layout.addWidget(self.provider_group)
-
-        # Auto-Detect beim Start (nicht-blockierend, kurz verzoegert bis UI steht)
-        QTimer.singleShot(300, self.refresh_ai_providers)
-
 
         # Harmonic Strictness
         harmony_group = QGroupBox("Harmonic Mixing")
@@ -966,8 +1047,19 @@ class AdvancedParametersWidget(QWidget):
 
     # ----- AI Provider Auto-Detect / Auto-Start -----
 
+    def _set_ai_enabled(self, enabled):
+        for control in self._ai_controls:
+            control.setEnabled(enabled)
+        if not enabled:
+            self.test_ai_btn.setEnabled(False)
+            self.ai_status_label.setText("KI deaktiviert (deterministischer Kernlauf)")
+            return
+        self.refresh_ai_providers()
+
     def refresh_ai_providers(self):
         """Startet den Hintergrund-Detect-Worker (kein UI-Block)."""
+        if not self.ai_enabled_checkbox.isChecked():
+            return
         if self._ai_detect_worker and self._ai_detect_worker.isRunning():
             return
         preferred = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
@@ -1050,6 +1142,8 @@ class AdvancedParametersWidget(QWidget):
 
     def test_ai_connection(self):
         """Sendet eine Test-Anfrage an den ausgewaehlten Provider."""
+        if not self.ai_enabled_checkbox.isChecked():
+            return
         provider = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
         model = self.model_combo.currentText().strip()
         if not model:
@@ -1166,6 +1260,7 @@ class AdvancedParametersWidget(QWidget):
     def get_parameters(self):
         """Return current parameter values as dict."""
         return {
+            "ai_enabled": self.ai_enabled_checkbox.isChecked(),
             "energy_direction": self.energy_direction.currentText(),
             "peak_position": self.peak_position_slider.value(),
             "harmonic_strictness": self.harmonic_strictness.value(),
@@ -1173,6 +1268,20 @@ class AdvancedParametersWidget(QWidget):
             "genre_mixing": self.genre_mixing.isChecked(),
             "genre_weight": self.genre_weight.value() / 100.0,
         }
+
+    def apply_strategy_support(self, strategy):
+        """Deaktiviert Parameter, die die gewaehlte Strategie nicht konsumiert."""
+        supported = SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
+        energy_enabled = "energy_direction" in supported
+        peak_enabled = "peak_position" in supported
+        harmonic_enabled = "harmonic_strictness" in supported
+        genre_enabled = "genre_mixing" in supported
+        self.energy_direction.setEnabled(energy_enabled)
+        self.peak_position_slider.setEnabled(peak_enabled)
+        self.harmonic_strictness.setEnabled(harmonic_enabled)
+        self.allow_experimental.setEnabled("allow_experimental" in supported)
+        self.genre_mixing.setEnabled(genre_enabled)
+        self.genre_weight.setEnabled("genre_weight" in supported)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1440,7 +1549,7 @@ class StatusBarWidget(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(240)
         self.progress_bar.setFixedHeight(22)
-        self.progress_bar.setRange(0, 10000)
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("0.00%")
         self.progress_bar.setStyleSheet(f"""
@@ -1474,9 +1583,9 @@ class StatusBarWidget(QWidget):
         self.status_label.setText(text)
 
     def set_progress(self, value):
-        self.progress_bar.setValue(value)
-        percentage = value / 100.0
-        self.progress_bar.setFormat(f"{percentage:.2f}%")
+        bounded = max(0, min(100, int(value)))
+        self.progress_bar.setValue(bounded)
+        self.progress_bar.setFormat(f"{bounded}%")
 
     def show_progress(self):
         """Analyse gestartet — Progress und Cancel sichtbar."""
@@ -1486,7 +1595,7 @@ class StatusBarWidget(QWidget):
 
     def hide_progress(self):
         """Analyse beendet — Progress und Cancel verstecken."""
-        self.cancel_btn.show()
+        self.cancel_btn.hide()
 
 
 class QtLogSignalEmitter(QObject):
@@ -1613,7 +1722,7 @@ class AnalysisProgressWidget(QWidget):
         
         # 2. Progress Bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 10000)
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFixedHeight(42)
@@ -1674,9 +1783,9 @@ class AnalysisProgressWidget(QWidget):
                 lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #FFFFFF;")
                 
     def set_progress(self, value):
-        self.progress_bar.setValue(value)
-        percentage = value / 100.0
-        self.progress_bar.setFormat(f"{percentage:.2f}%")
+        bounded = max(0, min(100, int(value)))
+        self.progress_bar.setValue(bounded)
+        self.progress_bar.setFormat(f"{bounded}%")
                 
     def reset_steps(self):
         for i in range(len(self.steps)):
@@ -1854,6 +1963,9 @@ class LibraryPanel(QWidget):
         right_layout.setSpacing(12)
 
         self.advanced_params = AdvancedParametersWidget()
+        self.advanced_params.apply_strategy_support(
+            self.strategy_combo.currentText()
+        )
         right_layout.addWidget(self.advanced_params)
 
         self.shortcuts_help = ShortcutsHelpWidget()
@@ -1880,6 +1992,8 @@ class LibraryPanel(QWidget):
         self.strategy_description.setText(
             descriptions.get(strategy, "No description available.")
         )
+        if hasattr(self, "advanced_params"):
+            self.advanced_params.apply_strategy_support(strategy)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -2308,13 +2422,19 @@ class PlaylistPanel(QWidget):
         if not self.playlist:
             return
 
-        # W2: O(N) Dict-Lookup statt O(N2) verschachtelter Loop
-        track_by_name = {t.fileName: t for t in self.playlist}
+        track_by_id = {t.track_id: t for t in self.playlist}
         reordered_playlist = []
         for i in range(self.table.rowCount()):
             track_name_item = self.table.item(i, 1)
             if track_name_item:
-                track = track_by_name.get(track_name_item.text())
+                row_id = os.path.normcase(
+                    os.path.abspath(
+                        os.path.normpath(
+                            str(track_name_item.data(Qt.ItemDataRole.UserRole) or "")
+                        )
+                    )
+                )
+                track = track_by_id.get(row_id)
                 if track:
                     reordered_playlist.append(track)
 
@@ -2381,6 +2501,12 @@ class MixTipsPanel(QWidget):
         self._card_layouts: dict[int, QVBoxLayout] = {}
         # Mapping: enumerate-Index → TransitionPreviewWidget
         self._preview_widgets: dict[int, TransitionPreviewWidget] = {}
+        self._preview_buttons: dict[int, QPushButton] = {}
+        self._preview_transitions = []
+        self._preview_queue = deque(maxlen=8)
+        self._preview_cache = OrderedDict()
+        self._preview_cache_limit = 8
+        self._active_preview_index = None
         # Aktiver Render-Worker (kann None sein)
         self._render_worker: TransitionRenderWorker | None = None
         self.init_ui()
@@ -2625,23 +2751,69 @@ class MixTipsPanel(QWidget):
 
     def setup_transition_previews(self, transitions: list):
         """
-        Erstellt TransitionPreviewWidget fuer jeden Uebergang und
-        startet den TransitionRenderWorker im Hintergrund.
-        Muss nach set_recommendations() aufgerufen werden.
+        Registriert On-Demand-Previews ohne Player oder Renderjobs anzulegen.
         """
         self._cleanup_existing_previews()
         self._preview_widgets = {}
+        self._preview_buttons = {}
+        self._preview_transitions = list(transitions)
+        for index in range(len(self._preview_transitions)):
+            button = QPushButton("Vorschau bei Bedarf rendern")
+            button.clicked.connect(
+                lambda checked=False, requested=index: self._request_preview(requested)
+            )
+            self._preview_buttons[index] = button
+            if index in self._card_layouts:
+                self._card_layouts[index].addWidget(button)
 
-        for i, tr in enumerate(transitions):
-            widget = TransitionPreviewWidget(i, tr, self)
-            self._preview_widgets[i] = widget
-            self._insert_preview_widget(i, widget)
+    def _request_preview(self, index: int):
+        if index < 0 or index >= len(self._preview_transitions):
+            return
+        if index not in self._preview_widgets:
+            widget = TransitionPreviewWidget(
+                index, self._preview_transitions[index], self
+            )
+            self._preview_widgets[index] = widget
+            self._insert_preview_widget(index, widget)
+        button = self._preview_buttons.get(index)
+        if button:
+            button.setEnabled(False)
+            button.setText("Vorschau wird vorbereitet …")
+        if index in self._preview_cache:
+            path = self._preview_cache.pop(index)
+            self._preview_cache[index] = path
+            self._on_clip_ready(index, path)
+            return
+        if index != self._active_preview_index and index not in self._preview_queue:
+            if len(self._preview_queue) >= self._preview_queue.maxlen:
+                self._on_clip_error(index, "Render-Warteschlange ist voll")
+                return
+            self._preview_queue.append(index)
+        self._start_next_preview()
 
-        # Worker starten — rendert alle Clips sequenziell im Hintergrund
-        self._render_worker = TransitionRenderWorker(transitions)
-        self._render_worker.clip_ready.connect(self._on_clip_ready)
-        self._render_worker.clip_error.connect(self._on_clip_error)
-        self._render_worker.start()
+    def _start_next_preview(self):
+        if self._render_worker is not None or not self._preview_queue:
+            return
+        index = self._preview_queue.popleft()
+        self._active_preview_index = index
+        worker = TransitionRenderWorker([self._preview_transitions[index]], self)
+        self._render_worker = worker
+        worker.clip_ready.connect(
+            lambda _local, path, requested=index: self._on_clip_ready(requested, path)
+        )
+        worker.clip_error.connect(
+            lambda _local, error, requested=index: self._on_clip_error(requested, error)
+        )
+        worker.finished.connect(self._on_preview_worker_finished)
+        worker.start()
+
+    def _on_preview_worker_finished(self):
+        worker = self._render_worker
+        self._render_worker = None
+        self._active_preview_index = None
+        if worker:
+            worker.deleteLater()
+        self._start_next_preview()
 
     def _insert_preview_widget(self, index: int, widget: TransitionPreviewWidget):
         """Haengt das Preview-Widget an das card_layout des jeweiligen Uebergangs."""
@@ -2655,7 +2827,7 @@ class MixTipsPanel(QWidget):
             try:
                 self._render_worker.clip_ready.disconnect(self._on_clip_ready)
                 self._render_worker.clip_error.disconnect(self._on_clip_error)
-            except:
+            except TypeError:
                 pass
 
             self._render_worker.request_cancel()
@@ -2668,7 +2840,7 @@ class MixTipsPanel(QWidget):
             def clean_and_delete():
                 try:
                     old_worker.cleanup()
-                except:
+                except OSError:
                     pass
                 old_worker.deleteLater()
                 
@@ -2676,16 +2848,39 @@ class MixTipsPanel(QWidget):
             self._render_worker = None
             
         self._preview_widgets = {}
+        self._preview_queue.clear()
+        self._active_preview_index = None
+        for path in self._preview_cache.values():
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        self._preview_cache.clear()
 
     def _on_clip_ready(self, index: int, wav_path: str):
         """Aufgerufen wenn ein Clip fertig gerendert ist."""
+        self._preview_cache[index] = wav_path
+        while len(self._preview_cache) > self._preview_cache_limit:
+            _, stale_path = self._preview_cache.popitem(last=False)
+            try:
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+            except OSError:
+                pass
         if index in self._preview_widgets:
             self._preview_widgets[index].set_wav_path(wav_path)
+        button = self._preview_buttons.get(index)
+        if button:
+            button.setText("Vorschau geladen")
 
     def _on_clip_error(self, index: int, error_msg: str):
         """Aufgerufen wenn Rendering eines Clips fehlgeschlagen ist."""
         if index in self._preview_widgets:
             self._preview_widgets[index].set_error(error_msg)
+        button = self._preview_buttons.get(index)
+        if button:
+            button.setText(f"Vorschau fehlgeschlagen: {error_msg}")
 
 
 class TimelinePanel(QWidget):
@@ -2703,13 +2898,19 @@ class TimelinePanel(QWidget):
         self.text_edit.setReadOnly(True)
         layout.addWidget(self.text_edit)
 
-    def set_timeline(self, playlist):
+    def set_timeline(self, playlist, transition_recommendations=None):
         """Timeline aus Playlist berechnen und als HTML rendern."""
         if not playlist:
             self.text_edit.setHtml("<p>Keine Playlist vorhanden.</p>")
             return
 
-        timeline = compute_set_timeline(playlist)
+        plans = [
+            rec.plan for rec in (transition_recommendations or [])
+            if getattr(rec, "plan", None) is not None
+        ]
+        timeline = compute_set_timeline(
+            playlist, transition_plans=plans or None
+        )
         summary = get_set_timing_summary(timeline)
 
         phase_colors = PHASE_COLORS
@@ -2928,6 +3129,9 @@ class MainWindow(QMainWindow):
         self.current_bpm_tolerance = 3.0
         self.worker = None
         self.ai_worker = None
+        self.run_state = RunState.IDLE
+        self._run_id = 0
+        self._close_pending = False
 
         self.init_ui()
         self.connect_signals()
@@ -3075,6 +3279,24 @@ class MainWindow(QMainWindow):
     def _set_bpm_tolerance(self, tolerance):
         self.current_bpm_tolerance = tolerance
 
+    def _set_run_state(self, state: RunState) -> None:
+        """Setzt den zentralen Pipelinezustand."""
+        self.run_state = state
+
+    def _run_is_active(self) -> bool:
+        """Beruecksichtigt Zustand und alle mutierenden Hauptworker."""
+        worker_alive = bool(self.worker and self.worker.isRunning())
+        ai_alive = bool(self.ai_worker and self.ai_worker.isRunning())
+        return self.run_state in ACTIVE_RUN_STATES or worker_alive or ai_alive
+
+    def _finish_run(self, state: RunState, status: str) -> None:
+        """Stellt die UI in jedem terminalen Pfad deterministisch wieder her."""
+        self._set_run_state(state)
+        self.library_panel.start_button.setEnabled(True)
+        self.toolbar.set_generate_enabled(True)
+        self.status_bar.hide_progress()
+        self.status_bar.set_status(status)
+
     def select_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Select Music Folder")
         if folder_path:
@@ -3084,7 +3306,7 @@ class MainWindow(QMainWindow):
         """Analyse starten — Progress in StatusBar, aktueller Content bleibt."""
         # H2-Fix: Doppelstart-Schutz — Ctrl+G umgeht den deaktivierten Button;
         # ohne Guard wuerde der laufende Worker verwaisen (zweiter ProcessPool)
-        if self.worker is not None and self.worker.isRunning():
+        if self._run_is_active():
             self.status_bar.set_status("Analyse laeuft bereits...")
             return
 
@@ -3109,6 +3331,8 @@ class MainWindow(QMainWindow):
         self.library_panel.progress_widget.set_step_status(0, "working")
 
         # Worker erstellen und starten
+        self._run_id += 1
+        self._set_run_state(RunState.AUDIO)
         self.worker = AnalysisWorker(
             folder_path=settings["folder"],
             mode=settings["strategy"],
@@ -3126,36 +3350,40 @@ class MainWindow(QMainWindow):
 
     def _on_audio_progress(self, percent):
         # Audio-Analyse nimmt die ersten 80% des Fortschritts ein
-        scaled = int(percent * 0.8)
+        if self.run_state not in {RunState.AUDIO, RunState.CANCELLING}:
+            return
+        scaled = map_phase_progress(percent, 0, 80)
         self.status_bar.set_progress(scaled)
         self.library_panel.progress_widget.set_progress(scaled)
 
     def _on_ai_progress(self, current, total):
-        if total > 0:
+        if total > 0 and self.run_state in {RunState.AI, RunState.CANCELLING}:
             percent = int((current / total) * 100)
             # AI-Analyse nimmt die verbleibenden 20% ein
-            scaled = 80 + int(percent * 0.2)
+            scaled = map_phase_progress(percent, 80, 95)
             self.status_bar.set_progress(scaled)
             self.library_panel.progress_widget.set_progress(scaled)
             self.status_bar.set_status(f"KI-Anreicherung laeuft... ({current}/{total} Tracks)")
 
     def cancel_analysis(self):
         """Analyse abbrechen — cooperative shutdown."""
+        if not self._run_is_active():
+            return
+        self._set_run_state(RunState.CANCELLING)
         if self.worker and self.worker.isRunning():
             self.worker.request_cancel()
-            if not self.worker.wait(5000):
-                self.worker.terminate()
-                self.worker.wait()
+        if self.ai_worker and self.ai_worker.isRunning():
+            self.ai_worker.request_cancel()
 
-        self.library_panel.start_button.setEnabled(True)
-        self.toolbar.set_generate_enabled(True)
-        self.status_bar.hide_progress()
-        self.status_bar.set_status("Analysis cancelled.")
-        self.library_panel.progress_widget.reset_steps()
+        self.status_bar.set_status("Abbruch angefordert; laufender Schritt wird beendet...")
 
 
-    def on_ai_finished(self, track_path, ai_data):
+    def on_ai_finished(self, track_path, ai_data, source_worker=None):
         """Update the playlist table with AI data."""
+        if source_worker is not None and source_worker is not self.ai_worker:
+            return
+        if self.run_state == RunState.CANCELLING:
+            return
         # Moods extrahieren
         moods = ai_data.get("moods", [])
         if isinstance(moods, list):
@@ -3194,6 +3422,13 @@ class MainWindow(QMainWindow):
                 # Check for AI recommended mix points
                 ai_mix_in = ai_data.get("mix_in_time")
                 ai_mix_out = ai_data.get("mix_out_time")
+                from hpg_core import config as hpg_config
+                if not (
+                    hpg_config.AI_AUTO_APPLY_MIXPOINTS
+                    and getattr(track, "outro_covered", False)
+                ):
+                    ai_mix_in = None
+                    ai_mix_out = None
                 
                 try:
                     if ai_mix_in is not None and ai_mix_out is not None:
@@ -3213,10 +3448,13 @@ class MainWindow(QMainWindow):
                             track.mix_out_point = round(val_out, 2)
 
                             # Recalculate bars
-                            from hpg_core.config import METER
-                            seconds_per_bar = (60.0 / track.bpm) * METER if track.bpm > 0 else 2.0
-                            track.mix_in_bars = int(round(track.mix_in_point / seconds_per_bar))
-                            track.mix_out_bars = int(round(track.mix_out_point / seconds_per_bar))
+                            from hpg_core.models import seconds_to_bars
+                            track.mix_in_bars = seconds_to_bars(
+                                track.mix_in_point, track.bpm
+                            )
+                            track.mix_out_bars = seconds_to_bars(
+                                track.mix_out_point, track.bpm
+                            )
                             logger.info(f"AI updated mix points for '{os.path.basename(track_path)}': in={track.mix_in_bars} bars, out={track.mix_out_bars} bars")
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Failed to parse AI mix points: {e}")
@@ -3268,12 +3506,27 @@ class MainWindow(QMainWindow):
                 score_item.setForeground(QColor("white"))
                 self.playlist_panel.table.setItem(found_row + 1, 14, score_item)
                 
-    def on_ai_worker_finished(self):
-        """AI Analysis beendet — Playlist generieren und UI-Panels einmalig aktualisieren."""
-        self.library_panel.progress_widget.set_step_status(4, "completed")
-        self.library_panel.progress_widget.set_progress(100)
-        self.status_bar.set_progress(100)
-        self.status_bar.hide_progress()
+    def on_ai_worker_finished(
+        self, source_worker=None, ai_completed=True, finalize=True
+    ):
+        """Erzeugt die Playlist und aktualisiert alle abhaengigen Ansichten."""
+        if source_worker is not None and source_worker is not self.ai_worker:
+            return
+        ai_failure = getattr(source_worker, "failure_reason", "") if source_worker else ""
+        if self.ai_worker:
+            self.ai_worker.deleteLater()
+            self.ai_worker = None
+        if self.run_state == RunState.CANCELLING:
+            self.library_panel.progress_widget.reset_steps()
+            self._finish_run(RunState.CANCELLED, "Analysis cancelled.")
+            return
+        self._set_run_state(RunState.PLAYLIST)
+        self.library_panel.progress_widget.set_step_status(
+            4, "completed" if ai_completed else "inactive"
+        )
+        self.library_panel.progress_widget.set_step_status(2, "working")
+        self.library_panel.progress_widget.set_progress(95)
+        self.status_bar.set_progress(95)
         
         # 1. Playlist zum ersten Mal generieren, jetzt wo alle Audio- und AI-Features da sind!
         settings = self.library_panel.get_current_settings()
@@ -3295,25 +3548,27 @@ class MainWindow(QMainWindow):
                 advanced_params=advanced_params
             )
         except Exception as e:
-            self.status_bar.set_status(f"ERROR generating playlist: {str(e)}")
             import logging
             logger = logging.getLogger("hpg_core.playlist")
             logger.error(f"Playlist generation failed: {e}")
-            self.library_panel.start_button.setEnabled(True)
-            self.toolbar.set_generate_enabled(True)
+            self._finish_run(RunState.ERROR, f"ERROR generating playlist: {str(e)}")
             return
 
         if not self.playlist:
-            self.status_bar.set_status("ERROR: Playlist generation returned empty result.")
-            self.library_panel.start_button.setEnabled(True)
-            self.toolbar.set_generate_enabled(True)
+            self._finish_run(RunState.ERROR, "ERROR: Playlist generation returned empty result.")
             return
+
+        self.library_panel.progress_widget.set_step_status(2, "completed")
+        self.library_panel.progress_widget.set_step_status(3, "working")
 
         # 2. Metriken und Transition-Empfehlungen berechnen
         self.quality_metrics = calculate_playlist_quality(self.playlist, bpm_tolerance)
         transition_plan = compute_transition_recommendations(self.playlist, bpm_tolerance)
         self.playlist_panel.quality_metrics = self.quality_metrics
         self.playlist_panel.transition_recommendations = transition_plan
+        self.library_panel.progress_widget.set_step_status(3, "completed")
+        self.library_panel.progress_widget.set_progress(100)
+        self.status_bar.set_progress(100)
 
         # 3. Daten an alle Panels verteilen
         self.playlist_panel.set_playlist_data(
@@ -3325,7 +3580,7 @@ class MainWindow(QMainWindow):
         self.mix_tips_panel.set_recommendations(transition_plan)
         # Transition-Audio-Previews rendern (Hintergrund-Worker)
         self.mix_tips_panel.setup_transition_previews(transition_plan)
-        self.timeline_panel.set_timeline(self.playlist)
+        self.timeline_panel.set_timeline(self.playlist, transition_plan)
         self.analytics_panel.set_analytics(self.quality_metrics)
 
         # 4. Toolbar & Status aktualisieren
@@ -3340,9 +3595,14 @@ class MainWindow(QMainWindow):
         # Automatisch zum Playlist-Panel wechseln
         self.sidebar.set_active(1)
 
-        # Buttons wieder aktivieren
-        self.library_panel.start_button.setEnabled(True)
-        self.toolbar.set_generate_enabled(True)
+        if finalize:
+            final_state = RunState.PARTIAL if ai_failure else RunState.SUCCESS
+            final_message = (
+                f"Playlist fertig; KI-Anreicherung unvollstaendig: {ai_failure}"
+                if ai_failure
+                else f"Complete — {len(self.playlist)} tracks, Quality {overall:.0%}"
+            )
+            self._finish_run(final_state, final_message)
 
     def analysis_finished(self, playlist, quality_metrics):
         """Audio-Analyse fertig — bereite KI-Veredelung vor, bevor die Playlist generiert wird."""
@@ -3361,21 +3621,36 @@ class MainWindow(QMainWindow):
             self.worker.deleteLater()
             self.worker = None
 
+        if self.run_state == RunState.CANCELLING:
+            self.library_panel.progress_widget.reset_steps()
+            self._finish_run(RunState.CANCELLED, "Analysis cancelled.")
+            return
+
         # Leere Playlist? Fehler anzeigen.
         if not playlist:
-            self.status_bar.set_status("Analysis returned no results.")
             self.library_panel.progress_widget.reset_steps()
+            self._finish_run(RunState.ERROR, "Analysis returned no results.")
             return
 
         # Speichere die analysierten Roh-Tracks
         self.analyzed_raw_tracks = playlist
 
-        # AI Analysis starten
-        if self.ai_worker and self.ai_worker.isRunning():
-            self.ai_worker.request_cancel()
-            self.ai_worker.wait()
-            
         ap = self.library_panel.advanced_params
+        ai_enabled = ap.get_parameters().get("ai_enabled", False)
+
+        # Die deterministische Playlist steht immer sofort zur Verfuegung.
+        self.on_ai_worker_finished(
+            ai_completed=False,
+            finalize=not ai_enabled,
+        )
+        if not ai_enabled or self.run_state in {RunState.ERROR, RunState.CANCELLED}:
+            return
+
+        # Optionale KI-Daten werden anschliessend als Overlay angereichert.
+        self._set_run_state(RunState.AI)
+        self.status_bar.show_progress()
+        self.library_panel.progress_widget.set_progress(80)
+        self.status_bar.set_progress(80)
         provider = ap.detected_provider or (
             "LM Studio" if ap.lmstudio_radio.isChecked() else "Ollama"
         )
@@ -3390,9 +3665,19 @@ class MainWindow(QMainWindow):
         # Phase 5: AI MOODS in Arbeit
         self.library_panel.progress_widget.set_step_status(4, "working")
 
-        self.ai_worker.ai_finished.connect(self.on_ai_finished)
+        current_ai_worker = self.ai_worker
+        self.ai_worker.ai_finished.connect(
+            lambda path, data, worker=current_ai_worker: self.on_ai_finished(
+                path, data, worker
+            )
+        )
         self.ai_worker.progress.connect(self._on_ai_progress)
-        self.ai_worker.finished.connect(self.on_ai_worker_finished)
+        self.ai_worker.failed.connect(
+            lambda message: self.status_bar.set_status(message)
+        )
+        self.ai_worker.finished.connect(
+            lambda worker=current_ai_worker: self.on_ai_worker_finished(worker)
+        )
         self.ai_worker.start()
 
 
@@ -3409,7 +3694,9 @@ class MainWindow(QMainWindow):
         self.mix_tips_panel.setup_transition_previews(
             self.playlist_panel.transition_recommendations
         )
-        self.timeline_panel.set_timeline(self.playlist)
+        self.timeline_panel.set_timeline(
+            self.playlist, self.playlist_panel.transition_recommendations
+        )
         self.analytics_panel.set_analytics(self.quality_metrics)
 
         # Toolbar aktualisieren
@@ -3472,16 +3759,20 @@ class MainWindow(QMainWindow):
         try:
             exporter = RekordboxXMLExporter()
             playlist_name = f"HPG - {self.current_playlist_mode}"
-            exporter.export(self.playlist, file_path, playlist_name)
+            report = exporter.export(self.playlist, file_path, playlist_name)
 
-            QMessageBox.information(
-                self,
-                "Export Successful",
-                f"Rekordbox XML exported!\n\n"
-                f"Location: {file_path}\n"
-                f"Tracks: {len(self.playlist)}\n"
-                f"Import: File -> Import -> rekordbox xml",
+            message = (
+                f"Location: {file_path}\nTracks: {report.tracks_written}\n"
+                f"Cues: {report.cues_written}\nBeatgrids: {report.beatgrids_written}"
             )
+            if report.status == "partial":
+                QMessageBox.warning(
+                    self,
+                    "Export teilweise abgeschlossen",
+                    message + "\n\n" + "\n".join(report.errors),
+                )
+            else:
+                QMessageBox.information(self, "Export Successful", message)
         except ImportError:
             QMessageBox.critical(
                 self,
@@ -3536,10 +3827,13 @@ class MainWindow(QMainWindow):
     def restart_app(self):
         """Zurueck zum Library-Panel, Playlist verwerfen."""
         if self.worker and self.worker.isRunning():
-            self.worker.request_cancel()
-            if not self.worker.wait(5000):
-                self.worker.terminate()
-                self.worker.wait()
+            self.cancel_analysis()
+            self.status_bar.set_status("Neustart nach Abschluss des Abbruchs erneut ausloesen.")
+            return
+        if self.ai_worker and self.ai_worker.isRunning():
+            self.cancel_analysis()
+            self.status_bar.set_status("Neustart nach Abschluss des Abbruchs erneut ausloesen.")
+            return
 
         self.playlist = []
         self.quality_metrics = {}
@@ -3552,18 +3846,30 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """M3: Worker sauber beenden beim Schliessen."""
+        running_workers = []
         if self.worker and self.worker.isRunning():
             self.worker.request_cancel()
-            if not self.worker.wait(3000):
-                self.worker.terminate()
-                self.worker.wait()
+            running_workers.append(self.worker)
         # H4-Fix: auch den AI-Tagging-Worker beenden — sonst Crash/Hang
         # ("QThread destroyed while running") beim App-Close waehrend Tagging
         if self.ai_worker and self.ai_worker.isRunning():
             self.ai_worker.request_cancel()
-            if not self.ai_worker.wait(3000):
-                self.ai_worker.terminate()
-                self.ai_worker.wait()
+            running_workers.append(self.ai_worker)
+
+        advanced = self.library_panel.advanced_params
+        for name in ("_ai_detect_worker", "_test_worker", "_pull_worker"):
+            auxiliary = getattr(advanced, name, None)
+            if auxiliary and auxiliary.isRunning():
+                auxiliary.requestInterruption()
+                running_workers.append(auxiliary)
+
+        if running_workers:
+            self._close_pending = True
+            self._set_run_state(RunState.CANCELLING)
+            self.status_bar.set_status("Beende laufende Hintergrundarbeit...")
+            event.ignore()
+            QTimer.singleShot(100, self.close)
+            return
         # Transition-Render-Worker stoppen und Temp-Dateien loeschen
         self.mix_tips_panel._cleanup_existing_previews()
         event.accept()

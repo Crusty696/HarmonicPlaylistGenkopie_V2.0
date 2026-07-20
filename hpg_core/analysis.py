@@ -20,6 +20,8 @@ from .config import (
     BPM_HALFTIME_MAX_RESULT,
     LIBROSA_FAST_PATH_DURATION,
     LIBROSA_MAX_DURATION,
+    LIBROSA_TAIL_DURATION,
+    LUFS_MAX_DECODE_BYTES,
 )
 
 # Reverse mapping: Camelot code → (Note, Mode)
@@ -27,7 +29,7 @@ REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
 from .caching import generate_cache_key, get_cached_track, cache_track
 from .rekordbox_importer import get_rekordbox_importer
 from .genre_classifier import classify_genre, GenreClassification
-from .structure_analyzer import analyze_structure, TrackStructure
+from .structure_analyzer import analyze_structure, TrackSection, TrackStructure
 from .dj_brain import calculate_genre_aware_mix_points, align_ai_mix_points
 from .downbeat import estimate_first_downbeat
 
@@ -191,6 +193,35 @@ def calculate_lufs(y: np.ndarray, sr: int) -> float:
     except Exception as e:
         logger.warning(f"LUFS-Messung fehlgeschlagen: {e}")
         return 0.0
+
+
+def calculate_file_lufs(file_path: str) -> tuple[float, str, float, int, int]:
+    """Misst LUFS ueber das vollstaendige native Mehrkanalprogramm.
+
+    Returns:
+        (lufs, status, coverage_seconds, channels, sample_rate)
+    """
+    try:
+        import pyloudnorm as pyln
+        import soundfile as sf
+
+        info = sf.info(file_path)
+        estimated_bytes = int(info.frames) * int(info.channels) * 4
+        if estimated_bytes > LUFS_MAX_DECODE_BYTES:
+            return 0.0, "skipped_memory_limit", 0.0, int(info.channels), int(info.samplerate)
+
+        audio, sample_rate = sf.read(file_path, dtype="float32", always_2d=True)
+        channels = int(audio.shape[1])
+        signal = audio[:, 0] if channels == 1 else audio
+        meter = pyln.Meter(sample_rate, filter_class="DeMan")
+        value = float(meter.integrated_loudness(signal.astype(np.float64, copy=False)))
+        coverage = float(len(audio) / sample_rate) if sample_rate > 0 else 0.0
+        if not np.isfinite(value) or value >= 0.0 or value < -70.0:
+            return 0.0, "invalid", coverage, channels, int(sample_rate)
+        return round(value, 2), "complete", coverage, channels, int(sample_rate)
+    except Exception as error:
+        logger.warning(f"Vollstaendige LUFS-Messung fehlgeschlagen: {error}")
+        return 0.0, "error", 0.0, 0, 0
 
 
 def calculate_energy(y: np.ndarray) -> int:
@@ -774,6 +805,90 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         return round(safe_in, 2), round(safe_out, 2), safe_in_bars, safe_out_bars
 
 
+def _offset_section(section: TrackSection, offset: float, bpm: float) -> TrackSection:
+    """Verschiebt eine lokal analysierte Tail-Sektion auf die Track-Zeitachse."""
+    seconds_bar = (60.0 / bpm) * METER if bpm > 0 else 0.0
+    start = section.start_time + offset
+    end = section.end_time + offset
+    return TrackSection(
+        label=section.label,
+        start_time=round(start, 2),
+        end_time=round(end, 2),
+        start_bar=int(round(start / seconds_bar)) if seconds_bar else 0,
+        end_bar=int(round(end / seconds_bar)) if seconds_bar else 0,
+        avg_energy=section.avg_energy,
+    )
+
+
+def analyze_structure_windows(
+    file_path: str,
+    head_audio: np.ndarray,
+    sr: int,
+    bpm: float,
+    genre: str,
+    duration: float,
+    anchor: float = 0.0,
+) -> tuple[TrackStructure, list[dict], bool]:
+    """Kombiniert Anfang und echtes Track-Ende mit expliziter Coverage-Luecke."""
+    head_duration = min(float(librosa.get_duration(y=head_audio, sr=sr)), duration)
+    head = analyze_structure(head_audio, sr, bpm, genre, anchor=anchor)
+    for section in head.sections:
+        section.end_time = min(section.end_time, head_duration)
+
+    coverage = [{"start": 0.0, "end": round(head_duration, 2)}]
+    if duration <= head_duration + 1.0:
+        return head, coverage, True
+
+    tail_start = max(head_duration, duration - LIBROSA_TAIL_DURATION)
+    tail_audio, _ = librosa.load(
+        file_path,
+        sr=sr,
+        mono=True,
+        offset=tail_start,
+        duration=max(0.0, duration - tail_start),
+    )
+    tail_duration = float(librosa.get_duration(y=tail_audio, sr=sr))
+    tail_end = min(duration, tail_start + tail_duration)
+    if tail_duration <= 0:
+        return head, coverage, False
+
+    tail = analyze_structure(
+        tail_audio,
+        sr,
+        bpm,
+        genre,
+        anchor=anchor - tail_start,
+    )
+    shifted_tail = [_offset_section(section, tail_start, bpm) for section in tail.sections]
+    coverage.append({"start": round(tail_start, 2), "end": round(tail_end, 2)})
+
+    head_sections = [section for section in head.sections if section.start_time < tail_start]
+    if head_sections:
+        head_sections[-1].end_time = min(head_sections[-1].end_time, tail_start)
+
+    merged_sections = head_sections
+    if tail_start > head_duration + 1.0:
+        seconds_bar = (60.0 / bpm) * METER if bpm > 0 else 0.0
+        merged_sections.append(
+            TrackSection(
+                label="unanalysed",
+                start_time=round(head_duration, 2),
+                end_time=round(tail_start, 2),
+                start_bar=int(round(head_duration / seconds_bar)) if seconds_bar else 0,
+                end_bar=int(round(tail_start / seconds_bar)) if seconds_bar else 0,
+                avg_energy=0.0,
+            )
+        )
+    merged_sections.extend(shifted_tail)
+    total_bars = int(duration / ((60.0 / bpm) * METER)) if bpm > 0 else 0
+    merged = TrackStructure(
+        sections=merged_sections,
+        total_bars=total_bars,
+        phrase_unit=head.phrase_unit or tail.phrase_unit,
+    )
+    return merged, coverage, tail_end >= duration - 1.0
+
+
 def analyze_track(file_path: str) -> Track | None:
     """Analyzes a single audio file for all v3.0 metadata, using a cache."""
     if not file_path:
@@ -827,8 +942,9 @@ def analyze_track(file_path: str) -> Track | None:
             energy = calculate_energy(y)
             bass_intensity = calculate_bass_intensity(y, sr)
 
-            # LUFS-Feature 2026-07-17: Integrated Loudness (EBU R128)
-            lufs = calculate_lufs(y, sr)
+            lufs, lufs_status, lufs_coverage, lufs_channels, lufs_sample_rate = (
+                calculate_file_lufs(file_path)
+            )
             # Key aus der Rekordbox-DB = verlaesslich analysiert
             key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
 
@@ -852,10 +968,20 @@ def analyze_track(file_path: str) -> Track | None:
                 )
 
             # DJ Brain: Struktur-Analyse (downbeat-verankert)
-            structure = analyze_structure(
-                y, sr, rekordbox_data.bpm, genre_result.genre, anchor=first_downbeat
+            structure, analysis_coverage, outro_covered = analyze_structure_windows(
+                file_path,
+                y,
+                sr,
+                rekordbox_data.bpm,
+                genre_result.genre,
+                duration,
+                anchor=first_downbeat,
             )
             section_dicts = [s.to_dict() for s in structure.sections]
+            for section in section_dicts:
+                section["analysis_status"] = (
+                    "unanalysed" if section.get("label") == "unanalysed" else "analyzed"
+                )
             section_labels = [s.label for s in structure.sections]
             logger.info(
                 f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
@@ -978,6 +1104,10 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint = []
             first_downbeat, downbeat_confidence = 0.0, 0.0
             lufs = 0.0
+            lufs_status = "error"
+            lufs_coverage = 0.0
+            lufs_channels = 0
+            lufs_sample_rate = 0
             key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
             # K1 Audit-Fix: Richtige Dataclasses statt fragiler Dummy-Objekte
             genre_result = GenreClassification(
@@ -986,6 +1116,8 @@ def analyze_track(file_path: str) -> Track | None:
             )
             section_dicts = []
             structure = TrackStructure()
+            analysis_coverage = []
+            outro_covered = False
 
         # Extract key note and mode from Camelot code (for backward compatibility)
         key_note = "C"
@@ -1091,6 +1223,13 @@ def analyze_track(file_path: str) -> Track | None:
             downbeat_confidence=downbeat_confidence,
             key_confidence=key_confidence,
             lufs=lufs,
+            analysis_mode="rekordbox_fast_tail",
+            analysis_coverage=analysis_coverage,
+            outro_covered=outro_covered,
+            lufs_status=lufs_status,
+            lufs_coverage_seconds=lufs_coverage,
+            lufs_channels=lufs_channels,
+            lufs_sample_rate=lufs_sample_rate,
         )
 
         cache_track(cache_key, track)
@@ -1166,8 +1305,9 @@ def analyze_track(file_path: str) -> Track | None:
         energy = calculate_energy(y)
         bass_intensity = calculate_bass_intensity(y, sr)
 
-        # LUFS-Feature 2026-07-17: Integrated Loudness (EBU R128)
-        lufs = calculate_lufs(y, sr)
+        lufs, lufs_status, lufs_coverage, lufs_channels, lufs_sample_rate = (
+            calculate_file_lufs(file_path)
+        )
 
         # DJ Brain: Genre-Klassifikation
         genre_result = classify_genre(y, sr, bpm, bass_intensity, genre)
@@ -1180,8 +1320,20 @@ def analyze_track(file_path: str) -> Track | None:
         first_downbeat, downbeat_confidence = estimate_first_downbeat(y, sr, bpm)
 
         # DJ Brain: Struktur-Analyse (downbeat-verankert)
-        structure = analyze_structure(y, sr, bpm, genre_result.genre, anchor=first_downbeat)
+        structure, analysis_coverage, outro_covered = analyze_structure_windows(
+            file_path,
+            y,
+            sr,
+            bpm,
+            genre_result.genre,
+            duration,
+            anchor=first_downbeat,
+        )
         section_dicts = [s.to_dict() for s in structure.sections]
+        for section in section_dicts:
+            section["analysis_status"] = (
+                "unanalysed" if section.get("label") == "unanalysed" else "analyzed"
+            )
         section_labels = [s.label for s in structure.sections]
         logger.info(
             f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
@@ -1281,6 +1433,13 @@ def analyze_track(file_path: str) -> Track | None:
             downbeat_confidence=downbeat_confidence,
             key_confidence=key_confidence,
             lufs=lufs,
+            analysis_mode="librosa_full_or_tail",
+            analysis_coverage=analysis_coverage,
+            outro_covered=outro_covered,
+            lufs_status=lufs_status,
+            lufs_coverage_seconds=lufs_coverage,
+            lufs_channels=lufs_channels,
+            lufs_sample_rate=lufs_sample_rate,
         )
 
         cache_track(cache_key, track)

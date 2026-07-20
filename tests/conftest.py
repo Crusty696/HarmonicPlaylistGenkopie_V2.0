@@ -4,11 +4,39 @@ Bietet Audio-Generatoren, Track-Factories und gemeinsame Fixtures.
 """
 import sys
 import os
+import hashlib
+import shutil
+import tempfile
 import pytest
 import numpy as np
 
 # Projekt-Root zum Path hinzufuegen
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+
+# Der Cache muss vor dem ersten hpg_core-Import isoliert werden. Jeder
+# pytest-/xdist-Prozess erhaelt eine eigene DB; ProcessPool-Kinder erben den
+# Pfad ueber die Umgebung.
+_TEST_CACHE_DIR = tempfile.mkdtemp(prefix=f"hpg_pytest_{os.getpid()}_")
+_TEST_CACHE_FILE = os.path.join(_TEST_CACHE_DIR, "hpg_cache_test.db")
+os.environ["HPG_CACHE_FILE"] = _TEST_CACHE_FILE
+
+_PRODUCTION_CACHE = os.path.join(PROJECT_ROOT, "hpg_cache_v17.db")
+
+
+def _file_fingerprint(path: str) -> tuple[int, int, str] | None:
+  """Liefert Groesse, mtime_ns und SHA256 ohne die Datei zu veraendern."""
+  if not os.path.exists(path):
+    return None
+  digest = hashlib.sha256()
+  with open(path, "rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+      digest.update(chunk)
+  stat = os.stat(path)
+  return stat.st_size, stat.st_mtime_ns, digest.hexdigest()
+
+
+_PRODUCTION_CACHE_BEFORE = _file_fingerprint(_PRODUCTION_CACHE)
 
 from hpg_core.models import Track, CAMELOT_MAP
 from tests.fixtures.audio_generators import (
@@ -268,3 +296,13 @@ def pytest_collection_modifyitems(config, items):
     # Mark slow tests
     if "integration" in item.nodeid or "playlist" in item.nodeid:
       item.add_marker(pytest.mark.slow)
+
+
+def pytest_sessionfinish(session, exitstatus):
+  """Schuetzt den Produktivcache und entfernt nur das eigene Testverzeichnis."""
+  after = _file_fingerprint(_PRODUCTION_CACHE)
+  if after != _PRODUCTION_CACHE_BEFORE:
+    raise pytest.UsageError(
+      "Produktivcache hpg_cache_v17.db wurde waehrend der Tests veraendert"
+    )
+  shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)

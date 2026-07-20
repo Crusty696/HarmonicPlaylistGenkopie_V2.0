@@ -12,6 +12,7 @@ from hpg_core.parallel_analyzer import (
   ParallelAnalyzer,
   get_optimal_worker_count,
   _analyze_track_wrapper,
+  _terminate_executor_processes,
 )
 from hpg_core.models import Track
 
@@ -141,6 +142,56 @@ class TestParallelAnalyzerInit:
     """Einzelner Worker funktioniert."""
     analyzer = ParallelAnalyzer(max_workers=1)
     assert analyzer.max_workers == 1
+
+  def test_explicit_worker_limit_is_used_for_multi_file_run(self, monkeypatch):
+    """Der Konstruktorwert darf nicht durch Auto-Scaling ersetzt werden."""
+    from hpg_core import parallel_analyzer
+
+    seen_workers = []
+
+    class ImmediateFuture:
+      def result(self, timeout=None):
+        return None
+
+      def cancel(self):
+        return True
+
+    class ImmediateExecutor:
+      def __init__(self, max_workers):
+        seen_workers.append(max_workers)
+        self._processes = {}
+
+      def __enter__(self):
+        return self
+
+      def __exit__(self, *args):
+        return False
+
+      def submit(self, func, path):
+        return ImmediateFuture()
+
+      def shutdown(self, wait=True, cancel_futures=False):
+        return None
+
+    monkeypatch.setattr(parallel_analyzer, "ProcessPoolExecutor", ImmediateExecutor)
+    monkeypatch.setattr(parallel_analyzer, "as_completed", lambda futures, timeout=None: list(futures))
+
+    ParallelAnalyzer(max_workers=2).analyze_files([f"track-{i}.wav" for i in range(8)])
+
+    assert seen_workers == [2, 2]
+
+
+def test_terminate_executor_stops_running_processes():
+  """Timeout/Cancel beendet Prozesse vor dem impliziten Context-Wait."""
+  process = MagicMock()
+  process.is_alive.return_value = True
+  executor = MagicMock()
+  executor._processes = {1: process}
+
+  _terminate_executor_processes(executor)
+
+  executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+  process.terminate.assert_called_once_with()
 
 
 # ============================================================

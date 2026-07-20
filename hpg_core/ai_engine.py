@@ -1,10 +1,109 @@
 import requests
 import logging
 import json
+import math
+from datetime import datetime, timezone
 from .models import Track
 from . import config
 
 logger = logging.getLogger(__name__)
+
+AI_SCHEMA_VERSION = 1
+AI_PROMPT_VERSION = "2026-07-20"
+AI_RESULT_KEYS = {"sub_genre", "moods", "description", "mix_in_time", "mix_out_time"}
+AI_JSON_SCHEMA = {
+    "name": "hpg_ai_analysis",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(AI_RESULT_KEYS),
+        "properties": {
+            "sub_genre": {"type": "string", "minLength": 1, "maxLength": 100},
+            "moods": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 3,
+                "items": {"type": "string", "minLength": 1, "maxLength": 40},
+            },
+            "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "mix_in_time": {"type": "number", "minimum": 0},
+            "mix_out_time": {"type": "number", "minimum": 0},
+        },
+    },
+}
+
+
+def ai_metadata_matches(track: Track, provider: str, model: str) -> bool:
+    """Prueft, ob vorhandene KI-Daten exakt zum aktuellen Vertrag passen."""
+    metadata = getattr(track, "ai_metadata", {})
+    if not isinstance(metadata, dict):
+        return False
+    provenance = metadata.get("_provenance")
+    if not isinstance(provenance, dict):
+        return False
+    return (
+        provenance.get("provider") == provider
+        and provenance.get("model") == model
+        and provenance.get("prompt_version") == AI_PROMPT_VERSION
+        and provenance.get("schema_version") == AI_SCHEMA_VERSION
+    )
+
+
+def validate_ai_analysis(
+    data: dict,
+    track: Track,
+    provider: str,
+    model: str,
+) -> dict:
+    """Validiert den fachlichen KI-Vertrag und fuegt Provenienz hinzu."""
+    if not isinstance(data, dict) or set(data) != AI_RESULT_KEYS:
+        raise ValueError("KI-Ergebnis muss exakt das definierte Fuenf-Key-Schema besitzen")
+    if (
+        not isinstance(data["sub_genre"], str)
+        or not data["sub_genre"].strip()
+        or len(data["sub_genre"].strip()) > 100
+    ):
+        raise ValueError("sub_genre muss ein nichtleerer String sein")
+    moods = data["moods"]
+    if not isinstance(moods, list) or not 2 <= len(moods) <= 3:
+        raise ValueError("moods muss zwei bis drei Eintraege besitzen")
+    if any(
+        not isinstance(mood, str) or not mood.strip() or len(mood.strip()) > 40
+        for mood in moods
+    ):
+        raise ValueError("Jeder Mood muss ein nichtleerer String sein")
+    if (
+        not isinstance(data["description"], str)
+        or not data["description"].strip()
+        or len(data["description"].strip()) > 1000
+    ):
+        raise ValueError("description muss ein nichtleerer String sein")
+
+    mix_in = float(data["mix_in_time"])
+    mix_out = float(data["mix_out_time"])
+    if not math.isfinite(mix_in) or not math.isfinite(mix_out):
+        raise ValueError("KI-Mixpoints muessen endlich sein")
+    if not 0.0 <= mix_in < mix_out <= float(track.duration):
+        raise ValueError("KI-Mixpoints verletzen die Track-Grenzen")
+    if not getattr(track, "outro_covered", False):
+        raise ValueError("KI-Mix-Out ist ohne analysiertes Track-Ende unzulaessig")
+
+    return {
+        "sub_genre": data["sub_genre"].strip(),
+        "moods": [mood.strip() for mood in moods],
+        "description": data["description"].strip(),
+        "mix_in_time": mix_in,
+        "mix_out_time": mix_out,
+        "_provenance": {
+            "provider": provider,
+            "model": model,
+            "prompt_version": AI_PROMPT_VERSION,
+            "schema_version": AI_SCHEMA_VERSION,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "mixpoints_advisory": True,
+        },
+    }
 
 def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
                       url: str = None) -> dict:
@@ -57,13 +156,15 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
         "messages": [
             {"role": "system", "content": config.AI_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
-        ]
+        ],
+        "temperature": 0,
+        "seed": 0,
     }
     
-    # LM Studio 0.3+ does not support type 'json_object' and throws HTTP 400.
-    # We only enforce json_object for Ollama.
-    if current_provider == "Ollama":
-        payload["response_format"] = {"type": "json_object"}
+    payload["response_format"] = {
+        "type": "json_schema",
+        "json_schema": AI_JSON_SCHEMA,
+    }
     
     try:
         logger.debug(f"Sending AI request to {url} for track: {track.title}")
@@ -100,10 +201,17 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
                 
             try:
                 parsed_data = json.loads(content_str)
+                selected_model = str(resp_json.get("model") or model or config.AI_MODEL)
+                parsed_data = validate_ai_analysis(
+                    parsed_data,
+                    track,
+                    current_provider,
+                    selected_model,
+                )
                 logger.info(f"AI-Analyse erfolgreich geladen fuer {track.title} ({current_provider})")
                 return parsed_data
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing failed for track {track.title}: {e}")
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.error(f"AI schema validation failed for track {track.title}: {e}")
                 logger.debug(f"Raw content: {content_str}")
                 return {}
             

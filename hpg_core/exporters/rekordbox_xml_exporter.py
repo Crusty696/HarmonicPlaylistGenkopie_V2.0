@@ -13,11 +13,30 @@ Compatible with Rekordbox 5.x, 6.x, 7.x
 
 import logging
 import os
+import tempfile
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from typing import List, Optional
 from ..models import Track
 from .base_exporter import BaseExporter
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ExportReport:
+    """Verifizierbares Ergebnis eines Rekordbox-Exports."""
+
+    status: str
+    output_path: str
+    tracks_written: int
+    cues_written: int
+    beatgrids_written: int
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def success(self) -> bool:
+        return self.status == "success"
 
 try:
     from pyrekordbox.rbxml import RekordboxXml
@@ -88,7 +107,7 @@ class RekordboxXMLExporter(BaseExporter):
         playlist: List[Track],
         output_path: str,
         playlist_name: str = "HPG Playlist",
-    ) -> None:
+    ) -> ExportReport:
         """
         Export playlist to Rekordbox XML format
 
@@ -105,32 +124,73 @@ class RekordboxXMLExporter(BaseExporter):
         # Validate playlist
         self._validate_playlist(playlist)
 
+        temp_path = ""
+        errors = []
+        tracks_written = 0
+        cues_written = 0
+        beatgrids_written = 0
         try:
             # Create new Rekordbox XML
             xml = RekordboxXml()
 
             # Add tracks to collection
             for idx, track in enumerate(playlist, start=1):
-                self._add_track_to_collection(xml, track, idx)
+                try:
+                    cue_count, beatgrid_count, track_errors = (
+                        self._add_track_to_collection(xml, track, idx)
+                    )
+                    tracks_written += 1
+                    cues_written += cue_count
+                    beatgrids_written += beatgrid_count
+                    errors.extend(track_errors)
+                except Exception as exc:
+                    errors.append(f"Track {track.filePath}: {exc}")
 
             # Create playlist -- get_playlist() wirft auf frischem XML ValueError,
             # Ordner und Playlist muessen explizit angelegt werden
             folder = xml.add_playlist_folder("HPG Playlists")
             pl = folder.add_playlist(playlist_name)
-            for idx in range(1, len(playlist) + 1):
+            for idx in range(1, tracks_written + 1):
                 pl.add_track(str(idx))
 
-            # Save XML
-            xml.save(output_path)
+            output_dir = os.path.dirname(os.path.abspath(output_path))
+            os.makedirs(output_dir, exist_ok=True)
+            handle = tempfile.NamedTemporaryFile(
+                prefix=".hpg_export_", suffix=".xml", dir=output_dir, delete=False
+            )
+            temp_path = handle.name
+            handle.close()
+            xml.save(temp_path)
+            ET.parse(temp_path)
+            if tracks_written != len(playlist):
+                raise IOError(
+                    f"Trackanzahl unvollstaendig: {tracks_written}/{len(playlist)}"
+                )
+            os.replace(temp_path, output_path)
+            temp_path = ""
 
             logger.info(f"Rekordbox XML exportiert: {output_path} ({len(playlist)} Tracks, Playlist: {playlist_name})")
+            return ExportReport(
+                status="partial" if errors else "success",
+                output_path=output_path,
+                tracks_written=tracks_written,
+                cues_written=cues_written,
+                beatgrids_written=beatgrids_written,
+                errors=tuple(errors),
+            )
 
         except Exception as e:
             raise IOError(f"Failed to export Rekordbox XML: {e}")
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    logger.warning("Temporaere Exportdatei konnte nicht entfernt werden: %s", temp_path)
 
     def _add_track_to_collection(
         self, xml: "RekordboxXml", track: Track, track_id: int
-    ) -> None:
+    ) -> tuple[int, int, list[str]]:
         """
         Add a single track to the Rekordbox XML collection
 
@@ -166,12 +226,13 @@ class RekordboxXMLExporter(BaseExporter):
                 rb_track["Tonality"] = rb_key
 
         # Add Beat Grid (TEMPO element)
-        self._add_beat_grid(rb_track, track)
+        beatgrid_count, beatgrid_errors = self._add_beat_grid(rb_track, track)
 
         # Add Cue Points (Mix In/Out markers + Sektions-Cues)
-        self._add_cue_points(xml, rb_track, track)
+        cue_count, cue_errors = self._add_cue_points(xml, rb_track, track)
+        return cue_count, beatgrid_count, beatgrid_errors + cue_errors
 
-    def _add_beat_grid(self, rb_track: dict, track: Track) -> None:
+    def _add_beat_grid(self, rb_track: dict, track: Track) -> tuple[int, list[str]]:
         """
         Schreibt ein TEMPO-Element (Beatgrid-Anker) fuer den Track.
 
@@ -179,17 +240,20 @@ class RekordboxXMLExporter(BaseExporter):
         (Track.first_downbeat); 0.0 wenn keiner erkannt wurde.
         """
         if not track.bpm or track.bpm <= 0:
-            return
+            return 0, [f"{track.filePath}: Beatgrid fehlt wegen ungueltiger BPM"]
         try:
             if hasattr(rb_track, "add_tempo"):
                 inizio = float(getattr(track, "first_downbeat", 0.0) or 0.0)
                 rb_track.add_tempo(Inizio=inizio, Bpm=float(track.bpm), Metro="4/4", Battito=1)
+                return 1, []
+            return 0, [f"{track.filePath}: Export-Backend unterstuetzt kein Beatgrid"]
         except Exception as e:
             logger.warning(f"Beat Grid konnte nicht zur XML hinzugefuegt werden: {e}")
+            return 0, [f"{track.filePath}: Beatgridfehler: {e}"]
 
     def _add_cue_points(
         self, xml: "RekordboxXml", rb_track: dict, track: Track
-    ) -> None:
+    ) -> tuple[int, list[str]]:
         """
         Add Cue Points to track (POSITION_MARKs).
 
@@ -197,15 +261,22 @@ class RekordboxXMLExporter(BaseExporter):
         anspringbar) UND als Memory Cue (Num=-1, sichtbar in der Waveform).
         Erkannte Drop-/Breakdown-Sektionen werden als Memory Cues exportiert.
         """
+        if not self._cue_export_allowed(track):
+            return 0, [
+                f"{track.filePath}: Cues ausgelassen (Coverage/Schema/Provenienz unzureichend)"
+            ]
+        count = 0
         try:
             # pyrekordbox-API: Hot Cue = Num>=0, Memory Cue = Num=-1
             if hasattr(track, "mix_in_point") and track.mix_in_point > 0:
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=0)
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=-1)
+                count += 2
 
             if hasattr(track, "mix_out_point") and track.mix_out_point > 0:
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=1)
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=-1)
+                count += 2
 
             # Sektions-Cues: erkannte Drops/Breakdowns als Memory Cues
             for section in (track.sections or []):
@@ -215,8 +286,30 @@ class RekordboxXMLExporter(BaseExporter):
                     rb_track.add_mark(
                         Name=label.upper(), Type="cue", Start=float(start), Num=-1
                     )
+                    count += 1
+            return count, []
         except Exception as e:
             logger.warning(f"Cue Points konnten nicht zur XML hinzugefuegt werden: {e}")
+            return count, [f"{track.filePath}: Cuefehler: {e}"]
+
+    @staticmethod
+    def _cue_export_allowed(track: Track) -> bool:
+        """Cues brauchen echte End-Coverage und gueltige endliche Grenzen."""
+        import math
+
+        if not getattr(track, "outro_covered", False) or track.duration <= 0:
+            return False
+        mix_in = float(getattr(track, "mix_in_point", 0.0) or 0.0)
+        mix_out = float(getattr(track, "mix_out_point", 0.0) or 0.0)
+        if not (math.isfinite(mix_in) and math.isfinite(mix_out)):
+            return False
+        if not 0.0 <= mix_in < mix_out <= float(track.duration):
+            return False
+        metadata = getattr(track, "ai_metadata", {})
+        provenance = metadata.get("_provenance", {}) if isinstance(metadata, dict) else {}
+        if metadata and not isinstance(provenance, dict):
+            return False
+        return True
 
     def _convert_to_rekordbox_uri(self, file_path: str) -> str:
         """

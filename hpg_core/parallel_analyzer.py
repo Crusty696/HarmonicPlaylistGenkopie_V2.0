@@ -17,6 +17,15 @@ from . import config
 logger = logging.getLogger(__name__)
 
 
+def _terminate_executor_processes(executor: ProcessPoolExecutor) -> None:
+    """Beendet laufende Child-Prozesse, bevor ein Context-Manager wartet."""
+    processes = tuple((getattr(executor, "_processes", None) or {}).values())
+    executor.shutdown(wait=False, cancel_futures=True)
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+
+
 def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     """
     Determines optimal number of worker processes based on CPU count and workload.
@@ -96,6 +105,7 @@ class ParallelAnalyzer:
         cpu_count = mp.cpu_count()
         # Use smart allocation if max_workers not explicitly provided
         default_workers = max(min(6, cpu_count), cpu_count // 2)
+        self._explicit_max_workers = max_workers is not None
         self.max_workers = min(max_workers or default_workers, cpu_count)
         logger.info(f"Initialisiert mit {self.max_workers} Workers (CPU: {cpu_count} Kerne)")
 
@@ -122,7 +132,11 @@ class ParallelAnalyzer:
         finished_count = 0
         completed_count = 0
 
-        worker_count = get_optimal_worker_count(total_files)
+        worker_count = (
+            min(self.max_workers, total_files)
+            if self._explicit_max_workers
+            else get_optimal_worker_count(total_files)
+        )
         # Batch mindestens 2 Tasks pro Worker, sonst laufen Prozesse leer
         # (Pool-Start ist teuer: Spawn + librosa-Import pro Prozess);
         # Obergrenze 48 begrenzt Memory-Bloat bei grossen Playlists
@@ -201,7 +215,7 @@ class ParallelAnalyzer:
                                 try:
                                     progress_callback(finished_count, total_files, status_msg)
                                 except InterruptedError:
-                                    executor.shutdown(wait=False, cancel_futures=True)
+                                    _terminate_executor_processes(executor)
                                     raise
                     except TimeoutError:
                         # M10-Fix: Batch-Deadline gerissen (haengender C-Level-Worker,
@@ -216,12 +230,11 @@ class ParallelAnalyzer:
                                 fut.cancel()
                                 batch_results[idx] = None
                                 finished_count += 1
-                        for proc in getattr(executor, "_processes", {}).values():
-                            proc.terminate()
+                        _terminate_executor_processes(executor)
 
                     if pool_broken:
                         # Abort execution of pending tasks in this broken pool
-                        executor.shutdown(wait=False)
+                        _terminate_executor_processes(executor)
 
             except InterruptedError:
                 # H7-Fix: sauberer User-Abbruch — nach oben durchreichen,
@@ -260,6 +273,7 @@ class ParallelAnalyzer:
                         track = None
                     except TimeoutError:
                         logger.warning(f"Timeout im Safe-Modus bei {os.path.basename(file_path)}")
+                        _terminate_executor_processes(recovery_executor)
                         status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
                         track = None
                     except Exception as e:

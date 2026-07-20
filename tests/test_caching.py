@@ -5,6 +5,7 @@ Prueft generate_cache_key, get_cached_track, cache_track.
 import os
 import pytest
 import tempfile
+import sqlite3
 from hpg_core.caching import generate_cache_key, file_lock, track_to_dict, dict_to_track
 from hpg_core.models import Track
 
@@ -21,9 +22,9 @@ def temp_audio_file():
 
 
 @pytest.fixture
-def temp_lock_file():
+def temp_lock_file(tmp_path):
   """Temporaere Lock-Datei."""
-  path = os.path.join(tempfile.gettempdir(), "test_hpg_cache.lock")
+  path = str(tmp_path / "test_hpg_cache.lock")
   yield path
   if os.path.exists(path):
     os.unlink(path)
@@ -56,7 +57,8 @@ class TestGenerateCacheKey:
   def test_includes_path_in_key(self, temp_audio_file):
     """Cache-Key enthaelt Dateipfad."""
     key = generate_cache_key(temp_audio_file)
-    assert temp_audio_file in key
+    expected = os.path.normcase(os.path.abspath(temp_audio_file))
+    assert expected in key
 
   def test_includes_size_in_key(self, temp_audio_file):
     """Cache-Key enthaelt Dateigroesse."""
@@ -377,3 +379,77 @@ class TestCacheKeyPathNormalization:
     a = generate_cache_key(r"X:\gibt\es\nicht.mp3")
     b = generate_cache_key("X:/gibt/es/nicht.mp3")
     assert a == b
+
+
+class TestSafeCacheRecovery:
+  """Recovery darf nur bestaetigte Korruption quarantinisieren."""
+
+  def test_operational_error_does_not_quarantine(self, tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    from hpg_core import caching
+
+    cache_file = tmp_path / "operational.db"
+    cache_file.write_bytes(b"unveraendert")
+    monkeypatch.setattr(caching, "CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(caching, "LOCK_FILE", str(tmp_path / "operational.lock"))
+    quarantine = Mock()
+    monkeypatch.setattr(caching, "_quarantine_corrupt_cache", quarantine)
+
+    caching._handle_database_error("Test", sqlite3.OperationalError("database is locked"))
+
+    quarantine.assert_not_called()
+    assert cache_file.read_bytes() == b"unveraendert"
+
+  def test_corrupt_database_is_quarantined_not_deleted(self, tmp_path, monkeypatch):
+    from hpg_core import caching
+
+    cache_file = tmp_path / "corrupt.db"
+    original = b"this is not a sqlite database"
+    cache_file.write_bytes(original)
+    monkeypatch.setattr(caching, "CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(caching, "LOCK_FILE", str(tmp_path / "corrupt.lock"))
+
+    caching.init_cache()
+
+    quarantined = list((tmp_path / "quarantine").glob("corrupt.db.*.corrupt"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == original
+    assert cache_file.exists()
+
+  def test_default_cache_path_is_cwd_independent(self, tmp_path, monkeypatch):
+    from hpg_core import caching
+
+    monkeypatch.delenv("HPG_CACHE_DIR", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    first = caching._default_cache_file()
+    monkeypatch.chdir(tmp_path)
+    second = caching._default_cache_file()
+
+    assert first == second
+    assert str(tmp_path / "appdata" / "HPG") in first
+
+
+class TestTrackSchemaValidation:
+  """Einzelne Records werden validiert, ohne freie Attribute zu setzen."""
+
+  def test_unknown_fields_are_not_attached(self, sample_track):
+    data = track_to_dict(sample_track)
+    data["unexpected_field"] = "ignored"
+
+    restored = dict_to_track(data)
+
+    assert not hasattr(restored, "unexpected_field")
+
+  def test_nonfinite_value_is_rejected(self, sample_track):
+    data = track_to_dict(sample_track)
+    data["energy"] = float("nan")
+
+    with pytest.raises(ValueError, match="nicht endlich"):
+      dict_to_track(data)
+
+  def test_nested_nonfinite_value_is_rejected(self, sample_track):
+    data = track_to_dict(sample_track)
+    data["ai_metadata"] = {"scores": [0.8, float("inf")]}
+
+    with pytest.raises(ValueError, match=r"ai_metadata\.scores\[1\] ist nicht endlich"):
+      dict_to_track(data)

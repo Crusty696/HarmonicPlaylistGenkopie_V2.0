@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -54,6 +55,42 @@ def seconds_per_bar(bpm: float, meter: int = METER) -> float:
     return (60.0 / bpm) * meter
 
 
+def seconds_to_bars(
+    seconds: float, bpm: float, meter: int = METER, rounding: str = "round"
+) -> int:
+    """Zentrale Seconds→Bars-Semantik mit expliziter Rundungsart."""
+    width = seconds_per_bar(bpm, meter)
+    if width <= 0:
+        return 0
+    value = float(seconds) / width
+    if rounding == "floor":
+        from math import floor
+        return int(floor(value))
+    if rounding == "ceil":
+        from math import ceil
+        return int(ceil(value))
+    if rounding != "round":
+        raise ValueError(f"Unbekannte Bar-Rundung: {rounding}")
+    return int(round(value))
+
+
+def bars_to_seconds(bars: int, bpm: float, meter: int = METER) -> float:
+    """Zentrale Bars→Seconds-Umrechnung."""
+    return float(bars) * seconds_per_bar(bpm, meter)
+
+
+ANALYSIS_FIELD_CONSUMERS = {
+    "bass_intensity": "genre_classifier input and diagnostics",
+    "avg_mids": "section diagnostics; no transition consumer",
+    "avg_highs": "section diagnostics; no transition consumer",
+    "brightness": "analysis diagnostics; no transition consumer",
+    "vocal_instrumental": "analysis diagnostics; no transition consumer",
+    "danceability": "analysis diagnostics; no transition consumer",
+    "genre_source": "genre provenance in cache/reporting",
+    "mfcc_fingerprint": "genre-classifier diagnostics; timbre_fingerprint is active for similarity",
+}
+
+
 _CAMELOT_RE = re.compile(r"(1[0-2]|[1-9])([AB])")
 
 
@@ -99,6 +136,11 @@ class Track:
     # Core Info
     filePath: str
     fileName: str
+
+    @property
+    def track_id(self) -> str:
+        """Stabile Windows-Identitaet; Basename ist ausdruecklich ungeeignet."""
+        return os.path.normcase(os.path.abspath(os.path.normpath(self.filePath)))
 
     # ID3 Tag Info
     artist: str = "Unknown"
@@ -159,6 +201,16 @@ class Track:
     mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor fuer Similarity
     timbre_fingerprint: list = field(default_factory=list)  # Gemittelter MFCC-Fingerabdruck
     ai_metadata: dict = field(default_factory=dict)  # LLM Analysis Results
+
+    # Provenienz der Audioabdeckung. Luecken bleiben explizit sichtbar; ein
+    # Mix-Out darf nur verwendet werden, wenn das Track-Ende analysiert wurde.
+    analysis_mode: str = "unknown"
+    analysis_coverage: list = field(default_factory=list)
+    outro_covered: bool = False
+    lufs_status: str = "unknown"
+    lufs_coverage_seconds: float = 0.0
+    lufs_channels: int = 0
+    lufs_sample_rate: int = 0
 
 def key_to_camelot(track: Track):
     """Assigns a Camelot code to a track based on its key."""

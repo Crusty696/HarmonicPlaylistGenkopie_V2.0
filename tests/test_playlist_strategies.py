@@ -193,14 +193,13 @@ class TestEdgeCases:
     assert len(result) > 0
 
   def test_tracks_without_camelot_code(self):
-    """Tracks ohne Camelot-Code werden gefiltert."""
+    """Tracks ohne Camelot-Code bleiben per neutralem Fallback erhalten."""
     tracks = [
       make_track(camelotCode="", bpm=128.0),
       make_track(camelotCode="8A", bpm=128.0),
     ]
     result = generate_playlist(tracks, "Harmonic Flow", bpm_tolerance=3.0)
-    # Nur Track mit gueltigem Code sollte uebrig bleiben
-    assert len(result) >= 1
+    assert len(result) == 2
 
   def test_tracks_with_zero_bpm_filtered(self):
     """Tracks mit BPM 0 werden gefiltert."""
@@ -236,3 +235,18 @@ class TestEdgeCases:
     # Half-Time-Partner (60/120) muessen direkt aufeinander folgen
     idx_120, idx_60 = bpms.index(120.0), bpms.index(60.0)
     assert abs(idx_120 - idx_60) == 1, f"Reihenfolge: {bpms}"
+
+
+def test_strategy_config_filters_and_clamps_visible_parameters():
+  from hpg_core.playlist import StrategyConfig
+
+  config = StrategyConfig.from_mapping(
+    {"peak_position": 999, "genre_weight": -2, "overlap": 500}
+  )
+
+  assert config.peak_position == 80
+  assert config.genre_weight == 0.0
+  assert config.overlap == 64.0
+  assert set(config.effective_kwargs("Peak-Time")) == {
+    "peak_position", "harmonic_strictness", "allow_experimental"
+  }

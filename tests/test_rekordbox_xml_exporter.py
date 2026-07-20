@@ -321,7 +321,7 @@ class TestRekordboxCuePunkte:
   def test_cue_points_werden_hinzugefuegt(self, tmp_path):
     playlist = [make_track(
       title="T1", bpm=128.0, camelotCode="8A", duration=300.0,
-      mix_in_point=30.0, mix_out_point=270.0,
+      mix_in_point=30.0, mix_out_point=270.0, outro_covered=True,
     )]
     out = str(tmp_path / "cues.xml")
     fake_xml = FakeRekordboxXml()
@@ -358,7 +358,7 @@ class TestRekordboxCuePunkte:
 
     playlist = [make_track(
       title="T1", bpm=128.0, camelotCode="8A", duration=300.0,
-      mix_in_point=30.0, mix_out_point=270.0,
+      mix_in_point=30.0, mix_out_point=270.0, outro_covered=True,
     )]
     out = str(tmp_path / "cueerror.xml")
     with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True):
@@ -374,7 +374,10 @@ class TestRekordboxCuePunkte:
 
   def test_mix_in_cue_zeitstempel(self, tmp_path):
     """Mix-In Cue hat korrekten Zeitstempel."""
-    playlist = [make_track(mix_in_point=45.0, mix_out_point=250.0)]
+    playlist = [make_track(
+      duration=300.0, mix_in_point=45.0, mix_out_point=250.0,
+      outro_covered=True,
+    )]
     out = str(tmp_path / "cue_time.xml")
     fake_xml = FakeRekordboxXml()
     make_export(playlist, out, fake_xml=fake_xml)
@@ -383,3 +386,41 @@ class TestRekordboxCuePunkte:
     assert len(mix_in_cues) == 2
     for cue in mix_in_cues:
       assert cue["time"] == pytest.approx(45.0)
+
+  def test_partial_report_for_track_without_tail_coverage(self, tmp_path):
+    playlist = [make_track(
+      duration=300.0, mix_in_point=30.0, mix_out_point=270.0,
+      outro_covered=False,
+    )]
+    fake_xml = FakeRekordboxXml()
+    out = str(tmp_path / "partial.xml")
+    with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True):
+      with patch(
+        "hpg_core.exporters.rekordbox_xml_exporter.RekordboxXml",
+        lambda: fake_xml,
+        create=True,
+      ):
+        report = RekordboxXMLExporter().export(playlist, out)
+
+    assert report.status == "partial"
+    assert report.cues_written == 0
+    assert any("Cues ausgelassen" in error for error in report.errors)
+
+  def test_invalid_xml_does_not_replace_existing_output(self, tmp_path):
+    class InvalidXml(FakeRekordboxXml):
+      def save(self, path):
+        with open(path, "w") as handle:
+          handle.write("<broken")
+
+    out = tmp_path / "existing.xml"
+    out.write_text("<existing/>", encoding="utf-8")
+    with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True):
+      with patch(
+        "hpg_core.exporters.rekordbox_xml_exporter.RekordboxXml",
+        InvalidXml,
+        create=True,
+      ):
+        with pytest.raises(IOError):
+          RekordboxXMLExporter().export([make_track()], str(out))
+
+    assert out.read_text(encoding="utf-8") == "<existing/>"

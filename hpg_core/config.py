@@ -6,6 +6,7 @@ Centralizes all magic numbers and configurable parameters.
 # === Audio Processing Parameters ===
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)
+MAX_TRANSITION_OVERLAP_SECONDS = 64.0
 
 # === Intro/Outro Detection (RMS-Fallback, research-basiert 2026-07-17) ===
 # Suchfenster-Pruning nach Bittner et al. (ISMIR 2017, Spotify):
@@ -78,6 +79,12 @@ GENRE_WEIGHT_WITHOUT_DJ_BRAIN = 0.1  # Fallback ohne DJ Brain Daten
 # Volle Analyse: 600s (10 Min) als Sicherheitsnetz gegen riesige Dateien.
 LIBROSA_FAST_PATH_DURATION = 360  # Sekunden (fuer Rekordbox-Pfad)
 LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
+# Separates Endfenster verhindert, dass Outro/Mix-Out aus einem reinen
+# Track-Anfang extrapoliert werden. Die Zeitachse markiert eventuelle Luecken.
+LIBROSA_TAIL_DURATION = 180
+# Maximale dekodierte Float32-Groesse fuer eine vollstaendige Stereo-LUFS-
+# Messung. Groessere Dateien werden explizit als nicht gemessen markiert.
+LUFS_MAX_DECODE_BYTES = 512 * 1024 * 1024
 
 # === Parallel Analysis ===
 PARALLEL_ANALYSIS_TIMEOUT = 60  # Sekunden pro Track (schuetzt gegen korrupte Dateien)
@@ -108,6 +115,8 @@ AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default Olla
 # "gemma4" existiert nicht als Ollama-Modell — gemeint ist Gemma 3 12B
 AI_MODEL = "gemma3:12b" # Oder mistral, etc.
 AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
+# KI-Mixpunkte bleiben bis zu einer unabhaengigen Cue-Validierung advisory.
+AI_AUTO_APPLY_MIXPOINTS = False
 AI_SYSTEM_PROMPT = (
     "You are a professional electronic music curator and DJ. Analyze tracks with focus on "
     "sub-genres (like Forest Psy, Peak-time Techno, Deep Progressive), atmosphere, and precise mixing points. "

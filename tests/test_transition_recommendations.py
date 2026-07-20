@@ -2,8 +2,11 @@
 Tests fuer Transition Recommendations.
 Prueft ob Uebergangsempfehlungen DJ-taugliche Werte liefern.
 """
+from types import SimpleNamespace
+
 import pytest
-from hpg_core.playlist import compute_transition_recommendations
+from hpg_core.playlist import compute_set_timeline, compute_transition_recommendations
+from hpg_core.transition_renderer import TransitionClipSpec
 from tests.fixtures.track_factories import make_track
 
 
@@ -77,6 +80,36 @@ class TestRecommendationFields:
     assert hasattr(rec, "compatibility_score")
     assert hasattr(rec, "risk_level")
     assert hasattr(rec, "notes")
+    assert rec.plan is not None
+
+  def test_plan_is_the_single_timing_contract(self):
+    pair = _make_pair(duration=420.0)
+    rec = compute_transition_recommendations(pair, default_overlap=16.0)[0]
+    spec = TransitionClipSpec.from_plan(rec.plan, rec.from_track, rec.to_track)
+    timeline = compute_set_timeline(pair, transition_plans=[rec.plan])
+
+    assert spec.mix_out_sec == rec.plan.mix_out_a == rec.fade_out_end
+    assert spec.mix_in_sec == rec.plan.mix_in_b == rec.mix_entry
+    assert spec.crossfade_sec == rec.plan.overlap == rec.overlap
+    assert rec.plan.crossfade_frames == round(rec.plan.overlap * rec.plan.target_sr)
+    assert timeline.entries[0].overlap_with_next == rec.plan.overlap
+
+  def test_plan_and_renderer_share_overlap_limit(self, monkeypatch):
+    pair = _make_pair(duration=420.0)
+    oversized = SimpleNamespace(
+      adjusted_mix_out_a=360.0,
+      adjusted_mix_in_b=16.0,
+      overlap_seconds=120.0,
+    )
+    monkeypatch.setattr(
+      "hpg_core.playlist._process_dj_brain_recommendations",
+      lambda *_: (oversized, [], 120.0, 240.0),
+    )
+
+    rec = compute_transition_recommendations(pair)[0]
+    spec = TransitionClipSpec.from_plan(rec.plan, rec.from_track, rec.to_track)
+
+    assert rec.overlap == rec.plan.overlap == spec.crossfade_sec == 64.0
 
   def test_index_is_zero_based(self):
     """Index ist 0-basiert."""
