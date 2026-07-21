@@ -125,13 +125,21 @@ def validate_track_dict(data: dict) -> dict:
 
 def _quarantine_cache_row(cache_key: str, data: str, error: Exception) -> None:
     """Isoliert nur den ungueltigen Record; die restliche DB bleibt erhalten."""
-    with _connect_cache() as conn:
+    # Audit-Fix 2026-07-21: `with sqlite3.Connection` committet zwar, SCHLIESST
+    # die Verbindung aber NICHT -> jeder quarantinisierte Record leakte ein
+    # Datei-Handle (auf Windows blockiert das spaeter das Verschieben der DB).
+    # Explizit schliessen wie alle anderen Cache-Zugriffe.
+    conn = _connect_cache()
+    try:
         _ensure_cache_schema(conn)
         conn.execute(
             "INSERT INTO cache_quarantine (key, data, error, quarantined_at) VALUES (?, ?, ?, ?)",
             (cache_key, data, str(error), datetime.now(timezone.utc).isoformat()),
         )
         conn.execute("DELETE FROM cache WHERE key = ?", (cache_key,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _sqlite_error_code(error: sqlite3.Error) -> int | None:

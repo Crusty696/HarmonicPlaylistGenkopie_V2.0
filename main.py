@@ -2982,12 +2982,23 @@ class MixTipsPanel(QWidget):
     def _cleanup_existing_previews(self):
         """Laufenden Worker stoppen, Widgets entfernen, Temp-Dateien loeschen."""
         if self._render_worker is not None:
-            # Signale trennen, damit die UI des Panels nicht mehr beeinflusst wird
-            try:
-                self._render_worker.clip_ready.disconnect(self._on_clip_ready)
-                self._render_worker.clip_error.disconnect(self._on_clip_error)
-            except TypeError:
-                pass
+            # Audit-Fix 2026-07-21: ALLE Signale generisch trennen (ohne Slot-Arg).
+            # Vorher wurde clip_ready/clip_error mit einem konkreten Slot getrennt,
+            # der nie verbunden war (Signale haengen an Lambdas) -> TypeError
+            # verschluckt, nichts getrennt; vor allem blieb 'finished' mit
+            # _on_preview_worker_finished verbunden. Beendete sich dieser alte
+            # Worker spaeter, feuerte finished -> _on_preview_worker_finished las
+            # das inzwischen NEUE self._render_worker und rief deleteLater() auf
+            # einem laufenden QThread -> "QThread destroyed while running"-Crash.
+            for _sig in (
+                self._render_worker.clip_ready,
+                self._render_worker.clip_error,
+                self._render_worker.finished,
+            ):
+                try:
+                    _sig.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
 
             self._render_worker.request_cancel()
 
@@ -3331,7 +3342,10 @@ class MainWindow(QMainWindow):
             warn_text = "System-Hinweis: Einige Dienste sind eingeschraenkt (Fuer Details hier hovern)"
             self.status_bar.set_status(warn_text)
             self.status_bar.setToolTip("\n".join(warnings))
-            self.status_bar.setStyleSheet("QStatusBar { background-color: #2b1f1a; color: #ffaa00; font-weight: bold; }")
+            # Audit-Fix 2026-07-21: status_bar ist ein StatusBarWidget(QWidget),
+            # KEIN QStatusBar -> der alte QStatusBar-Selektor matchte nie, die
+            # orange Warnfarbe erschien nicht. Korrekter Widget-Typ.
+            self.status_bar.setStyleSheet("StatusBarWidget { background-color: #2b1f1a; color: #ffaa00; font-weight: bold; }")
 
     def init_ui(self):
         # Zentrales Widget

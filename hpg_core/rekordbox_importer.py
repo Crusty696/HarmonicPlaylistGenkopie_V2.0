@@ -155,15 +155,22 @@ class RekordboxImporter:
                 content_iterator = self.db.get_content()
 
             for content in content_iterator:
-                # Build full file path
+                # Audit-Fix 2026-07-21: DjmdContent.FolderPath ist laut pyrekordbox
+                # bereits der VOLLE Dateipfad (inkl. Dateiname), NICHT der Ordner.
+                # Das alte os.path.join(folder_path, file_name) erzeugte
+                # ".../NOISE.wav/NOISE.wav" -> Exact-Path-Lookup schlug IMMER fehl,
+                # alle Lookups fielen auf den Basename-Fallback zurueck (Kollision
+                # bei gleichnamigen Dateien in verschiedenen Ordnern -> falsche
+                # BPM/Key/Cues). FolderPath direkt verwenden.
                 folder_path = content.FolderPath or ""
                 file_name = content.FileNameL or content.FileNameS or ""
 
                 if not file_name:
                     continue
 
-                # Normalize path for matching
-                full_path = os.path.join(folder_path, file_name)
+                # Normalize path for matching — FolderPath ist bereits der volle
+                # Pfad. Nur falls er (untypisch) fehlt, aus Ordner+Name bauen.
+                full_path = folder_path if folder_path else os.path.join(folder_path, file_name)
                 full_path = os.path.normpath(full_path).lower()
 
                 # Extract data

@@ -1050,9 +1050,13 @@ def analyze_track(file_path: str) -> Track | None:
                             if pos - dedup_positions[-1] >= 2.0:
                                 dedup_positions.append(pos)
                                 
-                    if len(dedup_positions) >= 2:
+                    # Audit-Fix 2026-07-21: mind. 3 Cues noetig. Bei genau 2 waren
+                    # cue_in (=pos[1]) und cue_out (=pos[-1]) IDENTISCH -> die
+                    # Heuristik loggte "angewendet", scheiterte dann still an
+                    # in < out und verwarf das Ergebnis wieder.
+                    if len(dedup_positions) >= 3:
                         cue_in = dedup_positions[1]
-                        
+
                         last_cue = dedup_positions[-1]
                         # If last cue is less than 15s from track end, use the penultimate cue for mix-out
                         if duration - last_cue < 15.0 and len(dedup_positions) >= 3:
@@ -1148,6 +1152,12 @@ def analyze_track(file_path: str) -> Track | None:
             # Timbre-Fingerprint fuer den Fast-Path-Ausschnitt
             timbre_fp = generate_timbre_fingerprint(y, sr)
 
+            # Overall Track Averages for Advanced Features (VOR dem Sektions-Loop,
+            # damit Sektionen ausserhalb des geladenen Audiofensters darauf
+            # zurueckfallen koennen).
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr)
+            track_pr, track_sf = analyze_rhythm_complexity(y, sr)
+
             # Update each section with detailed frequency and rhythm data
             updated_sections = []
             for sec_dict in section_dicts:
@@ -1171,19 +1181,22 @@ def analyze_track(file_path: str) -> Track | None:
                     sec_dict['percussive_ratio'] = pr
                     sec_dict['spectral_flatness'] = sf
                 else:
-                    sec_dict['avg_bass'] = sec_dict.get('avg_bass', 0.0)
-                    sec_dict['avg_mids'] = 0.0
-                    sec_dict['avg_highs'] = 0.0
-                    sec_dict['percussive_ratio'] = 0.0
-                    sec_dict['spectral_flatness'] = 0.0
+                    # Audit-Fix 2026-07-21: Sektion liegt ausserhalb des geladenen
+                    # Audiofensters (Fast-Path 360s / Full 600s) oder ist zu kurz.
+                    # Vorher wurden hier harte 0.0-Platzhalter geschrieben, die den
+                    # sinnvollen Track-Level-Fallback in dj_brain
+                    # (out_sec_data.get('avg_bass', track_a.avg_bass)) UEBERSCHRIEBEN —
+                    # genau am kritischen Mix-Out langer Tracks. Jetzt erben diese
+                    # Sektionen die Track-weiten Kennwerte statt Bass=0 vorzutaeuschen.
+                    sec_dict['avg_bass'] = sec_dict.get('avg_bass', avg_b)
+                    sec_dict['avg_mids'] = avg_m
+                    sec_dict['avg_highs'] = avg_h
+                    sec_dict['percussive_ratio'] = track_pr
+                    sec_dict['spectral_flatness'] = track_sf
 
                 updated_sections.append(sec_dict)
 
             section_dicts = updated_sections
-
-            # Overall Track Averages for Advanced Features
-            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr)
-            track_pr, track_sf = analyze_rhythm_complexity(y, sr)
 
         except Exception as e:
             logger.warning(f"Erweiterte Analyse fehlgeschlagen: {e}")

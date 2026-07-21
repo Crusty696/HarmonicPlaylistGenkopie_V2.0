@@ -283,6 +283,7 @@ def ollama_pull(model, cancel_check=None):
     if cancel_check is None:
         _run_hidden([exe, "pull", model], timeout=1800)  # bis 30 Min fuer grosse Modelle
     else:
+        proc = None
         try:
             proc = subprocess.Popen(
                 [exe, "pull", model],
@@ -291,17 +292,30 @@ def ollama_pull(model, cancel_check=None):
             )
             deadline = time.time() + 1800
             while proc.poll() is None:
-                if cancel_check() or time.time() > deadline:
+                # Audit-Fix 2026-07-21: cancel_check() eigenes try — wirft der
+                # Callback, wurde vorher der Pull-Prozess verwaist weitergefuehrt.
+                try:
+                    cancelled = bool(cancel_check())
+                except Exception:
+                    cancelled = True
+                if cancelled or time.time() > deadline:
                     proc.terminate()
                     try:
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
+                        proc.wait()  # Zombie vermeiden
                     logger.info(f"Ollama-Pull abgebrochen: {model}")
                     return False
                 time.sleep(0.5)
         except Exception as e:
             logger.debug(f"Ollama-Pull fehlgeschlagen {model}: {e}")
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
             return False
     return any(m.split(":")[0] == model.split(":")[0] for m in ollama_models())
 
@@ -351,8 +365,12 @@ def lms_detect_port():
     if not exe or not os.path.exists(exe):
         return None
     out = _run_hidden([exe, "server", "status"], timeout=10) or ""
-    if "running" in out.lower():
-        m = re.search(r"port\s+(\d+)", out)
+    low = out.lower()
+    # Audit-Fix 2026-07-21: "not running" enthaelt den Substring "running" —
+    # explizit ausschliessen. Port zusaetzlich aus "host:port"-Form lesen, falls
+    # die CLI-Ausgabe das Wort "port" nicht enthaelt.
+    if "running" in low and "not running" not in low:
+        m = re.search(r"port\s+(\d+)", low) or re.search(r":(\d{2,5})\b", out)
         if m:
             return int(m.group(1))
     return None

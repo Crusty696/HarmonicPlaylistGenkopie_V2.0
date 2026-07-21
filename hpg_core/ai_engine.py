@@ -151,20 +151,30 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
     else:
         url = config.AI_API_URL_OLLAMA
 
+    # Audit-Fix 2026-07-21: None-sicher formatieren. Ein explizit vorhandener
+    # None-Wert (bpm/duration/start_time) haette format(None, ".1f") geworfen und
+    # den AI-Worker-Thread ungefangen gecrasht (Prompt-Bau liegt vor dem try).
+    def _f(value) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
     sections_str = ""
     if hasattr(track, "sections") and track.sections:
         sections_list = []
         for s in track.sections:
             label = s.get("label", "unknown")
-            start = s.get("start_time", 0.0)
-            end = s.get("end_time", 0.0)
-            energy = s.get("avg_energy", 0.0)
+            start = _f(s.get("start_time", 0.0))
+            end = _f(s.get("end_time", 0.0))
+            energy = _f(s.get("avg_energy", 0.0))
             sections_list.append(f"{label}({start:.1f}s-{end:.1f}s, energy:{energy:.1f})")
         sections_str = " | ".join(sections_list)
 
     prompt = (
         f"Track: {track.artist} - {track.title}. "
-        f"Genre: {track.detected_genre}. BPM: {track.bpm:.1f}. Energy: {track.energy}. Duration: {track.duration:.1f}s.\n"
+        f"Genre: {track.detected_genre}. BPM: {_f(track.bpm):.1f}. "
+        f"Energy: {track.energy}. Duration: {_f(track.duration):.1f}s.\n"
     )
     if sections_str:
         prompt += f"Detected Audio Sections: {sections_str}\n"

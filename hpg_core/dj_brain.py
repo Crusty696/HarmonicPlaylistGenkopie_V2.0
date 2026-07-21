@@ -762,10 +762,20 @@ def _bpm_advice(bpm_a: float, bpm_b: float) -> str:
   abs_diff, relation = _effective_bpm_diff(bpm_a, bpm_b)
   pct = abs(diff / bpm_a) * 100  # Pitch-Prozent-Aenderung
 
-  if relation in ("half", "double") and abs_diff <= 2.0:
+  # Audit-Fix 2026-07-21: Half/Double-Beziehung UNABHAENGIG von der 2.0-Grenze
+  # behandeln. Vorher fiel z.B. 140->73 (double, eff. Diff ~3 BPM) in die
+  # rohen Prozent-Zweige und meldete unsinnige "52% runter pitchen" — jetzt
+  # wird die effektive Abweichung genannt und auf Phrasen-Alignment verwiesen.
+  if relation in ("half", "double"):
+    if abs_diff < 0.3:
+      return (
+        f"{bpm_a:.1f} → {bpm_b:.1f} — Half/Double-Time kompatibel, "
+        f"Downbeat exakt auf Phrase setzen"
+      )
+    eff_pct = abs_diff / bpm_a * 100
     return (
-      f"{bpm_a:.1f} → {bpm_b:.1f} — Half/Double-Time kompatibel, "
-      f"Downbeat exakt auf Phrase setzen"
+      f"{bpm_a:.1f} → {bpm_b:.1f} — Half/Double-Time (eff. {abs_diff:.1f} BPM, "
+      f"~{eff_pct:.1f}% Fein-Pitch), Downbeat auf Phrase setzen"
     )
 
   if abs_diff < 0.3:
@@ -1080,10 +1090,13 @@ def _assess_transition_risks(
   risks = []
 
   # BPM-Check mit Half/Double-Time-Erkennung
+  # Audit-Fix 2026-07-21: Half/Double UNABHAENGIG von der 2.0-Grenze melden —
+  # sonst blieb ein Half/Double-Uebergang mit eff. Diff 2-4 BPM voellig ohne Hinweis.
   bpm_diff, bpm_relation = _effective_bpm_diff(track_a.bpm, track_b.bpm)
-  if bpm_relation in ("half", "double") and bpm_diff <= 2.0:
+  if bpm_relation in ("half", "double"):
+    suffix = "" if bpm_diff <= 2.0 else f", eff. {bpm_diff:.1f} BPM angleichen"
     risks.append(
-      f"Half/Double-Time ({track_a.bpm:.1f}↔{track_b.bpm:.1f}) -- exakt auf Phrase/Downbeat cutten"
+      f"Half/Double-Time ({track_a.bpm:.1f}↔{track_b.bpm:.1f}) -- exakt auf Phrase/Downbeat cutten{suffix}"
     )
   elif bpm_diff > 8:
     risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")

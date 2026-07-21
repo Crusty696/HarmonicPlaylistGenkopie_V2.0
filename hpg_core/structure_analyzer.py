@@ -580,6 +580,12 @@ def analyze_structure(
     boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit, anchor)
 
   # Step 4: Compute energy and trend for each section
+  # Audit-Fix 2026-07-21: Grenzen, die (nach Quantisierung/Clamp) auf oder hinter
+  # der Track-Dauer liegen, verwerfen — sonst entsteht eine sinnlose 0s-Sektion
+  # (start == end == duration) am Ende.
+  boundaries = [b for b in boundaries if b < duration - 1e-3]
+  if not boundaries:
+    boundaries = [0.0]
   section_ends = boundaries[1:] + [duration]
   energies = []
   trends = []

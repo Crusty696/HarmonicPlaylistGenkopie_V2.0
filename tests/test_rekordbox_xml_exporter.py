@@ -246,14 +246,29 @@ class TestRekordboxExport:
           exporter.export([], out)
 
   def test_export_korrekte_anzahl_tracks(self, tmp_path):
+    # Distinkte filePaths: Rekordbox lehnt doppelte Locations ab (Dedup im Export)
     playlist = [
-      make_track(title=f"T{i}", bpm=128.0, camelotCode="8A", duration=300.0)
+      make_track(title=f"T{i}", filePath=f"/test/track_{i}.mp3",
+                 bpm=128.0, camelotCode="8A", duration=300.0)
       for i in range(3)
     ]
     out = str(tmp_path / "multi.xml")
     fake_xml = FakeRekordboxXml()
     make_export(playlist, out, fake_xml=fake_xml)
     assert len(fake_xml.tracks) == 3
+
+  def test_export_dedupliziert_gleiche_location(self, tmp_path):
+    """Audit-Fix 2026-07-21: doppelte Location darf den Export nicht killen —
+    Duplikat wird uebersprungen, restliche Tracks bleiben erhalten."""
+    playlist = [
+      make_track(title="A", filePath="/test/dup.mp3", bpm=128.0, camelotCode="8A", duration=300.0),
+      make_track(title="B", filePath="/test/dup.mp3", bpm=128.0, camelotCode="8A", duration=300.0),
+      make_track(title="C", filePath="/test/unique.mp3", bpm=128.0, camelotCode="8A", duration=300.0),
+    ]
+    out = str(tmp_path / "dup.xml")
+    fake_xml = FakeRekordboxXml()
+    make_export(playlist, out, fake_xml=fake_xml)
+    assert len(fake_xml.tracks) == 2
 
   def test_export_setzt_bpm_metadata(self, tmp_path):
     playlist = [make_track(title="T1", bpm=133.5, camelotCode="8A", duration=300.0)]
@@ -279,8 +294,8 @@ class TestRekordboxExport:
 
   def test_export_setzt_track_id(self, tmp_path):
     playlist = [
-      make_track(title="T1"),
-      make_track(title="T2"),
+      make_track(title="T1", filePath="/test/track_1.mp3"),
+      make_track(title="T2", filePath="/test/track_2.mp3"),
     ]
     out = str(tmp_path / "ids.xml")
     fake_xml = FakeRekordboxXml()

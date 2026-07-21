@@ -15,6 +15,7 @@ Die alten Module re-exportieren ihre Namen weiter (keine API-Brueche).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 
 # Die 9 kanonischen Genres der App (rein elektronische Musik)
 CANONICAL_GENRES: tuple[str, ...] = (
@@ -510,6 +511,20 @@ def _validate_genre_tables() -> None:
     for genre in canonical:
         if GENRE_COMPATIBILITY.get((genre, genre)) != 1.0:
             problems.append(f"Selbst-Paar fehlt/!=1.0 in GENRE_COMPATIBILITY: {genre}")
+
+    # Audit-Fix 2026-07-21: Cross-Paar-Vollstaendigkeit explizit pruefen.
+    # Der fruehere Set-Vergleich (compat_genres != canonical) war durch die
+    # Selbst-Paare IMMER trivial erfuellt und uebersah fehlende Cross-Paare —
+    # get_genre_compatibility waere dann still auf 0.5 gedriftet.
+    missing_pairs = [
+        (a, b)
+        for a, b in combinations(sorted(canonical), 2)
+        if (a, b) not in GENRE_COMPATIBILITY and (b, a) not in GENRE_COMPATIBILITY
+    ]
+    if missing_pairs:
+        problems.append(
+            f"GENRE_COMPATIBILITY fehlende Cross-Paare ({len(missing_pairs)}): {missing_pairs}"
+        )
 
     bad_id3_targets = set(ID3_GENRE_MAP.values()) - canonical
     if bad_id3_targets:

@@ -129,17 +129,34 @@ class RekordboxXMLExporter(BaseExporter):
         tracks_written = 0
         cues_written = 0
         beatgrids_written = 0
+        # Audit-Fix 2026-07-21: Duplikate (gleiche Location) VOR dem Loop entfernen.
+        # RekordboxXml.add_track wirft XmlDuplicateError bei doppelter Location —
+        # vorher riss ein einziges Duplikat ueber die Vollstaendigkeitspruefung den
+        # GESAMTEN Export (IOError, nichts geschrieben), obwohl n-1 Tracks gueltig waren.
+        unique_tracks = []
+        seen_locations = set()
+        for track in playlist:
+            loc = os.path.normcase(os.path.abspath(track.filePath or ""))
+            if loc in seen_locations:
+                errors.append(f"Track uebersprungen (Duplikat): {track.filePath}")
+                continue
+            seen_locations.add(loc)
+            unique_tracks.append(track)
+
         try:
             # Create new Rekordbox XML
             xml = RekordboxXml()
 
-            # Add tracks to collection
-            for idx, track in enumerate(playlist, start=1):
+            # Add tracks to collection — nur erfolgreich geschriebene IDs merken,
+            # damit die Playlist-Referenzen nie auf fehlende TrackIDs zeigen.
+            written_ids = []
+            for idx, track in enumerate(unique_tracks, start=1):
                 try:
                     cue_count, beatgrid_count, track_errors = (
                         self._add_track_to_collection(xml, track, idx)
                     )
                     tracks_written += 1
+                    written_ids.append(str(idx))
                     cues_written += cue_count
                     beatgrids_written += beatgrid_count
                     errors.extend(track_errors)
@@ -150,8 +167,8 @@ class RekordboxXMLExporter(BaseExporter):
             # Ordner und Playlist muessen explizit angelegt werden
             folder = xml.add_playlist_folder("HPG Playlists")
             pl = folder.add_playlist(playlist_name)
-            for idx in range(1, tracks_written + 1):
-                pl.add_track(str(idx))
+            for track_id in written_ids:
+                pl.add_track(track_id)
 
             output_dir = os.path.dirname(os.path.abspath(output_path))
             os.makedirs(output_dir, exist_ok=True)
@@ -162,14 +179,14 @@ class RekordboxXMLExporter(BaseExporter):
             handle.close()
             xml.save(temp_path)
             ET.parse(temp_path)
-            if tracks_written != len(playlist):
+            if tracks_written != len(unique_tracks):
                 raise IOError(
-                    f"Trackanzahl unvollstaendig: {tracks_written}/{len(playlist)}"
+                    f"Trackanzahl unvollstaendig: {tracks_written}/{len(unique_tracks)}"
                 )
             os.replace(temp_path, output_path)
             temp_path = ""
 
-            logger.info(f"Rekordbox XML exportiert: {output_path} ({len(playlist)} Tracks, Playlist: {playlist_name})")
+            logger.info(f"Rekordbox XML exportiert: {output_path} ({tracks_written} Tracks, Playlist: {playlist_name})")
             return ExportReport(
                 status="partial" if errors else "success",
                 output_path=output_path,

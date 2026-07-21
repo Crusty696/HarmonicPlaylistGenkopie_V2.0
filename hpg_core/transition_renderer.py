@@ -114,14 +114,19 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     """
     sr = spec.target_sr
     # Sicherheitslimit: max 64s Crossfade -- Trance/Progressive blenden 32-64 Bars
-    # (~55-110s bei 138 BPM), 32s kappte die Preview systematisch vor dem Mix-Out
-    cf_sec = min(spec.crossfade_sec, MAX_TRANSITION_OVERLAP_SECONDS)
+    # (~55-110s bei 138 BPM), 32s kappte die Preview systematisch vor dem Mix-Out.
+    # Audit-Fix 2026-07-21: untere Grenze 0 erzwingen. Ein degenerierter Mixplan
+    # (overlap <= 0, aus plan.overlap ungeprueft uebernommen) ergab sonst negative
+    # cf_frames -> np.linspace(..., negativ) / sosfiltfilt-Crash statt sauberem Clip.
+    cf_sec = min(max(0.0, spec.crossfade_sec), MAX_TRANSITION_OVERLAP_SECONDS)
+    pre_roll = max(0.0, spec.pre_roll_sec)
+    post_roll = max(0.0, spec.post_roll_sec)
 
     # Segmente berechnen
-    a_start = max(0.0, spec.mix_out_sec - spec.pre_roll_sec)
-    a_dur   = spec.pre_roll_sec + cf_sec
+    a_start = max(0.0, spec.mix_out_sec - pre_roll)
+    a_dur   = pre_roll + cf_sec
     b_start = max(0.0, spec.mix_in_sec)
-    b_dur   = cf_sec + spec.post_roll_sec
+    b_dur   = cf_sec + post_roll
 
     # Audio laden (beide Segmente)
     seg_a = _load_segment(spec.track_a_path, a_start, a_dur, sr)
@@ -476,6 +481,14 @@ def _apply_eq_crossfade(
     """
     fo = np.linspace(1.0, 0.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
     fi = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
+
+    # Audit-Fix 2026-07-21: sosfiltfilt verlangt Segmentlaenge > padlen (~30-60
+    # Samples). Bei extrem kurzem Crossfade (< ~1.5ms) crasht der Filter mit
+    # "input vector x must be greater than padlen". Solche Winz-Crossfades sind
+    # ohnehin degeneriert -> sauberer linearer Crossfade ohne EQ-Filter.
+    min_frames = min(len(seg_a), len(seg_b))
+    if min_frames < 64:
+        return (seg_a * fo + seg_b * fi).astype(np.float32)
 
     t_type = str(config.transition_type).lower()
 

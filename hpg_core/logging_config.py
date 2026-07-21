@@ -51,9 +51,9 @@ class _CompactFormatter(logging.Formatter):
   def format(self, record):
     # Kurzname: hpg_core.analysis -> analysis
     short_name = record.name
+    # Audit-Fix 2026-07-21: toter elif entfernt — "hpg_core.exporters." matcht
+    # bereits das erste if (identischer Strip).
     if short_name.startswith("hpg_core."):
-      short_name = short_name[9:]
-    elif short_name.startswith("hpg_core.exporters."):
       short_name = short_name[9:]
 
     tag = self.LEVEL_TAGS.get(record.levelname, f"[{record.levelname}]")

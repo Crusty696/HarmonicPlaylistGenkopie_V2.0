@@ -221,7 +221,10 @@ def calculate_enhanced_compatibility(
     if bpm_diff > bpm_tolerance:
         bpm_smoothness = 0.0
     else:
-        bpm_smoothness = math.exp(-bpm_diff / (bpm_tolerance / 2))
+        # Audit-Fix 2026-07-21: bpm_tolerance==0 ergab exp(-0/0) -> ZeroDivisionError.
+        # calculate_playlist_quality gated bereits <=0; der Enhanced-Pfad jetzt auch.
+        denom = max(bpm_tolerance / 2, 1e-9)
+        bpm_smoothness = math.exp(-bpm_diff / denom)
 
     # Energy flow analysis
     energy_diff = track2.energy - track1.energy
@@ -680,7 +683,13 @@ def _sort_peak_time(
     # Assign tracks to positions with harmonic consideration
     ordered_tracks: list[Optional[Track]] = [None] * count
 
-    for position_idx, track_idx in enumerate(zip(scored_tracks, waveform_positions)):
+    # Audit-Fix 2026-07-21: Tracks nach combined_score (Energie+BPM) sortieren,
+    # BEVOR sie auf die Peak-Kurve gelegt werden. Vorher lief die Zuweisung ueber
+    # den Eingabe-Index -> die Peak-Dramaturgie (ruhige Tracks an Start/Ende,
+    # energiereiche am Peak) entstand nie und das Ergebnis haing an der Ladereihenfolge.
+    scored_by_energy = sorted(scored_tracks, key=lambda item: item[1])
+
+    for track_idx in zip(scored_by_energy, waveform_positions):
         track, score, norm_bpm, norm_energy = track_idx[0]
         position = track_idx[1]
 
@@ -919,6 +928,7 @@ def predict_transition_type(
     from_track: Track,
     to_track: Track,
     bpm_tolerance: float = 3.0,
+    **kwargs,
 ) -> str:
     """
     Sagt den optimalen Transition-Typ vorher basierend auf Track-Eigenschaften.
@@ -940,8 +950,11 @@ def predict_transition_type(
     energy_delta = to_track.energy - from_track.energy
     abs_energy_delta = abs(energy_delta)
 
-    # Harmonic Compatibility pruefen
-    harmonic_score = calculate_compatibility(from_track, to_track, bpm_tolerance)
+    # Harmonic Compatibility pruefen — mit gewaehltem Scoring-Kontext (HPG-001):
+    # der vorhergesagte Typ muss zum angezeigten Score passen, nicht zu Defaults.
+    harmonic_score = calculate_compatibility(
+        from_track, to_track, bpm_tolerance, **kwargs
+    )
 
     # Genre-Info
     genre_a = getattr(from_track, "detected_genre", "Unknown") or "Unknown"
@@ -1265,7 +1278,7 @@ def compute_transition_recommendations(
         notes = "; ".join(notes_parts)
 
         transition_type = predict_transition_type(
-            current, upcoming, bpm_tolerance
+            current, upcoming, bpm_tolerance, **ctx
         )
         tempo_ratio = (
             float(upcoming.bpm / current.bpm)

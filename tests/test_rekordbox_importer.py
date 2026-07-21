@@ -56,7 +56,9 @@ class FakeContent:
     color_name=None,
     cues=None,
   ):
-    self.FolderPath = folder_path
+    # pyrekordbox: DjmdContent.FolderPath ist der VOLLE Dateipfad (inkl. Name),
+    # nicht der Ordner. Fixture bildet das real ab (Audit-Fix 2026-07-21).
+    self.FolderPath = os.path.join(folder_path, filename) if filename else folder_path
     self.FileNameL = filename
     self.FileNameS = filename
     self.BPM = bpm

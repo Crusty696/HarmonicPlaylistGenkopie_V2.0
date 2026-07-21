@@ -11,6 +11,7 @@ from hpg_core.playlist import (
   calculate_playlist_quality,
   calculate_transition_objective,
   compute_transition_recommendations,
+  generate_playlist,
   resolve_scoring_context,
 )
 
@@ -34,6 +35,30 @@ def _track(name, camelot, energy, ai_metadata=None):
     energy=energy,
     ai_metadata=ai_metadata or {},
   )
+
+
+def test_peak_time_orders_by_energy_not_input_order():
+  """Audit-Fix 2026-07-21: Peak-Time muss energiereiche Tracks in die Peak-Zone
+  legen und darf NICHT von der Eingabereihenfolge abhaengen."""
+  # Gleicher Key/BPM -> nur Energie unterscheidet; Camelot 8A haelt BPM-Gate offen
+  energies = [10, 30, 50, 70, 90, 75, 55, 35, 15]
+  tracks = [_track(f"t{i}", "8A", e) for i, e in enumerate(energies)]
+
+  ordered = generate_playlist(list(tracks), "Peak-Time", bpm_tolerance=3.0,
+                              advanced_params={"peak_position": 70})
+  assert len(ordered) == len(tracks)
+
+  # Der energiereichste Track (90) darf nicht am Rand (Start/Ende) stehen,
+  # sondern muss in die Peak-Region wandern.
+  pos_max = next(i for i, t in enumerate(ordered) if t.energy == 90)
+  assert 0 < pos_max < len(ordered) - 1
+
+  # Unabhaengigkeit von der Eingabereihenfolge: umgekehrte Eingabe -> gleiche
+  # Energie-Sequenz (bei eindeutigen Energien deterministisch).
+  reversed_in = list(reversed(tracks))
+  ordered_rev = generate_playlist(reversed_in, "Peak-Time", bpm_tolerance=3.0,
+                                  advanced_params={"peak_position": 70})
+  assert [t.energy for t in ordered] == [t.energy for t in ordered_rev]
 
 
 def test_ai_bonus_has_one_bounded_definition():
