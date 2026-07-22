@@ -712,11 +712,92 @@ class TransitionRenderWorker(QThread):
         self._temp_files.clear()
 
 
+class WaveformWidget(QWidget):
+    """Zeichnet den gerenderten Transition-Clip als Wellenform.
+
+    Deck-Element des Ink-Navy-Gold-Designs: die Crossfade-Region ist gold
+    hervorgehoben, ein Playhead folgt der Wiedergabe. So sieht der DJ, WO
+    gemischt wird.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._peaks = None       # Liste 0..1
+        self._pos = 0.0          # Playhead 0..1
+        self._cf_start = None    # Crossfade-Start 0..1
+        self._cf_end = None
+        self.setMinimumHeight(58)
+
+    def load(self, wav_path: str, crossfade_sec: float, preroll_sec: float = 30.0):
+        """Laedt Clip, berechnet Peak-Huellkurve + Crossfade-Bereich."""
+        self._peaks = None
+        self._cf_start = self._cf_end = None
+        try:
+            import soundfile as sf
+            import numpy as np
+            data, sr = sf.read(wav_path, dtype="float32", always_2d=True)
+            mono = data.mean(axis=1)
+            total = len(mono) / sr if sr else 0.0
+            n_bars = 700
+            chunk = max(1, len(mono) // n_bars)
+            peaks = [float(np.abs(mono[i:i + chunk]).max())
+                     for i in range(0, len(mono), chunk)]
+            peak_max = max(peaks) if peaks else 1.0
+            self._peaks = [p / peak_max for p in peaks] if peak_max > 0 else peaks
+            if total > 0:
+                self._cf_start = min(1.0, preroll_sec / total)
+                self._cf_end = min(1.0, (preroll_sec + crossfade_sec) / total)
+        except Exception:
+            self._peaks = None
+        self.update()
+
+    def set_position(self, pos_ms: int, dur_ms: int):
+        self._pos = (pos_ms / dur_ms) if dur_ms else 0.0
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        p.fillRect(self.rect(), QColor(COLORS["bg_input"]))
+        p.setPen(QPen(QColor(COLORS["border"]), 1))
+        p.drawRect(0, 0, w - 1, h - 1)
+        if not self._peaks:
+            p.setPen(QColor(COLORS["text_dim"]))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "Wellenform wird geladen …")
+            p.end()
+            return
+        mid = h / 2.0
+        # Crossfade-Region hinterlegen
+        if self._cf_start is not None:
+            x0 = self._cf_start * w
+            x1 = self._cf_end * w
+            cf = QColor(COLORS["accent_primary"]); cf.setAlpha(28)
+            p.fillRect(QRectF(x0, 0, x1 - x0, h), cf)
+        n = len(self._peaks)
+        steel = QColor(COLORS["accent_secondary"])
+        gold = QColor(COLORS["accent_primary"])
+        for i, v in enumerate(self._peaks):
+            x = i / n * w
+            bh = v * (h - 8)
+            frac = i / n
+            in_cf = (self._cf_start is not None
+                     and self._cf_start <= frac <= self._cf_end)
+            p.setPen(QPen(gold if in_cf else steel, 1))
+            p.drawLine(QPointF(x, mid - bh / 2), QPointF(x, mid + bh / 2))
+        # Playhead
+        px = self._pos * w
+        p.setPen(QPen(QColor(COLORS["text_bright"]), 1.5))
+        p.drawLine(QPointF(px, 0), QPointF(px, h))
+        p.end()
+
+
 class TransitionPreviewWidget(QWidget):
     """
     Player-Widget fuer einen einzelnen Transitions-Preview-Clip.
-    Zeigt: Play/Stop-Button, Fortschritts-Slider, Zeitanzeige, 
-    proportionale Visualisierung von Track A/B/Mix sowie genaue Mix-Punkte.
+    Zeigt: Play/Stop-Button, Fortschritts-Slider, Zeitanzeige,
+    Wellenform mit Crossfade-Region sowie genaue Mix-Punkte.
     Ist deaktiviert bis set_wav_path() aufgerufen wird.
     """
 
@@ -767,57 +848,43 @@ class TransitionPreviewWidget(QWidget):
         self.segments_layout.setSpacing(2)
         self.segments_layout.setContentsMargins(0, 2, 0, 2)
         
+        # Ink-Navy-Gold: A = Stahlblau, MIX = Gold, B = gedaempftes Gruen
+        seg_style = (
+            "QLabel {{ background-color: {bg}; color: {fg}; font-size: 10px; "
+            "font-weight: bold; border: 1px solid {bd}; border-radius: 3px; "
+            "padding: 4px 6px; }}"
+        )
         self.lbl_a = QLabel(f"A: {from_name}\n(Out: {mix_out:.1f}s)")
         self.lbl_a.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_a.setStyleSheet("""
-            QLabel {
-                background-color: #1E3A8A; 
-                color: #93C5FD; 
-                font-size: 10px; 
-                font-weight: bold;
-                border: 1px solid #3B82F6;
-                border-radius: 4px;
-                padding: 4px 6px;
-            }
-        """)
+        self.lbl_a.setStyleSheet(seg_style.format(
+            bg=COLORS["accent_secondary_bg"], fg=COLORS["accent_secondary"],
+            bd=COLORS["accent_secondary"]))
         self.lbl_a.setToolTip(f"Track A: {from_track.fileName}\nSpielt von 0s bis 30s in dieser Vorschau.\nÜbergang startet bei Sekunde {mix_out:.1f} des Original-Tracks A.")
-        
+
         self.lbl_mix = QLabel(f"⇄ MIX ({crossfade:.1f}s)\n{t_label}")
         self.lbl_mix.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_mix.setStyleSheet("""
-            QLabel {
-                background-color: #5B21B6; 
-                color: #DDD6FE; 
-                font-size: 10px; 
-                font-weight: bold;
-                border: 1px solid #8B5CF6;
-                border-radius: 4px;
-                padding: 4px 6px;
-            }
-        """)
+        self.lbl_mix.setStyleSheet(seg_style.format(
+            bg=COLORS["accent_primary_bg"], fg=COLORS["accent_primary"],
+            bd=COLORS["accent_primary"]))
         self.lbl_mix.setToolTip(f"Mischbereich (Crossfade) für {crossfade:.1f} Sekunden.\nSpielt von 30.0s bis {30.0+crossfade:.1f}s in dieser Vorschau.")
-        
+
         self.lbl_b = QLabel(f"B: {to_name}\n(In: {mix_in:.1f}s)")
         self.lbl_b.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_b.setStyleSheet("""
-            QLabel {
-                background-color: #064E3B; 
-                color: #A7F3D0; 
-                font-size: 10px; 
-                font-weight: bold;
-                border: 1px solid #10B981;
-                border-radius: 4px;
-                padding: 4px 6px;
-            }
-        """)
+        self.lbl_b.setStyleSheet(seg_style.format(
+            bg="#12233a", fg=COLORS["accent_success"], bd=COLORS["accent_success"]))
         self.lbl_b.setToolTip(f"Track B: {to_track.fileName}\nSpielt ab Sekunde {30.0+crossfade:.1f} der Vorschau bis zum Ende.\nÜbergang startet bei Sekunde {mix_in:.1f} des Original-Tracks B.")
-        
+
         # Proportionale Weiten: 30s vor dem Mix, crossfade Sekunden mixen, 30s nach dem Mix
         self.segments_layout.addWidget(self.lbl_a, 300)
         self.segments_layout.addWidget(self.lbl_mix, int(crossfade * 10))
         self.segments_layout.addWidget(self.lbl_b, 300)
-        
+
         layout.addLayout(self.segments_layout)
+
+        # Deck-Wellenform des gerenderten Clips (Crossfade gold hervorgehoben)
+        self._crossfade_sec = crossfade
+        self._waveform = WaveformWidget()
+        layout.addWidget(self._waveform)
 
         # 3. Kontrollzeile: Play-Button + Slider + Zeit
         ctrl_layout = QHBoxLayout()
@@ -866,6 +933,8 @@ class TransitionPreviewWidget(QWidget):
         self._play_btn.setEnabled(True)
         self._slider.setEnabled(True)
         self._time_label.setText("0:00 / –:––")
+        # Deck-Wellenform aus dem gerenderten Clip laden
+        self._waveform.load(path, getattr(self, "_crossfade_sec", 0.0))
 
     def set_error(self, msg: str):
         """Fehlermeldung anzeigen, Play-Button bleibt deaktiviert."""
@@ -888,6 +957,7 @@ class TransitionPreviewWidget(QWidget):
             self._slider.blockSignals(True)
             self._slider.setValue(int(pos_ms * 1000 / dur_ms))
             self._slider.blockSignals(False)
+        self._waveform.set_position(pos_ms, dur_ms)
         pos_s = pos_ms // 1000
         self._time_label.setText(f"{pos_s // 60}:{pos_s % 60:02d} / {self._fmt_dur()}")
 
