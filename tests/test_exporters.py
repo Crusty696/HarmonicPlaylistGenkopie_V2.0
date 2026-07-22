@@ -344,47 +344,6 @@ class TestRekordboxKeyMapping:
       assert not key.endswith("m"), f"{num}B -> '{key}' endet mit 'm'"
 
 
-class TestRekordboxURIConversion:
-  """Rekordbox URI-Konvertierung."""
-
-  def test_convert_uri_method_exists(self):
-    """_convert_to_rekordbox_uri Methode existiert."""
-    try:
-      from hpg_core.exporters.rekordbox_xml_exporter import (
-        RekordboxXMLExporter,
-      )
-      exporter = RekordboxXMLExporter()
-      assert hasattr(exporter, "_convert_to_rekordbox_uri")
-    except ImportError:
-      pytest.skip("pyrekordbox nicht installiert")
-
-  def test_uri_starts_with_file_protocol(self):
-    """URI beginnt mit 'file://localhost'."""
-    try:
-      from hpg_core.exporters.rekordbox_xml_exporter import (
-        RekordboxXMLExporter,
-      )
-      exporter = RekordboxXMLExporter()
-    except ImportError:
-      pytest.skip("pyrekordbox nicht installiert")
-
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\track.mp3")
-    assert uri.startswith("file://localhost")
-
-  def test_uri_uses_forward_slashes(self):
-    """URI verwendet Forward Slashes (kein Backslash)."""
-    try:
-      from hpg_core.exporters.rekordbox_xml_exporter import (
-        RekordboxXMLExporter,
-      )
-      exporter = RekordboxXMLExporter()
-    except ImportError:
-      pytest.skip("pyrekordbox nicht installiert")
-
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\Sets\\track.mp3")
-    assert "\\" not in uri
-
-
 class TestRekordboxFormatInfo:
   """Rekordbox Format-Informationen."""
 

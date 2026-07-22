@@ -56,9 +56,15 @@ KEY_CONFIDENCE_UNCERTAIN = 0.5
 GENRE_CONFIDENCE_THRESHOLD = (
     0.4  # Minimum Confidence fuer Genre-Akzeptanz (war 0.3 - zu niedrig)
 )
-# Drum & Bass: Mindest-BPM fuer Klassifikation (schuetzt gegen BPM-Halftime-Fehler)
-# Tracks unter 155 BPM koennen nicht als DnB klassifiziert werden
-DNB_MINIMUM_BPM = 155.0
+# Drum & Bass: BPM-Schwelle fuer den DnB-Score-Malus (kanonischer DnB-Bereich
+# 160-180, genres.py GENRE_PROFILES). Tracks unter dieser BPM werden NICHT hart
+# ausgeschlossen — ihr DnB-Score wird nur gedaempft (DNB_LOW_BPM_PENALTY), damit
+# starke DnB-Merkmale (Breakbeat/Sub-Bass/Rhythmus) weiter mitzaehlen und nur
+# BPM-Halftime-Fehler abgewehrt werden. Genre-Einteilung bleibt multi-feature.
+DNB_MINIMUM_BPM = 160.0
+# Daempfungsfaktor fuer den DnB-Score bei BPM unter DNB_MINIMUM_BPM
+# (0.0 = harter Ausschluss, 1.0 = kein Effekt). 0.5 = halbieren.
+DNB_LOW_BPM_PENALTY = 0.5
 
 # Halftime-Korrektur: Maximales Ergebnis nach Verdoppelung
 # Wenn bpm*2 > BPM_HALFTIME_MAX_RESULT, wird NICHT verdoppelt

@@ -327,7 +327,11 @@ def _compute_section_energy(y: np.ndarray, sr: int, start: float, end: float) ->
   start_sample = max(0, min(start_sample, len(y) - 1))
   end_sample = max(start_sample + 1, min(end_sample, len(y)))
 
-  segment = y[start_sample:end_sample]
+  # HIGH-Fix: NaN/Inf im Audio (korrupte Datei/Decode-Fehler) wuerde sonst als
+  # avg_energy=nan still bis in Cache/Scoring leaken (NaN-Vergleiche sind immer
+  # False -> Energie-Schwellen brechen lautlos). Konsistent mit den nan_to_num-
+  # Guards in analysis.py.
+  segment = np.nan_to_num(y[start_sample:end_sample])
   if len(segment) == 0:
     return 0.0
 
@@ -336,7 +340,7 @@ def _compute_section_energy(y: np.ndarray, sr: int, start: float, end: float) ->
   # gemasterte Tracks (RMS > 0.4) alle Sektionen auf 100 saettigen und
   # zerstoerte die Drop-vs-Main-Unterscheidung (Audit-Fix 2026-07-17).
   # np.dot statt y**2 vermeidet ein grosses temporaeres Array.
-  track_rms = float(np.sqrt(np.dot(y, y) / len(y))) if len(y) else 0.0
+  track_rms = float(np.sqrt(np.nan_to_num(np.dot(y, y)) / len(y))) if len(y) else 0.0
   # Faktor 1.6: durchschnittliche Sektion landet bei ~62, Drops (1.2-1.5x
   # Track-RMS) behalten Headroom bis 100 statt zu saettigen
   scale = max(0.4, track_rms * 1.6)
@@ -355,7 +359,7 @@ def _compute_energy_trend(y: np.ndarray, sr: int, start: float, end: float) -> s
   start_sample = max(0, min(start_sample, len(y) - 1))
   end_sample = max(start_sample + 1, min(end_sample, len(y)))
 
-  segment = y[start_sample:end_sample]
+  segment = np.nan_to_num(y[start_sample:end_sample])
   if len(segment) < sr:  # Less than 1 second
     return "stable"
 
@@ -454,10 +458,13 @@ def _label_sections(
         labels[-2] = "outro"
 
   # Step 3: Label drops (high energy sections)
+  # MED-Fix: energies[i] > 0 erzwingen — bei reiner Stille ist avg_energy=0 und
+  # damit high_threshold=0, sonst wuerde ein stiller Abschnitt (0 >= 0) faelsch-
+  # lich als energiereichster "drop" gelabelt und die Mixpoint-Logik fehlgeleitet.
   for i in range(n):
     if labels[i] != "main":
       continue
-    if energies[i] >= high_threshold:
+    if energies[i] >= high_threshold and energies[i] > 0.0:
       labels[i] = "drop"
 
   # Step 4: Label builds (rising energy before a drop)
@@ -547,6 +554,11 @@ def analyze_structure(
   Returns:
     TrackStructure with labeled sections
   """
+  # MED-Fix: sr vor get_duration pruefen — librosa.get_duration rechnet
+  # n_samples/sr und wuerfe bei sr<=0 einen ungefangenen ZeroDivisionError, der
+  # im Non-Rekordbox-Volllauf die komplette Track-Auswertung reisst.
+  if sr is None or sr <= 0:
+    return TrackStructure()
   duration = librosa.get_duration(y=y, sr=sr)
   if duration <= 0 or bpm <= 0:
     return TrackStructure()

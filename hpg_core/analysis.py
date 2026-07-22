@@ -36,6 +36,11 @@ REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
 def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float]:
     if y is None or len(y) == 0:
         return 0.0, 0.0, 0.0
+    # MED-Fix: NaN/Inf abfangen (librosa.stft wirft sonst ParameterError und
+    # reisst den ganzen Advanced-Analysis-Block), konsistent mit den uebrigen
+    # Feature-Funktionen (generate_timbre_fingerprint etc.).
+    if not np.all(np.isfinite(y)):
+        y = np.nan_to_num(y)
     S = np.abs(librosa.stft(y, hop_length=HOP_LENGTH))
     freqs = librosa.fft_frequencies(sr=sr)
     bass_mask = (freqs >= 20) & (freqs <= 200)
@@ -52,6 +57,9 @@ def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float
 def analyze_rhythm_complexity(y: np.ndarray, sr: int) -> tuple[float, float]:
     if y is None or len(y) == 0:
         return 0.0, 0.0
+    # MED-Fix: NaN/Inf abfangen (librosa.effects.hpss wirft sonst ParameterError).
+    if not np.all(np.isfinite(y)):
+        y = np.nan_to_num(y)
     y_h, y_p = librosa.effects.hpss(y)
     pe = np.sqrt(np.mean(y_p**2))
     he = np.sqrt(np.mean(y_h**2))
@@ -722,7 +730,12 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         )
 
         # Glaettung ueber ein 4-Takt-Fenster (Zehren: Salience ueber 4 Takte)
-        window_frames = max(1, int((seconds_per_bar * 4) * sr / HOP_LENGTH))
+        # HIGH-Fix: Kernel gegen len(rms) klemmen. Bei kurzen/langsamen Tracks
+        # (Audio kuerzer als 4 Takte, z.B. Jingles/IDs oder Downtempo) lieferte
+        # np.convolve(mode="same") sonst ein Array in KERNEL-Laenge > len(times),
+        # und times[active[-1]] warf einen (vom aeusseren except verschluckten)
+        # IndexError -> RMS-Erkennung fiel komplett auf den generischen Fallback.
+        window_frames = max(1, min(int((seconds_per_bar * 4) * sr / HOP_LENGTH), len(rms)))
         rms_smooth = np.convolve(
             rms, np.ones(window_frames) / window_frames, mode="same"
         )

@@ -12,6 +12,7 @@ Exports playlists in M3U8 format, compatible with:
 
 import logging
 import os
+import tempfile
 from typing import List
 from ..models import Track
 from .base_exporter import BaseExporter
@@ -61,28 +62,43 @@ class M3U8Exporter(BaseExporter):
         self._validate_playlist(playlist)
 
         try:
-            with open(output_path, "w", encoding=self.encoding) as f:
-                # Write header
-                f.write("#EXTM3U\n")
-                f.write(f"#EXTENC:{self.encoding.upper()}\n")
-                f.write(f"#PLAYLIST:{playlist_name}\n\n")
+            # HIGH-Fix: atomar schreiben — erst in eine Temp-Datei im Zielordner,
+            # dann os.replace(). Verhindert eine abgeschnittene/korrupte .m3u8 bei
+            # Absturz/voller Platte bzw. dass eine parallel lesende DJ-Software
+            # eine halb geschriebene Playlist sieht (konsistent zum XML-Exporter).
+            out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+            fd, tmp_path = tempfile.mkstemp(suffix=".m3u8", dir=out_dir)
+            try:
+                with os.fdopen(fd, "w", encoding=self.encoding) as f:
+                    # Write header
+                    f.write("#EXTM3U\n")
+                    f.write(f"#EXTENC:{self.encoding.upper()}\n")
+                    f.write(f"#PLAYLIST:{playlist_name}\n\n")
 
-                # Write tracks
-                for track in playlist:
-                    # Extended info: duration, artist - title
-                    duration = int(track.duration) if track.duration else 0
+                    # Write tracks
+                    for track in playlist:
+                        # Extended info: duration, artist - title
+                        duration = int(track.duration) if track.duration else 0
 
-                    # M10: Sanitize metadata to prevent newline injection
-                    artist = (track.artist or "Unknown Artist").replace("\n", " ").replace("\r", "")
-                    title = (track.title or os.path.basename(track.filePath)).replace("\n", " ").replace("\r", "")
+                        # M10: Sanitize metadata to prevent newline injection
+                        artist = (track.artist or "Unknown Artist").replace("\n", " ").replace("\r", "")
+                        title = (track.title or os.path.basename(track.filePath)).replace("\n", " ").replace("\r", "")
 
-                    # EXTINF format: #EXTINF:duration,artist - title
-                    f.write(f"#EXTINF:{duration},{artist} - {title}\n")
+                        # EXTINF format: #EXTINF:duration,artist - title
+                        f.write(f"#EXTINF:{duration},{artist} - {title}\n")
 
-                    # M5: Pfade mit Forward-Slashes fuer Cross-Platform-Kompatibilitaet
-                    # M10: Sanitize path to prevent path traversal/newline injection
-                    normalized_path = track.filePath.replace("\n", "").replace("\r", "").replace("\\", "/")
-                    f.write(f"{normalized_path}\n\n")
+                        # M5: Pfade mit Forward-Slashes fuer Cross-Platform-Kompatibilitaet
+                        # M10: Sanitize path to prevent path traversal/newline injection
+                        normalized_path = track.filePath.replace("\n", "").replace("\r", "").replace("\\", "/")
+                        f.write(f"{normalized_path}\n\n")
+                os.replace(tmp_path, output_path)
+            except BaseException:
+                # Temp-Datei bei jedem Fehler aufraeumen, dann weiterreichen
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
 
             logger.info(f"M3U8 exportiert: {output_path} ({len(playlist)} Tracks)")
 

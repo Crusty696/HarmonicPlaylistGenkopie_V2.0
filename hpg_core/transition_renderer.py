@@ -184,8 +184,14 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
 
     # Soll-Laengen in Frames
     cf_frames   = int(cf_sec * sr)
-    pre_frames  = int(spec.pre_roll_sec * sr)
-    post_frames = int(spec.post_roll_sec * sr)
+    # C1-Fix: pre_frames muss die TATSAECHLICH geladene Vorlaufzeit abbilden.
+    # Bei mix_out_sec < pre_roll wird a_start (Zeile 126) auf 0.0 geklemmt — das
+    # Segment beginnt dann bei t=0 statt pre_roll Sekunden vor dem Mix-Out. Nutzt
+    # man hier weiter das ungeklemmte spec.pre_roll_sec, greift der Crossfade
+    # (seg_a[pre_frames:]) pre_roll Sekunden hinter dem echten Mix-Out — bei kurzen
+    # Tracks komplett im Null-Padding (stilles/falsches Audio, kein Crash).
+    pre_frames  = int(round(max(0.0, spec.mix_out_sec - a_start) * sr))
+    post_frames = int(post_roll * sr)
 
     # H2-Fix: Beat-Phase-Alignment — Track B wird um den Phasenversatz
     # (< 1 Beat) verschoben, damit die Kicks im Crossfade uebereinander liegen.
@@ -237,13 +243,30 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         mixed = _apply_compressor(mixed, sr)
 
     # Soft-Limiter gegen Clipping (kein hartes Brick-Wall)
-    peak = np.max(np.abs(mixed))
+    # M3-Fix: np.max crasht auf leerem Array (degenerierter Plan mit
+    # pre_roll=post_roll=crossfade=0) — dann 0.0 als Peak annehmen.
+    peak = np.max(np.abs(mixed)) if mixed.size else 0.0
     if peak > 0.95:
         mixed = mixed * (0.95 / peak)
 
     # Als 16-bit PCM WAV exportieren
     sf.write(output_path, mixed.astype(np.float32), samplerate=sr, subtype='PCM_16')
     return output_path
+
+
+def _render_clip_subprocess_wrapper(args):
+    """
+    Hilfsfunktion zum Rendern eines Transition-Clips in einem separaten Prozess.
+    Muss auf Modulebene in DIESEM Modul liegen (nicht in main.py/__main__):
+    im PyInstaller-Frozen-Build dispatcht multiprocessing.freeze_support() den
+    spawn-Child bereits am Anfang von main.py — die dortigen Modulfunktionen sind
+    dann noch nicht definiert, und der Pickle-Lookup ueber __main__ schlaegt fehl
+    (AttributeError). Aus hpg_core.transition_renderer laedt der Child sauber
+    ohne Qt/Audio-Stack.
+    """
+    spec, out_path = args
+    render_transition_clip(spec, out_path)
+    return out_path
 
 
 def _estimate_first_beat(seg: np.ndarray, sr: int, bpm: float) -> float:
@@ -407,6 +430,12 @@ def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
     Durch Normalisierung auf -14 dBRMS klingen unterschiedlich gemasterte Tracks
     im Crossfade gleichmaessig — kein ploetzlicher Lautheitssprung.
     """
+    # C2-Fix: leeres Segment (z.B. _load_segment gibt (0,2) wenn der Mix-Punkt
+    # hinter dem Dateiende liegt) wuerde np.percentile crashen — unveraendert
+    # zurueckgeben, das Null-Padding erfolgt spaeter in _ensure_len.
+    if len(seg) == 0:
+        return seg
+
     # Aktive Frames finden (obere 80% Energie — ignoriert stille Passagen)
     energy = np.mean(seg**2, axis=1)
     threshold = np.percentile(energy, 20)

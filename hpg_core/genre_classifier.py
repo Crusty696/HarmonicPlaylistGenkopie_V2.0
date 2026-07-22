@@ -30,7 +30,7 @@ import logging
 from dataclasses import dataclass, field
 import numpy as np
 import librosa
-from .config import GENRE_CONFIDENCE_THRESHOLD, DNB_MINIMUM_BPM
+from .config import GENRE_CONFIDENCE_THRESHOLD, DNB_MINIMUM_BPM, DNB_LOW_BPM_PENALTY
 from .genres import GENRE_PROFILES, ID3_GENRE_MAP, GenreProfile
 
 logger = logging.getLogger(__name__)
@@ -326,9 +326,14 @@ def classify_genre(
     scores = {}
     for genre_name, profile in GENRE_PROFILES.items():
         scores[genre_name] = _score_genre(features, profile)
-        # Hard BPM-Guard: DnB braucht echte 160+ BPM (schuetzt gegen Halftime-Korrektur-Fehler)
+        # BPM-Malus statt Hard-Kill fuer DnB: liegt die BPM unter der
+        # DnB-Untergrenze, wird der Score nur gedaempft (nicht auf 0). So kann ein
+        # Track mit sehr starken DnB-Merkmalen (Breakbeat/Sub-Bass/hohe
+        # Onset-Rate) dennoch als DnB gewinnen, waehrend der Malus grenzwertige
+        # Faelle und BPM-Halftime-Fehler abwehrt. Die Einteilung bleibt damit
+        # multi-feature statt BPM-only.
         if genre_name == "Drum & Bass" and features.bpm < DNB_MINIMUM_BPM:
-            scores[genre_name] = 0.0
+            scores[genre_name] *= DNB_LOW_BPM_PENALTY
 
     # Step 4: Pick the best match
     if not scores:

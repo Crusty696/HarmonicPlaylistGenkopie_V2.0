@@ -216,11 +216,15 @@ class RekordboxXMLExporter(BaseExporter):
             track: Track object
             track_id: Unique track ID
         """
-        # Convert file path to Rekordbox URI
-        uri = self._convert_to_rekordbox_uri(track.filePath)
+        # CRITICAL-Fix: rohen absoluten Pfad uebergeben, KEINE fertige URI.
+        # pyrekordbox' add_track()/encode_path() baut die file://localhost-URI
+        # inkl. Prozent-Kodierung selbst — eine vorgefertigte URI wird dadurch
+        # DOPPELT kodiert (file://localhost/file://localhost/...), wodurch
+        # Rekordbox nach dem XML-Import keine einzige Datei mehr findet.
+        location_path = os.path.abspath(track.filePath)
 
         # Add track to collection
-        rb_track = xml.add_track(uri)
+        rb_track = xml.add_track(location_path)
 
         # Basic metadata
         rb_track["TrackID"] = str(track_id)
@@ -327,29 +331,6 @@ class RekordboxXMLExporter(BaseExporter):
         if metadata and not isinstance(provenance, dict):
             return False
         return True
-
-    def _convert_to_rekordbox_uri(self, file_path: str) -> str:
-        """
-        Convert Windows/Unix path to Rekordbox URI format
-
-        Args:
-            file_path: Absolute or relative file path
-
-        Returns:
-            Rekordbox URI format (file://localhost/C:/Music/track.wav)
-        """
-        # Normalize to absolute path
-        abs_path = os.path.abspath(file_path)
-
-        # Convert to URI format
-        if os.name == "nt":  # Windows
-            # Replace backslashes with forward slashes
-            abs_path = abs_path.replace("\\", "/")
-            uri = f"file://localhost/{abs_path}"
-        else:  # Unix/Linux/Mac
-            uri = f"file://localhost{abs_path}"
-
-        return uri
 
     def _convert_camelot_to_rekordbox_key(self, camelot_code: str) -> Optional[str]:
         """

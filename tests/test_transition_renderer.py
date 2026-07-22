@@ -412,6 +412,38 @@ class TestRenderTransitionClip:
         result = render_transition_clip(spec, out_path)
         assert os.path.exists(result)
 
+    def test_kurzer_vorlauf_crossfade_nutzt_echtes_audio(self, tmp_path):
+        """C1-Regression: mix_out_sec < pre_roll_sec darf den Crossfade NICHT
+        pre_roll Sekunden hinter den echten Mix-Out schieben. Vorher landete
+        a_cf komplett im Null-Padding (stilles/falsches Audio ohne Crash)."""
+        path_a = str(tmp_path / "a.wav")
+        path_b = str(tmp_path / "b.wav")
+        out_path = str(tmp_path / "out.wav")
+        _write_test_wav(path_a, duration_sec=20.0)
+        _write_test_wav(path_b, duration_sec=20.0)
+
+        spec = TransitionClipSpec(
+            track_a_path    = path_a,
+            track_b_path    = path_b,
+            mix_out_sec     = 3.0,
+            mix_in_sec      = 0.0,
+            crossfade_sec   = 4.0,
+            transition_type = "smooth_blend",
+            pre_roll_sec    = 30.0,   # weit groesser als mix_out_sec
+            post_roll_sec   = 10.0,
+            normalize_rms   = False,
+        )
+        render_transition_clip(spec, out_path)
+        info = sf.info(out_path)
+        # Erwartet: real verfuegbarer Vorlauf (3s) + crossfade (4s) + post (10s) = 17s.
+        # Beim pre_frames-Bug waeren es ~44s (30s Vorlauf, grossteils Stille).
+        assert abs(info.duration - 17.0) < 0.5, \
+            f"Dauer {info.duration:.1f}s deutet auf pre_frames-Clamp-Bug (erwartet ~17s)"
+        # Kompletter Clip muss echtes Audio tragen — kein stiller Crossfade.
+        data, _ = sf.read(out_path)
+        assert np.sqrt(np.mean(data.astype(np.float64) ** 2)) > 0.01, \
+            "Clip ist nahezu still — Crossfade griff ins Null-Padding statt echtes Audio"
+
     def test_crossfade_sec_wird_auf_64s_begrenzt(self, tmp_path):
         """crossfade_sec > 64 soll auf 64 reduziert werden (Trance blendet 32-64 Bars)."""
         path_a = str(tmp_path / "a.wav")

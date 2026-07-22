@@ -113,33 +113,37 @@ class TestRekordboxXMLExporterInit:
     assert isinstance(exporter, RekordboxXMLExporter)
 
 
-# ─── Tests: URI-Konvertierung ─────────────────────────────────────────────────
+# ─── Tests: Location-Kodierung (End-to-End) ───────────────────────────────────
 
-class TestRekordboxURIConvertierung:
-  """_convert_to_rekordbox_uri Tests."""
+class TestRekordboxLocationEncoding:
+  """CRITICAL-Regression: pyrekordbox kodiert die file://localhost-URI selbst.
+  HPG darf nur den ROHEN Pfad uebergeben, sonst doppelte Kodierung → Rekordbox
+  findet nach dem Import keine Datei."""
 
-  def test_windows_pfad_zu_uri(self):
+  def _exported_location(self, tmp_path, file_path):
+    import re
+    from hpg_core.models import Track
     exporter = make_exporter()
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\track.mp3")
-    assert uri.startswith("file://localhost")
+    track = Track(filePath=file_path, fileName="t.wav", title="T", artist="A")
+    out = str(tmp_path / "set.xml")
+    exporter.export([track], out)
+    with open(out, encoding="utf-8") as f:
+      xml_text = f.read()
+    m = re.search(r'Location="([^"]*)"', xml_text)
+    assert m, "Keine Location im Export"
+    return m.group(1)
 
-  def test_uri_enthaelt_dateiname(self):
-    exporter = make_exporter()
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\Sets\\deep_set.wav")
-    assert "deep_set.wav" in uri
+  def test_location_nicht_doppelt_kodiert(self, tmp_path):
+    loc = self._exported_location(tmp_path, "C:\\Music\\Track A.wav")
+    # genau EIN file://localhost-Prefix, kein verschachteltes zweites
+    assert loc.count("file://") == 1, f"Doppelt kodierte Location: {loc}"
+    assert "localhost/file:" not in loc, f"Doppelt kodierte Location: {loc}"
+    assert loc.startswith("file://localhost/"), loc
 
-  def test_forward_slashes_in_uri(self):
-    exporter = make_exporter()
-    uri = exporter._convert_to_rekordbox_uri("C:\\A\\B\\C\\track.wav")
-    assert "/" in uri
-    assert "\\" not in uri
-
-  def test_uri_format_korrekt(self):
-    exporter = make_exporter()
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\track.mp3")
-    # Format: file://localhost/C:/Music/track.mp3
-    assert "file://" in uri
-    assert "localhost" in uri
+  def test_location_sonderzeichen_kodiert(self, tmp_path):
+    loc = self._exported_location(tmp_path, "C:\\Übergäng & Söngs\\Track's #1.wav")
+    assert loc.count("file://") == 1, f"Doppelt kodierte Location: {loc}"
+    assert " " not in loc and "&" not in loc, f"Unkodierte Sonderzeichen: {loc}"
 
 
 # ─── Tests: Camelot Key Konvertierung ────────────────────────────────────────

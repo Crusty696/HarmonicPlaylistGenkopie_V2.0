@@ -58,7 +58,9 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
         elif file_count < 10:
             return 2  # Small workload: minimal parallelism
         elif file_count < 20:
-            return max(4, max_workers // 2)  # Medium workload: half capacity
+            # Medium workload: half capacity — gegen cpu_count klemmen, sonst
+            # liefert max(4, ...) auf 2-Kern-Maschinen 4 Worker (Oversubscription).
+            return min(cpu_count, max(4, max_workers // 2))
         # For 20+ files, use full capacity
 
     return max_workers

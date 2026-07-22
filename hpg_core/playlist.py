@@ -160,8 +160,15 @@ def calculate_ai_compatibility_bonus(track1: Track, track2: Track) -> float:
     HPG-002-Fix: Bonus nur bei gueltiger, aktueller Provenienz beider Tracks —
     beliebige oder veraltete ai_metadata ergeben deterministisch 0.0.
     """
-    # Lazy-Import: ai_engine zieht requests, das Core-Scoring soll ohne laufen
-    from .ai_engine import has_valid_provenance
+    # Lazy-Import: ai_engine zieht requests, das Core-Scoring soll ohne laufen.
+    # MED-Fix: defensiv importieren — ein Fehler in ai_engine (fehlendes
+    # requests, kaputter Import) darf nicht die gesamte Scoring-Kette (und damit
+    # alle Sortier-Strategien) abbrechen; dann verhaelt es sich wie dokumentiert
+    # (kein KI-Bonus -> 0.0).
+    try:
+        from .ai_engine import has_valid_provenance
+    except Exception:
+        return 0.0
 
     ai_meta1 = getattr(track1, "ai_metadata", {})
     ai_meta2 = getattr(track2, "ai_metadata", {})
@@ -812,10 +819,13 @@ def _sort_genre_flow(
         if best_next_genre:
             current_genre = best_next_genre
         else:
-            # If no compatible genre found, pick any remaining genre
+            # If no compatible genre found, pick any remaining genre.
+            # sorted() statt list(set(...)): Set-Iteration haengt vom
+            # PYTHONHASHSEED ab -> sonst nichtdeterministische Playlist-Reihenfolge
+            # ueber Programmlaeufe hinweg bei identischem Track-Pool.
             remaining_genres = set(genre_groups.keys()) - processed_genres
             if remaining_genres:
-                current_genre = list(remaining_genres)[0]
+                current_genre = sorted(remaining_genres)[0]
             else:
                 break  # All genres processed
 
@@ -904,7 +914,13 @@ def _resolve_mix_points(track: Track, fallback_overlap: float) -> tuple[float, f
 
     if duration > 0:
         mix_in_point = max(0.0, min(mix_in_point, duration))
-        mix_out_point = max(mix_in_point + 1.0, min(mix_out_point, duration))
+        # M4-Fix: aeusseres min(duration, ...) — der mix_in_point + 1.0 im max()
+        # konnte mix_out sonst ueber die Track-Dauer heben (Invariante
+        # mix_out <= duration verletzt -> _load_segment seekt hinter Dateiende).
+        mix_out_point = min(duration, max(mix_in_point + 1.0, min(mix_out_point, duration)))
+        # Bei winziger Restdauer mix_in zuruecknehmen, damit mix_in < mix_out bleibt.
+        if mix_in_point >= mix_out_point:
+            mix_in_point = max(0.0, mix_out_point - 1.0)
 
     return mix_in_point, mix_out_point
 

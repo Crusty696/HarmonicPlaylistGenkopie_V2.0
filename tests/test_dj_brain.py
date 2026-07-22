@@ -780,6 +780,25 @@ class TestCalculatePairedMixPoints:
     )
     assert mix_out_a < 420.0, "Mix-Out A muss vor Track-Ende liegen"
 
+  def test_paired_mix_in_b_phrase_aligned(self):
+    """H2-Regression: der Intro-Guard muss auf die PHRASENGRENZE quantisieren
+    (Psytrance phrase_unit=16), nicht auf einen einzelnen Bar. Vorher landete
+    Mix-In B auf Bar 36 (Bar-ceil), korrekt ist Bar 48 (16-Bar-Phrasengrenze)."""
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_in=60.0,
+    )
+    _mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+    spb_b = (60.0 / 143.0) * 4
+    bars_in = round(mix_in_b / spb_b)
+    assert bars_in % 16 == 0, (
+      f"Mix-In B {mix_in_b:.1f}s = Bar {bars_in} liegt nicht auf 16-Bar-Phrasengrenze"
+    )
+
   def test_tech_house_paired_points(self):
     """Tech House: Paired Mix Points werden berechnet (nicht mehr Sonderbehandlung)."""
     track_a = _make_track(

@@ -614,23 +614,41 @@ def calculate_paired_mix_points(
   adjusted_mix_out_a = max(outro_start_a, adjusted_mix_out_a)
 
   # --- Guard: Mix-In B NIEMALS im Intro ---
+  # Invariante 1: aufs PHRASEN-Gitter (seconds_per_bar * phrase_unit)
+  # quantisieren, nicht auf einen einzelnen Bar — sonst weicht der Mix-Punkt
+  # bei Trance/Psytrance (phrase_unit=16) bis zu 15 Bars von der Phrasengrenze
+  # ab (H2-Fix, konsistent mit calculate_genre_aware_mix_points/align_ai).
   intro_end_sections_b = _get_intro_end_from_sections(track_b.sections or [])
+  phrase_seconds_b = seconds_per_bar_b * profile_b.phrase_unit
   if intro_end_sections_b > 0:
-    # ceil auf naechsten Bar nach Intro-Ende (downbeat-verankert)
+    # ceil auf naechste Phrasengrenze nach Intro-Ende (downbeat-verankert)
     if adjusted_mix_in_b < intro_end_sections_b:
       anchor_b = getattr(track_b, "first_downbeat", 0.0) or 0.0
       adjusted_mix_in_b = quantize_to_grid(
-        intro_end_sections_b, seconds_per_bar_b, anchor_b, "ceil"
+        intro_end_sections_b, phrase_seconds_b, anchor_b, "ceil"
       )
 
   # --- Guard: Mix-Out A NIEMALS im Outro ---
+  profile_a = get_mix_profile(track_a.detected_genre or "Unknown")
   outro_start_sections_a = _get_outro_start_from_sections(
     track_a.sections or [], track_a.duration
   )
   bpm_a = track_a.bpm if track_a.bpm > 0 else DEFAULT_BPM
   seconds_per_bar_a = (60.0 / bpm_a) * METER
+  phrase_seconds_a = seconds_per_bar_a * profile_a.phrase_unit
   if adjusted_mix_out_a >= outro_start_sections_a:
-    adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
+    # floor auf Phrasengrenze VOR dem Outro (Invariante 1, downbeat-verankert)
+    anchor_a = getattr(track_a, "first_downbeat", 0.0) or 0.0
+    if phrase_seconds_a > 0:
+      adjusted_mix_out_a = quantize_to_grid(
+        outro_start_sections_a, phrase_seconds_a, anchor_a, "floor"
+      )
+      # floor kann exakt auf outro_start landen -> eine Phrase zurueck, damit
+      # der Mix-Out garantiert VOR dem Outro liegt
+      if adjusted_mix_out_a >= outro_start_sections_a:
+        adjusted_mix_out_a -= phrase_seconds_a
+    else:
+      adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
 
   # Sicherheitscheck: Mix-Out vor Track-Ende
   adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
