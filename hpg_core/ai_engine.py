@@ -203,8 +203,7 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
         if resp.status_code != 200:
             logger.error(f"AI API returned status code {resp.status_code}: {resp.text}")
             return {}
-            
-        resp.raise_for_status()
+
         resp_json = resp.json()
         
         # Validierung der Antwortstruktur

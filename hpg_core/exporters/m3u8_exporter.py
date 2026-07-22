@@ -89,7 +89,14 @@ class M3U8Exporter(BaseExporter):
 
                         # M5: Pfade mit Forward-Slashes fuer Cross-Platform-Kompatibilitaet
                         # M10: Sanitize path to prevent path traversal/newline injection
-                        normalized_path = track.filePath.replace("\n", "").replace("\r", "").replace("\\", "/")
+                        normalized_path = track.filePath.replace("\n", "").replace("\r", "")
+                        if normalized_path.startswith("\\\\"):
+                            # UNC-Netzwerkpfad (\\server\share): nativ belassen — ein
+                            # pauschales \\->// macht //server/share draus (weder gueltiger
+                            # UNC noch file://-URI, Player finden die Datei nicht).
+                            pass
+                        else:
+                            normalized_path = normalized_path.replace("\\", "/")
                         f.write(f"{normalized_path}\n\n")
                 os.replace(tmp_path, output_path)
             except BaseException:

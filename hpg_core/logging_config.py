@@ -101,7 +101,15 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
     handler.close()
 
   # Konsolen-Handler (stderr, damit stdout frei bleibt)
-  if log_to_console:
+  if log_to_console and sys.stderr is not None:
+    # Umlaute/CJK in Log-Meldungen (z.B. Track-Titel) duerfen die Ausgabe nicht
+    # still verschlucken — bei cp1252-stderr wirft StreamHandler.emit sonst einen
+    # UnicodeEncodeError, den handleError() verschluckt. backslashreplace escaped
+    # statt zu crashen; der Datei-Handler ist bereits utf-8.
+    try:
+      sys.stderr.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+      pass  # umgeleiteter/gepatchter Stream ohne reconfigure
     console = logging.StreamHandler(sys.stderr)
     console.setLevel(numeric_level)
     console.setFormatter(_CompactFormatter())
@@ -141,9 +149,6 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
   if log_to_file:
     logger.debug(f"Log-Datei: {LOG_FILE}")
 
-  # Erstelle Logs-Verzeichnis falls nicht vorhanden
-  LOG_DIR.mkdir(exist_ok=True)
-  
   return root
 
 

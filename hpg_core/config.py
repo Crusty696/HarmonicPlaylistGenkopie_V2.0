@@ -117,7 +117,7 @@ SECURITY_MAX_PLAYLIST_SIZE = 1000  # 1000 Tracks max pro Playlist
 # === AI Intelligence Layer ===
 AI_PROVIDER = "Ollama"  # "Ollama" or "LM Studio"
 AI_API_URL_OLLAMA = "http://localhost:11434/v1/chat/completions"
-AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default Ollama
+AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default LM Studio
 # Standardmodell mit vom lokalen Ollama-Server gemeldeter Audio-Faehigkeit.
 AI_MODEL = "gemma4:12b"
 AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
