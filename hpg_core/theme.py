@@ -1,13 +1,14 @@
 """
-HPG Cyberpunk DAW Theme — Ableton-Flat, Neon Gruen + Neon Violett.
+HPG Theme — "Ink Navy Gold": tiefes Navy + sattes Gold, gedaempft/edel.
 
 Design-Philosophie:
   - Font: Cascadia Code / Consolas (Monospace) — technischer DAW-Look
-  - border-radius: 0px ueberall (Ableton-Flat, keine abgerundeten Ecken)
+  - border-radius: 0px ueberall (flat, keine abgerundeten Ecken)
   - Kompaktes Padding (4-6px) — keine luftigen Abstaende
-  - Warme Grau-Toene (kein Blau-Grau) fuer Hintergruende
-  - Neon Gruen (#00E676) als Primaer-Akzent
-  - Neon Violett (#7C4DFF) als Sekundaer-Akzent
+  - Tiefes Ink-Navy (#0c1430) fuer Hintergruende
+  - Sattes Gold (#d6ac44) als Primaer-Akzent
+  - Gedaempftes Stahlblau (#6f8fc4) als Sekundaer-Akzent
+  - Gedaempfte Status-Farben (kein Neon)
   - 1px solid Borders — duenn, kaum sichtbar
 
 Stellt bereit:
@@ -38,47 +39,47 @@ FONT_SIZE_HEADER = "14px"
 # ──────────────────────────────────────────────────────────────
 
 COLORS = {
-  # Hintergruende — warme neutrale Grautöne (kein Blau!)
-  "bg_main":       "#141414",   # Hauptfenster (fast schwarz, warm)
-  "bg_panel":      "#1e1e1e",   # Sidebar, Panels
-  "bg_card":       "#262626",   # Cards, Gruppenboxen
-  "bg_card2":      "#2a2a2a",   # Cards zweite Ebene (etwas heller)
-  "bg_input":      "#1a1a1a",   # Eingabefelder, Tabellen-Basis
-  "bg_table_alt":  "#1f1f1f",   # Alternierende Zeilen
-  "bg_hover":      "#2d2d2d",   # Hover-State
-  "bg_selected":   "#2a3a2a",   # Selektion (leichter Gruen-Schimmer)
-  "bg_tooltip":    "#333333",   # Tooltips
-  "bg_sidebar":    "#111111",   # Sidebar (dunkelster Ton)
-  "bg_toolbar":    "#1a1a1a",   # Toolbar oben
+  # Hintergruende — tiefes Ink-Navy (Ink Navy Gold Theme)
+  "bg_main":       "#0c1430",   # Hauptfenster (kraeftiges tiefes Navy)
+  "bg_panel":      "#0f1832",   # Sidebar, Panels
+  "bg_card":       "#141d3a",   # Cards, Gruppenboxen
+  "bg_card2":      "#182342",   # Cards zweite Ebene (etwas heller)
+  "bg_input":      "#0d1730",   # Eingabefelder, Tabellen-Basis
+  "bg_table_alt":  "#111c38",   # Alternierende Zeilen
+  "bg_hover":      "#1b284a",   # Hover-State
+  "bg_selected":   "#22305a",   # Selektion (helleres Navy, Gold-Border via border_active)
+  "bg_tooltip":    "#182342",   # Tooltips
+  "bg_sidebar":    "#0a1128",   # Sidebar (dunkelster Navy-Ton)
+  "bg_toolbar":    "#0f1832",   # Toolbar oben
 
-  # Text (Weiss-Hierarchie — neutral, kein Blau-Tint)
-  "text_primary":   "#e0e0e0",  # Haupttext
-  "text_secondary": "#888888",  # Labels, Meta
+  # Text (warme Creme-Weiss-Hierarchie auf Navy)
+  "text_primary":   "#e3e6ee",  # Haupttext
+  "text_secondary": "#8592b0",  # Labels, Meta (blaugrau)
   "text_bright":    "#ffffff",  # Ueberschriften, aktive Elemente
-  "text_dim":       "#555555",  # Deaktiviert, Hints
+  "text_dim":       "#586080",  # Deaktiviert, Hints
 
-  # Primaer-Akzent: Neon Gruen
-  "accent_primary":      "#00E676",  # Aktive Elemente, Primary Buttons
-  "accent_primary_dim":  "#00C853",  # Hover-Variante (etwas dunkler)
-  "accent_primary_bg":   "#0a2e1a",  # Dezenter gruener Hintergrund
-  "accent_primary_glow": "#69FF9F",  # Extra-hell fuer Glow-Effekte
+  # Primaer-Akzent: sattes Gold (Farbton 43 Grad, wie abgestimmt)
+  "accent_primary":      "#d6ac44",  # Aktive Elemente, Primary Buttons
+  "accent_primary_dim":  "#b8922f",  # Hover-Variante (etwas dunkler)
+  "accent_primary_bg":   "#2a2410",  # Dezenter Gold-Hintergrund
+  "accent_primary_glow": "#e9cf86",  # Extra-hell fuer Glow-Effekte
 
-  # Sekundaer-Akzent: Neon Violett
-  "accent_secondary":     "#7C4DFF",  # Genre-Badges, Tab-Akzente
-  "accent_secondary_dim": "#651FFF",  # Hover
-  "accent_secondary_bg":  "#1a0a3a",  # Dezenter violetter Hintergrund
+  # Sekundaer-Akzent: gedaempftes Stahlblau (komplementaer zu Gold)
+  "accent_secondary":     "#6f8fc4",  # Genre-Badges, Tab-Akzente
+  "accent_secondary_dim": "#557aac",  # Hover
+  "accent_secondary_bg":  "#14213f",  # Dezenter blauer Hintergrund
 
-  # Status-Farben
-  "accent_success": "#00E676",  # Neon Gruen (= Primaer)
-  "accent_warning": "#FFD740",  # Neon Gold
-  "accent_danger":  "#FF5252",  # Neon Rot
+  # Status-Farben (gedaempft, kein Neon)
+  "accent_success": "#7bb091",  # Gedaempftes Gruen
+  "accent_warning": "#e0b34a",  # Amber (distinkt vom Primaer-Gold)
+  "accent_danger":  "#d47472",  # Gedaempftes Rot
 
-  # Borders — neutral grau, kaum sichtbar
-  "border":         "#2a2a2a",  # Subtile 1px Linien
-  "border_active":  "#00E676",  # Aktiver Border = Neon Gruen
-  "border_focus":   "#00E676",  # Focus = Neon Gruen (statt Blau!)
-  "border_danger":  "#FF5252",
-  "border_success": "#00E676",
+  # Borders — Navy-Linien, Gold als Aktiv/Fokus
+  "border":         "#26314f",  # Subtile 1px Linien
+  "border_active":  "#d6ac44",  # Aktiver Border = Gold
+  "border_focus":   "#d6ac44",  # Focus = Gold
+  "border_danger":  "#d47472",
+  "border_success": "#7bb091",
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -86,32 +87,34 @@ COLORS = {
 # Tupel: (Textfarbe, Hintergrundfarbe)
 # ──────────────────────────────────────────────────────────────
 
+# Gedaempfte Genre-Hues auf einheitlich navy-getoentem Hintergrund —
+# distinkt, aber ohne Neon (passt zu Ink Navy Gold).
 GENRE_COLORS = {
-  "Psytrance":      ("#E040FB", "#2a0a3a"),  # Neon Magenta
-  "Tech House":     ("#448AFF", "#0a1a3a"),  # Neon Blau
-  "Progressive":    ("#69F0AE", "#0a2a1a"),  # Neon Mint
-  "Melodic Techno": ("#18FFFF", "#0a2a2a"),  # Neon Cyan
-  "Techno":         ("#B0BEC5", "#1a1a1a"),  # Silber-Neutral
-  "Deep House":     ("#FFAB40", "#2a1a0a"),  # Neon Orange
-  "Trance":         ("#B388FF", "#1a0a3a"),  # Neon Violett-Hell
-  "Drum & Bass":    ("#FF5252", "#2a0a0a"),  # Neon Rot
-  "Minimal":        ("#C6FF00", "#1a2a0a"),  # Neon Lime
+  "Psytrance":      ("#c98fd6", "#1c1836"),  # Gedaempftes Magenta-Violett
+  "Tech House":     ("#6f9fd6", "#141f3a"),  # Stahlblau
+  "Progressive":    ("#7bc4a0", "#12233a"),  # Gedaempftes Mint
+  "Melodic Techno": ("#5fc4c4", "#12283a"),  # Gedaempftes Cyan
+  "Techno":         ("#9fb0c0", "#161f34"),  # Blaugrau-Neutral
+  "Deep House":     ("#d6a95c", "#241f10"),  # Gedaempftes Gold-Orange
+  "Trance":         ("#a58fd6", "#1a1836"),  # Gedaempftes Violett
+  "Drum & Bass":    ("#d47472", "#2a1420"),  # Gedaempftes Rot
+  "Minimal":        ("#b0c46f", "#1c2418"),  # Gedaempftes Olive-Lime
 }
 
 # Standard-Farbe fuer unbekannte Genres
-GENRE_DEFAULT = ("#888888", "#1e1e1e")
+GENRE_DEFAULT = ("#8592b0", "#141d3a")
 
 # ──────────────────────────────────────────────────────────────
 # Risk-Styles fuer Mix Tips (bg_color, accent_color)
 # ──────────────────────────────────────────────────────────────
 
 RISK_STYLES = {
-  "low":        ("#0a2e1a", "#00E676"),  # Neon Gruen
-  "medium-low": ("#1a2a0a", "#C6FF00"),  # Neon Lime
-  "medium":     ("#2a1a0a", "#FFD740"),  # Neon Gold
-  "high":       ("#2a0a0a", "#FF5252"),  # Neon Rot
+  "low":        ("#12233a", "#7bb091"),  # Gedaempftes Gruen
+  "medium-low": ("#1c2418", "#b0c46f"),  # Gedaempftes Olive-Lime
+  "medium":     ("#241f10", "#e0b34a"),  # Amber
+  "high":       ("#2a1420", "#d47472"),  # Gedaempftes Rot
 }
-RISK_DEFAULT = ("#1e1e1e", "#888888")
+RISK_DEFAULT = ("#141d3a", "#8592b0")
 
 # ──────────────────────────────────────────────────────────────
 # DJ-freundliche Risk-Labels
@@ -129,12 +132,12 @@ RISK_LABELS = {
 # ──────────────────────────────────────────────────────────────
 
 PHASE_COLORS = {
-  "intro":    "#00E676",  # Neon Gruen
-  "warmup":   "#69F0AE",  # Helles Gruen
-  "build":    "#FFD740",  # Neon Gold
-  "peak":     "#FF5252",  # Neon Rot
-  "sustain":  "#7C4DFF",  # Neon Violett
-  "cooldown": "#18FFFF",  # Neon Cyan
+  "intro":    "#7bb091",  # Gedaempftes Gruen
+  "warmup":   "#9bc4a6",  # Helles Salbei
+  "build":    "#e0b34a",  # Amber
+  "peak":     "#d47472",  # Gedaempftes Rot
+  "sustain":  "#a58fd6",  # Gedaempftes Violett
+  "cooldown": "#6f9fd6",  # Stahlblau
 }
 
 PHASE_LABELS = {
@@ -215,15 +218,15 @@ TRANSITION_TYPE_DESCRIPTIONS: dict[str, str] = {
 }
 
 TRANSITION_TYPE_COLORS = {
-  "smooth_blend":      "#00E676",  # Neon Gruen
-  "bass_swap":         "#448AFF",  # Neon Blau
-  "pro_eq_swap":       "#FF4081",  # Neon Pink
-  "breakdown_bridge":  "#FFD740",  # Neon Gold
-  "drop_cut":          "#FF5252",  # Neon Rot
-  "filter_ride":       "#18FFFF",  # Neon Cyan
-  "halftime_switch":   "#B388FF",  # Neon Violett-Hell
-  "echo_out":          "#7C4DFF",  # Neon Violett
-  "cold_cut":          "#B0BEC5",  # Silber
+  "smooth_blend":      "#7bb091",  # Gedaempftes Gruen
+  "bass_swap":         "#6f9fd6",  # Stahlblau
+  "pro_eq_swap":       "#d68fa8",  # Gedaempftes Rosa
+  "breakdown_bridge":  "#e0b34a",  # Amber
+  "drop_cut":          "#d47472",  # Gedaempftes Rot
+  "filter_ride":       "#5fc4c4",  # Gedaempftes Cyan
+  "halftime_switch":   "#a58fd6",  # Gedaempftes Violett
+  "echo_out":          "#8f7fd6",  # Violett-Blau
+  "cold_cut":          "#9fb0c0",  # Blaugrau
 }
 
 
@@ -768,10 +771,15 @@ def get_7_scale_color(value: float) -> str:
   Liefert eine feine 7-stufige Farbskala fuer Scores/Kompatibilitaeten (0.0 bis 1.0).
   Unterstuetzt edle HSL-Farben von Dunkelrot bis Dunkelgruehn.
   """
+  # HIGH-Fix: NaN wuerde ueber min(1.0, nan)==1.0 faelschlich als "Exzellent"
+  # gruen angezeigt (NaN-Vergleiche sind immer False). Ein undefinierter Score
+  # ist der schlechteste Fall — konsistent zu score_color().
+  if value != value:  # NaN
+    return "#ff3b30"
   if value > 1.0:
     value = value / 100.0
   value = max(0.0, min(1.0, value))
-  
+
   if value >= 0.90:
     return "#0f5223"  # Dunkelgruen (Exzellent)
   elif value >= 0.80:
@@ -793,6 +801,8 @@ def get_texture_label(value: float) -> str:
   Uebersetzt den nackten Texture-Similarity Wert (0.0 bis 1.0) 
   in eine fuer DJs verstaendliche, qualitative Bezeichnung.
   """
+  if value != value:  # NaN -> undefinierter Klang = schlechtester Fall
+    return "Klang: Discord"
   value = max(0.0, min(1.0, value))
   if value >= 0.85:
     return "Klang: Identisch"
