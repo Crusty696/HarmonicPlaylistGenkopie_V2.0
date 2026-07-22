@@ -3,6 +3,30 @@ import importlib
 import logging
 import multiprocessing
 
+# Windowed Frozen-Build (console=False): sys.stdout/stderr sind None. Der
+# multiprocessing-Fehlerhandler schreibt dorthin und crasht sonst mit
+# "'NoneType' object has no attribute 'write'". Auf einen Null-Sink umleiten.
+# MUSS vor freeze_support() stehen: im gefrorenen Worker fuehrt freeze_support()
+# die Ziel-Funktion aus und beendet den Prozess per sys.exit() — Code dahinter
+# wird im Worker nie erreicht, der Patch liefe sonst nur im GUI-Hauptprozess.
+import sys as _sys
+
+
+class _NullWriter:
+    """Verwirft jede Ausgabe (kein Speicherwachstum wie StringIO)."""
+
+    def write(self, _data):
+        return len(_data) if _data else 0
+
+    def flush(self):
+        pass
+
+
+if _sys.stdout is None:
+    _sys.stdout = _NullWriter()
+if _sys.stderr is None:
+    _sys.stderr = _NullWriter()
+
 # PyInstaller muss eingefrorene Multiprocessing-Worker vor Qt- und Audio-Imports
 # in den Worker-Einstieg umleiten. Andernfalls initialisieren sie die GUI- und
 # Native-Audio-Stacks und können auf Windows mit einem C-Level-Crash abbrechen.
@@ -12,6 +36,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from collections import OrderedDict, deque
 from datetime import datetime
@@ -52,6 +77,8 @@ from PyQt6.QtCore import (
     QUrl,
     QSize,
     QRect,
+    QRectF,
+    QPointF,
     QTimer,
     QObject,
     QEvent,
@@ -62,11 +89,17 @@ from PyQt6.QtGui import (
     QShortcut,
     QTextCursor,
     QCursor,
+    QPainter,
+    QPen,
+    QBrush,
+    QFont,
+    QPolygonF,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-from hpg_core.transition_renderer import TransitionClipSpec
+from hpg_core.transition_renderer import TransitionClipSpec, _render_clip_subprocess_wrapper
 from hpg_core.parallel_analyzer import ParallelAnalyzer
+from hpg_core.models import get_camelot_components
 from hpg_core.playlist import (
     STRATEGIES,
     calculate_playlist_quality,
@@ -522,17 +555,6 @@ class AnalysisWorker(QThread):
             self.finished.emit([], {})
 
 
-def _render_clip_subprocess_wrapper(args):
-    """
-    Hilfsfunktion zum Rendern eines Transition-Clips in einem separaten Prozess.
-    Muss auf Modulebene liegen, damit sie fuer multiprocessing pickelbar ist.
-    """
-    spec, out_path = args
-    from hpg_core.transition_renderer import render_transition_clip
-    render_transition_clip(spec, out_path)
-    return out_path
-
-
 class TransitionRenderWorker(QThread):
     """
     Rendert alle Transition-Preview-Clips nacheinander im Hintergrund.
@@ -550,15 +572,22 @@ class TransitionRenderWorker(QThread):
         self._should_cancel = False
         self._temp_files: list[str] = []  # Fuer Cleanup
         self._executor = None  # HPG-004: aktiver ProcessPoolExecutor (fuer Terminate)
+        # HPG: schuetzt _executor + _should_cancel gegen TOCTOU-Race zwischen
+        # request_cancel() (GUI-Thread) und run() (Worker-Thread).
+        self._exec_lock = threading.Lock()
         import uuid
         self._run_id = uuid.uuid4().hex[:8]
 
     def request_cancel(self):
         """Kooperatives Cancel — setzt Flag und beendet laufende Child-Prozesse."""
-        self._should_cancel = True
-        # HPG-004: laufenden Render-Prozess sofort terminieren statt bis zu
-        # 60s auf future.result() zu warten
-        self._terminate_executor(self._executor)
+        # HPG-004/H1-Fix: Flag setzen UND Executor terminieren unter demselben
+        # Lock, den run() beim Setzen von self._executor haelt. Ohne Lock konnte
+        # das Cancel genau im Fenster zwischen Executor-Konstruktion und
+        # self._executor-Zuweisung verpuffen -> Render lief bis zum 60s-Timeout
+        # weiter, App haengte beim Schliessen.
+        with self._exec_lock:
+            self._should_cancel = True
+            self._terminate_executor(self._executor)
 
     @staticmethod
     def _terminate_executor(executor):
@@ -627,7 +656,15 @@ class TransitionRenderWorker(QThread):
                 # Child-Prozess terminiert statt beim Context-Exit blockierend zu warten.
                 render_success = False
                 executor = ProcessPoolExecutor(max_workers=1)
-                self._executor = executor
+                # H1-Fix: Executor unter Lock veroeffentlichen. Kam das Cancel
+                # bereits vor/waehrend der Konstruktion, sieht run() hier das Flag
+                # und submittet gar nicht erst — sonst sieht request_cancel() den
+                # Executor und terminiert ihn. Kein Race-Fenster mehr.
+                with self._exec_lock:
+                    if self._should_cancel:
+                        self._terminate_executor(executor)
+                        break
+                    self._executor = executor
                 try:
                     future = executor.submit(_render_clip_subprocess_wrapper, (spec, out_path))
                     # Timeout grosszuegig fuer lange Trance/Progressive-Blends (bis 64s Crossfade)
@@ -643,8 +680,9 @@ class TransitionRenderWorker(QThread):
                     )
                     self.clip_error.emit(i, "Format-Absturz (Datei beschaedigt)")
                 except TimeoutError:
+                    # L7-Fix: kein doppelter _terminate_executor — der finally-Block
+                    # unten raeumt den Executor ohnehin ab.
                     logger.error(f"Render-Timeout bei Clip {i}")
-                    self._terminate_executor(executor)
                     self.clip_error.emit(i, "Zeitueberschreitung")
                 except Exception as render_err:
                     logger.error(f"Fehler bei Transition-Render {i}: {render_err}")
@@ -653,7 +691,8 @@ class TransitionRenderWorker(QThread):
                     )
                     self.clip_error.emit(i, f"Fehler: {render_err}")
                 finally:
-                    self._executor = None
+                    with self._exec_lock:
+                        self._executor = None
                     self._terminate_executor(executor)
 
                 if render_success:
@@ -686,8 +725,11 @@ class TransitionPreviewWidget(QWidget):
         self._index = index
         self._tr = transition
         self._wav_path: str | None = None
-        self._player = QMediaPlayer()
-        self._audio_out = QAudioOutput()
+        # M5-Fix: mit Qt-Parent erzeugen, damit Player/Output an der Widget-
+        # Hierarchie haengen und bei deleteLater() mitzerstoert werden (sonst
+        # haelt das offene Datei-Handle laenger als das Widget -> Windows-Lock).
+        self._player = QMediaPlayer(self)
+        self._audio_out = QAudioOutput(self)
         self._player.setAudioOutput(self._audio_out)
         self._audio_out.setVolume(0.85)
 
@@ -874,8 +916,12 @@ class TransitionPreviewWidget(QWidget):
             self._player.setPosition(int(value * dur_ms / 1000))
 
     def stop_and_reset(self):
-        """Playback stoppen und Slider zuruecksetzen."""
+        """Playback stoppen, Datei-Handle freigeben und Slider zuruecksetzen."""
         self._player.stop()
+        # H2-Fix: Source loesen, damit das offene WAV-Handle freigegeben wird —
+        # sonst schlaegt os.remove() unter Windows mit PermissionError fehl und
+        # die Temp-Datei bleibt liegen (der Aufrufer loescht direkt danach).
+        self._player.setSource(QUrl())
         self._play_btn.setText("▶")
 
 
@@ -2359,13 +2405,16 @@ class PlaylistPanel(QWidget):
         layout.addWidget(self.table, 1)
 
         # Drag-Info
-        drag_info = QLabel(
+        self._drag_info_default = (
             "Drag and drop rows to reorder. Transition scores update automatically."
         )
-        drag_info.setStyleSheet(
+        self._drag_info_style_default = (
             f"QLabel {{ color: {COLORS['text_dim']}; font-size: 10px; font-style: italic; }}"
         )
-        layout.addWidget(drag_info)
+        self._drag_info = QLabel(self._drag_info_default)
+        self._drag_info.setWordWrap(True)
+        self._drag_info.setStyleSheet(self._drag_info_style_default)
+        layout.addWidget(self._drag_info)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -2572,6 +2621,29 @@ class PlaylistPanel(QWidget):
             self.table.setItem(i, 14, score_item)
 
         self.table.setUpdatesEnabled(True)
+
+    def set_reorder_locked(self, locked: bool):
+        """Sperrt/entsperrt das Drag&Drop-Reorder der Playlist.
+
+        Waehrend der KI-Veredelung (RunState.AI) laeuft die Playlist-Generierung
+        nach KI-Abschluss noch einmal komplett durch — eine in diesem Fenster
+        manuell umsortierte Reihenfolge wuerde sonst kommentarlos ueberschrieben.
+        Deshalb wird das Sortieren gesperrt und sichtbar gekennzeichnet.
+        """
+        if locked:
+            self.table.setDragDropMode(QTableWidget.DragDropMode.NoDragDrop)
+            self._drag_info.setText(
+                "🔒 Sortieren gesperrt — die KI-Analyse laeuft noch. Die Reihenfolge "
+                "wuerde sonst nach Abschluss ueberschrieben. Freigabe automatisch, "
+                "sobald die KI-Veredelung fertig ist."
+            )
+            self._drag_info.setStyleSheet(
+                f"QLabel {{ color: {COLORS['accent_warning']}; font-size: 10px; font-weight: bold; }}"
+            )
+        else:
+            self.table.setDragDropMode(QTableWidget.DragDropMode.InternalMove)
+            self._drag_info.setText(self._drag_info_default)
+            self._drag_info.setStyleSheet(self._drag_info_style_default)
 
     def _on_rows_moved(self, *args):
         """Drag-and-Drop Reorder Handler."""
@@ -2971,6 +3043,19 @@ class MixTipsPanel(QWidget):
         self._render_worker = None
         self._active_preview_index = None
         if worker:
+            # M3-Fix: verwaiste Temp-Dateien loeschen (fehlgeschlagene/teilweise
+            # geschriebene Clips leaken sonst dauerhaft). NUR die, die NICHT als
+            # fertige Preview im Cache gelandet sind — erfolgreiche Clips gehoeren
+            # jetzt dem _preview_cache (LRU/Cleanup verwaltet sie), hier loeschen
+            # wuerde dem User die gerade fertige Vorschau wegnehmen.
+            active_paths = set(self._preview_cache.values())
+            for path in worker.get_temp_files():
+                if path not in active_paths:
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                    except OSError:
+                        pass
             worker.deleteLater()
         self._start_next_preview()
 
@@ -3017,6 +3102,13 @@ class MixTipsPanel(QWidget):
             old_worker.finished.connect(clean_and_delete)
             self._render_worker = None
             
+        # H2-Fix: laufende Player stoppen und Datei-Handles freigeben, BEVOR die
+        # zugehoerigen WAVs geloescht werden — sonst Windows-PermissionError.
+        for _widget in self._preview_widgets.values():
+            try:
+                _widget.stop_and_reset()
+            except RuntimeError:
+                pass  # Widget bereits von Qt zerstoert
         self._preview_widgets = {}
         self._preview_queue.clear()
         self._active_preview_index = None
@@ -3032,7 +3124,15 @@ class MixTipsPanel(QWidget):
         """Aufgerufen wenn ein Clip fertig gerendert ist."""
         self._preview_cache[index] = wav_path
         while len(self._preview_cache) > self._preview_cache_limit:
-            _, stale_path = self._preview_cache.popitem(last=False)
+            stale_index, stale_path = self._preview_cache.popitem(last=False)
+            # H2-Fix: falls der verdraengte Clip noch in einem Player offen ist,
+            # erst Handle freigeben, sonst os.remove -> Windows-PermissionError.
+            stale_widget = self._preview_widgets.get(stale_index)
+            if stale_widget is not None:
+                try:
+                    stale_widget.stop_and_reset()
+                except RuntimeError:
+                    pass
             try:
                 if os.path.exists(stale_path):
                     os.remove(stale_path)
@@ -3205,8 +3305,131 @@ class TimelinePanel(QWidget):
         self.text_edit.setHtml(html)
 
 
+class CamelotWheelWidget(QWidget):
+    """Zeichnet das Camelot-Rad (A/B) mit dem Pfad des aktuellen Sets.
+
+    Signature-Element des Ink-Navy-Gold-Designs: der harmonische Weg des Sets
+    ist direkt auf dem Rad sichtbar — kurze Boegen = harmonisch, weite/rote
+    Kanten = Sprung bzw. BPM-Clash.
+    """
+
+    def __init__(self, parent=None, bpm_tolerance: float = 6.0):
+        super().__init__(parent)
+        self._playlist = []
+        self._bpm_tolerance = bpm_tolerance
+        self.setMinimumHeight(300)
+
+    def set_playlist(self, playlist, bpm_tolerance: float = None):
+        self._playlist = list(playlist or [])
+        if bpm_tolerance is not None:
+            self._bpm_tolerance = bpm_tolerance
+        self.update()
+
+    @staticmethod
+    def _key_color(num: int) -> QColor:
+        """Camelot-Position -> gedaempfte Spektralfarbe (Ink-Navy-Gold-Ton)."""
+        c = QColor()
+        c.setHsl(int(((num - 1) % 12) * 30), 140, 150)  # Sat ~55%, Light ~59%
+        return c
+
+    def _edge_color(self, track_a, track_b) -> QColor:
+        """Farbe der Set-Kante nach Uebergangs-Qualitaet."""
+        try:
+            metrics = calculate_enhanced_compatibility(
+                track_a, track_b, self._bpm_tolerance
+            )
+            score = metrics.overall_score
+        except Exception:
+            score = 0.5
+        if score <= 0.001:
+            return QColor(COLORS["accent_danger"])
+        if score >= 0.6:
+            return QColor(COLORS["accent_success"])
+        return QColor(COLORS["accent_warning"])
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0
+        radius = min(w, h) / 2.0 - 22
+        r_a = radius * 0.62   # innerer Ring (A / Moll)
+        r_b = radius          # aeusserer Ring (B / Dur)
+
+        # Ring-Linien
+        p.setPen(QPen(QColor(COLORS["border"]), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for r in (r_a, r_b):
+            p.drawEllipse(QPointF(cx, cy), r, r)
+
+        import math
+
+        def pos(num, r):
+            ang = ((num - 1) / 12.0) * 2 * math.pi - math.pi / 2
+            return QPointF(cx + math.cos(ang) * r, cy + math.sin(ang) * r)
+
+        # Set-Positionen (nur A/B aus camelotCode)
+        parsed = []
+        for tr in self._playlist:
+            code = getattr(tr, "camelotCode", "") or ""
+            num, letter = get_camelot_components(code)
+            if num:
+                parsed.append((tr, num, letter))
+
+        used_nums = {num for _, num, _ in parsed}
+
+        # 24 Knoten zeichnen
+        for num in range(1, 13):
+            for r, letter in ((r_a, "A"), (r_b, "B")):
+                pt = pos(num, r)
+                col = self._key_color(num)
+                used = num in used_nums
+                if not used:
+                    col.setAlpha(90)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(col))
+                rad = 6.0 if used else 4.5
+                p.drawEllipse(pt, rad, rad)
+            # Zahl zwischen den Ringen
+            lp = pos(num, (r_a + r_b) / 2.0)
+            p.setPen(QColor(COLORS["text_secondary"]))
+            f = QFont(); f.setPointSize(7); p.setFont(f)
+            p.drawText(QRectF(lp.x() - 10, lp.y() - 8, 20, 16),
+                       Qt.AlignmentFlag.AlignCenter, str(num))
+
+        # Set-Pfad (Kanten mit Pfeil-Farbe nach Qualitaet)
+        for i in range(len(parsed) - 1):
+            _, n1, _ = parsed[i]
+            _, n2, _ = parsed[i + 1]
+            p1, p2 = pos(n1, r_a), pos(n2, r_a)
+            col = self._edge_color(parsed[i][0], parsed[i + 1][0])
+            pen = QPen(col, 2.0)
+            if col.name() == QColor(COLORS["accent_danger"]).name():
+                pen.setStyle(Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawLine(p1, p2)
+
+        # Reihenfolge-Badges auf besuchten A-Knoten
+        for idx, (_, num, _) in enumerate(parsed):
+            pt = pos(num, r_a)
+            p.setPen(QPen(self._key_color(num), 1.5))
+            p.setBrush(QBrush(QColor(COLORS["bg_main"])))
+            p.drawEllipse(pt, 8.5, 8.5)
+            p.setPen(QColor(COLORS["text_bright"]))
+            f = QFont(); f.setPointSize(7); f.setBold(True); p.setFont(f)
+            p.drawText(QRectF(pt.x() - 10, pt.y() - 9, 20, 18),
+                       Qt.AlignmentFlag.AlignCenter, str(idx + 1))
+
+        # Zentrum-Label
+        p.setPen(QColor(COLORS["text_dim"]))
+        f = QFont(); f.setPointSize(7); f.setBold(True); p.setFont(f)
+        p.drawText(QRectF(cx - 40, cy - 8, 80, 16),
+                   Qt.AlignmentFlag.AlignCenter, "CAMELOT")
+        p.end()
+
+
 class AnalyticsPanel(QWidget):
-    """Quality Analysis — HTML Bericht."""
+    """Quality Analysis — Camelot-Rad + HTML Bericht."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3215,13 +3438,20 @@ class AnalyticsPanel(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Signature: Camelot-Rad mit Set-Pfad (Ink Navy Gold)
+        self.wheel = CamelotWheelWidget()
+        self.wheel.setFixedHeight(320)
+        layout.addWidget(self.wheel)
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        layout.addWidget(self.text_edit)
+        layout.addWidget(self.text_edit, 1)
 
-    def set_analytics(self, quality_metrics):
-        """Analytics-HTML aus Quality-Metriken generieren."""
+    def set_analytics(self, quality_metrics, playlist=None, bpm_tolerance=6.0):
+        """Analytics: Camelot-Rad fuellen + HTML aus Quality-Metriken generieren."""
+        self.wheel.set_playlist(playlist or [], bpm_tolerance)
         if not quality_metrics:
             self.text_edit.setHtml("<p>Keine Analyse-Daten vorhanden.</p>")
             return
@@ -3456,6 +3686,12 @@ class MainWindow(QMainWindow):
     def _set_run_state(self, state: RunState) -> None:
         """Setzt den zentralen Pipelinezustand."""
         self.run_state = state
+        # Reorder-Sperre zentral an den Zustand koppeln: nur waehrend der
+        # KI-Veredelung (RunState.AI) gesperrt, jeder Uebergang weg davon
+        # (PLAYLIST/CANCELLED/ERROR) gibt das Sortieren automatisch wieder frei.
+        panel = getattr(self, "playlist_panel", None)
+        if panel is not None:
+            panel.set_reorder_locked(state == RunState.AI)
 
     def _run_is_active(self) -> bool:
         """Beruecksichtigt Zustand und alle mutierenden Hauptworker."""
@@ -3767,7 +4003,9 @@ class MainWindow(QMainWindow):
         # Transition-Audio-Previews rendern (Hintergrund-Worker)
         self.mix_tips_panel.setup_transition_previews(transition_plan)
         self.timeline_panel.set_timeline(self.playlist, transition_plan)
-        self.analytics_panel.set_analytics(self.quality_metrics)
+        self.analytics_panel.set_analytics(
+            self.quality_metrics, self.playlist, self.current_bpm_tolerance
+        )
 
         # 4. Toolbar & Status aktualisieren
         overall = self.quality_metrics.get("overall_score", 0)
@@ -3883,7 +4121,9 @@ class MainWindow(QMainWindow):
         self.timeline_panel.set_timeline(
             self.playlist, self.playlist_panel.transition_recommendations
         )
-        self.analytics_panel.set_analytics(self.quality_metrics)
+        self.analytics_panel.set_analytics(
+            self.quality_metrics, self.playlist, self.current_bpm_tolerance
+        )
 
         # Toolbar aktualisieren
         overall = self.quality_metrics.get("overall_score", 0)
@@ -4059,6 +4299,24 @@ class MainWindow(QMainWindow):
             running_workers.append(render_worker)
 
         if running_workers:
+            # H2-Fix: nicht unbegrenzt pollen. Reagiert ein Worker nicht auf
+            # Cancel (z.B. AnalysisWorker mitten in einem langen Librosa-Call,
+            # AITestWorker in requests.post), wuerde die App sonst nie schliessen.
+            # Nach ~5s (50 x 100ms) die verbliebenen Threads hart terminieren.
+            self._close_attempts = getattr(self, "_close_attempts", 0) + 1
+            if self._close_attempts > 50:
+                logger.warning(
+                    "Worker reagieren nicht auf Cancel — erzwinge Terminate beim Schliessen"
+                )
+                for w in running_workers:
+                    try:
+                        w.terminate()
+                        w.wait(2000)
+                    except Exception:
+                        pass
+                self.mix_tips_panel._cleanup_existing_previews()
+                event.accept()
+                return
             self._close_pending = True
             self._set_run_state(RunState.CANCELLING)
             self.status_bar.set_status("Beende laufende Hintergrundarbeit...")
