@@ -3767,7 +3767,16 @@ class MainWindow(QMainWindow):
         """Beruecksichtigt Zustand und alle mutierenden Hauptworker."""
         worker_alive = bool(self.worker and self.worker.isRunning())
         ai_alive = bool(self.ai_worker and self.ai_worker.isRunning())
-        return self.run_state in ACTIVE_RUN_STATES or worker_alive or ai_alive
+        # MED-Fix: laufenden Preview-Render-Worker mitzaehlen. RunState.PREVIEW
+        # wird nie gesetzt — ohne diesen Check gilt der Lauf als inaktiv, waehrend
+        # im Hintergrund noch ein Preview-ProcessPool die CPU belegt (parallele
+        # Analyse waere sonst unbeabsichtigte CPU-Konkurrenz).
+        render_worker = getattr(getattr(self, "mix_tips_panel", None), "_render_worker", None)
+        render_alive = bool(render_worker and render_worker.isRunning())
+        return (
+            self.run_state in ACTIVE_RUN_STATES
+            or worker_alive or ai_alive or render_alive
+        )
 
     def _finish_run(self, state: RunState, status: str) -> None:
         """Stellt die UI in jedem terminalen Pfad deterministisch wieder her."""
@@ -4408,6 +4417,23 @@ if __name__ == "__main__":
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
     qt_handler.setFormatter(formatter)
     logging.getLogger().addHandler(qt_handler)
+
+    # MED-Fix: globales Sicherheitsnetz. Eine unbehandelte Exception in einem
+    # Qt-Slot beendet unter PyQt6 sonst still den ganzen Prozess. Stattdessen mit
+    # vollem Traceback loggen (via qt_handler auch in der GUI-Logansicht sichtbar),
+    # damit der Fehler auffaellt und die App weiterlaeuft statt zu verschwinden.
+    import traceback as _traceback
+
+    def _global_excepthook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        logging.getLogger("hpg").critical(
+            "Unbehandelte Exception:\n%s",
+            "".join(_traceback.format_exception(exc_type, exc_value, exc_tb)),
+        )
+
+    sys.excepthook = _global_excepthook
 
     # Only clear cache if explicitly requested or on major version changes
     # Automatic clearing on every start is inefficient and can cause locking issues
