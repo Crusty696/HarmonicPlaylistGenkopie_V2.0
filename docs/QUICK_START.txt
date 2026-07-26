@@ -1,5 +1,5 @@
 ================================================================================
-HARMONICPLAYLISTGENERATOR v3.7.0 - QUICK START GUIDE
+HARMONICPLAYLISTGENERATOR v3.7.1 - QUICK START GUIDE
 ================================================================================
 
 1. APP STARTEN
@@ -198,7 +198,7 @@ Code: Siehe tests/ für Beispiele
 
 Die App ist PRODUCTION READY ✓
 
-Version: 3.7.0
+Version: 3.7.1
 Tests: 961/961 bestanden (100%)
 Coverage: 76%
 Stabilität: ★★★★★

@@ -1,12 +1,12 @@
 @echo off
 REM =========================================================
-REM Harmonic Playlist Generator v3.7.0 - Build Script
+REM Harmonic Playlist Generator v3.7.1 - Build Script
 REM One-Click Build: Creates standalone Windows executable
 REM =========================================================
 
 echo.
 echo ========================================================
-echo   Harmonic Playlist Generator v3.7.0 - BUILD SCRIPT
+echo   Harmonic Playlist Generator v3.7.1 - BUILD SCRIPT
 echo ========================================================
 echo.
 
