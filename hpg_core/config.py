@@ -102,6 +102,10 @@ LIBROSA_TAIL_DURATION = 180
 # === Parallel Analysis ===
 PARALLEL_ANALYSIS_TIMEOUT = 60  # Sekunden pro Track (schuetzt gegen korrupte Dateien)
 PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder feste Zahl
+# Native Audio-Decoder und Librosa benoetigen pro Worker deutlich RAM. Auf
+# Windows fuehren mehr als vier parallele Decoder bei grossen AIFF/WAV-Dateien
+# zu C-Level-Abstuerzen des ProcessPools; explizite Nutzerlimits bleiben moeglich.
+PARALLEL_AUTO_MAX_WORKERS = 4
 # AUDIT-FIX N-04 (2026-07-26): Obergrenze fuer die Haenger-Deadline im
 # Parallel-Analyzer. Die Deadline ist eine INAKTIVITAETS-Deadline pro
 # Wartezyklus (TIMEOUT * worker_count + 30) und wird hier auf ~15 Minuten

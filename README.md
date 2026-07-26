@@ -1,4 +1,4 @@
-# Harmonic Playlist Generator (HPG) v3.7.1
+# Harmonic Playlist Generator (HPG) v3.7.2
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12.1+](https://img.shields.io/badge/python-3.12.1+-blue.svg)](https://www.python.org/downloads/)
@@ -12,7 +12,7 @@
 
 ### Windows Standalone Executable
 
-**Latest Release: v3.7.1**
+**Latest Release: v3.7.2**
 
 [**DOWNLOAD HarmonicPlaylistGenerator.exe**](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/latest/download/HarmonicPlaylistGenerator.exe)
 

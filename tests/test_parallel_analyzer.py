@@ -114,6 +114,14 @@ class TestOptimalWorkerCount:
     count_large = get_optimal_worker_count(file_count=50)
     assert count_large >= 2
 
+  def test_large_audio_workload_uses_stable_auto_cap(self, monkeypatch):
+    """Grosse native Audio-Workloads bleiben bei vier Auto-Workern stabil."""
+    from hpg_core import parallel_analyzer
+
+    monkeypatch.setattr(parallel_analyzer.mp, "cpu_count", lambda: 16)
+
+    assert get_optimal_worker_count(file_count=26) == 4
+
   def test_none_file_count(self):
     """None File-Count = Auto-Detect."""
     count = get_optimal_worker_count(file_count=None)

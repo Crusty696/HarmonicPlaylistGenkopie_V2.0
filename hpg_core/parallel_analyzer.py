@@ -33,7 +33,8 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
 
     Uses smart dynamic allocation:
     - Small CPUs (≤12 cores): Up to 6 cores
-    - Large CPUs (>12 cores): Up to 50% of cores
+    - Large CPUs (>12 cores): Up to 50% of cores, capped at four stable
+      audio-decoder workers for Windows native-library safety
 
     Args:
         file_count: Number of files to process (optional)
@@ -50,7 +51,10 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     # Smart scaling: use the better of the two strategies
     # - Small CPU strategy: min(6, cpu_count)
     # - Large CPU strategy: cpu_count // 2
-    max_workers = max(min(6, cpu_count), cpu_count // 2)
+    max_workers = min(
+        max(min(6, cpu_count), cpu_count // 2),
+        config.PARALLEL_AUTO_MAX_WORKERS,
+    )
 
     if file_count:
         # Scale workers based on workload to avoid process overhead
@@ -121,7 +125,7 @@ class ParallelAnalyzer:
         """
         cpu_count = mp.cpu_count()
         # Use smart allocation if max_workers not explicitly provided
-        default_workers = max(min(6, cpu_count), cpu_count // 2)
+        default_workers = get_optimal_worker_count()
         self._explicit_max_workers = max_workers is not None
         self.max_workers = min(max_workers or default_workers, cpu_count)
         logger.info(f"Initialisiert mit {self.max_workers} Workers (CPU: {cpu_count} Kerne)")
