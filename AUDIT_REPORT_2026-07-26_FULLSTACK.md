@@ -5,7 +5,7 @@
 
 ## Executive Summary
 
-Der End-to-End-Datenfluss ist belastbar: Scan → Sicherheitsfilter → Parallel-Analyse → Cache → Playlist/Scoring → Transition-Plan → Renderer/Exporter ist durch Tests und einen echten AIFF-Lauf abgedeckt. Der Abschlussstand ist 1.381/1.381 Tests, 74,09 % Coverage, 39/39 Verify-Checks und 17/17 E2E-Checks.
+Der End-to-End-Datenfluss ist belastbar: Scan → Sicherheitsfilter → Parallel-Analyse → Cache → Playlist/Scoring → Transition-Plan → Renderer/Exporter ist durch Tests und einen echten AIFF-Lauf abgedeckt. Der Abschlussstand ist 1.384/1.384 Tests, 74,18 % Coverage, 39/39 Verify-Checks und 17/17 E2E-Checks.
 
 Die wichtigsten zuvor belegten Risiken wurden behoben: Mix-In-Grenzen, Rekordbox-Zeitsemantik, Cache-Versionierung und Metadaten-Invalidierung, stale GUI-Worker/Playlist-Zustände, Preview-Temp-Dateien, Pfad-Containment sowie CI-Python-/xdist-Vertrag. Der Restlauf schloss außerdem den echten Einzel-Task-Timeout, den Score-Vertrag, die Mixpoint-Sentinel-Semantik, die aktive/historische Dokumentationsdrift und nachgewiesen toten Code.
 
@@ -113,7 +113,7 @@ Repository-Fix.
 
 ## Verification Evidence
 
-- Volltest: **1.381 passed**, 26 warnings, **74,09 % Coverage**, Gate 70 %.
+- Volltest: **1.384 passed**, 26 warnings, **74,18 % Coverage**, Gate 70 %.
 - Verify-Suiten: `verify_fixes.py` **14/14**, `verify_wave2.py` **17/17**, `verify_wave4.py` **8/8**.
 - E2E: **17/17**, 3 echte AIFF-Dateien, Playlist/Recommendations/Render/Clipping/Loudness/Grid geprüft; Peak 0,955.
 - Reale ANLZ-Abnahme: Content `254580025`, `ANLZ0000.DAT/PQTZ`, Rohwert `0,0017 s` = Importerwert; Analyse `downbeat_confidence=1,0`, BPM `138,0`, Camelot `4A`.
@@ -122,3 +122,23 @@ Repository-Fix.
 - `compileall`: erfolgreich.
 - `git diff --check`: erfolgreich.
 - Workflow-Dateien strukturell geprüft; `actionlint` ist lokal nicht installiert.
+
+## Deep Bug-Hunt Addendum - 2026-07-26
+
+Die vertiefte Rekordbox-Prüfung fand eine reale False-Wiring-Gefahr: Die lokale
+`master.db` enthält 2.665 Content-Zeilen mit 77 doppelten normalisierten Pfad-
+Records. Vorher konnte dadurch der zuletzt gelesene Record BPM/Key/Cues eines
+früheren Records still überschreiben; außerdem wurde bei 60 mehrdeutigen
+Basenames der erste Treffer verwendet.
+
+Behoben in `hpg_core/rekordbox_importer.py`:
+
+- widersprüchliche exakte Pfad-Records werden als mehrdeutig verworfen;
+- ein eindeutig besserer analysierter Record gewinnt gegen einen Record mit
+  BPM `0`/fehlender Analyse;
+- mehrdeutige Basename-Fallbacks liefern `None` statt falscher Metadaten;
+- `get_statistics()` und `get_available_count()` zählen nur eindeutige Pfade.
+
+Regression: `tests/test_rekordbox_importer.py` deckt 62 Tests ab, einschließlich
+exakter Pfadkonflikte, analysierter-vs.-unanalysierter Duplikate und mehrdeutiger
+verschobener Dateinamen.

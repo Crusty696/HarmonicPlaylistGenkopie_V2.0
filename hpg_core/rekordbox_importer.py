@@ -76,7 +76,12 @@ class RekordboxImporter:
         """Initialize Rekordbox Importer"""
         self.db = None
         self.track_cache: Dict[str, RekordboxTrackData] = {}
-        self.basename_cache: Dict[str, RekordboxTrackData] = {}
+        # Mehrere master.db-Records koennen auf dieselbe Datei zeigen. Bei
+        # widerspruechlichen Analysewerten ist auch der exakte Pfad unsicher.
+        self._ambiguous_paths: set[str] = set()
+        # Mehrdeutige Basenames duerfen nie stillschweigend den ersten Track
+        # liefern: bei verschobenen Dateien waeren BPM/Key/Cues sonst falsch.
+        self.basename_cache: Dict[str, Optional[RekordboxTrackData]] = {}
         # Memo fuer lazy geparste ANLZ-Downbeats (content_id -> Sekunden oder None)
         self._downbeat_cache: Dict[str, Optional[float]] = {}
 
@@ -221,17 +226,66 @@ class RekordboxImporter:
                 # Cache by normalized path (nur wenn ein echter Pfad vorliegt —
                 # AUDIT-FIX RB-02: kein Eintrag unter leerem Key)
                 if full_path:
-                    self.track_cache[full_path] = data
                     basename = os.path.basename(full_path)
                 else:
                     basename = os.path.basename(file_name).lower()
 
-                # Cache by basename for O(1) fallback lookups.
-                if basename and basename not in self.basename_cache:
-                    self.basename_cache[basename] = data
+                if full_path:
+                    existing_path_data = self.track_cache.get(full_path)
+                    if existing_path_data is None:
+                        self.track_cache[full_path] = data
+                    elif self._track_data_conflicts(existing_path_data, data):
+                        self._ambiguous_paths.add(full_path)
+                        logger.warning(
+                            "Widerspruechliche Rekordbox-Records fuer Pfad verworfen: %s",
+                            full_path,
+                        )
+                    elif self._track_data_quality(data) > self._track_data_quality(
+                        existing_path_data
+                    ):
+                        # Typischer Realfall: ein alter Record hat BPM=0,
+                        # waehrend ein neuer Record dieselbe Datei analysiert.
+                        self.track_cache[full_path] = data
+
+                # Cache by basename for O(1) fallback lookups. Gleichnamige
+                # Tracks sind ohne Pfad nicht unterscheidbar; als None markieren
+                # statt potenziell falsche Rekordbox-Metadaten zu verwenden.
+                if basename:
+                    existing = self.basename_cache.get(basename)
+                    if existing is None and basename in self.basename_cache:
+                        continue
+                    if existing is not None and existing is not data:
+                        self.basename_cache[basename] = None
+                    else:
+                        self.basename_cache[basename] = data
 
         except Exception as e:
             logger.warning(f"Fehler beim Aufbau des Rekordbox-Track-Cache: {e}")
+
+    @staticmethod
+    def _track_data_quality(data: RekordboxTrackData) -> int:
+        """Bewertet, wie belastbar ein Rekordbox-Record analysiert ist."""
+        return sum(
+            value is not None
+            for value in (data.bpm, data.camelot_code, data.duration, data.title)
+        ) + len(data.cue_points or [])
+
+    @staticmethod
+    def _track_data_conflicts(
+        left: RekordboxTrackData, right: RekordboxTrackData
+    ) -> bool:
+        """Erkennt widerspruechliche Werte, nicht nur doppelte Content-IDs."""
+        for left_value, right_value in (
+            (left.bpm, right.bpm),
+            (left.camelot_code, right.camelot_code),
+            (left.duration, right.duration),
+            (left.title, right.title),
+            (left.artist, right.artist),
+            (left.genre, right.genre),
+        ):
+            if left_value is not None and right_value is not None and left_value != right_value:
+                return True
+        return False
 
     def _convert_key_to_camelot(self, rekordbox_key: str) -> Optional[str]:
         """
@@ -443,14 +497,24 @@ class RekordboxImporter:
         normalized_path = os.path.normpath(file_path).lower()
 
         # Try exact match
+        if normalized_path in self._ambiguous_paths:
+            logger.warning(
+                "Mehrdeutige Rekordbox-Pfadzuordnung verworfen: %s", normalized_path
+            )
+            return None
         if normalized_path in self.track_cache:
             return self.track_cache[normalized_path]
 
         # Try filename-only match (fallback for moved files)
         filename = os.path.basename(normalized_path)
-        if filename in self.basename_cache:
+        fallback = self.basename_cache.get(filename)
+        if fallback is not None:
             logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
-            return self.basename_cache[filename]
+            return fallback
+        if filename in self.basename_cache:
+            logger.warning(
+                "Mehrdeutiger Rekordbox-Basename-Fallback verworfen: %s", filename
+            )
 
         return None
 
@@ -469,7 +533,7 @@ class RekordboxImporter:
 
     def get_available_count(self) -> int:
         """Get number of tracks available in Rekordbox database"""
-        return len(self.track_cache)
+        return len(self.track_cache) - len(self._ambiguous_paths)
 
     def has_track(self, file_path: str) -> bool:
         """Check if track exists in Rekordbox database"""
@@ -483,21 +547,23 @@ class RekordboxImporter:
                 "total_tracks": 0,
             }
 
+        available_paths = set(self.track_cache) - self._ambiguous_paths
+        available_data = [self.track_cache[path] for path in available_paths]
         stats = {
             "available": True,
-            "total_tracks": len(self.track_cache),
-            "tracks_with_bpm": sum(1 for d in self.track_cache.values() if d.bpm),
+            "total_tracks": len(available_paths),
+            "tracks_with_bpm": sum(1 for d in available_data if d.bpm),
             "tracks_with_key": sum(
-                1 for d in self.track_cache.values() if d.camelot_code
+                1 for d in available_data if d.camelot_code
             ),
             "tracks_with_cues": sum(
-                1 for d in self.track_cache.values() if d.cue_points
+                1 for d in available_data if d.cue_points
             ),
             "average_bpm": None,
         }
 
         # Calculate average BPM
-        bpms = [d.bpm for d in self.track_cache.values() if d.bpm]
+        bpms = [d.bpm for d in available_data if d.bpm]
         if bpms:
             stats["average_bpm"] = sum(bpms) / len(bpms)
 

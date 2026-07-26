@@ -445,6 +445,56 @@ class TestGetTrackData:
     assert data is not None
     assert data.bpm == pytest.approx(140.0)
 
+  def test_mehrdeutiger_filename_fallback_wird_verworfen(self, tmp_path):
+    """Gleichnamige Tracks duerfen keine falschen RB-Metadaten liefern."""
+    filename = "track.mp3"
+    first = FakeContent(
+      folder_path=str(tmp_path / "first"), filename=filename, bpm=12800
+    )
+    second = FakeContent(
+      folder_path=str(tmp_path / "second"), filename=filename, bpm=14000
+    )
+    imp = make_importer(db=FakeDatabase([first, second]))
+
+    moved_path = str(tmp_path / "moved" / filename)
+
+    assert imp.get_track_data(moved_path) is None
+    assert imp.get_track_data(str(tmp_path / "first" / filename)).bpm == pytest.approx(128.0)
+    assert imp.get_track_data(str(tmp_path / "second" / filename)).bpm == pytest.approx(140.0)
+
+  def test_widerspruechliche_records_am_exakten_pfad_werden_verworfen(self, tmp_path):
+    """Auch doppelte RB-Pfad-Records duerfen nicht zufaellig gewinnen."""
+    filename = "track.mp3"
+    first = FakeContent(
+      folder_path=str(tmp_path), filename=filename, bpm=12800, key_name="8A"
+    )
+    second = FakeContent(
+      folder_path=str(tmp_path), filename=filename, bpm=14000, key_name="9A"
+    )
+    imp = make_importer(db=FakeDatabase([first, second]))
+
+    exact_path = str(tmp_path / filename)
+
+    assert exact_path.lower() in imp._ambiguous_paths
+    assert imp.get_track_data(exact_path) is None
+
+  def test_unanalysierter_duplicate_record_verliert_gegen_analyse(self, tmp_path):
+    """Ein BPM=0-Record darf einen analysierten Record nicht ueberschreiben."""
+    filename = "track.mp3"
+    unanalysed = FakeContent(
+      folder_path=str(tmp_path), filename=filename, bpm=0, key_name="Bmin"
+    )
+    analysed = FakeContent(
+      folder_path=str(tmp_path), filename=filename, bpm=14000, key_name="10A"
+    )
+    imp = make_importer(db=FakeDatabase([unanalysed, analysed]))
+
+    data = imp.get_track_data(str(tmp_path / filename))
+
+    assert data is not None
+    assert data.bpm == pytest.approx(140.0)
+    assert data.camelot_code == "10A"
+
   def test_nicht_gefunden_ergibt_none(self, tmp_path):
     content = FakeContent(folder_path=str(tmp_path), filename="track.mp3")
     imp = make_importer(db=FakeDatabase([content]))

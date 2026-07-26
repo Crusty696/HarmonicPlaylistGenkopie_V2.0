@@ -7,7 +7,7 @@ AUDIT_REPORT_2026-07-26_FULLSTACK.md)
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
 - Tests: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --no-cov -q`
-- Baseline: **1381 Tests grün**, 26 Warnungen (verifiziert 2026-07-26)
+- Baseline: **1384 Tests grün**, 26 Warnungen (verifiziert 2026-07-26)
 - Das alte defekte `venv\` (Python 3.14) wurde 2026-07-17 geloescht
 - Build: `build.bat` (findet Python 3.12 automatisch, nutzt venv312)
 - Python-Basis: **3.12.10** (2026-07-16 aktualisiert; 3.12.0 hatte einen
@@ -41,13 +41,14 @@ Produktkalibrierung nicht vollständig automatisierbar.
 
 ## Abschlussverifikation 2026-07-26
 
-- Volltest mit vier Workern: **1381 passed** in 328,79 s
-- Coverage-Gate: **74,09 %**, Mindestwert 70 %
+- Volltest mit vier Workern: **1384 passed** in 305,90 s
+- Coverage-Gate: **74,18 %**, Mindestwert 70 %
 - Verify-Suiten: **14/14**, **17/17**, **8/8**
 - E2E: **17/17** mit drei realen AIFF-Dateien; Render-Peak 0,955
 - ANLZ-Ground-Truth: Content `254580025`, `ANLZ0000.DAT/PQTZ`, Rohwert und Importer `0,0017 s` identisch; Analyse-Konfidenz `1,0`, BPM `138,0`, Camelot `4A`
 - Realer Uebergangs-Render: zwei Rekordbox-Tracks, 60 s / 44,1 kHz / Stereo, Peak `0,515`, Mitte-vs.-Anfang `-2,19 dB`, Kanalabweichung `0,06 dB`, finite Samples; akzeptiert
 - `pip check`, `compileall` und `git diff --check`: erfolgreich
+- Deep Bug-Hunt: Rekordbox-Duplikat-/Basename-Fallback abgesichert; 62 Importer-Regressionstests bestanden
 
 ## Reale Abschlussabnahme 2026-07-26
 
