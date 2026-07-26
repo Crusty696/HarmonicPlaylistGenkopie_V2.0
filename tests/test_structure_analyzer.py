@@ -10,6 +10,7 @@ from hpg_core.structure_analyzer import (
   TrackStructure,
   GENRE_PHRASE_UNITS,
   _compute_novelty_curve,
+  _estimate_phrase_unit_from_novelty,
   _pick_boundaries,
   _quantize_to_bars,
   _compute_section_energy,
@@ -163,25 +164,40 @@ class TestQuantizeToBars:
   """Prueft die Bar-Quantisierung."""
 
   def test_exact_bar_boundary(self):
-    """Exakte Bar-Grenzen bleiben unveraendert."""
+    """Exakte ganze Phrasen-Grenzen bleiben unveraendert."""
     bpm = 120.0
     spb = 60.0 / bpm * METER  # 2.0 Sekunden pro Bar
-    boundaries = [0.0, spb * 4, spb * 8]  # Bar 0, 4, 8
+    boundaries = [0.0, spb * 8, spb * 16]  # Phrase 0, 1, 2
     result = _quantize_to_bars(boundaries, bpm, spb * 16)
     assert 0.0 in result
-    assert abs(result[1] - spb * 4) < 0.01
-    assert abs(result[2] - spb * 8) < 0.01
+    assert abs(result[1] - spb * 8) < 0.01
+    assert abs(result[2] - spb * 16) < 0.01
 
   def test_snaps_to_nearest_bar(self):
-    """Werte zwischen Bars werden zum naechsten Bar gerundet."""
+    """Werte zwischen Phrasen werden zur naechsten ganzen Phrase gerundet."""
     bpm = 120.0
     spb = 60.0 / bpm * METER  # 2.0 sec/bar
-    boundaries = [0.0, spb * 3.7, spb * 8.2]
+    boundaries = [0.0, spb * 7.7, spb * 16.2]
     result = _quantize_to_bars(boundaries, bpm, spb * 16)
-    # 3.7 bars -> round to 4 bars = 8.0s
-    # 8.2 bars -> round to 8 bars = 16.0s
-    assert any(abs(t - spb * 4) < 0.01 for t in result)
+    # 7.7 bars -> round to 8 bars = 16.0s
+    # 16.2 bars -> round to 16 bars = 32.0s, then clamp to the duration
     assert any(abs(t - spb * 8) < 0.01 for t in result)
+    assert any(abs(t - spb * 16) < 0.01 for t in result)
+
+  def test_phrase_grid_respects_shared_anchor(self):
+    """Jede Grenze liegt auf dem ganzen Phrasengitter des Ankers."""
+    bpm = 120.0
+    spb = 60.0 / bpm * METER
+    anchor = 0.5
+    result = _quantize_to_bars(
+      [anchor + spb * 3.7, anchor + spb * 7.8, anchor + spb * 16.1],
+      bpm,
+      spb * 24,
+      phrase_unit=8,
+      anchor=anchor,
+    )
+    for boundary in result:
+      assert abs(((boundary - anchor) / (spb * 8)) - round((boundary - anchor) / (spb * 8))) < 1e-9
 
   def test_removes_duplicates(self):
     """Doppelte Boundaries nach Quantisierung werden entfernt."""
@@ -424,6 +440,93 @@ class TestComputeNoveltyCurve:
     y = _make_tone(sr, 10.0)
     novelty, times = _compute_novelty_curve(y, sr)
     assert np.all(np.diff(times) > 0)
+
+  def test_bass_and_percussion_signal_contribute_without_api_change(self):
+    """Die erweiterte Kurve bleibt gleich geformt und nichtnegativ."""
+    sr = 22050
+    duration = 12.0
+    t = np.arange(int(sr * duration)) / sr
+    kick = np.zeros_like(t)
+    for onset in np.arange(0.0, duration, 0.5):
+      start = int(onset * sr)
+      end = min(len(kick), start + int(0.08 * sr))
+      kick[start:end] += np.hanning(max(2, end - start)) * 0.8
+    y = (kick + 0.03 * np.sin(2 * np.pi * 55.0 * t)).astype(np.float32)
+
+    novelty, times = _compute_novelty_curve(y, sr)
+
+    assert novelty.shape == times.shape
+    assert np.all(np.isfinite(novelty))
+    assert np.all(novelty >= 0.0)
+
+
+class TestPhraseUnitMeasurement:
+  """Prueft die konservative Phrase-Messung aus Bar-Novelty."""
+
+  def test_clear_sixteen_bar_period_is_measured(self):
+    bpm = 120.0
+    seconds_per_bar = 60.0 / bpm * METER
+    times = np.arange(0.0, seconds_per_bar * 96.0, 0.5)
+    novelty = np.full(times.shape, 0.05, dtype=float)
+    pulse_bars = np.arange(0, 96, 16)
+    for bar in pulse_bars:
+      mask = (times >= bar * seconds_per_bar) & (
+        times < bar * seconds_per_bar + 0.5
+      )
+      novelty[mask] = 1.0
+
+    measured = _estimate_phrase_unit_from_novelty(
+      novelty,
+      times,
+      bpm,
+      genre="Tech House",
+    )
+
+    assert measured == 16
+
+  def test_flat_or_short_evidence_keeps_genre_prior(self):
+    bpm = 142.0
+    seconds_per_bar = 60.0 / bpm * METER
+    times = np.arange(0.0, seconds_per_bar * 24.0, 0.5)
+    novelty = np.ones(times.shape, dtype=float)
+
+    measured = _estimate_phrase_unit_from_novelty(
+      novelty,
+      times,
+      bpm,
+      genre="Psytrance",
+    )
+
+    assert measured is None
+
+  def test_analyze_structure_uses_confident_measurement(self, monkeypatch):
+    bpm = 120.0
+    sr = 100
+    duration = 192.0
+    seconds_per_bar = 60.0 / bpm * METER
+    times = np.arange(0.0, duration, 0.5)
+    novelty = np.full(times.shape, 0.05, dtype=float)
+    for bar in np.arange(0, 96, 16):
+      mask = (times >= bar * seconds_per_bar) & (
+        times < bar * seconds_per_bar + 0.5
+      )
+      novelty[mask] = 1.0
+
+    def fake_novelty_curve(y, sr, hop_length=512, feature_cache=None):
+      return novelty, times
+
+    monkeypatch.setattr(
+      "hpg_core.structure_analyzer._compute_novelty_curve",
+      fake_novelty_curve,
+    )
+    result = analyze_structure(
+      np.zeros(int(sr * duration), dtype=np.float32),
+      sr,
+      bpm,
+      genre="Tech House",
+    )
+
+    assert result.phrase_unit == 16
 
 
 # === Main Function: analyze_structure ===

@@ -20,7 +20,7 @@ def _make_track(
     camelot: str = "8A",
     energy: int = 50,
     duration: float = 300.0,
-    mix_out_point: float = 0.0,
+    mix_out_point: float = -1.0,
     genre: str = "Unknown",
 ) -> Track:
   """Erstellt einen Track fuer Set-Timing Tests."""

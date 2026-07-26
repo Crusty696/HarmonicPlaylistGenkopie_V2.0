@@ -14,7 +14,10 @@ Features:
 """
 
 import logging
+import math
 import os
+import hashlib
+import json
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 from .models import CAMELOT_MAP
@@ -170,8 +173,20 @@ class RekordboxImporter:
 
                 # Normalize path for matching — FolderPath ist bereits der volle
                 # Pfad. Nur falls er (untypisch) fehlt, aus Ordner+Name bauen.
-                full_path = folder_path if folder_path else os.path.join(folder_path, file_name)
-                full_path = os.path.normpath(full_path).lower()
+                # AUDIT-FIX RB-02 (2026-07-24): Der alte Ausdruck war
+                # `folder_path if folder_path else join(folder_path, file_name)`
+                # — der else-Zweig konnte nie einen echten Pfad bauen (join("",
+                # name)==name). Tracks ohne FolderPath landeten unter dem nackten
+                # Dateinamen als Key und wurden nur ueber den fehleranfaelligen
+                # Basename-Fallback gefunden. Jetzt: nur mit gueltigem Ordner in
+                # den Pfad-Cache, sonst ausschliesslich Basename-Zuordnung.
+                if folder_path:
+                    full_path = os.path.normpath(folder_path).lower()
+                else:
+                    logger.debug(
+                        f"Rekordbox-Track ohne FolderPath, nur Basename-Zuordnung: {file_name}"
+                    )
+                    full_path = ""
 
                 # Extract data
                 # Note: Rekordbox stores BPM as integer * 100 (e.g., 13600 = 136.0 BPM)
@@ -203,13 +218,16 @@ class RekordboxImporter:
                 if hasattr(content, "Cues") and content.Cues:
                     data.cue_points = self._extract_cue_points(content.Cues)
 
-                # Cache by normalized path
-                self.track_cache[full_path] = data
+                # Cache by normalized path (nur wenn ein echter Pfad vorliegt —
+                # AUDIT-FIX RB-02: kein Eintrag unter leerem Key)
+                if full_path:
+                    self.track_cache[full_path] = data
+                    basename = os.path.basename(full_path)
+                else:
+                    basename = os.path.basename(file_name).lower()
 
                 # Cache by basename for O(1) fallback lookups.
-                # Use lower() on basename as paths are normalized and lowercase.
-                basename = os.path.basename(full_path)
-                if basename not in self.basename_cache:
+                if basename and basename not in self.basename_cache:
                     self.basename_cache[basename] = data
 
         except Exception as e:
@@ -258,10 +276,12 @@ class RekordboxImporter:
                 # Audit-Fix 2026-07-17: Memory-Cues ohne Position liefern
                 # InMsec = -1/None — nicht als Cue bei -0.001s durchreichen
                 raw_msec = getattr(cue, "InMsec", None)
-                if raw_msec is None or float(raw_msec) < 0:
+                # Rekordbox-Cues nennen das Feld explizit InMsec.
+                position = self._milliseconds_to_seconds(raw_msec)
+                if position is None:
                     continue
                 cue_data = {
-                    "position": float(raw_msec) / 1000.0,
+                    "position": position,
                     "name": cue.Comment if hasattr(cue, "Comment") else None,
                     "type": cue.Kind if hasattr(cue, "Kind") else None,
                     "hot_cue_number": (
@@ -289,6 +309,11 @@ class RekordboxImporter:
 
         Returns:
             Sekunden des ersten Downbeats oder None (nicht verfuegbar).
+
+        Vertrag: Dieser Importer liefert ausschliesslich ``first_downbeat``,
+        also den Takt-Anker der ersten "1". ``phrase_anchor`` wird downstream
+        aus der Phrasen-Erkennung gewaehlt und kann bei ausreichender
+        Konfidenz spaeter auf einer anderen Phrasengrenze liegen.
         """
         data = self.get_track_data(file_path)
         if not data or not data.content_id or self.db is None:
@@ -299,30 +324,107 @@ class RekordboxImporter:
 
         result: Optional[float] = None
         try:
-            anlz_file = self.db.read_anlz_file(data.content_id, "DAT")
-            if anlz_file is not None:
-                for tag_key in ("PQTZ", "beat_grid"):
-                    try:
-                        tag = anlz_file.get_tag(tag_key)
-                    except Exception:
-                        tag = None
-                    if tag is None:
-                        continue
-                    beats = getattr(tag, "beats", None)
-                    times = getattr(tag, "times", None)
-                    if beats is None or times is None:
-                        continue
-                    for beat_num, time_ms in zip(beats, times):
-                        if int(beat_num) == 1 and time_ms is not None and time_ms >= 0:
-                            result = round(float(time_ms) / 1000.0, 4)
-                            break
-                    if result is not None:
-                        break
+            # AUDIT-FIX RB-01 (2026-07-24): Robuster gegen die tatsaechliche
+            # pyrekordbox-API. Vorher wurde ausschliesslich
+            # `read_anlz_file(content_id, "DAT")` + flache `.beats`/`.times`
+            # probiert — beides passt nicht zur aktuellen API, der Aufruf
+            # scheiterte still (DEBUG-Log) und der exakte Downbeat-Pfad war
+            # damit IMMER tot (nie confidence 1.0). Jetzt: mehrere API-Formen
+            # versuchen und per-Entry-Zugriff (.beat/.time) unterstuetzen.
+            anlz_files = []
+            for reader, args in (
+                (getattr(self.db, "read_anlz_files", None), (data.content_id,)),
+                (getattr(self.db, "read_anlz_file", None), (data.content_id, "DAT")),
+            ):
+                if reader is None:
+                    continue
+                try:
+                    res = reader(*args)
+                except Exception:
+                    continue
+                if res is None:
+                    continue
+                # read_anlz_files liefert dict {path: AnlzFile}, read_anlz_file ein Objekt
+                if isinstance(res, dict):
+                    anlz_files.extend(res.values())
+                else:
+                    anlz_files.append(res)
+                if anlz_files:
+                    break
+
+            result = self._extract_first_downbeat_from_anlz(anlz_files)
+
+            if result is None and anlz_files:
+                logger.warning(
+                    f"ANLZ vorhanden, aber kein Beatgrid extrahierbar fuer {file_path} "
+                    f"(pyrekordbox-API pruefen)"
+                )
         except Exception as e:
-            logger.debug(f"ANLZ-Beatgrid nicht lesbar fuer {file_path}: {e}")
+            logger.warning(f"ANLZ-Beatgrid nicht lesbar fuer {file_path}: {e}")
 
         self._downbeat_cache[data.content_id] = result
         return result
+
+    @staticmethod
+    def _extract_first_downbeat_from_anlz(anlz_files) -> Optional[float]:
+        """Extrahiert die erste '1' aus PQTZ-Tags, robust gegen mehrere
+        pyrekordbox-Tag-Formen (flache .beats/.times ODER per-Entry .beat/.time).
+        AUDIT-FIX RB-01."""
+        for anlz_file in anlz_files:
+            for tag_key in ("PQTZ", "PQT2", "beat_grid", "beats"):
+                tag = None
+                try:
+                    getter = getattr(anlz_file, "get_tag", None)
+                    tag = getter(tag_key) if getter else None
+                except Exception:
+                    tag = None
+                if tag is None:
+                    tag = getattr(anlz_file, tag_key, None)
+                if tag is None:
+                    continue
+
+                # Form A: flache Parallel-Listen
+                beats = getattr(tag, "beats", None)
+                times = getattr(tag, "times", None)
+                if beats is not None and times is not None:
+                    for beat_num, raw_time in zip(beats, times):
+                        try:
+                            # PQTZ/PQT2 speichern Beatzeiten in Millisekunden.
+                            position = RekordboxImporter._milliseconds_to_seconds(raw_time)
+                            if int(beat_num) == 1 and position is not None:
+                                return position
+                        except (TypeError, ValueError):
+                            continue
+
+                # Form B: iterierbare Entries mit .beat/.time
+                entries = getattr(tag, "entries", None) or (tag if hasattr(tag, "__iter__") else None)
+                if entries is not None:
+                    try:
+                        for entry in entries:
+                            beat = getattr(entry, "beat", None)
+                            t = getattr(entry, "time", None)
+                            position = RekordboxImporter._milliseconds_to_seconds(t)
+                            if beat is not None and int(beat) == 1 and position is not None:
+                                return position
+                    except (TypeError, ValueError):
+                        continue
+        return None
+
+    @staticmethod
+    def _time_to_seconds(raw_time) -> Optional[float]:
+        """Kompatibilitaetshelfer; neue Pfade nutzen die explizite Millisekunden-API."""
+        return RekordboxImporter._milliseconds_to_seconds(raw_time)
+
+    @staticmethod
+    def _milliseconds_to_seconds(raw_time) -> Optional[float]:
+        """Normalisiert einen Rekordbox-Zeitwert aus Millisekunden."""
+        try:
+            value = float(raw_time)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value < 0:
+            return None
+        return round(value / 1000.0, 4)
 
     def get_track_data(self, file_path: str) -> Optional[RekordboxTrackData]:
         """
@@ -351,6 +453,19 @@ class RekordboxImporter:
             return self.basename_cache[filename]
 
         return None
+
+    def get_track_signature(self, file_path: str) -> str:
+        """Liefert eine stabile Signatur der importierten RB-Metadaten.
+
+        Die Audio-Datei kann unveraendert bleiben, waehrend BPM, Key oder Cues
+        in Rekordbox geaendert werden. Diese Signatur bindet solche Aenderungen
+        an den HPG-Cache-Key.
+        """
+        data = self.get_track_data(file_path)
+        if data is None:
+            return ""
+        payload = json.dumps(data.__dict__, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def get_available_count(self) -> int:
         """Get number of tracks available in Rekordbox database"""

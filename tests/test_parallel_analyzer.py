@@ -169,7 +169,8 @@ class TestParallelAnalyzerInit:
         return True
 
     class ImmediateExecutor:
-      def __init__(self, max_workers):
+      def __init__(self, max_workers, initializer=None, **kwargs):
+        # AUDIT-FIX P-01: ProcessPoolExecutor bekommt jetzt initializer=_worker_init
         seen_workers.append(max_workers)
         self._processes = {}
 
@@ -186,7 +187,12 @@ class TestParallelAnalyzerInit:
         return None
 
     monkeypatch.setattr(parallel_analyzer, "ProcessPoolExecutor", ImmediateExecutor)
-    monkeypatch.setattr(parallel_analyzer, "as_completed", lambda futures, timeout=None: list(futures))
+    # AUDIT-FIX N-04: analyze_files nutzt jetzt wait() statt as_completed()
+    monkeypatch.setattr(
+      parallel_analyzer,
+      "wait",
+      lambda futures, timeout=None, return_when=None: (set(futures), set()),
+    )
 
     ParallelAnalyzer(max_workers=2).analyze_files([f"track-{i}.wav" for i in range(8)])
 
@@ -204,6 +210,180 @@ def test_terminate_executor_stops_running_processes():
 
   executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
   process.terminate.assert_called_once_with()
+
+
+# ============================================================
+# AUDIT-FIX N-04: Haenger-Deadline + Recovery-Executor-Reuse
+# ============================================================
+
+from concurrent.futures.process import BrokenProcessPool
+
+
+class _FakeFuture:
+  """Future-Ersatz fuer gemockte Executor-Tests (kein echter Prozess)."""
+
+  def __init__(self, fail=False):
+    self._fail = fail
+
+  def result(self, timeout=None):
+    if self._fail:
+      raise BrokenProcessPool("Simulierter Worker-Crash")
+    return None
+
+  def cancel(self):
+    return True
+
+
+def _make_fake_executor(created_workers, broken_main_pool=False):
+  """Erzeugt eine Fake-Executor-Klasse, die Instanziierungen protokolliert.
+
+  broken_main_pool=True laesst nur den Haupt-Pool (max_workers != 1)
+  crashen, der Recovery-Pool (max_workers == 1) funktioniert.
+  """
+
+  class FakeExecutor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      created_workers.append(max_workers)
+      self._processes = {}
+      self._fail = broken_main_pool and max_workers != 1
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+    def submit(self, func, path):
+      return _FakeFuture(fail=self._fail)
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      return None
+
+  return FakeExecutor
+
+
+class TestHangDeadline:
+  """N-04: Deadline haengt an worker_count, nicht an der Batch-Groesse."""
+
+  def _run(self, monkeypatch, file_count, max_workers):
+    from hpg_core import parallel_analyzer
+
+    recorded_timeouts = []
+
+    def fake_wait(futures, timeout=None, return_when=None):
+      recorded_timeouts.append(timeout)
+      return set(futures), set()
+
+    created = []
+    monkeypatch.setattr(parallel_analyzer, "wait", fake_wait)
+    monkeypatch.setattr(
+      parallel_analyzer, "ProcessPoolExecutor", _make_fake_executor(created)
+    )
+    ParallelAnalyzer(max_workers=max_workers).analyze_files(
+      [f"track-{i}.wav" for i in range(file_count)]
+    )
+    return recorded_timeouts
+
+  def test_deadline_depends_on_workers_not_batch_size(self, monkeypatch):
+    """300 Dateien, 2 Worker: Deadline = TIMEOUT * 2 + 30 (frueher batch-proportional)."""
+    from hpg_core import parallel_analyzer
+
+    timeouts = self._run(monkeypatch, file_count=300, max_workers=2)
+    assert timeouts, "wait() muss aufgerufen worden sein"
+    assert all(0 < t <= 0.5 for t in timeouts)
+
+
+  def test_deadline_identical_for_different_batch_sizes(self, monkeypatch):
+    """Gleiche Worker-Anzahl -> gleiche Deadline, egal wie gross der Batch ist."""
+    timeouts_small = self._run(monkeypatch, file_count=10, max_workers=2)
+    timeouts_large = self._run(monkeypatch, file_count=300, max_workers=2)
+    assert set(timeouts_small) == set(timeouts_large) == {0.5}
+
+  def test_deadline_is_capped_at_max(self, monkeypatch):
+    """Deadline ueberschreitet nie PARALLEL_HANG_DEADLINE_MAX (~15 min)."""
+    from hpg_core import parallel_analyzer
+
+    monkeypatch.setattr(parallel_analyzer.config, "PARALLEL_ANALYSIS_TIMEOUT", 600)
+    timeouts = self._run(monkeypatch, file_count=50, max_workers=2)
+    assert timeouts
+    assert all(0 < t <= 0.5 for t in timeouts)
+
+
+def test_per_task_timeout_limits_inflight_submissions(monkeypatch):
+  """Ein haengender Task wird nach seinem eigenen Limit erkannt."""
+  from hpg_core import parallel_analyzer
+  from itertools import count
+
+  class NeverFuture:
+    def result(self, timeout=None):
+      return None
+
+    def cancel(self):
+      return True
+
+  submitted = []
+
+  class FakeExecutor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      self.max_workers = max_workers
+      self._processes = {}
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+    def submit(self, func, path):
+      submitted.append((self.max_workers, path))
+      return NeverFuture()
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      return None
+
+  ticks = count(0)
+  monkeypatch.setattr(parallel_analyzer, "ProcessPoolExecutor", FakeExecutor)
+  monkeypatch.setattr(parallel_analyzer, "wait", lambda *args, **kwargs: (set(), set()))
+  monkeypatch.setattr(parallel_analyzer.time, "monotonic", lambda: float(next(ticks)))
+  monkeypatch.setattr(
+    parallel_analyzer.config, "PARALLEL_ANALYSIS_TIMEOUT", 0.5
+  )
+
+  ParallelAnalyzer(max_workers=2).analyze_files(
+    [f"track-{index}.wav" for index in range(4)]
+  )
+
+  main_submissions = [path for workers, path in submitted if workers == 2]
+  assert main_submissions == ["track-0.wav", "track-1.wav"]
+
+
+class TestRecoveryExecutorReuse:
+  """N-04: Nach BrokenProcessPool EIN Recovery-Pool fuer alle Rest-Dateien."""
+
+  def test_single_recovery_pool_per_batch(self, monkeypatch):
+    from hpg_core import parallel_analyzer
+
+    created = []
+    monkeypatch.setattr(
+      parallel_analyzer,
+      "ProcessPoolExecutor",
+      _make_fake_executor(created, broken_main_pool=True),
+    )
+    monkeypatch.setattr(
+      parallel_analyzer,
+      "wait",
+      lambda futures, timeout=None, return_when=None: (set(futures), set()),
+    )
+
+    result = ParallelAnalyzer(max_workers=2).analyze_files(
+      [f"track-{i}.wav" for i in range(8)]
+    )
+
+    # 8 Dateien, 2 Worker -> BATCH_SIZE 4 -> 2 Batches.
+    # Pro Batch: 1 Haupt-Pool (crasht) + genau EIN Recovery-Pool fuer alle
+    # 4 Rest-Dateien (vorher: ein neuer Recovery-Pool PRO Datei).
+    assert created == [2, 1, 2, 1]
+    assert result == []
 
 
 # ============================================================

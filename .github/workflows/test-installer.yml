@@ -15,10 +15,10 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.12.10'
 
     - name: Display Python Version
       run: python --version
@@ -91,16 +91,16 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.12.10'
 
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov
+        pip install pytest pytest-cov pytest-xdist
 
     - name: Run Tests (if available)
       run: |
@@ -110,7 +110,6 @@ jobs:
           Write-Host "⚠️ No tests directory found, skipping tests"
         }
       shell: pwsh
-      continue-on-error: true
 
     - name: Check Code Quality
       run: |

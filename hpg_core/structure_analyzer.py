@@ -81,13 +81,23 @@ MIN_SECTION_DURATION = 8.0
 # Energy thresholds for section labeling (relative to track average)
 ENERGY_HIGH_THRESHOLD = 1.2     # >120% of avg = high energy (drop)
 ENERGY_LOW_THRESHOLD = 0.6      # <60% of avg = low energy (intro/outro)
-ENERGY_BUILD_THRESHOLD = 0.9    # 60-90% with rising trend = build
 ENERGY_BREAKDOWN_THRESHOLD = 0.8  # Sudden drop after high = breakdown
+
+# Phrase-Messung bleibt absichtlich auf den bereits unterstuetzten Werten.
+PHRASE_UNIT_CANDIDATES = (8, 16, 32)
+PHRASE_ESTIMATE_MIN_SCORE = 0.18
+PHRASE_ESTIMATE_MIN_MARGIN = 0.08
+PHRASE_PRIOR_BONUS = 0.03
 
 
 # === Core Analysis Functions ===
 
-def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH) -> tuple[np.ndarray, np.ndarray]:
+def _compute_novelty_curve(
+  y: np.ndarray,
+  sr: int,
+  hop_length: int = HOP_LENGTH,
+  feature_cache=None,
+) -> tuple[np.ndarray, np.ndarray]:
   """
   Compute a novelty curve from MFCC-based self-similarity.
 
@@ -102,8 +112,12 @@ def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH)
   Returns:
     (novelty_curve, times) - novelty values and their timestamps
   """
-  # Extract MFCCs (13 coefficients, standard for music)
-  mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop_length)
+  # Extract MFCCs (13 coefficients, standard for music). A shared cache is
+  # optional, damit die öffentliche Hilfsfunktion rückwärtskompatibel bleibt.
+  if feature_cache is not None:
+    mfcc = feature_cache.get_mfcc(n_mfcc=13, hop_length=hop_length)
+  else:
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop_length)
 
   # Check for minimum MFCC length (needs at least 10 frames for recurrence matrix)
   num_frames = mfcc.shape[1]
@@ -169,9 +183,191 @@ def _compute_novelty_curve(y: np.ndarray, sr: int, hop_length: int = HOP_LENGTH)
     kernel /= kernel.sum()
     novelty = np.convolve(novelty, kernel, mode='same')
 
+  # MFCC-Novelty bleibt die Hauptquelle. Bass und Percussion liefern nur einen
+  # kleinen, robust normalisierten Zusatz, damit reine Klangfarbenwechsel die
+  # Sektionsgrenzen nicht dominieren.
+  signal_novelty = _compute_bass_percussion_novelty(
+    y, sr, effective_hop, len(novelty)
+  )
+  if signal_novelty is not None:
+    mfcc_novelty = _normalize_novelty(novelty)
+    bass_novelty = _normalize_novelty(signal_novelty[0])
+    percussion_novelty = _normalize_novelty(signal_novelty[1])
+    novelty = (
+      0.65 * mfcc_novelty
+      + 0.20 * bass_novelty
+      + 0.15 * percussion_novelty
+    )
+
   times = librosa.frames_to_time(np.arange(len(novelty)), sr=sr, hop_length=effective_hop)
 
   return novelty, times
+
+
+def _normalize_novelty(values: np.ndarray) -> np.ndarray:
+  """Normalisiert eine Novelty-Kurve robust auf den Bereich 0..1."""
+  values = np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+  if values.size == 0:
+    return values
+
+  values = np.maximum(values - np.percentile(values, 10), 0.0)
+  scale = np.percentile(values, 95)
+  if scale <= np.finfo(float).eps:
+    scale = np.max(values)
+  if scale <= np.finfo(float).eps:
+    return np.zeros_like(values)
+  return np.clip(values / scale, 0.0, 1.0)
+
+
+def _compute_bass_percussion_novelty(
+  y: np.ndarray,
+  sr: int,
+  hop_length: int,
+  num_frames: int,
+) -> tuple[np.ndarray, np.ndarray] | None:
+  """Erzeugt Bass- und Percussion-Onset-Novelty mit gleicher Frame-Anzahl."""
+  if num_frames < 4 or len(y) == 0 or sr <= 0:
+    return None
+
+  try:
+    # Tiefe Mel-Baender bilden Kick/Bass ab; positive Spektral-Aenderungen
+    # reagieren weniger empfindlich auf die absolute Master-Lautheit.
+    bass_mel = librosa.feature.melspectrogram(
+      y=y,
+      sr=sr,
+      n_fft=max(1024, hop_length * 4),
+      hop_length=hop_length,
+      n_mels=16,
+      fmin=20.0,
+      fmax=min(250.0, sr / 2.0),
+    )
+    bass_flux = np.maximum(np.diff(np.log1p(bass_mel), axis=1), 0.0)
+    bass_flux = np.mean(bass_flux, axis=0)
+    bass_flux = np.pad(bass_flux, (1, 0))
+
+    _, percussive = librosa.effects.hpss(y)
+    percussion_flux = librosa.onset.onset_strength(
+      y=percussive,
+      sr=sr,
+      hop_length=hop_length,
+    )
+
+    target_times = librosa.frames_to_time(
+      np.arange(num_frames), sr=sr, hop_length=hop_length
+    )
+    bass_times = librosa.frames_to_time(
+      np.arange(len(bass_flux)), sr=sr, hop_length=hop_length
+    )
+    percussion_times = librosa.frames_to_time(
+      np.arange(len(percussion_flux)), sr=sr, hop_length=hop_length
+    )
+    bass = np.interp(target_times, bass_times, bass_flux, left=0.0, right=0.0)
+    percussion = np.interp(
+      target_times,
+      percussion_times,
+      percussion_flux,
+      left=0.0,
+      right=0.0,
+    )
+    return bass, percussion
+  except Exception as signal_err:
+    logger.debug("Bass-/Percussion-Novelty nicht verfuegbar: %s", signal_err)
+    return None
+
+
+def _bar_novelty(
+  novelty: np.ndarray,
+  times: np.ndarray,
+  seconds_per_bar: float,
+  anchor: float = 0.0,
+) -> np.ndarray:
+  """Aggregiert Frame-Novelty auf ein barweises Raster."""
+  if seconds_per_bar <= 0 or len(novelty) == 0 or len(times) != len(novelty):
+    return np.array([], dtype=float)
+
+  values = np.nan_to_num(np.asarray(novelty, dtype=float))
+  frame_times = np.asarray(times, dtype=float)
+  bar_indices = np.floor((frame_times - anchor) / seconds_per_bar).astype(int)
+  valid = (bar_indices >= 0) & np.isfinite(values)
+  if not np.any(valid):
+    return np.array([], dtype=float)
+
+  bars = np.zeros(int(np.max(bar_indices[valid])) + 1, dtype=float)
+  counts = np.zeros_like(bars)
+  np.add.at(bars, bar_indices[valid], values[valid])
+  np.add.at(counts, bar_indices[valid], 1.0)
+  nonempty = counts > 0
+  bars[nonempty] /= counts[nonempty]
+  return bars
+
+
+def _estimate_phrase_unit_from_novelty(
+  novelty: np.ndarray,
+  times: np.ndarray,
+  bpm: float,
+  genre: str = "Unknown",
+  anchor: float = 0.0,
+) -> int | None:
+  """Misst eine Phrase aus Bar-Novelty/Autokorrelation, sonst ``None``.
+
+  Die Rueckgabe ``None`` ist bewusst der Unsicherheitskanal: Der Aufrufer
+  verwendet dann unveraendert den Genre-Prior.
+  """
+  prior = GENRE_PHRASE_UNITS.get(genre, 8)
+  if bpm <= 0:
+    return None
+
+  seconds_per_bar = (60.0 / bpm) * METER
+  bars = _bar_novelty(novelty, times, seconds_per_bar, anchor)
+  if len(bars) < 16:
+    return None
+
+  bars = _normalize_novelty(bars)
+  centered = bars - np.mean(bars)
+  variance = float(np.dot(centered, centered))
+  if variance <= np.finfo(float).eps:
+    return None
+
+  candidates = [
+    unit for unit in PHRASE_UNIT_CANDIDATES
+    if len(bars) >= (2 * unit + 8)
+  ]
+  if not candidates:
+    return None
+
+  scores: dict[int, float] = {}
+  for unit in candidates:
+    lag = centered[unit:]
+    reference = centered[:-unit]
+    score = float(np.dot(lag, reference) / variance)
+    # Ein ganzzahliges Vielfaches kann dieselbe Wiederholung sehen. Die
+    # kleinere Haelfte wird deshalb als Fundamentalperiode bevorzugt.
+    if unit >= 16:
+      half_score = scores.get(unit // 2)
+      if half_score is None and len(bars) >= (2 * (unit // 2) + 8):
+        half = centered[unit // 2:]
+        half_reference = centered[:-(unit // 2)]
+        half_score = float(np.dot(half, half_reference) / variance)
+      if half_score is not None:
+        score -= 0.5 * max(0.0, half_score)
+    scores[unit] = score
+
+  posterior_scores = {
+    unit: score + (PHRASE_PRIOR_BONUS if unit == prior else 0.0)
+    for unit, score in scores.items()
+  }
+  ranked = sorted(
+    posterior_scores.items(), key=lambda item: item[1], reverse=True
+  )
+  if len(ranked) < 2:
+    return None
+  best_unit, best_score = ranked[0]
+  second_score = ranked[1][1] if len(ranked) > 1 else -1.0
+  if scores[best_unit] < PHRASE_ESTIMATE_MIN_SCORE:
+    return None
+  if len(ranked) > 1 and best_score - second_score < PHRASE_ESTIMATE_MIN_MARGIN:
+    return None
+  return best_unit
 
 
 def _pick_boundaries(
@@ -257,9 +453,11 @@ def _quantize_to_bars(
   duration: float,
   phrase_unit: int = 8,
   anchor: float = 0.0,
+  seconds_per_bar: float | None = None,
+  whole_phrase: bool = True,
 ) -> list[float]:
   """
-  Quantize boundary times to the sub-phrase grid (half phrase_unit in bars).
+  Quantize boundary times to the whole-phrase grid by default.
 
   Audit-Fix 2026-07-17: vorher wurde phrase_unit ignoriert und nur auf
   einzelne Bars quantisiert — Sektionsgrenzen (und damit Mix-Punkte) lagen
@@ -279,14 +477,15 @@ def _quantize_to_bars(
   if bpm <= 0:
     return boundaries
 
-  seconds_per_beat = 60.0 / bpm
-  seconds_per_bar = seconds_per_beat * METER
-  grid_bars = min(8, max(2, phrase_unit // 2))
-  grid_seconds = seconds_per_bar * grid_bars
+  bar_length = seconds_per_bar or ((60.0 / bpm) * METER)
+  # Phase 1.1: Sections und Mix-Punkte verwenden dasselbe GANZE
+  # Phrasengitter. Die frühere Halbphrasen-Quantisierung ließ Grenzen bis zu
+  # einer ganzen Phrase vom Mix-Gitter abweichen.
+  grid_seconds = bar_length * phrase_unit if whole_phrase else bar_length
 
   quantized = []
   for t in boundaries:
-    # Quantize to nearest sub-phrase boundary (downbeat-verankert)
+    # Auf die naechste ganze Phrase relativ zum gemeinsamen Anker quantisieren.
     grid_index = round((t - anchor) / grid_seconds)
     quantized_time = grid_index * grid_seconds + anchor
 
@@ -298,7 +497,7 @@ def _quantize_to_bars(
   quantized = sorted(set(quantized))
 
   # Ensure minimum spacing of 2 bars
-  min_spacing = seconds_per_bar * 2
+  min_spacing = bar_length * 2
   filtered = [quantized[0]] if quantized else [0.0]
   for t in quantized[1:]:
     if t - filtered[-1] >= min_spacing:
@@ -483,21 +682,32 @@ def _label_sections(
 
   return labels
 
-def _calculate_rms_and_phrase_boundaries(y: np.ndarray, sr: int, bpm: float, duration: float, phrase_unit: int, anchor: float = 0.0) -> list[float]:
+def _calculate_rms_and_phrase_boundaries(
+  y: np.ndarray,
+  sr: int,
+  bpm: float,
+  duration: float,
+  phrase_unit: int,
+  anchor: float = 0.0,
+  seconds_per_bar: float | None = None,
+  feature_cache=None,
+) -> list[float]:
   """
   Echtes, dummyloses Fallback-System fuer Strukturgrenzen basierend auf RMS-Energieverlauf
   und musikalischem BPM-Taktgitter (Phrase-Einheiten).
   """
-  seconds_per_beat = 60.0 / bpm
-  seconds_per_bar = seconds_per_beat * METER
+  bar_length = seconds_per_bar or ((60.0 / bpm) * METER)
   
   # Standard-Phrasen-Laengen in Sekunden (z. B. 16 Bars)
-  intro_len_sec = seconds_per_bar * phrase_unit * 2.0  
-  outro_len_sec = seconds_per_bar * phrase_unit * 2.0  
+  intro_len_sec = bar_length * phrase_unit * 2.0
+  outro_len_sec = bar_length * phrase_unit * 2.0
   
   try:
     # 1. RMS-Pegel ueber Zeit extrahieren
-    rms = librosa.feature.rms(y=y, hop_length=HOP_LENGTH)[0]
+    if feature_cache is not None:
+      rms = feature_cache.get_rms(hop_length=HOP_LENGTH)[0]
+    else:
+      rms = librosa.feature.rms(y=y, hop_length=HOP_LENGTH)[0]
     times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=HOP_LENGTH)
     
     mean_rms = np.mean(rms)
@@ -526,7 +736,15 @@ def _calculate_rms_and_phrase_boundaries(y: np.ndarray, sr: int, bpm: float, dur
     boundaries = [0.0, intro_time, outro_time]
 
   # Quantisiere die Grenzen auf das Phrasengitter
-  return _quantize_to_bars(boundaries, bpm, duration, phrase_unit, anchor)
+  return _quantize_to_bars(
+    boundaries,
+    bpm,
+    duration,
+    phrase_unit,
+    anchor,
+    seconds_per_bar=bar_length,
+    whole_phrase=True,
+  )
 
 
 # === Main Analysis Function ===
@@ -537,6 +755,9 @@ def analyze_structure(
   bpm: float,
   genre: str = "Unknown",
   anchor: float = 0.0,
+  phrase_unit: int | None = None,
+  seconds_per_bar: float | None = None,
+  feature_cache=None,
 ) -> TrackStructure:
   """
   Analyze track structure to identify sections.
@@ -563,33 +784,66 @@ def analyze_structure(
   if duration <= 0 or bpm <= 0:
     return TrackStructure()
 
-  # Determine phrase unit based on genre
-  phrase_unit = GENRE_PHRASE_UNITS.get(genre, 8)
+  # Determine phrase unit before any boundary work so all downstream users
+  # share one explicit phrase definition.
+  genre_phrase_unit = GENRE_PHRASE_UNITS.get(genre, 8)
+  phrase_unit_was_explicit = phrase_unit is not None
+  phrase_unit = phrase_unit or genre_phrase_unit
 
-  seconds_per_beat = 60.0 / bpm
-  seconds_per_bar = seconds_per_beat * METER
-  total_bars = int(duration / seconds_per_bar)
+  bar_length = seconds_per_bar or ((60.0 / bpm) * METER)
+  total_bars = int(duration / bar_length)
 
   try:
     # Step 1: Compute novelty curve
-    novelty, times = _compute_novelty_curve(y, sr)
+    novelty, times = _compute_novelty_curve(
+      y, sr, feature_cache=feature_cache
+    )
+
+    # Die Messung darf den expliziten API-Wert nie ueberschreiben. Ohne
+    # Messwert bleibt exakt der bisherige Genre-Prior erhalten.
+    if not phrase_unit_was_explicit:
+      measured_phrase_unit = _estimate_phrase_unit_from_novelty(
+        novelty,
+        times,
+        bpm,
+        genre=genre,
+        anchor=anchor,
+      )
+      if measured_phrase_unit is not None:
+        phrase_unit = measured_phrase_unit
 
     # Step 2: Pick section boundaries
     boundaries = _pick_boundaries(
       novelty, times, duration,
-      min_distance_sec=max(MIN_SECTION_DURATION, seconds_per_bar * phrase_unit * 0.5),
+      min_distance_sec=max(MIN_SECTION_DURATION, bar_length * phrase_unit),
     )
 
-    # Step 3: Quantize to bar grid (downbeat-verankert)
-    boundaries = _quantize_to_bars(boundaries, bpm, duration, phrase_unit, anchor)
+    # Step 3: Auf das gemeinsame Ganze-Phrasen-Gitter quantisieren.
+    boundaries = _quantize_to_bars(
+      boundaries,
+      bpm,
+      duration,
+      phrase_unit,
+      anchor,
+      seconds_per_bar=bar_length,
+      whole_phrase=True,
+    )
 
     # Ensure we have at least intro + main + outro
     if len(boundaries) < 2:
-      boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit, anchor)
+      boundaries = _calculate_rms_and_phrase_boundaries(
+        y, sr, bpm, duration, phrase_unit, anchor,
+        seconds_per_bar=bar_length,
+        feature_cache=feature_cache,
+      )
 
   except Exception as e:
     logger.warning(f"Novelty-Analyse fehlgeschlagen: {e}")
-    boundaries = _calculate_rms_and_phrase_boundaries(y, sr, bpm, duration, phrase_unit, anchor)
+    boundaries = _calculate_rms_and_phrase_boundaries(
+      y, sr, bpm, duration, phrase_unit, anchor,
+      seconds_per_bar=bar_length,
+      feature_cache=feature_cache,
+    )
 
   # Step 4: Compute energy and trend for each section
   # Audit-Fix 2026-07-21: Grenzen, die (nach Quantisierung/Clamp) auf oder hinter
@@ -616,8 +870,8 @@ def analyze_structure(
   sections = []
   for i, start in enumerate(boundaries):
     end = section_ends[i]
-    start_bar = int(round(start / seconds_per_bar))
-    end_bar = int(round(end / seconds_per_bar))
+    start_bar = int(round(start / bar_length))
+    end_bar = int(round(end / bar_length))
 
     sections.append(TrackSection(
       label=labels[i] if i < len(labels) else "main",

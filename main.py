@@ -93,7 +93,6 @@ from PyQt6.QtGui import (
     QPen,
     QBrush,
     QFont,
-    QPolygonF,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
@@ -132,7 +131,11 @@ from hpg_core.theme import (
     FONT_FAMILY,
 )
 from hpg_core.error_reporter import get_error_reporter
-from hpg_core.playlist_security import validate_playlist_security, sanitize_playlist
+from hpg_core.resource_limits import sanitize_playlist as apply_resource_limits
+# AUDIT-FIX F1 (2026-07-24): hpg_config war nur lokal in init_ui importiert;
+# refresh_ai_providers() referenzierte es als Global -> NameError beim Aktivieren
+# der KI-Checkbox (Button blieb dauerhaft deaktiviert). Import jetzt auf Modulebene.
+from hpg_core import config as hpg_config
 
 # H1-Fix (Audit 2026-07-17): Modul-Logger — TransitionRenderWorker.run
 # referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
@@ -183,15 +186,17 @@ def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
     if plan is not None:
         return plan.mix_out_a, plan.mix_in_b, plan.overlap
     dj = transition.dj_rec
+    track_mix_out = float(getattr(transition.from_track, "mix_out_point", -1.0))
+    track_mix_in = float(getattr(transition.to_track, "mix_in_point", -1.0))
     mix_out = (
         dj.adjusted_mix_out_a
         if dj and dj.adjusted_mix_out_a >= 0.0
-        else float(transition.from_track.mix_out_point or 0)
+        else max(0.0, track_mix_out)
     )
     mix_in = (
         dj.adjusted_mix_in_b
         if dj and dj.adjusted_mix_in_b >= 0.0
-        else float(transition.to_track.mix_in_point or 0)
+        else max(0.0, track_mix_in)
     )
     crossfade = (
         dj.overlap_seconds
@@ -199,6 +204,13 @@ def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
         else float(transition.overlap or 16.0)
     )
     return mix_out, mix_in, crossfade
+
+
+def format_mix_point_display(seconds: float, bars: int) -> str:
+    """Formatiert Mixpunkte; der Schema-Sentinel wird als nicht gesetzt gezeigt."""
+    if seconds < 0:
+        return "--:-- (- bars)"
+    return f"{int(seconds // 60):02d}:{int(seconds % 60):02d} ({bars} bars)"
 
 
 
@@ -220,6 +232,7 @@ class AIAnalysisWorker(QThread):
 
     def request_cancel(self):
         self._should_cancel = True
+        self.requestInterruption()
 
     def _ensure_ready(self):
         """
@@ -279,7 +292,7 @@ class AIAnalysisWorker(QThread):
                 ai_data = fetch_ai_analysis(
                     track, provider=self.provider, model=self.model, url=self.base_url
                 )
-                if ai_data:
+                if ai_data and not self._should_cancel:
                     self.ai_finished.emit(track.filePath, ai_data)
                 else:
                     reason = (
@@ -409,13 +422,51 @@ class AIPullWorker(QThread):
             self.pull_finished.emit(False, str(e))
 
 
+class DependencyCheckWorker(QThread):
+    """Prueft optionale Dienste ohne den GUI-Thread zu blockieren."""
+
+    checked = pyqtSignal(bool, bool)  # (pedalboard_installed, ai_online)
+
+    def __init__(self, provider: str, url: str, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.url = url
+
+    def run(self):
+        try:
+            importlib.import_module("pedalboard")
+            pedalboard_installed = True
+        except (ImportError, OSError):
+            pedalboard_installed = False
+
+        ai_online = False
+        try:
+            import requests
+
+            requests.get(
+                self.url.replace("/chat/completions", ""),
+                timeout=(0.3, 0.3),
+            )
+            ai_online = True
+        except Exception:
+            ai_online = False
+
+        if not self.isInterruptionRequested():
+            self.checked.emit(pedalboard_installed, ai_online)
+
+
 class AnalysisWorker(QThread):
     """Worker thread for running the analysis in the background."""
 
     progress = pyqtSignal(int)
     status_update = pyqtSignal(str)
     phase_changed = pyqtSignal(int, str)  # step_index, state ("inactive", "working", "completed")
-    finished = pyqtSignal(list, dict)  # playlist, quality_metrics
+    # AUDIT-FIX T1 (2026-07-24): eigenes Ergebnis-Signal, das NICHT das
+    # eingebaute QThread.finished ueberschreibt. Vorher gab es kein Signal mehr,
+    # das das echte Thread-Ende meldete -> deleteLater() konnte aus dem selbst
+    # emittierten Signal heraus einen noch laufenden QThread zerstoeren
+    # ("QThread: Destroyed while thread is still running").
+    analysis_done = pyqtSignal(list, dict)  # playlist, quality_metrics
 
     def __init__(
         self,
@@ -448,12 +499,38 @@ class AnalysisWorker(QThread):
 
             # Scan for audio files
             audio_files = []
+            scan_root = os.path.realpath(self.folder_path)
+            scan_limit_reached = False
             for root, _, files in os.walk(self.folder_path):
                 if self._should_cancel:
                     raise InterruptedError("Analysis cancelled by user")
                 for file in files:
                     if file.lower().endswith(self.supported_formats):
-                        audio_files.append(os.path.join(root, file))
+                        candidate = os.path.abspath(os.path.join(root, file))
+                        real_candidate = os.path.realpath(candidate)
+                        try:
+                            inside_root = os.path.commonpath(
+                                [scan_root, real_candidate]
+                            ) == scan_root
+                        except ValueError:
+                            inside_root = False
+                        if not inside_root:
+                            logger.warning(
+                                "Audio-Symlink ausserhalb des Scanroots uebersprungen: %s",
+                                candidate,
+                            )
+                            continue
+                        if len(audio_files) >= hpg_config.SECURITY_MAX_PLAYLIST_SIZE:
+                            scan_limit_reached = True
+                            break
+                        audio_files.append(candidate)
+                if scan_limit_reached:
+                    break
+
+            if scan_limit_reached:
+                self.status_update.emit(
+                    f"WARNING: Scan auf {hpg_config.SECURITY_MAX_PLAYLIST_SIZE} Tracks begrenzt."
+                )
 
             total_files = len(audio_files)
             if total_files == 0:
@@ -462,7 +539,7 @@ class AnalysisWorker(QThread):
                     "ERROR: No audio files found in selected folder!"
                 )
                 logger.error(f"No compatible audio files ({', '.join(self.supported_formats)}) found in selected folder!")
-                self.finished.emit([], {})
+                self.analysis_done.emit([], {})
                 return
 
             self.phase_changed.emit(0, "completed")
@@ -503,12 +580,14 @@ class AnalysisWorker(QThread):
                     ParallelAnalyzer()
                 )  # Auto-detect optimal core count (smart scaling)
                 analyzed_tracks = analyzer.analyze_files(
-                    audio_files, progress_callback=progress_callback
+                    audio_files,
+                    progress_callback=progress_callback,
+                    cancel_callback=lambda: self._should_cancel,
                 )
             except InterruptedError:
                 self.phase_changed.emit(1, "inactive")
                 self.status_update.emit("Analysis cancelled.")
-                self.finished.emit([], {})
+                self.analysis_done.emit([], {})
                 return
             except Exception as e:
                 self.phase_changed.emit(1, "inactive")
@@ -516,28 +595,24 @@ class AnalysisWorker(QThread):
                 get_error_reporter().log_error(
                     "analysis", str(e), {"folder": self.folder_path}
                 )
-                self.finished.emit([], {})
+                self.analysis_done.emit([], {})
                 return
 
-            # Security-Gate: defekte Eintraege und Tracks ueber den Limits
+            # Ressourcenfilter: defekte Eintraege und Tracks ueber den Limits
             # (Dateigroesse/Dauer) entfernen, Playlist-Groesse deckeln
             pre_count = len(analyzed_tracks)
-            analyzed_tracks = sanitize_playlist(analyzed_tracks)
+            analyzed_tracks = apply_resource_limits(analyzed_tracks)
             if len(analyzed_tracks) < pre_count:
                 removed = pre_count - len(analyzed_tracks)
                 self.status_update.emit(
-                    f"WARNING: {removed} Track(s) durch Security-Filter entfernt (defekt oder ueber Limits)."
+                    f"WARNING: {removed} Track(s) durch Ressourcenfilter entfernt (defekt oder ueber Limits)."
                 )
-                logger.warning(f"Security-Filter entfernte {removed} von {pre_count} Tracks.")
-            if analyzed_tracks and not validate_playlist_security(analyzed_tracks):
-                self.status_update.emit(
-                    "WARNING: Playlist verletzt Security-Limits -- Details im Log."
-                )
+                logger.warning(f"Ressourcenfilter entfernte {removed} von {pre_count} Tracks.")
 
             if not analyzed_tracks:
                 self.phase_changed.emit(1, "inactive")
                 self.status_update.emit("ERROR: No tracks were successfully analyzed.")
-                self.finished.emit([], {})
+                self.analysis_done.emit([], {})
                 return
 
             logger.info(f"Feature extraction complete: {len(analyzed_tracks)} tracks successfully analyzed.")
@@ -545,14 +620,14 @@ class AnalysisWorker(QThread):
             self.status_update.emit(
                 f"Audio-Analyse abgeschlossen. Starte KI-Veredelung fuer {len(analyzed_tracks)} Tracks..."
             )
-            self.finished.emit(analyzed_tracks, {})
+            self.analysis_done.emit(analyzed_tracks, {})
 
         except InterruptedError:
             self.status_update.emit("Analysis cancelled.")
-            self.finished.emit([], {})
+            self.analysis_done.emit([], {})
         except Exception as e:
             self.status_update.emit(f"FATAL ERROR: {str(e)}")
-            self.finished.emit([], {})
+            self.analysis_done.emit([], {})
 
 
 class TransitionRenderWorker(QThread):
@@ -571,6 +646,7 @@ class TransitionRenderWorker(QThread):
         self._transitions = transitions
         self._should_cancel = False
         self._temp_files: list[str] = []  # Fuer Cleanup
+        self._temp_dir: str | None = None
         self._executor = None  # HPG-004: aktiver ProcessPoolExecutor (fuer Terminate)
         # HPG: schuetzt _executor + _should_cancel gegen TOCTOU-Race zwischen
         # request_cancel() (GUI-Thread) und run() (Worker-Thread).
@@ -611,13 +687,19 @@ class TransitionRenderWorker(QThread):
         from concurrent.futures import ProcessPoolExecutor
         from concurrent.futures.process import BrokenProcessPool
 
+        try:
+            self._temp_dir = tempfile.mkdtemp(prefix=f"hpg_preview_{self._run_id}_")
+        except OSError as exc:
+            logger.error("Privates Preview-Temp-Verzeichnis konnte nicht angelegt werden: %s", exc)
+            return
+
         for i, transition in enumerate(self._transitions):
             if self._should_cancel:
                 break
             try:
-                # Temp-Ausgabedatei im System-Temp-Verzeichnis
-                tmp_dir = tempfile.gettempdir()
-                out_path = os.path.join(tmp_dir, f"hpg_preview_{self._run_id}_{i:03d}.wav")
+                # Pro Render-Session ein privates Verzeichnis verwenden; kein
+                # vorab angelegter Symlink im globalen Temp kann so ueberschrieben werden.
+                out_path = os.path.join(self._temp_dir, f"preview_{i:03d}.wav")
                 self._temp_files.append(out_path)
 
                 plan = getattr(transition, "plan", None)
@@ -710,6 +792,43 @@ class TransitionRenderWorker(QThread):
             except OSError:
                 pass
         self._temp_files.clear()
+        if self._temp_dir:
+            try:
+                os.rmdir(self._temp_dir)
+            except OSError:
+                pass
+            else:
+                self._temp_dir = None
+
+
+# AUDIT-FIX N2 (2026-07-26): Laufende Peak-Worker werden auf Modulebene
+# referenziert — bewusst NICHT als Kind des Widgets. Sonst zerstoert der
+# Widget-Destruktor (START OVER / Playlist-Reorder entsorgt die Preview-
+# Widgets per deleteLater) einen noch laufenden QThread:
+# "QThread: Destroyed while thread is still running".
+_PEAK_WORKERS: set = set()
+
+
+def stop_peaks(wait_ms: int = 2000):
+    """Stoppt alle laufenden Waveform-Peak-Worker sauber.
+
+    Wird aus MixTipsPanel._cleanup_existing_previews() aufgerufen (deckt
+    START OVER, Reorder und MainWindow.closeEvent ab). Worker, die nicht
+    rechtzeitig enden, bleiben referenziert — ein laufender QThread darf
+    nie per GC/deleteLater zerstoert werden.
+    """
+    for worker in list(_PEAK_WORKERS):
+        try:
+            worker.requestInterruption()
+        except RuntimeError:
+            # C++-Objekt bereits durch deleteLater() zerstoert
+            _PEAK_WORKERS.discard(worker)
+    for worker in list(_PEAK_WORKERS):
+        try:
+            if worker.wait(wait_ms):
+                _PEAK_WORKERS.discard(worker)
+        except RuntimeError:
+            _PEAK_WORKERS.discard(worker)
 
 
 class WaveformWidget(QWidget):
@@ -726,30 +845,102 @@ class WaveformWidget(QWidget):
         self._pos = 0.0          # Playhead 0..1
         self._cf_start = None    # Crossfade-Start 0..1
         self._cf_end = None
+        # AUDIT-FIX N3: Generation-Counter — nur das Ergebnis der jeweils
+        # letzten load()-Anfrage wird uebernommen (stale Worker ignoriert).
+        self._peak_generation = 0
         self.setMinimumHeight(58)
 
     def load(self, wav_path: str, crossfade_sec: float, preroll_sec: float = 30.0):
-        """Laedt Clip, berechnet Peak-Huellkurve + Crossfade-Bereich."""
+        """Laedt Clip, berechnet Peak-Huellkurve + Crossfade-Bereich.
+
+        AUDIT-FIX T2 (2026-07-26): Das Einlesen der Preview-WAV (bis ~124 s,
+        ~22 MB) lief im GUI-Thread und blockierte die UI bei jedem Preview
+        sichtbar. Jetzt laeuft das Dekodieren + die Peak-Berechnung in einem
+        kurzen QThread; das Widget zeigt solange "Wellenform wird geladen …".
+        """
         self._peaks = None
         self._cf_start = self._cf_end = None
-        try:
-            import soundfile as sf
-            import numpy as np
-            data, sr = sf.read(wav_path, dtype="float32", always_2d=True)
-            mono = data.mean(axis=1)
-            total = len(mono) / sr if sr else 0.0
-            n_bars = 700
-            chunk = max(1, len(mono) // n_bars)
-            peaks = [float(np.abs(mono[i:i + chunk]).max())
-                     for i in range(0, len(mono), chunk)]
-            peak_max = max(peaks) if peaks else 1.0
-            self._peaks = [p / peak_max for p in peaks] if peak_max > 0 else peaks
-            if total > 0:
-                self._cf_start = min(1.0, preroll_sec / total)
-                self._cf_end = min(1.0, (preroll_sec + crossfade_sec) / total)
-        except Exception:
-            self._peaks = None
         self.update()
+
+        class _PeakWorker(QThread):
+            done = pyqtSignal(object, float)  # (peaks|None, total_sec)
+
+            def __init__(self, path, parent=None):
+                super().__init__(parent)
+                self._path = path
+
+            def run(self):
+                try:
+                    # AUDIT-FIX N2: kooperativ abbrechbar — stop_peaks() bzw.
+                    # ein neuer load() setzt requestInterruption().
+                    if self.isInterruptionRequested():
+                        return
+                    import soundfile as sf
+                    import numpy as np
+                    data, sr = sf.read(self._path, dtype="float32", always_2d=True)
+                    # Nach dem (nicht unterbrechbaren) Dekodieren erneut pruefen
+                    if self.isInterruptionRequested():
+                        return
+                    mono = data.mean(axis=1)
+                    total = len(mono) / sr if sr else 0.0
+                    n_bars = 700
+                    chunk = max(1, len(mono) // n_bars)
+                    peaks = [float(np.abs(mono[i:i + chunk]).max())
+                             for i in range(0, len(mono), chunk)]
+                    peak_max = max(peaks) if peaks else 1.0
+                    norm = [p / peak_max for p in peaks] if peak_max > 0 else peaks
+                    if self.isInterruptionRequested():
+                        return
+                    self.done.emit(norm, total)
+                except Exception as exc:
+                    # AUDIT-FIX F9: nicht mehr stumm schlucken
+                    logging.getLogger(__name__).warning(
+                        "Waveform-Peaks konnten nicht geladen werden: %s", exc
+                    )
+                    if not self.isInterruptionRequested():
+                        self.done.emit(None, 0.0)
+
+        # AUDIT-FIX N1 (2026-07-26): Alten Worker nur noch unterbrechen —
+        # KEIN isRunning()-Guard mehr. Der lief auf einer per deleteLater()
+        # bereits zerstoerten C++-Instanz und crashte beim zweiten load()
+        # mit RuntimeError. Stale-Ergebnisse blockt jetzt der
+        # Generation-Counter (N3), nicht der isRunning-Check.
+        self._peak_generation += 1
+        generation = self._peak_generation
+        old = getattr(self, "_peak_worker", None)
+        if old is not None:
+            try:
+                old.requestInterruption()
+            except RuntimeError:
+                pass  # C++-Objekt bereits durch deleteLater() zerstoert
+            self._peak_worker = None
+
+        def _apply(peaks, total, _cf=crossfade_sec, _pre=preroll_sec,
+                   _gen=generation):
+            # AUDIT-FIX N3: nur Ergebnisse der aktuellen Generation
+            # uebernehmen — ein alter Worker darf frisch berechnete
+            # Peaks nicht mehr ueberschreiben.
+            if _gen != self._peak_generation:
+                return
+            try:
+                self._peaks = peaks
+                if peaks and total > 0:
+                    self._cf_start = min(1.0, _pre / total)
+                    self._cf_end = min(1.0, (_pre + _cf) / total)
+                self.update()
+            except RuntimeError:
+                pass  # Widget wurde inzwischen von Qt zerstoert
+
+        # AUDIT-FIX N2: Worker OHNE Widget-Parent erzeugen und auf
+        # Modulebene referenzieren — sonst zerstoert der Widget-Destruktor
+        # (START OVER / Reorder) einen laufenden QThread.
+        worker = _PeakWorker(wav_path)
+        self._peak_worker = worker
+        _PEAK_WORKERS.add(worker)
+        worker.done.connect(_apply)
+        worker.finished.connect(lambda w=worker: _PEAK_WORKERS.discard(w))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def set_position(self, pos_ms: int, dur_ms: int):
         self._pos = (pos_ms / dur_ms) if dur_ms else 0.0
@@ -773,7 +964,8 @@ class WaveformWidget(QWidget):
         if self._cf_start is not None:
             x0 = self._cf_start * w
             x1 = self._cf_end * w
-            cf = QColor(COLORS["accent_primary"]); cf.setAlpha(28)
+            cf = QColor(COLORS["accent_primary"])
+            cf.setAlpha(28)
             p.fillRect(QRectF(x0, 0, x1 - x0, h), cf)
         n = len(self._peaks)
         steel = QColor(COLORS["accent_secondary"])
@@ -1059,6 +1251,8 @@ class AdvancedParametersWidget(QWidget):
         self.detected_provider = None
         self.detected_active_model = None
         self._ai_detect_worker = None
+        self._test_worker = None
+        self._pull_worker = None
 
         self.provider_group = QGroupBox("AI Intelligence Provider")
         provider_outer = QVBoxLayout(self.provider_group)
@@ -1269,6 +1463,16 @@ class AdvancedParametersWidget(QWidget):
             if parameter in supported
         ]
 
+    def _cleanup_ai_worker(self, attr_name, worker):
+        """Gibt eine beendete AI-Hilfsinstanz frei, wenn sie noch aktuell ist."""
+        if getattr(self, attr_name, None) is not worker:
+            return
+        setattr(self, attr_name, None)
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
+
     def _set_strategy_control_state(self, group, hint, controls, parameter, strategy):
         """Setzt Bedienbarkeit, Farbe und begruendenden Hinweis eines Bereichs."""
         enabled = parameter in SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
@@ -1309,14 +1513,27 @@ class AdvancedParametersWidget(QWidget):
         self.ai_status_label.setText("AI: suche & starte Provider ...")
         self.ai_refresh_btn.setEnabled(False)
 
-        self._ai_detect_worker = AIDetectWorker(
-            preferred=preferred, preferred_model=preferred_model
+        worker = AIDetectWorker(
+            preferred=preferred, preferred_model=preferred_model, parent=self
         )
-        self._ai_detect_worker.detected.connect(self._on_ai_detected)
-        self._ai_detect_worker.start()
+        self._ai_detect_worker = worker
+        worker.detected.connect(
+            lambda status, source=worker: self._on_ai_detected(status, source)
+        )
+        worker.finished.connect(
+            lambda source=worker: self._cleanup_ai_worker(
+                "_ai_detect_worker", source
+            )
+        )
+        worker.start()
 
-    def _on_ai_detected(self, status):
+    def _on_ai_detected(self, status, source_worker=None):
         """Befuellt UI mit erkanntem Provider + real installierten Modellen."""
+        if (
+            source_worker is not None
+            and source_worker is not self._ai_detect_worker
+        ):
+            return
         self.ai_refresh_btn.setEnabled(True)
 
         if not status or not getattr(status, "running", False):
@@ -1399,6 +1616,8 @@ class AdvancedParametersWidget(QWidget):
         """Sendet eine Test-Anfrage an den ausgewaehlten Provider."""
         if not self.ai_enabled_checkbox.isChecked():
             return
+        if self._test_worker and self._test_worker.isRunning():
+            return
         provider = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
         model = self.model_combo.currentText().strip()
         if not model:
@@ -1410,12 +1629,28 @@ class AdvancedParametersWidget(QWidget):
         self.ai_status_label.setText("AI: Testanfrage laeuft...")
 
         base_url = self.detected_base_url
-        self._test_worker = AITestWorker(provider, model, base_url, parent=self)
-        self._test_worker.test_finished.connect(self._on_test_finished)
-        self._test_worker.start()
+        worker = AITestWorker(provider, model, base_url, parent=self)
+        self._test_worker = worker
+        worker.test_finished.connect(
+            lambda success, response_text, responded_model, latency, source=worker:
+            self._on_test_finished(
+                success, response_text, responded_model, latency, source
+            )
+        )
+        worker.finished.connect(
+            lambda source=worker: self._cleanup_ai_worker("_test_worker", source)
+        )
+        worker.start()
 
-    def _on_test_finished(self, success, response_text, responded_model, latency):
+    def _on_test_finished(
+        self, success, response_text, responded_model, latency, source_worker=None
+    ):
         """Verarbeitet das Ergebnis des AI-Verbindungstests."""
+        if (
+            source_worker is not None
+            and source_worker is not self._test_worker
+        ):
+            return
         self.test_ai_btn.setEnabled(True)
         self.ai_refresh_btn.setEnabled(True)
 
@@ -1477,19 +1712,37 @@ class AdvancedParametersWidget(QWidget):
             )
 
     def _start_model_pull(self, model):
-        """Startet den Download des Modells über Ollama im Hintergrund."""
+        """Startet den Download des Modells ueber Ollama im Hintergrund."""
+        if self._pull_worker and self._pull_worker.isRunning():
+            return
         self.test_ai_btn.setEnabled(False)
         self.ai_refresh_btn.setEnabled(False)
         self.ai_status_label.setText(f"AI: Lade '{model}' herunter (bitte warten)...")
 
-        self._pull_worker = AIPullWorker(model, parent=self)
-        self._pull_worker.pull_finished.connect(self._on_pull_finished)
-        self._pull_worker.start()
+        worker = AIPullWorker(model, parent=self)
+        self._pull_worker = worker
+        worker.pull_finished.connect(
+            lambda success, error_msg, source=worker: self._on_pull_finished(
+                success, error_msg, source
+            )
+        )
+        worker.finished.connect(
+            lambda source=worker: self._cleanup_ai_worker("_pull_worker", source)
+        )
+        worker.start()
 
-    def _on_pull_finished(self, success, error_msg):
+    def _on_pull_finished(self, success, error_msg, source_worker=None):
         """Verarbeitet das Ende des Model-Downloads."""
+        if (
+            source_worker is not None
+            and source_worker is not self._pull_worker
+        ):
+            return
         self.test_ai_btn.setEnabled(True)
         self.ai_refresh_btn.setEnabled(True)
+        model_name = getattr(
+            source_worker or self._pull_worker, "model", "unbekannt"
+        )
 
         if success:
             self.ai_status_label.setText("AI: Download abgeschlossen. Teste Verbindung...")
@@ -1500,7 +1753,7 @@ class AdvancedParametersWidget(QWidget):
             QMessageBox.information(
                 self,
                 "Download erfolgreich",
-                f"Das Modell '{self._pull_worker.model}' wurde erfolgreich heruntergeladen und installiert!\n\n"
+                f"Das Modell '{model_name}' wurde erfolgreich heruntergeladen und installiert!\n\n"
                 f"Der Verbindungstest wird nun automatisch gestartet. Sobald dieser erfolgreich ist, kannst du beginnen!"
             )
         else:
@@ -1910,7 +2163,7 @@ class ShortcutsHelpWidget(QGroupBox):
         shortcuts = [
             ("Ctrl+G", "Generate Playlist"),
             ("Ctrl+E", "Export Playlist"),
-            ("1 - 5", "Switch Navigation Panels"),
+            ("Ctrl+1 - Ctrl+5", "Switch Navigation Panels"),
             ("Space", "Play / Pause Preview")
         ]
         
@@ -2194,17 +2447,6 @@ class LibraryPanel(QWidget):
         bpm_row.addWidget(self.bpm_value_label)
         left_layout.addLayout(bpm_row)
 
-        # Force Rekordbox Custom Cue Schema Checkbox
-        self.force_custom_cues = QCheckBox("Erzwinge Cue-Heuristik (2. Cue = In, Letzter/Vorletzter = Out)")
-        self.force_custom_cues.setChecked(False)
-        self.force_custom_cues.setStyleSheet(f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 11px; padding-top: 6px; padding-bottom: 6px; }}")
-        self.force_custom_cues.setToolTip(
-            "Ignoriert 'MIX IN' / 'MIX OUT' Bezeichnungen und setzt die Mixpunkte "
-            "strikt nach deinem Cue-Schema (2. Cue = Mix-In, letzter oder vorletzter Cue = Mix-Out)."
-        )
-        self.force_custom_cues.stateChanged.connect(self._on_force_cues_changed)
-        left_layout.addWidget(self.force_custom_cues)
-
         # Generate-Button
         self.start_button = QPushButton("GENERATE PLAYLIST")
         self.start_button.setObjectName("btn_primary")
@@ -2306,15 +2548,6 @@ class LibraryPanel(QWidget):
             "bpm_tolerance": float(self.bpm_tolerance_slider.value()),
             "advanced_params": self.get_advanced_parameters(),
         }
-
-    def _on_force_cues_changed(self, state):
-        import os
-        # In PyQt6, state is an integer (2 = Checked, 0 = Unchecked)
-        if state == 2:
-            os.environ["HPG_FORCE_CUSTOM_CUE_SCHEMA"] = "1"
-        else:
-            os.environ["HPG_FORCE_CUSTOM_CUE_SCHEMA"] = "0"
-
 
 class EnergyBarDelegate(QStyledItemDelegate):
     """Rendert Energy-Werte als visuellen Neon-Balken (Cyberpunk DAW-Stil)."""
@@ -2651,10 +2884,10 @@ class PlaylistPanel(QWidget):
 
             # Mix In / Mix Out
             mix_in_item = QTableWidgetItem(
-                f"{int(track.mix_in_point // 60):02d}:{int(track.mix_in_point % 60):02d} ({track.mix_in_bars} bars)"
+                format_mix_point_display(track.mix_in_point, track.mix_in_bars)
             )
             mix_out_item = QTableWidgetItem(
-                f"{int(track.mix_out_point // 60):02d}:{int(track.mix_out_point % 60):02d} ({track.mix_out_bars} bars)"
+                format_mix_point_display(track.mix_out_point, track.mix_out_bars)
             )
             self.table.setItem(i, 10, mix_in_item)
             self.table.setItem(i, 11, mix_out_item)
@@ -2829,6 +3062,7 @@ class MixTipsPanel(QWidget):
 
     def set_recommendations(self, recommendations):
         self.transition_recommendations = recommendations
+        self._cleanup_existing_previews()
         # W4: Batch-Update
         self.scroll.setUpdatesEnabled(False)
         try:
@@ -3157,29 +3391,38 @@ class MixTipsPanel(QWidget):
 
             self._render_worker.request_cancel()
 
-            # Alten Thread asynchron im Hintergrund fertigstellen lassen,
-            # um Freezes (durch blockierendes wait()) zu vermeiden.
-            # Da dieser Thread eindeutige Dateinamen hat, gibt es keine Konflikte.
             old_worker = self._render_worker
-            
-            def clean_and_delete():
-                try:
-                    old_worker.cleanup()
-                except OSError:
-                    pass
+
+            if old_worker.isRunning():
+                # Alten Thread asynchron im Hintergrund fertigstellen lassen,
+                # um Freezes (durch blockierendes wait()) zu vermeiden.
+                def clean_and_delete():
+                    try:
+                        old_worker.cleanup()
+                    except OSError:
+                        pass
+                    old_worker.deleteLater()
+
+                old_worker.finished.connect(clean_and_delete)
+            else:
+                old_worker.cleanup()
                 old_worker.deleteLater()
-                
-            old_worker.finished.connect(clean_and_delete)
             self._render_worker = None
             
+        # AUDIT-FIX N2: laufende Waveform-Peak-Worker sauber stoppen, BEVOR
+        # die Preview-Widgets (und damit die WaveformWidgets) entsorgt werden.
+        stop_peaks()
+
         # H2-Fix: laufende Player stoppen und Datei-Handles freigeben, BEVOR die
         # zugehoerigen WAVs geloescht werden — sonst Windows-PermissionError.
         for _widget in self._preview_widgets.values():
             try:
                 _widget.stop_and_reset()
+                _widget.deleteLater()
             except RuntimeError:
                 pass  # Widget bereits von Qt zerstoert
         self._preview_widgets = {}
+        self._preview_buttons.clear()
         self._preview_queue.clear()
         self._active_preview_index = None
         for path in self._preview_cache.values():
@@ -3216,11 +3459,17 @@ class MixTipsPanel(QWidget):
 
     def _on_clip_error(self, index: int, error_msg: str):
         """Aufgerufen wenn Rendering eines Clips fehlgeschlagen ist."""
-        if index in self._preview_widgets:
-            self._preview_widgets[index].set_error(error_msg)
+        widget = self._preview_widgets.pop(index, None)
+        if widget is not None:
+            try:
+                widget.stop_and_reset()
+                widget.deleteLater()
+            except RuntimeError:
+                pass
         button = self._preview_buttons.get(index)
         if button:
-            button.setText(f"Vorschau fehlgeschlagen: {error_msg}")
+            button.setEnabled(True)
+            button.setText(f"Vorschau erneut rendern ({error_msg})")
 
 
 class TimelinePanel(QWidget):
@@ -3463,7 +3712,9 @@ class CamelotWheelWidget(QWidget):
             # Zahl zwischen den Ringen
             lp = pos(num, (r_a + r_b) / 2.0)
             p.setPen(QColor(COLORS["text_secondary"]))
-            f = QFont(); f.setPointSize(7); p.setFont(f)
+            f = QFont()
+            f.setPointSize(7)
+            p.setFont(f)
             p.drawText(QRectF(lp.x() - 10, lp.y() - 8, 20, 16),
                        Qt.AlignmentFlag.AlignCenter, str(num))
 
@@ -3486,13 +3737,19 @@ class CamelotWheelWidget(QWidget):
             p.setBrush(QBrush(QColor(COLORS["bg_main"])))
             p.drawEllipse(pt, 8.5, 8.5)
             p.setPen(QColor(COLORS["text_bright"]))
-            f = QFont(); f.setPointSize(7); f.setBold(True); p.setFont(f)
+            f = QFont()
+            f.setPointSize(7)
+            f.setBold(True)
+            p.setFont(f)
             p.drawText(QRectF(pt.x() - 10, pt.y() - 9, 20, 18),
                        Qt.AlignmentFlag.AlignCenter, str(idx + 1))
 
         # Zentrum-Label
         p.setPen(QColor(COLORS["text_dim"]))
-        f = QFont(); f.setPointSize(7); f.setBold(True); p.setFont(f)
+        f = QFont()
+        f.setPointSize(7)
+        f.setBold(True)
+        p.setFont(f)
         p.drawText(QRectF(cx - 40, cy - 8, 80, 16),
                    Qt.AlignmentFlag.AlignCenter, "CAMELOT")
         p.end()
@@ -3600,6 +3857,7 @@ class MainWindow(QMainWindow):
         self.current_scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.worker = None
         self.ai_worker = None
+        self._dependency_worker = None
         self.run_state = RunState.IDLE
         self._run_id = 0
         self._close_pending = False
@@ -3609,27 +3867,45 @@ class MainWindow(QMainWindow):
         self.check_dependencies_and_warn()
 
     def check_dependencies_and_warn(self):
-        """Ueberprueft wichtige Abhaengigkeiten und warnt den Benutzer aktiv vor eingeschraenkten System-Diensten."""
-        try:
-            importlib.import_module("pedalboard")
-            pedalboard_installed = True
-        except (ImportError, OSError):
-            pedalboard_installed = False
+        """Prueft optionale Dienste im Hintergrund und aktualisiert danach die UI."""
+        if self._dependency_worker and self._dependency_worker.isRunning():
+            return
+        ai_provider = hpg_config.AI_PROVIDER
+        url = (
+            hpg_config.AI_API_URL_LMSTUDIO
+            if ai_provider == "LM Studio"
+            else hpg_config.AI_API_URL_OLLAMA
+        )
+        worker = DependencyCheckWorker(ai_provider, url, parent=self)
+        self._dependency_worker = worker
+        worker.checked.connect(
+            lambda pedalboard_installed, ai_online, source=worker:
+            self._on_dependencies_checked(
+                pedalboard_installed, ai_online, ai_provider, source
+            )
+        )
+        worker.finished.connect(
+            lambda source=worker: self._cleanup_dependency_worker(source)
+        )
+        worker.start()
 
-        import requests
-        from hpg_core import config
-        
-        ai_provider = config.AI_PROVIDER
-        url = config.AI_API_URL_LMSTUDIO if ai_provider == "LM Studio" else config.AI_API_URL_OLLAMA
-        
-        ai_online = False
+    def _cleanup_dependency_worker(self, worker):
+        if self._dependency_worker is not worker:
+            return
+        self._dependency_worker = None
         try:
-            # Schneller Verbindungs-Check mit 0.3s Timeout
-            requests.get(url.replace("/chat/completions", ""), timeout=0.3)
-            ai_online = True
-        except Exception:
-            ai_online = False
+            worker.deleteLater()
+        except RuntimeError:
+            pass
 
+    def _on_dependencies_checked(
+        self, pedalboard_installed, ai_online, ai_provider, source_worker=None
+    ):
+        if (
+            source_worker is not None
+            and source_worker is not self._dependency_worker
+        ):
+            return
         warnings = []
         if not pedalboard_installed:
             warnings.append("• Spotify-Pedalboard fehlt: Frequenzweichen (EQ-Swap) werden ueber eine Scipy-Alternative berechnet. Der echte Dynamik-Compressor ist inaktiv.")
@@ -3692,14 +3968,16 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _setup_shortcuts(self):
-        """Keyboard Shortcuts: Ctrl+G, Ctrl+E, Tasten 1-5 fuer Sidebar-Navigation."""
+        """Keyboard Shortcuts fuer Generierung, Export und Sidebar-Navigation."""
         # Ctrl+G → Playlist generieren
         QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self.start_analysis)
         # Ctrl+E → Export
         QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self.export_playlist)
-        # Tasten 1-5 → Sidebar-Panel direkt anwaehlen
+        # Ctrl+1..5 → Sidebar-Panel direkt anwaehlen
         for i in range(5):
-            QShortcut(QKeySequence(str(i + 1)), self).activated.connect(
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(
                 lambda idx=i: self.sidebar.set_active(idx)
             )
 
@@ -3819,6 +4097,18 @@ class MainWindow(QMainWindow):
         self.library_panel.progress_widget.reset_steps()
         self.library_panel.progress_widget.set_step_status(0, "working")
 
+        # Ein neuer Lauf darf bei einem spaeteren Fehler keine alte Playlist
+        # weiter exportierbar lassen.
+        self.playlist = []
+        self.analyzed_raw_tracks = []
+        self.quality_metrics = {}
+        self.current_scoring_context = {}
+        self.toolbar.set_export_enabled(False)
+        self.playlist_panel.set_playlist_data([], {})
+        self.mix_tips_panel.set_recommendations([])
+        self.timeline_panel.set_timeline([], [])
+        self.analytics_panel.set_analytics({}, [])
+
         # Worker erstellen und starten
         self._run_id += 1
         self._set_run_state(RunState.AUDIO)
@@ -3833,9 +4123,29 @@ class MainWindow(QMainWindow):
         self.worker.progress.connect(self._on_audio_progress)
         self.worker.phase_changed.connect(self.library_panel.progress_widget.set_step_status)
         self.worker.status_update.connect(self.status_bar.set_status)
-        self.worker.finished.connect(self.analysis_finished)
+        # AUDIT-FIX T1 (2026-07-24): Ergebnis ueber analysis_done; Cleanup erst
+        # beim ECHTEN QThread.finished (Thread ist dann garantiert beendet).
+        self.worker.analysis_done.connect(self.analysis_finished)
+        current_worker = self.worker
+        current_worker.finished.connect(
+            lambda worker=current_worker: self._cleanup_analysis_worker(worker)
+        )
 
         self.worker.start()
+
+    def _cleanup_analysis_worker(self, source_worker=None):
+        """AUDIT-FIX T1: raeumt den AnalysisWorker sicher auf, NACHDEM der
+        QThread wirklich beendet ist (an QThread.finished gebunden)."""
+        worker = source_worker or self.worker
+        if worker is None or (source_worker is not None and worker is not self.worker):
+            return
+        try:
+            worker.wait(2000)
+        except Exception:
+            pass
+        worker.deleteLater()
+        if worker is self.worker:
+            self.worker = None
 
     def _on_audio_progress(self, percent):
         # Audio-Analyse nimmt die ersten 80% des Fortschritts ein
@@ -3863,6 +4173,9 @@ class MainWindow(QMainWindow):
             self.worker.request_cancel()
         if self.ai_worker and self.ai_worker.isRunning():
             self.ai_worker.request_cancel()
+        render_worker = getattr(self.mix_tips_panel, "_render_worker", None)
+        if render_worker and render_worker.isRunning():
+            render_worker.request_cancel()
 
         self.status_bar.set_status("Abbruch angefordert; laufender Schritt wird beendet...")
 
@@ -3908,48 +4221,10 @@ class MainWindow(QMainWindow):
             if track.filePath == track_path:
                 track.ai_metadata = ai_data
                 
-                # Check for AI recommended mix points
-                ai_mix_in = ai_data.get("mix_in_time")
-                ai_mix_out = ai_data.get("mix_out_time")
-                from hpg_core import config as hpg_config
-                if not (
-                    hpg_config.AI_AUTO_APPLY_MIXPOINTS
-                    and getattr(track, "outro_covered", False)
-                ):
-                    ai_mix_in = None
-                    ai_mix_out = None
-                
-                try:
-                    if ai_mix_in is not None and ai_mix_out is not None:
-                        val_in = float(ai_mix_in)
-                        val_out = float(ai_mix_out)
-                        
-                        if 0 <= val_in < val_out <= track.duration and val_out > 0:
-                            # AI-Werte aufs Phrasen-Gitter quantisieren (DJ-Konvention:
-                            # Mix-In ceil nach Intro, Mix-Out floor vor Outro)
-                            from hpg_core.dj_brain import align_ai_mix_points
-                            val_in, val_out = align_ai_mix_points(
-                                val_in, val_out, track.bpm, track.duration,
-                                getattr(track, "phrase_unit", 8) or 8,
-                                anchor=getattr(track, "first_downbeat", 0.0) or 0.0,
-                            )
-                            track.mix_in_point = round(val_in, 2)
-                            track.mix_out_point = round(val_out, 2)
-
-                            # Recalculate bars
-                            from hpg_core.models import seconds_to_bars
-                            track.mix_in_bars = seconds_to_bars(
-                                track.mix_in_point, track.bpm
-                            )
-                            track.mix_out_bars = seconds_to_bars(
-                                track.mix_out_point, track.bpm
-                            )
-                            logger.info(f"AI updated mix points for '{os.path.basename(track_path)}': in={track.mix_in_bars} bars, out={track.mix_out_bars} bars")
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to parse AI mix points: {e}")
-                
                 # Persist to SQLite Cache
-                cache_key = generate_cache_key(track.filePath)
+                cache_key = generate_cache_key(
+                    track.filePath, getattr(track, "rekordbox_signature", "")
+                )
                 if cache_key:
                     cache_track(cache_key, track)
                 found_track = track
@@ -3963,10 +4238,10 @@ class MainWindow(QMainWindow):
             
             # 2. Update Mix In / Mix Out columns (col 10 & 11)
             mix_in_item = QTableWidgetItem(
-                f"{int(found_track.mix_in_point // 60):02d}:{int(found_track.mix_in_point % 60):02d} ({found_track.mix_in_bars} bars)"
+                format_mix_point_display(found_track.mix_in_point, found_track.mix_in_bars)
             )
             mix_out_item = QTableWidgetItem(
-                f"{int(found_track.mix_out_point // 60):02d}:{int(found_track.mix_out_point % 60):02d} ({found_track.mix_out_bars} bars)"
+                format_mix_point_display(found_track.mix_out_point, found_track.mix_out_bars)
             )
             self.playlist_panel.table.setItem(found_row, 10, mix_in_item)
             self.playlist_panel.table.setItem(found_row, 11, mix_out_item)
@@ -4113,16 +4388,16 @@ class MainWindow(QMainWindow):
         self.status_bar.set_progress(80)
         self.library_panel.progress_widget.set_progress(80)
 
-        # M4: Worker-Signale trennen und aufraeumen
+        # AUDIT-FIX T1 (2026-07-24): NUR die Ergebnis-/Fortschritts-Signale
+        # trennen. deleteLater() passiert NICHT mehr hier (der Thread laeuft
+        # noch), sondern in _cleanup_analysis_worker beim echten QThread.finished.
         if self.worker:
             try:
                 self.worker.progress.disconnect()
                 self.worker.status_update.disconnect()
-                self.worker.finished.disconnect()
+                self.worker.analysis_done.disconnect()
             except TypeError:
                 pass
-            self.worker.deleteLater()
-            self.worker = None
 
         if self.run_state == RunState.CANCELLING:
             self.library_panel.progress_widget.reset_steps()
@@ -4175,8 +4450,15 @@ class MainWindow(QMainWindow):
             )
         )
         self.ai_worker.progress.connect(self._on_ai_progress)
+        # AUDIT-FIX N6/T10 (2026-07-26): Source-Guard wie bei den anderen
+        # Slots — ein verwaister (bereits abgeloester) AI-Worker darf die
+        # Statuszeile nicht mehr ueberschreiben.
         self.ai_worker.failed.connect(
-            lambda message: self.status_bar.set_status(message)
+            lambda message, worker=current_ai_worker: (
+                self.status_bar.set_status(message)
+                if worker is self.ai_worker
+                else None
+            )
         )
         self.ai_worker.finished.connect(
             lambda worker=current_ai_worker: self.on_ai_worker_finished(worker)
@@ -4231,6 +4513,10 @@ class MainWindow(QMainWindow):
         try:
             file_lower = file_path.lower()
             if selected_filter.startswith("Rekordbox") or file_lower.endswith(".xml"):
+                # AUDIT-FIX F2 (2026-07-24): fehlende .xml-Endung ergaenzen —
+                # ohne Endung ist die Datei fuer Rekordbox' XML-Import unsichtbar.
+                if not file_lower.endswith(".xml"):
+                    file_path += ".xml"
                 self._export_rekordbox_xml(file_path)
             else:
                 if not file_lower.endswith(".m3u8"):
@@ -4341,9 +4627,57 @@ class MainWindow(QMainWindow):
             self.cancel_analysis()
             self.status_bar.set_status("Neustart nach Abschluss des Abbruchs erneut ausloesen.")
             return
+        advanced = self.library_panel.advanced_params
+        for name in ("_ai_detect_worker", "_test_worker", "_pull_worker"):
+            auxiliary = getattr(advanced, name, None)
+            if auxiliary and auxiliary.isRunning():
+                auxiliary.requestInterruption()
+                self.status_bar.set_status(
+                    "Neustart nach Abschluss des Abbruchs erneut ausloesen."
+                )
+                return
+        if self._dependency_worker and self._dependency_worker.isRunning():
+            self._dependency_worker.requestInterruption()
+            self.status_bar.set_status(
+                "Neustart nach Abschluss des Abbruchs erneut ausloesen."
+            )
+            return
 
         self.playlist = []
         self.quality_metrics = {}
+        # AUDIT-FIX F5 (2026-07-26): START OVER raeumt jetzt WIRKLICH auf.
+        # Vorher blieben die alte Playlist-Tabelle, Mix-Tips-Karten (inkl.
+        # lebender QMediaPlayer + Temp-WAVs), Timeline und Analytics sichtbar
+        # stehen — und "PREVIEW TRANSITIONS" arbeitete auf alten Empfehlungen.
+        self.analyzed_raw_tracks = []
+        self.current_scoring_context = {}
+        try:
+            self.playlist_panel.set_playlist_data([], {})
+        except Exception:
+            pass
+        try:
+            self.mix_tips_panel._cleanup_existing_previews()
+            self.mix_tips_panel.set_recommendations([])
+        except Exception:
+            pass
+        try:
+            self.timeline_panel.set_timeline([], [])
+        except Exception:
+            pass
+        try:
+            self.analytics_panel.set_analytics({}, [])
+        except Exception:
+            pass
+        self._set_run_state(RunState.IDLE)
+        # AUDIT-FIX N7 (2026-07-26): Auch Progress-Steps/-Badges und den
+        # Playlist-Modus zuruecksetzen — sonst zeigt das Progress-Widget
+        # nach START OVER noch den alten Lauf und Exporte wuerden den
+        # alten Modus im Namen tragen.
+        try:
+            self.library_panel.progress_widget.reset_steps()
+        except Exception:
+            pass
+        self.current_playlist_mode = "Harmonic Flow"
         self.toolbar.set_export_enabled(False)
         self.toolbar.quality_badge.hide()
         self.toolbar.set_info("No folder selected")
@@ -4370,6 +4704,10 @@ class MainWindow(QMainWindow):
                 auxiliary.requestInterruption()
                 running_workers.append(auxiliary)
 
+        if self._dependency_worker and self._dependency_worker.isRunning():
+            self._dependency_worker.requestInterruption()
+            running_workers.append(self._dependency_worker)
+
         # HPG-004: Preview-Render-Worker in den Close-Lifecycle aufnehmen —
         # request_cancel terminiert dessen Child-Prozess, Thread endet schnell
         render_worker = getattr(self.mix_tips_panel, "_render_worker", None)
@@ -4389,6 +4727,11 @@ class MainWindow(QMainWindow):
                 )
                 for w in running_workers:
                     try:
+                        if w is render_worker:
+                            # Erst Child-Prozesse beenden, dann den Qt-Thread.
+                            TransitionRenderWorker._terminate_executor(
+                                getattr(w, "_executor", None)
+                            )
                         w.terminate()
                         w.wait(2000)
                     except Exception:

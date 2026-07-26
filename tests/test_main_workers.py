@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 import requests
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication
 
 import main
@@ -170,11 +171,45 @@ def test_ai_pull_worker_real_qthread_lifecycle(qtbot, monkeypatch):
   assert worker.wait(1000)
 
 
+def test_dependency_check_worker_keeps_http_probe_out_of_mainwindow(monkeypatch):
+  calls = []
+
+  def fake_get(*args, **kwargs):
+    calls.append((args, kwargs))
+    return SimpleNamespace()
+
+  monkeypatch.setattr(requests, "get", fake_get)
+  worker = main.DependencyCheckWorker(
+    "Ollama", "http://localhost:11434/v1/chat/completions"
+  )
+  emitted = []
+  worker.checked.connect(lambda *args: emitted.append(args))
+
+  worker.run()
+
+  assert emitted and emitted[0][1] is True
+  assert calls[0][1]["timeout"] == (0.3, 0.3)
+
+
+def test_render_executor_terminates_children_before_shutdown():
+  events = []
+  process = Mock()
+  process.terminate.side_effect = lambda: events.append("terminate")
+  executor = SimpleNamespace(_processes={1: process}, shutdown=Mock())
+  executor.shutdown.side_effect = lambda **kwargs: events.append("shutdown")
+
+  main.TransitionRenderWorker._terminate_executor(executor)
+
+  process.terminate.assert_called_once_with()
+  executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+  assert events == ["terminate", "shutdown"]
+
+
 def test_analysis_worker_empty_folder(tmp_path):
   worker = main.AnalysisWorker(str(tmp_path))
   finished = []
   statuses = []
-  worker.finished.connect(lambda tracks, quality: finished.append((tracks, quality)))
+  worker.analysis_done.connect(lambda tracks, quality: finished.append((tracks, quality)))
   worker.status_update.connect(statuses.append)
 
   worker.run()
@@ -188,21 +223,20 @@ def test_analysis_worker_success_and_analyzer_failure(tmp_path, monkeypatch):
   track = Track(filePath=str(tmp_path / "track.wav"), fileName="track.wav")
 
   class SuccessfulAnalyzer:
-    def analyze_files(self, files, progress_callback):
+    def analyze_files(self, files, progress_callback, **kwargs):
       progress_callback(1, 1, "done")
       return [track]
 
   monkeypatch.setattr(main, "ParallelAnalyzer", SuccessfulAnalyzer)
-  monkeypatch.setattr(main, "sanitize_playlist", lambda tracks: tracks)
-  monkeypatch.setattr(main, "validate_playlist_security", lambda tracks: True)
+  monkeypatch.setattr(main, "apply_resource_limits", lambda tracks: tracks)
   worker = main.AnalysisWorker(str(tmp_path))
   finished = []
-  worker.finished.connect(lambda tracks, quality: finished.append((tracks, quality)))
+  worker.analysis_done.connect(lambda tracks, quality: finished.append((tracks, quality)))
   worker.run()
   assert finished == [([track], {})]
 
   class FailingAnalyzer:
-    def analyze_files(self, files, progress_callback):
+    def analyze_files(self, files, progress_callback, **kwargs):
       raise RuntimeError("decoder failed")
 
   reporter = Mock()
@@ -210,7 +244,7 @@ def test_analysis_worker_success_and_analyzer_failure(tmp_path, monkeypatch):
   monkeypatch.setattr(main, "get_error_reporter", lambda: reporter)
   worker = main.AnalysisWorker(str(tmp_path))
   finished = []
-  worker.finished.connect(lambda tracks, quality: finished.append((tracks, quality)))
+  worker.analysis_done.connect(lambda tracks, quality: finished.append((tracks, quality)))
   worker.run()
   assert finished == [([], {})]
   reporter.log_error.assert_called_once()
@@ -221,7 +255,7 @@ def test_analysis_worker_cancel_during_scan(tmp_path):
   worker = main.AnalysisWorker(str(tmp_path))
   worker.request_cancel()
   finished = []
-  worker.finished.connect(lambda tracks, quality: finished.append((tracks, quality)))
+  worker.analysis_done.connect(lambda tracks, quality: finished.append((tracks, quality)))
 
   worker.run()
 
@@ -246,6 +280,70 @@ def test_mainwindow_terminal_state_and_empty_analysis(qtbot, monkeypatch):
   window.analysis_finished([], {})
   assert window.run_state == main.RunState.ERROR
   assert "no results" in window.status_bar.status_label.text().lower()
+
+
+def test_shortcuts_use_window_scoped_ctrl_navigation(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  shortcuts = {
+    shortcut.key().toString(): shortcut.context()
+    for shortcut in window.findChildren(QShortcut)
+  }
+
+  assert all(f"Ctrl+{index}" in shortcuts for index in range(1, 6))
+  assert all(f"{index}" not in shortcuts for index in range(1, 6))
+  assert all(
+    shortcuts[f"Ctrl+{index}"]
+    == main.Qt.ShortcutContext.WindowShortcut
+    for index in range(1, 6)
+  )
+
+
+def test_cue_heuristic_checkbox_is_not_exposed(qtbot):
+  panel = main.LibraryPanel()
+  qtbot.addWidget(panel)
+
+  assert not hasattr(panel, "force_custom_cues")
+  assert not hasattr(panel, "_on_force_cues_changed")
+
+
+def test_preview_error_releases_widget_and_allows_retry(qtbot):
+  transition = SimpleNamespace(
+    from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
+    to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
+    plan=SimpleNamespace(mix_out_a=30.0, mix_in_b=0.0, overlap=8.0),
+    transition_type="blend",
+  )
+  panel = main.MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = main.TransitionPreviewWidget(0, transition, panel)
+  button = main.QPushButton("laufend")
+  panel._preview_widgets[0] = widget
+  panel._preview_buttons[0] = button
+
+  panel._on_clip_error(0, "decoder")
+
+  assert 0 not in panel._preview_widgets
+  assert button.isEnabled()
+  assert "erneut" in button.text()
+  widget.deleteLater()
+  button.deleteLater()
+
+
+def test_ai_auxiliary_worker_guards_and_cleanup(qtbot):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  stale = Mock()
+  current = Mock()
+  widget._test_worker = current
+  widget.test_ai_btn.setEnabled(False)
+
+  widget._on_test_finished(False, "stale", "model", 0.1, stale)
+  assert not widget.test_ai_btn.isEnabled()
+
+  widget._cleanup_ai_worker("_test_worker", current)
+
+  current.deleteLater.assert_called_once_with()
+  assert widget._test_worker is None
 
 
 def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):

@@ -13,7 +13,7 @@ hpg_core/                  # Core analysis modules
   analysis.py              # Audio-Analyse (librosa): BPM, Key, Energy, Sections
   config.py                # Alle konfigurierbaren Konstanten
   genres.py                # Single Source of Truth: alle Genre-Tabellen + Drift-Validierung
-  caching.py               # SQLite-basierter Cache (WAL, hpg_cache_v14.db)
+  caching.py               # SQLite-basierter Cache (WAL, hpg_cache_v24.db)
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Verse/Drop/Outro)
@@ -30,12 +30,12 @@ docs/archive/              # Erledigte Plaene und historische Dokumente
 ## Python-Pfad (WICHTIG!)
 
 - **Echtes Python:** `C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe`
-- In Bash-Tool: `powershell -Command "& 'C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe' ..."`
+- Im Projekt: `.` + `\venv312\Scripts\python.exe` verwenden.
 
 ## Tests ausfuehren
 
 `ash
-powershell -Command "Set-Location 'C:\Users\david\Dokumente\HarmonicPlaylistGenkopie_V2.0-main'; & 'C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe' -m pytest tests/ --tb=short -q"
+.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 `
 
 ## Coding-Konventionen
@@ -47,8 +47,7 @@ powershell -Command "Set-Location 'C:\Users\david\Dokumente\HarmonicPlaylistGenk
 
 ## Geschuetzte Dateien (NICHT editieren)
 
-- `track_cache.*`, `hpg_cache_v10.*` � Cache-Dateien
-- `*.lock`, `*.coverage` � System-Dateien
+- `track_cache.*`, `hpg_cache_v*.db`, `*.lock`, `*.coverage` – Cache-/System-Dateien
 
 ## Analyse-Pipeline
 1. **Rekordbox Fast-Path**: Nutzt existierende Metadaten.

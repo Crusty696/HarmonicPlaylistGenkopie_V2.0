@@ -38,6 +38,30 @@ class FakeCue:
     self.ColorID = color_id
 
 
+class FakeBeatEntry:
+  """Simuliert einen PQTZ-Beatgrid-Eintrag ohne Rekordbox-Daten."""
+
+  def __init__(self, beat, time):
+    self.beat = beat
+    self.time = time
+
+
+class FakeBeatTag:
+  """Simuliert beide im Importer unterstuetzten PQTZ-Tag-Formen."""
+
+  def __init__(self, beats=None, times=None, entries=None):
+    self.beats = beats
+    self.times = times
+    self.entries = entries
+
+
+class FakeAnlzFile:
+  """Minimaler ANLZ-Stub fuer Pure-Python-Downbeat-Tests."""
+
+  def __init__(self, tag):
+    self.PQTZ = tag
+
+
 class FakeContent:
   """Simuliert ein Rekordbox Content-Objekt (Track in der DB)."""
 
@@ -289,6 +313,40 @@ class TestExtractCuePoints:
     result = imp._extract_cue_points([BrokenCue()])
     # Fehler wird abgefangen, leere Liste zurueck
     assert isinstance(result, list)
+
+
+class TestRekordboxTimeHeuristic:
+  """Gemeinsamer ms/s-Vertrag fuer Cues und Downbeats."""
+
+  def test_cue_bis_einschliesslich_100_wird_als_millisekunden_interpretiert(self):
+    imp = make_importer()
+    result = imp._extract_cue_points([FakeCue(in_msec=100)])
+    assert result[0]["position"] == pytest.approx(0.1)
+
+  def test_cue_ueber_100_wird_ebenfalls_als_millisekunden_interpretiert(self):
+    imp = make_importer()
+    result = imp._extract_cue_points([FakeCue(in_msec=101)])
+    assert result[0]["position"] == pytest.approx(0.101)
+
+  @pytest.mark.parametrize(
+    "raw_time, expected",
+    [(12500, 12.5), (1500, 1.5), (100000, 100.0), (101000, 101.0)],
+  )
+  def test_downbeat_flache_tagform_verwendet_rekordbox_millisekunden(
+    self, raw_time, expected
+  ):
+    tag = FakeBeatTag(beats=[1], times=[raw_time])
+    result = RekordboxImporter._extract_first_downbeat_from_anlz(
+      [FakeAnlzFile(tag)]
+    )
+    assert result == pytest.approx(expected)
+
+  def test_downbeat_entry_tagform_normalisiert_sekunden_und_ms(self):
+    tag = FakeBeatTag(entries=[FakeBeatEntry(1, 1500)])
+    result = RekordboxImporter._extract_first_downbeat_from_anlz(
+      [FakeAnlzFile(tag)]
+    )
+    assert result == pytest.approx(1.5)
 
 
 # ─── Tests: Track-Cache ───────────────────────────────────────────────────────

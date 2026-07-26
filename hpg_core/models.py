@@ -3,7 +3,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from .config import METER, BPM_HALF_DOUBLE_ENABLED
+from .config import METER, BPM_HALF_DOUBLE_ENABLED, MIX_POINT_UNSET
 
 # Mapping from Key and Mode to Camelot Code
 CAMELOT_MAP = {
@@ -79,18 +79,6 @@ def bars_to_seconds(bars: int, bpm: float, meter: int = METER) -> float:
     return float(bars) * seconds_per_bar(bpm, meter)
 
 
-ANALYSIS_FIELD_CONSUMERS = {
-    "bass_intensity": "genre_classifier input and diagnostics",
-    "avg_mids": "section diagnostics; no transition consumer",
-    "avg_highs": "section diagnostics; no transition consumer",
-    "brightness": "analysis diagnostics; no transition consumer",
-    "vocal_instrumental": "analysis diagnostics; no transition consumer",
-    "danceability": "analysis diagnostics; no transition consumer",
-    "genre_source": "genre provenance in cache/reporting",
-    "mfcc_fingerprint": "genre-classifier diagnostics; timbre_fingerprint is active for similarity",
-}
-
-
 _CAMELOT_RE = re.compile(r"(1[0-2]|[1-9])([AB])")
 
 
@@ -117,12 +105,18 @@ def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     if bpm1 <= 0 or bpm2 <= 0:
         return abs(bpm1 - bpm2), "direct"
 
+    # AUDIT-FIX F01 (2026-07-24): Die Differenz wird IMMER im Tempo-Raum von
+    # bpm1 (Referenz = Track A, der laufen bleibt) gemessen. Vorher enthielt die
+    # Liste fuer dieselbe Relation je einen Kandidaten im schnellen UND im
+    # langsamen Tempo-Raum (z. B. |bpm1-bpm2*2| und |bpm1*2-bpm2| = das Doppelte
+    # davon); min() waehlte systematisch die halbierte Variante, wodurch das
+    # BPM-Hard-Gate bei Half/Double doppelt so lax war (140 vs 73 passierte mit
+    # "diff 3", real muss der DJ 6 BPM = 4,3 % schieben). Track B wird an A
+    # angepasst: half-time B -> *2, double-time B -> /2, jeweils gegen bpm1.
     candidates = [
         (abs(bpm1 - bpm2), "direct"),
-        (abs(bpm1 - bpm2 * 2), "half"),   # bpm2 ist Half-Time
-        (abs(bpm1 * 2 - bpm2), "half"),   # bpm1 ist Half-Time
-        (abs(bpm1 - bpm2 / 2), "double"), # bpm2 ist Double-Time
-        (abs(bpm1 / 2 - bpm2), "double"), # bpm1 ist Double-Time
+        (abs(bpm1 - bpm2 * 2), "half"),    # bpm2 ist Half-Time -> auf *2 ziehen
+        (abs(bpm1 - bpm2 / 2), "double"),  # bpm2 ist Double-Time -> auf /2 ziehen
     ]
 
     if not BPM_HALF_DOUBLE_ENABLED:
@@ -131,7 +125,7 @@ def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     return min(candidates, key=lambda x: x[0])
 
 
-@dataclass
+@dataclass(eq=False)
 class Track:
     # Core Info
     filePath: str
@@ -141,6 +135,41 @@ class Track:
     def track_id(self) -> str:
         """Stabile Windows-Identitaet; Basename ist ausdruecklich ungeeignet."""
         return os.path.normcase(os.path.abspath(os.path.normpath(self.filePath)))
+
+    def __eq__(self, other: object) -> bool:
+        """Vergleicht Tracks ueber stabile Datei-Identitaet statt Deep-Compare."""
+        if not isinstance(other, Track):
+            return NotImplemented
+        return self.track_id == other.track_id
+
+    def __hash__(self) -> int:
+        """Ermoeglicht schnelle Sets/Dicts ueber stabile Track-Identitaet."""
+        return hash(self.track_id)
+
+    @property
+    def phrase_anchor(self) -> float:
+        """AUDIT-FEATURE A1: Anker fuers PHRASEN-Gitter.
+
+        first_phrase, wenn die Schaetzung belastbar ist (Konfidenz-Gate aus
+        config.PHRASE_CONFIDENCE_MIN), sonst first_downbeat (bisheriges
+        Verhalten). Damit ist die Umstellung fuer Alt-Caches und schwache
+        Schaetzungen ein No-Op.
+
+        AUDIT-FIX R4 (2026-07-26): Sentinel fuer "nicht geschaetzt" ist -1.0
+        — eine Phase von exakt 0.0 ist GUELTIG und wurde vorher verworfen.
+        AUDIT-FIX R2 (2026-07-26): zusaetzliches Gate auf
+        downbeat_confidence — ein first_phrase aus Alt-Caches, das auf einem
+        gescheiterten (erfundenen) Downbeat-Raster abgestimmt wurde, wird
+        nicht mehr als Anker verwendet.
+        """
+        from .config import PHRASE_CONFIDENCE_MIN
+        if (
+            self.first_phrase >= 0.0
+            and self.downbeat_confidence > 0.0
+            and self.phrase_confidence >= PHRASE_CONFIDENCE_MIN
+        ):
+            return self.first_phrase
+        return self.first_downbeat
 
     # ID3 Tag Info
     artist: str = "Unknown"
@@ -162,8 +191,9 @@ class Track:
     avg_highs: float = 0.0
 
     # Structural Info
-    mix_in_point: float = 0.0
-    mix_out_point: float = 0.0
+    # -1.0 = nicht gesetzt; 0.0 ist ein gueltiger Mixpunkt am Trackanfang.
+    mix_in_point: float = MIX_POINT_UNSET
+    mix_out_point: float = MIX_POINT_UNSET
 
     # Downbeat-Anker (2026-07-17): Zeitpunkt der ersten "1" in Sekunden.
     # Verankert das Phrasen-Raster der Mixpoint-Quantisierung; 0.0 = kein
@@ -171,6 +201,15 @@ class Track:
     # (mix_in_bars/mix_out_bars) zaehlt weiterhin ab Track-Start.
     first_downbeat: float = 0.0
     downbeat_confidence: float = 0.0  # 0-1; 1.0 = aus Rekordbox-Beatgrid
+
+    # AUDIT-FEATURE A1 (2026-07-26): PHRASEN-Anker — Zeitpunkt der ersten
+    # Phrasengrenze in Sekunden (liegt auf dem Bar-Raster: first_downbeat +
+    # k*bar_len). Der Takt-Anker sagt nur, WO die "1" liegt; erst die
+    # Phrasen-Phase sagt, welcher Takt Takt 1 einer 8/16-Bar-Phrase ist.
+    # AUDIT-FIX R4 (2026-07-26): -1.0 = nicht geschaetzt (Fallback:
+    # first_downbeat als Anker); 0.0 ist eine GUELTIGE Phase.
+    first_phrase: float = -1.0
+    phrase_confidence: float = 0.0  # 0-1 aus dem Bar-Voting
 
     # Key-Confidence (2026-07-17): 0-1 nach Essentia-Muster (strength+margin);
     # 0.0 = unbekannt (Alt-Cache), 1.0 = Key aus Rekordbox-DB
@@ -201,6 +240,8 @@ class Track:
     mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor fuer Similarity
     timbre_fingerprint: list = field(default_factory=list)  # Gemittelter MFCC-Fingerabdruck
     ai_metadata: dict = field(default_factory=dict)  # LLM Analysis Results
+    # Signatur der verwendeten Rekordbox-Metadaten fuer Cache-Invalidierung.
+    rekordbox_signature: str = ""
 
     # Provenienz der Audioabdeckung. Luecken bleiben explizit sichtbar; ein
     # Mix-Out darf nur verwendet werden, wenn das Track-Ende analysiert wurde.

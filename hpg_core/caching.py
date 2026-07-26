@@ -19,13 +19,24 @@ from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
 from .models import Track
+from .config import MIX_POINT_UNSET
 
 logger = logging.getLogger(__name__)
 
 # v17: Key-Confidence (Essentia-Muster strength+margin) + LUFS-Loudness
 # (EBU R128 via pyloudnorm/DeMan) 2026-07-17 — neue Track-Felder
 # key_confidence und lufs werden bei der Analyse gefuellt
-CACHE_VERSION = 18
+# AUDIT-FIX Welle 1 (2026-07-24): Version-Bump 18 -> 19 — die gecachten
+# Mix-Punkte/Downbeats stammen aus der fehlerhaften Logik (N1/B7/B4/B5/B1/N10)
+# und muessen neu berechnet werden.
+# AUDIT-FEATURE A1 (2026-07-26): 19 -> 20 — neue Felder first_phrase/
+# phrase_confidence; Mix-Punkte sind jetzt phrasen-verankert und muessen
+# fuer alle Tracks neu berechnet werden.
+# Analyse-/Quantisierungsvertrag geaendert: ungerundete Mixpunkte und
+# gemessene Phrase-Units/erweiterte Novelty.
+# AUDIT-FIX 2026-07-26: Mixpoints verwenden -1.0 als "nicht gesetzt";
+# 0.0 bleibt ein gueltiger Zeitpunkt.
+CACHE_VERSION = 24
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -33,11 +44,15 @@ def _default_cache_file() -> str:
     """Liefert einen CWD-unabhaengigen Cachepfad im Benutzerprofil."""
     configured_dir = os.environ.get("HPG_CACHE_DIR", "").strip()
     if configured_dir:
-        base_dir = Path(configured_dir)
+        base_dir = Path(configured_dir).expanduser().resolve()
     else:
         local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-        base_dir = Path(local_app_data) / "HPG" if local_app_data else Path.home() / ".hpg"
-    return str(base_dir / f"hpg_cache_v{CACHE_VERSION}.db")
+        base_dir = (
+            Path(local_app_data).expanduser().resolve() / "HPG"
+            if local_app_data
+            else (Path.home() / ".hpg").resolve()
+        )
+    return str((base_dir / f"hpg_cache_v{CACHE_VERSION}.db").resolve())
 
 
 CACHE_FILE = _CACHE_FILE_OVERRIDE or _default_cache_file()
@@ -46,6 +61,7 @@ LOCK_FILE = os.path.splitext(CACHE_FILE)[0] + ".lock"
 SQLITE_BUSY_CODES = {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
 SQLITE_CORRUPTION_CODES = {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}
 SQLITE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4)
+CACHE_LOCK_TIMEOUT = 15.0
 
 
 def _ensure_cache_schema(conn: sqlite3.Connection) -> None:
@@ -69,6 +85,12 @@ TRACK_FIELD_NAMES = {field.name for field in fields(Track)}
 TRACK_LIST_FIELDS = {"sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage"}
 TRACK_DICT_FIELDS = {"ai_metadata"}
 TRACK_CONFIDENCE_FIELDS = {"downbeat_confidence", "key_confidence", "genre_confidence"}
+TRACK_NUMERIC_FIELDS = {
+    field.name
+    for field in fields(Track)
+    if isinstance(field.default, (int, float))
+    and not isinstance(field.default, bool)
+}
 
 
 class CacheValidationError(ValueError):
@@ -104,6 +126,13 @@ def validate_track_dict(data: dict) -> dict:
         if name in filtered and not isinstance(filtered[name], dict):
             raise CacheValidationError(f"{name} muss ein Dictionary sein")
 
+    for name in TRACK_NUMERIC_FIELDS:
+        if name in filtered and (
+            isinstance(filtered[name], bool)
+            or not isinstance(filtered[name], (int, float))
+        ):
+            raise CacheValidationError(f"{name} muss numerisch sein")
+
     for name, value in filtered.items():
         _validate_finite_values(value, name)
     for name in TRACK_CONFIDENCE_FIELDS:
@@ -111,16 +140,35 @@ def validate_track_dict(data: dict) -> dict:
         if value is not None and not 0.0 <= float(value) <= 1.0:
             raise CacheValidationError(f"{name} liegt ausserhalb 0..1")
 
-    duration = float(filtered.get("duration") or 0.0)
-    mix_in = float(filtered.get("mix_in_point") or 0.0)
-    mix_out = float(filtered.get("mix_out_point") or 0.0)
-    if duration < 0 or mix_in < 0 or mix_out < 0:
-        raise CacheValidationError("Dauer oder Mixpoint ist negativ")
-    if mix_out > 0 and not mix_in < mix_out:
+    try:
+        duration = float(filtered.get("duration") or 0.0)
+        mix_in = float(filtered.get("mix_in_point", MIX_POINT_UNSET))
+        mix_out = float(filtered.get("mix_out_point", MIX_POINT_UNSET))
+    except (TypeError, ValueError, OverflowError) as error:
+        raise CacheValidationError("Numerischer Track-Wert ist ungueltig") from error
+    if duration < 0 or mix_in < MIX_POINT_UNSET or mix_out < MIX_POINT_UNSET:
+        raise CacheValidationError("Dauer oder Mixpoint ist ungueltig negativ")
+    if mix_in >= 0 and mix_out >= 0 and not mix_in < mix_out:
         raise CacheValidationError("Mix-In muss vor Mix-Out liegen")
-    if duration > 0 and mix_out > duration + 1e-6:
+    if duration > 0 and mix_out >= 0 and mix_out > duration + 1e-6:
         raise CacheValidationError("Mix-Out liegt hinter dem Trackende")
     return filtered
+
+
+def _quarantine_cache_row_on_connection(
+    conn: sqlite3.Connection,
+    cache_key: str,
+    data: str,
+    error: Exception,
+) -> None:
+    """Isoliert einen ungueltigen Record auf einer bereits gesperrten Verbindung."""
+    _ensure_cache_schema(conn)
+    conn.execute(
+        "INSERT INTO cache_quarantine (key, data, error, quarantined_at) VALUES (?, ?, ?, ?)",
+        (cache_key, data, str(error), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.execute("DELETE FROM cache WHERE key = ?", (cache_key,))
+    conn.commit()
 
 
 def _quarantine_cache_row(cache_key: str, data: str, error: Exception) -> None:
@@ -129,17 +177,12 @@ def _quarantine_cache_row(cache_key: str, data: str, error: Exception) -> None:
     # die Verbindung aber NICHT -> jeder quarantinisierte Record leakte ein
     # Datei-Handle (auf Windows blockiert das spaeter das Verschieben der DB).
     # Explizit schliessen wie alle anderen Cache-Zugriffe.
-    conn = _connect_cache()
-    try:
-        _ensure_cache_schema(conn)
-        conn.execute(
-            "INSERT INTO cache_quarantine (key, data, error, quarantined_at) VALUES (?, ?, ?, ?)",
-            (cache_key, data, str(error), datetime.now(timezone.utc).isoformat()),
-        )
-        conn.execute("DELETE FROM cache WHERE key = ?", (cache_key,))
-        conn.commit()
-    finally:
-        conn.close()
+    with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+        conn = _connect_cache()
+        try:
+            _quarantine_cache_row_on_connection(conn, cache_key, data, error)
+        finally:
+            conn.close()
 
 
 def _sqlite_error_code(error: sqlite3.Error) -> int | None:
@@ -155,6 +198,7 @@ def _connect_cache() -> sqlite3.Connection:
         try:
             conn = sqlite3.connect(CACHE_FILE, timeout=15.0)
             conn.execute("PRAGMA busy_timeout=15000;")
+            conn.execute("PRAGMA foreign_keys=ON;")
             return conn
         except sqlite3.OperationalError as error:
             last_error = error
@@ -164,7 +208,7 @@ def _connect_cache() -> sqlite3.Connection:
     raise last_error
 
 
-def _is_confirmed_corrupt() -> bool:
+def _is_confirmed_corrupt_on_connection() -> bool:
     """Bestaetigt Korruption per integrity_check oder eindeutigem Resultcode."""
     conn = None
     try:
@@ -178,16 +222,22 @@ def _is_confirmed_corrupt() -> bool:
             conn.close()
 
 
+def _is_confirmed_corrupt() -> bool:
+    """Prueft die Cache-Integritaet unter dem Cross-Process-Lock."""
+    with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+        return _is_confirmed_corrupt_on_connection()
+
+
 def _quarantine_corrupt_cache() -> bool:
     """Verschiebt eine bestaetigt defekte DB reversibel statt sie zu loeschen."""
-    if not os.path.exists(CACHE_FILE) or not _is_confirmed_corrupt():
-        return False
+    with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+        if not os.path.exists(CACHE_FILE) or not _is_confirmed_corrupt_on_connection():
+            return False
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    quarantine_dir = Path(CACHE_FILE).parent / "quarantine"
-    quarantine_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        quarantine_dir = Path(CACHE_FILE).parent / "quarantine"
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
 
-    with file_lock(LOCK_FILE, timeout=15.0):
         for suffix in ("", "-wal", "-shm"):
             source = Path(CACHE_FILE + suffix)
             if source.exists():
@@ -259,32 +309,41 @@ def init_cache() -> None:
     conn = None
     try:
         # Establish connection with a generous timeout for concurrent writes
-        conn = _connect_cache()
-        # Enable WAL mode for high concurrency
-        conn.execute("PRAGMA journal_mode=WAL;")
-        _ensure_cache_schema(conn)
-        conn.commit()
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+            # Establish connection with a generous timeout for concurrent writes
+            conn = _connect_cache()
+            # Enable WAL mode for high concurrency
+            conn.execute("PRAGMA journal_mode=WAL;")
+            _ensure_cache_schema(conn)
+            conn.commit()
 
-        # Check version and clear cache if it was created with an old version
-        cursor = conn.cursor()
-        cursor.execute("SELECT version FROM cache WHERE key = 'version' LIMIT 1")
-        row = cursor.fetchone()
-        if row is None:
-            # Set initial version
-            conn.execute(
-                "INSERT INTO cache (key, filepath, version, data) VALUES ('version', 'system', ?, 'metadata')",
-                (CACHE_VERSION,)
-            )
-            conn.commit()
-            logger.info(f"Cache initialisiert (Version {CACHE_VERSION})")
-        elif row[0] != CACHE_VERSION:
-            logger.warning(f"Cache-Version veraltet (Erwartet: {CACHE_VERSION}, Gefunden: {row[0]}). Cache geleert.")
-            cursor.execute("DELETE FROM cache")
-            conn.execute(
-                "INSERT INTO cache (key, filepath, version, data) VALUES ('version', 'system', ?, 'metadata')",
-                (CACHE_VERSION,)
-            )
-            conn.commit()
+            # Check version and clear cache if it was created with an old version
+            cursor = conn.cursor()
+            cursor.execute("SELECT version FROM cache WHERE key = 'version' LIMIT 1")
+            row = cursor.fetchone()
+            if row is None:
+                # Ohne Marker sind vorhandene Records nicht vertrauenswuerdig.
+                cursor.execute("DELETE FROM cache")
+                conn.execute(
+                    "INSERT INTO cache (key, filepath, version, data) VALUES ('version', 'system', ?, 'metadata')",
+                    (CACHE_VERSION,)
+                )
+                conn.commit()
+                logger.info(f"Cache initialisiert (Version {CACHE_VERSION})")
+            elif row[0] != CACHE_VERSION:
+                logger.warning(f"Cache-Version veraltet (Erwartet: {CACHE_VERSION}, Gefunden: {row[0]}). Cache geleert.")
+                cursor.execute("DELETE FROM cache")
+                conn.execute(
+                    "INSERT INTO cache (key, filepath, version, data) VALUES ('version', 'system', ?, 'metadata')",
+                    (CACHE_VERSION,)
+                )
+                conn.commit()
+            else:
+                cursor.execute(
+                    "DELETE FROM cache WHERE key <> 'version' AND (version IS NULL OR version <> ?)",
+                    (CACHE_VERSION,),
+                )
+                conn.commit()
 
         conn.close()
     except sqlite3.DatabaseError as e:
@@ -301,8 +360,8 @@ def init_cache() -> None:
             conn.close()
 
 
-def generate_cache_key(file_path: str) -> str | None:
-    """Generates a cache key based on file path, size, and modification time."""
+def generate_cache_key(file_path: str, source_signature: str = "") -> str | None:
+    """Generiert einen stabilen Key aus Pfad und mehreren Dateizeitstempeln."""
     if not file_path:
         return None
     # normpath: QFileDialog liefert D:/pfad, os.walk D:\pfad -- ohne
@@ -311,7 +370,13 @@ def generate_cache_key(file_path: str) -> str | None:
     identifier = os.path.normcase(os.path.abspath(os.path.normpath(str(file_path))))
     try:
         stat = os.stat(identifier)
-        return f"{identifier}-{stat.st_size}-{stat.st_mtime}"
+        key = (
+            f"{identifier}-{stat.st_size}-{stat.st_mtime}-"
+            f"{stat.st_mtime_ns}-{stat.st_ctime_ns}"
+        )
+        if source_signature:
+            key = f"{key}-source-{source_signature}"
+        return key
     except OSError:
         return hashlib.sha256(identifier.encode("utf-8", "ignore")).hexdigest()
 
@@ -323,37 +388,52 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
 
     conn = None
     try:
-        conn = _connect_cache()
-        _ensure_cache_schema(conn)
-        cursor = conn.cursor()
-        cursor.execute("SELECT data FROM cache WHERE key = ?", (cache_key,))
-        row = cursor.fetchone()
-        conn.close()
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+            conn = _connect_cache()
+            _ensure_cache_schema(conn)
+            conn.commit()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT data FROM cache WHERE key = ? AND version = ?",
+                (cache_key, CACHE_VERSION),
+            )
+            row = cursor.fetchone()
 
-        if row:
-            try:
-                data_dict = json.loads(row[0])
-                track = dict_to_track(data_dict)
-            except (json.JSONDecodeError, CacheValidationError) as error:
-                _quarantine_cache_row(cache_key, row[0], error)
-                logger.warning("Ungueltiger Cache-Record %s quarantinisiert: %s", cache_key, error)
-                return None
-
-            # Validate cache key against physical file changes
-            if file_path:
+            if row:
                 try:
-                    # H8-Fix: gleiche Normalisierung wie generate_cache_key,
-                    # sonst False-Cache-Miss bei Forward-Slash-Pfaden
-                    identifier = os.path.normcase(
-                        os.path.abspath(os.path.normpath(str(file_path)))
-                    )
-                    stat = os.stat(identifier)
-                    expected_key = f"{identifier}-{stat.st_size}-{stat.st_mtime}"
-                    if expected_key != cache_key:
-                        return None
-                except OSError:
-                    pass
-            return track
+                    data_dict = json.loads(row[0])
+                    track = dict_to_track(data_dict)
+                except (
+                    json.JSONDecodeError,
+                    CacheValidationError,
+                    TypeError,
+                    ValueError,
+                    OverflowError,
+                ) as error:
+                    _quarantine_cache_row_on_connection(conn, cache_key, row[0], error)
+                    logger.warning("Ungueltiger Cache-Record %s quarantinisiert: %s", cache_key, error)
+                    return None
+
+                # Validate cache key against physical file changes
+                if file_path:
+                    try:
+                        # H8-Fix: gleiche Normalisierung wie generate_cache_key,
+                        # sonst False-Cache-Miss bei Forward-Slash-Pfaden
+                        identifier = os.path.normcase(
+                            os.path.abspath(os.path.normpath(str(file_path)))
+                        )
+                        stat = os.stat(identifier)
+                        expected_key = (
+                            f"{identifier}-{stat.st_size}-{stat.st_mtime}-"
+                            f"{stat.st_mtime_ns}-{stat.st_ctime_ns}"
+                        )
+                        if "-source-" in cache_key:
+                            expected_key = f"{expected_key}{cache_key[cache_key.index('-source-'):]}"
+                        if expected_key != cache_key:
+                            return None
+                    except OSError:
+                        pass
+                return track
     except sqlite3.DatabaseError as e:
         if conn is not None:
             conn.close()
@@ -361,12 +441,35 @@ def get_cached_track(cache_key: str, file_path: str = None) -> Track | None:
         _handle_database_error("Lesen", e)
         return None
     except Exception as e:
-        logger.debug(f"SQLite cache read error: {e}")
+        # AUDIT-FIX C-02 (2026-07-24): auf WARNING statt DEBUG. Schema-Drift
+        # nach einem Track-Feld-Rename (dict_to_track wirft) fuehrte sonst
+        # dazu, dass JEDER Track bei jedem Start neu analysiert wurde — im Log
+        # unsichtbar, User merkte nur "ploetzlich langsam".
+        logger.warning(f"SQLite cache read error (Track wird neu analysiert): {e}")
         return None
     finally:
         if conn is not None:
             conn.close()
     return None
+
+
+def _sanitize_nan(obj):
+    """Ersetzt NaN/Inf rekursiv durch 0.0, damit json.dumps(allow_nan=False)
+    nicht wirft (AUDIT-FIX C-02)."""
+    import math
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, float) and not math.isfinite(v):
+                obj[k] = 0.0
+            elif isinstance(v, (dict, list)):
+                _sanitize_nan(v)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, float) and not math.isfinite(v):
+                obj[i] = 0.0
+            elif isinstance(v, (dict, list)):
+                _sanitize_nan(v)
+    return obj
 
 
 def cache_track(cache_key: str, track: Track) -> None:
@@ -377,17 +480,35 @@ def cache_track(cache_key: str, track: Track) -> None:
     conn = None
     try:
         data_dict = track_to_dict(track)
+        # AUDIT-FIX C-02 (2026-07-24): NaN/Inf in Fingerprint-Listen wuerde
+        # json.dumps(allow_nan=False) werfen -> Track waere NIE gecacht und bei
+        # jedem Lauf neu analysiert worden. Vorab bereinigen.
+        _sanitize_nan(data_dict)
         data_json = json.dumps(data_dict, allow_nan=False)
 
-        conn = _connect_cache()
-        conn.execute("PRAGMA journal_mode=WAL;")
-        _ensure_cache_schema(conn)
-        conn.execute(
-            "INSERT OR REPLACE INTO cache (key, filepath, version, data) VALUES (?, ?, ?, ?)",
-            (cache_key, track.filePath, CACHE_VERSION, data_json)
-        )
-        conn.commit()
-        conn.close()
+        with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
+            conn = _connect_cache()
+            conn.execute("PRAGMA journal_mode=WAL;")
+            _ensure_cache_schema(conn)
+            marker = conn.execute(
+                "SELECT version FROM cache WHERE key = 'version' LIMIT 1"
+            ).fetchone()
+            if marker is None or marker[0] != CACHE_VERSION:
+                conn.execute("DELETE FROM cache")
+                conn.execute(
+                    "INSERT INTO cache (key, filepath, version, data) VALUES ('version', 'system', ?, 'metadata')",
+                    (CACHE_VERSION,),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM cache WHERE key <> 'version' AND (version IS NULL OR version <> ?)",
+                    (CACHE_VERSION,),
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO cache (key, filepath, version, data) VALUES (?, ?, ?, ?)",
+                (cache_key, track.filePath, CACHE_VERSION, data_json)
+            )
+            conn.commit()
     except sqlite3.DatabaseError as e:
         if conn is not None:
             conn.close()
@@ -438,10 +559,17 @@ def file_lock(lock_path: str, timeout: float = 5.0):
     start_time = time.time()
 
     try:
+        lock_path_obj = Path(lock_path)
+        lock_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
         # Step 1: Open the lock file with retries
         while True:
             try:
-                lock_file_handle = open(lock_path, 'w')
+                lock_file_handle = open(lock_path, 'a+b')
+                if lock_file_handle.seek(0, os.SEEK_END) == 0:
+                    lock_file_handle.write(b'\0')
+                    lock_file_handle.flush()
+                lock_file_handle.seek(0)
                 break
             except (PermissionError, IOError) as e:
                 if time.time() - start_time > timeout:
@@ -456,7 +584,11 @@ def file_lock(lock_path: str, timeout: float = 5.0):
             except (BlockingIOError, IOError):
                 if time.time() - start_time > timeout:
                     raise TimeoutError(f"Could not acquire lock on {lock_path} within {timeout}s")
+                lock_file_handle.close()
+                lock_file_handle = None
                 time.sleep(0.01)
+                lock_file_handle = open(lock_path, 'a+b')
+                lock_file_handle.seek(0)
 
         yield lock_file_handle
 

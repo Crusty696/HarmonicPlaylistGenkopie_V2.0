@@ -25,8 +25,6 @@ from hpg_core.dj_brain import (
   _get_intro_end,
   _get_intro_end_from_sections,
   _get_outro_start_from_sections,
-  _get_section_at_mix_out,
-  _get_section_at_mix_in,
   _build_structure_note,
   _get_cross_genre_technique,
   _get_cross_genre_eq,
@@ -93,14 +91,12 @@ class TestGenreMixProfiles:
   def test_psytrance_profile(self):
     p = GENRE_MIX_PROFILES["Psytrance"]
     assert p.phrase_unit == 16
-    assert p.intro_bars == (32, 64)
     assert p.outro_bars == (32, 64)
     assert p.transition_bars == (16, 32)
 
   def test_tech_house_profile(self):
     p = GENRE_MIX_PROFILES["Tech House"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (16, 32)
     assert p.transition_bars == (8, 16)
 
   def test_progressive_profile(self):
@@ -121,33 +117,28 @@ class TestGenreMixProfiles:
   def test_techno_profile(self):
     p = GENRE_MIX_PROFILES["Techno"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (16, 32)
     # DJ-Praxis-Recherche 2026-07: 16 Bars Standard-Blend, 32 Bars Sweet Spot
     assert p.transition_bars == (16, 32)
 
   def test_deep_house_profile(self):
     p = GENRE_MIX_PROFILES["Deep House"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (32, 64)
     assert p.transition_bars == (32, 64)
 
   def test_trance_profile(self):
     p = GENRE_MIX_PROFILES["Trance"]
     assert p.phrase_unit == 16
-    assert p.intro_bars == (32, 64)
     # DJ-Praxis-Recherche 2026-07: Uplifting Trance blendet 32-64+ Bars
     assert p.transition_bars == (32, 64)
 
   def test_dnb_profile(self):
     p = GENRE_MIX_PROFILES["Drum & Bass"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (16, 32)
     assert p.transition_bars == (8, 16)
 
   def test_minimal_profile(self):
     p = GENRE_MIX_PROFILES["Minimal"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (32, 64)
     assert p.transition_bars == (32, 64)
 
   def test_get_mix_profile_unknown_genre(self):
@@ -158,7 +149,6 @@ class TestGenreMixProfiles:
   def test_default_profile_has_sensible_values(self):
     d = DEFAULT_MIX_PROFILE
     assert d.phrase_unit == 8
-    assert d.intro_bars[0] <= d.intro_bars[1]
     assert d.outro_bars[0] <= d.outro_bars[1]
     assert d.transition_bars[0] <= d.transition_bars[1]
 
@@ -366,6 +356,54 @@ class TestMixPointCalculation:
     assert mix_in > 0
     assert mix_out < 360.0
 
+  def test_r3_min_mix_in_bindet_an_first_downbeat(self):
+    """AUDIT-FIX R3 (2026-07-26): Die min_mix_in-Untergrenze haengt am
+    TAKT-Anker (first_downbeat), nicht am (ggf. spaeten) Phrasen-Anker.
+    Vorher wanderte min_mix_in = anchor + grid mit einem spaeten
+    Phrasen-Anker um bis zu eine volle Phrase (~27 s bei Psytrance)
+    nach hinten."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 10.0, "avg_energy": 20.0},
+      {"label": "main", "start_time": 10.0, "end_time": 380.0, "avg_energy": 75.0},
+      {"label": "outro", "start_time": 380.0, "end_time": 420.0, "avg_energy": 25.0},
+    ]
+    bpm, duration, genre = 140.0, 420.0, "Psytrance"
+    grid = (60.0 / bpm) * 4 * 16  # 16-Bar-Phrase = 27.43 s
+    anchor = 40.0        # spaeter Phrasen-Anker
+    fd = 0.5             # frueher Takt-Anker
+
+    # Ohne first_downbeat (Alt-Verhalten): Untergrenze = anchor + grid
+    mi_old, mo_old, _, _ = calculate_genre_aware_mix_points(
+      sections, bpm, duration, genre, anchor=anchor
+    )
+    # Mit first_downbeat: Untergrenze = first_downbeat + grid -> der
+    # fruehere Gitterpunkt (= anchor selbst) wird nutzbar
+    mi_new, mo_new, _, _ = calculate_genre_aware_mix_points(
+      sections, bpm, duration, genre, anchor=anchor, first_downbeat=fd
+    )
+
+    assert mi_old == pytest.approx(anchor + grid, abs=0.05)
+    assert mi_new == pytest.approx(anchor, abs=0.05)
+    assert mi_new >= fd + grid - 0.05  # Untergrenze weiterhin respektiert
+    assert mo_new == pytest.approx(mo_old, abs=0.05)
+    # Beide Ergebnisse liegen auf dem Phrasen-Gitter des Ankers
+    for value in (mi_old, mi_new, mo_new):
+      rem = (value - anchor) % grid
+      assert min(rem, grid - rem) < 0.05
+
+  def test_r3_first_downbeat_none_ist_altes_verhalten(self):
+    """Backward-Compat: first_downbeat=None (Default) muss exakt dem
+    bisherigen Verhalten entsprechen."""
+    sections = _standard_sections()
+    legacy = calculate_genre_aware_mix_points(
+      sections, bpm=140.0, duration=420.0, genre="Psytrance", anchor=1.9
+    )
+    explicit = calculate_genre_aware_mix_points(
+      sections, bpm=140.0, duration=420.0, genre="Psytrance", anchor=1.9,
+      first_downbeat=None,
+    )
+    assert legacy == explicit
+
 
 # === DJ Empfehlungen ===
 
@@ -497,21 +535,6 @@ class TestHelperFunctions:
     # Kein Outro -> outro_start = 300.0, letzte Nicht-Outro-Sektion = main(270-300)
     assert result <= 300.0
     assert result > 0.0
-
-  def test_section_at_mix_out(self):
-    track = _make_track(sections=_standard_sections(), mix_out=370.0)
-    section = _get_section_at_mix_out(track)
-    assert section == "outro"
-
-  def test_section_at_mix_in(self):
-    track = _make_track(sections=_standard_sections(), mix_in=65.0)
-    section = _get_section_at_mix_in(track)
-    assert section == "build"
-
-  def test_section_no_sections(self):
-    track = _make_track(sections=[])
-    assert _get_section_at_mix_out(track) == "unknown"
-    assert _get_section_at_mix_in(track) == "unknown"
 
   def test_build_structure_note_ideal(self):
     note = _build_structure_note("outro", "intro")

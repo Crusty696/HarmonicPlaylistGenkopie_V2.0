@@ -2,7 +2,12 @@
 
 import numpy as np
 
-from hpg_core.analysis import analyze_structure_windows, calculate_file_lufs
+from hpg_core.analysis import (
+  FeatureCache,
+  _median_seconds_per_bar,
+  analyze_structure_windows,
+  calculate_file_lufs,
+)
 from hpg_core.structure_analyzer import TrackSection, TrackStructure
 
 
@@ -56,3 +61,52 @@ def test_file_lufs_uses_complete_native_stereo(tmp_path):
   assert coverage == seconds
   assert channels == 2
   assert sample_rate == sr
+
+
+def test_file_lufs_blockwise_matches_pyloudnorm(tmp_path):
+  """Blockweises LUFS bleibt numerisch auf der bisherigen Referenz."""
+  import pyloudnorm as pyln
+  import soundfile as sf
+
+  sr = 48000
+  rng = np.random.default_rng(42)
+  audio = (0.1 * rng.standard_normal((sr * 3, 2))).astype(np.float32)
+  path = tmp_path / "reference.wav"
+  sf.write(path, audio, sr)
+
+  streamed, status, *_ = calculate_file_lufs(str(path))
+  reference = pyln.Meter(sr, filter_class="DeMan").integrated_loudness(
+    audio.astype(np.float64)
+  )
+
+  assert status == "complete"
+  assert abs(streamed - round(float(reference), 2)) <= 0.01
+
+
+def test_feature_cache_reuses_same_feature_matrix():
+  """Wiederholte Feature-Anfragen führen keine zweite Berechnung aus."""
+  sr = 22050
+  audio = np.zeros(sr * 2, dtype=np.float32)
+  cache = FeatureCache(audio, sr)
+
+  first_mfcc = cache.get_mfcc(n_mfcc=13, hop_length=1024)
+  second_mfcc = cache.get_mfcc(n_mfcc=13, hop_length=1024)
+  first_rms = cache.get_rms(hop_length=1024)
+  second_rms = cache.get_rms(hop_length=1024)
+
+  assert first_mfcc is second_mfcc
+  assert first_rms is second_rms
+
+
+def test_median_ibi_reuse_returns_bar_length():
+  """Die Struktur kann die gemessene statt der gerundeten BPM-Taktlänge nutzen."""
+  frames = np.array([0, 100, 201, 301, 402, 502, 603, 703], dtype=np.int64)
+  bar_length = _median_seconds_per_bar(
+    frames,
+    sr=1000,
+    bpm=60.0,
+    hop_length=10,
+  )
+
+  assert bar_length is not None
+  assert abs(bar_length - 4.0) < 0.05

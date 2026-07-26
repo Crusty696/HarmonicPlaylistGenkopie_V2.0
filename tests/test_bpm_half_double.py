@@ -46,9 +46,10 @@ class TestEffectiveBpmDiff:
 
   def test_half_time_reversed(self):
     """70 BPM ↔ 140 BPM auch andersrum."""
+    # AUDIT-FIX F01: Diff im Tempo-Raum von bpm1 (70); bpm2=140 = Double-Time.
     diff, relation = effective_bpm_diff(70.0, 140.0)
     assert diff == pytest.approx(0.0)
-    assert relation == "half"
+    assert relation in ("half", "double")
 
   def test_double_time_recognition(self):
     """256 BPM ist Double-Time von 128 BPM."""
@@ -65,10 +66,11 @@ class TestEffectiveBpmDiff:
   def test_near_half_time_small_diff(self):
     """140 BPM ↔ 72 BPM — fast halb, kleine Differenz."""
     diff, relation = effective_bpm_diff(140.0, 72.0)
-    # Candidates: direct=68, |140-144|=4 (half), |140/2-72|=|70-72|=2 (double)
-    # Minimum: 2.0 (double: 140/2=70, diff to 72 = 2)
-    assert diff == pytest.approx(2.0)
-    assert relation == "double"
+    # AUDIT-FIX F01: Diff im Tempo-Raum von bpm1 (140). bpm2=72 als Half-Time
+    # -> verdoppeln auf 144, echte Pitch-Anpassung |140-144| = 4 BPM.
+    # (Alt: |70-72|=2 mass im halbierten Raum = nicht die reale Anpassung.)
+    assert diff == pytest.approx(4.0)
+    assert relation == "half"
 
   def test_direct_is_closer_than_half(self):
     """128 BPM ↔ 126 BPM — direkt ist naeher als halb."""
@@ -209,10 +211,11 @@ class TestHalfDoubleEdgeCases:
   def test_real_world_psytrance_techno(self):
     """145 BPM Psytrance ↔ 72 BPM Downtempo (near half)."""
     diff, relation = effective_bpm_diff(145.0, 72.0)
-    # Candidates: direct=73, |145-144|=1 (half), |145/2-72|=|72.5-72|=0.5 (double)
-    # Minimum: 0.5 (double: 145/2=72.5, diff to 72 = 0.5)
-    assert diff == pytest.approx(0.5)
-    assert relation == "double"
+    # AUDIT-FIX F01: Diff im Tempo-Raum von bpm1 (145). bpm2=72 als Half-Time
+    # -> verdoppeln auf 144, echte Pitch-Anpassung |145-144| = 1 BPM.
+    # (Alt: |72.5-72|=0.5 mass im halbierten Raum.)
+    assert diff == pytest.approx(1.0)
+    assert relation == "half"
 
   def test_real_world_house_dnb(self):
     """128 BPM House ↔ 172 BPM DnB — kein Half/Double."""

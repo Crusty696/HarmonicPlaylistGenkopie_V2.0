@@ -290,7 +290,6 @@ ID3_GENRE_MAP: dict[str, str] = {
 class GenreMixProfile:
   """Definiert genre-spezifische Mix-Parameter."""
   name: str
-  intro_bars: tuple[int, int]      # (min, max) Bars fuer Intro-Laenge
   outro_bars: tuple[int, int]      # (min, max) Bars fuer Outro-Laenge
   transition_bars: tuple[int, int] # (min, max) empfohlener Overlap in Bars
   phrase_unit: int                  # Phrase-Einheit in Bars (8, 16, 32)
@@ -301,7 +300,6 @@ class GenreMixProfile:
 GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   "Psytrance": GenreMixProfile(
     name="Psytrance",
-    intro_bars=(32, 64),
     outro_bars=(32, 64),
     transition_bars=(16, 32),
     phrase_unit=16,
@@ -311,7 +309,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Tech House": GenreMixProfile(
     name="Tech House",
-    intro_bars=(16, 32),
     outro_bars=(16, 32),
     transition_bars=(8, 16),
     phrase_unit=8,
@@ -321,7 +318,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Progressive": GenreMixProfile(
     name="Progressive",
-    intro_bars=(32, 64),
     outro_bars=(32, 64),
     transition_bars=(32, 64),
     phrase_unit=8,
@@ -331,7 +327,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Melodic Techno": GenreMixProfile(
     name="Melodic Techno",
-    intro_bars=(32, 64),
     outro_bars=(32, 64),
     transition_bars=(16, 32),
     phrase_unit=8,
@@ -341,7 +336,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Techno": GenreMixProfile(
     name="Techno",
-    intro_bars=(16, 32),
     outro_bars=(16, 32),
     transition_bars=(16, 32),
     phrase_unit=8,
@@ -351,7 +345,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Deep House": GenreMixProfile(
     name="Deep House",
-    intro_bars=(32, 64),
     outro_bars=(32, 64),
     transition_bars=(32, 64),
     phrase_unit=8,
@@ -361,7 +354,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Trance": GenreMixProfile(
     name="Trance",
-    intro_bars=(32, 64),
     outro_bars=(32, 64),
     transition_bars=(32, 64),
     phrase_unit=16,
@@ -371,7 +363,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Drum & Bass": GenreMixProfile(
     name="Drum & Bass",
-    intro_bars=(16, 32),
     outro_bars=(16, 32),
     transition_bars=(8, 16),
     phrase_unit=8,
@@ -381,7 +372,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
   ),
   "Minimal": GenreMixProfile(
     name="Minimal",
-    intro_bars=(32, 64),
     outro_bars=(32, 64),
     transition_bars=(32, 64),
     phrase_unit=8,
@@ -394,7 +384,6 @@ GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
 # Default-Profil fuer unbekannte Genres
 DEFAULT_MIX_PROFILE = GenreMixProfile(
   name="Default",
-  intro_bars=(16, 32),
   outro_bars=(16, 32),
   transition_bars=(16, 32),
   phrase_unit=8,

@@ -70,12 +70,8 @@ Name: "{autodesktop}\Harmonic Playlist Generator"; Filename: "{app}\HarmonicPlay
 Filename: "{app}\HarmonicPlaylistGenerator.exe"; Description: "{cm:LaunchProgram,Harmonic Playlist Generator}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Clean up cache files on uninstall
-Type: filesandordirs; Name: "{app}\hpg_cache_*.db"
-Type: filesandordirs; Name: "{app}\hpg_cache_*.db-wal"
-Type: filesandordirs; Name: "{app}\hpg_cache_*.db-shm"
-Type: filesandordirs; Name: "{app}\hpg_cache_*.lock"
-Type: filesandordirs; Name: "{app}\hpg_cache_*.dbm*"
+; Der produktive Cache liegt bewusst unter %LOCALAPPDATA%\HPG und wird bei
+; der Deinstallation nicht geloescht. So wird kein Benutzerzustand entfernt.
 Type: filesandordirs; Name: "{app}\*.log"
 
 [Code]

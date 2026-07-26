@@ -58,6 +58,7 @@ desktop.ini
 
 # Logs
 *.log
+logs/error_report.json
 
 # Environment
 .env

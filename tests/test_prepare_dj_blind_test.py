@@ -59,3 +59,18 @@ def test_prepare_balances_hpg_side_and_randomizes_pair_order(tmp_path):
   hpg_a = sum(row["candidate"] == "A" and row["system"] == "HPG" for row in key)
   assert hpg_a in {2, 3}
   assert [row["pair_id"] for row in public] != [f"p{i}" for i in range(5)]
+
+
+def test_prepare_rejects_clip_outside_manifest_root(tmp_path):
+  outside = tmp_path / "outside.wav"
+  sf.write(outside, np.zeros(800), 8000)
+  source_dir = tmp_path / "sources"
+  source_dir.mkdir()
+  manifest = source_dir / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{outside},missing.wav\n",
+    encoding="utf-8",
+  )
+
+  with pytest.raises(ValueError, match="ausserhalb"):
+    prepare(manifest, tmp_path / "session", tmp_path / "key.csv")

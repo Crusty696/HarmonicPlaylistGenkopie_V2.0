@@ -171,6 +171,20 @@ class TestM3U8ExporterBasics:
 
     assert "#EXTENC:UTF-8" in content
 
+  def test_relative_paths_for_usb_export(self, sample_playlist, export_dir):
+    """USB-Modus schreibt Pfade relativ zum Speicherort der Playlist."""
+    music_dir = os.path.join(export_dir, "music")
+    usb_dir = os.path.join(export_dir, "usb")
+    os.makedirs(music_dir)
+    os.makedirs(usb_dir)
+    sample_playlist[0].filePath = os.path.join(music_dir, "track.mp3")
+    path = os.path.join(usb_dir, "set.m3u8")
+
+    M3U8Exporter(relative_paths=True).export(sample_playlist[:1], path)
+
+    content = open(path, "r", encoding="utf-8").read()
+    assert "../music/track.mp3" in content.replace("\\", "/")
+
 
 class TestM3U8Unicode:
   """M3U8 Unicode-Unterstuetzung."""

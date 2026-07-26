@@ -18,9 +18,20 @@ MIX_OUT_SEARCH_WINDOW_PCT = 0.75
 # Abschnitt gilt als "aktiv/tragfaehig", wenn die ueber ein 4-Takt-Fenster
 # geglaettete RMS >= 0.4 x Track-Maximum liegt
 RMS_THRESHOLD = 0.4
+MIX_POINT_UNSET = -1.0  # Expliziter Sentinel; 0.0 ist ein gueltiger Zeitpunkt
 
 # === Phrase Detection ===
 BARS_PER_PHRASE = 8  # Standard phrase length (8 bars)
+
+# AUDIT-FEATURE A1 (2026-07-26): Mindest-Konfidenz des Bar-Votings, damit
+# first_phrase als Phrasen-Anker verwendet wird (darunter: first_downbeat).
+# Konservativ gewaehlt — ein falscher Phrasen-Anker waere schlimmer als keiner.
+PHRASE_CONFIDENCE_MIN = 0.25
+
+# Anchor-Vertrag: first_downbeat ist der erste Takt-1-Anker (in Sekunden), den
+# der Rekordbox-Importer liefert. phrase_anchor ist der nachgelagerte
+# Phrasen-Anker und darf bei belastbarer Phrasen-Konfidenz davon abweichen;
+# andernfalls faellt er auf first_downbeat zurueck.
 
 # === Performance Optimization ===
 # Default BPM for fallback when BPM detection fails
@@ -88,13 +99,14 @@ LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
 # Separates Endfenster verhindert, dass Outro/Mix-Out aus einem reinen
 # Track-Anfang extrapoliert werden. Die Zeitachse markiert eventuelle Luecken.
 LIBROSA_TAIL_DURATION = 180
-# Maximale dekodierte Float32-Groesse fuer eine vollstaendige Stereo-LUFS-
-# Messung. Groessere Dateien werden explizit als nicht gemessen markiert.
-LUFS_MAX_DECODE_BYTES = 512 * 1024 * 1024
-
 # === Parallel Analysis ===
 PARALLEL_ANALYSIS_TIMEOUT = 60  # Sekunden pro Track (schuetzt gegen korrupte Dateien)
 PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder feste Zahl
+# AUDIT-FIX N-04 (2026-07-26): Obergrenze fuer die Haenger-Deadline im
+# Parallel-Analyzer. Die Deadline ist eine INAKTIVITAETS-Deadline pro
+# Wartezyklus (TIMEOUT * worker_count + 30) und wird hier auf ~15 Minuten
+# gedeckelt — sie waechst NICHT mehr mit der Batch-Groesse.
+PARALLEL_HANG_DEADLINE_MAX = 900  # Sekunden (15 Minuten)
 
 # === Structure Analysis ===
 SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung (0.1-0.5)
@@ -121,8 +133,6 @@ AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default LM S
 # Standardmodell mit vom lokalen Ollama-Server gemeldeter Audio-Faehigkeit.
 AI_MODEL = "gemma4:12b"
 AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
-# KI-Mixpunkte bleiben bis zu einer unabhaengigen Cue-Validierung advisory.
-AI_AUTO_APPLY_MIXPOINTS = False
 AI_SYSTEM_PROMPT = (
     "You are a professional electronic music curator and DJ. Analyze tracks with focus on "
     "sub-genres (like Forest Psy, Peak-time Techno, Deep Progressive), atmosphere, and precise mixing points. "

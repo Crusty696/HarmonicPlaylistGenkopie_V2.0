@@ -1,8 +1,11 @@
 # Direkte Dependencies — gepinnt auf getestete Versionen (H1 Audit-Fix)
 librosa==0.11.0
-numpy==1.26.4
-numba==0.59.1
-llvmlite==0.42.0
+numpy==1.26.4  # <2.0 erzwungen durch numba 0.59.1 (librosa-Stack, NICHT anheben)
+numba==0.59.1  # Constraint-Pin fuer librosa (nicht direkt importiert)
+llvmlite==0.42.0  # Constraint-Pin fuer numba (nicht direkt importiert)
+# AUDIT-FIX R1/R2 (2026-07-24): direkte Imports, die bisher nur transitiv kamen
+soundfile>=0.12.1  # Direkt importiert in main.py, transition_renderer.py, analysis.py
+SQLAlchemy>=2.0  # Direkt importiert in rekordbox_importer.py (joinedload)
 PyQt6==6.10.2
 mutagen==1.47.0
 pyrekordbox>=0.4.4  # Optional: Rekordbox database import (v3.0+)

@@ -32,7 +32,6 @@ FONT_FAMILY_DATA = "'Cascadia Code', 'Consolas', 'JetBrains Mono', monospace"
 
 FONT_SIZE = "13px"
 FONT_SIZE_SMALL = "12px"
-FONT_SIZE_HEADER = "14px"
 
 # ──────────────────────────────────────────────────────────────
 # Farb-Palette (Cyberpunk DAW — warmes Dunkelgrau + Neon)

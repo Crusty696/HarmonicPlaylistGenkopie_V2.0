@@ -109,6 +109,7 @@ def calculate_genre_aware_mix_points(
   duration: float,
   genre: str,
   anchor: float = 0.0,
+  first_downbeat: float | None = None,
 ) -> tuple[float, float, int, int]:
   """
   Berechnet genre-spezifische Mix-In/Out-Punkte basierend auf Track-Struktur.
@@ -119,9 +120,13 @@ def calculate_genre_aware_mix_points(
   - Quantisiert aufs Phrasen-Gitter fuer musikalisches Phrase-Alignment
 
   Args:
-    anchor: Downbeat-Anker in Sekunden (Track.first_downbeat) — das
-      Phrasen-Gitter liegt auf anchor + k*grid statt auf k*grid.
-      0.0 = bisheriges Verhalten (Raster ab t=0).
+    anchor: Anker des Phrasen-Gitters in Sekunden (seit A1: phrase_anchor,
+      vorher first_downbeat) — das Gitter liegt auf anchor + k*grid statt
+      auf k*grid. 0.0 = bisheriges Verhalten (Raster ab t=0).
+    first_downbeat: Takt-Anker in Sekunden (AUDIT-FIX R3, 2026-07-26) —
+      bindet die min_mix_in-Untergrenze an den Track-ANFANG statt an den
+      (ggf. spaeten) Phrasen-Anker. None = Fallback auf anchor
+      (Alt-Verhalten fuer Aufrufer ohne Downbeat-Info).
   """
   if not sections or bpm <= 0 or duration <= 0:
     return 0.0, duration, 0, 0
@@ -149,11 +154,20 @@ def calculate_genre_aware_mix_points(
   intro_end = _get_intro_end_from_sections(sections)
   outro_start = _get_outro_start_from_sections(sections, duration)
 
-  min_mix_in = max(intro_end, anchor + grid_seconds)
+  # AUDIT-FIX R3 (2026-07-26): Untergrenze an den TAKT-Anker (first_downbeat)
+  # binden. anchor ist seit A1 der PHRASEN-Anker und kann bis zu
+  # phrase_unit-1 Bars (~28 s bei 16-Bar-Phrasen) hinter dem ersten Downbeat
+  # liegen — min_mix_in wanderte entsprechend nach hinten und kollabierte das
+  # Mix-Fenster in den Notfall-Prozent-Pfad. Der Sinn der Grenze ("nicht in
+  # die allererste Phrase mixen") haengt am Track-Anfang, nicht an der
+  # Phrasen-Phase.
+  base_anchor = first_downbeat if first_downbeat is not None else anchor
+  min_mix_in = max(intro_end, base_anchor + grid_seconds)
   # Mix-Out AUF der Outro-Grenze ist DJ-Standard (Ausstieg wenn das Outro
   # beginnt) — floor-Quantisierung garantiert bereits mix_out <= outro_start
   max_mix_out = min(outro_start, duration - grid_seconds)
   min_window = grid_seconds * 2  # mind. 2 Phrasen nutzbares Mix-Fenster
+  grid_epsilon = 1e-9  # Verhindert Doppel-Quantisierung durch Float-Rauschen
 
   if max_mix_out - min_mix_in >= min_window:
     mix_in_time = max(min_mix_in, min(mix_in_time, max_mix_out - min_window))
@@ -162,10 +176,14 @@ def calculate_genre_aware_mix_points(
     # schieben — zurueck aufs Gitter quantisieren, solange die Grenzen halten
     # (reale DJ-Cues liegen auf Phrasengrenzen, arXiv 2407.06823)
     if grid_seconds > 0:
-      aligned_out = quantize_to_grid(mix_out_time, grid_seconds, anchor, "floor")
+      aligned_out = quantize_to_grid(
+        mix_out_time + grid_epsilon, grid_seconds, anchor, "floor"
+      )
       if aligned_out - mix_in_time >= min_window:
         mix_out_time = aligned_out
-      aligned_in = quantize_to_grid(mix_in_time, grid_seconds, anchor, "ceil")
+      aligned_in = quantize_to_grid(
+        mix_in_time - grid_epsilon, grid_seconds, anchor, "ceil"
+      )
       if mix_out_time - aligned_in >= min_window:
         mix_in_time = aligned_in
   else:
@@ -182,11 +200,27 @@ def calculate_genre_aware_mix_points(
       mix_in_time = duration * 0.15
       mix_out_time = duration * 0.85
 
+  # AUDIT-FIX N5 (2026-07-24): Auch die Notfall-Pfade liefern jetzt Werte auf
+  # dem Phrasen-Gitter, wenn das ohne Fenster-Kollaps moeglich ist. Vorher
+  # gingen reine Prozentwerte (duration*0.15/0.85) ungefiltert und off-grid
+  # in Track.mix_in_point/mix_out_point.
+  if grid_seconds > 0:
+    q_in = quantize_to_grid(
+      mix_in_time - grid_epsilon, grid_seconds, anchor, "ceil"
+    )
+    q_out = quantize_to_grid(
+      mix_out_time + grid_epsilon, grid_seconds, anchor, "floor"
+    )
+    if 0.0 <= q_in < q_out <= duration:
+      mix_in_time, mix_out_time = q_in, q_out
+
   # In Bars umrechnen
   mix_in_bars = seconds_to_bars(mix_in_time, bpm)
   mix_out_bars = seconds_to_bars(mix_out_time, bpm)
 
-  return round(mix_in_time, 2), round(mix_out_time, 2), mix_in_bars, mix_out_bars
+  # Interne Vertragsschnittstelle: Quantisierte Werte bleiben ungerundet.
+  # Anzeige-/Exportpfade runden erst an der jeweiligen Ausgabegrenze.
+  return mix_in_time, mix_out_time, mix_in_bars, mix_out_bars
 
 
 def _find_mix_in_point(
@@ -216,10 +250,12 @@ def _find_mix_in_point(
   avg_energy = sum(all_energies) / len(all_energies) if all_energies else DEFAULT_SECTION_ENERGY
 
   # --- Kandidaten: Sektionen nach Intro, nicht Outro ---
+  # AUDIT-FIX E3 (2026-07-24): "unanalysed"-Pseudo-Sections (Coverage-Luecke
+  # bei langen Tracks) sind keine gueltigen Mix-Kandidaten.
   candidates = [
     s for s in sections
     if s.get("start_time", 0.0) >= intro_end
-    and s.get("label", "main") not in ("intro", "outro")
+    and s.get("label", "main") not in ("intro", "outro", "unanalysed")
   ]
 
   if not candidates:
@@ -229,13 +265,26 @@ def _find_mix_in_point(
       return max(intro_end, quantize_to_grid(intro_end, phrase_seconds, anchor))
     return intro_end
 
+  # AUDIT-FIX B4 (2026-07-24): Ein DJ startet den Mix-In frueh im Track.
+  # Ohne Positionsterm gewann z. B. ein spaetes "build" bei 64 % der Laenge
+  # gegen ein fruehes "main". Suchfenster: erste ~40 % des Track-Bereichs;
+  # nur wenn dort nichts liegt, alle Kandidaten zulassen.
+  track_end = max(s.get("end_time", 0.0) for s in sections)
+  search_limit = max(intro_end, track_end * 0.40)
+  early = [s for s in candidates if s.get("start_time", 0.0) <= search_limit]
+  if early:
+    candidates = early
+
   # --- Beste Sektion waehlen ---
-  # Praeferenz fuer Mix-In: build > main > breakdown > drop
+  # Praeferenz fuer Mix-In: build > main > breakdown > drop;
+  # bei gleichem Label gewinnt die FRUEHERE Section (Positionsterm),
+  # Energie-Naehe nur noch als Tiebreak.
   label_priority = {"build": 0, "main": 1, "breakdown": 2, "drop": 3}
 
   best = min(candidates, key=lambda s: (
     label_priority.get(s.get("label", "main"), 99),
-    abs(s.get("avg_energy", DEFAULT_SECTION_ENERGY) - avg_energy * 0.75), # Slightly higher energy preference for mix in
+    s.get("start_time", 0.0),
+    abs(s.get("avg_energy", DEFAULT_SECTION_ENERGY) - avg_energy * 0.75),
   ))
 
   mix_in = best.get("start_time", intro_end)
@@ -276,10 +325,11 @@ def _find_mix_out_point(
   outro_start = _get_outro_start_from_sections(sections, duration)
 
   # --- Kandidaten: Sektionen vor Outro, nicht Intro ---
+  # AUDIT-FIX E3 (2026-07-24): "unanalysed" ausgeschlossen (siehe Mix-In).
   candidates = [
     s for s in sections
     if s.get("end_time", 0.0) <= outro_start
-    and s.get("label", "main") not in ("intro", "outro")
+    and s.get("label", "main") not in ("intro", "outro", "unanalysed")
   ]
 
   if not candidates:
@@ -291,12 +341,16 @@ def _find_mix_out_point(
     return outro_start
 
   # --- Letzte starke Sektion VOR Outro ---
-  # Bevorzugt main, breakdown, drop für den Übergang
+  # AUDIT-FIX B5 (2026-07-24): Position ist jetzt das PRIMAERE Kriterium.
+  # Vorher schlug das Label die Position: ein "main" bei 50 % gewann gegen
+  # ein "breakdown" bei 85 % — der Mix-Out landete in der Track-Mitte.
+  # Ein DJ steigt so spaet wie musikalisch sinnvoll aus; das Label
+  # entscheidet nur noch bei (praktisch) gleicher Endzeit. Drops bleiben
+  # als Ausstieg unattraktiv (Tiebreak-Prioritaet).
   label_priority = {"main": 0, "breakdown": 1, "build": 2, "drop": 3}
-  # Finde den besten Ausstieg (bevorzugt eine Sektion mit abnehmender Energie)
   best = min(candidates, key=lambda s: (
+    -s.get("end_time", 0.0),
     label_priority.get(s.get("label", "main"), 99),
-    -s.get("end_time", 0.0) # Eher am Ende, aber nicht strikt die allerletzte
   ))
 
   # Normalerweise mix_out am Ende dieser Sektion
@@ -307,7 +361,17 @@ def _find_mix_out_point(
   if phrase_seconds > 0:
     mix_out = quantize_to_grid(mix_out, phrase_seconds, anchor, "floor")
 
-  # --- Guard: NIEMALS nach Outro-Start ---
+  # --- Guard: STRIKT vor dem Outro-Start ---
+  # AUDIT-FIX B5-Regression (2026-07-24): Seit die Position das Primaerkriterium
+  # ist, kann die gewaehlte Sektion exakt am Outro-Start enden (z. B. letzter
+  # Drop 240-360, Outro ab 360). floor lieferte dann 360 == outro_start und der
+  # Uebergang reichte in das Outro hinein. Ein DJ steigt VOR dem Outro aus:
+  # landet der Punkt auf/hinter der Outro-Grenze, eine Phrase zurueck (analog
+  # calculate_paired_mix_points). Nur wenn ein echtes Outro existiert
+  # (outro_start < duration).
+  if outro_start < duration and mix_out >= outro_start and phrase_seconds > 0:
+    mix_out = quantize_to_grid(outro_start - phrase_seconds, phrase_seconds, anchor, "floor")
+
   mix_out = min(mix_out, outro_start)
 
   # Wir wollen auch vermeiden, dass der Uebergang direkt im Drop liegt, wenn es Alternativen gibt
@@ -489,7 +553,7 @@ def _get_intro_end(track: Track) -> float:
     -> gibt 106.0 zurueck (Ende aller Intro-Sections)
   """
   if not track.sections:
-    return track.mix_in_point if track.mix_in_point > 0 else 0.0
+    return track.mix_in_point if track.mix_in_point >= 0 else 0.0
 
   last_intro_end = 0.0
   for section in track.sections:
@@ -498,15 +562,17 @@ def _get_intro_end(track: Track) -> float:
       # Akkumuliere Ende des Intros (auch Multi-Section Intros)
       last_intro_end = section.get("end_time", section.get("start_time", 0.0))
     else:
-      # Erste Non-Intro-Section nach dem Intro-Block: fertig
-      if last_intro_end > 0.0:
-        break
+      # AUDIT-FIX B7 (2026-07-24): IMMER beim ersten Non-Intro abbrechen.
+      # Vorher lief der Scan weiter, wenn die erste Section kein Intro war —
+      # eine "intro"-Section aus dem Tail-Analysefenster konnte intro_end
+      # dann ans Track-ENDE ziehen und alle Mix-Punkte mitreissen.
+      break
 
   if last_intro_end > 0.0:
     return last_intro_end
 
   # Kein Intro erkannt -> gespeicherter mix_in_point als Schaetzung
-  return track.mix_in_point if track.mix_in_point > 0 else 0.0
+  return track.mix_in_point if track.mix_in_point >= 0 else 0.0
 
 
 def _get_intro_end_from_sections(sections: list[dict]) -> float:
@@ -522,8 +588,10 @@ def _get_intro_end_from_sections(sections: list[dict]) -> float:
     if section.get("label", "main") == "intro":
       last_intro_end = section.get("end_time", section.get("start_time", 0.0))
     else:
-      if last_intro_end > 0.0:
-        break
+      # AUDIT-FIX B7 (2026-07-24): nur den zusammenhaengenden Intro-Block ab
+      # Index 0 auswerten — Tail-Fenster-"intro"-Sections duerfen intro_end
+      # nicht ans Track-Ende ziehen.
+      break
 
   return last_intro_end
 
@@ -544,8 +612,14 @@ def _get_outro_start_from_sections(sections: list[dict], duration: float) -> flo
       first_outro_start = section.get("start_time", duration)
       found_outro = True
     else:
-      if found_outro:
-        break
+      # AUDIT-FIX N1 (2026-07-24): IMMER bei der ersten Non-Outro-Section
+      # abbrechen. Vorher lief der Rueckwaerts-Scan weiter, wenn der Track
+      # nicht auf "outro" endete — und fand das "outro", das die Fenster-
+      # Analyse am Ende des HEAD-Fensters vergeben hatte. Folge: outro_start
+      # in der Track-Mitte, Mix-Out bei ~34 % der Laenge (reproduziert fuer
+      # jeden Track > Head-Fensterlaenge). Nur der zusammenhaengende Block
+      # am Track-ENDE zaehlt.
+      break
 
   return first_outro_start if found_outro else duration
 
@@ -581,6 +655,15 @@ def calculate_paired_mix_points(
   Returns:
     (adjusted_mix_out_a, adjusted_mix_in_b) in Sekunden
   """
+  # AUDIT-FIX N4 (2026-07-24): Guard fuer fehlgeschlagene Analysen — bei
+  # duration <= 0 kollabiert die Overlap-Rechnung (Mix-Out hinter Track-Ende,
+  # unquantisierte Rohwerte). Dann lieber die Track-Werte unveraendert lassen.
+  if track_a.duration <= 0 or track_b.duration <= 0:
+    return (
+      round(max(track_a.mix_out_point, 0.0), 2),
+      round(max(track_b.mix_in_point, 0.0), 2),
+    )
+
   profile_b = get_mix_profile(track_b.detected_genre or "Unknown")
 
   # --- Intro-Dauer von Track B ---
@@ -623,7 +706,7 @@ def calculate_paired_mix_points(
   if intro_end_sections_b > 0:
     # ceil auf naechste Phrasengrenze nach Intro-Ende (downbeat-verankert)
     if adjusted_mix_in_b < intro_end_sections_b:
-      anchor_b = getattr(track_b, "first_downbeat", 0.0) or 0.0
+      anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
       adjusted_mix_in_b = quantize_to_grid(
         intro_end_sections_b, phrase_seconds_b, anchor_b, "ceil"
       )
@@ -638,7 +721,7 @@ def calculate_paired_mix_points(
   phrase_seconds_a = seconds_per_bar_a * profile_a.phrase_unit
   if adjusted_mix_out_a >= outro_start_sections_a:
     # floor auf Phrasengrenze VOR dem Outro (Invariante 1, downbeat-verankert)
-    anchor_a = getattr(track_a, "first_downbeat", 0.0) or 0.0
+    anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
     if phrase_seconds_a > 0:
       adjusted_mix_out_a = quantize_to_grid(
         outro_start_sections_a, phrase_seconds_a, anchor_a, "floor"
@@ -656,7 +739,36 @@ def calculate_paired_mix_points(
   # druecken; negativer Wert wuerde den Sentinel-Check (>= 0.0) fehlleiten
   adjusted_mix_out_a = max(adjusted_mix_out_a, seconds_per_bar_a)
 
-  return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
+  # AUDIT-FIX B1 (2026-07-24): Die Endwerte werden IMMER aufs Phrasen-Gitter
+  # quantisiert (downbeat-verankert). Vorher quantisierten nur die
+  # Intro-/Outro-Guards — im Regelfall (Punkt ausserhalb Intro/Outro) gingen
+  # ROHE Subtraktionswerte zurueck, und genau diese ueberschreiben in
+  # playlist.compute_transition_recommendations die sauber quantisierten
+  # Track-Werte. Der real gerenderte Uebergang startete damit off-grid.
+  # Konvention: Mix-Out floor (nie NACH dem musikalischen Ereignis),
+  # Mix-In ceil (nie davor). Quantisierte Werte nur uebernehmen, wenn sie
+  # die Sicherheitsgrenzen nicht verletzen.
+  anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
+  anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
+  if phrase_seconds_a > 0:
+    q_out = quantize_to_grid(adjusted_mix_out_a, phrase_seconds_a, anchor_a, "floor")
+    if seconds_per_bar_a <= q_out <= track_a.duration - seconds_per_bar_a:
+      adjusted_mix_out_a = q_out
+  if phrase_seconds_b > 0:
+    q_in = quantize_to_grid(adjusted_mix_in_b, phrase_seconds_b, anchor_b, "ceil")
+    if 0.0 <= q_in < track_b.duration:
+      adjusted_mix_in_b = q_in
+    elif q_in >= track_b.duration:
+      # Bei sehr kurzen Tracks kann die naechste Phrase hinter dem Ende liegen.
+      # Der rohe Wert darf dann nicht als ungueltiger Off-Track-Mixpunkt
+      # zurueckbleiben. Fallback: letzter gueltiger Takt, mindestens nach dem
+      # erkannten Intro, sofern das Zeitfenster dies noch erlaubt.
+      last_bar = max(0.0, track_b.duration - seconds_per_bar_b)
+      adjusted_mix_in_b = max(last_bar, min(intro_end_sections_b, track_b.duration))
+      adjusted_mix_in_b = min(adjusted_mix_in_b, track_b.duration - 1e-6)
+
+  # Keine Rundung innerhalb der Quantisierungskette (R9/N15).
+  return adjusted_mix_out_a, adjusted_mix_in_b
 
 
 def align_ai_mix_points(
@@ -693,26 +805,12 @@ def align_ai_mix_points(
     aligned_in = quantize_to_grid(mix_in - eps, grid, anchor, "ceil")
     aligned_out = quantize_to_grid(mix_out + eps, grid, anchor, "floor")
     if 0 <= aligned_in < aligned_out <= duration:
-      return round(aligned_in, 2), round(aligned_out, 2)
+      return aligned_in, aligned_out
 
   return mix_in, mix_out
 
 
 # === Hilfsfunktionen ===
-
-def _get_section_at_mix_out(track: Track) -> str:
-  """Findet die Sektion am Mix-Out-Punkt eines Tracks."""
-  if track.mix_out_point <= 0:
-    return "unknown"
-  return _get_section_at_time(track, track.mix_out_point, "out")
-
-
-def _get_section_at_mix_in(track: Track) -> str:
-  """Findet die Sektion am Mix-In-Punkt eines Tracks."""
-  if track.mix_in_point <= 0:
-    return "unknown"
-  return _get_section_at_time(track, track.mix_in_point, "in")
-
 
 def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) -> str:
   """Findet die Sektion an einem beliebigen Mix-Zeitpunkt."""
@@ -1183,6 +1281,17 @@ def _assess_transition_risks(
       risks.append(
           f"Lautheits-Sprung {abs(lufs_a - lufs_b):.1f} dB "
           f"({lufs_a:.1f} vs {lufs_b:.1f} LUFS) -- Gain vor dem Mix angleichen"
+      )
+
+  # AUDIT-FIX D2-light (2026-07-26): Vocal-Clash — zwei Lead-Vocals
+  # uebereinander sind einer der haeufigsten Mixfehler
+  if (
+      getattr(track_a, "vocal_instrumental", "unknown") == "vocal"
+      and getattr(track_b, "vocal_instrumental", "unknown") == "vocal"
+  ):
+      risks.append(
+          "Beide Tracks vocal-lastig -- Vocal-Ueberlappung vermeiden "
+          "(Uebergang ueber instrumentale Passagen legen)"
       )
 
   return risks

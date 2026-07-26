@@ -64,7 +64,7 @@ class TestProfileWerte:
 
   def test_bar_ranges_plausibel(self):
     for genre, profile in GENRE_MIX_PROFILES.items():
-      for pair in (profile.intro_bars, profile.outro_bars, profile.transition_bars):
+      for pair in (profile.outro_bars, profile.transition_bars):
         assert 0 < pair[0] <= pair[1] <= 128, genre
 
   def test_compatibility_werte_in_0_1(self):

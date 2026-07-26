@@ -15,7 +15,7 @@ result = subprocess.run(
         "-p", "no:xdist",
         "--timeout=120",
     ],
-    cwd=r"C:\Users\david\Dokumente\HarmonicPlaylistGenkopie_V2.0-main",
+    cwd=r"C:\Users\david\Documents\HarmonicPlaylistGenkopie_V2.0-main\HarmonicPlaylistGenkopie_V2.0-main",
     capture_output=True,
     text=True,
     timeout=300,

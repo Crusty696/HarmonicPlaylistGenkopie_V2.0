@@ -10,12 +10,17 @@ import os
 import numpy as np
 import pytest
 import soundfile as sf
+from scipy.signal import sosfiltfilt
 
 from hpg_core.transition_renderer import (
     EqCrossfadeConfig,
+    FILTER_RAMP_SECONDS,
     TransitionClipSpec,
+    _align_beat_phase,
     _apply_compressor,
     _apply_eq_crossfade,
+    _apply_lufs_delta,
+    _apply_soft_limiter,
     _ensure_len,
     _load_segment,
     _make_sos,
@@ -149,18 +154,14 @@ class TestApplyEqCrossfade:
         assert result.dtype == np.float32
 
     def test_smooth_blend_am_anfang_ist_track_a(self):
-        """Erster Frame soll hauptsaechlich Track A sein (fo=1.0, fi=0.0)."""
+        """Erster Frame bleibt ungefiltertes Track A (fo=1.0, fi=0.0)."""
         config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
             config
         )
-        # Erster Frame: fo=1.0, fi=0.0 -> result entspricht gefiltertem seg_a[0]
-        from hpg_core.transition_renderer import _make_sos
-        from scipy.signal import sosfiltfilt
-        sos_lp = _make_sos(300.0, self.SR, 'low')
-        expected_a = sosfiltfilt(sos_lp, self.seg_a, axis=0)
-        np.testing.assert_allclose(result[0], expected_a[0], atol=0.01)
+        # Die kurze Filter-Rampe startet ohne harten Filter-Schalter.
+        np.testing.assert_allclose(result[0], self.seg_a[0], atol=1e-6)
 
     def test_smooth_blend_am_ende_ist_track_b(self):
         """Letzter Frame soll hauptsaechlich Track B sein (fo=0.0, fi=1.0)."""
@@ -189,18 +190,112 @@ class TestApplyEqCrossfade:
         )
         assert result.shape == (self.CF_FRAMES, 2)
 
-    def test_unbekannter_typ_verwendet_linear_crossfade(self):
-        """Unbekannte transition_type soll als linearer Crossfade behandelt werden."""
+    @pytest.mark.parametrize(
+        ("transition_type", "cutoff_hz", "filter_type"),
+        [
+            ("smooth_blend", 300.0, "low"),
+            ("filter_ride", 800.0, "high"),
+            ("breakdown_bridge", 250.0, "high"),
+        ],
+    )
+    def test_filter_einsatz_wird_kurz_eingeramped(
+        self, transition_type, cutoff_hz, filter_type
+    ):
+        """Filter-Einsatz startet ungefiltert und erreicht Ziel nach 50 ms."""
+        rng = np.random.RandomState(7)
+        seg_a = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        seg_b = np.zeros_like(seg_a)
+        config = EqCrossfadeConfig(
+            self.CF_FRAMES, self.SR, 200.0, transition_type
+        )
+
+        result = _apply_eq_crossfade(seg_a, seg_b, config)
+        sos = _make_sos(cutoff_hz, self.SR, filter_type)
+        filtered_a = sosfiltfilt(sos, seg_a, axis=0)
+        ramp_frames = int(round(FILTER_RAMP_SECONDS * self.SR))
+        fo = np.cos(
+            np.linspace(0.0, 1.0, self.CF_FRAMES, dtype=np.float32)
+            * (np.pi / 2.0)
+        )
+
+        np.testing.assert_allclose(result[0], seg_a[0], atol=1e-6)
+        np.testing.assert_allclose(
+            result[ramp_frames // 2],
+            (
+                seg_a[ramp_frames // 2] * 0.5
+                + filtered_a[ramp_frames // 2] * 0.5
+            ) * fo[ramp_frames // 2],
+            rtol=1e-5,
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            result[ramp_frames - 1],
+            filtered_a[ramp_frames - 1] * fo[ramp_frames - 1],
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    def test_unbekannter_typ_verwendet_equal_power_crossfade(self):
+        """Unbekannter transition_type -> Equal-Power-Crossfade (AUDIT-FIX C3).
+        Vorher linear (fo/fi = linspace), was in der Mitte ein -3-dB-Loch
+        erzeugte; jetzt cos/sin mit konstanter Summenleistung."""
         config_unknown = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "totally_unknown_type")
         result_unknown = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
             config_unknown
         )
-        # Erstelle manuell einen linearen Crossfade
-        fo = np.linspace(1.0, 0.0, self.CF_FRAMES, dtype=np.float32)[:, np.newaxis]
-        fi = np.linspace(0.0, 1.0, self.CF_FRAMES, dtype=np.float32)[:, np.newaxis]
+        # Equal-Power-Kurven (identisch zur Implementierung)
+        t = np.linspace(0.0, 1.0, self.CF_FRAMES, dtype=np.float32)
+        fo = np.cos(t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
+        fi = np.sin(t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
         expected = self.seg_a * fo + self.seg_b * fi
-        np.testing.assert_array_equal(result_unknown, expected)
+        np.testing.assert_allclose(result_unknown, expected, rtol=1e-5, atol=1e-6)
+
+    def test_pro_eq_swap_kein_energie_loch_am_mittelpunkt(self):
+        """AUDIT-FIX N-01 (2026-07-26): pro_eq_swap (Default-Modus fuer
+        Techno/Psy/Tech-House) fadete Mids+Highs mit amplituden-
+        komplementaeren LINEAREN Envelopes -> Summenleistung 0.5 = -3.01 dB
+        Energie-Loch am Uebergangs-Mittelpunkt. Mit Equal-Power (cos/sin,
+        fo^2 + fi^2 == 1) muss die RMS in der Mitte der RMS am Rand
+        entsprechen (unkorreliertes Rauschen = Worst Case fuer lineare
+        Fades). Der harte Bass-Swap bleibt unveraendert (Bass-Anteil des
+        weissen Rauschens < 1 %, beeinflusst die Messung nicht)."""
+        rng = np.random.RandomState(0)
+        noise_a = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        noise_b = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "pro_eq_swap")
+        result = _apply_eq_crossfade(noise_a, noise_b, config)
+
+        half = self.CF_FRAMES // 2
+        win = 2000
+        rms_mid = float(np.sqrt(np.mean(result[half - win:half + win] ** 2)))
+        rms_edge = float(np.sqrt(np.mean(result[:2 * win] ** 2)))
+        ratio_db = 20.0 * np.log10(rms_mid / (rms_edge + 1e-9))
+        assert abs(ratio_db) < 1.0, (
+            f"pro_eq_swap Mittelpunkt vs Rand = {ratio_db:+.2f} dB "
+            f"(lineare Envelopes ergaeben ~-3 dB)"
+        )
+
+    def test_pro_eq_swap_hoehen_fenster_kein_energie_loch(self):
+        """N-01: auch am Mittelpunkt des Hoehen-Fade-Fensters (1/2 des
+        Crossfades = Mitte von [1/4..3/4]) und an den Fenster-Grenzen darf
+        kein Leistungsloch entstehen — Stichproben ueber den Verlauf."""
+        rng = np.random.RandomState(1)
+        noise_a = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        noise_b = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "pro_eq_swap")
+        result = _apply_eq_crossfade(noise_a, noise_b, config)
+
+        win = 2000
+        ref = float(np.sqrt(np.mean(result[:2 * win] ** 2)))
+        # Stichproben bei 1/4, 3/8, 1/2, 5/8, 3/4 des Crossfades
+        for frac in (0.25, 0.375, 0.5, 0.625, 0.75):
+            c = int(self.CF_FRAMES * frac)
+            rms = float(np.sqrt(np.mean(result[c - win:c + win] ** 2)))
+            ratio_db = 20.0 * np.log10(rms / (ref + 1e-9))
+            assert abs(ratio_db) < 1.0, (
+                f"Energie-Loch bei {frac:.0%}: {ratio_db:+.2f} dB"
+            )
 
     def test_kein_clipping_bei_bass_swap(self):
         """Bass-Swap darf nicht ueber 1.0 gehen (wegen Doppel-Addition)."""
@@ -214,6 +309,115 @@ class TestApplyEqCrossfade:
         # dass die Funktion selbst keine NaN/Inf produziert
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
+
+
+# ---------------------------------------------------------------------------
+# Tests: _align_beat_phase — N-02 Vorlauf-Logik (2026-07-26)
+# ---------------------------------------------------------------------------
+
+class TestAlignBeatPhaseLead:
+    """AUDIT-FIX N-02: Das C1-Bar-Alignment darf nie in den Einsatz von
+    Track B schneiden — der Cut konsumiert ausschliesslich den mit
+    1 Takt Vorlauf geladenen Bereich davor."""
+
+    SR = 1000        # kleine Abtastrate fuer schnelle, exakte Sample-Rechnung
+    BPM = 120.0      # beat_len = 500 Samples, Takt (grid) = 2000 Samples
+    GRID = 2000
+    LEAD = 2000      # 1 Takt Vorlauf
+
+    def _seg_with_entry_marker(self, frames: int = 10000) -> np.ndarray:
+        """Stilles Segment mit Impuls am Einsatzpunkt (Index LEAD)."""
+        seg = np.zeros((frames, 2), dtype=np.float32)
+        seg[self.LEAD] = 1.0
+        return seg
+
+    def _ref(self, frames: int = 8000) -> np.ndarray:
+        return np.zeros((frames, 2), dtype=np.float32)
+
+    def test_cut_schneidet_nur_in_den_vorlauf(self):
+        """Phasenversatz 0.3s (< Takt/2): vorher wurden 300 Samples vom
+        EINSATZ abgeschnitten — jetzt werden (lead - 1700) = 300 Samples
+        des Vorlaufs behalten und der Einsatz bleibt vollstaendig."""
+        seg_b = self._seg_with_entry_marker()
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=self.LEAD,
+        )
+        # raw = 300 -> cut = 300 (<= lead), Einsatz-Impuls bei 2000-300 = 1700
+        assert out[1700, 0] == 1.0
+        assert float(np.sum(out[:, 0])) == 1.0  # Impuls nicht verworfen
+
+    def test_phasengleich_konsumiert_exakt_den_vorlauf(self):
+        """Kein Phasenversatz: der Cut entfernt genau den Vorlauf, der
+        Einsatz liegt exakt am Crossfade-Start."""
+        seg_b = self._seg_with_entry_marker()
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.25, known_first_beat_b=0.25,
+            lead_frames=self.LEAD,
+        )
+        assert out[0, 0] == 1.0
+
+    def test_einsatz_bleibt_fuer_alle_phasenlagen_erhalten(self):
+        """Fuer jeden Versatz gilt: Impuls vorhanden und maximal
+        grid_len-1 Samples hinter dem Crossfade-Start."""
+        for offset_sec in (0.0, 0.1, 0.49, 0.5, 0.51, 1.0, 1.5, 1.99):
+            seg_b = self._seg_with_entry_marker()
+            out = _align_beat_phase(
+                self._ref(), seg_b, self.BPM, self.SR,
+                known_first_beat_a=0.0, known_first_beat_b=offset_sec,
+                lead_frames=self.LEAD,
+            )
+            idx = np.flatnonzero(out[:, 0] == 1.0)
+            assert idx.size == 1, f"Einsatz verworfen bei offset={offset_sec}"
+            assert 0 <= int(idx[0]) < self.GRID, (
+                f"Einsatz {int(idx[0])} Samples hinter Start (offset={offset_sec})"
+            )
+            # Grid-Alignment: Der konsumierte Vorlauf ist phasenkongruent
+            # zum Rohversatz. Die Einsatzposition im Ergebnis ist
+            # `LEAD - cut`, nicht `LEAD + raw - cut`.
+            raw = int(round(offset_sec * self.SR))
+            consumed_cut = self.LEAD - int(idx[0])
+            assert (consumed_cut - raw) % self.GRID == 0
+
+    def test_ohne_vorlauf_bleibt_altes_verhalten(self):
+        """lead_frames=0 (Mix-In am Track-Anfang): naechstgelegene
+        Verschiebung wie bisher — Cut nach vorne bei Versatz <= Takt/2."""
+        seg_b = np.zeros((10000, 2), dtype=np.float32)
+        seg_b[500] = 1.0
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=0,
+        )
+        # cut = 300 -> Marker wandert von 500 auf 200
+        assert out[200, 0] == 1.0
+
+    def test_ohne_vorlauf_padding_bei_grossem_versatz(self):
+        """lead_frames=0 und Versatz > Takt/2: Null-Padding statt Cut."""
+        seg_b = np.zeros((10000, 2), dtype=np.float32)
+        seg_b[0] = 1.0
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=1.7,
+            lead_frames=0,
+        )
+        # offset = 1700 > 1000 -> pad = 300
+        assert out[300, 0] == 1.0
+        assert not np.any(out[:300])
+
+    def test_degenerierte_segmente_trimmen_den_vorlauf(self):
+        """Zu kurze Segmente: kein Alignment, aber der Vorlauf muss
+        trotzdem entfernt werden (sonst laege der Crossfade 1 Takt zu
+        frueh im Material von Track B)."""
+        seg_b = np.zeros((900, 2), dtype=np.float32)  # < 1s -> kein Alignment
+        seg_b[100] = 1.0
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR, lead_frames=100,
+        )
+        assert out[0, 0] == 1.0
+        assert len(out) == 800
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +833,36 @@ class TestRmsNormalize:
         result = _rms_normalize(sig, target_rms_db=-14.0)
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
+
+
+class TestLufsDelta:
+    """LUFS darf nach der RMS-Norm nur noch relativ wirken."""
+
+    def test_delta_erhaelt_mittleren_absolutpegel(self):
+        a = np.ones((100, 2), dtype=np.float32)
+        b = np.ones((100, 2), dtype=np.float32)
+        out_a, out_b = _apply_lufs_delta(a, b, -10.0, -14.0)
+        assert np.mean(np.abs(out_a)) < 1.0
+        assert np.mean(np.abs(out_b)) > 1.0
+        assert np.mean(np.abs(out_a)) * np.mean(np.abs(out_b)) == pytest.approx(1.0)
+
+    def test_unbekannte_lufs_bleiben_unveraendert(self):
+        a = np.ones((10, 2), dtype=np.float32)
+        b = np.full((10, 2), 2.0, dtype=np.float32)
+        out_a, out_b = _apply_lufs_delta(a, b, 0.0, -12.0)
+        np.testing.assert_array_equal(out_a, a)
+        np.testing.assert_array_equal(out_b, b)
+
+
+class TestSoftLimiter:
+    """Limiter muss Stereo-Verhaeltnis und endliche Samples erhalten."""
+
+    def test_channel_linked_und_nan_sicher(self):
+        signal = np.array([[2.0, 1.0], [np.nan, np.inf]], dtype=np.float32)
+        result = _apply_soft_limiter(signal)
+        assert np.all(np.isfinite(result))
+        assert result[0, 0] / result[0, 1] == pytest.approx(2.0)
+        assert np.max(np.abs(result)) <= 1.0
 
 
 # ---------------------------------------------------------------------------

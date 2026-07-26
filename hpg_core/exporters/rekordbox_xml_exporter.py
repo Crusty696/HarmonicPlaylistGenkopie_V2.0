@@ -12,6 +12,7 @@ Compatible with Rekordbox 5.x, 6.x, 7.x
 """
 
 import logging
+import math
 import os
 import tempfile
 import xml.etree.ElementTree as ET
@@ -179,9 +180,20 @@ class RekordboxXMLExporter(BaseExporter):
             handle.close()
             xml.save(temp_path)
             ET.parse(temp_path)
-            if tracks_written != len(unique_tracks):
+            # AUDIT-FIX F3 (2026-07-24): Die harte Vollstaendigkeitspruefung machte
+            # den Partial-Export-Mechanismus zunichte — EIN defekter Track (z. B.
+            # verschobene Datei) verwarf alle uebrigen. Jetzt: Export nur abbrechen,
+            # wenn GAR KEIN Track geschrieben wurde; sonst status="partial" mit
+            # Fehlerliste (die GUI zeigt dafuer bereits eine Warnung an).
+            if tracks_written == 0:
                 raise IOError(
-                    f"Trackanzahl unvollstaendig: {tracks_written}/{len(unique_tracks)}"
+                    f"Kein Track exportierbar (0/{len(unique_tracks)}): "
+                    + "; ".join(errors[:3])
+                )
+            if tracks_written != len(unique_tracks):
+                errors.append(
+                    f"{len(unique_tracks) - tracks_written} von {len(unique_tracks)} "
+                    "Tracks uebersprungen (Details oben)"
                 )
             os.replace(temp_path, output_path)
             temp_path = ""
@@ -258,15 +270,28 @@ class RekordboxXMLExporter(BaseExporter):
         Schreibt ein TEMPO-Element (Beatgrid-Anker) fuer den Track.
 
         Downbeat-Feature 2026-07-17: Anker ist der erkannte erste Downbeat
-        (Track.first_downbeat); 0.0 wenn keiner erkannt wurde.
+        (Track.first_downbeat). Ein unsicherer Anker wird nicht als Beatgrid
+        exportiert.
         """
         if not track.bpm or track.bpm <= 0:
             return 0, [f"{track.filePath}: Beatgrid fehlt wegen ungueltiger BPM"]
         try:
-            if hasattr(rb_track, "add_tempo"):
-                inizio = float(getattr(track, "first_downbeat", 0.0) or 0.0)
-                rb_track.add_tempo(Inizio=inizio, Bpm=float(track.bpm), Metro="4/4", Battito=1)
+            first_downbeat = float(getattr(track, "first_downbeat", 0.0) or 0.0)
+            if (
+                hasattr(rb_track, "add_tempo")
+                and getattr(track, "downbeat_confidence", 0.0) >= 0.9
+                and math.isfinite(first_downbeat)
+                and 0.0 <= first_downbeat < float(track.duration)
+            ):
+                rb_track.add_tempo(
+                    Inizio=first_downbeat,
+                    Bpm=float(track.bpm),
+                    Metro="4/4",
+                    Battito=1,
+                )
                 return 1, []
+            if hasattr(rb_track, "add_tempo"):
+                return 0, [f"{track.filePath}: Beatgrid ausgelassen (kein verlaesslicher Downbeat)"]
             return 0, [f"{track.filePath}: Export-Backend unterstuetzt kein Beatgrid"]
         except Exception as e:
             logger.warning(f"Beat Grid konnte nicht zur XML hinzugefuegt werden: {e}")
@@ -289,12 +314,12 @@ class RekordboxXMLExporter(BaseExporter):
         count = 0
         try:
             # pyrekordbox-API: Hot Cue = Num>=0, Memory Cue = Num=-1
-            if hasattr(track, "mix_in_point") and track.mix_in_point > 0:
+            if hasattr(track, "mix_in_point") and track.mix_in_point >= 0:
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=0)
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=track.mix_in_point, Num=-1)
                 count += 2
 
-            if hasattr(track, "mix_out_point") and track.mix_out_point > 0:
+            if hasattr(track, "mix_out_point") and track.mix_out_point >= 0:
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=1)
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=track.mix_out_point, Num=-1)
                 count += 2
@@ -320,8 +345,8 @@ class RekordboxXMLExporter(BaseExporter):
 
         if not getattr(track, "outro_covered", False) or track.duration <= 0:
             return False
-        mix_in = float(getattr(track, "mix_in_point", 0.0) or 0.0)
-        mix_out = float(getattr(track, "mix_out_point", 0.0) or 0.0)
+        mix_in = float(getattr(track, "mix_in_point", -1.0))
+        mix_out = float(getattr(track, "mix_out_point", -1.0))
         if not (math.isfinite(mix_in) and math.isfinite(mix_out)):
             return False
         if not 0.0 <= mix_in < mix_out <= float(track.duration):

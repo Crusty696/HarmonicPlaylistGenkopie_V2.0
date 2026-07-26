@@ -43,18 +43,21 @@ class TestKeyConfidence:
     assert result == ("C", "Major")
 
   def test_score_sicher_bei_starkem_match(self):
-    conf = key_confidence_score(0.85, 0.10, "A", "Minor", "E", "Minor")
+    # AUDIT-FIX F02: strength ist jetzt ein z-Score-Kontrast (typ. 2-4 fuer
+    # klaren Sieger), nicht mehr der rohe Cosine-Wert. margin auf Cosine-Skala.
+    conf = key_confidence_score(2.5, 0.03, "A", "Minor", "E", "Minor")
     assert conf >= 0.6
 
   def test_score_nachbar_quasi_sicher(self):
     """Zweitkandidat = Quint-Nachbar (8A vs 9A) -> quasi-sicher (>= 0.5)."""
-    # A-Moll = 8A, E-Moll = 9A (Quinte)
-    conf = key_confidence_score(0.7, 0.01, "A", "Minor", "E", "Minor")
+    # A-Moll = 8A, E-Moll = 9A (Quinte). AUDIT-FIX F02: Kontrast-Skala.
+    conf = key_confidence_score(1.5, 0.01, "A", "Minor", "E", "Minor")
     assert conf >= 0.5
 
   def test_score_relative_quasi_sicher(self):
     """Zweitkandidat = relative Dur/Moll (8A vs 8B) -> quasi-sicher."""
-    conf = key_confidence_score(0.7, 0.01, "A", "Minor", "C", "Major")
+    # AUDIT-FIX F02: Kontrast-Skala.
+    conf = key_confidence_score(1.5, 0.01, "A", "Minor", "C", "Major")
     assert conf >= 0.5
 
   def test_score_entfernter_zweitkandidat_unsicher(self):

@@ -55,6 +55,11 @@ def main() -> int:
   parser = argparse.ArgumentParser()
   parser.add_argument("--ground-truth", required=True, type=Path)
   parser.add_argument("--output", required=True, type=Path)
+  parser.add_argument(
+    "--audio-root",
+    type=Path,
+    help="Erlaubter Audio-Root; Standard ist das Verzeichnis des Manifests.",
+  )
   parser.add_argument("--allow-rekordbox", action="store_true")
   args = parser.parse_args()
 
@@ -74,11 +79,17 @@ def main() -> int:
   ]
 
   predictions = []
+  audio_root = (args.audio_root or args.ground_truth.parent).resolve()
   for row in eligible:
     audio_path = Path(row["audio_path"])
     if not audio_path.is_absolute():
       audio_path = args.ground_truth.resolve().parent / audio_path
     audio_path = audio_path.resolve()
+    if not audio_path.is_relative_to(audio_root):
+      raise ValueError(
+        f"Audio-Pfad ausserhalb des erlaubten Audio-Roots fuer {row['track_id']}: "
+        f"{audio_path}"
+      )
     if not audio_path.is_file():
       raise FileNotFoundError(f"Audio fehlt fuer {row['track_id']}: {audio_path}")
     digest = file_sha256(audio_path)

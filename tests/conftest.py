@@ -20,7 +20,11 @@ _TEST_CACHE_DIR = tempfile.mkdtemp(prefix=f"hpg_pytest_{os.getpid()}_")
 _TEST_CACHE_FILE = os.path.join(_TEST_CACHE_DIR, "hpg_cache_test.db")
 os.environ["HPG_CACHE_FILE"] = _TEST_CACHE_FILE
 
-_PRODUCTION_CACHE = os.path.join(PROJECT_ROOT, "hpg_cache_v17.db")
+_PRODUCTION_CACHE = os.path.join(
+  os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+  "HPG",
+  "hpg_cache_v24.db",
+)
 
 
 def _file_fingerprint(path: str) -> tuple[int, int, str] | None:
@@ -301,6 +305,6 @@ def pytest_sessionfinish(session, exitstatus):
   after = _file_fingerprint(_PRODUCTION_CACHE)
   if after != _PRODUCTION_CACHE_BEFORE:
     raise pytest.UsageError(
-      "Produktivcache hpg_cache_v17.db wurde waehrend der Tests veraendert"
+      "Produktivcache hpg_cache_v24.db wurde waehrend der Tests veraendert"
     )
   shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)

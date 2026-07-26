@@ -164,8 +164,10 @@ class TestTimingValues:
     rec = compute_transition_recommendations([current, upcoming], bpm_tolerance=3.0)[0]
 
     assert rec.dj_rec is not None
-    assert rec.fade_out_end == round(rec.dj_rec.adjusted_mix_out_a, 2)
-    assert rec.mix_entry == round(rec.dj_rec.adjusted_mix_in_b, 2)
+    # Der interne Timing-Vertrag bleibt ungerundet; gerundet wird erst in
+    # Anzeige-/Exportpfaden.
+    assert rec.fade_out_end == rec.dj_rec.adjusted_mix_out_a
+    assert rec.mix_entry == rec.dj_rec.adjusted_mix_in_b
 
 
 class TestCompatibilityScore:

@@ -70,8 +70,14 @@ def test_ai_bonus_has_one_bounded_definition():
   first = _track("first", "8A", 40, metadata)
   second = _track("second", "9A", 60, metadata)
 
+  # AUDIT-FIX F05: Der KI-Bonus hat GENAU EINE Definition
+  # (calculate_ai_compatibility_bonus) und wird nur EINMAL angewandt — im
+  # Overall-Pfad (calculate_enhanced_compatibility), NICHT zusaetzlich in die
+  # 0-100-Harmonik-Skala von calculate_compatibility gebacken. Vorher war er
+  # doppelt gezaehlt (80 harmonic -> 94), was predict_transition_type
+  # verfaelschte. calculate_compatibility liefert jetzt die reine Harmonik.
   assert calculate_ai_compatibility_bonus(first, second) == pytest.approx(0.14)
-  assert calculate_compatibility(first, second, 3.0) == 94
+  assert calculate_compatibility(first, second, 3.0) == 80
 
 
 def test_ai_bonus_requires_valid_provenance():
@@ -109,6 +115,21 @@ def test_optimizer_score_is_exactly_the_displayed_enhanced_score():
   assert metrics.ai_bonus == pytest.approx(0.14)
   assert calculate_transition_objective(first, second, 3.0) == round(
     metrics.overall_score * 100
+  )
+
+
+def test_playlist_quality_uses_the_same_enhanced_transition_contract():
+  first = _track("first-quality", "8A", 40)
+  second = _track("second-quality", "9A", 60)
+
+  quality = calculate_playlist_quality([first, second], 3.0)
+  recommendation = compute_transition_recommendations([first, second], 3.0)[0]
+
+  assert quality["avg_transition_score"] == pytest.approx(
+    recommendation.compatibility_score
+  )
+  assert quality["overall_score"] == pytest.approx(
+    recommendation.compatibility_score / 100.0, abs=0.01
   )
 
 

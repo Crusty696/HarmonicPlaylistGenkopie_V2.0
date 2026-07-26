@@ -3,10 +3,12 @@ from __future__ import annotations  # Python 3.9 compatibility for | type hints
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 
 import librosa
 import mutagen
 import numpy as np
+import soundfile as sf
 
 from .caching import cache_track, generate_cache_key, get_cached_track
 from .config import (
@@ -20,20 +22,141 @@ from .config import (
     LIBROSA_FAST_PATH_DURATION,
     LIBROSA_MAX_DURATION,
     LIBROSA_TAIL_DURATION,
-    LUFS_MAX_DECODE_BYTES,
+    PHRASE_CONFIDENCE_MIN,
+    SECURITY_MAX_FILE_SIZE,
+    SECURITY_MAX_TRACK_DURATION,
 )
 from .dj_brain import align_ai_mix_points, calculate_genre_aware_mix_points
-from .downbeat import estimate_first_downbeat
+from .downbeat import estimate_first_downbeat, estimate_first_phrase
 from .genre_classifier import GenreClassification, classify_genre
 from .models import CAMELOT_MAP, Track, get_camelot_components
 from .rekordbox_importer import get_rekordbox_importer
-from .structure_analyzer import TrackSection, TrackStructure, analyze_structure
+from .structure_analyzer import (
+    GENRE_PHRASE_UNITS,
+    TrackSection,
+    TrackStructure,
+    analyze_structure,
+)
 
 logger = logging.getLogger(__name__)
 
 # Reverse mapping: Camelot code → (Note, Mode)
 REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
-def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float]:
+
+
+@dataclass
+class FeatureCache:
+    """Lazy, track-lokaler Cache für wiederverwendete Librosa-Features.
+
+    Die Cache-Einträge werden erst beim ersten Zugriff berechnet. Dadurch
+    bleibt der bestehende Fast-Path leichtgewichtig, während Struktur-,
+    Fingerprint- und Track-Feature-Pfade dieselben Matrizen teilen können.
+    Module außerhalb des Ownership-Scope bleiben bewusst über ihre alten
+    Signaturen angebunden.
+    """
+
+    y: np.ndarray
+    sr: int
+    _mfcc: dict[tuple[int, int | None], np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _rms: dict[int, np.ndarray] = field(default_factory=dict, init=False, repr=False)
+    _stft: dict[tuple[int, int], np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _chroma: dict[int | None, np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _centroid: dict[int, np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _flatness: dict[int | None, np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _contrast: dict[int | None, np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _onset: dict[int | None, np.ndarray] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _hpss: tuple[np.ndarray, np.ndarray] | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def get_mfcc(self, n_mfcc: int = 13, hop_length: int | None = None) -> np.ndarray:
+        key = (n_mfcc, hop_length)
+        if key not in self._mfcc:
+            kwargs = {"y": self.y, "sr": self.sr, "n_mfcc": n_mfcc}
+            if hop_length is not None:
+                kwargs["hop_length"] = hop_length
+            self._mfcc[key] = librosa.feature.mfcc(**kwargs)
+        return self._mfcc[key]
+
+    def get_rms(self, hop_length: int = HOP_LENGTH) -> np.ndarray:
+        if hop_length not in self._rms:
+            self._rms[hop_length] = librosa.feature.rms(
+                y=self.y, hop_length=hop_length
+            )
+        return self._rms[hop_length]
+
+    def get_stft_magnitude(
+        self, n_fft: int = 2048, hop_length: int = HOP_LENGTH
+    ) -> np.ndarray:
+        key = (n_fft, hop_length)
+        if key not in self._stft:
+            self._stft[key] = np.abs(
+                librosa.stft(self.y, n_fft=n_fft, hop_length=hop_length)
+            )
+        return self._stft[key]
+
+    def get_chroma(self, hop_length: int | None = None) -> np.ndarray:
+        if hop_length not in self._chroma:
+            kwargs = {"y": self.y, "sr": self.sr}
+            if hop_length is not None:
+                kwargs["hop_length"] = hop_length
+            self._chroma[hop_length] = librosa.feature.chroma_stft(**kwargs)
+        return self._chroma[hop_length]
+
+    def get_spectral_centroid(self, hop_length: int = HOP_LENGTH) -> np.ndarray:
+        if hop_length not in self._centroid:
+            self._centroid[hop_length] = librosa.feature.spectral_centroid(
+                y=self.y, sr=self.sr, hop_length=hop_length
+            )
+        return self._centroid[hop_length]
+
+    def get_spectral_flatness(self, hop_length: int | None = None) -> np.ndarray:
+        if hop_length not in self._flatness:
+            kwargs = {"y": self.y}
+            if hop_length is not None:
+                kwargs["hop_length"] = hop_length
+            self._flatness[hop_length] = librosa.feature.spectral_flatness(**kwargs)
+        return self._flatness[hop_length]
+
+    def get_spectral_contrast(self, hop_length: int | None = None) -> np.ndarray:
+        if hop_length not in self._contrast:
+            kwargs = {"y": self.y, "sr": self.sr}
+            if hop_length is not None:
+                kwargs["hop_length"] = hop_length
+            self._contrast[hop_length] = librosa.feature.spectral_contrast(**kwargs)
+        return self._contrast[hop_length]
+
+    def get_onset_strength(self, hop_length: int | None = None) -> np.ndarray:
+        if hop_length not in self._onset:
+            kwargs = {"y": self.y, "sr": self.sr}
+            if hop_length is not None:
+                kwargs["hop_length"] = hop_length
+            self._onset[hop_length] = librosa.onset.onset_strength(**kwargs)
+        return self._onset[hop_length]
+
+    def get_hpss(self) -> tuple[np.ndarray, np.ndarray]:
+        if self._hpss is None:
+            self._hpss = librosa.effects.hpss(self.y)
+        return self._hpss
+
+
+def analyze_frequency_bands(
+    y: np.ndarray, sr: int, feature_cache: FeatureCache | None = None
+) -> tuple[float, float, float]:
     if y is None or len(y) == 0:
         return 0.0, 0.0, 0.0
     # MED-Fix: NaN/Inf abfangen (librosa.stft wirft sonst ParameterError und
@@ -41,7 +164,11 @@ def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float
     # Feature-Funktionen (generate_timbre_fingerprint etc.).
     if not np.all(np.isfinite(y)):
         y = np.nan_to_num(y)
-    S = np.abs(librosa.stft(y, hop_length=HOP_LENGTH))
+    S = (
+        feature_cache.get_stft_magnitude(hop_length=HOP_LENGTH)
+        if feature_cache is not None
+        else np.abs(librosa.stft(y, hop_length=HOP_LENGTH))
+    )
     freqs = librosa.fft_frequencies(sr=sr)
     bass_mask = (freqs >= 20) & (freqs <= 200)
     mids_mask = (freqs > 200) & (freqs <= 4000)
@@ -54,26 +181,42 @@ def analyze_frequency_bands(y: np.ndarray, sr: int) -> tuple[float, float, float
     t = b + m + h + 1e-6
     return round(b/t*100, 1), round(m/t*100, 1), round(h/t*100, 1)
 
-def analyze_rhythm_complexity(y: np.ndarray, sr: int) -> tuple[float, float]:
+def analyze_rhythm_complexity(
+    y: np.ndarray, sr: int, feature_cache: FeatureCache | None = None
+) -> tuple[float, float]:
     if y is None or len(y) == 0:
         return 0.0, 0.0
     # MED-Fix: NaN/Inf abfangen (librosa.effects.hpss wirft sonst ParameterError).
     if not np.all(np.isfinite(y)):
         y = np.nan_to_num(y)
-    y_h, y_p = librosa.effects.hpss(y)
+    y_h, y_p = (
+        feature_cache.get_hpss()
+        if feature_cache is not None
+        else librosa.effects.hpss(y)
+    )
     pe = np.sqrt(np.mean(y_p**2))
     he = np.sqrt(np.mean(y_h**2))
     pr = pe / (pe + he + 1e-6)
-    sf = np.mean(librosa.feature.spectral_flatness(y=y))
+    sf = np.mean(
+        feature_cache.get_spectral_flatness()
+        if feature_cache is not None
+        else librosa.feature.spectral_flatness(y=y)
+    )
     return round(float(pr), 3), round(float(sf), 3)
 
-def generate_timbre_fingerprint(y: np.ndarray, sr: int) -> list[float]:
+def generate_timbre_fingerprint(
+    y: np.ndarray, sr: int, feature_cache: FeatureCache | None = None
+) -> list[float]:
     if y is None or len(y) == 0:
         return []
     # Handle NaN/Inf values
     if not np.all(np.isfinite(y)):
         y = np.nan_to_num(y)
-    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfccs = (
+        feature_cache.get_mfcc(n_mfcc=13)
+        if feature_cache is not None
+        else librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    )
     return [round(float(v), 3) for v in np.mean(mfccs, axis=1)]
 
 # Krumhansl-Schmuckler key profiles (simplified)
@@ -127,15 +270,31 @@ def get_key_with_confidence(
     best_corr, key_note, key_mode = correlations[0]
     second_corr, second_note, second_mode = correlations[1]
 
-    strength = best_corr if np.isfinite(best_corr) else 0.0
+    # AUDIT-FIX F02 (2026-07-24): "strength" ist jetzt ein KONTRAST-Wert
+    # (z-Score des Gewinners gegen alle 24 Kandidaten), nicht der rohe
+    # Cosine-Wert. Cosine ueber nicht-zentrierte, durchweg positive Chroma
+    # komprimiert alle Kandidaten auf ~0,94-1,00 — der rohe Wert war damit
+    # nicht-diskriminierend (auch eine FLACHE Chroma liefert ~0,95). Der
+    # z-Score trennt "ein Profil sticht heraus" (peaked chroma) sauber von
+    # "alle gleich" (flache/stille Chroma -> ~0). Die Key-AUSWAHL bleibt
+    # cosine-basiert (unveraendert). margin bleibt der relative Cosine-Abstand.
+    all_corrs = np.array([c[0] for c in correlations], dtype=float)
+    finite = all_corrs[np.isfinite(all_corrs)]
+    if finite.size >= 2:
+        mean_all = float(np.mean(finite))
+        std_all = float(np.std(finite))
+        contrast = (best_corr - mean_all) / std_all if std_all > 1e-9 else 0.0
+    else:
+        contrast = 0.0
+
     margin = 0.0
-    if np.isfinite(second_corr) and abs(strength) > 1e-9:
-        margin = (strength - second_corr) / abs(strength)
+    if np.isfinite(second_corr) and abs(best_corr) > 1e-9:
+        margin = (best_corr - second_corr) / abs(best_corr)
 
     return (
         key_note,
         key_mode,
-        round(max(0.0, strength), 4),
+        round(max(0.0, contrast), 4),
         round(max(0.0, margin), 4),
         second_note,
         second_mode,
@@ -153,17 +312,24 @@ def key_confidence_score(
     key_note: str, key_mode: str,
     second_note: str, second_mode: str,
 ) -> float:
-    """Verdichtet strength/margin zu einer 0-1-Konfidenz fuers Harmonic Mixing.
+    """Verdichtet Kontrast/margin zu einer 0-1-Konfidenz fuers Harmonic Mixing.
 
-    Schwellwerte heuristisch (nirgends offiziell publiziert, siehe Research):
-    strength >= 0.6 UND margin >= 0.05 = sicher. Bei knapper Marge wird
-    geprueft, ob der Zweitkandidat ein Camelot-Nachbar ist (Quinte = +-1,
-    relative Dur/Moll = gleiche Nummer) — solche Fehler sind fuers Mixing
-    harmlos und werten die Konfidenz nur leicht ab.
+    AUDIT-FIX F02 (2026-07-24): auf die tatsaechlichen Wertebereiche kalibriert.
+    `strength` ist jetzt ein z-Score-KONTRAST (siehe get_key_with_confidence),
+    typisch ~2-4 fuer einen klaren Sieger, ~0-1 fuer flache Chroma. `margin`
+    ist der relative Cosine-Abstand, real ~0,005-0,04 (nicht 0,05+ wie die
+    alten Pearson-Schwellen annahmen — dadurch war der "sicher"-Zweig frueher
+    UNERREICHBAR und praktisch jeder Track bekam 0,4).
+
+    Sicher (>=0,8): klarer Kontrast UND deutliche Marge.
+    Mittel (0,5): knapp, aber Zweitkandidat ist ein kompatibler Camelot-Nachbar.
+    Unsicher (<=0,4): flache/mehrdeutige Chroma.
     """
-    base = min(1.0, max(0.0, strength))
-    if strength >= 0.6 and margin >= 0.05:
-        return round(max(base, 0.6), 3)
+    # Kontrast in [0..~5] auf [0..1] abbilden (2,5 sigma = voll sicher)
+    contrast_norm = min(1.0, max(0.0, strength / 2.5))
+
+    if strength >= 2.0 and margin >= 0.02:
+        return round(max(0.8, contrast_norm), 3)
 
     # Zweitkandidat harmonisch benachbart? (Camelot-Distanz via CAMELOT_MAP)
     first_code = CAMELOT_MAP.get((key_note, key_mode), "")
@@ -175,11 +341,15 @@ def key_confidence_score(
             dist = min(abs(num1 - num2), 12 - abs(num1 - num2))
             relative = num1 == num2 and let1 != let2
             quint = dist == 1 and let1 == let2
-            if relative or quint:
+            if (relative or quint) and strength >= 1.0:
                 # Verwechslung waere ein kompatibler Nachbar — quasi-sicher
-                return round(max(0.5, base * 0.9), 3)
+                return round(max(0.5, contrast_norm * 0.8), 3)
 
-    return round(min(base, 0.4), 3)
+    if strength >= 1.0 and margin >= 0.01:
+        # erkennbarer, aber nicht eindeutiger Sieger
+        return round(min(0.6, max(0.45, contrast_norm)), 3)
+
+    return round(min(contrast_norm, 0.4), 3)
 
 
 def calculate_lufs(y: np.ndarray, sr: int) -> float:
@@ -209,32 +379,154 @@ def calculate_lufs(y: np.ndarray, sr: int) -> float:
 
 
 def calculate_file_lufs(file_path: str) -> tuple[float, str, float, int, int]:
-    """Misst LUFS ueber das vollstaendige native Mehrkanalprogramm.
+    """Misst LUFS blockweise über das vollständige native Mehrkanalprogramm.
 
     Returns:
         (lufs, status, coverage_seconds, channels, sample_rate)
     """
     try:
         import pyloudnorm as pyln
-        import soundfile as sf
 
         info = sf.info(file_path)
-        estimated_bytes = int(info.frames) * int(info.channels) * 4
-        if estimated_bytes > LUFS_MAX_DECODE_BYTES:
-            return 0.0, "skipped_memory_limit", 0.0, int(info.channels), int(info.samplerate)
-
-        audio, sample_rate = sf.read(file_path, dtype="float32", always_2d=True)
-        channels = int(audio.shape[1])
-        signal = audio[:, 0] if channels == 1 else audio
+        sample_rate = int(info.samplerate)
+        channels = int(info.channels)
+        frames = int(info.frames)
+        coverage = float(frames / sample_rate) if sample_rate > 0 else 0.0
         meter = pyln.Meter(sample_rate, filter_class="DeMan")
-        value = float(meter.integrated_loudness(signal.astype(np.float64, copy=False)))
-        coverage = float(len(audio) / sample_rate) if sample_rate > 0 else 0.0
+        value = _integrated_loudness_from_blocks(file_path, info, meter)
         if not np.isfinite(value) or value >= 0.0 or value < -70.0:
             return 0.0, "invalid", coverage, channels, int(sample_rate)
         return round(value, 2), "complete", coverage, channels, int(sample_rate)
     except Exception as error:
         logger.warning(f"Vollstaendige LUFS-Messung fehlgeschlagen: {error}")
         return 0.0, "error", 0.0, 0, 0
+
+
+def _integrated_loudness_from_blocks(file_path: str, info, meter) -> float:
+    """Berechnet BS.1770-Gating mit begrenztem Decode-Speicher.
+
+    Die Filterzustände laufen über Chunk-Grenzen weiter. Für das Gating bleiben
+    nur die 400-ms-Fenster und ein einzelnes Überlappungsfenster im Speicher;
+    die Semantik entspricht damit ``pyloudnorm.Meter.integrated_loudness``.
+    """
+    from scipy.signal import lfilter
+
+    sample_rate = int(info.samplerate)
+    channels = int(info.channels)
+    total_frames = int(info.frames)
+    block_frames = int(meter.block_size * sample_rate)
+    step_seconds = meter.block_size * (1.0 - meter.overlap)
+    if sample_rate <= 0 or channels <= 0 or channels > 5 or total_frames < block_frames:
+        return float("nan")
+
+    num_blocks = int(
+        np.round((total_frames / sample_rate - meter.block_size) / step_seconds) + 1
+    )
+    if num_blocks <= 0:
+        return float("nan")
+
+    # pyloudnorm verwendet dieselben DeMan-Koeffizienten; lfilter mit zi
+    # erhält zusätzlich den Filterzustand zwischen den SoundFile-Chunks.
+    filter_stages = list(meter._filters.values())
+    filter_states = [np.zeros((channels, 2), dtype=np.float64) for _ in filter_stages]
+    z = np.zeros((channels, num_blocks), dtype=np.float64)
+    pending = np.empty((0, channels), dtype=np.float64)
+    pending_start = 0
+    next_block = 0
+    read_frames = 0
+    stream_block_frames = max(block_frames, int(sample_rate * 10.0))
+
+    for chunk in sf.blocks(
+        file_path,
+        blocksize=stream_block_frames,
+        dtype="float32",
+        always_2d=True,
+    ):
+        filtered = np.asarray(chunk, dtype=np.float64)
+        for stage_index, stage in enumerate(filter_stages):
+            for channel in range(channels):
+                filtered[:, channel], filter_states[stage_index][channel] = lfilter(
+                    stage.b,
+                    stage.a,
+                    filtered[:, channel],
+                    zi=filter_states[stage_index][channel],
+                )
+
+        pending = np.concatenate((pending, filtered), axis=0)
+        read_frames += len(filtered)
+        while next_block < num_blocks:
+            start = int(next_block * step_seconds * sample_rate)
+            end = start + block_frames
+            if end > read_frames:
+                break
+            local_start = start - pending_start
+            window = pending[local_start:local_start + block_frames]
+            z[:, next_block] = np.mean(window * window, axis=0)
+            next_block += 1
+
+            next_start = int(next_block * step_seconds * sample_rate)
+            discard = next_start - pending_start
+            if discard > 0:
+                pending = pending[discard:]
+                pending_start = next_start
+
+    if next_block != num_blocks:
+        return float("nan")
+
+    gains = np.array([1.0, 1.0, 1.0, 1.41, 1.41], dtype=np.float64)
+    gains = gains[:channels]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        loudness = -0.691 + 10.0 * np.log10(np.sum(gains[:, None] * z, axis=0))
+    absolute = loudness >= -70.0
+    if not np.any(absolute):
+        return float("nan")
+
+    gated_z = np.mean(z[:, absolute], axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        relative_threshold = -0.691 + 10.0 * np.log10(np.sum(gains * gated_z)) - 10.0
+    relative = absolute & (loudness > relative_threshold)
+    if not np.any(relative):
+        return float("nan")
+
+    final_z = np.nan_to_num(np.mean(z[:, relative], axis=1))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return float(-0.691 + 10.0 * np.log10(np.sum(gains * final_z)))
+
+
+def _get_file_duration(file_path: str) -> float:
+    """Liest die Dauer ohne Audiodaten zu dekodieren, mit Librosa-Fallback."""
+    try:
+        info = sf.info(file_path)
+        if info.samplerate > 0:
+            return float(info.frames / info.samplerate)
+    except (OSError, RuntimeError, ValueError) as error:
+        logger.debug(f"SoundFile-Dauer nicht verfügbar: {error}")
+    return float(librosa.get_duration(path=file_path))
+
+
+def _median_seconds_per_bar(
+    beat_frames: np.ndarray,
+    sr: int,
+    bpm: float,
+    hop_length: int = 512,
+) -> float | None:
+    """Leitet eine robuste Taktlänge aus vorhandenen Beat-Intervallen ab."""
+    frames = np.asarray(beat_frames).reshape(-1)
+    if sr <= 0 or bpm <= 0 or frames.size < 8:
+        return None
+    intervals = np.diff(frames.astype(float))
+    intervals = intervals[intervals > 0]
+    if intervals.size == 0:
+        return None
+    ibi = float(np.median(intervals) * hop_length / sr)
+    expected_ibi = 60.0 / bpm
+    if ibi > expected_ibi * 1.5:
+        ibi /= 2.0
+    elif ibi < expected_ibi * 0.75:
+        ibi *= 2.0
+    if not np.isfinite(ibi) or ibi <= 0:
+        return None
+    return 4.0 * ibi
 
 
 def calculate_energy(y: np.ndarray) -> int:
@@ -300,7 +592,9 @@ def calculate_bass_intensity(y: np.ndarray, sr: int) -> int:
     return int(min(max(bass_intensity, 0.0), 100.0))
 
 
-def calculate_brightness(y: np.ndarray, sr: int) -> int:
+def calculate_brightness(
+    y: np.ndarray, sr: int, feature_cache: FeatureCache | None = None
+) -> int:
     """
     Berechnet die spektrale Helligkeit eines Tracks (0-100).
 
@@ -327,7 +621,11 @@ def calculate_brightness(y: np.ndarray, sr: int) -> int:
 
     try:
         # Spectral Centroid = gewichteter Mittelwert der Frequenzen
-        centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+        centroid = (
+            feature_cache.get_spectral_centroid()[0]
+            if feature_cache is not None
+            else librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+        )
         mean_centroid = float(np.mean(centroid))
 
         if not np.isfinite(mean_centroid):
@@ -342,7 +640,9 @@ def calculate_brightness(y: np.ndarray, sr: int) -> int:
         return 0
 
 
-def detect_vocal_instrumental(y: np.ndarray, sr: int) -> str:
+def detect_vocal_instrumental(
+    y: np.ndarray, sr: int, feature_cache: FeatureCache | None = None
+) -> str:
     """
     Erkennt ob ein Track Vocals oder nur Instrumental enthält.
 
@@ -369,16 +669,28 @@ def detect_vocal_instrumental(y: np.ndarray, sr: int) -> str:
 
     try:
         # 1. Spectral Flatness (niedriger = tonaler = eher Vocals)
-        flatness = librosa.feature.spectral_flatness(y=y)[0]
+        flatness = (
+            feature_cache.get_spectral_flatness()[0]
+            if feature_cache is not None
+            else librosa.feature.spectral_flatness(y=y)[0]
+        )
         mean_flatness = float(np.mean(flatness))
 
         # 2. MFCC-Varianz (höher = mehr spektrale Variation = eher Vocals)
-        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+        mfccs = (
+            feature_cache.get_mfcc(n_mfcc=13)
+            if feature_cache is not None
+            else librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+        )
         # Varianz über die Zeit für MFCCs 2-13 (MFCC 1 ist Lautstärke)
         mfcc_variance = float(np.mean(np.var(mfccs[1:], axis=1)))
 
         # 3. Spectral Contrast (grössere Unterschiede = eher Vocals)
-        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+        contrast = (
+            feature_cache.get_spectral_contrast()
+            if feature_cache is not None
+            else librosa.feature.spectral_contrast(y=y, sr=sr)
+        )
         mean_contrast = float(np.mean(contrast))
 
         # Scoring: Jedes Feature gibt einen Punkt für "vocal"
@@ -415,7 +727,12 @@ def detect_vocal_instrumental(y: np.ndarray, sr: int) -> str:
         return "unknown"
 
 
-def calculate_danceability(y: np.ndarray, sr: int, bpm: float | None = None) -> int:
+def calculate_danceability(
+    y: np.ndarray,
+    sr: int,
+    bpm: float | None = None,
+    feature_cache: FeatureCache | None = None,
+) -> int:
     """
     Berechnet die Tanzbarkeit eines Tracks (0-100).
 
@@ -457,7 +774,11 @@ def calculate_danceability(y: np.ndarray, sr: int, bpm: float | None = None) -> 
             beat_regularity = 0.0
 
         # 2. Onset-Regelmässigkeit (0-1)
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        onset_env = (
+            librosa.onset.onset_strength(y=y, sr=sr)
+            if feature_cache is None
+            else feature_cache.get_onset_strength()
+        )
         if onset_env.size > 0:
             # Autokorrelation der Onset-Stärke → Periodizität
             ac = librosa.autocorrelate(onset_env, max_size=onset_env.size // 2)
@@ -480,7 +801,11 @@ def calculate_danceability(y: np.ndarray, sr: int, bpm: float | None = None) -> 
         # 3. Low-Frequency-Periodizität (0-1)
         # Stärke des Bass-Rhythmus
         if y.size >= 2048:
-            stft = np.abs(librosa.stft(y, n_fft=2048))
+            stft = (
+                feature_cache.get_stft_magnitude(n_fft=2048, hop_length=512)
+                if feature_cache is not None
+                else np.abs(librosa.stft(y, n_fft=2048))
+            )
             freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
             bass_bins = np.where((freqs >= 20) & (freqs <= 200))[0]
             if bass_bins.size > 0:
@@ -538,7 +863,12 @@ def calculate_danceability(y: np.ndarray, sr: int, bpm: float | None = None) -> 
         return 0
 
 
-def calculate_mfcc_fingerprint(y: np.ndarray, sr: int, n_mfcc: int = 13) -> list[float]:
+def calculate_mfcc_fingerprint(
+    y: np.ndarray,
+    sr: int,
+    n_mfcc: int = 13,
+    feature_cache: FeatureCache | None = None,
+) -> list[float]:
     """
     Berechnet einen kompakten MFCC-Fingerprint für Similarity-Vergleiche.
 
@@ -560,7 +890,11 @@ def calculate_mfcc_fingerprint(y: np.ndarray, sr: int, n_mfcc: int = 13) -> list
     y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
     try:
-        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
+        mfccs = (
+            feature_cache.get_mfcc(n_mfcc=n_mfcc)
+            if feature_cache is not None
+            else librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
+        )
         # Mittelwert über die Zeit → kompakter Vektor
         mean_mfccs = np.mean(mfccs, axis=1)
         return [round(float(v), 4) for v in mean_mfccs]
@@ -682,7 +1016,7 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
     return None
 
 
-def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown", anchor: float = 0.0) -> tuple[float, float, int, int]:
+def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown", anchor: float = 0.0, first_downbeat: float | None = None) -> tuple[float, float, int, int]:
     """
     RMS-Fallback fuer Mix-Punkte, wenn keine Struktur-Analyse (Sections) vorliegt.
 
@@ -802,7 +1136,8 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         ]
 
         return calculate_genre_aware_mix_points(
-            pseudo_sections, bpm, duration, genre, anchor=anchor
+            pseudo_sections, bpm, duration, genre, anchor=anchor,
+            first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
         )
 
     except Exception as e:
@@ -820,12 +1155,17 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         safe_in_bars = int(safe_in / seconds_per_bar)
         safe_out_bars = int(safe_out / seconds_per_bar)
 
-        return round(safe_in, 2), round(safe_out, 2), safe_in_bars, safe_out_bars
+        return safe_in, safe_out, safe_in_bars, safe_out_bars
 
 
-def _offset_section(section: TrackSection, offset: float, bpm: float) -> TrackSection:
+def _offset_section(
+    section: TrackSection,
+    offset: float,
+    bpm: float,
+    seconds_per_bar: float | None = None,
+) -> TrackSection:
     """Verschiebt eine lokal analysierte Tail-Sektion auf die Track-Zeitachse."""
-    seconds_bar = (60.0 / bpm) * METER if bpm > 0 else 0.0
+    seconds_bar = seconds_per_bar or ((60.0 / bpm) * METER if bpm > 0 else 0.0)
     start = section.start_time + offset
     end = section.end_time + offset
     return TrackSection(
@@ -846,16 +1186,35 @@ def analyze_structure_windows(
     genre: str,
     duration: float,
     anchor: float = 0.0,
+    phrase_unit: int | None = None,
+    seconds_per_bar: float | None = None,
+    feature_cache: FeatureCache | None = None,
 ) -> tuple[TrackStructure, list[dict], bool]:
     """Kombiniert Anfang und echtes Track-Ende mit expliziter Coverage-Luecke."""
     head_duration = min(float(librosa.get_duration(y=head_audio, sr=sr)), duration)
-    head = analyze_structure(head_audio, sr, bpm, genre, anchor=anchor)
+    structure_kwargs = {"anchor": anchor}
+    if phrase_unit is not None:
+        structure_kwargs["phrase_unit"] = phrase_unit
+    if seconds_per_bar is not None:
+        structure_kwargs["seconds_per_bar"] = seconds_per_bar
+    if feature_cache is not None:
+        structure_kwargs["feature_cache"] = feature_cache
+    head = analyze_structure(head_audio, sr, bpm, genre, **structure_kwargs)
     for section in head.sections:
         section.end_time = min(section.end_time, head_duration)
 
     coverage = [{"start": 0.0, "end": round(head_duration, 2)}]
     if duration <= head_duration + 1.0:
         return head, coverage, True
+
+    # AUDIT-FIX N1 (2026-07-24): Das Head-Fenster endet NICHT am Track-Ende —
+    # ein dort vergebenes "outro"-Label ist ein Fenster-Artefakt (der Labeler
+    # markiert immer die letzte Section als Outro-Kandidat, ohne zu wissen,
+    # dass der Track weitergeht). Solche Labels zu "main" degradieren, sonst
+    # zieht der Outro-Scanner in dj_brain den outro_start in die Track-Mitte.
+    for section in head.sections:
+        if section.label == "outro":
+            section.label = "main"
 
     tail_start = max(head_duration, duration - LIBROSA_TAIL_DURATION)
     tail_audio, _ = librosa.load(
@@ -870,14 +1229,25 @@ def analyze_structure_windows(
     if tail_duration <= 0:
         return head, coverage, False
 
-    tail = analyze_structure(
-        tail_audio,
-        sr,
-        bpm,
-        genre,
-        anchor=anchor - tail_start,
-    )
-    shifted_tail = [_offset_section(section, tail_start, bpm) for section in tail.sections]
+    tail_kwargs = {"anchor": anchor - tail_start}
+    if phrase_unit is not None:
+        tail_kwargs["phrase_unit"] = phrase_unit
+    if seconds_per_bar is not None:
+        tail_kwargs["seconds_per_bar"] = seconds_per_bar
+    if feature_cache is not None:
+        tail_kwargs["feature_cache"] = FeatureCache(tail_audio, sr)
+    tail = analyze_structure(tail_audio, sr, bpm, genre, **tail_kwargs)
+    # AUDIT-FIX B7 (2026-07-24): Spiegelbildlich zum Head-Fenster — das
+    # Tail-Fenster beginnt mitten im Track, ein "intro"-Label dort ist ein
+    # Fenster-Artefakt und wuerde den Intro-Scanner in dj_brain vergiften.
+    for section in tail.sections:
+        if section.label == "intro":
+            section.label = "main"
+
+    shifted_tail = [
+        _offset_section(section, tail_start, bpm, seconds_per_bar=seconds_per_bar)
+        for section in tail.sections
+    ]
     coverage.append({"start": round(tail_start, 2), "end": round(tail_end, 2)})
 
     head_sections = [section for section in head.sections if section.start_time < tail_start]
@@ -886,7 +1256,7 @@ def analyze_structure_windows(
 
     merged_sections = head_sections
     if tail_start > head_duration + 1.0:
-        seconds_bar = (60.0 / bpm) * METER if bpm > 0 else 0.0
+        seconds_bar = seconds_per_bar or ((60.0 / bpm) * METER if bpm > 0 else 0.0)
         merged_sections.append(
             TrackSection(
                 label="unanalysed",
@@ -898,7 +1268,9 @@ def analyze_structure_windows(
             )
         )
     merged_sections.extend(shifted_tail)
-    total_bars = int(duration / ((60.0 / bpm) * METER)) if bpm > 0 else 0
+    total_bars = int(
+        duration / (seconds_per_bar or ((60.0 / bpm) * METER))
+    ) if bpm > 0 else 0
     merged = TrackStructure(
         sections=merged_sections,
         total_bars=total_bars,
@@ -922,7 +1294,31 @@ def analyze_track(file_path: str) -> Track | None:
         logger.error(f"Datei nicht gefunden: {file_path}")
         return None
 
-    cache_key = generate_cache_key(file_path)
+    # Ressourcenlimits vor jedem Decoder-/LUFS-Aufruf pruefen. Der spaetere
+    # Playlist-Filter bleibt als zweite Verteidigung bestehen, darf aber nicht
+    # erst nach teurem Audio-Decode greifen.
+    try:
+        file_size = os.path.getsize(file_path)
+        if file_size > SECURITY_MAX_FILE_SIZE:
+            logger.warning("Datei wegen Groessenlimit uebersprungen: %s", file_path)
+            return None
+        file_duration = _get_file_duration(file_path)
+        if file_duration > SECURITY_MAX_TRACK_DURATION:
+            logger.warning("Datei wegen Dauerlimit uebersprungen: %s", file_path)
+            return None
+    except OSError as error:
+        logger.warning("Datei konnte vor Analyse nicht geprueft werden: %s", error)
+        return None
+
+    # Rekordbox-Metadaten koennen sich ohne Audio-Dateiaenderung aendern.
+    # Die Signatur muss deshalb vor dem Cache-Lookup ermittelt werden.
+    rekordbox_importer = get_rekordbox_importer()
+    rekordbox_data = rekordbox_importer.get_track_data(file_path)
+    signature_builder = getattr(rekordbox_importer, "get_track_signature", None)
+    rekordbox_signature = (
+        signature_builder(file_path) if callable(signature_builder) else ""
+    )
+    cache_key = generate_cache_key(file_path, rekordbox_signature)
     cached_track = get_cached_track(cache_key, file_path=file_path)
 
     if cached_track:
@@ -931,12 +1327,9 @@ def analyze_track(file_path: str) -> Track | None:
 
     logger.info(f"Analysiere: {os.path.basename(file_path)}")
 
-    # Try to get analysis data from Rekordbox first (MUCH faster!)
-    rekordbox_importer = get_rekordbox_importer()
-    rekordbox_data = rekordbox_importer.get_track_data(file_path)
-
     if rekordbox_data and rekordbox_data.bpm:
         # Rekordbox data available - use it!
+        analysis_degraded = False  # AUDIT-FIX A-02: markiert Load-Fehlschlag
         logger.info(
             f"Rekordbox-Daten: BPM={rekordbox_data.bpm}, Key={rekordbox_data.camelot_code}"
         )
@@ -953,8 +1346,9 @@ def analyze_track(file_path: str) -> Track | None:
         # K2 Audit-Fix: Dauer begrenzen — BPM/Key kommt aus Rekordbox, nur Energy/Genre noetig
         try:
             y, sr = librosa.load(file_path, duration=LIBROSA_FAST_PATH_DURATION)
+            feature_cache = FeatureCache(y, sr)
             # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
-            duration = rekordbox_data.duration or float(librosa.get_duration(path=file_path))
+            duration = rekordbox_data.duration or _get_file_duration(file_path)
 
             # Calculate energy and bass (not in Rekordbox)
             energy = calculate_energy(y)
@@ -985,7 +1379,20 @@ def analyze_track(file_path: str) -> Track | None:
                     y, sr, rekordbox_data.bpm
                 )
 
-            # DJ Brain: Struktur-Analyse (downbeat-verankert)
+            phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
+            if downbeat_confidence > 0.0:
+                first_phrase, phrase_confidence = estimate_first_phrase(
+                    y, sr, rekordbox_data.bpm, first_downbeat, phrase_unit
+                )
+            else:
+                first_phrase, phrase_confidence = -1.0, 0.0
+            phrase_anchor = (
+                first_phrase
+                if first_phrase >= 0.0 and phrase_confidence >= PHRASE_CONFIDENCE_MIN
+                else first_downbeat
+            )
+
+            # DJ Brain: Struktur-Analyse (phrase-verankert)
             structure, analysis_coverage, outro_covered = analyze_structure_windows(
                 file_path,
                 y,
@@ -993,7 +1400,9 @@ def analyze_track(file_path: str) -> Track | None:
                 rekordbox_data.bpm,
                 genre_result.genre,
                 duration,
-                anchor=first_downbeat,
+                anchor=phrase_anchor,
+                phrase_unit=phrase_unit,
+                feature_cache=feature_cache,
             )
             section_dicts = [s.to_dict() for s in structure.sections]
             for section in section_dicts:
@@ -1005,13 +1414,22 @@ def analyze_track(file_path: str) -> Track | None:
                 f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
             )
 
+            # AUDIT-FEATURE A1 (2026-07-26): Phrasen-Phase schaetzen und als
+            # Anker fuers PHRASEN-Gitter verwenden (Konfidenz-Gate; Fallback
+            # bleibt der Takt-Anker first_downbeat).
+            # AUDIT-FIX R2 (2026-07-26): NUR bei belastbarem Downbeat-Raster —
+            # ein gescheitertes Downbeat-Estimate (Konfidenz 0.0) wuerde sonst
+            # ein erfundenes Bar-Raster ab t=0 abstimmen.
+            # AUDIT-FIX R4 (2026-07-26): Sentinel -1.0 statt 0.0 — first_phrase
+            # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
             # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
             # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
             if section_dicts:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     calculate_genre_aware_mix_points(
                         section_dicts, rekordbox_data.bpm, duration,
-                        genre_result.genre, anchor=first_downbeat,
+                        genre_result.genre, anchor=phrase_anchor,
+                        first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
                     )
                 )
                 logger.info(
@@ -1022,7 +1440,8 @@ def analyze_track(file_path: str) -> Track | None:
                     analyze_structure_and_mix_points(
                         y, sr, duration, energy, rekordbox_data.bpm,
                         genre=genre_result.genre,
-                        anchor=first_downbeat,
+                        anchor=phrase_anchor,
+                        first_downbeat=first_downbeat,  # R3
                     )
                 )
 
@@ -1071,8 +1490,9 @@ def analyze_track(file_path: str) -> Track | None:
                         cue_in = dedup_positions[1]
 
                         last_cue = dedup_positions[-1]
-                        # If last cue is less than 15s from track end, use the penultimate cue for mix-out
-                        if duration - last_cue < 15.0 and len(dedup_positions) >= 3:
+                        # AUDIT-FIX N12 (2026-07-24): `len(dedup_positions) >= 3`
+                        # ist durch das umschliessende if bereits garantiert.
+                        if duration - last_cue < 15.0:
                             cue_out = dedup_positions[-2]
                         else:
                             cue_out = last_cue
@@ -1092,7 +1512,7 @@ def analyze_track(file_path: str) -> Track | None:
                         rekordbox_data.bpm,
                         duration,
                         structure.phrase_unit,
-                        anchor=first_downbeat,
+                        anchor=phrase_anchor,  # A1: Phrasen- statt Takt-Anker
                     )
                     seconds_per_bar = (60.0 / rekordbox_data.bpm) * METER
                     mix_in_bars = int(mix_in_point / seconds_per_bar)
@@ -1104,17 +1524,28 @@ def analyze_track(file_path: str) -> Track | None:
                     )
 
             # Audio Feature Extensions
-            brightness = calculate_brightness(y, sr)
-            vocal_instrumental = detect_vocal_instrumental(y, sr)
-            danceability = calculate_danceability(y, sr, rekordbox_data.bpm)
+            brightness = calculate_brightness(y, sr, feature_cache)
+            vocal_instrumental = detect_vocal_instrumental(y, sr, feature_cache)
+            danceability = calculate_danceability(
+                y, sr, rekordbox_data.bpm, feature_cache
+            )
             # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
-            mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(y, sr)
+            mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
+                y, sr, feature_cache=feature_cache
+            )
             logger.debug(
                 f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
             )
 
-        except Exception as e:
+        except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as e:
+            # AUDIT-FIX A-02 (2026-07-24): Nur die tatsaechlich erwarteten
+            # Lade-/Decode-Fehlerklassen fangen (vorher `except Exception`, was
+            # auch echte Programmierfehler als "Load fehlgeschlagen" tarnte).
+            # Das Ergebnis ist ein DEGRADIERTER Track mit Default-Werten — der
+            # wird unten NICHT gecacht, sonst liefert der mtime-basierte Cache
+            # den Muell (energy=50, mix_in=0) fuer immer zurueck.
             logger.warning(f"Schneller Librosa-Load fehlgeschlagen: {e}")
+            analysis_degraded = True
             duration = rekordbox_data.duration or 0.0
             energy = 50  # Default energy
             bass_intensity = 50
@@ -1125,6 +1556,7 @@ def analyze_track(file_path: str) -> Track | None:
             danceability = 0
             mfcc_fingerprint = []
             first_downbeat, downbeat_confidence = 0.0, 0.0
+            first_phrase, phrase_confidence = -1.0, 0.0  # A1 (R4: Sentinel -1.0)
             lufs = 0.0
             lufs_status = "error"
             lufs_coverage = 0.0
@@ -1142,19 +1574,13 @@ def analyze_track(file_path: str) -> Track | None:
             outro_covered = False
 
         # Extract key note and mode from Camelot code (for backward compatibility)
-        key_note = "C"
-        key_mode = "Major"
+        key_note = ""
+        key_mode = ""
         if rekordbox_data.camelot_code:
             # Use reverse mapping to get correct Note and Mode from Camelot code
             key_tuple = REVERSE_CAMELOT_MAP.get(rekordbox_data.camelot_code)
             if key_tuple:
                 key_note, key_mode = key_tuple
-            else:
-                # Fallback: at least detect mode from A/B suffix
-                if "A" in rekordbox_data.camelot_code:
-                    key_mode = "Minor"
-                elif "B" in rekordbox_data.camelot_code:
-                    key_mode = "Major"
 
         # --- Advanced Audio Analysis (Phase 2) ---
         # C1-Fix: Block darf NICHT im camelot_code-Zweig haengen, sonst wird
@@ -1163,13 +1589,13 @@ def analyze_track(file_path: str) -> Track | None:
         # die Datei erneut in voller Laenge zu laden.
         try:
             # Timbre-Fingerprint fuer den Fast-Path-Ausschnitt
-            timbre_fp = generate_timbre_fingerprint(y, sr)
+            timbre_fp = generate_timbre_fingerprint(y, sr, feature_cache)
 
             # Overall Track Averages for Advanced Features (VOR dem Sektions-Loop,
             # damit Sektionen ausserhalb des geladenen Audiofensters darauf
             # zurueckfallen koennen).
-            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr)
-            track_pr, track_sf = analyze_rhythm_complexity(y, sr)
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr, feature_cache)
+            track_pr, track_sf = analyze_rhythm_complexity(y, sr, feature_cache)
 
             # Update each section with detailed frequency and rhythm data
             updated_sections = []
@@ -1252,8 +1678,11 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            first_phrase=first_phrase,
+            phrase_confidence=phrase_confidence,
             key_confidence=key_confidence,
             lufs=lufs,
+            rekordbox_signature=rekordbox_signature,
             analysis_mode="rekordbox_fast_tail",
             analysis_coverage=analysis_coverage,
             outro_covered=outro_covered,
@@ -1263,7 +1692,15 @@ def analyze_track(file_path: str) -> Track | None:
             lufs_sample_rate=lufs_sample_rate,
         )
 
-        cache_track(cache_key, track)
+        # AUDIT-FIX A-02 (2026-07-24): Degradierte Analysen NICHT persistieren —
+        # sonst liefert der mtime-basierte Cache die erfundenen Default-Werte
+        # (energy=50, mix_in=0.0) fuer immer zurueck, ohne sichtbaren Fehler.
+        if not analysis_degraded:
+            cache_track(cache_key, track)
+        else:
+            logger.warning(
+                f"Degradierte Analyse NICHT gecacht: {os.path.basename(file_path)}"
+            )
         return track
 
     # No Rekordbox data - fallback to full librosa analysis
@@ -1273,8 +1710,9 @@ def analyze_track(file_path: str) -> Track | None:
     try:
         # K2 Audit-Fix: Safety-Net gegen extrem lange Dateien (>10 Min)
         # Echte Datei-Dauer zuerst bestimmen (sehr schnell), dann nur max. 10 Min laden
-        duration = float(librosa.get_duration(path=file_path))
+        duration = _get_file_duration(file_path)
         y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
+        feature_cache = FeatureCache(y, sr)
 
         # --- BPM-Erkennung: ID3-Tags haben Vorrang vor Librosa --- #
         # Beatport/Rekordbox-exportierte Dateien enthalten immer korrekte BPM-Werte.
@@ -1316,7 +1754,7 @@ def analyze_track(file_path: str) -> Track | None:
                 bpm = round(bpm / 2, 2)
             logger.info(f"BPM via Librosa: {bpm:.2f} (keine BPM-Tags gefunden)")
 
-        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+        chroma = feature_cache.get_chroma()
         chroma_vector = np.mean(chroma, axis=1)
         # Key-Confidence-Feature 2026-07-17: Essentia-Muster (strength + margin)
         key_note, key_mode, key_strength, key_margin, second_note, second_mode = (
@@ -1331,7 +1769,17 @@ def analyze_track(file_path: str) -> Track | None:
         )
 
         # Get Camelot code from key
-        camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
+        # AUDIT-FIX F15 (2026-07-24): Bei flacher/stiller/mehrdeutiger Chroma
+        # (Kontrast praktisch 0) KEINEN erfundenen Key setzen — sonst landen
+        # alle fehlgeschlagenen Analysen auf demselben Default-Camelot (5A) und
+        # scoren untereinander 100 ("perfekt harmonischer" Block aus Muell).
+        # Leerer Code -> neutraler Fallback-Score (10) im Scoring.
+        if key_strength <= 0.05 and key_margin <= 1e-4:
+            camelot_code = ""
+            key_confidence = 0.0
+            logger.info("Key-Detection nicht eindeutig (flache Chroma) -> kein Camelot-Code")
+        else:
+            camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
 
         energy = calculate_energy(y)
         bass_intensity = calculate_bass_intensity(y, sr)
@@ -1350,7 +1798,21 @@ def analyze_track(file_path: str) -> Track | None:
         # Vande Veire), BPM ist an dieser Stelle final
         first_downbeat, downbeat_confidence = estimate_first_downbeat(y, sr, bpm)
 
-        # DJ Brain: Struktur-Analyse (downbeat-verankert)
+        phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
+        if downbeat_confidence > 0.0:
+            first_phrase, phrase_confidence = estimate_first_phrase(
+                y, sr, bpm, first_downbeat, phrase_unit
+            )
+        else:
+            first_phrase, phrase_confidence = -1.0, 0.0
+        phrase_anchor = (
+            first_phrase
+            if first_phrase >= 0.0 and phrase_confidence >= PHRASE_CONFIDENCE_MIN
+            else first_downbeat
+        )
+        median_bar_length = _median_seconds_per_bar(beat_frames, sr, bpm)
+
+        # DJ Brain: Struktur-Analyse (phrase-verankert)
         structure, analysis_coverage, outro_covered = analyze_structure_windows(
             file_path,
             y,
@@ -1358,7 +1820,10 @@ def analyze_track(file_path: str) -> Track | None:
             bpm,
             genre_result.genre,
             duration,
-            anchor=first_downbeat,
+            anchor=phrase_anchor,
+            phrase_unit=phrase_unit,
+            seconds_per_bar=median_bar_length,
+            feature_cache=feature_cache,
         )
         section_dicts = [s.to_dict() for s in structure.sections]
         for section in section_dicts:
@@ -1370,13 +1835,21 @@ def analyze_track(file_path: str) -> Track | None:
             f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
         )
 
+        # AUDIT-FEATURE A1 (2026-07-26): Phrasen-Phase schaetzen (Konfidenz-Gate,
+        # Fallback: Takt-Anker) und als Anker fuers Phrasen-Gitter verwenden.
+        # AUDIT-FIX R2 (2026-07-26): NUR bei belastbarem Downbeat-Raster —
+        # ein gescheitertes Downbeat-Estimate (Konfidenz 0.0) wuerde sonst
+        # ein erfundenes Bar-Raster ab t=0 abstimmen.
+        # AUDIT-FIX R4 (2026-07-26): Sentinel -1.0 statt 0.0 — first_phrase
+        # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
         # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
         # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
         if section_dicts:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 calculate_genre_aware_mix_points(
                     section_dicts, bpm, duration, genre_result.genre,
-                    anchor=first_downbeat,
+                    anchor=phrase_anchor,
+                    first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
                 )
             )
             logger.info(
@@ -1387,16 +1860,19 @@ def analyze_track(file_path: str) -> Track | None:
                 analyze_structure_and_mix_points(
                     y, sr, duration, energy, bpm,
                     genre=genre_result.genre,
-                    anchor=first_downbeat,
+                    anchor=phrase_anchor,
+                    first_downbeat=first_downbeat,  # R3
                 )
             )
 
         # Audio Feature Extensions
-        brightness = calculate_brightness(y, sr)
-        vocal_instrumental = detect_vocal_instrumental(y, sr)
-        danceability = calculate_danceability(y, sr, bpm)
+        brightness = calculate_brightness(y, sr, feature_cache)
+        vocal_instrumental = detect_vocal_instrumental(y, sr, feature_cache)
+        danceability = calculate_danceability(y, sr, bpm, feature_cache)
         # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
-        mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(y, sr)
+        mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
+            y, sr, feature_cache=feature_cache
+        )
         logger.debug(
             f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
         )
@@ -1405,7 +1881,7 @@ def analyze_track(file_path: str) -> Track | None:
         # --- Advanced Audio Analysis (Phase 2) ---
         try:
             # We already have y and sr loaded. For detailed analysis, use full signal.
-            timbre_fp = generate_timbre_fingerprint(y, sr)
+            timbre_fp = generate_timbre_fingerprint(y, sr, feature_cache)
             
             updated_sections = []
             for sec_dict in section_dicts:
@@ -1422,8 +1898,8 @@ def analyze_track(file_path: str) -> Track | None:
                 updated_sections.append(sec_dict)
             section_dicts = updated_sections
             
-            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr)
-            track_pr, track_sf = analyze_rhythm_complexity(y, sr)
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr, feature_cache)
+            track_pr, track_sf = analyze_rhythm_complexity(y, sr, feature_cache)
         except Exception as e:
             logger.warning(f"Librosa-Phase-2 fehlgeschlagen: {e}")
             timbre_fp = []
@@ -1464,8 +1940,11 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            first_phrase=first_phrase,
+            phrase_confidence=phrase_confidence,
             key_confidence=key_confidence,
             lufs=lufs,
+            rekordbox_signature=rekordbox_signature,
             analysis_mode="librosa_full_or_tail",
             analysis_coverage=analysis_coverage,
             outro_covered=outro_covered,

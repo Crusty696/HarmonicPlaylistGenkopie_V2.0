@@ -349,11 +349,11 @@ class TestRekordboxCuePunkte:
     assert "MIX IN" in cue_names
     assert "MIX OUT" in cue_names
 
-  def test_keine_cues_wenn_mix_points_null(self, tmp_path):
-    """Keine Cue-Points wenn mix_in/out = 0."""
+  def test_keine_cues_wenn_mix_points_nicht_gesetzt(self, tmp_path):
+    """Keine Cue-Points wenn mix_in/out den Sentinel tragen."""
     playlist = [make_track(
       title="T1", bpm=128.0, camelotCode="8A", duration=300.0,
-      mix_in_point=0.0, mix_out_point=0.0,
+      mix_in_point=-1.0, mix_out_point=-1.0,
     )]
     out = str(tmp_path / "nocues.xml")
     fake_xml = FakeRekordboxXml()

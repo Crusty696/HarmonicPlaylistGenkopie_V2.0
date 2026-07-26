@@ -4,7 +4,6 @@ Validiert alle 24 Camelot-Codes und Track-Defaults.
 """
 import pytest
 from hpg_core.models import (
-  ANALYSIS_FIELD_CONSUMERS,
   CAMELOT_MAP,
   Track,
   bars_to_seconds,
@@ -154,8 +153,8 @@ class TestTrackDataclass:
     assert track.camelotCode == ""
     assert track.energy == 0
     assert track.bass_intensity == 0
-    assert track.mix_in_point == 0.0
-    assert track.mix_out_point == 0.0
+    assert track.mix_in_point == -1.0
+    assert track.mix_out_point == -1.0
     assert track.mix_in_bars == 0
     assert track.mix_out_bars == 0
 
@@ -208,6 +207,71 @@ class TestTrackDataclass:
     assert isinstance(track.mix_in_bars, int)
     assert isinstance(track.mix_out_bars, int)
 
+  def test_zero_is_a_valid_mix_in_point(self):
+    track = Track(
+      filePath="/t.mp3", fileName="t.mp3", mix_in_point=0.0, mix_out_point=30.0
+    )
+    assert track.mix_in_point == 0.0
+
+
+class TestPhraseAnchor:
+  """AUDIT-FIX R2/R4 (2026-07-26): Gates des phrase_anchor-Fallbacks.
+
+  R4: Sentinel fuer 'nicht geschaetzt' ist -1.0 — eine Phrasen-Phase von
+  exakt 0.0 ist GUELTIG und darf nicht verworfen werden.
+  R2: Ohne belastbaren Downbeat (downbeat_confidence == 0.0) waere das
+  Bar-Raster, auf dem first_phrase abgestimmt wurde, erfunden — dann
+  Fallback auf first_downbeat.
+  """
+
+  def _track(self, **kw) -> Track:
+    return Track(filePath="/t.mp3", fileName="t.mp3", **kw)
+
+  def test_default_ist_sentinel_und_faellt_auf_downbeat_zurueck(self):
+    t = self._track(first_downbeat=1.5, downbeat_confidence=0.8)
+    assert t.first_phrase == -1.0
+    assert t.phrase_anchor == 1.5
+
+  def test_gueltige_phase_null_wird_verwendet(self):
+    """R4-Kern: first_phrase == 0.0 (Track startet auf der Phrasengrenze)
+    mit ausreichender Konfidenz ist ein gueltiger Anker."""
+    t = self._track(
+      first_phrase=0.0, phrase_confidence=0.9,
+      first_downbeat=1.5, downbeat_confidence=0.8,
+    )
+    assert t.phrase_anchor == 0.0
+
+  def test_belastbare_phase_wird_verwendet(self):
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=0.5,
+      first_downbeat=0.5, downbeat_confidence=0.7,
+    )
+    assert t.phrase_anchor == 14.2
+
+  def test_schwache_konfidenz_faellt_auf_downbeat_zurueck(self):
+    from hpg_core.config import PHRASE_CONFIDENCE_MIN
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=PHRASE_CONFIDENCE_MIN - 0.01,
+      first_downbeat=0.5, downbeat_confidence=0.7,
+    )
+    assert t.phrase_anchor == 0.5
+
+  def test_ohne_downbeat_konfidenz_faellt_auf_downbeat_zurueck(self):
+    """R2-Kern: first_phrase aus einem erfundenen Raster (gescheiterter
+    Downbeat-Estimate, z. B. Alt-Cache) wird nicht als Anker verwendet."""
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=0.9,
+      first_downbeat=0.0, downbeat_confidence=0.0,
+    )
+    assert t.phrase_anchor == 0.0  # == first_downbeat (Fallback)
+
+  def test_sentinel_minus_1_faellt_auf_downbeat_zurueck(self):
+    t = self._track(
+      first_phrase=-1.0, phrase_confidence=0.9,
+      first_downbeat=2.25, downbeat_confidence=1.0,
+    )
+    assert t.phrase_anchor == 2.25
+
 
 def test_bar_conversion_has_explicit_rounding_contract():
   assert bars_to_seconds(16, 120.0) == 32.0
@@ -216,8 +280,12 @@ def test_bar_conversion_has_explicit_rounding_contract():
   assert seconds_to_bars(31.2, 120.0, rounding="ceil") == 16
 
 
-def test_every_audited_persisted_feature_has_a_declared_consumer_or_diagnostic_role():
-  assert set(ANALYSIS_FIELD_CONSUMERS) == {
-    "bass_intensity", "avg_mids", "avg_highs", "brightness",
-    "vocal_instrumental", "danceability", "genre_source", "mfcc_fingerprint",
-  }
+def test_tracks_compare_and_hash_by_stable_file_identity():
+  first = Track("C:/music/song.mp3", "song.mp3")
+  restored = Track("C:/music/./song.mp3", "song.mp3")
+  other = Track("C:/music/other.mp3", "other.mp3")
+
+  assert first == restored
+  assert hash(first) == hash(restored)
+  assert first != other
+  assert len({first, restored, other}) == 2

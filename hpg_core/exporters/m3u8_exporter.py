@@ -31,14 +31,16 @@ class M3U8Exporter(BaseExporter):
     - No dependencies required
     """
 
-    def __init__(self, encoding: str = "utf-8"):
+    def __init__(self, encoding: str = "utf-8", relative_paths: bool = False):
         """
         Initialize M3U8 Exporter
 
         Args:
             encoding: File encoding (default: utf-8)
+            relative_paths: Write paths relative to the .m3u8 file directory.
         """
         self.encoding = encoding
+        self.relative_paths = relative_paths
 
     def export(
         self,
@@ -90,6 +92,15 @@ class M3U8Exporter(BaseExporter):
                         # M5: Pfade mit Forward-Slashes fuer Cross-Platform-Kompatibilitaet
                         # M10: Sanitize path to prevent path traversal/newline injection
                         normalized_path = track.filePath.replace("\n", "").replace("\r", "")
+                        if self.relative_paths:
+                            try:
+                                normalized_path = os.path.relpath(
+                                    normalized_path, out_dir
+                                )
+                            except ValueError:
+                                # Unterschiedliche Windows-Laufwerke koennen
+                                # nicht relativ zueinander ausgedrueckt werden.
+                                pass
                         if normalized_path.startswith("\\\\"):
                             # UNC-Netzwerkpfad (\\server\share): nativ belassen — ein
                             # pauschales \\->// macht //server/share draus (weder gueltiger
@@ -123,6 +134,7 @@ class M3U8Exporter(BaseExporter):
             "format": "M3U8",
             "extension": ".m3u8",
             "encoding": self.encoding,
+            "relative_paths": self.relative_paths,
             "compatible_with": [
                 "Rekordbox 5.x, 6.x, 7.x",
                 "Serato DJ Pro",

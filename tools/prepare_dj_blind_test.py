@@ -33,6 +33,7 @@ def prepare(
   output_dir: Path,
   key_path: Path,
   seed: int | None = None,
+  source_root: Path | None = None,
 ) -> tuple[Path, Path]:
   if output_dir.exists():
     raise FileExistsError(f"Ausgabeordner existiert bereits: {output_dir}")
@@ -44,6 +45,7 @@ def prepare(
     raise ValueError("Schluesseldatei muss ausserhalb des Session-Ordners liegen")
 
   manifest = manifest.resolve()
+  allowed_root = (source_root or manifest.parent).resolve()
   rows = list(csv.DictReader(manifest.open(encoding="utf-8-sig", newline="")))
   required = {"pair_id", "hpg_clip", "baseline_clip"}
   if not rows or not required.issubset(rows[0]):
@@ -63,6 +65,10 @@ def prepare(
       if not source.is_absolute():
         source = manifest.parent / source
       source = source.resolve()
+      if not source.is_relative_to(allowed_root):
+        raise ValueError(
+          f"Clip ausserhalb des erlaubten Source-Roots in Paar {pair_id}: {source}"
+        )
       if not source.is_file():
         raise ValueError(f"Clip fehlt in Paar {pair_id}: {source}")
       sources.append(source)
@@ -140,8 +146,13 @@ def main() -> int:
   parser.add_argument("--manifest", required=True, type=Path)
   parser.add_argument("--output-dir", required=True, type=Path)
   parser.add_argument("--key-output", required=True, type=Path)
+  parser.add_argument(
+    "--source-root",
+    type=Path,
+    help="Erlaubter Clip-Root; Standard ist das Verzeichnis des Manifests.",
+  )
   args = parser.parse_args()
-  prepare(args.manifest, args.output_dir, args.key_output)
+  prepare(args.manifest, args.output_dir, args.key_output, source_root=args.source_root)
   return 0
 
 

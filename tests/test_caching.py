@@ -6,8 +6,30 @@ import os
 import pytest
 import tempfile
 import sqlite3
+import multiprocessing as mp
 from hpg_core.caching import generate_cache_key, file_lock, track_to_dict, dict_to_track
 from hpg_core.models import Track
+
+
+def _cache_process_job(cache_file, lock_file, cache_key, title, initialize):
+  """Schreibt und liest einen Track in einem separaten Prozess."""
+  from hpg_core import caching
+
+  caching.CACHE_FILE = cache_file
+  caching.LOCK_FILE = lock_file
+  if initialize:
+    caching.init_cache()
+
+  track = Track(
+    filePath=f"C:/Music/{title}.mp3",
+    fileName=f"{title}.mp3",
+    title=title,
+    bpm=128.0,
+    duration=300.0,
+  )
+  caching.cache_track(cache_key, track)
+  cached = caching.get_cached_track(cache_key)
+  return cached is not None and cached.title == title
 
 
 @pytest.fixture
@@ -453,3 +475,76 @@ class TestTrackSchemaValidation:
 
     with pytest.raises(ValueError, match=r"ai_metadata\.scores\[1\] ist nicht endlich"):
       dict_to_track(data)
+
+  def test_zero_mix_in_is_valid_but_sentinel_is_explicit(self, sample_track):
+    data = track_to_dict(sample_track)
+    data["mix_in_point"] = 0.0
+    data["mix_out_point"] = 30.0
+    restored = dict_to_track(data)
+    assert restored.mix_in_point == 0.0
+
+    data["mix_in_point"] = -2.0
+    with pytest.raises(ValueError, match="ungueltig negativ"):
+      dict_to_track(data)
+
+
+class TestCacheConcurrency:
+  """Regressionen fuer konkurrierende Prozesse auf einem Testcache."""
+
+  def test_multiprocess_initialization_and_writes_are_serialized(self, tmp_path):
+    """Gleichzeitige Initialisierung darf keine Versionsrennen erzeugen."""
+    cache_file = str(tmp_path / "concurrent_init.db")
+    lock_file = str(tmp_path / "concurrent_init.lock")
+    jobs = [
+      (cache_file, lock_file, f"init-key-{index}", f"Init Track {index}", True)
+      for index in range(8)
+    ]
+
+    context = mp.get_context("spawn")
+    with context.Pool(processes=4) as pool:
+      results = pool.starmap(_cache_process_job, jobs, chunksize=1)
+
+    assert all(results)
+    conn = sqlite3.connect(cache_file)
+    try:
+      version = conn.execute(
+        "SELECT version FROM cache WHERE key = 'version'"
+      ).fetchone()
+      record_count = conn.execute(
+        "SELECT COUNT(*) FROM cache WHERE key != 'version'"
+      ).fetchone()
+    finally:
+      conn.close()
+
+    from hpg_core import caching
+    assert version == (caching.CACHE_VERSION,)
+    assert record_count == (len(jobs),)
+
+  def test_multiprocess_writes_and_readbacks_are_atomic(self, tmp_path, monkeypatch):
+    """Konkurrierende Track-Writes liefern vollstaendige, lesbare Records."""
+    from hpg_core import caching
+
+    cache_file = str(tmp_path / "concurrent_writes.db")
+    lock_file = str(tmp_path / "concurrent_writes.lock")
+    monkeypatch.setattr(caching, "CACHE_FILE", cache_file)
+    monkeypatch.setattr(caching, "LOCK_FILE", lock_file)
+    caching.init_cache()
+    jobs = [
+      (cache_file, lock_file, f"write-key-{index}", f"Write Track {index}", False)
+      for index in range(16)
+    ]
+
+    context = mp.get_context("spawn")
+    with context.Pool(processes=4) as pool:
+      results = pool.starmap(_cache_process_job, jobs, chunksize=1)
+
+    assert all(results)
+    conn = sqlite3.connect(cache_file)
+    try:
+      record_count = conn.execute(
+        "SELECT COUNT(*) FROM cache WHERE key != 'version'"
+      ).fetchone()
+    finally:
+      conn.close()
+
+    assert record_count == (len(jobs),)

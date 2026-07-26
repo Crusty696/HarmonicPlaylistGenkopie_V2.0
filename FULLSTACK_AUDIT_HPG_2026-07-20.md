@@ -1,5 +1,9 @@
 # Full-Stack-Systemaudit – Harmonic Playlist Generator V2.0
 
+> **Historischer Snapshot vom 2026-07-20.** Nicht als aktueller
+> Produktionsstatus verwenden; der aktuelle Stand steht in
+> `PRODUCTION_STATUS.md` und `AUDIT_REPORT_2026-07-26_FULLSTACK.md`.
+
 Datum: 2026-07-20  
 Modus: `audit-plan`, read-only  
 Ergebnis: 4 HIGH, 1 MEDIUM, 2 LOW; keine Codeänderungen im Audit

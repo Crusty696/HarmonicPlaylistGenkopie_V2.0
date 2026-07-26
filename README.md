@@ -77,7 +77,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Optional Rekordbox integration:
+Rekordbox integration is optional at runtime. The full developer requirements
+include its package; a lean installation can omit that line from
+`requirements.txt` and the app will continue with the librosa path:
 ```bash
 pip install pyrekordbox
 ```

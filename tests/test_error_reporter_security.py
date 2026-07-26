@@ -11,6 +11,7 @@ from hpg_core.playlist_security import (
   validate_playlist_security,
   validate_track_security,
 )
+from hpg_core.resource_limits import sanitize_playlist as sanitize_resource_limits
 from hpg_core.config import SECURITY_MAX_PLAYLIST_SIZE, SECURITY_MAX_TRACK_DURATION
 from tests.fixtures.track_factories import make_track
 
@@ -55,6 +56,9 @@ class TestErrorReporter:
 
 
 class TestPlaylistSecurity:
+  def test_canonical_resource_limits_module_exports_sanitizer(self):
+    assert sanitize_resource_limits([]) == []
+
   def test_sanitize_removes_none_and_invalid(self):
     good = make_track()
     bad = make_track()

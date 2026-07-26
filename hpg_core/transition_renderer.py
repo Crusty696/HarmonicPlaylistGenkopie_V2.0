@@ -21,7 +21,7 @@ import soundfile as sf
 from scipy.signal import butter, sosfiltfilt
 import librosa
 
-from .config import MAX_TRANSITION_OVERLAP_SECONDS
+from .config import MAX_TRANSITION_OVERLAP_SECONDS, METER
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 FILTER_RIDE_HP_HZ = 800.0    # Hochpass-Sweep beim Ausblenden (filter_ride)
 SMOOTH_BLEND_LP_HZ = 300.0   # Tiefpass auf Track A (smooth_blend)
 BREAKDOWN_HP_HZ = 250.0      # Bass-Kill auf Track A (breakdown_bridge)
+FILTER_RAMP_SECONDS = 0.05   # Kurze Rampe gegen harte Filter-Schalter
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,7 @@ class EqCrossfadeConfig:
     sr: int
     bass_cutoff_hz: float
     transition_type: str
+    bpm_a: float = 120.0  # AUDIT-FIX R-04: fuer beat-synchrone echo_out-Delays
 
 
 @dataclass
@@ -73,6 +75,11 @@ class TransitionClipSpec:
     normalize_rms: bool = True          # RMS-Normalisierung vor Crossfade
     normalize_target_db: float = -14.0  # Ziel-Pegel in dBRMS (EBU R128: -14 LUFS)
     use_compressor: bool = False        # Optionaler pedalboard Compressor (experimentell)
+    # AUDIT-FIX R-07 (2026-07-26): echte gemessene Track-LUFS (pyloudnorm,
+    # BS.1770) aus der Analyse — praeziser als der ungewichtete RMS-Messwert
+    # des Renderers. 0.0 = nicht gemessen (Sentinel) -> RMS-Fallback.
+    lufs_a: float = 0.0
+    lufs_b: float = 0.0
 
     @classmethod
     def from_plan(cls, plan, from_track, to_track):
@@ -95,6 +102,8 @@ class TransitionClipSpec:
             downbeat_reliable_b=(
                 getattr(to_track, "downbeat_confidence", 0.0) >= 0.9
             ),
+            lufs_a=float(getattr(from_track, "lufs", 0.0) or 0.0),
+            lufs_b=float(getattr(to_track, "lufs", 0.0) or 0.0),
         )
 
 
@@ -125,8 +134,15 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Segmente berechnen
     a_start = max(0.0, spec.mix_out_sec - pre_roll)
     a_dur   = pre_roll + cf_sec
-    b_start = max(0.0, spec.mix_in_sec)
-    b_dur   = cf_sec + post_roll
+    # AUDIT-FIX N-02 (2026-07-26): Track B mit 1 Takt VORLAUF laden. Das
+    # C1-Bar-Alignment verschiebt B um bis zu einen Takt — ohne Vorlauf wurden
+    # dabei bis zu 2 Beats vom ANFANG von seg_b verworfen: genau der Phrasen-/
+    # Drop-Einsatz, auf den die Analyse den Mix-In gelegt hat. Mit Vorlauf
+    # schneidet der Alignment-Cut nur in den Vorlauf, nie in den Einsatz.
+    bar_lead_sec = (60.0 / spec.bpm_b) * METER if spec.bpm_b > 0 else 0.0
+    b_start = max(0.0, spec.mix_in_sec - bar_lead_sec)
+    b_lead_sec = spec.mix_in_sec - b_start  # tatsaechlich geladener Vorlauf
+    b_dur   = b_lead_sec + cf_sec + post_roll
 
     # Audio laden (beide Segmente)
     seg_a = _load_segment(spec.track_a_path, a_start, a_dur, sr)
@@ -151,17 +167,25 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
             target_bpm_b = spec.bpm_b / 2.0
             logger.info(f"Doubletime-Switch erkannt fuer Track B: Virtuelle BPM halbiert von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
 
-        # Rate: rate = target_bpm_b / bpm_a.
-        # Wenn rate > 1.0, wird das Signal verlangsamt. Wenn rate < 1.0, wird es beschleunigt.
-        raw_rate = float(target_bpm_b / spec.bpm_a)
+        # AUDIT-FIX R-01 (2026-07-24): Rate war invertiert.
+        # librosa.effects.time_stretch: rate > 1.0 = SCHNELLER, rate < 1.0 = LANGSAMER.
+        # Track B (target_bpm_b) soll auf das Tempo von Track A (bpm_a) gebracht werden:
+        # rate = bpm_a / target_bpm_b  (B langsamer als A -> rate > 1 -> B wird beschleunigt).
+        # Die Phasen-Umrechnung in known_b (phase_b / applied_stretch_rate) folgt bereits
+        # dieser librosa-Semantik (t_out = t_in / rate) und bleibt unveraendert.
+        raw_rate = float(spec.bpm_a / target_bpm_b)
 
-        # Sicherheitslimit fuer extremen Pitch (max +-15% vom Zieltempo)
-        rate = max(0.85, min(1.15, raw_rate))
+        # AUDIT-FIX C4 (2026-07-26): Clamp von +-15% auf +-8% gesenkt.
+        # DJ-realistisch sind +-6-8% Pitchfader; +-15% ohne Key-Lock waren
+        # ~2,4 Halbtoene Verstimmung — das Camelot-Scoring stimmt dann nicht
+        # mehr mit dem Gehoerten ueberein. (Phase-Vocoder ohne Key-Lock:
+        # 8% ~ 1,3 Halbtoene, an der Grenze des Tolerablen fuer Previews.)
+        rate = max(0.92, min(1.08, raw_rate))
         # H3-Fix: geclampter Stretch bedeutet, dass der Preview NICHT
         # tempo-synchron laeuft — das muss sichtbar geloggt werden
         if abs(rate - raw_rate) > 1e-6:
             logger.warning(
-                f"Time-Stretch geclamped (benoetigt Rate {raw_rate:.3f}, erlaubt 0.85-1.15): "
+                f"Time-Stretch geclamped (benoetigt Rate {raw_rate:.3f}, erlaubt 0.92-1.08): "
                 f"Preview laeuft NICHT tempo-synchron ({spec.bpm_b:.1f} vs {spec.bpm_a:.1f} BPM)"
             )
 
@@ -176,11 +200,22 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         except Exception as ts_err:
             logger.warning(f"BPM Time-Stretching fehlgeschlagen: {ts_err}")
 
-    # RMS-Normalisierung: beide Tracks auf gleichen Lautheitspegel bringen
-    # Verhindert hoerbare Lautheitssprunge im Crossfade (echte Tracks: bis 22 dB Differenz)
+    # Lautheits-Normalisierung: absolute Pegel ausschliesslich aus dem
+    # tatsaechlichen Preview-Segment bestimmen.
+    # AUDIT-FIX R-07 (2026-07-26): Wenn echte Track-LUFS aus der Analyse
+    # vorliegen (pyloudnorm, K-gewichtet nach BS.1770), wird der Gain direkt
+    # daraus berechnet — der ungewichtete RMS des Renderers unterschied sich
+    # je nach Spektrum um 2-4 LUFS (basslastiger Techno vs. heller Trance),
+    # genau der Lautheitssprung, den das Feature verhindern soll.
     if spec.normalize_rms:
+        # -14 dB ist ein RMS-Ziel, kein LUFS-Ziel. Die gemessenen LUFS duerfen
+        # danach nur noch den relativen A/B-Unterschied korrigieren; so bleibt
+        # die Preview-Semantik unabhaengig davon, ob Track-LUFS vorhanden ist.
         seg_a = _rms_normalize(seg_a, spec.normalize_target_db)
         seg_b = _rms_normalize(seg_b, spec.normalize_target_db)
+        seg_a, seg_b = _apply_lufs_delta(
+            seg_a, seg_b, spec.lufs_a, spec.lufs_b
+        )
 
     # Soll-Laengen in Frames
     cf_frames   = int(cf_sec * sr)
@@ -198,23 +233,41 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Downbeat-Feature 2026-07-17: sind die ersten Downbeats beider Tracks
     # bekannt, wird der Versatz EXAKT aus den Beatgrids berechnet statt zur
     # Renderzeit geschaetzt (schneller und praeziser).
+    # AUDIT-FIX N-02 (2026-07-26): der geladene Vorlauf (b_lead_sec) skaliert
+    # beim Time-Stretch mit 1/rate; das Alignment konsumiert ihn per Cut.
+    b_lead_frames = int(round(b_lead_sec / applied_stretch_rate * sr))
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
             known_a = known_b = None
             if spec.downbeat_reliable_a and spec.downbeat_reliable_b:
-                beat_sec_a = 60.0 / spec.bpm_a
-                # Zeit vom Segmentstart bis zum naechsten Grid-Beat
-                known_a = (spec.first_downbeat_a - spec.mix_out_sec) % beat_sec_a
-                beat_sec_b = 60.0 / spec.bpm_b if spec.bpm_b > 0 else beat_sec_a
-                phase_b = (spec.first_downbeat_b - spec.mix_in_sec) % beat_sec_b
+                # AUDIT-FIX C1 (2026-07-26): Phase innerhalb des TAKTS (Bar)
+                # statt innerhalb des Beats — das Alignment setzt Beat 1 von B
+                # auf Beat 1 von A, nicht nur Kick auf Kick.
+                bar_sec_a = (60.0 / spec.bpm_a) * METER
+                known_a = (spec.first_downbeat_a - spec.mix_out_sec) % bar_sec_a
+                bar_sec_b = (
+                    (60.0 / spec.bpm_b) * METER if spec.bpm_b > 0 else bar_sec_a
+                )
+                # N-02: Phase relativ zum SEGMENT-Anfang (b_start, inkl.
+                # Vorlauf) — konsistent mit dem Schaetz-Pfad, der die Phase
+                # ebenfalls ab Segment-Anfang misst. Ohne Clamp ist das
+                # modulo-identisch zur alten Rechnung ab mix_in_sec.
+                phase_b = (spec.first_downbeat_b - b_start) % bar_sec_b
                 # Track B wurde ggf. gestretcht: Zeitpunkte skalieren mit 1/rate
                 known_b = phase_b / applied_stretch_rate
             seg_b = _align_beat_phase(
                 seg_a[pre_frames:], seg_b, spec.bpm_a, sr,
                 known_first_beat_a=known_a, known_first_beat_b=known_b,
+                lead_frames=b_lead_frames,
             )
         except Exception as align_err:
             logger.warning(f"Beat-Phase-Alignment fehlgeschlagen: {align_err}")
+            # N-02: Vorlauf trotzdem entfernen, sonst laege der Crossfade
+            # einen Takt zu frueh im Material von Track B
+            seg_b = seg_b[min(b_lead_frames, len(seg_b)):]
+    elif b_lead_frames > 0:
+        # Kein Alignment moeglich -> Vorlauf verwerfen (altes Verhalten)
+        seg_b = seg_b[min(b_lead_frames, len(seg_b)):]
 
     # Sicherstellen dass Segmente lang genug sind (Null-Padding falls noetig)
     seg_a = _ensure_len(seg_a, pre_frames + cf_frames)
@@ -230,6 +283,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         sr=sr,
         bass_cutoff_hz=spec.bass_cutoff_hz,
         transition_type=spec.transition_type,
+        bpm_a=float(spec.bpm_a or 120.0),
     )
     part_cf   = _apply_eq_crossfade(a_cf, b_cf, config)
     part_post = seg_b[cf_frames:]              # Nur Track B nach dem Mix
@@ -242,12 +296,14 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     if spec.use_compressor:
         mixed = _apply_compressor(mixed, sr)
 
-    # Soft-Limiter gegen Clipping (kein hartes Brick-Wall)
-    # M3-Fix: np.max crasht auf leerem Array (degenerierter Plan mit
-    # pre_roll=post_roll=crossfade=0) — dann 0.0 als Peak annehmen.
-    peak = np.max(np.abs(mixed)) if mixed.size else 0.0
-    if peak > 0.95:
-        mixed = mixed * (0.95 / peak)
+    # AUDIT-FIX R-03 (2026-07-24): Echter Soft-Limiter mit tanh-Kennlinie statt
+    # globaler Peak-Normalisierung. Vorher senkte ein EINZELNER Transient den
+    # KOMPLETTEN Clip (Pre-Roll + Crossfade + Post-Roll) linear ab -> die
+    # -14-dBRMS-Normalisierung wurde durch einen Sample-Peak zunichte gemacht
+    # und A/B-Previews waren nicht mehr lautheitskonsistent. Jetzt: nur die
+    # ueberschreitenden Samples weich begrenzen, der Rest bleibt unveraendert.
+    if mixed.size:
+        mixed = _apply_soft_limiter(mixed)
 
     # Als 16-bit PCM WAV exportieren
     sf.write(output_path, mixed.astype(np.float32), samplerate=sr, subtype='PCM_16')
@@ -285,46 +341,76 @@ def _estimate_first_beat(seg: np.ndarray, sr: int, bpm: float) -> float:
 def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
                       bpm: float, sr: int,
                       known_first_beat_a: float | None = None,
-                      known_first_beat_b: float | None = None) -> np.ndarray:
+                      known_first_beat_b: float | None = None,
+                      lead_frames: int = 0) -> np.ndarray:
     """
-    Verschiebt seg_b um weniger als einen Beat, sodass sein erster Beat auf
-    das Beat-Raster von ref_seg (Track A im Crossfade-Bereich) faellt.
+    Verschiebt seg_b, sodass sein Beat-Raster auf das von ref_seg (Track A im
+    Crossfade-Bereich) faellt.
 
     Downbeat-Feature 2026-07-17: sind die ersten Beat-Zeitpunkte beider
     Segmente aus den Beatgrids bekannt, entfaellt die (teurere und
     unsicherere) Laufzeit-Schaetzung via librosa.beat.beat_track.
 
-    Verschiebung nach vorne = Samples am Anfang verwerfen, nach hinten =
-    Null-Padding (< 1/2 Beat, unhoerbar da im Fade-In).
+    AUDIT-FIX N-02 (2026-07-26): seg_b wird jetzt mit `lead_frames` Vorlauf
+    (1 Takt vor dem Mix-In) uebergeben. Der Alignment-Cut waehlt den
+    GROESSTEN Schnitt <= lead_frames mit korrekter Phase — er schneidet also
+    nur in den Vorlauf, nie in den eigentlichen Einsatz (Phrasen-/Drop-Start
+    bei lead_frames). Vorher wurden bis zu grid_len/2 Samples (2 Beats auf
+    dem Takt-Pfad) vom Einsatz selbst verworfen. Das zurueckgegebene Segment
+    beginnt am (alignierten) Crossfade-Start; der Vorlauf ist konsumiert.
+
+    Ohne Vorlauf (lead_frames == 0, Mix-In am Track-Anfang) bleibt das alte
+    Verhalten: naechstgelegene Verschiebung, nach vorne = Cut, nach hinten =
+    Null-Padding (< 1/2 Grid, unhoerbar da im Fade-In).
     """
+    lead_frames = max(0, min(int(lead_frames), len(seg_b)))
     if bpm <= 0 or len(ref_seg) < sr or len(seg_b) < sr:
-        return seg_b
+        return seg_b[lead_frames:]
     beat_len = int(round(60.0 / bpm * sr))
     if beat_len <= 0:
-        return seg_b
+        return seg_b[lead_frames:]
 
+    # AUDIT-FIX C1 (2026-07-26): Auf dem EXAKT-Pfad (beide Downbeats aus
+    # verlaesslichen Beatgrids bekannt) wird jetzt auf TAKT-Phase aligned
+    # (Modulo Bar-Laenge) statt nur auf Beat-Phase. Vorher konnte die Kick
+    # zwar auf der Kick sitzen, aber Beat 1 von B auf Beat 3 von A — der
+    # Snare-Backbeat und die Taktstruktur lagen versetzt. Der Schaetz-Pfad
+    # (8-s-Fenster, 30-380 ms Fehler) bleibt bewusst auf Beat-Ebene: eine
+    # Verschiebung um ganze Takte auf Basis einer unsicheren Schaetzung waere
+    # riskanter als der Beat-Fehler, den sie korrigieren soll.
     if known_first_beat_a is not None and known_first_beat_b is not None:
         t_a = float(known_first_beat_a)
         t_b = float(known_first_beat_b)
+        grid_len = beat_len * 4  # Takt-Phase (METER=4)
     else:
         t_a = _estimate_first_beat(ref_seg, sr, bpm)
         t_b = _estimate_first_beat(seg_b, sr, bpm)
-    offset = int(round((t_b - t_a) * sr)) % beat_len
-    if offset == 0:
-        return seg_b
-
-    if offset <= beat_len // 2:
-        shifted = seg_b[offset:]
-        shift_info = -offset
+        grid_len = beat_len
+    # t_a/t_b sind Grid-Phasen relativ zum jeweiligen SEGMENT-Anfang.
+    # Gesuchter Schnitt: cut == (t_b - t_a) (mod grid_len), damit die Phase
+    # des Ergebnis-Anfangs auf dem Raster von A liegt.
+    raw = int(round((t_b - t_a) * sr))
+    if lead_frames > 0:
+        # N-02: groesster phasengleicher Schnitt <= lead_frames — der Einsatz
+        # (bei lead_frames) bleibt vollstaendig erhalten und landet maximal
+        # grid_len-1 Samples hinter dem Crossfade-Start.
+        cut = raw + grid_len * ((lead_frames - raw) // grid_len)
     else:
-        pad = beat_len - offset
+        # Alt-Verhalten ohne Vorlauf: naechstgelegene Verschiebung (+-1/2 Grid)
+        offset = raw % grid_len
+        cut = offset if offset <= grid_len // 2 else offset - grid_len
+
+    if cut >= 0:
+        shifted = seg_b[cut:]
+    else:
         shifted = np.concatenate(
-            [np.zeros((pad, seg_b.shape[1]), dtype=seg_b.dtype), seg_b], axis=0
+            [np.zeros((-cut, seg_b.shape[1]), dtype=seg_b.dtype), seg_b], axis=0
         )
-        shift_info = pad
-    logger.info(
-        f"Beat-Phase-Alignment: Track B um {shift_info / sr * 1000:.0f}ms verschoben"
-    )
+    shift_info = lead_frames - cut  # Verschiebung relativ zum nominalen Start
+    if shift_info != 0:
+        logger.info(
+            f"Beat-Phase-Alignment: Track B um {shift_info / sr * 1000:.0f}ms verschoben"
+        )
     return shifted
 
 
@@ -419,6 +505,29 @@ def _make_sos(cutoff_hz: float, sr: int, btype: str, order: int = 4) -> np.ndarr
     return butter(order, cutoff_hz, btype=btype, fs=sr, output='sos')
 
 
+def _apply_filter_ramp(
+    unfiltered: np.ndarray,
+    filtered: np.ndarray,
+    sr: int,
+) -> np.ndarray:
+    """Blendt den Filtereinsatz am Crossfade-Anfang kurz und sicher ein."""
+    ramp_frames = min(
+        len(unfiltered),
+        len(filtered),
+        max(1, int(round(FILTER_RAMP_SECONDS * sr))),
+    )
+    if ramp_frames < 2:
+        return unfiltered.astype(np.float32, copy=True)
+
+    filter_env = np.ones((len(unfiltered), 1), dtype=np.float32)
+    filter_env[:ramp_frames] = np.linspace(
+        0.0, 1.0, ramp_frames, dtype=np.float32
+    )[:, np.newaxis]
+    return (
+        unfiltered * (1.0 - filter_env) + filtered * filter_env
+    ).astype(np.float32)
+
+
 def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
     """
     Normalisiert ein Audio-Segment auf einen Ziel-RMS-Pegel.
@@ -455,6 +564,44 @@ def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
     # Gain clampen: max. +12 dB (4.0x) / -20 dB (0.1x) — verhindert aggressive Eingriffe
     gain = float(np.clip(gain, 0.1, 4.0))
     return (seg * gain).astype(np.float32)
+
+
+def _apply_lufs_delta(
+    seg_a: np.ndarray,
+    seg_b: np.ndarray,
+    lufs_a: float,
+    lufs_b: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Korrigiert nur den relativen LUFS-Abstand nach der Segment-RMS-Norm."""
+    if not (np.isfinite(lufs_a) and np.isfinite(lufs_b)):
+        return seg_a, seg_b
+    if lufs_a >= 0.0 or lufs_b >= 0.0:
+        return seg_a, seg_b
+
+    delta_db = float(np.clip(lufs_a - lufs_b, -6.0, 6.0))
+    half_gain = float(10.0 ** (delta_db / 40.0))
+    return (
+        (seg_a / half_gain).astype(np.float32),
+        (seg_b * half_gain).astype(np.float32),
+    )
+
+
+def _apply_soft_limiter(
+    mixed: np.ndarray, threshold: float = 0.95
+) -> np.ndarray:
+    """Begrenzt Peaks kanalgekoppelt und bereinigt ungueltige Samples."""
+    limited = np.nan_to_num(mixed, nan=0.0, posinf=1.0, neginf=-1.0).astype(
+        np.float32, copy=True
+    )
+    if limited.size == 0:
+        return limited
+    frame_peak = np.max(np.abs(limited), axis=1, keepdims=True)
+    over = frame_peak > threshold
+    excess = (frame_peak - threshold) / (1.0 - threshold + 1e-9)
+    limited_peak = threshold + (1.0 - threshold) * np.tanh(excess)
+    scale = np.ones_like(frame_peak, dtype=np.float32)
+    scale[over] = limited_peak[over] / np.maximum(frame_peak[over], 1e-12)
+    return limited * scale
 
 
 _pedalboard_warned = False
@@ -505,11 +652,18 @@ def _apply_eq_crossfade(
     Wendet hochpraezise, echt verdrahtete EQ- und DSP-Effekte fuer DJ-Übergänge an.
 
     Fade-Envelopes:
-      fo (fade_out): 1.0 -> 0.0 linear (Track A verschwindet)
-      fi (fade_in):  0.0 -> 1.0 linear (Track B erscheint)
+      fo (fade_out): Track A verschwindet
+      fi (fade_in):  Track B erscheint
+
+    AUDIT-FIX C3 (2026-07-24): EQUAL-POWER (cos/sin) statt linear. Ein linearer
+    Crossfade erzeugt bei nicht perfekt korrelierten Signalen in der Mitte ein
+    hoerbares ~-3-dB-Lautheitsloch. Die Equal-Power-Kurven halten die
+    Summenleistung fo^2 + fi^2 == 1 konstant. Betrifft die Hoehen im bass_swap,
+    filter_ride/smooth_blend/breakdown_bridge und den Fallback-Crossfade.
     """
-    fo = np.linspace(1.0, 0.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
-    fi = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
+    _t = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)
+    fo = np.cos(_t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
+    fi = np.sin(_t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
 
     # Audit-Fix 2026-07-21: sosfiltfilt verlangt Segmentlaenge > padlen (~30-60
     # Samples). Bei extrem kurzem Crossfade (< ~1.5ms) crasht der Filter mit
@@ -531,8 +685,10 @@ def _apply_eq_crossfade(
         bass_a  = sosfiltfilt(sos_lp, seg_a, axis=0)
         bass_b  = sosfiltfilt(sos_lp, seg_b, axis=0)
 
-        # Hoehen: normaler linearer Crossfade
-        mixed = highs_a * fo + highs_b * fi
+        # AUDIT-FIX R-09 (2026-07-24): Die hier vorher stehende Zeile
+        # `mixed = highs_a * fo + highs_b * fi` erzeugte ein komplettes
+        # Crossfade-langes Array, das 16 Zeilen weiter sofort ueberschrieben
+        # wurde — reine Verschwendung, entfernt.
 
         # M6-Fix: echter Bass-Handover — harter Swap am Crossfade-Mittelpunkt
         # mit kurzer 50ms-Rampe gegen Klicks. Vorher ueberlappten beide Baesse
@@ -557,21 +713,18 @@ def _apply_eq_crossfade(
 
         # Filter design
         sos_lp_low  = _make_sos(fc1, config.sr, 'low', order=2)
-        sos_hp_mid  = _make_sos(fc1, config.sr, 'high', order=2)
-        sos_lp_mid  = _make_sos(fc2, config.sr, 'low', order=2)
         sos_hp_high = _make_sos(fc2, config.sr, 'high', order=2)
 
-        # Trennung fuer Track A
+        # AUDIT-FIX R-05 (2026-07-24): Mitten aus Rest bilden (seg - bass - highs)
+        # statt zwei zusaetzlicher Filterpassagen (sos_hp_mid + sos_lp_mid) —
+        # spart pro Track 2 von 4 Filterlaeufen und 2 float64-Vollkopien.
         bass_a = sosfiltfilt(sos_lp_low, seg_a, axis=0)
-        mids_a_tmp = sosfiltfilt(sos_hp_mid, seg_a, axis=0)
-        mids_a = sosfiltfilt(sos_lp_mid, mids_a_tmp, axis=0)
         highs_a = sosfiltfilt(sos_hp_high, seg_a, axis=0)
+        mids_a = seg_a - bass_a - highs_a
 
-        # Trennung fuer Track B
         bass_b = sosfiltfilt(sos_lp_low, seg_b, axis=0)
-        mids_b_tmp = sosfiltfilt(sos_hp_mid, seg_b, axis=0)
-        mids_b = sosfiltfilt(sos_lp_mid, mids_b_tmp, axis=0)
         highs_b = sosfiltfilt(sos_hp_high, seg_b, axis=0)
+        mids_b = seg_b - bass_b - highs_b
 
         # Envelopes
         # Lows (Bass-Swap auf der Haelfte mit 50ms Rampe)
@@ -588,28 +741,36 @@ def _apply_eq_crossfade(
         bass_a_env[ramp_end:] = 0.0
         bass_b_env[ramp_end:] = 1.0
 
-        # Mids (Complementary -6 dB Rule: 1.0 -> 0.5 in der Mitte, dann 0.5 -> 0.0)
-        mids_a_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
-        mids_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+        # Mids: Equal-Power (cos/sin) ueber den gesamten Crossfade.
+        # AUDIT-FIX N-01 (2026-07-26): vorher amplituden-komplementaere
+        # LINEARE Envelopes ("-6 dB Rule": 1.0 -> 0.5 -> 0.0). Bei nicht
+        # korrelierten Signalen ergibt das am Mittelpunkt eine Summenleistung
+        # von 0.5^2 + 0.5^2 = 0.5 = -3.01 dB — genau das Energie-Loch, das
+        # C3 im Fallback-Crossfade beseitigt hatte, hier im Default-Modus
+        # fuer Techno/Psy/Tech-House (Hauptpfad). cos/sin haelt
+        # fo^2 + fi^2 == 1 konstant (0 dB am Mittelpunkt). Der harte
+        # Bass-Swap oben bleibt unveraendert hart.
+        mids_a_env = fo
+        mids_b_env = fi
 
-        mids_a_env[:half] = np.linspace(1.0, 0.5, half, dtype=np.float32)[:, np.newaxis]
-        mids_a_env[half:] = np.linspace(0.5, 0.0, config.cf_frames - half, dtype=np.float32)[:, np.newaxis]
-
-        mids_b_env[:half] = np.linspace(0.0, 0.5, half, dtype=np.float32)[:, np.newaxis]
-        mids_b_env[half:] = np.linspace(0.5, 1.0, config.cf_frames - half, dtype=np.float32)[:, np.newaxis]
-
-        # Highs (Asymmetrischer Tausch: A bleibt bis 3/4 voll da, blendet dann aus. B blendet ab 1/4 ein)
+        # Highs (Asymmetrischer Tausch: A voll bis 1/4, B voll ab 3/4).
+        # AUDIT-FIX R-02 (2026-07-24): kein a+b > 1 mehr (vorher Summe 2.0
+        # am 3/4-Punkt -> +6 dB, Limiter, harsches Uebergangsdrittel).
+        # AUDIT-FIX N-01 (2026-07-26): Equal-Power (cos/sin) statt linear-
+        # komplementaer — a + b == 1 fixierte zwar die +6-dB-Spitze, erzeugte
+        # aber dasselbe -3.01-dB-Leistungsloch am Fenster-Mittelpunkt wie bei
+        # den Mids. Jetzt gilt a^2 + b^2 == 1 im gesamten Fade-Fenster.
         quarter = config.cf_frames // 4
         three_quarters = 3 * quarter
+        len_in = max(1, three_quarters - quarter)
+        # Fade-Fortschritt 0..1 innerhalb des Fensters [1/4 .. 3/4]
+        prog = np.linspace(0.0, 1.0, len_in, dtype=np.float32)[:, np.newaxis]
 
         highs_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
         highs_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
-
-        len_out = config.cf_frames - three_quarters
-        highs_a_env[three_quarters:] = np.linspace(1.0, 0.0, len_out, dtype=np.float32)[:, np.newaxis]
-
-        len_in = three_quarters - quarter
-        highs_b_env[quarter:three_quarters] = np.linspace(0.0, 1.0, len_in, dtype=np.float32)[:, np.newaxis]
+        highs_a_env[quarter:three_quarters] = np.cos(prog * (np.pi / 2.0))
+        highs_a_env[three_quarters:] = 0.0
+        highs_b_env[quarter:three_quarters] = np.sin(prog * (np.pi / 2.0))
         highs_b_env[three_quarters:] = 1.0
 
         # Rekonstruktion
@@ -623,48 +784,71 @@ def _apply_eq_crossfade(
             # Hochpass auf Track A simuliert einen Filter-Sweep beim Ausblenden
             sos_hp_a = _make_sos(FILTER_RIDE_HP_HZ, config.sr, 'high')
             filtered_a = sosfiltfilt(sos_hp_a, seg_a, axis=0)
+            filtered_a = _apply_filter_ramp(seg_a, filtered_a, config.sr)
             mixed = filtered_a * fo + seg_b * fi
         else:
             # smooth_blend: Tiefpass auf Track A waehrend Track B einfadet
             sos_lp_a = _make_sos(SMOOTH_BLEND_LP_HZ, config.sr, 'low')
             filtered_a = sosfiltfilt(sos_lp_a, seg_a, axis=0)
+            filtered_a = _apply_filter_ramp(seg_a, filtered_a, config.sr)
             mixed = filtered_a * fo + seg_b * fi
 
     elif t_type == "cold_cut":
-        # Harter Cut genau in der Mitte ohne jede Blende
+        # Harter Cut in der Mitte — AUDIT-FIX R-06 (2026-07-24): mit 3ms
+        # Mikro-Fade um die Schnittstelle gegen den sonst garantierten Klick
+        # (Amplitudensprung A->B = breitbandiger Impuls). Bleibt hoerbar ein
+        # harter Cut.
         half = config.cf_frames // 2
         mixed = np.zeros_like(seg_a)
         mixed[:half] = seg_a[:half]
         mixed[half:] = seg_b[half:]
+        mf = min(int(0.003 * config.sr), half, config.cf_frames - half)
+        if mf > 0:
+            ramp = np.linspace(1.0, 0.0, mf, dtype=np.float32)[:, np.newaxis]
+            mixed[half - mf:half] = (
+                seg_a[half - mf:half] * ramp + seg_b[half - mf:half] * (1.0 - ramp)
+            )
 
     elif t_type == "drop_cut":
-        # Track A blendet bis zur Mitte aus, dann bricht Track B schlagartig ein
+        # Track A blendet bis zur Mitte aus, dann bricht Track B ein.
+        # AUDIT-FIX R-06: kurzer Mikro-Fade am Einsatzpunkt von B gegen Klick.
         half = config.cf_frames // 2
         fo_half = np.linspace(1.0, 0.0, half, dtype=np.float32)[:, np.newaxis]
         mixed = np.zeros_like(seg_a)
         mixed[:half] = seg_a[:half] * fo_half
         mixed[half:] = seg_b[half:]
+        mf = min(int(0.003 * config.sr), config.cf_frames - half)
+        if mf > 0:
+            ramp_in = np.linspace(0.0, 1.0, mf, dtype=np.float32)[:, np.newaxis]
+            mixed[half:half + mf] = seg_b[half:half + mf] * ramp_in
 
     elif t_type == "echo_out":
-        # Track A bekommt ein echtes Echo-Delay-Feedback (Beat-synchrone Verzoegerung), waehrend Track B einfadet
+        # Track A bekommt ein Echo-Delay-Feedback, waehrend Track B einfadet.
         mixed = seg_b * fi
-        
-        # Delay-Zeit: ca. 0.5s fuer einen Viertelbeat bei 120 BPM
-        delay_samples = int(0.5 * config.sr)
+
+        # AUDIT-FIX R-04 (2026-07-24): Delay ist jetzt BEAT-synchron zu Track A
+        # (vorher fix 0.5 s = bei 120 BPM ein ganzer Beat, bei 138 BPM 65 ms
+        # Drift pro Reflexion -> hoerbares Flamming). Ein Beat = 60/bpm.
+        beat_sec = 60.0 / config.bpm_a if config.bpm_a > 0 else 0.5
+        delay_samples = max(1, int(beat_sec * config.sr))
         echo_signal = seg_a.copy()
-        
+
         # 3 Echo-Reflektionen mit Daempfung (Feedback)
         for i in range(1, 4):
             shift = i * delay_samples
             if shift < len(echo_signal):
                 echo_signal[shift:] += seg_a[:-shift] * (0.45 ** i)
-                
+
+        # AUDIT-FIX R-04: Pegel normieren — die kohaerente Summe erreichte bis
+        # 1.74x (1 + 0.45 + 0.2 + 0.09) und loeste bei -14 dBRMS Clipping aus.
+        echo_signal *= (1.0 / 1.74)
         mixed += echo_signal * fo
 
     elif t_type == "breakdown_bridge":
         # Bass aus Track A sofort komplett rausfiltern, um Platz fuer Track B zu machen
         sos_hp = _make_sos(BREAKDOWN_HP_HZ, config.sr, 'high')
         highs_a = sosfiltfilt(sos_hp, seg_a, axis=0)
+        highs_a = _apply_filter_ramp(seg_a, highs_a, config.sr)
         mixed = highs_a * fo + seg_b * fi
 
     else:
