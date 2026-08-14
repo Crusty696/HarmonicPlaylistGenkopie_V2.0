@@ -9,6 +9,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication
 
 import main
+from hpg_core.exporters import ExportReport
 from hpg_core.models import Track
 
 
@@ -306,7 +307,7 @@ def test_cue_heuristic_checkbox_is_not_exposed(qtbot):
   assert not hasattr(panel, "_on_force_cues_changed")
 
 
-def test_preview_error_releases_widget_and_allows_retry(qtbot):
+def test_preview_error_shows_message_in_widget_and_allows_retry(qtbot):
   transition = SimpleNamespace(
     from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
     to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
@@ -322,9 +323,21 @@ def test_preview_error_releases_widget_and_allows_retry(qtbot):
 
   panel._on_clip_error(0, "decoder")
 
-  assert 0 not in panel._preview_widgets
+  # Widget bleibt stehen und zeigt den Fehler an (set_error ist verdrahtet)
+  assert panel._preview_widgets[0] is widget
+  assert widget._error_msg == "decoder"
+  assert not widget._play_btn.isEnabled()
+  assert widget._time_label.text() == "Fehler"
+  assert "⚠" in widget._title_label.text()
+  assert widget._title_label.toolTip() == "decoder"
+  assert "decoder" in widget._waveform._placeholder
   assert button.isEnabled()
   assert "erneut" in button.text()
+
+  # Zweiter Fehlschlag haengt kein zweites ⚠ an
+  panel._on_clip_error(0, "decoder")
+  assert widget._title_label.text().count("⚠") == 1
+
   widget.deleteLater()
   button.deleteLater()
 
@@ -351,6 +364,14 @@ def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   window.playlist = [Track(filePath="C:/a.wav", fileName="a.wav")]
   window.current_playlist_mode = "Harmonic Flow"
   m3u8_exporter = Mock()
+  # Beide Exporter liefern denselben Typ: ExportReport (nicht None, nicht dict).
+  m3u8_exporter.export.return_value = ExportReport(
+    status="success",
+    output_path=str(tmp_path / "set.m3u8"),
+    tracks_written=1,
+    cues_written=0,
+    beatgrids_written=0,
+  )
   monkeypatch.setattr(main, "M3U8Exporter", lambda: m3u8_exporter)
   info = Mock()
   warning = Mock()

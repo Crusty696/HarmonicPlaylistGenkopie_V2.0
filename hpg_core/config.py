@@ -131,11 +131,34 @@ SECURITY_MAX_TRACK_DURATION = 7200  # 2 Stunden max Track-Länge (sicherheitsbed
 SECURITY_MAX_PLAYLIST_SIZE = 1000  # 1000 Tracks max pro Playlist
 
 # === AI Intelligence Layer ===
-AI_PROVIDER = "Ollama"  # "Ollama" or "LM Studio"
+# AUDIT-FIX 2026-08-14: Provider und Modell waren nicht lauffaehig.
+# AI_MODEL stand auf "gemma4:12b" — dieses Modell ist weder lokal installiert,
+# noch existiert die Groesse 12B in der Gemma-4-Familie (E2B/E4B/26B-A4B/31B).
+# Wer die KI-Funktion einschaltete, lief ins Leere.
+# Beide Werte sind nur Vorauswahl: der ai_launcher erkennt beide Provider und
+# fuellt das Modell-Dropdown mit den tatsaechlich installierten Modellen.
+AI_PROVIDER = "LM Studio"  # "Ollama" or "LM Studio"
 AI_API_URL_OLLAMA = "http://localhost:11434/v1/chat/completions"
 AI_API_URL_LMSTUDIO = "http://localhost:1234/v1/chat/completions" # Default LM Studio
 # Standardmodell mit vom lokalen Ollama-Server gemeldeter Audio-Faehigkeit.
-AI_MODEL = "gemma4:12b"
+# Gemessen am 2026-08-14 gegen den echten Vertrag dieser App (System-Prompt,
+# response_format=json_schema strict, Validierung inkl. Provenienz), 8 reale
+# Tracks je Modell auf einer RX 7800 XT (LM Studio, Vulkan-Runtime):
+#
+#   granite-4.0-h-tiny        8/8 gueltig   2.7 s/Track   Laden 20 s   4.2 GB
+#   llama-3.2-8x3b-dark-...   8/8 gueltig   2.8 s/Track   Laden 40 s  10.7 GB
+#   ministral-3-14b-reason.   8/8 gueltig   6.7 s/Track   Laden 51 s  12.0 GB
+#   qwen3.5-9b                0/8           leere Antwort bei JEDEM Token-Budget
+#   ornith-1.0-9b             0/8           leere Antwort
+#
+# granite-4.0-h-tiny gewinnt in allen Dimensionen: hoechste Trefferquote,
+# schnellste Antwort, kleinster Speicherbedarf. Bei 500 Tracks sind das rund
+# 22 Minuten statt 11 Stunden mit einem 27B-Reasoning-Modell.
+AI_MODEL = "granite-4.0-h-tiny"
+# Obergrenze der KI-Antwortlaenge. Pflicht bei erzwungenem JSON-Schema:
+# ohne Limit kann ein Modell in einer ungeschlossenen Struktur haengen
+# bleiben und laeuft in AI_TIMEOUT statt in einen sauberen Fehler.
+AI_MAX_TOKENS = 400
 AI_TIMEOUT = 120.0  # Hoch genug fuer Cold-Start (Modell-Load in VRAM beim ersten Call); danach schnell
 AI_SYSTEM_PROMPT = (
     "You are a professional electronic music curator and DJ. Analyze tracks with focus on "

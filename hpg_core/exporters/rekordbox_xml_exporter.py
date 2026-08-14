@@ -16,28 +16,12 @@ import math
 import os
 import tempfile
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
 from typing import List, Optional
+from ..downbeat import REFERENCE_BEATGRID_CONFIDENCE
 from ..models import Track
-from .base_exporter import BaseExporter
+from .base_exporter import BaseExporter, ExportReport
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ExportReport:
-    """Verifizierbares Ergebnis eines Rekordbox-Exports."""
-
-    status: str
-    output_path: str
-    tracks_written: int
-    cues_written: int
-    beatgrids_written: int
-    errors: tuple[str, ...] = field(default_factory=tuple)
-
-    @property
-    def success(self) -> bool:
-        return self.status == "success"
 
 try:
     from pyrekordbox.rbxml import RekordboxXml
@@ -272,6 +256,15 @@ class RekordboxXMLExporter(BaseExporter):
         Downbeat-Feature 2026-07-17: Anker ist der erkannte erste Downbeat
         (Track.first_downbeat). Ein unsicherer Anker wird nicht als Beatgrid
         exportiert.
+
+        AUDIT-FIX D-03 (2026-08-14): Hier ist WIRKLICH nur das
+        Referenz-Beatgrid gemeint, deshalb steht die Bedingung jetzt explizit
+        als `== REFERENCE_BEATGRID_CONFIDENCE` statt als Zahlenschwelle. Ein
+        TEMPO-Element traegt `Battito=1`, behauptet also die TAKT-Phase — und
+        genau die liefert die Eigenschaetzung nicht verlaesslich (gemessen an
+        35 ANLZ-Referenzen: 9 von 19 Schaetzungen um ganze Beats daneben).
+        Ein falsches Beatgrid landet in der Rekordbox-Bibliothek des Nutzers
+        und ist dort schlimmer als gar keines.
         """
         if not track.bpm or track.bpm <= 0:
             return 0, [f"{track.filePath}: Beatgrid fehlt wegen ungueltiger BPM"]
@@ -279,7 +272,8 @@ class RekordboxXMLExporter(BaseExporter):
             first_downbeat = float(getattr(track, "first_downbeat", 0.0) or 0.0)
             if (
                 hasattr(rb_track, "add_tempo")
-                and getattr(track, "downbeat_confidence", 0.0) >= 0.9
+                and getattr(track, "downbeat_confidence", 0.0)
+                == REFERENCE_BEATGRID_CONFIDENCE
                 and math.isfinite(first_downbeat)
                 and 0.0 <= first_downbeat < float(track.duration)
             ):

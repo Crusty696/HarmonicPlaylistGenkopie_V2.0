@@ -1,13 +1,14 @@
 # HPG — Produktionsstatus
 
-Stand: 2026-07-26 (nach Fullstack-Audit und autonomem Restlauf; Details:
-AUDIT_REPORT_2026-07-26_FULLSTACK.md)
+Stand der Abnahme: 2026-07-26 (nach Fullstack-Audit und autonomem Restlauf;
+Details: AUDIT_REPORT_2026-07-26_FULLSTACK.md).
+Zahlen nachgemessen am 2026-08-14, siehe Abschnitt "Messung 2026-08-14".
 
 ## Umgebung (verbindlich)
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
 - Tests: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --no-cov -q`
-- Baseline: **1384 Tests grün**, 26 Warnungen (verifiziert 2026-07-26)
+- Baseline: **1389 Tests grün**, 26 Warnungen (gemessen 2026-08-14)
 - Das alte defekte `venv\` (Python 3.14) wurde 2026-07-17 geloescht
 - Build: `build.bat` (findet Python 3.12 automatisch, nutzt venv312)
 - Python-Basis: **3.12.10** (2026-07-16 aktualisiert; 3.12.0 hatte einen
@@ -32,12 +33,29 @@ AUDIT_REPORT_2026-07-26_FULLSTACK.md)
   Half/Double-Erkennung mit 4%-Toleranz
 - **Export**: m3u8 + Rekordbox XML (Folder/Playlist-Anlage gefixt)
 
+## Messung 2026-08-14
+
+Selbst gemessen mit `.\venv312\Scripts\python.exe -m pytest`:
+
+- Volllauf mit Coverage: **1395 passed**, 26 Warnungen, **162 s**
+- Coverage gesamt: **75,28 %** — das Gate `--cov-fail-under=70` ist erfüllt
+- Weitere gemessene Fakten: `main.py` rund 4900 Zeilen, 8 Strategien in
+  `STRATEGIES`, 3 Einträge in `STRATEGY_ALIASES`, 9 kanonische Genres,
+  `CACHE_VERSION = 25`, Python 3.12.10 im `venv312`
+
+Hinweis zu einer früheren Zwischenmessung in dieser Sitzung: Zwischenstände
+mit 66,82 % Coverage und einem `NameError: ExportReport` in
+`tests/test_main_workers.py` entstanden, während mehrere Agenten dieselben
+Dateien gleichzeitig umschrieben. Beide sind am fertigen Stand widerlegt —
+nachgemessen: Gate erfüllt, Suite vollständig grün.
+
 ## Offene Punkte
 
-Keine bekannten technischen offenen Punkte aus dem Audit-Backlog. Die reale
-Audio-/Rekordbox-Abnahme ist im Abschnitt Abschlussverifikation dokumentiert.
-Eine subjektive Langzeit-Hörsession bleibt optional und ist als
-Produktkalibrierung nicht vollständig automatisierbar.
+- Die Arbeitskopie ist nicht sauber: `git status` zeigt uncommittete
+  Änderungen (u. a. `main.py`, `hpg_core/`, `tests/`, `requirements.txt`).
+  Die Angaben in diesem Dokument beschreiben also keinen committeten Zustand.
+- Eine subjektive Langzeit-Hörsession bleibt optional und ist als
+  Produktkalibrierung nicht vollständig automatisierbar.
 
 ## Abschlussverifikation 2026-07-26
 

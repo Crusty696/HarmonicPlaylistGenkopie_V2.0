@@ -9,8 +9,10 @@ from .models import Track, CAMELOT_MAP
 from .analysis import analyze_track
 from .playlist import generate_playlist, calculate_playlist_quality, STRATEGIES
 from .parallel_analyzer import ParallelAnalyzer
+from .app_metadata import APP_VERSION
 
-__version__ = "3.7.2"
+# Einzige Versionsquelle ist app_metadata.APP_VERSION.
+__version__ = APP_VERSION
 __all__ = [
     "Track",
     "CAMELOT_MAP",

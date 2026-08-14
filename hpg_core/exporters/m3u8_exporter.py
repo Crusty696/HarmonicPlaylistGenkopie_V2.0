@@ -15,7 +15,7 @@ import os
 import tempfile
 from typing import List
 from ..models import Track
-from .base_exporter import BaseExporter
+from .base_exporter import BaseExporter, ExportReport
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class M3U8Exporter(BaseExporter):
         playlist: List[Track],
         output_path: str,
         playlist_name: str = "HPG Playlist",
-    ) -> None:
+    ) -> ExportReport:
         """
         Export playlist to M3U8 format
 
@@ -56,12 +56,19 @@ class M3U8Exporter(BaseExporter):
             output_path: Path to save .m3u8 file
             playlist_name: Name of the playlist
 
+        Returns:
+            ExportReport. M3U8 kennt weder Cues noch Beatgrids -> beide 0.
+            status="partial", wenn einzelne Tracks uebersprungen wurden.
+
         Raises:
             ValueError: If playlist is empty or invalid
             IOError: If file cannot be written
         """
         # Validate playlist
         self._validate_playlist(playlist)
+
+        errors: List[str] = []
+        tracks_written = 0
 
         try:
             # HIGH-Fix: atomar schreiben — erst in eine Temp-Datei im Zielordner,
@@ -79,6 +86,15 @@ class M3U8Exporter(BaseExporter):
 
                     # Write tracks
                     for track in playlist:
+                        # Ohne Dateipfad ist der Eintrag fuer jeden Player wertlos —
+                        # ueberspringen und im Report melden (status="partial").
+                        if not track.filePath:
+                            errors.append(
+                                "Track uebersprungen (kein Dateipfad): "
+                                + (track.title or track.fileName or "?")
+                            )
+                            continue
+
                         # Extended info: duration, artist - title
                         duration = int(track.duration) if track.duration else 0
 
@@ -109,6 +125,12 @@ class M3U8Exporter(BaseExporter):
                         else:
                             normalized_path = normalized_path.replace("\\", "/")
                         f.write(f"{normalized_path}\n\n")
+                        tracks_written += 1
+                if tracks_written == 0:
+                    raise IOError(
+                        f"Kein Track exportierbar (0/{len(playlist)}): "
+                        + "; ".join(errors[:3])
+                    )
                 os.replace(tmp_path, output_path)
             except BaseException:
                 # Temp-Datei bei jedem Fehler aufraeumen, dann weiterreichen
@@ -118,7 +140,15 @@ class M3U8Exporter(BaseExporter):
                     pass
                 raise
 
-            logger.info(f"M3U8 exportiert: {output_path} ({len(playlist)} Tracks)")
+            logger.info(f"M3U8 exportiert: {output_path} ({tracks_written} Tracks)")
+            return ExportReport(
+                status="partial" if errors else "success",
+                output_path=output_path,
+                tracks_written=tracks_written,
+                cues_written=0,
+                beatgrids_written=0,
+                errors=tuple(errors),
+            )
 
         except IOError as e:
             raise IOError(f"Failed to write M3U8 file: {e}")

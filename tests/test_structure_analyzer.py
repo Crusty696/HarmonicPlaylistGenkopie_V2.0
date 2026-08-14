@@ -575,6 +575,22 @@ class TestAnalyzeStructure:
       duration = lr.get_duration(y=y, sr=sr)
       assert abs(result.sections[-1].end_time - duration) < 1.0
 
+  @pytest.mark.parametrize("anchor", [0.0, 0.9, 3.4, 13.0])
+  def test_sections_decken_den_track_auch_mit_anker_ab(self, structured_audio, anchor):
+    """AUDIT-FIX S-01 (2026-08-14): Die Abdeckungs-Zusage galt bisher nur fuer
+    anchor=0.0. Bei anchor > 0 rastete die Nullgrenze auf den anker-relativen
+    Phrasenpunkt, sodass [0, anchor) zu keiner Sektion gehoerte. An 34 echten
+    Psytrance-Tracks hatten 22 eine solche Kopfluecke (max. 13,0 s)."""
+    y, sr = structured_audio
+    result = analyze_structure(y, sr, bpm=128.0, genre="Psy-Trance", anchor=anchor)
+    assert result.sections, "keine Sektionen erzeugt"
+    assert result.sections[0].start_time == 0.0, (
+      f"Kopfluecke von {result.sections[0].start_time}s bei anchor={anchor}"
+    )
+    # Sektionen bleiben eine lueckenlose Partition
+    for a, b in zip(result.sections, result.sections[1:]):
+      assert a.end_time == pytest.approx(b.start_time, abs=0.01)
+
   def test_no_overlapping_sections(self, simple_audio):
     """Sektionen ueberlappen nicht."""
     y, sr = simple_audio

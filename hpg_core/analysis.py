@@ -182,26 +182,53 @@ def analyze_frequency_bands(
     return round(b/t*100, 1), round(m/t*100, 1), round(h/t*100, 1)
 
 def analyze_rhythm_complexity(
-    y: np.ndarray, sr: int, feature_cache: FeatureCache | None = None
+    y: np.ndarray,
+    sr: int,
+    feature_cache: FeatureCache | None = None,
+    sample_range: tuple[int, int] | None = None,
 ) -> tuple[float, float]:
+    """Perkussiv-Anteil und spektrale Flachheit.
+
+    sample_range (PERF 2026-08-14): Sektions-Grenzen in Samples, bezogen auf das
+    Signal des feature_cache. Damit wird die HPSS EINMAL fuer den ganzen Track
+    berechnet und pro Sektion nur noch geschnitten, statt sie je Sektion neu zu
+    rechnen (gemessen: 11 Aufrufe = 11,5 s pro Track). Der Perkussiv-Anteil
+    weicht dadurch leicht vom Segment-HPSS ab, weil der Medianfilter mehr
+    Kontext sieht — an den Sektionsraendern ist das genauer, nicht ungenauer.
+    """
     if y is None or len(y) == 0:
         return 0.0, 0.0
     # MED-Fix: NaN/Inf abfangen (librosa.effects.hpss wirft sonst ParameterError).
     if not np.all(np.isfinite(y)):
         y = np.nan_to_num(y)
-    y_h, y_p = (
-        feature_cache.get_hpss()
-        if feature_cache is not None
-        else librosa.effects.hpss(y)
-    )
+
+    cached_hpss = None
+    if feature_cache is not None:
+        if sample_range is not None:
+            start, end = sample_range
+            full_h, full_p = feature_cache.get_hpss()
+            if 0 <= start < end <= len(full_h):
+                cached_hpss = (full_h[start:end], full_p[start:end])
+        elif len(feature_cache.y) == len(y):
+            cached_hpss = feature_cache.get_hpss()
+
+    y_h, y_p = cached_hpss if cached_hpss is not None else librosa.effects.hpss(y)
+
     pe = np.sqrt(np.mean(y_p**2))
     he = np.sqrt(np.mean(y_h**2))
     pr = pe / (pe + he + 1e-6)
-    sf = np.mean(
-        feature_cache.get_spectral_flatness()
-        if feature_cache is not None
-        else librosa.feature.spectral_flatness(y=y)
-    )
+
+    # Die Flachheit des Caches gilt fuer den GANZEN Track — fuer eine Sektion
+    # muss sie auf deren Ausschnitt gerechnet werden.
+    if (
+        feature_cache is not None
+        and sample_range is None
+        and len(feature_cache.y) == len(y)
+    ):
+        flatness = feature_cache.get_spectral_flatness()
+    else:
+        flatness = librosa.feature.spectral_flatness(y=y)
+    sf = np.mean(flatness)
     return round(float(pr), 3), round(float(sf), 3)
 
 def generate_timbre_fingerprint(
@@ -419,9 +446,19 @@ def _integrated_loudness_from_blocks(file_path: str, info, meter) -> float:
     if sample_rate <= 0 or channels <= 0 or channels > 5 or total_frames < block_frames:
         return float("nan")
 
-    num_blocks = int(
-        np.round((total_frames / sample_rate - meter.block_size) / step_seconds) + 1
-    )
+    # AUDIT-FIX 2026-08-14: Die Blockzahl wurde mit np.round aufgerundet. Der
+    # letzte 400-ms-Block passte dann bei vielen Dateien nicht mehr vollstaendig
+    # in das Signal, die Fuell-Schleife brach ab und die strikte Pruefung
+    # `next_block != num_blocks` weiter unten lieferte NaN -> lufs_status
+    # "invalid". Gemessen betraf das 24 von 52 Tracks der Produktivbibliothek,
+    # ohne dass irgendwo ein Fehler sichtbar wurde.
+    # Jetzt wird abgerundet, sodass JEDER gezaehlte Block vollstaendig im
+    # Signal liegt. Hoechstens ein angebrochener Rest-Block am Dateiende
+    # entfaellt — BS.1770 verwirft unvollstaendige Fenster ohnehin.
+    step_frames = step_seconds * sample_rate
+    if step_frames <= 0:
+        return float("nan")
+    num_blocks = int((total_frames - block_frames) // step_frames) + 1
     if num_blocks <= 0:
         return float("nan")
 
@@ -588,7 +625,17 @@ def calculate_bass_intensity(y: np.ndarray, sr: int) -> int:
         return 0
 
     bass_ratio = bass_energy / total_energy
-    bass_intensity = float(np.interp(bass_ratio, [0.0, 0.5], [0.0, 100.0]))
+
+    # AUDIT-FIX 2026-08-14: Die Skala endete bei einem Bass-Anteil von 0.5 und
+    # klemmte alles darueber auf 100. Real gemessen liegt der Anteil bei
+    # elektronischer Musik zwischen 0.78 und 0.89 (20 Tracks der Produktiv-
+    # bibliothek) — JEDER Track landete damit auf exakt 100, ueber 52 Tracks
+    # genau EIN distinkter Wert. Das Merkmal trug null Information und lag
+    # ausserdem ausserhalb jedes Genre-Bereichs (25-95), zog also im Scoring
+    # alle Genres gleichmaessig runter.
+    # Jetzt ist der Wert die wortwoertliche Prozentzahl: Anteil der spektralen
+    # Energie unter 150 Hz. Keine willkuerliche Obergrenze, keine Saettigung.
+    bass_intensity = float(np.interp(bass_ratio, [0.0, 1.0], [0.0, 100.0]))
     return int(min(max(bass_intensity, 0.0), 100.0))
 
 
@@ -1616,7 +1663,10 @@ def analyze_track(file_path: str) -> Track | None:
                     sec_dict['avg_highs'] = h
 
                     # Rhythm & Texture
-                    pr, sf = analyze_rhythm_complexity(y_seg, sr)
+                    pr, sf = analyze_rhythm_complexity(
+                        y_seg, sr, feature_cache,
+                        sample_range=(start_sample, end_sample),
+                    )
                     sec_dict['percussive_ratio'] = pr
                     sec_dict['spectral_flatness'] = sf
                 else:
@@ -1714,14 +1764,105 @@ def analyze_track(file_path: str) -> Track | None:
         y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
         feature_cache = FeatureCache(y, sr)
 
-        # --- BPM-Erkennung: ID3-Tags haben Vorrang vor Librosa --- #
-        # Beatport/Rekordbox-exportierte Dateien enthalten immer korrekte BPM-Werte.
-        # Librosa macht bei Psytrance haeufig Halftime/Doubletime-Fehler.
+        # --- BPM-Erkennung: ID3-Tag liefert den Wert, Audio prueft den Faktor ---
+        # AUDIT-FIX 2026-08-14: Frueher stand hier "Beatport-Exporte enthalten
+        # immer korrekte BPM-Werte" und der Tag wurde ungeprueft uebernommen,
+        # abgesichert nur durch 20 < bpm < 300. Gemessen an der Produktiv-
+        # bibliothek widersprach der Tag bei 23 von 52 Tracks der Rekordbox-
+        # Analyse; bei "Bellatrix - Modern Music" stand 69 BPM im Tag, waehrend
+        # librosa am selben Track 143.6 misst — exakt Halftime. Der Fehler
+        # pflanzt sich fort: falsche BPM -> Genre "Unknown" -> phrase_unit 8
+        # statt 16 -> verdoppeltes Phrasengitter -> Mixpoints auf falschem
+        # Raster, und im Renderer reisst die Stretch-Klemme (+-8 %).
+        # Die Halftime-Korrektur weiter unten galt nur fuer den Librosa-Zweig.
+        #
+        # Neue Logik: Die PRAEZISION des Tags bleibt massgeblich (er ist auf
+        # Nachkommastellen genau), aber der FAKTOR wird gegen das Audio
+        # geprueft. Nur wenn ein einfaches Vielfaches des Tags das gemessene
+        # Tempo deutlich besser trifft, wird korrigiert.
         tag_bpm = extract_bpm_from_tags(file_path)
         if tag_bpm is not None:
             bpm = tag_bpm
-            logger.info(f"BPM aus ID3-Tag: {bpm:.2f} (kein Librosa-Fallback noetig)")
             beat_frames = np.array([])  # Kein Beat-Tracking noetig
+            measured = 0.0
+            try:
+                measured_raw, _ = librosa.beat.beat_track(y=y, sr=sr)
+                measured_arr = np.atleast_1d(measured_raw)
+                measured = float(measured_arr[0]) if measured_arr.size else 0.0
+            except Exception as error:
+                logger.debug(f"Tempo-Gegenprobe nicht moeglich: {error}")
+
+            # Das ID3-Genre ist der Schiedsrichter. Ohne ihn wird NICHT
+            # korrigiert — Begruendung: librosa liefert Tempo-Fehler um den
+            # Faktor 2/3 vollkommen stabil (an einem echten 140-BPM-Track
+            # ueber vier Fenster konstant 92.3, Streuung 0.0). Die Messung
+            # allein kann "Tag falsch" und "Messung falsch" also nicht
+            # unterscheiden. Der kanonische BPM-Bereich des Genres kann es:
+            # 92 BPM sind fuer Psytrance (135-150) unmoeglich, 138 nicht.
+            # Ist das ID3-Genre bekannt, gilt dessen kanonischer Bereich.
+            # Sonst der Vereinigungsbereich ALLER unterstuetzten Genres —
+            # gemessen tragen genau die Dateien ohne Rekordbox-Daten auch
+            # kein Genre-Tag, der spezifische Bereich waere dort also nie
+            # verfuegbar. Ein Tag unterhalb jedes unterstuetzten Genres ist
+            # unabhaengig vom Stil unplausibel.
+            genre_bpm_range = None
+            try:
+                from .genre_classifier import match_id3_genre
+                from .genres import GENRE_PROFILES
+
+                canonical = match_id3_genre(genre)
+                if canonical and canonical in GENRE_PROFILES:
+                    genre_bpm_range = GENRE_PROFILES[canonical].bpm_range
+                elif GENRE_PROFILES:
+                    genre_bpm_range = (
+                        min(p.bpm_range[0] for p in GENRE_PROFILES.values()),
+                        max(p.bpm_range[1] for p in GENRE_PROFILES.values()),
+                    )
+            except Exception as error:
+                logger.debug(f"Genre-BPM-Bereich nicht ermittelbar: {error}")
+
+            def _in_genre_range(value: float) -> bool:
+                if not genre_bpm_range:
+                    return False
+                return genre_bpm_range[0] <= value <= genre_bpm_range[1]
+
+            if measured > 0:
+                # 2/3 und 3/2 decken die verbreiteten Triolen-/Shuffle-Fehl-
+                # taggings ab, 1/2 und 2 den klassischen Halftime/Doubletime.
+                candidates = [
+                    (abs(tag_bpm * factor - measured) / measured, factor)
+                    for factor in (0.5, 2.0 / 3.0, 1.0, 1.5, 2.0)
+                ]
+                deviation, factor = min(candidates)
+                direct = abs(tag_bpm - measured) / measured
+                # Vier Bedingungen muessen ALLE halten:
+                #   1. ein anderes Vielfaches als 1 passt am besten
+                #   2. der Tag selbst liegt klar daneben (>8 %)
+                #   3. das Vielfache trifft das gemessene Tempo eng (<=6 %)
+                #   4. der Tag liegt AUSSERHALB des Genre-Bereichs und das
+                #      korrigierte Tempo INNERHALB — sonst gewinnt der Tag
+                plausible = (
+                    not _in_genre_range(tag_bpm)
+                    and _in_genre_range(tag_bpm * factor)
+                )
+                if factor != 1.0 and direct > 0.08 and deviation <= 0.06 and plausible:
+                    corrected = round(tag_bpm * factor, 2)
+                    logger.warning(
+                        "ID3-BPM %.2f widerspricht dem Audio (%.1f gemessen) — "
+                        "als Faktor %.3f erkannt, korrigiert auf %.2f: %s",
+                        tag_bpm, measured, factor, corrected,
+                        os.path.basename(file_path),
+                    )
+                    bpm = corrected
+                elif direct > 0.08:
+                    logger.warning(
+                        "ID3-BPM %.2f weicht um %.0f%% vom gemessenen Tempo "
+                        "%.1f ab, wird aber uebernommen (kein plausibles "
+                        "Vielfaches im Genre-Bereich): %s",
+                        tag_bpm, direct * 100.0, measured,
+                        os.path.basename(file_path),
+                    )
+            logger.info(f"BPM aus ID3-Tag: {bpm:.2f}")
         else:
             # Librosa-Fallback: wenn keine BPM-Tags vorhanden
             tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
@@ -1893,7 +2034,10 @@ def analyze_track(file_path: str) -> Track | None:
                 
                 if len(y_seg) > sr:
                     b, m, h = analyze_frequency_bands(y_seg, sr)
-                    pr, sf = analyze_rhythm_complexity(y_seg, sr)
+                    pr, sf = analyze_rhythm_complexity(
+                        y_seg, sr, feature_cache,
+                        sample_range=(start_sample, end_sample),
+                    )
                     sec_dict.update({'avg_bass': b, 'avg_mids': m, 'avg_highs': h, 'percussive_ratio': pr, 'spectral_flatness': sf})
                 updated_sections.append(sec_dict)
             section_dicts = updated_sections

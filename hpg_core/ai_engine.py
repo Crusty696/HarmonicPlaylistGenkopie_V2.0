@@ -188,6 +188,16 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
         ],
         "temperature": 0,
         "seed": 0,
+        # AUDIT-FIX 2026-08-14: max_tokens war nicht gesetzt. Unter
+        # response_format=json_schema erzwingt die Runtime eine Grammatik; ein
+        # Modell, das dabei in eine ungeschlossene Struktur laeuft, KANN nicht
+        # mehr stoppen, weil das Schema den Abschluss verlangt. LM Studio
+        # dokumentiert das ausdruecklich und empfiehlt immer ein Token-Limit.
+        # Ohne Limit frisst ein einziger solcher Track die vollen AI_TIMEOUT
+        # Sekunden - bei einer Bibliothek mit hunderten Tracks summiert sich das.
+        # Die erwartete Antwort ist klein (Sub-Genre, 2-3 Moods, ein Satz,
+        # zwei Zahlen); 400 Tokens sind grosszuegig bemessen.
+        "max_tokens": config.AI_MAX_TOKENS,
     }
     
     payload["response_format"] = {

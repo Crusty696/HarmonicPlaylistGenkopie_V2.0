@@ -7,6 +7,7 @@ import sys
 import time
 import glob
 import traceback
+import pytest
 
 # Projekt-Pfad
 sys.path.insert(0, os.path.dirname(__file__))
@@ -47,6 +48,7 @@ def get_test_files(n=5):
 # ============================================================
 # TEST 1: Einzeltrack-Analyse — Datenqualitaet
 # ============================================================
+@pytest.mark.slow
 def test_single_track_quality():
     print("\n" + "=" * 60)
     print("TEST 1: Einzeltrack-Analyse — Datenqualitaet")
@@ -200,6 +202,7 @@ def test_cache_integrity():
 # ============================================================
 # TEST 3: Parallel-Analyse — Datenfluss
 # ============================================================
+@pytest.mark.slow
 def test_parallel_analysis():
     print("\n" + "=" * 60)
     print("TEST 3: Parallel-Analyse — Datenfluss")

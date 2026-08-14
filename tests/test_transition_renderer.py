@@ -318,7 +318,10 @@ class TestApplyEqCrossfade:
 class TestAlignBeatPhaseLead:
     """AUDIT-FIX N-02: Das C1-Bar-Alignment darf nie in den Einsatz von
     Track B schneiden — der Cut konsumiert ausschliesslich den mit
-    1 Takt Vorlauf geladenen Bereich davor."""
+    1 Takt Vorlauf geladenen Bereich davor.
+
+    Alle Faelle hier beschreiben den TAKT-Pfad, seit D-03 explizit ueber
+    `bar_aligned=True` angefordert (vorher implizit an bekannten Ankern)."""
 
     SR = 1000        # kleine Abtastrate fuer schnelle, exakte Sample-Rechnung
     BPM = 120.0      # beat_len = 500 Samples, Takt (grid) = 2000 Samples
@@ -342,7 +345,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.0, known_first_beat_b=0.3,
-            lead_frames=self.LEAD,
+            lead_frames=self.LEAD, bar_aligned=True,
         )
         # raw = 300 -> cut = 300 (<= lead), Einsatz-Impuls bei 2000-300 = 1700
         assert out[1700, 0] == 1.0
@@ -355,7 +358,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.25, known_first_beat_b=0.25,
-            lead_frames=self.LEAD,
+            lead_frames=self.LEAD, bar_aligned=True,
         )
         assert out[0, 0] == 1.0
 
@@ -367,7 +370,7 @@ class TestAlignBeatPhaseLead:
             out = _align_beat_phase(
                 self._ref(), seg_b, self.BPM, self.SR,
                 known_first_beat_a=0.0, known_first_beat_b=offset_sec,
-                lead_frames=self.LEAD,
+                lead_frames=self.LEAD, bar_aligned=True,
             )
             idx = np.flatnonzero(out[:, 0] == 1.0)
             assert idx.size == 1, f"Einsatz verworfen bei offset={offset_sec}"
@@ -389,7 +392,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.0, known_first_beat_b=0.3,
-            lead_frames=0,
+            lead_frames=0, bar_aligned=True,
         )
         # cut = 300 -> Marker wandert von 500 auf 200
         assert out[200, 0] == 1.0
@@ -401,7 +404,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.0, known_first_beat_b=1.7,
-            lead_frames=0,
+            lead_frames=0, bar_aligned=True,
         )
         # offset = 1700 > 1000 -> pad = 300
         assert out[300, 0] == 1.0
@@ -418,6 +421,73 @@ class TestAlignBeatPhaseLead:
         )
         assert out[0, 0] == 1.0
         assert len(out) == 800
+
+
+class TestAlignBeatPhaseGridWidth:
+    """AUDIT-FIX D-03 (2026-08-14): Bekannte Anker allein rechtfertigen noch
+    kein TAKT-Alignment. Nur das Rekordbox-Referenz-Beatgrid belegt, welcher
+    Beat die "1" ist; die Eigenschaetzung lag an 19 gemessenen Tracks bei 9
+    um ganze Beats daneben. Ohne `bar_aligned` wird deshalb auf BEAT-Ebene
+    ausgerichtet — Kick auf Kick, ohne Takt-Behauptung."""
+
+    SR = 1000
+    BPM = 120.0     # beat_len = 500, Takt = 2000
+
+    def _seg(self, marker_at: int, frames: int = 10000) -> np.ndarray:
+        seg = np.zeros((frames, 2), dtype=np.float32)
+        seg[marker_at] = 1.0
+        return seg
+
+    def _ref(self) -> np.ndarray:
+        return np.zeros((8000, 2), dtype=np.float32)
+
+    def test_ohne_bar_aligned_ist_das_gitter_ein_beat(self):
+        """Versatz 0.3 s, Vorlauf 2000: auf Beat-Gitter (500) ist der
+        groesste phasengleiche Schnitt 1800, auf Takt-Gitter (2000) nur 300."""
+        out = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=False,
+        )
+        idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+        assert idx == 200, f"Beat-Gitter erwartet (200), war {idx}"
+
+    def test_bar_aligned_nutzt_das_taktgitter(self):
+        out = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=True,
+        )
+        idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+        assert idx == 1700, f"Takt-Gitter erwartet (1700), war {idx}"
+
+    def test_beat_gitter_ist_die_vorgabe(self):
+        """Der Default darf nicht versehentlich das Taktgitter sein."""
+        default = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000,
+        )
+        explicit = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=False,
+        )
+        assert np.array_equal(default, explicit)
+
+    def test_takt_phasen_modulo_beat_bleiben_korrekt(self):
+        """Die uebergebenen Phasen sind Takt-Phasen. Auf dem Beat-Gitter
+        muss der Restversatz nach dem Cut ein Vielfaches des Beats sein."""
+        for a_phase, b_phase in ((0.0, 1.7), (0.25, 1.95), (1.2, 0.4)):
+            out = _align_beat_phase(
+                self._ref(), self._seg(2000), self.BPM, self.SR,
+                known_first_beat_a=a_phase, known_first_beat_b=b_phase,
+                lead_frames=2000, bar_aligned=False,
+            )
+            idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+            raw = int(round((b_phase - a_phase) * self.SR))
+            assert (2000 - idx - raw) % 500 == 0
+            assert 0 <= idx < 500
 
 
 # ---------------------------------------------------------------------------

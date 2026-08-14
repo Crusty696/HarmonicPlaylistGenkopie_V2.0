@@ -5,6 +5,7 @@ Prueft Export-Formate, Key-Mapping und Cue-Points.
 import os
 import pytest
 import tempfile
+from hpg_core.exporters.base_exporter import ExportReport
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from tests.fixtures.track_factories import make_track
 
@@ -271,6 +272,58 @@ class TestM3U8EdgeCases:
     assert info["format"] == "M3U8"
     assert info["extension"] == ".m3u8"
     assert "compatible_with" in info
+
+
+class TestExportReportContract:
+  """Beide Exporter liefern denselben Rueckgabetyp: ExportReport."""
+
+  def test_m3u8_returns_export_report(self, sample_playlist, export_dir):
+    """export() gibt ExportReport zurueck, nicht None/dict."""
+    path = os.path.join(export_dir, "report.m3u8")
+    report = M3U8Exporter().export(sample_playlist, path)
+
+    assert isinstance(report, ExportReport)
+    assert report.success is True
+    assert report.status == "success"
+    assert report.output_path == path
+    assert report.tracks_written == len(sample_playlist)
+    # M3U8 kennt keine Cues/Beatgrids
+    assert report.cues_written == 0
+    assert report.beatgrids_written == 0
+    assert report.errors == ()
+
+  def test_m3u8_partial_when_track_has_no_path(self, export_dir):
+    """Track ohne Dateipfad wird uebersprungen -> status='partial'."""
+    tracks = [
+      make_track(title="Good", duration=300.0),
+      make_track(title="Broken", duration=300.0, filePath=""),
+    ]
+    path = os.path.join(export_dir, "partial.m3u8")
+    report = M3U8Exporter().export(tracks, path)
+
+    assert report.status == "partial"
+    assert report.success is False
+    assert report.tracks_written == 1
+    assert len(report.errors) == 1
+    assert "Broken" in report.errors[0]
+    # partial ist KEIN Fehler: die Datei existiert und enthaelt den guten Track
+    with open(path, "r", encoding="utf-8") as f:
+      content = f.read()
+    assert content.count("#EXTINF:") == 1
+
+  def test_m3u8_all_tracks_unwritable_raises(self, export_dir):
+    """Kein einziger schreibbarer Track -> IOError, keine Datei."""
+    tracks = [make_track(title="Broken", duration=300.0, filePath="")]
+    path = os.path.join(export_dir, "none.m3u8")
+    with pytest.raises(IOError):
+      M3U8Exporter().export(tracks, path)
+    assert not os.path.exists(path)
+
+  def test_both_exporters_share_report_type(self):
+    """RekordboxXMLExporter nutzt denselben ExportReport aus base_exporter."""
+    from hpg_core.exporters import rekordbox_xml_exporter
+
+    assert rekordbox_xml_exporter.ExportReport is ExportReport
 
 
 # ============================================================

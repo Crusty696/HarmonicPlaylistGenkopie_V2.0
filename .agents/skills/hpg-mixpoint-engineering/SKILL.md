@@ -1,80 +1,140 @@
 ---
 name: hpg-mixpoint-engineering
-description: Use when working on Mix-In/Mix-Out-Punkte, Phrase-Alignment, Übergangs-Rendering, DJRecommendation, adjusted_mix_out_a/adjusted_mix_in_b, calculate_genre_aware_mix_points, calculate_paired_mix_points oder Transition-Preview im HPG-Projekt — vor jedem Lesen/Ändern dieser Logik.
+description: Use when touching HPG mix points — mix_in_point/mix_out_point, Phrasen-Quantisierung, phrase_anchor/first_downbeat, calculate_genre_aware_mix_points, calculate_paired_mix_points, align_ai_mix_points, adjusted_mix_out_a/adjusted_mix_in_b, DJRecommendation oder Transition-Timing. Vor jedem Lesen oder Aendern dieser Logik.
 ---
 
 # HPG Mixpoint Engineering
 
-## Overview
+## Das Grundgesetz
 
-Mixpoints (Sekunden, `Track.mix_in_point`/`mix_out_point`, [models.py:61-62](hpg_core/models.py)) werden von **vier konkurrierenden Pfaden** gesetzt. Es gibt keinen Prioritäts-Mechanismus — letzter Schreibzugriff gewinnt. Änderungen an einem Pfad brechen leicht die anderen.
+Ein Track hat **einen Anker** und **ein Gitter**. Jeder Zeitpunkt, der in
+`Track.mix_in_point` / `mix_out_point` oder in einen `TransitionPlan` landet,
+muss auf diesem Gitter liegen.
 
-## Die 4 Berechnungspfade (Reihenfolge = zeitlich)
+```
+grid  = seconds_per_bar(bpm) * profile.phrase_unit      # METER = 4
+mix_in  = quantize_to_grid(t, grid, anchor, "ceil")     # nie VOR dem Ereignis
+mix_out = quantize_to_grid(t, grid, anchor, "floor")    # nie NACH dem Ereignis
+```
 
-| # | Pfad | Ort | Bedingung |
-|---|------|-----|-----------|
-| A | Genre-aware (primär) | `calculate_genre_aware_mix_points` [dj_brain.py:263-316](hpg_core/dj_brain.py:263) | Genre != "Unknown" und Sections vorhanden ([analysis.py:777](hpg_core/analysis.py:777)) |
-| B | RMS-Fallback | `analyze_structure_and_mix_points` [analysis.py:545-686](hpg_core/analysis.py:545) | sonst; fixe 8-Bar-Phrasen |
-| C | Rekordbox-Cue-Override | [analysis.py:793-805](hpg_core/analysis.py:793) | Cues mit "IN"/"START" bzw. "OUT"/"END" im Namen überschreiben A/B |
-| D | AI/LLM-Override | `fetch_ai_analysis` [ai_engine.py:9](hpg_core/ai_engine.py:9) → [main.py:3130-3146](main.py:3130) | zur Laufzeit; mutiert Track in-place, persistiert in SQLite-Cache |
+`quantize_to_grid` [models.py:25] ist die **einzige** erlaubte Quantisierung.
+Keine Inline-Formeln, keine `round(x, 2)` innerhalb der Kette — gerundet wird
+erst an der Anzeige-/Exportgrenze (R9/N15).
 
-Zusätzlich **paarweise zur Renderzeit** (überschreibt Track NICHT):
-- `calculate_paired_mix_points(track_a, track_b)` [dj_brain.py:676-755](hpg_core/dj_brain.py:676)
-- `generate_dj_recommendation` [dj_brain.py:496](hpg_core/dj_brain.py:496) → `DJRecommendation.adjusted_mix_out_a/adjusted_mix_in_b/overlap_seconds` (Sentinel-Default `-1.0`)
+## Zwei Anker, zwei Aufgaben — nicht verwechseln
 
-## Invarianten (bei jeder Änderung prüfen)
+| Anker | Feld | Wofuer |
+|---|---|---|
+| Takt-Anker | `Track.first_downbeat` | wo die "1" liegt; Untergrenze `min_mix_in` |
+| Phrasen-Anker | `Track.phrase_anchor` | das **Gitter** (`anchor`-Parameter) |
 
-1. **Phrase-Alignment**: `mix_in = ceil(t/grid)*grid` (NACH Intro), `mix_out = floor(t/grid)*grid` (VOR Outro). `grid = seconds_per_bar * phrase_unit`. [dj_brain.py:290-294](hpg_core/dj_brain.py:290)
-2. `phrase_unit` ist genre-abhängig: Psytrance/Trance=16, sonst 8 (`GENRE_PHRASE_UNITS` [structure_analyzer.py:62-72](hpg_core/structure_analyzer.py:62)).
-3. `0 <= mix_in < mix_out <= duration` — Test-Helper: `assert_mix_points_valid` [tests/conftest.py:186](tests/conftest.py:186), `assert_phrase_aligned` [:215](tests/conftest.py:215).
-4. Mixpoints dürfen nie in Intro/Outro-Sektionen liegen (Design-Spec: docs/superpowers/specs/2026-03-11-mix-point-intro-outro-guard-design.md).
-5. Einheiten: Sekunden für Zeitpunkte, Bars nur für Anzeige (`mix_in_bars`/`mix_out_bars`), Samples nur intern im Renderer.
+`phrase_anchor` [models.py:149] liefert `first_phrase` nur, wenn **alle drei**
+Gates halten:
 
-## Rendering-Kette
+```python
+first_phrase >= 0.0                          # -1.0 = nicht geschaetzt
+and downbeat_confidence > 0.0                # kein erfundenes Raster
+and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # config.py:29, = 0.25
+```
 
-`compute_transition_recommendations` [playlist.py:1290](hpg_core/playlist.py:1290) → `TransitionRenderWorker.run` [main.py:439](main.py:439) → subprocess (`ProcessPoolExecutor(max_workers=1)`, 30s-Timeout, fängt C-Crashes) → `render_transition_clip` [transition_renderer.py:65](hpg_core/transition_renderer.py:65).
+sonst `first_downbeat`.
 
-Prioritätslogik im Worker ([main.py:483-498](main.py:483)): `dj.adjusted_*` > `track.mix_*_point` > Fallback 16.0s Overlap. Renderer: Crossfade max 32s, Stretch-Rate geclamped 0.85–1.15, Pre-Roll 30s.
+**Warum getrennt (AUDIT-FIX R3):** `phrase_anchor` kann bis zu
+`phrase_unit - 1` Bars hinter dem ersten Downbeat liegen (~28 s bei 16-Bar-
+Phrasen). Wuerde `min_mix_in` daran haengen, wandert die Untergrenze mit und
+das Mix-Fenster kollabiert in den Notfall-Prozent-Pfad. Deshalb nimmt
+`calculate_genre_aware_mix_points` den `first_downbeat` als eigenen Parameter.
 
-## Historie gefixter Bugs (2026-07-16, alle mit Regressionstests / Suite 1433 grün)
+## Wer setzt Track-Mixpoints (Stand heute: 3 Quellen)
 
-| Fix | Ort |
-|-----|-----|
-| Sentinel vereinheitlicht auf `>= 0.0` (0.0 = legitimer Mixpoint, -1.0 = Sentinel) | main.py 486/491/585/590/2481, playlist.py:1360 |
-| AI/LLM-Mixpoints phrase-quantisiert via `align_ai_mix_points()` (ceil in / floor out, Bar-Fallback, Epsilon) | dj_brain.py, main.py AI-Override |
-| Prozent-Guards (0.4/0.6) durch sektions-/phrasenbasierte Grenzen ersetzt (min_window = 2 Phrasen) | dj_brain.py `calculate_genre_aware_mix_points` |
-| Fallback-BPM 140.0 → `config.DEFAULT_BPM` | dj_brain.py |
-| None-Guard `_section_covers()` im Bass-Kollisions-Check | dj_brain.py `_assess_transition_risks` |
-| Halftime-Toleranz: absolut 10 BPM → relativ 4% (DJ-Pitchfader-Praxis) | transition_renderer.py |
-| Crossfade-Cap 32s→64s + Render-Timeout 30s→60s (Trance blendet 32-64 Bars) | transition_renderer.py:76, main.py |
-| Genre-Profile recherche-basiert: Techno transition (16,32), Trance (32,64) | dj_brain.py GENRE_MIX_PROFILES |
+| # | Quelle | Ort | Bedingung |
+|---|---|---|---|
+| A | `calculate_genre_aware_mix_points` | dj_brain.py:106 | Sections vorhanden |
+| B | `analyze_structure_and_mix_points` | analysis.py:1019 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
+| C | Rekordbox-Cue-Override | analysis.py:1448 | Cues matchen Wortgrenzen-Regex, dann `align_ai_mix_points` |
 
-## Key-Confidence + LUFS ERLEDIGT (2026-07-17)
+Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1666 und
+:1928]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
+(per grep verifiziert).
 
-`Track.key_confidence` (Essentia-Muster: strength=Pearson-r des Gewinners + margin=(max−max2)/max; `get_key_with_confidence`/`key_confidence_score` in analysis.py; Zweitkandidat-Nachbar-Logik: Quinte/relative = quasi-sicher, MIREX-Fehlerklassen; Rekordbox-Key = 1.0, 0.0 = Alt-Cache-Sentinel). `Track.lufs` (EBU R128 Integrated via pyloudnorm/DeMan, neue Dependency; Sentinel 0.0; Referenz LUFS_REFERENCE=-18 = ReplayGain 2.0). `DJRecommendation.gain_advice` (+Risk-Notes bei Key-Konfidenz <0.5 bzw. LUFS-Diff ≥3 dB). Renderer bewusst unverändert (lokale RMS-Segment-Angleichung = Mix-Moment-Matching). Bewusst KEINE Ranking-Änderung durch key_confidence. CACHE_VERSION 17. Plan: docs/plans/2026-07-17-key-confidence-lufs.md.
+**Korrektur gegenueber aelteren Notizen:** Es gibt **keinen** vierten
+LLM-Schreibpfad mehr. Der AI-Auto-Apply-Block wurde entfernt; `ai_engine`
+liefert Mixpoints nur mit `"mixpoints_advisory": True` [ai_engine.py:123] und
+verwirft sie ganz, wenn `outro_covered` falsch ist [ai_engine.py:108].
+"Letzter Schreibzugriff gewinnt" gilt nicht mehr.
 
-## Downbeat-Erkennung ERLEDIGT (2026-07-17)
+## Paar-Ebene (ueberschreibt den Track NICHT)
 
-`Track.first_downbeat` (+ `downbeat_confidence`) verankert das gesamte Phrasen-Raster — vorher rasterte alles arithmetisch ab t=0. Quellen: (1) Rekordbox-ANLZ-Beatgrid (PQTZ-Tag, `rekordbox_importer.get_first_downbeat`, Konfidenz 1.0), (2) eigene Schätzung `hpg_core/downbeat.py` (Phase-Voting nach Vande Veire EURASIP 2018: Bass-Onsets + Chroma-Novelty + Loudness-Akzent über 4 Hypothesen, Bass-Onset-Snap-Feintuning). Zentrale Quantisierung: `models.quantize_to_grid(t, grid, anchor, mode)` — anchor=0.0 ist bit-identisch zum Altverhalten. Verankert: calculate_genre_aware_mix_points (+_find-Helfer), align_ai_mix_points, calculate_paired_mix_points-Guards, structure_analyzer-Grenzen, Renderer-Beat-Alignment (exakt aus Grids statt Laufzeit-Schätzung, `TransitionClipSpec.first_downbeat_a/b`), XML-Export `Inizio`. Bars-Anzeige zählt weiterhin ab t=0 (dokumentierte Entscheidung). CACHE_VERSION 16. Plan: docs/plans/2026-07-17-downbeat-erkennung.md.
+`calculate_paired_mix_points(track_a, track_b)` [dj_brain.py:627]
+- Overlap = `min(Intro-Dauer B, Outro-Dauer A)`
+- loest das Problem, dass ein per-Track-Mix-In den Partner nicht kennt
+- quantisiert **immer** am Ende (B1) mit `anchor_a`/`anchor_b` aus
+  `phrase_anchor`
+- `duration <= 0` -> Track-Werte unveraendert lassen (N4)
 
-## Pfad-B-Konsolidierung ERLEDIGT (2026-07-17)
+`generate_dj_recommendation` [dj_brain.py:433] fuellt
+`DJRecommendation.adjusted_mix_out_a` / `adjusted_mix_in_b` /
+`overlap_seconds`, Sentinel `-1.0`.
 
-`analyze_structure_and_mix_points` ist jetzt reine Fassade: RMS-Aktivitätserkennung (Glättung 4-Takt-Fenster, Schwelle 0.4×Track-Max nach Zehren arXiv 2007.08411) + Suchfenster-Pruning (Mix-In erste 20%, Mix-Out letzte 25% nach Bittner ISMIR 2017) → 3 Pseudo-Sektionen (intro/main/outro) → delegiert an `calculate_genre_aware_mix_points`. **Nur noch EINE Quantisierungs-/Clamp-Logik.** Signatur: `genre`-Parameter statt `phrase_unit` (Profil liefert das Gitter). `DJ_BRAIN_ENABLED` entfernt (schaltete nichts mehr), `INTRO_MAX_PERCENTAGE`/`OUTRO_MIN_PERCENTAGE` ersetzt durch `MIX_IN_SEARCH_WINDOW_PCT`/`MIX_OUT_SEARCH_WINDOW_PCT`. Pfad A verbessert: `max_mix_out` bis zur Outro-GRENZE (Mix-Out auf der Grenze = DJ-Standard) + Re-Quantisierung aufs Phrasen-Gitter nach Clamps. bpm<=0 wirft weiterhin ValueError (Fassaden-Vertrag). CACHE_VERSION 15. Plan+Research: docs/plans/2026-07-17-mixpoint-pfad-b-konsolidierung.md.
+Aufloesung zur Renderzeit: `resolve_transition_mix_points(transition)`
+[main.py:174] — Prioritaet `plan` > `dj.adjusted_*` (nur bei `>= 0.0`) >
+`track.mix_*_point` > Fallback 16.0 s. **Diese Funktion ist die einzige
+erlaubte Aufloesung**; sie ersetzt drei frueher kopierte Varianten.
 
-## Noch offen
+## Sentinel-Regel
 
-| Punkt | Detail |
-|-------|--------|
-| Mix-Out nah am Track-Ende | `calculate_paired_mix_points` Limit nur `duration - 1 Bar`. |
+`MIX_POINT_UNSET = -1.0` [config.py:21]. `0.0` ist ein **gueltiger** Mixpoint
+(Track-Anfang).
 
-## DJ-Praxis-Referenz (Web-Recherche 2026-07, 26 Quellen)
+```python
+if mix_out >= 0.0:   # richtig
+if mix_out > 0:      # FALSCH — verwirft den Mixpoint bei t=0
+```
 
-Techno: 16 Bars Standard-Blend, 32 Sweet Spot; Bass-Swap hart auf Phrasengrenze (Lows 2-4 Bars, Mids bis 16). Psytrance: Dark 8-16, Full-On 16-32, Progressive 32-64 Bars; Intros/Outros 32-64 Bars sind Werkzeug. Uplifting Trance: 32-64+, bis 120 Bars. Nie zwei Basslines gleichzeitig. Pitch max ±3-4%. Loops als Fallback bei kurzen Intros. Quellen: DJ TechTools, Psynews, Crossfader, Digital DJ Tips.
+Anzeige: `format_mix_point_display` [main.py:208] zeigt `--:-- (- bars)` bei
+negativem Wert.
+
+## Invarianten (bei jeder Aenderung pruefen)
+
+1. `0 <= mix_in < mix_out <= duration`
+2. beide auf `anchor + k*grid`
+3. `mix_out - mix_in >= 2 * grid` (`min_window`, 2 Phrasen)
+4. `max_mix_out = min(outro_start, duration - grid)` — Mix-Out **auf** der
+   Outro-Grenze ist DJ-Standard, nicht davor
+5. Mixpoints nie innerhalb Intro/Outro (Spec:
+   `docs/superpowers/specs/2026-03-11-mix-point-intro-outro-guard-design.md`)
+6. Einheiten: Sekunden intern, Bars nur zur Anzeige
+   (`mix_in_bars`/`mix_out_bars`), Samples nur im Renderer
+
+Test-Helfer: `assert_mix_points_valid` [tests/conftest.py:216],
+`assert_phrase_aligned` [tests/conftest.py:245].
+
+## phrase_unit
+
+Kommt aus `GENRE_MIX_PROFILES[genre].phrase_unit`, erlaubt sind nur 8/16/32
+(erzwungen von `_validate_genre_tables`). Psytrance/Trance = 16, sonst
+ueberwiegend 8. Ableitung fuer den Struktur-Analyzer:
+`GENRE_PHRASE_UNITS` [structure_analyzer.py]. Details: Skill `hpg-genres`.
+
+## Notfall-Pfade
+
+Kollabiert das Fenster (`max_mix_out - min_mix_in < min_window`), greifen
+Prozent-Fallbacks `duration * 0.15 / 0.85`. Auch die werden seit N5
+nachtraeglich aufs Gitter quantisiert, sofern das gueltig bleibt. Wer diese
+Pfade anfasst: das Ergebnis muss weiterhin Invariante 1 und 2 erfuellen.
+
+## DJ-Praxis-Referenz (Recherche 2026-07, 26 Quellen)
+
+Techno 16 Bars Standard-Blend, 32 Sweet Spot, Bass-Swap hart auf der
+Phrasengrenze. Psytrance: Dark 8-16, Full-On 16-32, Progressive 32-64.
+Uplifting Trance 32-64+. Nie zwei Basslines gleichzeitig. Pitch max +-3-4 %.
 
 ## Common Mistakes
 
-- Sentinel-Check gegen `> 0` statt `>= 0.0` schreiben — verwirft Mixpoint bei t=0.
-- Neue Mixpoint-Quelle hinzufügen ohne Phrase-Quantisierung (siehe AI-Override-Bug).
-- Section-Dict-Felder ohne `None`-Guard vergleichen.
-- Magische Faktoren ändern, ohne beide Pfade (A und B) zu synchronisieren.
-- Bars und Sekunden verwechseln — `seconds_per_bar = 60/bpm * 4` (METER=4).
+- `> 0` statt `>= 0.0` gegen den Sentinel pruefen.
+- `phrase_anchor` als Untergrenze fuer `min_mix_in` benutzen (R3).
+- Neue Mixpoint-Quelle ohne `align_ai_mix_points`/`quantize_to_grid` einbauen.
+- Inline `(60/bpm)*4` statt `seconds_per_bar()` — es gab 14 solche Kopien.
+- Innerhalb der Kette runden.
+- Mixpoint-Logik aendern ohne `CACHE_VERSION`-Bump -> Skill
+  `hpg-cache-persistence`.

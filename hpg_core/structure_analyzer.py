@@ -187,7 +187,7 @@ def _compute_novelty_curve(
   # kleinen, robust normalisierten Zusatz, damit reine Klangfarbenwechsel die
   # Sektionsgrenzen nicht dominieren.
   signal_novelty = _compute_bass_percussion_novelty(
-    y, sr, effective_hop, len(novelty)
+    y, sr, effective_hop, len(novelty), feature_cache=feature_cache
   )
   if signal_novelty is not None:
     mfcc_novelty = _normalize_novelty(novelty)
@@ -224,6 +224,7 @@ def _compute_bass_percussion_novelty(
   sr: int,
   hop_length: int,
   num_frames: int,
+  feature_cache=None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
   """Erzeugt Bass- und Percussion-Onset-Novelty mit gleicher Frame-Anzahl."""
   if num_frames < 4 or len(y) == 0 or sr <= 0:
@@ -245,7 +246,17 @@ def _compute_bass_percussion_novelty(
     bass_flux = np.mean(bass_flux, axis=0)
     bass_flux = np.pad(bass_flux, (1, 0))
 
-    _, percussive = librosa.effects.hpss(y)
+    # PERF (2026-08-14): HPSS ist mit ~1 s pro Aufruf die teuerste Operation
+    # der Analyse. Der FeatureCache haelt sie bereits fuer exakt dieses Signal
+    # vor — nur nutzen, wenn es wirklich dasselbe ist (Laengenvergleich), sonst
+    # waere das Ergebnis ein anderes. Bit-identisch zum Direktaufruf.
+    cached_percussive = None
+    if feature_cache is not None and len(getattr(feature_cache, "y", ())) == len(y):
+      cached_percussive = feature_cache.get_hpss()[1]
+    percussive = (
+      cached_percussive if cached_percussive is not None
+      else librosa.effects.hpss(y)[1]
+    )
     percussion_flux = librosa.onset.onset_strength(
       y=percussive,
       sr=sr,
@@ -852,6 +863,20 @@ def analyze_structure(
   boundaries = [b for b in boundaries if b < duration - 1e-3]
   if not boundaries:
     boundaries = [0.0]
+
+  # AUDIT-FIX S-01 (2026-08-14): Die erste Grenze auf den Fensteranfang
+  # klemmen. _pick_boundaries liefert immer 0.0 als erste Grenze, aber
+  # _quantize_to_bars rastet sie auf den anker-relativen Phrasenpunkt in der
+  # Naehe von 0 — bei anchor > 0 also auf `anchor` selbst. Der Bereich
+  # [0, anchor) gehoerte dann zu KEINER Sektion, obwohl die Sektionen den
+  # Track vollstaendig partitionieren sollen (so testet es auch
+  # test_sections_cover_full_track, das bisher nur mit anchor=0 lief).
+  # An 34 echten Psytrance-Tracks gemessen: 22 hatten eine solche Kopfluecke,
+  # die groesste 13,0 s. Alle uebrigen Grenzen bleiben unveraendert auf dem
+  # Phrasengitter — nur die Nullgrenze ist ohnehin kein Mixpunkt-Kandidat.
+  if boundaries[0] > 0.0:
+    boundaries[0] = 0.0
+
   section_ends = boundaries[1:] + [duration]
   energies = []
   trends = []

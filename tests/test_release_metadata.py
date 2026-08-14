@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import hpg_core
 from hpg_core.app_metadata import APP_VERSION, MIN_PYTHON
 from hpg_core.playlist import STRATEGIES
 from tools import release_manifest
@@ -19,6 +20,11 @@ def test_version_is_consistent_across_user_facing_release_files():
     ROOT / "version_info.txt"
   ).read_text(encoding="utf-8")
   assert f"v{APP_VERSION}" in (ROOT / "build.bat").read_text(encoding="utf-8")
+
+
+def test_package_version_mirrors_single_metadata_source():
+  # Verhindert das Auseinanderlaufen der frueher doppelten Versionsquellen.
+  assert hpg_core.__version__ == APP_VERSION
 
 
 def test_readme_strategy_count_and_python_floor_match_source():

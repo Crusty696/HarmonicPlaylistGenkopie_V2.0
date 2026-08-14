@@ -97,6 +97,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from hpg_core.transition_renderer import TransitionClipSpec, _render_clip_subprocess_wrapper
+from hpg_core.downbeat import DOWNBEAT_RELIABLE_MIN, REFERENCE_BEATGRID_CONFIDENCE
 from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.models import get_camelot_components
 from hpg_core.playlist import (
@@ -117,15 +118,14 @@ from hpg_core.theme import (
     COLORS,
     GENRE_COLORS,
     GENRE_DEFAULT,
-    RISK_STYLES,
-    RISK_DEFAULT,
-    RISK_LABELS,
     PHASE_COLORS,
     PHASE_LABELS,
     TRANSITION_TYPE_COLORS,
     TRANSITION_TYPE_LABELS,
     TRANSITION_TYPE_DESCRIPTIONS,
+    TRANSITION_SCORE_TEXT,
     score_color,
+    transition_score_style,
     html_style_block,
     apply_dark_theme,
     FONT_FAMILY,
@@ -718,18 +718,28 @@ class TransitionRenderWorker(QThread):
                     transition_type=transition.transition_type or "smooth_blend",
                     bpm_a=float(transition.from_track.bpm or 120.0),
                     bpm_b=float(transition.to_track.bpm or 120.0),
-                    # Downbeat-Feature 2026-07-17: exaktes Beat-Alignment NUR
-                    # bei hoher Konfidenz (ANLZ-Beatgrid, auch Anker 0.0 ist
-                    # dann legitim). Validierung auf echter Musik zeigte: die
-                    # eigene Schaetzung liegt 30-380ms neben der Beat-Phase —
-                    # dann ist die Laufzeit-Schaetzung am Segment praeziser.
+                    # Downbeat-Feature 2026-07-17 / AUDIT-FIX D-03 (2026-08-14):
+                    # Beat-Alignment ab der kalibrierten Schwelle
+                    # DOWNBEAT_RELIABLE_MIN (auch Anker 0.0 ist legitim), die
+                    # TAKT-Ebene nur mit Referenz-Beatgrid. Gleiche Logik wie
+                    # in TransitionClipSpec.from_plan — Begruendung dort.
                     first_downbeat_a=float(getattr(transition.from_track, "first_downbeat", 0.0) or 0.0),
                     first_downbeat_b=float(getattr(transition.to_track, "first_downbeat", 0.0) or 0.0),
                     downbeat_reliable_a=(
-                        getattr(transition.from_track, "downbeat_confidence", 0.0) >= 0.9
+                        getattr(transition.from_track, "downbeat_confidence", 0.0)
+                        >= DOWNBEAT_RELIABLE_MIN
                     ),
                     downbeat_reliable_b=(
-                        getattr(transition.to_track, "downbeat_confidence", 0.0) >= 0.9
+                        getattr(transition.to_track, "downbeat_confidence", 0.0)
+                        >= DOWNBEAT_RELIABLE_MIN
+                    ),
+                    bar_phase_reliable_a=(
+                        getattr(transition.from_track, "downbeat_confidence", 0.0)
+                        == REFERENCE_BEATGRID_CONFIDENCE
+                    ),
+                    bar_phase_reliable_b=(
+                        getattr(transition.to_track, "downbeat_confidence", 0.0)
+                        == REFERENCE_BEATGRID_CONFIDENCE
                     ),
                     )
 
@@ -831,6 +841,55 @@ def stop_peaks(wait_ms: int = 2000):
             _PEAK_WORKERS.discard(worker)
 
 
+class _PeakWorker(QThread):
+    """Dekodiert eine Preview-WAV und berechnet die Peak-Huellkurve.
+
+    AUDIT-FIX T2 (2026-07-26): laeuft im Thread, weil das Einlesen der
+    Preview-WAV (bis ~124 s, ~22 MB) den GUI-Thread sichtbar blockierte.
+    Die Klasse liegt auf Modulebene wie alle anderen Worker der App —
+    frueher wurde sie in WaveformWidget.load() definiert und damit bei
+    JEDEM Aufruf als neues Klassenobjekt (eigenes pyqtSignal, eigenes
+    QMetaObject) erzeugt.
+    """
+
+    done = pyqtSignal(object, float)  # (peaks|None, total_sec)
+
+    def __init__(self, path, parent=None):
+        super().__init__(parent)
+        self._path = path
+
+    def run(self):
+        try:
+            # AUDIT-FIX N2: kooperativ abbrechbar — stop_peaks() bzw.
+            # ein neuer load() setzt requestInterruption().
+            if self.isInterruptionRequested():
+                return
+            import soundfile as sf
+            import numpy as np
+            data, sr = sf.read(self._path, dtype="float32", always_2d=True)
+            # Nach dem (nicht unterbrechbaren) Dekodieren erneut pruefen
+            if self.isInterruptionRequested():
+                return
+            mono = data.mean(axis=1)
+            total = len(mono) / sr if sr else 0.0
+            n_bars = 700
+            chunk = max(1, len(mono) // n_bars)
+            peaks = [float(np.abs(mono[i:i + chunk]).max())
+                     for i in range(0, len(mono), chunk)]
+            peak_max = max(peaks) if peaks else 1.0
+            norm = [p / peak_max for p in peaks] if peak_max > 0 else peaks
+            if self.isInterruptionRequested():
+                return
+            self.done.emit(norm, total)
+        except Exception as exc:
+            # AUDIT-FIX F9: nicht mehr stumm schlucken
+            logging.getLogger(__name__).warning(
+                "Waveform-Peaks konnten nicht geladen werden: %s", exc
+            )
+            if not self.isInterruptionRequested():
+                self.done.emit(None, 0.0)
+
+
 class WaveformWidget(QWidget):
     """Zeichnet den gerenderten Transition-Clip als Wellenform.
 
@@ -848,7 +907,16 @@ class WaveformWidget(QWidget):
         # AUDIT-FIX N3: Generation-Counter — nur das Ergebnis der jeweils
         # letzten load()-Anfrage wird uebernommen (stale Worker ignoriert).
         self._peak_generation = 0
+        # Text solange keine Peaks vorliegen (Ladehinweis oder Fehlermeldung)
+        self._placeholder = "Wellenform wird geladen …"
         self.setMinimumHeight(58)
+
+    def set_placeholder(self, text: str):
+        """Text setzen, der statt der Wellenform gezeigt wird (z. B. Fehler)."""
+        self._peaks = None
+        self._cf_start = self._cf_end = None
+        self._placeholder = text
+        self.update()
 
     def load(self, wav_path: str, crossfade_sec: float, preroll_sec: float = 30.0):
         """Laedt Clip, berechnet Peak-Huellkurve + Crossfade-Bereich.
@@ -860,45 +928,8 @@ class WaveformWidget(QWidget):
         """
         self._peaks = None
         self._cf_start = self._cf_end = None
+        self._placeholder = "Wellenform wird geladen …"
         self.update()
-
-        class _PeakWorker(QThread):
-            done = pyqtSignal(object, float)  # (peaks|None, total_sec)
-
-            def __init__(self, path, parent=None):
-                super().__init__(parent)
-                self._path = path
-
-            def run(self):
-                try:
-                    # AUDIT-FIX N2: kooperativ abbrechbar — stop_peaks() bzw.
-                    # ein neuer load() setzt requestInterruption().
-                    if self.isInterruptionRequested():
-                        return
-                    import soundfile as sf
-                    import numpy as np
-                    data, sr = sf.read(self._path, dtype="float32", always_2d=True)
-                    # Nach dem (nicht unterbrechbaren) Dekodieren erneut pruefen
-                    if self.isInterruptionRequested():
-                        return
-                    mono = data.mean(axis=1)
-                    total = len(mono) / sr if sr else 0.0
-                    n_bars = 700
-                    chunk = max(1, len(mono) // n_bars)
-                    peaks = [float(np.abs(mono[i:i + chunk]).max())
-                             for i in range(0, len(mono), chunk)]
-                    peak_max = max(peaks) if peaks else 1.0
-                    norm = [p / peak_max for p in peaks] if peak_max > 0 else peaks
-                    if self.isInterruptionRequested():
-                        return
-                    self.done.emit(norm, total)
-                except Exception as exc:
-                    # AUDIT-FIX F9: nicht mehr stumm schlucken
-                    logging.getLogger(__name__).warning(
-                        "Waveform-Peaks konnten nicht geladen werden: %s", exc
-                    )
-                    if not self.isInterruptionRequested():
-                        self.done.emit(None, 0.0)
 
         # AUDIT-FIX N1 (2026-07-26): Alten Worker nur noch unterbrechen —
         # KEIN isRunning()-Guard mehr. Der lief auf einer per deleteLater()
@@ -956,7 +987,7 @@ class WaveformWidget(QWidget):
         if not self._peaks:
             p.setPen(QColor(COLORS["text_dim"]))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Wellenform wird geladen …")
+                       self._placeholder)
             p.end()
             return
         mid = h / 2.0
@@ -998,6 +1029,7 @@ class TransitionPreviewWidget(QWidget):
         self._index = index
         self._tr = transition
         self._wav_path: str | None = None
+        self._error_msg: str | None = None
         # M5-Fix: mit Qt-Parent erzeugen, damit Player/Output an der Widget-
         # Hierarchie haengen und bei deleteLater() mitzerstoert werden (sonst
         # haelt das offene Datei-Handle laenger als das Widget -> Windows-Lock).
@@ -1015,7 +1047,8 @@ class TransitionPreviewWidget(QWidget):
         layout.setSpacing(6)
 
         # 1. Titel-Label
-        self._title_label = QLabel(f"▶ Hör-Vorschau Übergang {self._index + 1}")
+        self._base_title = f"▶ Hör-Vorschau Übergang {self._index + 1}"
+        self._title_label = QLabel(self._base_title)
         self._title_label.setStyleSheet("QLabel { font-size: 11px; font-weight: bold; color: #8b949e; }")
         layout.addWidget(self._title_label)
 
@@ -1120,6 +1153,7 @@ class TransitionPreviewWidget(QWidget):
 
     def set_wav_path(self, path: str):
         """Aufgerufen wenn TransitionRenderWorker clip_ready emittiert."""
+        self.clear_error()
         self._wav_path = path
         self._player.setSource(QUrl.fromLocalFile(path))
         self._play_btn.setEnabled(True)
@@ -1129,10 +1163,32 @@ class TransitionPreviewWidget(QWidget):
         self._waveform.load(path, getattr(self, "_crossfade_sec", 0.0))
 
     def set_error(self, msg: str):
-        """Fehlermeldung anzeigen, Play-Button bleibt deaktiviert."""
+        """Fehlermeldung anzeigen, Play-Button bleibt deaktiviert.
+
+        Wird von MixTipsPanel._on_clip_error() aufgerufen. Das Widget bleibt
+        stehen, damit der Nutzer sieht, WELCHER Uebergang fehlgeschlagen ist;
+        ein Retry ueber den Karten-Button setzt es per clear_error() zurueck.
+        """
+        self._error_msg = msg
+        self._wav_path = None
+        self._play_btn.setEnabled(False)
+        self._slider.setEnabled(False)
+        self._slider.setValue(0)
         self._time_label.setText("Fehler")
-        self._title_label.setText(f"{self._title_label.text()} ⚠")
+        # Basistitel verwenden — sonst haengt jeder Fehlversuch ein ⚠ mehr an.
+        self._title_label.setText(f"{self._base_title} ⚠ Render fehlgeschlagen")
         self._title_label.setToolTip(msg)
+        self._waveform.set_placeholder(f"Render fehlgeschlagen: {msg}")
+
+    def clear_error(self):
+        """Fehleranzeige zuruecknehmen (neuer Render-Versuch laeuft)."""
+        if getattr(self, "_error_msg", None) is None:
+            return
+        self._error_msg = None
+        self._title_label.setText(self._base_title)
+        self._title_label.setToolTip("")
+        self._time_label.setText("—")
+        self._waveform.set_placeholder("Wellenform wird geladen …")
 
     def _toggle_play(self):
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -2599,6 +2655,47 @@ class EnergyBarDelegate(QStyledItemDelegate):
         return QSize(60, 24)
 
 
+class TransitionScoreDelegate(QStyledItemDelegate):
+    """Rendert die Uebergangs-Passung als deutliches, farbiges Badge."""
+
+    def paint(self, painter, option, index):
+        score = index.data(Qt.ItemDataRole.UserRole)
+        if score is None:
+            super().paint(painter, option, index)
+            return
+
+        try:
+            score = float(score)
+        except (TypeError, ValueError):
+            super().paint(painter, option, index)
+            return
+
+        accent_color, _, _ = transition_score_style(score / 100.0)
+        painter.save()
+
+        cell_background = (
+            COLORS["bg_selected"]
+            if option.state & QStyle.StateFlag.State_Selected
+            else COLORS["bg_input"]
+        )
+        painter.fillRect(option.rect, QColor(cell_background))
+        painter.fillRect(option.rect.adjusted(3, 3, -3, -3), QColor(accent_color))
+
+        font = painter.font()
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(TRANSITION_SCORE_TEXT))
+        painter.drawText(
+            option.rect,
+            Qt.AlignmentFlag.AlignCenter,
+            str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
+        )
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(130, 24)
+
+
 class PlaylistPanel(QWidget):
     """Playlist-Tabelle mit Quality-Header und Drag-Drop."""
 
@@ -2647,7 +2744,8 @@ class PlaylistPanel(QWidget):
                 "Mix Out",
                 "Bass %",
                 "Texture",
-                "Transition Score", "AI Insights",
+                "Passung",
+                "AI Insights",
             ]
         )
 
@@ -2667,7 +2765,8 @@ class PlaylistPanel(QWidget):
             "Mix-Out-Punkt: Dynamisch berechneter Endpunkt für den Mix (vor Outro).",
             "Bass %: Subbass-Anteil (20-150Hz) für Genre-Flow und EQing.",
             "Textur: Klangliche Ähnlichkeit für fließende Übergänge.",
-            "Kompatibilität zum vorherigen Track (0-100%).",
+            "Passung zum vorherigen Track: Farbe, Bewertung und Score (0-100%).",
+            "Optionale KI-Beschreibung zu Stimmung und Charakter.",
         ]
         for col, tip in enumerate(header_tooltips):
             item = self.table.horizontalHeaderItem(col)
@@ -2697,6 +2796,9 @@ class PlaylistPanel(QWidget):
         self.table.setColumnWidth(9, 60)
         self.table.setColumnWidth(10, 70)
         self.table.setColumnWidth(11, 70)
+        self.table.setColumnWidth(12, 65)
+        self.table.setColumnWidth(13, 115)
+        self.table.setColumnWidth(14, 130)
 
         # rowsMoved Signal
         self.table.model().rowsMoved.connect(self._on_rows_moved)
@@ -2704,6 +2806,8 @@ class PlaylistPanel(QWidget):
         # EnergyBarDelegate fuer visuelle Energie-Anzeige (Spalte 7)
         self._energy_delegate = EnergyBarDelegate(self.table)
         self.table.setItemDelegateForColumn(7, self._energy_delegate)
+        self._transition_score_delegate = TransitionScoreDelegate(self.table)
+        self.table.setItemDelegateForColumn(14, self._transition_score_delegate)
 
         layout.addWidget(self.table, 1)
 
@@ -2835,6 +2939,24 @@ class PlaylistPanel(QWidget):
 
         self.quality_layout.addStretch()
 
+    @staticmethod
+    def _make_transition_score_item(score):
+        """Erzeugt die einheitliche Passungsanzeige fuer eine Tabellenzeile."""
+        if score is None:
+            item = QTableWidgetItem("—")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setToolTip("Erster Track: kein vorheriger Uebergang.")
+            return item
+
+        accent_color, _, label = transition_score_style(score / 100.0)
+        item = QTableWidgetItem(f"{int(score)}% · {label}")
+        item.setData(Qt.ItemDataRole.UserRole, float(score))
+        item.setBackground(QColor(accent_color))
+        item.setForeground(QColor(TRANSITION_SCORE_TEXT))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setToolTip(f"{label}: {int(score)}% Passung zum vorherigen Track.")
+        return item
+
     def _populate_table(self):
         """Tabelle mit Performance-Optimierung befuellen."""
         self.table.setUpdatesEnabled(False)
@@ -2916,11 +3038,10 @@ class PlaylistPanel(QWidget):
             
             self.table.setItem(i, 13, texture_item)
 
-            # Transition-Score (moved to column 14)
-            from hpg_core.theme import get_7_scale_color
-            score_item = QTableWidgetItem(f"{transition_score}%")
-            score_item.setBackground(QColor(get_7_scale_color(transition_score / 100)))
-            score_item.setForeground(QColor("white"))
+            # Passung zum vorherigen Track (Spalte 14)
+            score_item = self._make_transition_score_item(
+                transition_score if i > 0 else None
+            )
             self.table.setItem(i, 14, score_item)
 
         self.table.setUpdatesEnabled(True)
@@ -3006,11 +3127,10 @@ class PlaylistPanel(QWidget):
                 texture_item = QTableWidgetItem("-")
             self.table.setItem(i, 13, texture_item)
 
-            # Spalte 14: Transition-Score aktualisieren (Korrektur des Spaltenbugs!)
-            from hpg_core.theme import get_7_scale_color
-            score_item = QTableWidgetItem(f"{transition_score}%")
-            score_item.setBackground(QColor(get_7_scale_color(transition_score / 100)))
-            score_item.setForeground(QColor("white"))
+            # Spalte 14: Passung zum vorherigen Track aktualisieren
+            score_item = self._make_transition_score_item(
+                transition_score if i > 0 else None
+            )
             self.table.setItem(i, 14, score_item)
 
         # Quality neu berechnen — mit aktivem Scoring-Kontext (HPG-001)
@@ -3092,7 +3212,9 @@ class MixTipsPanel(QWidget):
             return
 
         for card_index, rec in enumerate(self.transition_recommendations):
-            bg_color, accent_color = RISK_STYLES.get(rec.risk_level, RISK_DEFAULT)
+            accent_color, bg_color, fit_label = transition_score_style(
+                rec.compatibility_score / 100.0
+            )
 
             card = QFrame()
             card.setFrameShape(QFrame.Shape.StyledPanel)
@@ -3100,7 +3222,7 @@ class MixTipsPanel(QWidget):
                 QFrame {{
                     background-color: {bg_color};
                     border-radius: 0px;
-                    border: 1px solid {accent_color};
+                    border: 2px solid {accent_color};
                     padding: 12px;
                 }}
             """)
@@ -3140,13 +3262,14 @@ class MixTipsPanel(QWidget):
                 card_layout.addWidget(genre_label)
 
             # Risk-Summary
-            risk_display = RISK_LABELS.get(rec.risk_level, rec.risk_level)
             summary = QLabel(
-                f"{risk_display} | Score {rec.compatibility_score}/100 | "
+                f"{fit_label} | Score {rec.compatibility_score}/100 | "
                 f"BPM {rec.bpm_delta:+.1f} | Energy {rec.energy_delta:+d}"
             )
             summary.setStyleSheet(
-                f"QLabel {{ color: {accent_color}; font-weight: 600; }}"
+                f"QLabel {{ color: {TRANSITION_SCORE_TEXT}; "
+                f"background-color: {accent_color}; font-weight: 700; "
+                f"padding: 5px 8px; }}"
             )
             card_layout.addWidget(summary)
 
@@ -3310,6 +3433,13 @@ class MixTipsPanel(QWidget):
             )
             self._preview_widgets[index] = widget
             self._insert_preview_widget(index, widget)
+        else:
+            # Retry nach Fehler: bestehendes Widget wiederverwenden und die
+            # alte Fehleranzeige zuruecknehmen.
+            try:
+                self._preview_widgets[index].clear_error()
+            except RuntimeError:
+                pass  # Widget bereits von Qt zerstoert
         button = self._preview_buttons.get(index)
         if button:
             button.setEnabled(False)
@@ -3458,14 +3588,20 @@ class MixTipsPanel(QWidget):
             button.setText("Vorschau geladen")
 
     def _on_clip_error(self, index: int, error_msg: str):
-        """Aufgerufen wenn Rendering eines Clips fehlgeschlagen ist."""
-        widget = self._preview_widgets.pop(index, None)
+        """Aufgerufen wenn Rendering eines Clips fehlgeschlagen ist.
+
+        Das Preview-Widget bleibt stehen und zeigt den Fehler an (statt
+        entsorgt zu werden) — so ist sichtbar, WELCHER Uebergang gescheitert
+        ist. Ein Retry ueber den Karten-Button nutzt dasselbe Widget weiter.
+        """
+        widget = self._preview_widgets.get(index)
         if widget is not None:
             try:
                 widget.stop_and_reset()
-                widget.deleteLater()
+                widget.set_error(error_msg)
             except RuntimeError:
-                pass
+                # Widget bereits von Qt zerstoert
+                self._preview_widgets.pop(index, None)
         button = self._preview_buttons.get(index)
         if button:
             button.setEnabled(True)
@@ -4246,9 +4382,8 @@ class MainWindow(QMainWindow):
             self.playlist_panel.table.setItem(found_row, 10, mix_in_item)
             self.playlist_panel.table.setItem(found_row, 11, mix_out_item)
             
-            # 3. Recalculate Transition Score for this track and the next track (col 14)
+            # 3. Passung fuer diesen und den naechsten Track neu berechnen (Spalte 14)
             from hpg_core.playlist import calculate_enhanced_compatibility
-            from hpg_core.theme import get_7_scale_color
             
             # HPG-001: Scoring-Kontext des Panels wiederverwenden
             scoring_context = getattr(self.playlist_panel, "scoring_context", {})
@@ -4257,9 +4392,7 @@ class MainWindow(QMainWindow):
                 prev_track = self.playlist[found_row - 1]
                 metrics = calculate_enhanced_compatibility(prev_track, found_track, self.playlist_panel.bpm_tolerance, **scoring_context)
                 score = int(metrics.overall_score * 100)
-                score_item = QTableWidgetItem(f"{score}%")
-                score_item.setBackground(QColor(get_7_scale_color(score / 100)))
-                score_item.setForeground(QColor("white"))
+                score_item = self.playlist_panel._make_transition_score_item(score)
                 self.playlist_panel.table.setItem(found_row, 14, score_item)
 
             # Recalculate for next row (compatibility of next track to current track)
@@ -4267,9 +4400,7 @@ class MainWindow(QMainWindow):
                 next_track = self.playlist[found_row + 1]
                 metrics = calculate_enhanced_compatibility(found_track, next_track, self.playlist_panel.bpm_tolerance, **scoring_context)
                 score = int(metrics.overall_score * 100)
-                score_item = QTableWidgetItem(f"{score}%")
-                score_item.setBackground(QColor(get_7_scale_color(score / 100)))
-                score_item.setForeground(QColor("white"))
+                score_item = self.playlist_panel._make_transition_score_item(score)
                 self.playlist_panel.table.setItem(found_row + 1, 14, score_item)
                 
     def on_ai_worker_finished(
@@ -4533,16 +4664,22 @@ class MainWindow(QMainWindow):
         try:
             exporter = M3U8Exporter()
             playlist_name = f"HPG - {self.current_playlist_mode}"
-            exporter.export(self.playlist, file_path, playlist_name)
+            report = exporter.export(self.playlist, file_path, playlist_name)
 
-            QMessageBox.information(
-                self,
-                "Export Successful",
+            message = (
                 f"M3U8 Playlist exported!\n\n"
                 f"Location: {file_path}\n"
-                f"Tracks: {len(self.playlist)}\n"
-                f"Compatible with Rekordbox, Serato, Traktor.",
+                f"Tracks: {report.tracks_written}\n"
+                f"Compatible with Rekordbox, Serato, Traktor."
             )
+            if report.status == "partial":
+                QMessageBox.warning(
+                    self,
+                    "Export teilweise abgeschlossen",
+                    message + "\n\n" + "\n".join(report.errors),
+                )
+            else:
+                QMessageBox.information(self, "Export Successful", message)
         except Exception as e:
             raise Exception(f"M3U8 export failed: {e}")
 

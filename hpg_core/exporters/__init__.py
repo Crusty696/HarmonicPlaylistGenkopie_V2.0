@@ -6,7 +6,8 @@ Provides export functionality to various DJ software formats:
 - Rekordbox XML: Professional integration with full metadata
 """
 
+from .base_exporter import BaseExporter, ExportReport
 from .m3u8_exporter import M3U8Exporter
 from .rekordbox_xml_exporter import RekordboxXMLExporter
 
-__all__ = ['M3U8Exporter', 'RekordboxXMLExporter']
+__all__ = ['BaseExporter', 'ExportReport', 'M3U8Exporter', 'RekordboxXMLExporter']

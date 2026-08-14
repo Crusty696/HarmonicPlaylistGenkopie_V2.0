@@ -465,11 +465,6 @@ class RekordboxImporter:
         return None
 
     @staticmethod
-    def _time_to_seconds(raw_time) -> Optional[float]:
-        """Kompatibilitaetshelfer; neue Pfade nutzen die explizite Millisekunden-API."""
-        return RekordboxImporter._milliseconds_to_seconds(raw_time)
-
-    @staticmethod
     def _milliseconds_to_seconds(raw_time) -> Optional[float]:
         """Normalisiert einen Rekordbox-Zeitwert aus Millisekunden."""
         try:

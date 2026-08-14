@@ -494,6 +494,18 @@ def _calculate_compatibility_inner(
 
 # Global thread-local-like cache containers for the current playlist generation
 # session. They remain opt-in so direct API calls preserve their existing behavior.
+#
+# AUDIT-MESSUNG F07 (2026-08-14, 52 echte Tracks, alle 8 Strategien): waehrend
+# generate_playlist wird _COMPAT_CACHE zwar angelegt, aber NIE gelesen oder
+# beschrieben (0 Aufrufe von calculate_compatibility, 0 Treffer). Alle
+# Strategien sortieren ueber calculate_transition_objective ->
+# calculate_enhanced_compatibility und treffen damit ausschliesslich
+# _ENHANCED_COMPAT_CACHE (Warm-Up 1538/2005, Cool-Down 1538/2001,
+# Peak-Time 711/948 Treffer; die uebrigen Strategien bewerten jedes Paar genau
+# einmal und koennen konstruktionsbedingt keine Treffer haben).
+# _COMPAT_CACHE bleibt als korrekter Opt-in-Mechanismus fuer den einzigen
+# externen Consumer predict_transition_type bestehen — er kostet eine
+# Dict-Allokation pro Generierung und veraendert kein Ergebnis.
 _ENHANCED_COMPAT_CACHE = None
 _COMPAT_CACHE = None
 
@@ -741,15 +753,23 @@ def _sort_directional_bpm(
                 immediate = calculate_transition_objective(
                     current, candidate, bpm_tolerance, **kwargs
                 )
-                future = 0.0
-                if len(remaining) > 1:
-                    future = max(
+                # AUDIT-FIX 2026-08-14: Guard (len(remaining) > 1) passte nicht
+                # zum Filter (other is not candidate). Steht DASSELBE Track-
+                # Objekt mehrfach in der BPM-Gruppe (Nutzer laedt eine Datei
+                # doppelt), filtert der Generator alle Kopien heraus und max()
+                # lief auf einer leeren Sequenz -> ValueError mitten in
+                # Warm-Up/Cool-Down. default=0.0 ist bei nicht-leerer Sequenz
+                # verhaltensgleich.
+                future = max(
+                    (
                         calculate_transition_objective(
                             candidate, other, bpm_tolerance, **kwargs
                         )
                         for other in remaining
                         if other is not candidate
-                    )
+                    ),
+                    default=0.0,
+                )
                 return immediate + LOOKAHEAD_FUTURE_WEIGHT * future
 
             next_track = max(remaining, key=_tie_break_score)
@@ -1120,21 +1140,6 @@ def _resolve_mix_points(track: Track, fallback_overlap: float) -> tuple[float, f
     return mix_in_point, mix_out_point
 
 
-def _intro_end_for_transition(track: Track) -> Optional[float]:
-    """Liest das Ende des Intro-Fensters, sofern Sections vorhanden sind."""
-    intro_ends = []
-    for section in getattr(track, "sections", None) or []:
-        if isinstance(section, dict):
-            label = section.get("label", section.get("section_type", ""))
-            end = section.get("end_time")
-        else:
-            label = getattr(section, "label", getattr(section, "section_type", ""))
-            end = getattr(section, "end_time", None)
-        if str(label).lower() == "intro" and end is not None:
-            intro_ends.append(float(end))
-    return max(intro_ends) if intro_ends else None
-
-
 def _clamp_transition_overlap(
     overlap: float,
     current: Track,
@@ -1143,14 +1148,27 @@ def _clamp_transition_overlap(
     next_mix_in: float,
     limit_to_windows: bool = True,
 ) -> float:
-    """Begrenzt den Overlap auf die tatsaechlichen Outro-/Intro-Fenster."""
+    """Begrenzt den Overlap auf das real vorhandene Audio beider Tracks.
+
+    Vertrag mit dem Renderer (TransitionClipSpec.from_plan): waehrend des
+    Crossfades laeuft A ab ``mix_out_a`` und B ab ``mix_in_b`` — beide also
+    VORWAERTS ab ihrem Mixpunkt. Nutzbar ist damit die Restdauer hinter dem
+    jeweiligen Mixpunkt.
+
+    AUDIT-FIX 2026-08-14: Die B-Seite begrenzte vorher auf
+    ``intro_end_B - mix_in_b``. dj_brain garantiert per Design
+    ``mix_in_b >= intro_end_B`` (siehe tests/test_dj_brain.py), dieser Term
+    war also immer <= 0 — gemessen an 52 echten Tracks wurden 50 von 51
+    Uebergaengen auf overlap=0.0 geklemmt (Mittel 0.67 s statt 37 s), der
+    Renderer bekam faktisch ueberall harte Schnitte und der overlap-Parameter
+    blieb wirkungslos. Korrekt ist die Restdauer von B hinter dem Mix-In.
+    """
     limits = [float(MAX_TRANSITION_OVERLAP_SECONDS)]
     if limit_to_windows:
         if current.duration > 0:
             limits.append(max(0.0, float(current.duration) - current_mix_out))
-        intro_end = _intro_end_for_transition(upcoming)
-        if intro_end is not None:
-            limits.append(max(0.0, intro_end - next_mix_in))
+        if upcoming.duration > 0:
+            limits.append(max(0.0, float(upcoming.duration) - next_mix_in))
     return max(0.0, min(float(overlap), *limits))
 
 
@@ -1162,7 +1180,16 @@ def _handoff_pair_point_risks(
     next_mix_in: float,
     notes_parts: list[str],
 ) -> list[str]:
-    """Bewertet Bass-Risiken an den paarspezifischen statt Track-Default-Punkten."""
+    """Bewertet Bass-Risiken an den paarspezifischen statt Track-Default-Punkten.
+
+    NICHT ENTFERNEN, auch wenn es nach Dopplung aussieht. Seit dj_brain die
+    Risiken selbst an den Paar-Punkten bewertet (Audit 2026-08-14, N2), sind die
+    erzeugten `risk_notes` tatsaechlich identisch — gemessen 0 Abweichungen ueber
+    51 reale Uebergaenge. Diese Funktion ist aber die EINZIGE Stelle, die die
+    Kollisionswarnung zusaetzlich in den nutzersichtbaren Notiztext (`notes_parts`,
+    mit "! "-Praefix) hebt. Ohne sie fehlt die Warnung in der Anzeige — gemessen
+    bei 43 von 51 Uebergaengen.
+    """
     if dj_rec is None:
         return notes_parts
 

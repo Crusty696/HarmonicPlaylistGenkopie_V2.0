@@ -53,16 +53,6 @@ class ErrorReporter:
         with self._lock:
             return self._read_errors()[-count:]
 
-    def clear_errors(self):
-        """Loescht alle Fehlermeldungen."""
-        with self._lock:
-            try:
-                with open(self.error_log_file, 'w', encoding='utf-8') as f:
-                    json.dump([], f)
-                logger.info("Fehlerprotokoll geloescht")
-            except OSError as e:
-                logger.error(f"Fehler beim Loeschen des Fehlerprotokolls: {e}")
-
     def _read_errors(self):
         """Liest bestehende Eintraege; korrupte/fehlende Datei ergibt leere Liste."""
         try:

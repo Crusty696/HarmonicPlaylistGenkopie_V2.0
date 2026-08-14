@@ -1,3 +1,4 @@
+import math
 import logging
 from typing import List
 from .models import Track
@@ -38,7 +39,18 @@ def validate_playlist_security(tracks: List[Track]) -> bool:
             logger.debug(f"Could not check file size for track {track.filePath}: {e}")
             
         # Validate track duration if available
-        if hasattr(track, 'duration') and track.duration:
+        # AUDIT-FIX 2026-08-14: `if track.duration:` liess negative Werte und
+        # NaN durch — NaN scheitert an JEDEM Vergleich, ist also weder ">" noch
+        # "<=" dem Limit, und -5.0 ist schlicht truthy. Gemessene Folge einer
+        # negativen Dauer: calculate_genre_aware_mix_points liefert
+        # mix_in=0.0 / mix_out=-5.0 und verletzt damit die eigene Invariante
+        # 0 <= mix_in < mix_out <= duration.
+        if hasattr(track, 'duration') and track.duration is not None:
+            if not math.isfinite(track.duration) or track.duration <= 0:
+                logger.warning(
+                    f"Track {track.filePath} hat ungueltige Dauer: {track.duration!r}"
+                )
+                return False
             if track.duration > SECURITY_MAX_TRACK_DURATION:
                 logger.warning(f"Track {track.filePath} exceeds max duration: {track.duration}s")
                 return False
@@ -103,8 +115,14 @@ def validate_track_security(track: Track) -> bool:
     except OSError as e:
         logger.debug(f"Could not check file size for track {track.filePath}: {e}")
         
-    # Check duration if available
-    if hasattr(track, 'duration') and track.duration:
+    # Check duration if available (siehe Begruendung oben: NaN und negative
+    # Werte muessen explizit raus, `if track.duration:` genuegt nicht)
+    if hasattr(track, 'duration') and track.duration is not None:
+        if not math.isfinite(track.duration) or track.duration <= 0:
+            logger.warning(
+                f"Track {track.filePath} hat ungueltige Dauer: {track.duration!r}"
+            )
+            return False
         if track.duration > SECURITY_MAX_TRACK_DURATION:
             logger.warning(f"Track {track.filePath} exceeds max duration: {track.duration}s")
             return False

@@ -9,6 +9,12 @@ import pytest
 
 from hpg_core.config import PHRASE_CONFIDENCE_MIN
 from hpg_core.downbeat import (
+  DOWNBEAT_RELIABLE_MIN,
+  REFERENCE_BEATGRID_CONFIDENCE,
+  SELF_ESTIMATE_CONFIDENCE_MAX,
+  _bar_phase_confidence,
+  _beat_phase_from_fold,
+  _grid_is_commensurate,
   _vote_margin_confidence,
   estimate_first_downbeat,
   estimate_first_phrase,
@@ -234,3 +240,207 @@ class TestEstimateFirstPhraseSentinel:
   def test_phrase_unit_1_liefert_sentinel(self):
     y = np.random.RandomState(2).randn(SR * 30).astype(np.float32)
     assert estimate_first_phrase(y, SR, 128.0, 0.0, 1) == (-1.0, 0.0)
+
+
+class TestDownbeatAnkerInvarianten:
+  """AUDIT-FIX D-01/D-02 (2026-08-14): Messungen an 34 echten Psytrance-AIFFs
+  (D:/beatport_tracks_2025-08) und am Produktivcache (52 Tracks).
+
+  Zwei belegte Defekte:
+  * D-01 Drift — der Anker wurde linear ueber `median(diff(beat_times))`
+    zurueckgerechnet. Dieser Median ist auf allen 34 Tracks EXAKT ein
+    ganzzahliges Vielfaches der Hop-Dauer (Abweichung < 1e-12) und damit
+    systematisch bias-behaftet; der lineare Term multipliziert den Bias mit
+    der Taktnummer. Folge: 28 von 34 Ankern lagen ausserhalb des ersten
+    Takts, der schlimmste bei 11,6 Takten (19,95 s), im Produktivcache bei
+    31,5 Takten (55,6 s).
+  * D-02 Fremdes Raster — bei 11 von 34 Tracks trackte librosa ein
+    inkommensurables Tempo (fast immer 3:2), sodass `% 4` Takte einer
+    anderen Metrik zaehlte.
+
+  Gegen die 9 Tracks mit Rekordbox-ANLZ-Downbeat als Ground Truth sank der
+  mediane Takt-Fehler von 0,287 s auf 0,024 s.
+  """
+
+  @pytest.mark.slow
+  @pytest.mark.parametrize("bpm,offset", [(128.0, 0.30), (140.0, 0.50)])
+  def test_anker_driftet_nicht_mit_der_tracklaenge(self, bpm, offset):
+    """D-01: Derselbe Downbeat muss bei 40 s und bei 300 s Material
+    denselben Anker liefern. Genau das tat die alte Rueckrechnung nicht —
+    ihr Fehler wuchs linear mit der Tracklaenge."""
+    kurz = estimate_first_downbeat(_make_four_on_floor(bpm, 40.0, offset), SR, bpm)[0]
+    lang = estimate_first_downbeat(_make_four_on_floor(bpm, 300.0, offset), SR, bpm)[0]
+    assert kurz == pytest.approx(lang, abs=0.05), (
+      f"Anker haengt von der Tracklaenge ab: {kurz} vs {lang}"
+    )
+    assert abs(lang - offset) < 0.08, f"Anker {lang} statt {offset}"
+
+  @pytest.mark.slow
+  @pytest.mark.parametrize("bpm,offset,duration", [
+    (128.0, 0.30, 300.0),
+    (140.0, 0.50, 300.0),
+    (140.0, 1.60, 120.0),
+  ])
+  def test_anker_liegt_immer_im_ersten_takt(self, bpm, offset, duration):
+    """Ein ERSTER Downbeat kann per Definition nicht hinter dem ersten Takt
+    liegen. dj_brain nutzt first_downbeat als Untergrenze fuer Mix-In
+    (AUDIT-FIX R3) — ein Anker bei 55 s verschiebt dort den Einstiegspunkt."""
+    bar_len = (60.0 / bpm) * 4
+    db, _ = estimate_first_downbeat(
+      _make_four_on_floor(bpm, duration, offset), SR, bpm
+    )
+    assert 0.0 <= db < bar_len, f"Anker {db} liegt nicht im ersten Takt ({bar_len})"
+
+  def test_kommensurabilitaet_trennt_die_gemessenen_verhaeltnisse(self):
+    """D-02: Die Schwelle muss die an echtem Material gemessenen Cluster
+    trennen — Verhaeltnisse um 1 (und ganzzahlige Vielfache/Teiler, wenn
+    librosa nur jeden n-ten Beat findet) sind gueltig, 3:2 & Co. nicht."""
+    for ratio in (0.962, 0.996, 1.019, 1.044, 0.5, 2.0, 3.975, 4.024):
+      assert _grid_is_commensurate(ratio, 1.0), f"ratio {ratio} faelschlich verworfen"
+    for ratio in (0.756, 1.320, 1.351, 1.485, 1.489, 2.650):
+      assert not _grid_is_commensurate(ratio, 1.0), f"ratio {ratio} faelschlich akzeptiert"
+
+  def test_degenerierte_raster_werden_verworfen(self):
+    assert not _grid_is_commensurate(0.0, 1.0)
+    assert not _grid_is_commensurate(1.0, 0.0)
+
+  @pytest.mark.slow
+  def test_fremdes_beat_raster_liefert_keinen_anker(self):
+    """D-02 Integration: passt das getrackte Raster nicht zum uebergebenen
+    bpm, ist die '1' auf dem Zielgitter nicht definiert. Dann gilt der
+    dokumentierte Vertrag (0.0, 0.0) — kein Anker statt falschem Anker."""
+    y = _make_four_on_floor(128.0, 60.0, 0.30)
+    # 85,33 BPM = 2/3 von 128: das Raster liegt zwischen den Zielbeats
+    assert estimate_first_downbeat(y, SR, 85.33) == (0.0, 0.0)
+    # dasselbe Material mit passendem Tempo liefert weiterhin einen Anker
+    assert estimate_first_downbeat(y, SR, 128.0)[1] > 0.0
+
+  @pytest.mark.slow
+  def test_konfidenz_nutzt_die_volle_skala_bleibt_aber_unter_1(self):
+    """AUDIT-FIX D-03 (2026-08-14): Die Skala ist repariert.
+
+    Vorher war `confidence` die rohe Voting-Margin (v1-v2)/sum(|v|). Weil
+    die vier Votes Summen z-normierter Groessen sind, summieren sie sich
+    exakt zu 0 — damit ist die Margin analytisch auf 2/3 gedeckelt. Die
+    frueheren Gates `>= 0.9` waren fuer eine Eigenschaetzung deshalb
+    UNERREICHBAR und bedeuteten faktisch "nur Rekordbox-ANLZ-Beatgrid".
+
+    Jetzt: Margin durch ihren Deckel geteilt (ehrliche 0..1-Skala), mit dem
+    Faltungs-Lock konjungiert und hart unter 1.0 gehalten — 1.0 bleibt
+    exklusiv dem Referenz-Beatgrid vorbehalten.
+    """
+    conf = estimate_first_downbeat(_make_four_on_floor(140.0, 120.0, 0.5), SR, 140.0)[1]
+    assert conf > 2.0 / 3.0, (
+      f"Skala weiterhin gedeckelt (conf={conf}) — Ruecknormierung wirkt nicht"
+    )
+    assert conf >= DOWNBEAT_RELIABLE_MIN
+    assert conf <= SELF_ESTIMATE_CONFIDENCE_MAX < REFERENCE_BEATGRID_CONFIDENCE
+
+  def test_margin_deckel_wird_auf_1_zurueckgerechnet(self):
+    """Der analytisch maximale Vote-Vektor (S, -S/3, -S/3, -S/3) hat die
+    rohe Margin 2/3 und muss auf 1.0 abgebildet werden."""
+    votes = np.array([3.0, -1.0, -1.0, -1.0])
+    raw = (votes[0] - votes[1]) / np.sum(np.abs(votes))
+    assert raw == pytest.approx(2.0 / 3.0)
+    assert _bar_phase_confidence(votes) == pytest.approx(1.0)
+
+  def test_bar_phase_confidence_degeneriert(self):
+    assert _bar_phase_confidence(np.zeros(4)) == 0.0
+    assert _bar_phase_confidence(np.array([1.0])) == 0.0
+    # Gleichstand zwischen Platz 1 und 2 = keine Entscheidung
+    assert _bar_phase_confidence(np.array([1.0, 1.0, -1.0, -1.0])) == 0.0
+
+  @pytest.mark.slow
+  def test_faltung_findet_die_beat_phase_ohne_gruppenlaufzeit(self):
+    """D-03 Kern: der Sub-Beat-Anteil kommt aus der beat-synchronen Faltung
+    der nullphasig gefilterten Huellkurve. Auf einem Klick-Track muss der
+    Attack-Punkt praktisch exakt auf dem Kick liegen — der alte Snap auf den
+    staerksten Onset-FRAME war an echtem Material im Median 116 ms zu spaet
+    und auf das 46-ms-Hop-Raster gequantelt."""
+    bpm, offset = 140.0, 0.5
+    ibi = 60.0 / bpm
+    y = _make_four_on_floor(bpm, 60.0, offset)
+    phase, lock = _beat_phase_from_fold(y, SR, ibi)
+    assert phase is not None
+    assert lock > 0.5, f"Klick-Track ohne beat-synchrone Struktur? lock={lock}"
+    err = abs(phase - offset % ibi) % ibi
+    err = min(err, ibi - err)
+    assert err < ibi / 8.0, f"Beat-Phase {phase} statt {offset % ibi} (Fehler {err:.4f}s)"
+
+  def test_faltung_lehnt_zu_kurzes_material_ab(self):
+    assert _beat_phase_from_fold(np.zeros(SR, dtype=np.float32), SR, 0.5) == (None, 0.0)
+    assert _beat_phase_from_fold(None, SR, 0.5) == (None, 0.0)
+    assert _beat_phase_from_fold(np.zeros(SR * 30, dtype=np.float32), SR, 0.0) == (None, 0.0)
+
+  def test_stille_hat_keinen_lock(self):
+    """Ohne Transienten gibt es keine Sub-Beat-Phase — und damit keinen
+    Anker. Ein erfundener Anker waere schlimmer als keiner."""
+    assert _beat_phase_from_fold(
+      np.zeros(SR * 30, dtype=np.float32), SR, 0.5
+    ) == (None, 0.0)
+
+
+class TestKalibrierteSchwelle:
+  """AUDIT-FIX D-03 (2026-08-14): Kalibrierung an 35 Tracks mit
+  Rekordbox-ANLZ-Beatgrid als Ground Truth (Paare aus Konfidenz und
+  tatsaechlichem Phasenfehler). 19 davon liefern ueberhaupt eine
+  Eigenschaetzung, 16 werden vom Kommensurabilitaets-Gate (D-02) verworfen.
+
+  Hoerbare Grenze: 1/8 Beat (54 ms bei 138 BPM). Gemessen:
+    * Konfidenz >= 0.30 -> 12 Tracks, Sub-Beat-Fehler Median 16 ms,
+      Max 43 ms — 0 Verletzungen.
+    * Konfidenz <= 0.241 -> enthaelt ALLE drei Ausreisser (83/153/188 ms).
+  Die Luecke 0.241..0.391 ist eindeutig; 0.30 liegt geometrisch mittig.
+  """
+
+  def test_schwelle_liegt_in_der_gemessenen_luecke(self):
+    assert 0.241 < DOWNBEAT_RELIABLE_MIN <= 0.391
+
+  def test_referenz_beatgrid_bleibt_exklusiv(self):
+    """1.0 darf ausschliesslich das ANLZ-Beatgrid bedeuten — nur dort ist
+    auch die TAKT-Phase belegt. Die Eigenschaetzung muss hart darunter
+    bleiben, sonst wird `== 1.0` in Exporter und Renderer bedeutungslos."""
+    assert SELF_ESTIMATE_CONFIDENCE_MAX < REFERENCE_BEATGRID_CONFIDENCE
+
+  def test_gates_der_konsumenten_stimmen_mit_der_kalibrierung_ueberein(self):
+    """Kein Konsument darf eine eigene Zahlenschwelle mitfuehren."""
+    from hpg_core import transition_renderer as tr
+
+    class _T:
+      filePath = "x"
+      bpm = 138.0
+      lufs = 0.0
+      first_downbeat = 0.5
+
+    class _Plan:
+      mix_out_a = 10.0
+      mix_in_b = 20.0
+      overlap = 30.0
+      transition_type = "smooth_blend"
+      target_sr = 44100
+
+    def spec_for(conf_a, conf_b):
+      a, b = _T(), _T()
+      a.downbeat_confidence = conf_a
+      b.downbeat_confidence = conf_b
+      return tr.TransitionClipSpec.from_plan(_Plan(), a, b)
+
+    below = spec_for(DOWNBEAT_RELIABLE_MIN - 0.01, 1.0)
+    assert not below.downbeat_reliable_a
+    at = spec_for(DOWNBEAT_RELIABLE_MIN, DOWNBEAT_RELIABLE_MIN)
+    assert at.downbeat_reliable_a and at.downbeat_reliable_b
+    # Eigenschaetzung erlaubt Beat-, aber nie Takt-Alignment
+    assert not at.bar_phase_reliable_a and not at.bar_phase_reliable_b
+    ref = spec_for(1.0, 1.0)
+    assert ref.bar_phase_reliable_a and ref.bar_phase_reliable_b
+
+  def test_beatgrid_export_verlangt_das_referenz_beatgrid(self):
+    """Ein TEMPO-Element behauptet mit `Battito=1` die Takt-Phase. Die
+    liefert die Eigenschaetzung nicht verlaesslich (9 von 19 Schaetzungen
+    lagen um ganze Beats daneben), deshalb bleibt der Export bei == 1.0."""
+    from hpg_core.exporters import rekordbox_xml_exporter as rx
+    import inspect
+
+    src = inspect.getsource(rx.RekordboxXMLExporter._add_beat_grid)
+    assert "REFERENCE_BEATGRID_CONFIDENCE" in src
+    assert ">= 0.9" not in src

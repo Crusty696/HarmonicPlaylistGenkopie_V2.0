@@ -2,41 +2,53 @@
 HARMONICPLAYLISTGENERATOR v3.7.2 - QUICK START GUIDE
 ================================================================================
 
+Stand: 2026-08-14. Die Angaben hier sind gegen den Code gemessen.
+Im Zweifel gilt der Code, nicht dieses Dokument.
+
 1. APP STARTEN
-   python main.py
-   → GUI öffnet sich mit Folder Browser
+   Start.bat (Doppelklick) oder:
+   .\venv312\Scripts\python.exe main.py
+   -> GUI oeffnet sich im Panel LIBRARY
 
-2. EINEN ORDNER WÄHLEN
-   [📁 Browse] und Musik-Ordner auswählen
-   → App findet und analysiert alle MP3/WAV/FLAC Dateien
+2. EINEN ORDNER WAEHLEN
+   Ordner in das Drop-Feld ziehen oder [Select Music Folder] klicken
+   -> App durchsucht auch Unterordner nach WAV / AIFF / MP3 / FLAC
 
-3. ALGORITHMUS WÄHLEN
-   [▼ Harmonic Flow Enhanced] ← Standard, sehr gut
-   
-   Alternative Strategien:
-   - Genre Flow           → Bleibe in Genre, aber harmonic
-   - Peak Time           → Klassisches DJ-Set-Profil (build-up, peak, drop)
-   - Energy Wave         → Dynamisch auf-ab-auf-ab
-   - Harmonic Consistent → Strictest harmonic flow
-   - Emotional Journey   → Story-basiert
-   - BPM Progression     → Von langsam zu schnell
-   - Smooth Crossfade    → Minimale BPM-Sprünge
-   - Genre Explorer      → Genre-übergreifend kombinieren
-   - Surprise me         → Zufälliges Mixing
-   - Danceability Peak   → Tanzbarkeit maximieren
+3. STRATEGIE WAEHLEN
+   Dropdown STRATEGY, Standard: Harmonic Flow
+
+   Genau 8 Strategien (hpg_core/playlist.py, STRATEGIES):
+   - Harmonic Flow   -> Camelot-Kompatibilitaet mit Look-Ahead und Backtracking
+   - Warm-Up         -> BPM aufsteigend
+   - Cool-Down       -> BPM absteigend
+   - Peak-Time       -> einstellbare Peak-Position + Harmonic Smoothing
+   - Energy Wave     -> abwechselnd hohe/niedrige Energie
+   - Genre Flow      -> Genre-Cluster mit weichen Uebergaengen
+   - Consistent      -> minimale BPM-/Energie-Spruenge, harmonisch bevorzugt
+   - Context Flow    -> Set-Phasen-Zielenergie, Trend, Genre-Fatigue
+
+   Alte Namen bleiben nur ueber STRATEGY_ALIASES gueltig, genau drei:
+   "Harmonic Flow Enhanced", "Peak-Time Enhanced", "Emotional Journey".
+   Nicht mehr vorhanden: Surprise me, Danceability Peak, BPM Progression,
+   Genre Explorer, Smooth Crossfade, Harmonic Consistent.
 
 4. EINSTELLUNGEN (Optional)
-   Shuffle:     [☐] (Zufälligkeit)
-   Limit:       [50] (max. Anzahl Tracks)
-   Playlist Mix: [10] (mehrere Algorithmen vergleichen)
+   BPM TOLERANCE: Slider 1-15, Standard +/-3
+   ADVANCED PARAMETERS (rechte Spalte): es bleiben nur die Regler aktiv,
+   die die gewaehlte Strategie wirklich nutzt
+   (hpg_core/playlist.py, SUPPORTED_STRATEGY_PARAMETERS)
 
 5. GENERIEREN
-   [▶ Generate] klicken
-   → Warte 5-10 Sekunden
-   → 10 Playlist-Optionen werden angezeigt
+   [GENERATE PLAYLIST] oder Ctrl+G
+   -> Analyse laeuft mehrkernig; die Dauer haengt an Trackzahl und Cache
+   -> Ergebnis ist EINE Playlist fuer die gewaehlte Strategie
 
-6. EXPORTIEREN
-   [💾 Export] → Wähle Format:
+6. ANSEHEN UND ANHOEREN
+   Panels per Ctrl+1 bis Ctrl+5: LIBRARY, PLAYLIST, MIX TIPS, TIMELINE, QUALITY
+   [PREVIEW TRANSITIONS] rendert die Uebergaenge zum Anhoeren (Space = Play/Pause)
+
+7. EXPORTIEREN
+   [EXPORT PLAYLIST] oder Ctrl+E -> Format waehlen:
    - M3U8 (Standard Playlist, Universal)
    - Rekordbox XML (Pioneer DJ Software)
 
@@ -46,161 +58,175 @@ VERSTEHEN DER PLAYLIST-GENERIERUNG
 
 DER ALGORITHMUS FRAGT SICH:
 
-"Welcher Track passt als NÄCHSTER?"
+"Welcher Track passt als NAECHSTER?"
 
 Kriterien, auf die geachtet wird:
 
-✓ HARMONIE
-  8A (A Minor) → 9A (E Minor) ✓ (Nachbarn im Camelot Wheel)
-  8A (A Minor) → 3B (C Major) ✗ (zu weit weg)
++ HARMONIE (Camelot-Rad, Mapping in hpg_core/models.py)
+  8A (A Minor)  -> 9A (E Minor)   ok  (Nachbar im Camelot Wheel)
+  8A (A Minor)  -> 8B (C Major)   ok  (Dur/Moll-Wechsel derselben Zahl)
+  8A (A Minor)  -> 3B (C# Major)  nein (zu weit weg)
 
-✓ BPM (TEMPO)
-  128 BPM → 130 BPM ✓ (nur 2 BPM Unterschied)
-  128 BPM → 170 BPM ✗ (großer Sprung, schwer zu mixen)
++ BPM (TEMPO)
+  128 BPM -> 130 BPM  ok   (nur 2 BPM Unterschied)
+  128 BPM -> 170 BPM  nein (grosser Sprung, schwer zu mixen)
+  Half/Double-Time wird erkannt und toleriert
 
-✓ ENERGIE
-  Sollte passen zur gewählten Strategie:
-  - Peak Time:     75 → 85 → 95 → 75 (Up, Up, Down)
-  - Harmonic Flow: Ähnlich halten
++ ENERGIE
+  Sollte zur gewaehlten Strategie passen:
+  - Peak-Time:     Aufbau, Peak an einstellbarer Position, Abbau
+  - Harmonic Flow: aehnlich halten
   - Energy Wave:   Auf-Ab-Auf-Ab Muster
 
-✓ GENRE
-  House → House ✓
-  House → Techno ~ (okay mit crossover)
-  House → Metal ✗ (zu unterschiedlich)
++ GENRE
+  Die App kennt 9 kanonische, rein elektronische Genres
+  (hpg_core/genres.py, CANONICAL_GENRES): Psytrance, Tech House,
+  Progressive, Melodic Techno, Techno, Deep House, Trance,
+  Drum & Bass, Minimal.
+  Tech House -> Deep House  ok
+  Techno     -> Drum & Bass nein (zu unterschiedlich)
 
-✓ STRUKTUR
-  Fade-Out bei 3:45min + Fade-In bei 0:05s = guter Übergang
++ STRUKTUR
+  Mix-Out im Outro von A trifft Mix-In im Intro von B, phrasen-quantisiert
 
 ================================================================================
-TEST SUITE (Nur für Entwickler)
+TEST SUITE (Nur fuer Entwickler)
 ================================================================================
 
-SCHNELL (empfohlen während Entwicklung):
-  pytest -n auto -m "not requires_audio"
-  → ~10 Sekunden
+Immer den venv-Interpreter benutzen. pytest.ini setzt bereits -n auto,
+Coverage auf hpg_core + main und --cov-fail-under=70.
 
-VOLLSTÄNDIG (vor Commit):
-  pytest -n auto
-  → ~20 Sekunden
+VOLLSTAENDIG MIT COVERAGE (vor Commit):
+  .\venv312\Scripts\python.exe -m pytest -q
+  -> gemessen 2026-08-14: 1389 passed, 26 warnings, 188 s
+
+SCHNELL, OHNE COVERAGE:
+  .\venv312\Scripts\python.exe -m pytest -q --no-cov -m "not requires_audio"
+  -> gemessen 2026-08-14: ca. 174 s (nur 4 Tests tragen requires_audio,
+     der Marker spart also kaum Zeit)
 
 NUR AUDIO-TESTS:
-  pytest -m requires_audio
-  → ~30 Sekunden
+  .\venv312\Scripts\python.exe -m pytest -q --no-cov -m requires_audio
+  -> gemessen 2026-08-14: 4 passed in 8 s
 
-COVERAGE REPORT:
-  pytest --cov=hpg_core --cov-report=html
-  → Öffnet htmlcov/index.html
+COVERAGE REPORT (HTML):
+  .\venv312\Scripts\python.exe -m pytest --cov-report=html
+  -> oeffnet htmlcov/index.html
 
 ================================================================================
 DATEIEN VERSTEHEN
 ================================================================================
 
+main.py                        -> PyQt6-GUI, alle QThread-Worker
+                                  (rund 4900 Zeilen, Stand 2026-08-14).
+                                  Es gibt KEINEN GUI/-Ordner, kein ui/-Paket
+                                  und kein theme.py im Wurzelverzeichnis.
+
 hpg_core/
-  ├─ playlist.py              → Hauptalgorithmen (alle 10 Strategien)
-  ├─ analysis.py              → Audio-Analyse mit Librosa
-  ├─ dj_brain.py              → Genre/Struktur/Feature-Erkennung
-  ├─ parallel_analyzer.py      → 8-Worker Parallel-Verarbeitung
-  ├─ genre_classifier.py       → Machine Learning Genre-Klassifikation
-  ├─ structure_analyzer.py     → Intro/Main/Outro Detection
-  ├─ exporters/
-  │  ├─ m3u8_exporter.py       → Playlist-Export (Standard)
-  │  └─ rekordbox_xml_exporter.py → Pioneer DJ Format
-  └─ models.py                → Track Dataclass
+  playlist.py                  -> alle 8 Strategien + Scoring (STRATEGIES)
+  analysis.py                  -> Audio-Analyse mit librosa (analyze_track)
+  downbeat.py                  -> Downbeat- und Phrasen-Anker
+  dj_brain.py                  -> genre-spezifische Mixpoints, DJ-Empfehlungen
+  parallel_analyzer.py         -> ProcessPoolExecutor, automatisch bis 4 Worker
+                                  (config.PARALLEL_AUTO_MAX_WORKERS)
+  genre_classifier.py          -> regelbasierte Genre-Erkennung (kein ML)
+  structure_analyzer.py        -> Intro/Breakdown/Drop/Outro
+  transition_renderer.py       -> Uebergangs-Preview (Crossfade, EQ, Limiter)
+  caching.py                   -> SQLite-Cache, CACHE_VERSION 27
+  genres.py                    -> 9 kanonische Genres (Single Source of Truth)
+  theme.py                     -> Farben und Styles der GUI
+  models.py                    -> Track-Dataclass, Camelot-Map
+  exporters/m3u8_exporter.py           -> Playlist-Export (Standard)
+  exporters/rekordbox_xml_exporter.py  -> Pioneer DJ Format
 
 tests/
-  ├─ conftest.py              → Gemeinsame Fixtures & Konfiguration
-  ├─ performance_fixtures.py   → Cached Track-Fixtures (schnelle Tests)
-  ├─ test_playlist.py          → Algorithmus-Tests
-  ├─ test_analysis.py          → Audio-Analyse Tests
-  └─ test_exporters.py         → Export-Format Tests
+  conftest.py                  -> Gemeinsame Fixtures & Konfiguration
+  performance_fixtures.py      -> Cached Track-Fixtures (schnelle Tests)
+  test_playlist_strategies.py  -> Strategie-Tests
+  test_playlist_quality.py     -> Qualitaetsmetriken
+  test_analysis.py             -> Audio-Analyse Tests
+  test_exporters.py            -> Export-Format Tests
+  (eine Datei tests/test_playlist.py gibt es nicht)
 
-GUI/
-  ├─ main.py                  → Entry Point (PyQt6)
-  ├─ ui/main_window.py        → Hauptfenster
-  └─ theme.py                 → Dark Mode Design
+Der Laufzeit-Cache liegt ausserhalb des Repos:
+  %LOCALAPPDATA%\HPG\hpg_cache_v27.db
+  (ueberschreibbar mit HPG_CACHE_DIR bzw. HPG_CACHE_FILE)
 
 ================================================================================
 WICHTIGE KOMMANDOS
 ================================================================================
 
 Projekt starten:
-  python main.py
+  .\venv312\Scripts\python.exe main.py
 
 Tests laufen:
-  pytest                          # Alle
-  pytest -n auto                  # Parallel
-  pytest tests/test_playlist.py   # Spezifisch
-
-Code-Format Check:
-  black --check hpg_core/
+  .\venv312\Scripts\python.exe -m pytest
+  .\venv312\Scripts\python.exe -m pytest tests/test_playlist_strategies.py
 
 Performance Profiling:
-  pytest --durations=10           # Top 10 Slowest Tests
+  .\venv312\Scripts\python.exe -m pytest --durations=10
 
-Abhängigkeiten:
+Abhaengigkeiten:
   pip install -r requirements.txt
-  pip install -r requirements-performance.txt  # Für Optimierungen
+  pip install -r requirements-performance.txt   # optionale Optimierungen
+
+Python: 3.12 zwingend, mindestens 3.12.1 (MIN_PYTHON in
+hpg_core/app_metadata.py), getestet mit 3.12.10. Kein 3.13+ (numba).
 
 ================================================================================
 DOKUMENTATION
 ================================================================================
 
-PLAYLIST_ALGORITHMEN_ERKLAERUNG.md
-  → Detaillierte Erklärung WIE der Algorithmus entscheidet
-  → Mit Code-Beispielen und Walkthroughs
-  → Deutsche Sprache
-  → ~500 Zeilen
+docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md
+  -> Detaillierte Erklaerung, WIE der Algorithmus entscheidet (deutsch)
 
-PERFORMANCE_OPTIMIZATION.md
-  → Wie man Tests schneller macht
-  → pytest-xdist & Cached Fixtures
-  → Englisch
-  → Für Entwickler
+docs/PERFORMANCE_OPTIMIZATION.md
+  -> Wie man Tests schneller macht, pytest-xdist & Cached Fixtures
 
-OPTIMIZATION_SUMMARY.md
-  → Zusammenfassung dieser Session
-  → Was wurde erledigt
-  → Performance-Gains
+docs/OPTIMIZATION_SUMMARY.md
+  -> Historischer Snapshot einer Optimierungs-Session
+
+Projekt-Skills mit dem verifizierten Ist-Stand, zuerst laden:
+  .claude/skills/  (Claude Code)   bzw.   .agents/skills/  (Codex)
+  Einstieg: hpg-orientation
 
 ================================================================================
-HÄUFIGE FRAGEN
+HAEUFIGE FRAGEN
 ================================================================================
 
 F: Warum ist meine Playlist nicht gut?
-A: 1) Versuche andere Strategien
-   2) Schau die Preview (nicht nur 1. Ergebnis)
-   3) Genre kann inkonsistent sein → Genre Flow probieren
-   4) Energie-Kurve passt nicht → Peak Time oder Energy Wave
+A: 1) Andere Strategie versuchen
+   2) BPM-Toleranz anpassen
+   3) Genre kann inkonsistent sein -> Genre Flow probieren
+   4) Energie-Kurve passt nicht -> Peak-Time oder Energy Wave
 
 F: Warum sind diese Tracks zusammen?
-A: Schau in PLAYLIST_ALGORITHMEN_ERKLAERUNG.md
-   Der Score für den nächsten Track wird detailliert erklärt
+A: Siehe docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md und das Panel MIX TIPS
 
 F: Kann ich die Gewichte anpassen?
-A: Ja! In hpg_core/playlist.py sind die Strategien definiert.
-   Z.B. in Harmonic Flow: Ändere weights['harmonic'] = 0.8
+A: Ja, in hpg_core/playlist.py sind Strategien und Scoring definiert.
+   Achtung: geaenderte Analyse-Ausgaben brauchen einen CACHE_VERSION-Bump,
+   sonst maskiert der Cache die Aenderung.
 
 F: Warum ist die Audio-Analyse so langsam?
-A: Librosa ist gründlich (BPM, Key, Structure, Energy...)
-   Mit pytest-xdist & Cached Fixtures wird's 4-6x schneller
+A: librosa ist gruendlich (BPM, Key, Struktur, Energie ...). Der optionale
+   Rekordbox-Import nutzt vorhandene Metadaten und ist deutlich schneller.
+   Ergebnisse werden gecacht; der zweite Lauf ueber denselben Ordner ist schnell.
 
-F: Kann ich die App für ein Festival nutzen?
-A: Ja! Generiere Playlists und exportiere als M3U8
-   Dann in deinen DJ-Player laden (Serato, Rekordbox, etc.)
+F: Kann ich die App fuer ein Festival nutzen?
+A: Ja. Playlist generieren und als M3U8 oder Rekordbox XML exportieren,
+   dann in den DJ-Player laden.
 
 ================================================================================
 KONTAKT & SUPPORT
 ================================================================================
 
-GitHub Issues: https://github.com/...
-Code: Siehe tests/ für Beispiele
-
-Die App ist PRODUCTION READY ✓
+GitHub: https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0
+Code: Siehe tests/ fuer Beispiele
 
 Version: 3.7.2
-Tests: 961/961 bestanden (100%)
-Coverage: 76%
-Stabilität: ★★★★★
+Tests:    1389 passed, 26 warnings (gemessen 2026-08-14, Volllauf mit Coverage)
+Coverage: 66,82 % gemessen; das Gate liegt bei 70 % und ist damit aktuell
+          NICHT erfuellt (Stand 2026-08-14, uncommittete Arbeitskopie)
 
-Happy DJing! 🎵
+Happy DJing!

@@ -16,6 +16,9 @@ leichtgewichtige Eigenimplementierung ohne neue Dependencies:
 4. Phase-Voting ueber die 4 Hypothesen (Beat-Index mod 4) ueber den GANZEN
    Track — Einzel-Beat-Klassifikation darf mittelmaessig sein, die Summe
    ueber hunderte Takte ist robust und liefert EINE konsistente Phase.
+5. Sub-Beat-Feinausrichtung ueber die beat-synchrone Faltung der nullphasig
+   tiefpassgefilterten Huellkurve (D-03): das Voting bestimmt WELCHER Beat
+   die "1" ist, die Faltung WO im Beat sie genau liegt.
 
 Plan + Quellen: docs/plans/2026-07-17-downbeat-erkennung.md
 """
@@ -26,10 +29,54 @@ import logging
 
 import numpy as np
 import librosa
+from scipy.ndimage import uniform_filter1d
+from scipy.signal import butter, sosfiltfilt
 
 from .config import HOP_LENGTH, METER
 
 logger = logging.getLogger(__name__)
+
+# Konfidenz-Skala von ``Track.downbeat_confidence``
+# ------------------------------------------------
+# 1.0 ist EXKLUSIV dem Rekordbox-ANLZ-Beatgrid vorbehalten. Nur dort ist auch
+# die TAKT-Phase (welcher Beat ist die "1") belegt; die Eigenschaetzung ist
+# deshalb hart unter 1.0 gedeckelt.
+REFERENCE_BEATGRID_CONFIDENCE = 1.0
+SELF_ESTIMATE_CONFIDENCE_MAX = 0.99
+
+# AUDIT-FIX D-03 (2026-08-14): kalibrierte Mindest-Konfidenz fuer ein
+# Beat-Phase-Alignment aus der EIGENSCHAETZUNG.
+# Kalibriert an 35 Tracks mit Rekordbox-ANLZ-Beatgrid als Ground Truth
+# (Paare aus Konfidenz und tatsaechlichem Phasenfehler); 19 davon liefern
+# ueberhaupt eine Eigenschaetzung, 16 werden vom Kommensurabilitaets-Gate
+# (D-02) verworfen. Hoerbare Grenze: 1/8 Beat (54 ms bei 138 BPM) — darueber
+# sind zwei Kicks nicht mehr ein Kick mit Flam, sondern zwei Kicks.
+# Gemessene Trennung auf den 19 Schaetzungen:
+#   Konfidenz >= 0.30  -> 12 Tracks, Sub-Beat-Fehler Median 16 ms, Max 43 ms
+#   Konfidenz <= 0.241 -> enthaelt ALLE drei Ausreisser (83 / 153 / 188 ms)
+# Die Luecke 0.241 .. 0.391 ist eindeutig; 0.30 liegt geometrisch mittig
+# (sqrt(0.241 * 0.391) = 0.307).
+DOWNBEAT_RELIABLE_MIN = 0.30
+
+# Analytischer Deckel der rohen Voting-Margin: die vier Votes sind Summen
+# z-normierter Groessen und summieren sich damit exakt zu 0. Unter dieser
+# Nebenbedingung ist max (v1-v2)/sum|v| = 2/3 (angenommen bei
+# v = (S, -S/3, -S/3, -S/3)). Ohne Ruecknormierung erreicht die
+# Eigenschaetzung deshalb NIE mehr als 0.667 — ein Artefakt der Normierung,
+# kein Qualitaetsurteil. Gemessen: perfekter Klick-Track 0.50, bester echter
+# Track 0.651.
+_VOTE_MARGIN_CAP = 2.0 / 3.0
+
+# Sub-Beat-Feinausrichtung (Faltung): Tiefband-Grenze und Huellkurven-Glaettung
+_FOLD_LOWPASS_HZ = 150.0
+_FOLD_SMOOTH_SEC = 0.005
+_FOLD_BINS = 1024
+# Attack-Punkt = Ruecklauf vom Profil-Maximum bis unter diesen Anteil des
+# Profil-Hubs. 0.15 traf die ANLZ-Referenz am besten (Median 16 ms).
+_FOLD_ATTACK_FRACTION = 0.15
+# Mindestzahl gefalteter Beats, damit das Mittel nicht von Einzelereignissen
+# dominiert wird
+_FOLD_MIN_BEATS = 8
 
 # Beats unterhalb dieses Anteils der Maximal-Loudness werden nicht gewertet
 # (Vande Veire trimmt Intro/Outro vor dem Voting)
@@ -40,6 +87,122 @@ _WEIGHTS = (1.0, 1.0, 0.5)
 
 # Mindestanzahl auswertbarer Beats fuer ein belastbares Voting
 _MIN_BEATS = 16
+
+# AUDIT-FIX D-02 (2026-08-14): Maximal zulaessige relative Abweichung des
+# librosa-Beat-Rasters von einem GANZZAHLIGEN Vielfachen bzw. Teiler des
+# Beat-Abstands, der sich aus `bpm` ergibt.
+# Kalibriert an 34 echten Psytrance-AIFFs (D:/beatport_tracks_2025-08):
+# 23 Tracks lagen auf <=3,8 % beim Verhaeltnis 1, 11 Tracks waren mit 1,32 bis
+# 1,49 (fast immer 3:2 — 138-BPM-Tracks getrackt als ~93 BPM) inkommensurabel;
+# der naechste ganzzahlige Bezug lag dort >=24 % entfernt. Die Luecke zwischen
+# 3,8 % und 24 % ist eindeutig, 10 % liegt mit Faktor 2,6 Abstand zu beiden
+# Seiten darin.
+_GRID_TEMPO_TOLERANCE = 0.10
+
+
+def _grid_is_commensurate(grid_ibi: float, expected_ibi: float) -> bool:
+    """Liegt das getrackte Beat-Raster auf dem Gitter aus ``bpm``?
+
+    Toleriert ganzzahlige Vielfache und Teiler: trackt librosa nur jeden
+    zweiten Beat oder gleich ganze Takte, liegen die gefundenen Beats immer
+    noch AUF dem Zielgitter. Verworfen wird nur ein inkommensurables Raster
+    (typisch 3:2), dessen Beats zwischen die Zielbeats fallen — dort ist die
+    ``% 4``-Phase auf dem Zielgitter nicht definiert.
+    """
+    if grid_ibi <= 0 or expected_ibi <= 0:
+        return False
+    ratio = grid_ibi / expected_ibi
+    k = round(ratio) if ratio >= 1.0 else round(1.0 / ratio)
+    if k < 1:
+        return False
+    normalized = ratio / k if ratio >= 1.0 else ratio * k
+    return abs(normalized - 1.0) <= _GRID_TEMPO_TOLERANCE
+
+
+def _bar_phase_confidence(votes: np.ndarray) -> float:
+    """Ehrliche 0..1-Konfidenz der TAKT-Phase aus dem 4-Bin-Voting.
+
+    Die rohe Margin (v1-v2)/sum|v| kann wegen sum(votes)==0 nie ueber
+    ``_VOTE_MARGIN_CAP`` = 2/3 steigen. Ohne Ruecknormierung ist jedes Gate
+    oberhalb 2/3 fuer eine Eigenschaetzung unerreichbar — genau daran hingen
+    die frueheren ">= 0.9"-Gates, die damit faktisch "nur Rekordbox" hiessen.
+    """
+    if votes.size < 2:
+        return 0.0
+    spread = float(np.sum(np.abs(votes)))
+    if spread < 1e-9:
+        return 0.0
+    order = np.argsort(votes)[::-1]
+    margin = float(votes[order[0]] - votes[order[1]]) / spread
+    return float(np.clip(margin / _VOTE_MARGIN_CAP, 0.0, 1.0))
+
+
+def _beat_phase_from_fold(
+    y: np.ndarray, sr: int, ibi: float
+) -> tuple[float | None, float]:
+    """Sub-Beat-Phase per beat-synchroner Faltung der Tiefband-Huellkurve.
+
+    AUDIT-FIX D-03 (2026-08-14): Der vorherige Feinschliff snappte den Anker
+    auf den staerksten Bass-Onset-FRAME. Das ist doppelt ungenau:
+      1. Die Frame-Aufloesung betraegt HOP_LENGTH/sr = 46 ms — allein das
+         Raster verfehlt die hoerbare Grenze von 54 ms fast schon.
+      2. ``librosa.onset.onset_strength`` hat eine systematische Latenz
+         (Fensterbreite + Anstiegszeit des Sub-Bass). An 35 Tracks mit
+         ANLZ-Ground-Truth lag die daraus gewonnene Phase im Median 116 ms
+         HINTER dem echten Beatgrid — bei jeder getesteten Hop-Groesse gleich.
+    Gemessen ueber alle 19 Eigenschaetzungen: Sub-Beat-Fehler Median 129 ms
+    (alt) gegen 16 ms (Faltung).
+
+    Verfahren:
+      * Tiefpass 150 Hz mit ``sosfiltfilt`` — NULLPHASIG, also ohne
+        Gruppenlaufzeit, die man hinterher wegschaetzen muesste.
+      * Betrag, zentriert geglaettet (ebenfalls verzoegerungsfrei).
+      * Falten aller Samples auf eine Beat-Periode ueber die exakte
+        Fliesskomma-Phase (``t % ibi``) statt ueber ganzzahlige Blockgroessen:
+        so entsteht keine Drift ueber die Tracklaenge.
+      * Attack-Punkt statt Maximum: das Huellkurven-Maximum eines Kicks liegt
+        im Koerper, nicht im Einsatz (gemessen 84 ms zu spaet). Gesucht ist
+        der Ruecklauf vom Maximum unter ``_FOLD_ATTACK_FRACTION`` des Hubs.
+
+    Returns:
+        (beat_phase_seconds in [0, ibi), lock 0..1) oder (None, 0.0).
+        ``lock`` ist der relative Hub des gefalteten Profils: 0 = keine
+        beat-synchrone Struktur, ~1 = klarer, immer gleicher Transient.
+    """
+    if ibi <= 0 or y is None or sr <= 0:
+        return None, 0.0
+    if len(y) < _FOLD_MIN_BEATS * ibi * sr:
+        return None, 0.0
+    nyquist = sr / 2.0
+    if _FOLD_LOWPASS_HZ >= nyquist:
+        return None, 0.0
+    sos = butter(4, _FOLD_LOWPASS_HZ / nyquist, btype="low", output="sos")
+    env = np.abs(sosfiltfilt(sos, y.astype(np.float64)))
+    smooth = max(3, int(_FOLD_SMOOTH_SEC * sr) | 1)
+    env = uniform_filter1d(env, size=smooth, mode="nearest")
+
+    phase = np.mod(np.arange(len(env), dtype=np.float64) / sr, ibi)
+    bins = (phase / ibi * _FOLD_BINS).astype(np.int32)
+    np.clip(bins, 0, _FOLD_BINS - 1, out=bins)
+    counts = np.bincount(bins, minlength=_FOLD_BINS).astype(np.float64)
+    profile = np.bincount(bins, weights=env, minlength=_FOLD_BINS) / np.maximum(
+        counts, 1.0
+    )
+    peak_value = float(np.max(profile))
+    if peak_value <= 1e-12:
+        return None, 0.0
+    floor_value = float(np.min(profile))
+    lock = float(np.clip((peak_value - floor_value) / peak_value, 0.0, 1.0))
+
+    threshold = floor_value + _FOLD_ATTACK_FRACTION * (peak_value - floor_value)
+    peak_bin = int(np.argmax(profile))
+    attack_bin = peak_bin
+    for step in range(_FOLD_BINS):
+        candidate = (peak_bin - step) % _FOLD_BINS
+        if profile[candidate] <= threshold:
+            attack_bin = candidate
+            break
+    return float(attack_bin) / _FOLD_BINS * ibi, lock
 
 
 def _znorm(values: np.ndarray) -> np.ndarray:
@@ -78,6 +241,27 @@ def estimate_first_downbeat(
         beat_times = librosa.frames_to_time(
             beat_frames, sr=sr, hop_length=HOP_LENGTH
         )
+
+        # AUDIT-FIX D-02 (2026-08-14): Tempo-Konsistenz-Gate.
+        # Das Phase-Voting laeuft ueber `beat_index % 4` des librosa-Rasters,
+        # das Ergebnis wird aber als Phase auf dem Takt-Gitter interpretiert,
+        # das ALLE Konsumenten aus `bpm` aufbauen (dj_brain, transition_renderer,
+        # models.quantize_to_grid: seconds_per_bar = METER * 60/bpm).
+        # Trackt librosa ein anderes Tempo — an echtem Material gemessen bei
+        # 11 von 34 Tracks das 3:2-Verhaeltnis —, dann zaehlt `% 4` Takte einer
+        # FREMDEN Metrik und die gelieferte Phase ist auf dem Zielgitter
+        # bedeutungslos. Ein selbstbewusst falscher Anker ist schlechter als
+        # keiner: hier gilt der dokumentierte Vertrag (0.0, 0.0) = "kein Anker".
+        grid_ibi = float(
+            (beat_times[-1] - beat_times[0]) / (beat_times.size - 1)
+        )
+        if not _grid_is_commensurate(grid_ibi, 60.0 / bpm):
+            logger.debug(
+                f"Downbeat verworfen: Beat-Raster {60.0 / grid_ibi:.1f} BPM "
+                f"ist inkommensurabel zu bpm={bpm:.1f}"
+            )
+            return 0.0, 0.0
+
         beat_samples = (beat_times * sr).astype(int)
 
         # --- Feature-Kurven (frame-basiert) ---
@@ -154,61 +338,83 @@ def estimate_first_downbeat(
             if np.any(mask):
                 votes[p] = float(np.sum(combined[mask]))
 
-        order = np.argsort(votes)[::-1]
-        best_phase = int(order[0])
-        spread = float(np.sum(np.abs(votes)))
-        confidence = 0.0
-        if spread > 1e-9:
-            confidence = float(
-                np.clip((votes[order[0]] - votes[order[1]]) / spread, 0.0, 1.0)
-            )
+        best_phase = int(np.argmax(votes))
+        # AUDIT-FIX D-03 (2026-08-14): ehrliche 0..1-Skala statt roher Margin
+        # (analytisch auf 2/3 gedeckelt, siehe _bar_phase_confidence).
+        bar_confidence = _bar_phase_confidence(votes)
 
         # AUDIT-FIX N10 (2026-07-24): Der Anker wurde vorher direkt aus einem
         # der ersten vier Beats gelesen (beat_times[best_phase]) — genau dem
         # Bereich, den das Trim-Kriterium als zu leise vom Voting ausschliesst
         # (Intro/Stille, maximaler Beat-Tracking-Jitter). Der Fehler propagierte
         # in JEDE Quantisierung des Projekts. Jetzt: aus allen VALIDEN Beats
-        # der Gewinner-Phase per Median auf t0 zurueckrechnen — robust gegen
-        # einzelne verschobene Beats.
-        ibi = float(np.median(np.diff(beat_times)))
-        first_downbeat = float(beat_times[best_phase])
-        if ibi > 0:
-            idx = np.arange(n_beats)
-            phase_mask = valid & ((idx % 4) == best_phase)
-            if int(np.sum(phase_mask)) >= 2:
-                bar_len = 4.0 * ibi
-                t0_estimates = (
-                    beat_times[phase_mask] - (idx[phase_mask] // 4) * bar_len
-                )
-                t0 = float(np.median(t0_estimates))
-                # auf den ersten nicht-negativen Rasterpunkt schieben
-                if t0 < 0:
-                    t0 += float(np.ceil(-t0 / bar_len)) * bar_len
-                first_downbeat = t0
+        # der Gewinner-Phase auf t0 zurueckrechnen.
+        #
+        # AUDIT-FIX D-01 (2026-08-14, Drift): Die Rueckrechnung lief vorher
+        # linear ueber `beat_times - (idx // 4) * 4 * median(diff(beat_times))`.
+        # Beide Groessen darin sind fehlerhaft:
+        #   1. beat_times liegen auf dem HOP-Raster (1024/22050 = 46,4 ms).
+        #      median(diff(...)) rastet damit auf ein GANZZAHLIGES Vielfaches
+        #      der Hop-Dauer ein. Bei 140 BPM ist der echte Beat-Abstand
+        #      9,22 Hops, der Median aber 9 Hops — 2,5 % zu kurz.
+        #   2. Der lineare Term (idx // 4) * bar_len multipliziert diesen Bias
+        #      mit der Taktnummer, der Fehler waechst also UNBEGRENZT mit der
+        #      Tracklaenge. Gemessen an einem perfekten Klick-Track (140 BPM,
+        #      64 Takte) landete der "erste" Downbeat bei 1,30 s statt 0,05 s;
+        #      im Produktivcache lagen 13 von 17 selbst geschaetzten Ankern
+        #      ausserhalb des ersten Takts, der Extremwert bei 55,6 s
+        #      (= 31,5 Takte) — als Untergrenze fuer Mix-In (dj_brain R3)
+        #      direkt schaedlich.
+        # Fix: (a) Die Taktlaenge kommt aus dem validierten Tempo, nicht aus
+        # dem hop-gerasterten Beat-Abstand — nur so liegt der Anker auf
+        # DEMSELBEN Gitter, das alle Konsumenten aus bpm aufbauen.
+        # (b) Statt linearer Rueckrechnung ein ZIRKULAERER Mittelwert der
+        # Beat-Zeiten modulo Taktlaenge: driftfrei und per Konstruktion
+        # in [0, bar_len) — ein "erster Downbeat" kann nie mehr hinter dem
+        # ersten Takt liegen.
+        ibi = 60.0 / bpm
+        bar_len = ibi * METER
+        idx = np.arange(n_beats)
+        phase_mask = valid & ((idx % 4) == best_phase)
+        first_downbeat = float(beat_times[best_phase]) % bar_len
+        if int(np.sum(phase_mask)) >= 2:
+            angles = 2.0 * np.pi * np.mod(beat_times[phase_mask], bar_len) / bar_len
+            mean_angle = np.arctan2(
+                float(np.mean(np.sin(angles))), float(np.mean(np.cos(angles)))
+            )
+            first_downbeat = (
+                float(np.mod(mean_angle, 2.0 * np.pi)) * bar_len / (2.0 * np.pi)
+            )
 
-        # Feintuning: das Beat-Raster von librosa hat Hop-/Attack-Jitter —
-        # den gewaehlten Downbeat auf den staerksten Bass-Onset im
-        # +-1/2-Beat-Fenster snappen (Kick-Attack = praezise "1")
-        if ibi > 0:
-            half = ibi / 2.0
-            f_lo = int(librosa.time_to_frames(
-                max(0.0, first_downbeat - half), sr=sr, hop_length=HOP_LENGTH
-            ))
-            f_hi = int(librosa.time_to_frames(
-                first_downbeat + half, sr=sr, hop_length=HOP_LENGTH
-            )) + 1
-            f_lo = max(0, min(f_lo, len(bass_env) - 1))
-            f_hi = max(f_lo + 1, min(f_hi, len(bass_env)))
-            local = bass_env[f_lo:f_hi]
-            if local.size and float(np.max(local)) > 0:
-                peak_frame = f_lo + int(np.argmax(local))
-                first_downbeat = float(librosa.frames_to_time(
-                    peak_frame, sr=sr, hop_length=HOP_LENGTH
-                ))
+        # Sub-Beat-Feinausrichtung (AUDIT-FIX D-03): Die Taktphase kommt aus
+        # dem Voting, die PRAEZISE Lage im Beat aus der beat-synchronen
+        # Faltung. Der frueher hier stehende Snap auf den staerksten
+        # Bass-Onset-Frame war auf das 46-ms-Hop-Raster gerastert und
+        # systematisch ~116 ms zu spaet (Messung an 35 ANLZ-Referenzen).
+        beat_phase, fold_lock = _beat_phase_from_fold(y, sr, ibi)
+        if beat_phase is None:
+            # Ohne belastbare Sub-Beat-Phase gibt es keinen Anker, den ein
+            # Konsument ausrichten koennte — dokumentierter Vertrag.
+            logger.debug("Downbeat verworfen: keine beat-synchrone Struktur")
+            return 0.0, 0.0
+        # Denselben Takt behalten, nur die Beat-Phase korrigieren.
+        first_downbeat = beat_phase + round((first_downbeat - beat_phase) / ibi) * ibi
+        first_downbeat = float(np.mod(first_downbeat, bar_len))
+
+        # Die Konfidenz ist die SCHWAECHERE der beiden Saeulen: eine klare
+        # Taktphase nuetzt nichts ohne beat-synchrone Struktur und umgekehrt.
+        # An echtem Material trennt erst diese Konjunktion die Ausreisser —
+        # Tracks mit hohem fold_lock, aber unentschiedenem Voting (gemessen:
+        # 153 ms und 188 ms Phasenfehler) faellt nur die Margin.
+        confidence = min(bar_confidence, fold_lock)
+        confidence = float(
+            np.clip(confidence, 0.0, SELF_ESTIMATE_CONFIDENCE_MAX)
+        )
 
         logger.debug(
             f"Downbeat: Phase {best_phase}, t={first_downbeat:.3f}s, "
-            f"Konfidenz {confidence:.2f}"
+            f"Konfidenz {confidence:.2f} (Takt {bar_confidence:.2f} / "
+            f"Faltung {fold_lock:.2f})"
         )
         return round(first_downbeat, 4), round(confidence, 3)
 
