@@ -21,7 +21,7 @@ Behauptung im Code pruefen.
 | Version | 3.7.2 |
 | Testsuite | **1395 passed**, 26 warnings, ~162 s |
 | Coverage | **75,28 %**, Gate 70 % erfuellt |
-| `CACHE_VERSION` | **27**, `hpg_cache_v27.db` |
+| `CACHE_VERSION` | **28**, `hpg_cache_v28.db` |
 | Strategien | **8** (`STRATEGIES`, playlist.py:1864) |
 | `main.py` | rund 4930 Zeilen |
 | Kanonische Genres | **9** |

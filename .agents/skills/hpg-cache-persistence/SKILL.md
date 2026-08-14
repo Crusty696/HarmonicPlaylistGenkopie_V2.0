@@ -13,10 +13,10 @@ Werte, solange die Datei unveraendert ist.
 
 ## CACHE_VERSION — wo und wann
 
-`CACHE_VERSION = 27` in **`hpg_core/caching.py`** — nicht in `config.py`.
+`CACHE_VERSION = 28` in **`hpg_core/caching.py`** — nicht in `config.py`.
 Das ist ein haeufiger Fehlgriff.
 
-Die Version steckt im **Dateinamen**: `hpg_cache_v27.db`. Ein Bump erzeugt
+Die Version steckt im **Dateinamen**: `hpg_cache_v28.db`. Ein Bump erzeugt
 also eine neue DB; zusaetzlich filtert der Read auf die Version und raeumt
 stale Rows auf.
 
@@ -32,9 +32,9 @@ Neue Bumps in diesem Stil ergaenzen.
 
 ```
 CACHE_FILE = HPG_CACHE_FILE                       # Env, hoechste Prioritaet
-           | HPG_CACHE_DIR/hpg_cache_v27.db       # Env
-           | %LOCALAPPDATA%\HPG\hpg_cache_v27.db  # Standard Windows
-           | ~/.hpg/hpg_cache_v27.db              # Fallback
+           | HPG_CACHE_DIR/hpg_cache_v28.db       # Env
+           | %LOCALAPPDATA%\HPG\hpg_cache_v28.db  # Standard Windows
+           | ~/.hpg/hpg_cache_v28.db              # Fallback
 LOCK_FILE  = <cache ohne .db> + ".lock"
 ```
 

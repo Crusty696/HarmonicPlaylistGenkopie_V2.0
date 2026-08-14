@@ -12,8 +12,10 @@ from hpg_core.downbeat import (
   DOWNBEAT_RELIABLE_MIN,
   REFERENCE_BEATGRID_CONFIDENCE,
   SELF_ESTIMATE_CONFIDENCE_MAX,
+  PHRASE_SUBPERIOD_MIN_CORRELATION,
   _bar_phase_confidence,
   _beat_phase_from_fold,
+  _fold_votes_to_measured_period,
   _grid_is_commensurate,
   _vote_margin_confidence,
   estimate_first_downbeat,
@@ -217,6 +219,111 @@ class TestVoteMarginConfidence:
     assert _vote_margin_confidence(np.zeros(8)) == 0.0
     assert _vote_margin_confidence(np.array([1.0])) == 0.0
     assert _vote_margin_confidence(np.array([])) == 0.0
+
+
+def _votes_from_scores(scores: np.ndarray, phrase_unit: int) -> np.ndarray:
+  """Voting ueber ``bar_index % phrase_unit`` — identisch zu
+  estimate_first_phrase, nur ohne Audio."""
+  idx = np.arange(len(scores))
+  return np.array([
+    float(np.sum(scores[idx % phrase_unit == p])) for p in range(phrase_unit)
+  ])
+
+
+class TestFoldVotesToMeasuredPeriod:
+  """AUDIT-FIX P-01 (2026-08-14): ``phrase_unit`` ist eine Genre-ANNAHME.
+
+  Wiederholt sich der Track alle 8 statt alle 16 Bars, sammeln im 16-Bin-
+  Voting zwei Bins (p und p+8) dieselbe echte Phrasengrenze — die Margin
+  bricht genau dann zusammen, wenn die Struktur besonders klar ist.
+  Gemessen an 35 echten AIFFs: Gate-Ausbeute 7/35 -> 10/35, ohne einen
+  einzigen neuen Fehlanker (unabhaengige Referenz: Bass-Energie 20-150 Hz).
+  """
+
+  def test_faltung_ist_identisch_mit_direktem_voting(self):
+    """Algebraische Kernidentitaet: votes[:h] + votes[h:] ist exakt das
+    Voting mit h Bins. Ohne sie waere die Faltung eine Naeherung."""
+    rng = np.random.RandomState(11)
+    scores = rng.randn(160)
+    scores[np.arange(160) % 8 == 3] += 3.0  # echte 8-Bar-Periode
+    folded = _fold_votes_to_measured_period(_votes_from_scores(scores, 16))
+    assert folded.size == 8
+    np.testing.assert_allclose(folded, _votes_from_scores(scores, 8), atol=1e-9)
+
+  def test_echte_16_bar_struktur_wird_nicht_gefaltet(self):
+    """Der teure Fall: bei echter 16-Bar-Periode laege die falsche Haelfte
+    MITTEN in der Phrase. Hier darf nicht gefaltet werden."""
+    rng = np.random.RandomState(12)
+    scores = rng.randn(320)
+    scores[np.arange(320) % 16 == 5] += 3.0
+    votes = _votes_from_scores(scores, 16)
+    assert _fold_votes_to_measured_period(votes).size == 16
+
+  def test_32_faltet_bis_auf_die_gemessene_periode(self):
+    rng = np.random.RandomState(13)
+    scores = rng.randn(640)
+    scores[np.arange(640) % 8 == 1] += 4.0
+    folded = _fold_votes_to_measured_period(_votes_from_scores(scores, 32))
+    assert folded.size == 8
+    assert int(np.argmax(folded)) == 1
+
+  def test_acht_bins_bleiben_unveraendert(self):
+    """8 Bars ist die Kalibrierungs-Basis von PHRASE_CONFIDENCE_MIN und
+    zugleich die kleinste sinnvolle Phrase — darunter wird nie gefaltet."""
+    rng = np.random.RandomState(14)
+    votes = rng.randn(8)
+    np.testing.assert_allclose(_fold_votes_to_measured_period(votes), votes)
+
+  def test_degenerierte_eingaben(self):
+    np.testing.assert_allclose(
+      _fold_votes_to_measured_period(np.zeros(16)), np.zeros(16)
+    )
+    assert _fold_votes_to_measured_period(np.array([])).size == 0
+
+  def test_halbperiodische_struktur_passiert_das_gate_bei_16_bins(self):
+    """Vorher/Nachher am Kern des Befunds: klare 8-Bar-Struktur, mit
+    phrase_unit=16 abgestimmt. Ohne Faltung faellt sie durch das Gate."""
+    rng = np.random.RandomState(15)
+    passed_old = passed_new = 0
+    runs = 200
+    for _ in range(runs):
+      scores = rng.randn(208)
+      scores[np.arange(208) % 8 == 2] += 2.0
+      votes = _votes_from_scores(scores, 16)
+      passed_old += _vote_margin_confidence(votes) >= PHRASE_CONFIDENCE_MIN
+      folded = _fold_votes_to_measured_period(votes)
+      passed_new += _vote_margin_confidence(folded) >= PHRASE_CONFIDENCE_MIN
+    assert passed_old / runs < 0.25, (
+      f"Simulationsannahme pruefen: alte Pass-Rate {passed_old / runs:.2f}"
+    )
+    assert passed_new / runs > 0.95, (
+      f"Faltung rettet die Struktur nicht: {passed_new / runs:.2f}"
+    )
+
+  def test_rauschen_bleibt_unter_dem_gate(self):
+    """Die Faltung darf die Falsch-Positiv-Rate nicht aufblasen — ein
+    falscher Phrasen-Anker ist schlimmer als keiner. Monte-Carlo an echten
+    Bar-Zahlen: 3.62 % -> 3.67 % (iid), 2.52 % -> 2.58 % (AR(1))."""
+    rng = np.random.RandomState(16)
+    runs = 600
+    old_hits = new_hits = 0
+    for _ in range(runs):
+      votes = _votes_from_scores(rng.randn(208), 16)
+      old_hits += _vote_margin_confidence(votes) >= PHRASE_CONFIDENCE_MIN
+      new_hits += (
+        _vote_margin_confidence(_fold_votes_to_measured_period(votes))
+        >= PHRASE_CONFIDENCE_MIN
+      )
+    assert new_hits / runs < 0.1, f"Noise-Pass-Rate {new_hits / runs:.3f}"
+    assert new_hits <= old_hits + 0.02 * runs, (
+      f"Faltung inflationiert die Falsch-Positiven: {old_hits} -> {new_hits}"
+    )
+
+  def test_schwelle_liegt_in_der_gemessenen_luecke(self):
+    """Kalibriert an 18 eindeutig entscheidbaren Tracks (9x Periode 8,
+    9x Periode 16): hoechste Selbstkorrelation eines echten 16-Bar-Tracks
+    0.60, niedrigste der erkannten 8-Bar-Tracks 0.78."""
+    assert 0.60 < PHRASE_SUBPERIOD_MIN_CORRELATION <= 0.78
 
 
 class TestEstimateFirstPhraseSentinel:

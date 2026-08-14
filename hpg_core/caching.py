@@ -64,7 +64,17 @@ logger = logging.getLogger(__name__)
 # war ein Artefakt der Vote-Normierung, 1.0 bleibt Rekordbox vorbehalten).
 # first_downbeat UND downbeat_confidence aendern sich auf jedem selbst
 # geschaetzten Track; phrase_anchor, Sektionsgrenzen und Mixpunkte folgen.
-CACHE_VERSION = 27
+# AUDIT-FIX 2026-08-14 (Runde 4): 27 -> 28. Das Phrasen-Voting faltet jetzt
+# auf die GEMESSENE Periode, bevor es bewertet. Grund: Psytrance/Trance
+# sind die einzigen Genres mit phrase_unit=16, viele Tracks haben real
+# aber eine 8-Bar-Periode. Dann sammeln zwei Bins (p und p+8) dieselbe
+# echte Phrasengrenze, die Margin bricht zusammen — und zwar umso mehr,
+# je klarer die Struktur ist. Gefaltet wird nur bei zirkularer
+# Selbstkorrelation >= 0.70 (kalibriert: echte 16-Bar-Tracks max 0.60,
+# erkannte 8-Bar-Tracks min 0.78).
+# Geaendert: first_phrase, phrase_confidence und darueber phrase_anchor,
+# sections sowie alle Mixpunkte.
+CACHE_VERSION = 28
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

@@ -427,6 +427,65 @@ def estimate_first_downbeat(
 # 8-Bar-Phrasen gewaehlt (haeufigster Fall, Techno/House)
 _PHRASE_UNIT_REFERENCE = 8
 
+# AUDIT-FIX P-01 (2026-08-14): Mindest-Korrelation des Phasen-Votings mit sich
+# selbst, um eine HALBIERTE Phrasen-Periode als gemessen zu akzeptieren.
+# Gemessen an 35 echten AIFFs (D:/beatport_tracks_2025-08) gegen eine
+# unabhaengige Referenz (Bass-Energie 20-150 Hz, groesste Bar-zu-Bar-Spruenge;
+# Periode 8 <=> zirkulare Konzentration mod 8 hoch, mod 16 niedrig):
+#   18 Tracks sind eindeutig entscheidbar, 9 mit Periode 8, 9 mit Periode 16.
+#   Hoechste Selbstkorrelation eines echten 16-Bar-Tracks: 0.60
+#   Niedrigste der erkannten 8-Bar-Tracks:                 0.78
+# Die Luecke 0.60 .. 0.78 ist eindeutig; 0.70 liegt darin (geometrisch mittig
+# 0.684). Bei 0.70 werden 6 von 9 Periode-8-Tracks erkannt und KEIN
+# Periode-16-Track faelschlich gefaltet.
+PHRASE_SUBPERIOD_MIN_CORRELATION = 0.70
+
+
+def _fold_votes_to_measured_period(votes: np.ndarray) -> np.ndarray:
+    """AUDIT-FIX P-01 (2026-08-14): faltet das Voting auf die GEMESSENE Periode.
+
+    ``phrase_unit`` ist eine Genre-ANNAHME (Psytrance/Trance: 16 Bars), keine
+    Messung. Wiederholt sich der Track in Wahrheit alle 8 Bars, dann sammeln
+    im 16-Bin-Voting ZWEI Bins — p und p+8 — dieselbe echte Phrasengrenze. Die
+    Margin zwischen Platz 1 und 2 bricht damit genau dann zusammen, wenn die
+    Struktur besonders klar ist. Gemessen an 35 echten Tracks:
+
+      Track                     Konf. P=16   Konf. P=8   Phasenfehler P=8
+      Dragonfruit (E-Clip)          0.012       0.416       0 Bars
+      Flowstate                     0.042       0.439       0 Bars
+      Night Sky                     0.045       0.298       0 Bars
+      Solarians                     0.279       0.478       0 Bars
+      Shores of the Subconscious    0.314       0.538       0 Bars
+
+    Musikalisch ist die verbleibende Zweideutigkeit dabei folgenlos: liegt die
+    echte Periode bei 8 Bars, sind BEIDE Kandidaten (p und p+8) echte
+    Phrasengrenzen. Ein 16-Bar-Gitter, das auf einer davon verankert ist,
+    trifft ausschliesslich echte 8-Bar-Grenzen. Deshalb darf hier gefaltet
+    werden — anders als bei einem Track mit echter 16-Bar-Periode, wo die
+    falsche Haelfte mitten in der Phrase landen wuerde.
+
+    Kriterium ist die zirkulare Selbstkorrelation der Stimmen bei Lag P/2 —
+    eine Messung AM TRACK, unabhaengig von der Margin. Deshalb inflationiert
+    sie die Falsch-Positiv-Rate des Gates praktisch nicht (Monte-Carlo ueber
+    4000 Rauschlaeufe je Konfiguration: 3.62 % -> 3.67 % bei iid-Rauschen,
+    2.52 % -> 2.58 % bei AR(1)-Rauschen, n_bars = 210).
+
+    Die Faltung ist exakt: ``votes[:h] + votes[h:]`` ist dieselbe Summe, die
+    ein Voting mit P/2 Bins direkt berechnet haette (die Bars ``i % P == p``
+    und ``i % P == p + h`` sind genau die Bars ``i % h == p``).
+    """
+    votes = np.asarray(votes, dtype=float)
+    while votes.size >= 2 * _PHRASE_UNIT_REFERENCE and votes.size % 2 == 0:
+        energy = float(np.dot(votes, votes))
+        if energy < 1e-12:
+            break
+        half = votes.size // 2
+        correlation = float(np.dot(votes, np.roll(votes, half))) / energy
+        if correlation < PHRASE_SUBPERIOD_MIN_CORRELATION:
+            break
+        votes = votes[:half] + votes[half:]
+    return votes
+
 
 def _vote_margin_confidence(votes: np.ndarray) -> float:
     """AUDIT-FIX N-03 (2026-07-26): phrase_unit-invariante Voting-Konfidenz.
@@ -482,7 +541,9 @@ def estimate_first_phrase(
         sr: Samplerate.
         bpm: Tempo (validiert, > 0).
         first_downbeat: Takt-Anker in Sekunden (Basis des Bar-Rasters).
-        phrase_unit: Phrasenlaenge in Bars (Genre-Profil: 8 oder 16).
+        phrase_unit: Phrasenlaenge in Bars (Genre-ANNAHME: 8, 16 oder 32).
+            Obergrenze der Voting-Aufloesung; zeigt der Track eine halbierte
+            Periode, wird darauf gefaltet (P-01, _fold_votes_to_measured_period).
 
     Returns:
         (first_phrase_seconds, confidence 0..1). first_phrase liegt auf dem
@@ -568,6 +629,10 @@ def estimate_first_phrase(
             if np.any(mask):
                 votes[p] = float(np.sum(combined[mask]))
 
+        # AUDIT-FIX P-01 (2026-08-14): auf die GEMESSENE Periode falten, bevor
+        # bewertet wird — der Genre-Prior phrase_unit ist eine Annahme.
+        votes = _fold_votes_to_measured_period(votes)
+
         best_phase = int(np.argmax(votes))
         # AUDIT-FIX N-03 (2026-07-26): phrase_unit-invariante Konfidenz —
         # Margin/Spread auf die 8-Bar-Referenz normiert (Faktor P/8), sonst
@@ -578,8 +643,9 @@ def estimate_first_phrase(
         first_phrase = float(anchor + best_phase * bar_len)
 
         logger.debug(
-            f"Phrasen-Phase: Bar {best_phase}/{phrase_unit}, "
-            f"t={first_phrase:.3f}s, Konfidenz {confidence:.3f}"
+            f"Phrasen-Phase: Bar {best_phase}/{votes.size} "
+            f"(Genre-Annahme {phrase_unit}), t={first_phrase:.3f}s, "
+            f"Konfidenz {confidence:.3f}"
         )
         return round(first_phrase, 4), round(confidence, 3)
 
