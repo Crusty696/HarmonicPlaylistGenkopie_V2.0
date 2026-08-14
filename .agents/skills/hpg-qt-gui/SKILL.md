@@ -7,7 +7,7 @@ description: Use when working on the HPG PyQt6 GUI in main.py — QThread-Worker
 
 ## Architektur
 
-`main.py` (4868 Zeilen) enthaelt **alles**: Worker, Widgets, Panels,
+`main.py` (4944 Zeilen) enthaelt **alles**: Worker, Widgets, Panels,
 MainWindow. Es gibt kein `ui/`-Paket (alte Doku behauptet das).
 
 Fuenf Panels in einem `QStackedWidget`, umgeschaltet von `SidebarWidget`

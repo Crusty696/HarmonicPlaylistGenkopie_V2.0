@@ -98,7 +98,7 @@ Coverage auf hpg_core + main und --cov-fail-under=70.
 
 VOLLSTAENDIG MIT COVERAGE (vor Commit):
   .\venv312\Scripts\python.exe -m pytest -q
-  -> gemessen 2026-08-14: 1389 passed, 26 warnings, 188 s
+  -> gemessen 2026-08-14: 1471 passed, 26 warnings, 188 s
 
 SCHNELL, OHNE COVERAGE:
   .\venv312\Scripts\python.exe -m pytest -q --no-cov -m "not requires_audio"
@@ -225,7 +225,7 @@ GitHub: https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0
 Code: Siehe tests/ fuer Beispiele
 
 Version: 3.7.2
-Tests:    1389 passed, 26 warnings (gemessen 2026-08-14, Volllauf mit Coverage)
+Tests:    1471 passed, 26 warnings (gemessen 2026-08-14, Volllauf mit Coverage)
 Coverage: 66,82 % gemessen; das Gate liegt bei 70 % und ist damit aktuell
           NICHT erfuellt (Stand 2026-08-14, uncommittete Arbeitskopie)
 

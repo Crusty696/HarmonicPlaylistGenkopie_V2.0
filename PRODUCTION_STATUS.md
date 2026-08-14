@@ -37,11 +37,12 @@ Zahlen nachgemessen am 2026-08-14, siehe Abschnitt "Messung 2026-08-14".
 
 Selbst gemessen mit `.\venv312\Scripts\python.exe -m pytest`:
 
-- Volllauf mit Coverage: **1395 passed**, 26 Warnungen, **162 s**
-- Coverage gesamt: **75,28 %** — das Gate `--cov-fail-under=70` ist erfüllt
-- Weitere gemessene Fakten: `main.py` rund 4900 Zeilen, 8 Strategien in
+- Volllauf mit Coverage (`-m ""`): **1471 passed**, 26 Warnungen, **164 s**
+- Coverage gesamt: **75,49 %** — das Gate `--cov-fail-under=70` ist erfüllt
+- Standardlauf (langsame Tests abgewählt): rund 1282 Tests in ~85 s, 73,5 %
+- Weitere gemessene Fakten: `main.py` 4944 Zeilen, 8 Strategien in
   `STRATEGIES`, 3 Einträge in `STRATEGY_ALIASES`, 9 kanonische Genres,
-  `CACHE_VERSION = 25`, Python 3.12.10 im `venv312`
+  `CACHE_VERSION = 28`, Python 3.12.10 im `venv312`
 
 Hinweis zu einer früheren Zwischenmessung in dieser Sitzung: Zwischenstände
 mit 66,82 % Coverage und einem `NameError: ExportReport` in

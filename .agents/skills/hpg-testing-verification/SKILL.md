@@ -22,13 +22,18 @@ Volllauf mit Coverage (langsamer, aber das ist das echte Gate):
 
 ## Baseline
 
-**1388 passed, 26 warnings, ~307 s** — am 2026-08-14 auf diesem Rechner
-ausgefuehrt, inklusive der damals uncommitteten Arbeitskopie-Aenderungen.
+**1471 passed, 26 warnings, ~164 s** im vollen Lauf (`pytest -m ""`),
+**rund 1282 in ~85 s** im Standardlauf. Gemessen 2026-08-14.
 
-Die Doku widerspricht sich hier: `PRODUCTION_STATUS.md` sagt 1384,
-`docs/AGENT_HANDOFF.md` sagt 1313, `docs/QUICK_START.txt` sagt 961. Das sind
-Snapshots. **Immer selbst zaehlen**, nie eine Zahl aus einem Markdown
-uebernehmen.
+Die zwei Integrationstests mit echter Audio-Analyse sind als `slow` markiert
+und per `pytest.ini` standardmaessig abgewaehlt — sie machten allein 150 s der
+150 s Wall-Clock aus. Coverage faellt dadurch von 75,49 % auf 73,5 %, das
+70-%-Gate haelt in beiden Faellen.
+
+Aeltere Zahlen im Repo sind datierte Snapshots, keine Widersprueche:
+`docs/AGENT_HANDOFF.md` nennt 1313, der historische Abschnitt in
+`PRODUCTION_STATUS.md` nennt 1384. **Immer selbst zaehlen**, nie eine Zahl aus
+einem Markdown uebernehmen — auch nicht aus diesem Skill.
 
 ## Was pytest.ini erzwingt
 

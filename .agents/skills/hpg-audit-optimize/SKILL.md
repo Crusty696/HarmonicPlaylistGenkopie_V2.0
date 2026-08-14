@@ -19,11 +19,11 @@ Behauptung im Code pruefen.
 | Fakt | Wert |
 |---|---|
 | Version | 3.7.2 |
-| Testsuite | **1395 passed**, 26 warnings, ~162 s |
-| Coverage | **75,28 %**, Gate 70 % erfuellt |
+| Testsuite | **1471 passed** (`-m ""`), rund 1282 im Standardlauf |
+| Coverage | **75,49 %**, Gate 70 % erfuellt |
 | `CACHE_VERSION` | **28**, `hpg_cache_v28.db` |
 | Strategien | **8** (`STRATEGIES`, playlist.py:1864) |
-| `main.py` | rund 4930 Zeilen |
+| `main.py` | **4944 Zeilen** |
 | Kanonische Genres | **9** |
 | Python | 3.12.10 in `venv312` |
 | Worker-Cap | 4 (`PARALLEL_AUTO_MAX_WORKERS`) |
@@ -32,7 +32,7 @@ Behauptung im Code pruefen.
 
 | Behauptung | Fundort | Realitaet |
 |---|---|---|
-| "main.py ~1600 Zeilen" | `CLAUDE.md`, `AGENTS.md` | 4868 |
+| ~~"main.py ~1600 Zeilen"~~ | `CLAUDE.md`, `AGENTS.md` | **2026-08-14 korrigiert** |
 | 10-11 Strategien, alte Namen | `docs/QUICK_START.txt` | 8, `STRATEGY_ALIASES` haelt Altnamen gueltig |
 | `ui/main_window.py`, `GUI/`-Ordner | `docs/QUICK_START.txt` | existiert nicht, alles in `main.py` |
 | veraltete Testzahlen | AGENT_HANDOFF, alte Fixlogs | real 1395 (2026-08-14) |

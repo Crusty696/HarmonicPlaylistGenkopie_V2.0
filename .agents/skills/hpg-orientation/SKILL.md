@@ -46,13 +46,13 @@ main.AnalysisWorker.run              [main.py:489]
 
 | Thema | Datei | Einstieg |
 |---|---|---|
-| GUI, alle Worker, Panels | `main.py` (4868 Z.) | `MainWindow.init_ui` :3992 |
+| GUI, alle Worker, Panels | `main.py` (4944 Z.) | `MainWindow.init_ui` |
 | Track-Datenmodell, Camelot, Anker | `hpg_core/models.py` | `class Track` :128 |
 | Audio-Analyse | `hpg_core/analysis.py` | `analyze_track` :1282 |
 | Mixpoints, DJ-Empfehlungen | `hpg_core/dj_brain.py` | :106, :433, :627 |
 | Strategien + Scoring | `hpg_core/playlist.py` | `STRATEGIES` :1864 |
 | Genre-Tabellen (SSoT) | `hpg_core/genres.py` | `CANONICAL_GENRES` :21 |
-| Cache | `hpg_core/caching.py` | `CACHE_VERSION` :39 |
+| Cache | `hpg_core/caching.py` | `CACHE_VERSION` :77 |
 | Preview-DSP | `hpg_core/transition_renderer.py` | `render_transition_clip` :114 |
 | Rekordbox-Import | `hpg_core/rekordbox_importer.py` | :59 |
 | Export | `hpg_core/exporters/` | m3u8, Rekordbox-XML |
@@ -82,7 +82,9 @@ PLAYLIST · MIX TIPS · TIMELINE · QUALITY, Umschalten per Ctrl+1..5.
 Dieses Repo hat massive Doku-Drift. Diese Aussagen sind **falsch**, immer im
 Code nachsehen:
 
-- `CLAUDE.md` / `AGENTS.md`: "main.py ~1600 Zeilen" — real 4868.
+- `CLAUDE.md` / `AGENTS.md` waren bis 2026-08-14 falsch ("main.py ~1600
+  Zeilen", real 4944) und sind inzwischen korrigiert. Trotzdem gilt: Zahlen
+  aus Markdown vor Gebrauch nachmessen.
 - `docs/QUICK_START.txt`: nennt 10 Strategien mit alten Namen ("Emotional
   Journey", "Surprise me"), eine Datei `ui/main_window.py` (existiert nicht)
   und "961 Tests". Real: 8 Strategien, kein `ui/`-Paket.
