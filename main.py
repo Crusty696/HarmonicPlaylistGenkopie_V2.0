@@ -425,7 +425,8 @@ class AIPullWorker(QThread):
 class DependencyCheckWorker(QThread):
     """Prueft optionale Dienste ohne den GUI-Thread zu blockieren."""
 
-    checked = pyqtSignal(bool, bool)  # (pedalboard_installed, ai_online)
+    checked = pyqtSignal(bool, bool, bool)
+    # (pedalboard_installed, ai_online, rekordbox_running)
 
     def __init__(self, provider: str, url: str, parent=None):
         super().__init__(parent)
@@ -451,8 +452,17 @@ class DependencyCheckWorker(QThread):
         except Exception:
             ai_online = False
 
+        # Prozesspruefung gehoert in den Worker: psutil iteriert ueber alle
+        # laufenden Prozesse und das darf den GUI-Thread nicht blockieren.
+        try:
+            from hpg_core.rekordbox_importer import is_rekordbox_running
+
+            rekordbox_running = is_rekordbox_running()
+        except Exception:
+            rekordbox_running = False
+
         if not self.isInterruptionRequested():
-            self.checked.emit(pedalboard_installed, ai_online)
+            self.checked.emit(pedalboard_installed, ai_online, rekordbox_running)
 
 
 class AnalysisWorker(QThread):
@@ -4015,9 +4025,11 @@ class MainWindow(QMainWindow):
         worker = DependencyCheckWorker(ai_provider, url, parent=self)
         self._dependency_worker = worker
         worker.checked.connect(
-            lambda pedalboard_installed, ai_online, source=worker:
+            lambda pedalboard_installed, ai_online, rekordbox_running,
+            source=worker:
             self._on_dependencies_checked(
-                pedalboard_installed, ai_online, ai_provider, source
+                pedalboard_installed, ai_online, rekordbox_running,
+                ai_provider, source
             )
         )
         worker.finished.connect(
@@ -4035,7 +4047,8 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_dependencies_checked(
-        self, pedalboard_installed, ai_online, ai_provider, source_worker=None
+        self, pedalboard_installed, ai_online, rekordbox_running,
+        ai_provider, source_worker=None
     ):
         if (
             source_worker is not None
@@ -4049,6 +4062,10 @@ class MainWindow(QMainWindow):
             # M4-Fix: Hinweis passend zum gewaehlten Provider statt hardcodiert Ollama
             port = "1234" if ai_provider == "LM Studio" else "11434"
             warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Der AI-Layer ist inaktiv. Moods und Mixing-Tips bleiben leer. Bitte starten Sie {ai_provider} auf Port {port}.")
+        if rekordbox_running:
+            # Rekordbox checkpointet sein WAL erst beim Beenden nach master.db.
+            # Waehrend es laeuft, liest HPG einen aelteren Stand.
+            warnings.append("• Rekordbox laeuft: HPG liest die Datenbank erst nach dem Beenden von Rekordbox aktuell. Frisch analysierte Tracks fehlen dann noch und werden neu berechnet. Fuer aktuelle Metadaten Rekordbox schliessen.")
 
         if warnings:
             warn_text = "System-Hinweis: Einige Dienste sind eingeschraenkt (Fuer Details hier hovern)"

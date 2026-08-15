@@ -575,3 +575,21 @@ def get_rekordbox_importer() -> RekordboxImporter:
     if _rekordbox_importer is None:
         _rekordbox_importer = RekordboxImporter()
     return _rekordbox_importer
+
+
+def is_rekordbox_running() -> bool:
+    """True, wenn gerade ein Rekordbox-Prozess laeuft.
+
+    Rekordbox haelt seine Aenderungen im SQLite-WAL und checkpointet erst beim
+    Beenden nach master.db. Solange die App laeuft, liest HPG daher womoeglich
+    einen veralteten Stand — frisch analysierte Tracks fehlen dann noch.
+    """
+    if not REKORDBOX_AVAILABLE:
+        return False
+    try:
+        from pyrekordbox.utils import get_rekordbox_pid
+
+        return bool(get_rekordbox_pid())
+    except Exception as exc:  # psutil-Ausfall darf den Start nicht kippen
+        logger.debug("Rekordbox-Prozesspruefung fehlgeschlagen: %s", exc)
+        return False

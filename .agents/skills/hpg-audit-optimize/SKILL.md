@@ -19,8 +19,8 @@ Behauptung im Code pruefen.
 | Fakt | Wert |
 |---|---|
 | Version | 3.7.2 |
-| Testsuite | **1471 passed** (`-m ""`), rund 1282 im Standardlauf |
-| Coverage | **75,49 %**, Gate 70 % erfuellt |
+| Testsuite | **1478 passed** (`-m ""`), rund 1289 im Standardlauf |
+| Coverage | **75,76 %**, Gate 70 % erfuellt |
 | `CACHE_VERSION` | **28**, `hpg_cache_v28.db` |
 | Strategien | **8** (`STRATEGIES`, playlist.py:1864) |
 | `main.py` | **4944 Zeilen** |

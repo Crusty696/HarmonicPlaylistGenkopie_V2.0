@@ -22,13 +22,14 @@ Volllauf mit Coverage (langsamer, aber das ist das echte Gate):
 
 ## Baseline
 
-**1471 passed, 26 warnings, ~164 s** im vollen Lauf (`pytest -m ""`),
-**rund 1282 in ~85 s** im Standardlauf. Gemessen 2026-08-14.
+**1478 passed, 26 warnings, ~102 s** im vollen Lauf (`pytest -m ""`),
+**rund 1289 in ~70 s** im Standardlauf. Gemessen 2026-08-15.
 
 Die zwei Integrationstests mit echter Audio-Analyse sind als `slow` markiert
-und per `pytest.ini` standardmaessig abgewaehlt — sie machten allein 150 s der
-150 s Wall-Clock aus. Coverage faellt dadurch von 75,49 % auf 73,5 %, das
-70-%-Gate haelt in beiden Faellen.
+und per `pytest.ini` standardmaessig abgewaehlt — sie brauchen rund 92 s bzw.
+90 s CPU und kosten unter `-n auto` etwa 32 s Wall-Clock (102 s statt
+70 s). Coverage faellt dadurch von 75,76 % auf rund 73,5 %, das 70-%-Gate
+haelt in beiden Faellen.
 
 Aeltere Zahlen im Repo sind datierte Snapshots, keine Widersprueche:
 `docs/AGENT_HANDOFF.md` nennt 1313, der historische Abschnitt in

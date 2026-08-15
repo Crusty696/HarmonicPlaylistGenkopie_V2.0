@@ -430,3 +430,71 @@ def test_mainwindow_repeated_widget_start_close_smoke(qapp, monkeypatch):
     window.deleteLater()
     QApplication.sendPostedEvents()
     QApplication.processEvents()
+
+
+def _dependency_stub():
+  """Minimales MainWindow-Double: _on_dependencies_checked fasst nur
+  _dependency_worker und status_bar an."""
+  recorded = {"status": None, "tooltip": None}
+  status_bar = SimpleNamespace(
+    set_status=lambda text: recorded.__setitem__("status", text),
+    setToolTip=lambda text: recorded.__setitem__("tooltip", text),
+    setStyleSheet=lambda text: None,
+  )
+  window = SimpleNamespace(_dependency_worker=None, status_bar=status_bar)
+  return window, recorded
+
+
+def test_running_rekordbox_produces_stale_metadata_warning():
+  window, recorded = _dependency_stub()
+
+  main.MainWindow._on_dependencies_checked(
+    window, True, True, True, "LM Studio"
+  )
+
+  assert recorded["status"] is not None
+  assert "Rekordbox laeuft" in recorded["tooltip"]
+  assert "schliessen" in recorded["tooltip"]
+
+
+def test_closed_rekordbox_produces_no_warning():
+  window, recorded = _dependency_stub()
+
+  main.MainWindow._on_dependencies_checked(
+    window, True, True, False, "LM Studio"
+  )
+
+  assert recorded["status"] is None
+  assert recorded["tooltip"] is None
+
+
+def test_dependency_worker_emits_rekordbox_state(monkeypatch):
+  monkeypatch.setattr(requests, "get", lambda *a, **k: SimpleNamespace())
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.is_rekordbox_running", lambda: True
+  )
+  worker = main.DependencyCheckWorker("LM Studio", "http://localhost:1234/v1")
+  emitted = []
+  worker.checked.connect(lambda *args: emitted.append(args))
+
+  worker.run()
+
+  assert emitted and emitted[0][2] is True
+
+
+def test_real_window_shows_rekordbox_warning_end_to_end(qtbot, monkeypatch):
+  """Vollstaendige Kette: Worker-Signal (3 Argumente) -> Lambda -> Handler ->
+  Statuszeile. Faengt Signaturbrueche, die Unit-Doubles durchlassen."""
+  # Original sichern, bevor _window() die Methode fuer den Aufbau stilllegt.
+  check = main.MainWindow.check_dependencies_and_warn
+  window = _window(qtbot, monkeypatch)
+
+  monkeypatch.setattr(requests, "get", lambda *a, **k: SimpleNamespace())
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.is_rekordbox_running", lambda: True
+  )
+  check(window)
+
+  qtbot.waitUntil(
+    lambda: "Rekordbox laeuft" in window.status_bar.toolTip(), timeout=5000
+  )

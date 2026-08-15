@@ -616,3 +616,36 @@ class TestSingleton:
       assert i1 is i2
     finally:
       rb_module._rekordbox_importer = None  # Cleanup
+
+
+# --- Prozesspruefung: warnt die App, wenn Rekordbox noch offen ist? ---------
+
+
+def test_is_rekordbox_running_reports_live_process(monkeypatch):
+  """Laufender Prozess -> True. Rekordbox checkpointet sein WAL erst beim
+  Beenden, HPG liest solange einen veralteten Stand."""
+  import pyrekordbox.utils as rb_utils
+
+  monkeypatch.setattr(rb_module, "REKORDBOX_AVAILABLE", True)
+  monkeypatch.setattr(rb_utils, "get_rekordbox_pid", lambda *a, **k: 4711)
+  assert rb_module.is_rekordbox_running() is True
+
+  monkeypatch.setattr(rb_utils, "get_rekordbox_pid", lambda *a, **k: 0)
+  assert rb_module.is_rekordbox_running() is False
+
+
+def test_is_rekordbox_running_survives_psutil_failure(monkeypatch):
+  """Ein Fehler in der Prozessliste darf den App-Start nicht kippen."""
+  import pyrekordbox.utils as rb_utils
+
+  def boom(*a, **k):
+    raise OSError("Zugriff verweigert")
+
+  monkeypatch.setattr(rb_module, "REKORDBOX_AVAILABLE", True)
+  monkeypatch.setattr(rb_utils, "get_rekordbox_pid", boom)
+  assert rb_module.is_rekordbox_running() is False
+
+
+def test_is_rekordbox_running_false_without_pyrekordbox(monkeypatch):
+  monkeypatch.setattr(rb_module, "REKORDBOX_AVAILABLE", False)
+  assert rb_module.is_rekordbox_running() is False
