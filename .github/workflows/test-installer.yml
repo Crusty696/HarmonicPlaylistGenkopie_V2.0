@@ -28,9 +28,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Install PyInstaller
-      run: pip install pyinstaller
-
     - name: Run Build Script
       run: |
         cmd /c build.bat
@@ -68,12 +65,47 @@ jobs:
         }
       shell: pwsh
 
+    - name: Install Inno Setup
+      shell: pwsh
+      run: choco install innosetup --yes --no-progress
+
+    - name: Build installer package
+      shell: cmd
+      run: call build_installer.bat
+
+    - name: Silent install, startup smoke, and uninstall
+      shell: pwsh
+      run: |
+        $setups = @(Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe" -File)
+        if ($setups.Count -ne 1) {
+          throw "Expected exactly one installer, found $($setups.Count)"
+        }
+        $setup = $setups[0].FullName
+        $installDir = Join-Path $env:RUNNER_TEMP "HPG-Installer-Smoke"
+        $install = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -Wait -PassThru
+        if ($install.ExitCode -ne 0) { throw "Installer failed with $($install.ExitCode)" }
+        $installedExe = Join-Path $installDir "HarmonicPlaylistGenerator.exe"
+        if (-not (Test-Path $installedExe)) { throw "Installed executable missing" }
+
+        $app = Start-Process -FilePath $installedExe -PassThru
+        Start-Sleep -Seconds 8
+        if ($app.HasExited) { throw "Installed application exited with $($app.ExitCode)" }
+        Stop-Process -Id $app.Id -Force
+
+        $uninstaller = Join-Path $installDir "unins000.exe"
+        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+        if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with $($uninstall.ExitCode)" }
+        Start-Sleep -Seconds 2
+        if (Test-Path $installedExe) { throw "Uninstall left the application executable behind" }
+
     - name: Upload Build Artifact
       if: success()
       uses: actions/upload-artifact@v4
       with:
         name: HarmonicPlaylistGenerator-Windows
-        path: dist/HarmonicPlaylistGenerator.exe
+        path: |
+          dist/HarmonicPlaylistGenerator.exe
+          installer_output/HPG_v*_Setup.exe
         retention-days: 7
 
     - name: Test Import of Core Modules
@@ -100,16 +132,9 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov pytest-xdist
 
-    - name: Run Tests (if available)
-      run: |
-        if (Test-Path "tests") {
-          python -m pytest tests/ -v
-        } else {
-          Write-Host "⚠️ No tests directory found, skipping tests"
-        }
-      shell: pwsh
+    - name: Run Tests
+      run: python -m pytest tests/ -q
 
     - name: Check Code Quality
       run: |
@@ -122,5 +147,7 @@ jobs:
             exit 1
           }
         }
+        python -m py_compile main.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         Write-Host "✅ All Python files compile successfully"
       shell: pwsh

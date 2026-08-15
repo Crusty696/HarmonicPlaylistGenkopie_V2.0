@@ -74,7 +74,10 @@ logger = logging.getLogger(__name__)
 # erkannte 8-Bar-Tracks min 0.78).
 # Geaendert: first_phrase, phrase_confidence und darueber phrase_anchor,
 # sections sowie alle Mixpunkte.
-CACHE_VERSION = 28
+# AUDIT-FIX 2026-08-15: 28 -> 29. Context-/Genre-Flow, Transition-Typ und
+# abgeleitete Camelot-Werte wurden korrigiert. Damit alte Genre-/Mixpoint-
+# Ausgaben die neuen Verträge nicht maskieren, wird ein neuer Cache genutzt.
+CACHE_VERSION = 29
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -93,7 +96,16 @@ def _default_cache_file() -> str:
     return str((base_dir / f"hpg_cache_v{CACHE_VERSION}.db").resolve())
 
 
-CACHE_FILE = _CACHE_FILE_OVERRIDE or _default_cache_file()
+def _resolve_cache_file(override: str) -> str:
+    """Bindet auch relative Overrides einmalig an einen absoluten Pfad."""
+    return (
+        str(Path(override).expanduser().resolve())
+        if override
+        else _default_cache_file()
+    )
+
+
+CACHE_FILE = _resolve_cache_file(_CACHE_FILE_OVERRIDE)
 LOCK_FILE = os.path.splitext(CACHE_FILE)[0] + ".lock"
 
 SQLITE_BUSY_CODES = {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
@@ -620,4 +632,3 @@ def file_lock(lock_path: str, timeout: float = 5.0):
                 lock_file_handle.close()
             except OSError:
                 pass
-

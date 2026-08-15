@@ -25,6 +25,7 @@ from hpg_core.dj_brain import (
   _get_intro_end,
   _get_intro_end_from_sections,
   _get_outro_start_from_sections,
+  _get_section_at_time,
   _build_structure_note,
   _get_cross_genre_technique,
   _get_cross_genre_eq,
@@ -535,6 +536,17 @@ class TestHelperFunctions:
     # Kein Outro -> outro_start = 300.0, letzte Nicht-Outro-Sektion = main(270-300)
     assert result <= 300.0
     assert result > 0.0
+
+  def test_adjacent_section_boundary_belongs_to_following_section(self):
+    track = _make_track(
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 30.0},
+        {"label": "main", "start_time": 30.0, "end_time": 100.0},
+      ]
+    )
+
+    assert _get_section_at_time(track, 30.0, "in") == "main"
+    assert _get_section_at_time(track, 100.0, "out") == "main"
 
   def test_build_structure_note_ideal(self):
     note = _build_structure_note("outro", "intro")

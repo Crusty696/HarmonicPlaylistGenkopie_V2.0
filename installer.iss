@@ -103,8 +103,8 @@ begin
            '  2. Drag & drop your music folder' + #13#10 +
            '  3. Choose playlist strategy' + #13#10 +
            '  4. Click Generate Playlist' + #13#10 + #13#10 +
-           'For Rekordbox integration, install pyrekordbox:' + #13#10 +
-           '  pip install pyrekordbox' + #13#10 + #13#10 +
+           'Die optionale Rekordbox-Integration ist bereits enthalten und wird' + #13#10 +
+           'automatisch aktiviert, wenn eine kompatible lokale Datenbank vorhanden ist.' + #13#10 + #13#10 +
          'Enjoy harmonically optimized playlists!',
            mbInformation, MB_OK);
   end;

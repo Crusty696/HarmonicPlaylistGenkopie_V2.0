@@ -37,6 +37,15 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
+"!PYTHON_EXE!" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) and sys.version_info >= (3, 12, 1) else 1)"
+if errorlevel 1 (
+    echo [FEHLER] HPG benoetigt Python 3.12.1 oder neuer innerhalb der 3.12-Serie.
+    echo [INFO]   Gefunden:
+    "!PYTHON_EXE!" --version
+    pause
+    exit /b 1
+)
+
 echo [INFO] Interpreter: !PYTHON_EXE!
 echo.
 "!PYTHON_EXE!" main.py

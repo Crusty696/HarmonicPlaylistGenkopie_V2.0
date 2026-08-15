@@ -9,7 +9,6 @@ import tempfile
 os.environ.setdefault("PYTHONUTF8", "1")
 
 from hpg_core.analysis import analyze_track
-from hpg_core.config import PHRASE_CONFIDENCE_MIN
 from hpg_core.models import METER
 from hpg_core.playlist import (
     generate_playlist,
@@ -88,14 +87,15 @@ def main() -> int:
         )
         plans = [r.plan for r in recs if getattr(r, "plan", None) is not None]
         check("Empfehlungen", len(recs) == len(ordered) - 1, f"{len(recs)} Uebergaenge")
+        check("Renderbarer Plan", bool(plans), f"{len(plans)} Plaene")
 
         # --- 3) Render + DSP-Invarianten ---
         if plans:
             import numpy as np
             import soundfile as sf
-            out = os.path.join(tempfile.gettempdir(), "hpg_e2e_preview.wav")
-            spec = TransitionClipSpec.from_plan(plans[0], ordered[0], ordered[1])
-            try:
+            with tempfile.TemporaryDirectory(prefix="hpg_e2e_") as temp_dir:
+                out = os.path.join(temp_dir, "preview.wav")
+                spec = TransitionClipSpec.from_plan(plans[0], ordered[0], ordered[1])
                 render_transition_clip(spec, out)
                 data, sr = sf.read(out, dtype="float32", always_2d=True)
                 peak = float(np.max(np.abs(data)))
@@ -109,11 +109,6 @@ def main() -> int:
                 ratio_db = 20 * np.log10(rms(mid) / rms(head))
                 check("Kein Pegel-Loch in der Mitte", ratio_db > -6.0,
                       f"Mitte vs Anfang {ratio_db:+.1f} dB")
-            finally:
-                try:
-                    os.remove(out)
-                except OSError:
-                    pass
 
     # --- 4) Rekordbox-Verfuegbarkeit (nur Report, kein Fail) ---
     try:

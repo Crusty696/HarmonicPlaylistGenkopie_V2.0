@@ -210,6 +210,23 @@ class TestEdgeCases:
     valid_bpms = [t.bpm for t in result if t.bpm > 0]
     assert len(valid_bpms) >= 1
 
+  @pytest.mark.parametrize("invalid_bpm", [float("nan"), float("inf"), -float("inf")])
+  def test_tracks_with_non_finite_bpm_filtered(self, invalid_bpm):
+    invalid = make_track(camelotCode="8A", bpm=invalid_bpm)
+    valid = make_track(camelotCode="8A", bpm=128.0, title="valid")
+
+    result = generate_playlist([invalid, valid], "Harmonic Flow", bpm_tolerance=3.0)
+
+    assert result == [valid]
+
+  def test_all_invalid_bpms_return_empty_playlist(self):
+    tracks = [
+      make_track(camelotCode="8A", bpm=0.0),
+      make_track(camelotCode="8A", bpm=float("nan")),
+    ]
+
+    assert generate_playlist(tracks, "Harmonic Flow", bpm_tolerance=3.0) == []
+
   def test_harmonic_flow_fallback_prefers_half_time(self, monkeypatch):
     """Fallback wählt Half-Time (effektive BPM-Differenz) statt roher Distanz.
 

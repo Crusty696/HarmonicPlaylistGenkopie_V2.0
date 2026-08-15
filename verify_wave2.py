@@ -1,11 +1,8 @@
 # Verifikation Welle 2 (Scoring) — stellt die Audit-Belege mit gefixtem Code nach.
-import sys, types
-for name in ("librosa", "librosa.effects", "librosa.feature", "librosa.beat",
-             "librosa.onset", "librosa.segment", "soundfile", "mutagen",
-             "mutagen.easyid3", "pyloudnorm", "scipy", "scipy.signal"):
-    sys.modules.setdefault(name, types.ModuleType(name))
-sys.modules["mutagen"].File = lambda *a, **k: None
-sys.path.insert(0, "/home/claude/hpg-fix")
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 
 from hpg_core.models import effective_bpm_diff, Track

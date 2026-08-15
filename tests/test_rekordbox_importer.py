@@ -592,6 +592,32 @@ class TestRekordboxTrackData:
     assert data.camelot_code == "8A"
     assert data.duration == 240.0
 
+  def test_different_content_ids_are_conflicting(self):
+    left = RekordboxTrackData(bpm=128.0, content_id="old")
+    right = RekordboxTrackData(bpm=128.0, content_id="new")
+
+    assert RekordboxImporter._track_data_conflicts(left, right) is True
+
+  def test_different_cue_sets_are_conflicting(self):
+    left = RekordboxTrackData(
+      bpm=128.0, cue_points=[{"name": "MIX IN", "position": 30.0}]
+    )
+    right = RekordboxTrackData(
+      bpm=128.0, cue_points=[{"name": "MIX IN", "position": 90.0}]
+    )
+
+    assert RekordboxImporter._track_data_conflicts(left, right) is True
+
+  def test_same_cues_in_different_order_are_not_conflicting(self):
+    cues = [
+      {"name": "IN", "position": 30.0},
+      {"name": "OUT", "position": 240.0},
+    ]
+    left = RekordboxTrackData(bpm=128.0, cue_points=cues)
+    right = RekordboxTrackData(bpm=128.0, cue_points=list(reversed(cues)))
+
+    assert RekordboxImporter._track_data_conflicts(left, right) is False
+
 
 # ─── Tests: Singleton ────────────────────────────────────────────────────────
 

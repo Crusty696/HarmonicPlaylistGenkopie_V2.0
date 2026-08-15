@@ -80,9 +80,12 @@ class M3U8Exporter(BaseExporter):
             try:
                 with os.fdopen(fd, "w", encoding=self.encoding) as f:
                     # Write header
+                    safe_playlist_name = (
+                        playlist_name.replace("\r", " ").replace("\n", " ")
+                    )
                     f.write("#EXTM3U\n")
                     f.write(f"#EXTENC:{self.encoding.upper()}\n")
-                    f.write(f"#PLAYLIST:{playlist_name}\n\n")
+                    f.write(f"#PLAYLIST:{safe_playlist_name}\n\n")
 
                     # Write tracks
                     for track in playlist:

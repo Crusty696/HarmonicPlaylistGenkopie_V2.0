@@ -262,7 +262,6 @@ def calculate_enhanced_compatibility(
 ) -> TransitionMetrics:
     """Enhanced compatibility calculation with multiple factors."""
 
-    global _ENHANCED_COMPAT_CACHE
     cache_key = _enhanced_cache_key(
         track1, track2, bpm_tolerance, energy_direction, kwargs
     )
@@ -495,17 +494,9 @@ def _calculate_compatibility_inner(
 # Global thread-local-like cache containers for the current playlist generation
 # session. They remain opt-in so direct API calls preserve their existing behavior.
 #
-# AUDIT-MESSUNG F07 (2026-08-14, 52 echte Tracks, alle 8 Strategien): waehrend
-# generate_playlist wird _COMPAT_CACHE zwar angelegt, aber NIE gelesen oder
-# beschrieben (0 Aufrufe von calculate_compatibility, 0 Treffer). Alle
-# Strategien sortieren ueber calculate_transition_objective ->
-# calculate_enhanced_compatibility und treffen damit ausschliesslich
-# _ENHANCED_COMPAT_CACHE (Warm-Up 1538/2005, Cool-Down 1538/2001,
-# Peak-Time 711/948 Treffer; die uebrigen Strategien bewerten jedes Paar genau
-# einmal und koennen konstruktionsbedingt keine Treffer haben).
-# _COMPAT_CACHE bleibt als korrekter Opt-in-Mechanismus fuer den einzigen
-# externen Consumer predict_transition_type bestehen — er kostet eine
-# Dict-Allokation pro Generierung und veraendert kein Ergebnis.
+# Context Flow und die Genre-Flow-Gruppengrenzen nutzen bewusst die reine
+# Harmonik und damit _COMPAT_CACHE. Die uebrigen Strategien verwenden die
+# erweiterte Zielfunktion und _ENHANCED_COMPAT_CACHE.
 _ENHANCED_COMPAT_CACHE = None
 _COMPAT_CACHE = None
 
@@ -523,8 +514,6 @@ def calculate_compatibility(
     verfaelschten Score, und calculate_playlist_quality verbuchte KI-Stimmung
     als Harmonik. Dieser Wrapper liefert jetzt reine harmonische Kompatibilitaet.
     """
-    global _COMPAT_CACHE
-
     if _COMPAT_CACHE is not None:
         cache_key = (
             _track_cache_key(track1),
@@ -986,10 +975,11 @@ def _sort_genre_flow(
     if not genre_mixing_enabled:
         return _sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
 
-    # Group tracks by genre (bevorzuge detected_genre wenn vorhanden)
+    # Group tracks by genre (bevorzuge eine echte Klassifikation, sonst ID3)
     genre_groups = {}
     for track in tracks:
-        genre = getattr(track, "detected_genre", "") or track.genre
+        detected = getattr(track, "detected_genre", "") or ""
+        genre = detected if detected != "Unknown" else (track.genre or "")
         if not genre or genre == "Unknown":
             genre = "Mixed"
         if genre not in genre_groups:
@@ -1023,10 +1013,23 @@ def _sort_genre_flow(
 
         for genre in genre_groups:
             if genre not in processed_genres:
-                # Einzige Quelle: DJ-Brain-Matrix (0.5 = unbekannte Kombination),
-                # skaliert mit genre_weight (hoeher = staerkere Genre-Praeferenz)
+                # genre_weight blendet zwischen dem besten realen Uebergang
+                # in die Gruppe (0 = Genre ignorieren) und der DJ-Brain-Matrix
+                # (1 = Genre ist ausschlaggebend). Die fruehere affine Formel
+                # war fuer alle Gewichte < 1 streng monoton und konnte deshalb
+                # die Rangfolge niemals veraendern.
                 dj_compat = get_genre_compatibility(current_genre, genre)
-                compatibility = dj_compat * (1 - genre_weight) + genre_weight
+                current_track = result[-1]
+                transition_compat = max(
+                    calculate_compatibility(
+                        current_track, candidate, bpm_tolerance, **kwargs
+                    )
+                    for candidate in genre_groups[genre]
+                ) / 100.0
+                compatibility = (
+                    (1.0 - genre_weight) * transition_compat
+                    + genre_weight * dj_compat
+                )
                 if compatibility > best_compatibility:
                     best_compatibility = compatibility
                     best_next_genre = genre
@@ -1280,8 +1283,14 @@ def predict_transition_type(
     )
 
     # Genre-Info
-    genre_a = getattr(from_track, "detected_genre", "Unknown") or "Unknown"
-    genre_b = getattr(to_track, "detected_genre", "Unknown") or "Unknown"
+    def _resolved_genre(track: Track) -> str:
+        detected = getattr(track, "detected_genre", "") or ""
+        if detected and detected != "Unknown":
+            return detected
+        return track.genre if track.genre and track.genre != "Unknown" else "Unknown"
+
+    genre_a = _resolved_genre(from_track)
+    genre_b = _resolved_genre(to_track)
 
     # --- Regel 1: Half/Double-Time Wechsel ---
     if bpm_relation in ("half", "double") and eff_diff <= bpm_tolerance:
@@ -1289,7 +1298,13 @@ def predict_transition_type(
 
     # --- Regel 2: BPM ausserhalb Toleranz ---
     if eff_diff > bpm_tolerance:
-        if harmonic_score >= 50:
+        # Die normale Kompatibilitaet ist hier wegen ihres BPM-Hard-Gates
+        # definitionsgemaess 0. Fuer die Breakdown-Entscheidung die reine
+        # Harmonie deshalb ohne dieses Gate bewerten.
+        harmonic_without_bpm_gate = calculate_compatibility(
+            from_track, to_track, float("inf"), **kwargs
+        )
+        if harmonic_without_bpm_gate >= 50:
             return "breakdown_bridge"
         return "cold_cut"
 
@@ -1424,8 +1439,7 @@ def _build_transition_description(
 def _process_dj_brain_recommendations(
     current: Track,
     upcoming: Track,
-    current_mix_out: float,
-) -> tuple["DJRecommendation | None", list[str], float | None, float | None]:
+) -> tuple["DJRecommendation | None", list[str], float | None]:
     """
     Processes DJ Brain recommendations and returns the updated transition details.
 
@@ -1434,12 +1448,10 @@ def _process_dj_brain_recommendations(
         - dj_rec: The DJRecommendation object if successful, else None
         - notes_parts: Additional notes from the DJ Brain
         - overlap: Adjusted overlap if DJ Brain provided transition bars
-        - fade_out_start: Adjusted fade out start based on overlap
     """
     dj_rec = None
     notes_parts = []
     overlap = None
-    fade_out_start = None
 
     current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
     upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
@@ -1475,12 +1487,26 @@ def _process_dj_brain_recommendations(
             if dj_rec.transition_bars > 0 and current.bpm > 0:
                 seconds_per_bar = (60.0 / current.bpm) * METER
                 overlap = seconds_per_bar * dj_rec.transition_bars
-                fade_out_start = max(0.0, current_mix_out - overlap)
         except Exception as e:
             logger.warning(f"DJ-Brain Transition-Verarbeitung fehlgeschlagen: {e}")
             # Fallback auf Standard-Notes
 
-    return dj_rec, notes_parts, overlap, fade_out_start
+    return dj_rec, notes_parts, overlap
+
+
+def compute_adjacent_transition_metrics(
+    playlist: List[Track],
+    bpm_tolerance: float = 3.0,
+    scoring_context: Optional[Dict] = None,
+) -> List[TransitionMetrics]:
+    """Berechnet den gemeinsamen Enhanced-Score einmal pro Nachbarpaar."""
+    ctx = dict(scoring_context or {})
+    return [
+        calculate_enhanced_compatibility(
+            playlist[index], playlist[index + 1], bpm_tolerance, **ctx
+        )
+        for index in range(max(0, len(playlist) - 1))
+    ]
 
 
 def compute_transition_recommendations(
@@ -1488,6 +1514,7 @@ def compute_transition_recommendations(
     bpm_tolerance: float = 3.0,
     default_overlap: float = 12.0,
     scoring_context: Optional[Dict] = None,
+    transition_metrics: Optional[List[TransitionMetrics]] = None,
 ) -> List[TransitionRecommendation]:
     """Build actionable mix recommendations between consecutive tracks.
 
@@ -1500,6 +1527,13 @@ def compute_transition_recommendations(
         return []
 
     ctx = dict(scoring_context or {})
+    metrics_by_pair = (
+        list(transition_metrics)
+        if transition_metrics is not None
+        else compute_adjacent_transition_metrics(playlist, bpm_tolerance, ctx)
+    )
+    if len(metrics_by_pair) != len(playlist) - 1:
+        raise ValueError("transition_metrics muss genau ein Element pro Nachbarpaar enthalten")
     configured_overlap = ctx.get("overlap", default_overlap)
     try:
         configured_overlap = float(configured_overlap)
@@ -1523,7 +1557,7 @@ def compute_transition_recommendations(
         current_mix_in, current_mix_out = _resolve_mix_points(
             current, effective_overlap
         )
-        next_mix_in, next_mix_out = _resolve_mix_points(upcoming, effective_overlap)
+        next_mix_in, _ = _resolve_mix_points(upcoming, effective_overlap)
 
         # DJ Logic: The mix usually starts at the 'mix_in' of the upcoming track
         # and ends at the 'mix_out' of the current track.
@@ -1541,13 +1575,11 @@ def compute_transition_recommendations(
         fade_in_start = next_mix_in
         overlap = transition_duration
 
-        metrics = calculate_enhanced_compatibility(
-            current, upcoming, bpm_tolerance, **ctx
-        )
-        compatibility_score = int(metrics.overall_score * 100)
+        metrics = metrics_by_pair[index]
+        compatibility_score = int(round(metrics.overall_score * 100))
 
         energy_delta = upcoming.energy - current.energy
-        eff_bpm_diff, bpm_relation = effective_bpm_diff(current.bpm, upcoming.bpm)
+        eff_bpm_diff, _ = effective_bpm_diff(current.bpm, upcoming.bpm)
         # Vorzeichen-behaftetes Delta fuer Anzeige (positiv = schneller)
         bpm_delta = upcoming.bpm - current.bpm
         # Fuer Risikobewertung effektive Differenz nutzen (L1-Fix: toter
@@ -1561,8 +1593,8 @@ def compute_transition_recommendations(
         notes_parts = []
 
         # DJ Brain Empfehlungen wenn Genre-Daten vorhanden
-        dj_rec, dj_notes_parts, dj_overlap, dj_fade_out_start = (
-            _process_dj_brain_recommendations(current, upcoming, current_mix_out)
+        dj_rec, dj_notes_parts, dj_overlap = (
+            _process_dj_brain_recommendations(current, upcoming)
         )
         notes_parts.extend(dj_notes_parts)
         if dj_rec is not None:
@@ -1677,6 +1709,7 @@ def calculate_playlist_quality(
     tracks: list[Track],
     bpm_tolerance: float,
     scoring_context: Optional[Dict] = None,
+    transition_metrics: Optional[List[TransitionMetrics]] = None,
 ) -> Dict[str, float]:
     """Calculate comprehensive quality metrics for a playlist.
 
@@ -1692,20 +1725,18 @@ def calculate_playlist_quality(
         }
 
     ctx = scoring_context or {}
-    transition_metrics = []
+    metrics_by_pair = (
+        list(transition_metrics)
+        if transition_metrics is not None
+        else compute_adjacent_transition_metrics(tracks, bpm_tolerance, ctx)
+    )
+    if len(metrics_by_pair) != len(tracks) - 1:
+        raise ValueError("transition_metrics muss genau ein Element pro Nachbarpaar enthalten")
     energy_diffs = []
     bpm_diffs = []
 
     for i in range(len(tracks) - 1):
         current, next_track = tracks[i], tracks[i + 1]
-
-        # Der angezeigte Playlist-Score muss denselben erweiterten Vertrag
-        # verwenden wie die Transition-Empfehlungen (inkl. Kontext und
-        # validiertem KI-Bonus).
-        metrics = calculate_enhanced_compatibility(
-            current, next_track, bpm_tolerance, **ctx
-        )
-        transition_metrics.append(metrics)
 
         # Energy differences
         energy_diffs.append(abs(current.energy - next_track.energy))
@@ -1715,7 +1746,7 @@ def calculate_playlist_quality(
         bpm_diffs.append(eff_diff)
 
     # Calculate metrics
-    avg_harmonic = sum(m.harmonic_score for m in transition_metrics) / len(transition_metrics) / 100.0
+    avg_harmonic = sum(m.harmonic_score for m in metrics_by_pair) / len(metrics_by_pair) / 100.0
     avg_energy_diff = sum(energy_diffs) / len(energy_diffs)
     avg_bpm_diff = sum(bpm_diffs) / len(bpm_diffs)
 
@@ -1732,7 +1763,7 @@ def calculate_playlist_quality(
     # Der Overall-Wert ist der Mittelwert der gerundeten 0-100-Werte, die
     # compute_transition_recommendations anzeigt. Damit sind UI-Qualitaet und
     # einzelne Empfehlung auch nach der Anzeige-Rundung identisch.
-    displayed_scores = [round(m.overall_score * 100) for m in transition_metrics]
+    displayed_scores = [round(m.overall_score * 100) for m in metrics_by_pair]
     overall_score = sum(displayed_scores) / len(displayed_scores) / 100.0
 
     return {
@@ -1767,22 +1798,14 @@ def _sort_context_flow(
     if len(tracks) <= 2:
         return sorted(tracks, key=lambda t: t.energy)
 
-    phase_target_energy = {"warmup": 30.0, "build": 60.0, "peak": 85.0, "cooldown": 40.0}
     energy_dir = str(kwargs.get("energy_direction", "Auto"))
+    peak_position = max(0.4, min(0.8, float(kwargs.get("peak_position", 70)) / 100.0))
+    genre_mixing = bool(kwargs.get("genre_mixing", True))
+    genre_weight = max(0.0, min(1.0, float(kwargs.get("genre_weight", 0.3))))
     pool_avg_energy = sum(t.energy for t in tracks) / len(tracks)
     configured_target = kwargs.get("target_energy")
     if configured_target is not None:
         configured_target = max(0.0, min(100.0, float(configured_target)))
-
-    def _phase(position: int, total: int) -> str:
-        p = position / max(1, total - 1)
-        if p < 0.2:
-            return "warmup"
-        if p < 0.5:
-            return "build"
-        if p < 0.8:
-            return "peak"
-        return "cooldown"
 
     def _target_energy(position: int, total: int) -> float:
         if configured_target is not None:
@@ -1794,10 +1817,18 @@ def _sort_context_flow(
             return 85.0 - 55.0 * progress
         if energy_dir == "Maintain":
             return pool_avg_energy
-        return phase_target_energy[_phase(position, total)]
+        # Auto-Dramaturgie mit dem sichtbaren Peak-Regler: 30 -> 85 am
+        # gewaehlten Peak -> 40 am Set-Ende.
+        if progress <= peak_position:
+            return 30.0 + 55.0 * (progress / peak_position)
+        decline = (progress - peak_position) / max(1e-9, 1.0 - peak_position)
+        return 85.0 - 45.0 * decline
 
     def _genre(t: Track) -> str:
-        return getattr(t, "detected_genre", "") or t.genre or "Unknown"
+        detected = getattr(t, "detected_genre", "") or ""
+        if detected and detected != "Unknown":
+            return detected
+        return t.genre if t.genre and t.genre != "Unknown" else "Unknown"
 
     unprocessed = list(tracks)
     total = len(tracks)
@@ -1832,7 +1863,10 @@ def _sort_context_flow(
         best_next = None
         highest_score = -999999.0
         for candidate in unprocessed:
-            base = calculate_transition_objective(
+            # Reine Harmonik als Basis; Energie und Genre werden unten als
+            # explizite Context-Regler addiert. So bedeutet genre_weight=0
+            # tatsaechlich, dass Genre die Reihenfolge nicht beeinflusst.
+            base = calculate_compatibility(
                 current, candidate, bpm_tolerance, **kwargs
             )
             if base == 0:
@@ -1850,9 +1884,17 @@ def _sort_context_flow(
                 cand_delta = candidate.energy - current.energy
                 if (trend > 0) == (cand_delta > 0) and abs(cand_delta) <= 25:
                     score += 5.0
-            # Genre-Fatigue
-            if streak >= 4:
-                score += 4.0 if _genre(candidate) != streak_genre else -6.0
+            if genre_mixing and genre_weight > 0.0:
+                # Genre-Matrix wirkt kontinuierlich: bei Gewicht 0 ist Genre
+                # vollstaendig neutral, bei 1 maximal +/-10 Punkte.
+                genre_compat = get_genre_compatibility(
+                    streak_genre, _genre(candidate)
+                )
+                score += genre_weight * (genre_compat - 0.5) * 20.0
+                # Fatigue bleibt ein kleiner Zusatz innerhalb desselben Reglers.
+                if streak >= 4:
+                    fatigue = 4.0 if _genre(candidate) != streak_genre else -6.0
+                    score += genre_weight * fatigue
             # Repetition-Penalty: Beinahe-Klon direkt hintereinander
             if (
                 abs(candidate.bpm - current.bpm) < 0.5
@@ -1998,7 +2040,7 @@ def generate_playlist(
             logger.warning("Track ohne gueltige BPM ausgeschlossen: %s", candidate.filePath)
             continue
 
-        if bpm_numeric <= 0:
+        if not math.isfinite(bpm_numeric) or bpm_numeric <= 0:
             logger.warning("Track ohne positive BPM ausgeschlossen: %s", candidate.filePath)
             continue
 
@@ -2014,7 +2056,7 @@ def generate_playlist(
         )
 
     if not valid_tracks:
-        return tracks  # Return original if no tracks are valid
+        return []
 
     # Alte Strategie-Namen (vor dem 11->8-Merge) aufloesen
     mode = STRATEGY_ALIASES.get(mode, mode)
@@ -2305,5 +2347,3 @@ def get_set_timing_summary(timeline: SetTimeline) -> dict:
         "track_count": len(timeline.entries),
         "avg_track_duration": round(avg_dur, 1),
     }
-
-

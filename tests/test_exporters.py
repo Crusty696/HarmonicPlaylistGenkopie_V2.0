@@ -161,6 +161,22 @@ class TestM3U8ExporterBasics:
 
     assert "#PLAYLIST:My DJ Set" in content
 
+  def test_playlist_name_cannot_inject_m3u_directive(
+    self, sample_playlist, export_dir
+  ):
+    path = os.path.join(export_dir, "test.m3u8")
+    M3U8Exporter().export(
+      sample_playlist,
+      path,
+      playlist_name="Safe\n#EXTINF:999,Injected",
+    )
+
+    with open(path, "r", encoding="utf-8") as f:
+      lines = f.read().splitlines()
+
+    assert "#PLAYLIST:Safe #EXTINF:999,Injected" in lines
+    assert "#EXTINF:999,Injected" not in lines
+
   def test_encoding_header(self, sample_playlist, export_dir):
     """Encoding-Header vorhanden."""
     path = os.path.join(export_dir, "test.m3u8")

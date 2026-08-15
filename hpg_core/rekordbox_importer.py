@@ -309,6 +309,23 @@ class RekordboxImporter:
         ):
             if left_value is not None and right_value is not None and left_value != right_value:
                 return True
+        if (
+            left.content_id
+            and right.content_id
+            and left.content_id != right.content_id
+        ):
+            return True
+        if left.cue_points and right.cue_points:
+            left_cues = sorted(
+                json.dumps(cue, sort_keys=True, default=str)
+                for cue in left.cue_points
+            )
+            right_cues = sorted(
+                json.dumps(cue, sort_keys=True, default=str)
+                for cue in right.cue_points
+            )
+            if left_cues != right_cues:
+                return True
         return False
 
     def _convert_key_to_camelot(self, rekordbox_key: str) -> Optional[str]:

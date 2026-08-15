@@ -26,6 +26,7 @@ def check(name, condition, detail=""):
     else:
         RESULTS["fail"] += 1
         print(f"  [FAIL] {name} — {detail}")
+        raise AssertionError(f"{name}: {detail or 'Bedingung ist False'}")
 
 
 def warn(name, detail=""):
@@ -149,6 +150,7 @@ def test_single_track_quality():
 # ============================================================
 # TEST 2: Cache-Integritaet
 # ============================================================
+@pytest.mark.slow
 def test_cache_integrity():
     print("\n" + "=" * 60)
     print("TEST 2: Cache-Integritaet")
@@ -170,7 +172,7 @@ def test_cache_integrity():
             continue
 
         # Cache-Key generieren
-        cache_key = generate_cache_key(fp)
+        cache_key = generate_cache_key(fp, track1.rekordbox_signature)
         check(f"{fname}: Cache-Key generiert", cache_key is not None)
 
         # Cache-Lookup (mit file_path fuer TOCTOU-Check)
@@ -249,6 +251,7 @@ def test_parallel_analysis():
 # ============================================================
 # TEST 4: Playlist-Generierung — End-to-End
 # ============================================================
+@pytest.mark.slow
 def test_playlist_generation():
     print("\n" + "=" * 60)
     print("TEST 4: Playlist-Generierung — End-to-End")
@@ -363,7 +366,11 @@ def test_edge_cases():
 
     # Cache-Key fuer nicht existierende Datei
     key = generate_cache_key("nonexistent_file.wav")
-    check("generate_cache_key('nonexistent') = None", key is None)
+    check(
+        "generate_cache_key('nonexistent') ist deterministisch",
+        isinstance(key, str) and len(key) == 64,
+        f"key={key!r}",
+    )
 
     # Parallel-Analyse mit leerer Liste
     from hpg_core.parallel_analyzer import ParallelAnalyzer

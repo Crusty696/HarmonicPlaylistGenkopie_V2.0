@@ -102,7 +102,7 @@ class TestRecommendationFields:
     )
     monkeypatch.setattr(
       "hpg_core.playlist._process_dj_brain_recommendations",
-      lambda *_: (oversized, [], 120.0, 240.0),
+      lambda *_: (oversized, [], 120.0),
     )
 
     rec = compute_transition_recommendations(pair)[0]

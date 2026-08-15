@@ -294,8 +294,6 @@ class TestHangDeadline:
 
   def test_deadline_depends_on_workers_not_batch_size(self, monkeypatch):
     """300 Dateien, 2 Worker: Deadline = TIMEOUT * 2 + 30 (frueher batch-proportional)."""
-    from hpg_core import parallel_analyzer
-
     timeouts = self._run(monkeypatch, file_count=300, max_workers=2)
     assert timeouts, "wait() muss aufgerufen worden sein"
     assert all(0 < t <= 0.5 for t in timeouts)
@@ -392,6 +390,30 @@ class TestRecoveryExecutorReuse:
     # 4 Rest-Dateien (vorher: ein neuer Recovery-Pool PRO Datei).
     assert created == [2, 1, 2, 1]
     assert result == []
+
+  def test_cancel_is_polled_inside_recovery(self, monkeypatch):
+    from hpg_core import parallel_analyzer
+
+    created = []
+    monkeypatch.setattr(
+      parallel_analyzer,
+      "ProcessPoolExecutor",
+      _make_fake_executor(created, broken_main_pool=True),
+    )
+    monkeypatch.setattr(
+      parallel_analyzer,
+      "wait",
+      lambda futures, timeout=None, return_when=None: (set(futures), set()),
+    )
+    cancel_states = iter([False, False, True])
+
+    with pytest.raises(InterruptedError):
+      ParallelAnalyzer(max_workers=2).analyze_files(
+        [f"track-{i}.wav" for i in range(4)],
+        cancel_callback=lambda: next(cancel_states),
+      )
+
+    assert created == [2, 1]
 
 
 # ============================================================

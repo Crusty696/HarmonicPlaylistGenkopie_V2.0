@@ -99,6 +99,10 @@ def validate_ai_analysis(
     ):
         raise ValueError("description muss ein nichtleerer String sein")
 
+    for key in ("mix_in_time", "mix_out_time"):
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{key} muss eine JSON-Zahl sein")
     mix_in = float(data["mix_in_time"])
     mix_out = float(data["mix_out_time"])
     if not math.isfinite(mix_in) or not math.isfinite(mix_out):

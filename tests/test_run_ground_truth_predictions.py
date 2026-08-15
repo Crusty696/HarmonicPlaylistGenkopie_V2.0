@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from tools.run_ground_truth_predictions import prediction_from_track
+from tools import run_ground_truth_predictions
 
 
 def test_prediction_from_track_uses_analysis_contract_fields():
@@ -23,3 +24,15 @@ def test_prediction_from_track_uses_analysis_contract_fields():
   assert result["audio_sha256"] == "a" * 64
   assert result["genre"] == "Tech House"
   assert result["sections"] == track.sections
+
+
+def test_predictions_reject_dirty_worktree(monkeypatch):
+  monkeypatch.setattr(
+    run_ground_truth_predictions.subprocess,
+    "run",
+    lambda *args, **kwargs: SimpleNamespace(stdout=" M main.py\n"),
+  )
+
+  import pytest
+  with pytest.raises(RuntimeError, match="dirty Worktree"):
+    run_ground_truth_predictions.require_clean_worktree()

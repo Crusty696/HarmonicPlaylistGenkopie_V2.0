@@ -779,6 +779,7 @@ def calculate_danceability(
     sr: int,
     bpm: float | None = None,
     feature_cache: FeatureCache | None = None,
+    beat_frames: np.ndarray | None = None,
 ) -> int:
     """
     Berechnet die Tanzbarkeit eines Tracks (0-100).
@@ -792,6 +793,7 @@ def calculate_danceability(
         y: Audio-Signal (numpy array)
         sr: Sample-Rate
         bpm: Optional, bereits erkannte BPM
+        beat_frames: Optional, bereits erkannte Beat-Frames
 
     Returns:
         int: Danceability-Score 0-100
@@ -807,7 +809,11 @@ def calculate_danceability(
 
     try:
         # 1. Beat-Regelmässigkeit (0-1): Niedrige Varianz = regelmässiger Beat
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+        if beat_frames is None:
+            tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+        else:
+            tempo = np.asarray([bpm or 0.0])
+            beats = np.asarray(beat_frames).reshape(-1)
         if beats.size > 2:
             beat_times = librosa.frames_to_time(beats, sr=sr)
             intervals = np.diff(beat_times)
@@ -1189,20 +1195,25 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
 
     except Exception as e:
         logger.error(f"Fehler in analyze_structure_and_mix_points: {e}")
-        # Safe fallback
+        # Der Fehler-Fallback bleibt auf derselben genre- und
+        # phrasenbewussten Quantisierung wie der regulaere Pfad.
         safe_in = min(max(duration * 0.2, 0.0), max(duration - 1.0, 0.0))
         safe_out = max(duration * 0.8, safe_in + 1.0)
         safe_out = min(safe_out, duration)
         safe_in = min(safe_in, max(safe_out - 1.0, 0.0))
-
-        # Calculate bars for fallback using METER constant
-        seconds_per_bar = (
-            (60.0 / bpm) * METER if bpm > 0 else (60.0 / DEFAULT_BPM) * METER
+        pseudo_sections = [
+            {"label": "intro", "start_time": 0.0, "end_time": safe_in},
+            {"label": "main", "start_time": safe_in, "end_time": safe_out},
+            {"label": "outro", "start_time": safe_out, "end_time": duration},
+        ]
+        return calculate_genre_aware_mix_points(
+            pseudo_sections,
+            bpm,
+            duration,
+            genre,
+            anchor=anchor,
+            first_downbeat=first_downbeat,
         )
-        safe_in_bars = int(safe_in / seconds_per_bar)
-        safe_out_bars = int(safe_out / seconds_per_bar)
-
-        return safe_in, safe_out, safe_in_bars, safe_out_bars
 
 
 def _offset_section(
@@ -1264,13 +1275,38 @@ def analyze_structure_windows(
             section.label = "main"
 
     tail_start = max(head_duration, duration - LIBROSA_TAIL_DURATION)
-    tail_audio, _ = librosa.load(
-        file_path,
-        sr=sr,
-        mono=True,
-        offset=tail_start,
-        duration=max(0.0, duration - tail_start),
-    )
+    try:
+        tail_audio, _ = librosa.load(
+            file_path,
+            sr=sr,
+            mono=True,
+            offset=tail_start,
+            duration=max(0.0, duration - tail_start),
+        )
+    except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as error:
+        logger.warning("Track-Ende konnte nicht analysiert werden: %s", error)
+        seconds_bar = seconds_per_bar or (
+            (60.0 / bpm) * METER if bpm > 0 else 0.0
+        )
+        if duration > head_duration + 1.0:
+            head.sections.append(
+                TrackSection(
+                    label="unanalysed",
+                    start_time=round(head_duration, 2),
+                    end_time=round(duration, 2),
+                    start_bar=(
+                        int(round(head_duration / seconds_bar)) if seconds_bar else 0
+                    ),
+                    end_bar=(
+                        int(round(duration / seconds_bar)) if seconds_bar else 0
+                    ),
+                    avg_energy=0.0,
+                )
+            )
+            head.total_bars = (
+                int(duration / seconds_bar) if seconds_bar else head.total_bars
+            )
+        return head, coverage, False
     tail_duration = float(librosa.get_duration(y=tail_audio, sr=sr))
     tail_end = min(duration, tail_start + tail_duration)
     if tail_duration <= 0:
@@ -1395,7 +1431,7 @@ def analyze_track(file_path: str) -> Track | None:
             y, sr = librosa.load(file_path, duration=LIBROSA_FAST_PATH_DURATION)
             feature_cache = FeatureCache(y, sr)
             # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
-            duration = rekordbox_data.duration or _get_file_duration(file_path)
+            duration = rekordbox_data.duration or file_duration
 
             # Calculate energy and bass (not in Rekordbox)
             energy = calculate_energy(y)
@@ -1593,7 +1629,7 @@ def analyze_track(file_path: str) -> Track | None:
             # den Muell (energy=50, mix_in=0) fuer immer zurueck.
             logger.warning(f"Schneller Librosa-Load fehlgeschlagen: {e}")
             analysis_degraded = True
-            duration = rekordbox_data.duration or 0.0
+            duration = rekordbox_data.duration or file_duration
             energy = 50  # Default energy
             bass_intensity = 50
             mix_in_point, mix_out_point = 0.0, duration
@@ -1663,12 +1699,12 @@ def analyze_track(file_path: str) -> Track | None:
                     sec_dict['avg_highs'] = h
 
                     # Rhythm & Texture
-                    pr, sf = analyze_rhythm_complexity(
+                    percussive_ratio, spectral_flatness = analyze_rhythm_complexity(
                         y_seg, sr, feature_cache,
                         sample_range=(start_sample, end_sample),
                     )
-                    sec_dict['percussive_ratio'] = pr
-                    sec_dict['spectral_flatness'] = sf
+                    sec_dict['percussive_ratio'] = percussive_ratio
+                    sec_dict['spectral_flatness'] = spectral_flatness
                 else:
                     # Audit-Fix 2026-07-21: Sektion liegt ausserhalb des geladenen
                     # Audiofensters (Fast-Path 360s / Full 600s) oder ist zu kurz.
@@ -1760,7 +1796,7 @@ def analyze_track(file_path: str) -> Track | None:
     try:
         # K2 Audit-Fix: Safety-Net gegen extrem lange Dateien (>10 Min)
         # Echte Datei-Dauer zuerst bestimmen (sehr schnell), dann nur max. 10 Min laden
-        duration = _get_file_duration(file_path)
+        duration = file_duration
         y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
         feature_cache = FeatureCache(y, sr)
 
@@ -1783,10 +1819,10 @@ def analyze_track(file_path: str) -> Track | None:
         tag_bpm = extract_bpm_from_tags(file_path)
         if tag_bpm is not None:
             bpm = tag_bpm
-            beat_frames = np.array([])  # Kein Beat-Tracking noetig
+            beat_frames = np.array([])  # Bleibt leer, falls die Gegenprobe scheitert
             measured = 0.0
             try:
-                measured_raw, _ = librosa.beat.beat_track(y=y, sr=sr)
+                measured_raw, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
                 measured_arr = np.atleast_1d(measured_raw)
                 measured = float(measured_arr[0]) if measured_arr.size else 0.0
             except Exception as error:
@@ -2009,7 +2045,9 @@ def analyze_track(file_path: str) -> Track | None:
         # Audio Feature Extensions
         brightness = calculate_brightness(y, sr, feature_cache)
         vocal_instrumental = detect_vocal_instrumental(y, sr, feature_cache)
-        danceability = calculate_danceability(y, sr, bpm, feature_cache)
+        danceability = calculate_danceability(
+            y, sr, bpm, feature_cache, beat_frames=beat_frames
+        )
         # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
         mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
             y, sr, feature_cache=feature_cache
@@ -2034,11 +2072,17 @@ def analyze_track(file_path: str) -> Track | None:
                 
                 if len(y_seg) > sr:
                     b, m, h = analyze_frequency_bands(y_seg, sr)
-                    pr, sf = analyze_rhythm_complexity(
+                    percussive_ratio, spectral_flatness = analyze_rhythm_complexity(
                         y_seg, sr, feature_cache,
                         sample_range=(start_sample, end_sample),
                     )
-                    sec_dict.update({'avg_bass': b, 'avg_mids': m, 'avg_highs': h, 'percussive_ratio': pr, 'spectral_flatness': sf})
+                    sec_dict.update({
+                        'avg_bass': b,
+                        'avg_mids': m,
+                        'avg_highs': h,
+                        'percussive_ratio': percussive_ratio,
+                        'spectral_flatness': spectral_flatness,
+                    })
                 updated_sections.append(sec_dict)
             section_dicts = updated_sections
             
@@ -2106,4 +2150,3 @@ def analyze_track(file_path: str) -> Track | None:
         import traceback
         logger.error(traceback.format_exc())
         return None
-

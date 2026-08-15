@@ -882,10 +882,11 @@ def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) 
   if not track.sections or time_seconds < 0:
     return "unknown"
 
-  for section in track.sections:
+  for index, section in enumerate(track.sections):
     start = section.get("start_time", 0.0)
     end = section.get("end_time", 0.0)
-    if start <= time_seconds <= end:
+    is_last = index == len(track.sections) - 1
+    if start <= time_seconds < end or (is_last and time_seconds == end):
       return section.get("label", "unknown")
 
   if fallback_edge == "in":

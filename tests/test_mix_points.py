@@ -113,6 +113,35 @@ class TestEdgeCases:
         with pytest.raises((ValueError, ZeroDivisionError)):
             analyze_structure_and_mix_points(y, sr, 300.0, 'medium', 0.0)
 
+    def test_internal_error_fallback_stays_on_phrase_grid(self, monkeypatch):
+        from hpg_core import analysis
+
+        def fail_rms(*args, **kwargs):
+            raise RuntimeError("forced rms failure")
+
+        monkeypatch.setattr(analysis.librosa.feature, "rms", fail_rms)
+        anchor = 0.3
+        bpm = 128.0
+        mix_in, mix_out, mix_in_bars, mix_out_bars = (
+            analyze_structure_and_mix_points(
+                np.ones(22050, dtype=np.float32),
+                22050,
+                301.0,
+                50,
+                bpm,
+                genre="Tech House",
+                anchor=anchor,
+                first_downbeat=anchor,
+            )
+        )
+
+        phrase_seconds = (60.0 / bpm) * 4 * 8
+        assert _is_phrase_aligned(mix_in - anchor, phrase_seconds)
+        assert _is_phrase_aligned(mix_out - anchor, phrase_seconds)
+        assert mix_in < mix_out
+        assert mix_in_bars % 8 == 0
+        assert mix_out_bars % 8 == 0
+
 
 def _is_phrase_aligned(time_seconds: float, seconds_per_phrase: float, tolerance: float = 0.05) -> bool:
     """Pruefe ob ein Zeitpunkt auf einer Phrase-Grenze liegt (Fliesskomma-sicher)."""

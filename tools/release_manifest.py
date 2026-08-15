@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hpg_core.app_metadata import APP_NAME, APP_VERSION
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def sha256(path):
   digest = hashlib.sha256()
@@ -23,14 +25,16 @@ def sha256(path):
 
 def git_commit():
   result = subprocess.run(
-    ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ["git", "rev-parse", "HEAD"], cwd=ROOT,
+    capture_output=True, text=True, check=True
   )
   return result.stdout.strip()
 
 
 def git_is_clean():
   result = subprocess.run(
-    ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+    ["git", "status", "--porcelain"], cwd=ROOT,
+    capture_output=True, text=True, check=True
   )
   return not result.stdout.strip()
 

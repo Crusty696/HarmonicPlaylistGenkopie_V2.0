@@ -261,6 +261,23 @@ class TestCalculateDanceability:
     assert isinstance(result, int)
     assert 0 <= result <= 100
 
+  def test_reuses_precomputed_beat_frames(self, monkeypatch, sr):
+    """Die Full-Analyse muss Beat-Tracking nicht fuer Danceability wiederholen."""
+    from hpg_core import analysis
+
+    def unexpected_beat_track(*args, **kwargs):
+      raise AssertionError("beat_track wurde doppelt aufgerufen")
+
+    monkeypatch.setattr(analysis.librosa.beat, "beat_track", unexpected_beat_track)
+    audio = generate_click_track(128.0, 5.0, sr)
+    beats = np.array([0, 22, 44, 66, 88], dtype=np.int64)
+
+    result = calculate_danceability(
+      audio, sr, bpm=128.0, beat_frames=beats
+    )
+
+    assert 0 <= result <= 100
+
 
 # ============================================================
 # MFCC Fingerprint Tests

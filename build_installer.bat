@@ -15,7 +15,6 @@ if not exist "HarmonicPlaylistGenerator.exe" (
     echo [FEHLER] HarmonicPlaylistGenerator.exe nicht gefunden.
     echo [INFO]   Zuerst build.bat ausfuehren.
     echo.
-    pause
     exit /b 1
 )
 echo [1/4] EXE gefunden: HarmonicPlaylistGenerator.exe
@@ -29,7 +28,6 @@ if not defined INNO_PATH (
     echo [FEHLER] Inno Setup 6 nicht gefunden ^(ISCC.exe^).
     echo [INFO]   Download: https://jrsoftware.org/isdl.php
     echo.
-    pause
     exit /b 1
 )
 echo [2/4] Inno Setup gefunden: !INNO_PATH!
@@ -45,7 +43,12 @@ echo.
 if errorlevel 1 (
     echo.
     echo [FEHLER] Installer-Build fehlgeschlagen - Meldungen oben pruefen.
-    pause
+    exit /b 1
+)
+
+if not exist "installer_output\HPG_v3.7.2_Setup.exe" (
+    echo [FEHLER] Erwartetes Installer-Artefakt wurde nicht erzeugt:
+    echo [INFO]   installer_output\HPG_v3.7.2_Setup.exe
     exit /b 1
 )
 
@@ -55,5 +58,4 @@ echo   INSTALLER ERFOLGREICH ERSTELLT
 echo ========================================
 echo   Ablage: installer_output\
 echo.
-pause
 endlocal

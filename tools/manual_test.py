@@ -57,7 +57,7 @@ def print_track_list(tracks: list[Path]) -> None:
     print(SEP)
 
 
-def dj_report(track_path: str) -> None:
+def dj_report(track_path: str) -> bool:
     """Analysiert einen Track und gibt den vollstaendigen DJ-Report aus."""
     print(f"\n{SEP}")
     print("  DJ TEST AGENT - TRACK REPORT")
@@ -69,7 +69,7 @@ def dj_report(track_path: str) -> None:
     track = analyze_track(track_path)
     if not track:
         print(f"  {ERR}Track konnte nicht analysiert werden!")
-        return
+        return False
 
     # Basis-Info
     print(f"  Titel   : {track.title or track.fileName}")
@@ -83,14 +83,15 @@ def dj_report(track_path: str) -> None:
 
     # Phrasing-Grundlagen
     seconds_per_bar = (60.0 / track.bpm) * 4
-    seconds_per_phrase = seconds_per_bar * 8
-    MIX_GRID_BARS = 4
-    seconds_per_grid = seconds_per_bar * MIX_GRID_BARS
+    phrase_unit = max(1, int(getattr(track, "phrase_unit", 8) or 8))
+    phrase_anchor = float(getattr(track, "phrase_anchor", 0.0) or 0.0)
+    seconds_per_phrase = seconds_per_bar * phrase_unit
+    seconds_per_grid = seconds_per_phrase
 
     print(f"\n[2] Phrasing-Analyse (BPM={track.bpm:.1f})")
     print(f"  Sekunden/Bar    : {seconds_per_bar:.2f}s")
-    print(f"  Sekunden/Phrase : {seconds_per_phrase:.2f}s (8 Bars)")
-    print(f"  Mix-Grid        : {seconds_per_grid:.2f}s (4 Bars, DJ Brain-Raster)")
+    print(f"  Sekunden/Phrase : {seconds_per_phrase:.2f}s ({phrase_unit} Bars)")
+    print(f"  Phrasen-Anker   : {phrase_anchor:.2f}s")
 
     # Mix-Punkte
     mix_in = track.mix_in_point
@@ -105,10 +106,10 @@ def dj_report(track_path: str) -> None:
     bars_at_mix_out = mix_out / seconds_per_bar
     outro_bars = (track.duration - mix_out) / seconds_per_bar
 
-    grid_at_mix_in = mix_in / seconds_per_grid
+    grid_at_mix_in = (mix_in - phrase_anchor) / seconds_per_grid
     grid_deviation = abs(grid_at_mix_in - round(grid_at_mix_in)) * seconds_per_grid
 
-    phrase_at_mix_in = mix_in / seconds_per_phrase
+    phrase_at_mix_in = (mix_in - phrase_anchor) / seconds_per_phrase
     phrase_deviation = (
         abs(phrase_at_mix_in - round(phrase_at_mix_in)) * seconds_per_phrase
     )
@@ -116,7 +117,7 @@ def dj_report(track_path: str) -> None:
     print("\n[4] Phrase-Alignment Check")
     print(
         f"  Mix-In bei Bar  : {bars_at_mix_in:.1f}  "
-        f"(4-Bar-Grid: {grid_at_mix_in:.2f}, 8-Bar-Phrase: {phrase_at_mix_in:.2f})"
+        f"(Phrasen-Grid: {grid_at_mix_in:.2f}, {phrase_unit}-Bar-Phrase: {phrase_at_mix_in:.2f})"
     )
 
     # 4-Bar-Grid Bewertung
@@ -124,14 +125,14 @@ def dj_report(track_path: str) -> None:
         OK if grid_deviation < 0.5 else (WARN if grid_deviation < 2.0 else ERR)
     )
     if grid_deviation < 0.5 and phrase_deviation < 0.5:
-        grid_label = "Exakt auf 8-Bar-Phrasegrenze (perfekt!)"
+        grid_label = f"Exakt auf {phrase_unit}-Bar-Phrasegrenze"
     elif grid_deviation < 0.5:
-        grid_label = f"Auf 4-Bar-Grid  (8-Bar-Abw. {phrase_deviation:.1f}s)"
+        grid_label = f"Auf Phrasen-Grid (Abw. {phrase_deviation:.1f}s)"
     elif grid_deviation < 2.0:
         grid_label = f"Leichte Grid-Abweichung ({grid_deviation:.1f}s)"
     else:
         grid_label = f"NICHT auf Grid! ({grid_deviation:.1f}s)"
-    print(f"  4-Bar-Grid-Abw. : {grid_deviation:.1f}s  {grid_status}{grid_label}")
+    print(f"  Phrasen-Abw.    : {grid_deviation:.1f}s  {grid_status}{grid_label}")
 
     # Outro
     print(f"  Mix-Out bei Bar : {bars_at_mix_out:.1f}")
@@ -217,12 +218,13 @@ def dj_report(track_path: str) -> None:
             for w in warnings:
                 print(f"       - {w}")
     print(SEP)
+    return not issues
 
 
 # ── Hauptprogramm ────────────────────────────────────────────────────────────
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="HPG Manueller DJ-Test",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -245,13 +247,12 @@ def main() -> None:
         if not os.path.exists(args.track):
             print(f"{ERR}Datei nicht gefunden: {args.track}")
             sys.exit(1)
-        dj_report(args.track)
-        return
+        return 0 if dj_report(args.track) else 1
 
     # Modus 2: Interaktive Auswahl
     tracks = list_tracks(args.folder)
     if not tracks:
-        sys.exit(1)
+        return 1
 
     print_track_list(tracks)
 
@@ -279,7 +280,8 @@ def main() -> None:
                 print(f"  {WARN}Ungueltige Nummer. Bitte 1-{len(tracks)} eingeben.")
         except ValueError:
             print(f"  {WARN}Bitte eine Zahl eingeben.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

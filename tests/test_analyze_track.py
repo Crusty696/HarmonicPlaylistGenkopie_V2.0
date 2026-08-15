@@ -6,7 +6,9 @@ import os
 import pytest
 import tempfile
 import numpy as np
+from unittest.mock import Mock
 from hpg_core.models import Track
+from hpg_core.rekordbox_importer import RekordboxTrackData
 
 
 # ============================================================
@@ -160,6 +162,41 @@ class TestAnalyzeTrackBasics:
     from hpg_core.analysis import analyze_track
     result = analyze_track(12345)
     assert result is None
+
+  def test_rekordbox_fast_path_decode_error_returns_degraded_track(
+    self, monkeypatch, simple_wav
+  ):
+    from hpg_core import analysis
+
+    importer = Mock()
+    importer.get_track_data.return_value = RekordboxTrackData(
+      bpm=128.0,
+      duration=5.0,
+      camelot_code="8A",
+      title="Test",
+      artist="Artist",
+    )
+    importer.get_track_signature.return_value = "rb-signature"
+    cache_writer = Mock()
+
+    monkeypatch.setattr(analysis, "get_rekordbox_importer", lambda: importer)
+    monkeypatch.setattr(analysis, "get_cached_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr(analysis, "cache_track", cache_writer)
+    monkeypatch.setattr(analysis, "extract_metadata", lambda path: ("A", "T", "G"))
+    monkeypatch.setattr(analysis, "_get_file_duration", lambda path: 5.0)
+
+    def fail_decode(*args, **kwargs):
+      raise RuntimeError("decode failed")
+
+    monkeypatch.setattr(analysis.librosa, "load", fail_decode)
+
+    track = analysis.analyze_track(simple_wav)
+
+    assert isinstance(track, Track)
+    assert track.duration == 5.0
+    assert track.analysis_mode == "rekordbox_fast_tail"
+    assert track.outro_covered is False
+    cache_writer.assert_not_called()
 
 
 # ============================================================

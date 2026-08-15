@@ -116,67 +116,21 @@ def _is_embedding_model(model_id):
     return "embed" in mid or "bert" in mid
 
 
-def _ollama_model_capabilities(model_id):
-    """Liest die vom lokalen Ollama-Server gemeldeten Modellfaehigkeiten."""
-    try:
-        response = requests.post(
-            _OLLAMA_HOST + "/api/show",
-            json={"name": model_id},
-            timeout=5,
-        )
-        if response.status_code != 200:
-            return set()
-        payload = response.json()
-        return {
-            str(capability).lower()
-            for capability in payload.get("capabilities", [])
-        }
-    except Exception as error:
-        logger.debug("Ollama-Faehigkeiten fuer %s nicht lesbar: %s", model_id, error)
-        return set()
-
-
-def _is_audio_capable_ollama_model(model_id):
-    """Akzeptiert nur Modelle, deren Server-Metadaten Audio bestaetigen."""
-    capabilities = _ollama_model_capabilities(model_id)
-    return "audio" in capabilities and "completion" in capabilities
-
-
-def _contains_audio_capability(value):
-    """Erkennt Audio-Capabilities in Listen oder verschachtelten Provider-Metadaten."""
-    if isinstance(value, str):
-        return value.lower() in {"audio", "audio_input", "audio-understanding"}
-    if isinstance(value, (list, tuple, set)):
-        return any(_contains_audio_capability(item) for item in value)
-    if isinstance(value, dict):
-        return any(
-            "audio" in str(key).lower() and bool(item)
-            or _contains_audio_capability(item)
-            for key, item in value.items()
-        )
-    return False
-
-
-def _is_lms_audio_model(model):
-    """Prueft LM-Studio-Metadaten ohne aus dem Modellnamen zu raten."""
-    if not isinstance(model, dict) or model.get("type") != "llm":
-        return False
-
-    capabilities = model.get("capabilities", {})
-    if _contains_audio_capability(capabilities):
-        return True
-
-    # LM Studio meldet bei Gemma 4 derzeit Vision, aber kein separates
-    # Audio-Flag. Laut Modellvertrag haben ausschliesslich die kleinen
-    # E2B/E4B-Varianten einen Audio-Encoder. Beide Metadaten muessen passen.
-    model_key = str(model.get("key") or model.get("id") or "").lower()
-    architecture = str(model.get("architecture") or model.get("arch") or "").lower()
-    has_vision = bool(capabilities.get("vision")) if isinstance(capabilities, dict) else False
-    return (
-        architecture == "gemma4"
-        and has_vision
-        and ("gemma-4-e2b" in model_key or "gemma-4-e4b" in model_key)
-    )
+def _match_preferred_model(installed, preferred):
+    """Liefert nur einen echten Preferred-Match, niemals einen Fallback."""
+    if not preferred:
+        return ""
+    chat_models = [m for m in installed if not _is_embedding_model(m)]
+    pref = preferred.lower()
+    if preferred in chat_models:
+        return preferred
+    for model in chat_models:
+        if model.split(":")[0].lower() == pref or model.lower().startswith(pref):
+            return model
+    for model in chat_models:
+        if pref in model.lower():
+            return model
+    return ""
 
 
 def _pick_model(installed, preferred):
@@ -187,18 +141,9 @@ def _pick_model(installed, preferred):
       3. erstes installiertes (Nicht-Embedding) Modell
     """
     chat_models = [m for m in installed if not _is_embedding_model(m)]
-    if preferred:
-        pref = preferred.lower()
-        if preferred in chat_models:
-            return preferred
-        # Praefix-Match (Ollama-Tags: 'llama3' -> 'llama3:latest')
-        for m in chat_models:
-            if m.split(":")[0].lower() == pref or m.lower().startswith(pref):
-                return m
-        # Substring-Match (LM-Studio 'provider/model': 'gemma' -> 'google/gemma-4-e4b')
-        for m in chat_models:
-            if pref in m.lower():
-                return m
+    preferred_match = _match_preferred_model(chat_models, preferred)
+    if preferred_match:
+        return preferred_match
     return chat_models[0] if chat_models else (installed[0] if installed else "")
 
 
@@ -221,12 +166,12 @@ def ollama_running():
 
 
 def ollama_models():
-    """Gibt nur lokal installierte, vom Server als audiofaehig bestaetigte Modelle zurueck."""
+    """Gibt lokal installierte Chatmodelle zurueck, keine Embeddingmodelle."""
     ok, data = _http_json(_OLLAMA_HOST + "/api/tags")
     if not ok or not data:
         return []
     installed = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-    return [model for model in installed if _is_audio_capable_ollama_model(model)]
+    return [model for model in installed if not _is_embedding_model(model)]
 
 
 def ollama_active_model():
@@ -236,7 +181,7 @@ def ollama_active_model():
         models = data["models"]
         if models:
             active = models[0].get("name", "")
-            if active and _is_audio_capable_ollama_model(active):
+            if active and not _is_embedding_model(active):
                 return active
     return ""
 
@@ -320,7 +265,7 @@ def ollama_pull(model, cancel_check=None):
     return any(m.split(":")[0] == model.split(":")[0] for m in ollama_models())
 
 
-def _prepare_ollama(preferred_model):
+def _prepare_ollama(preferred_model, cancel_check=None):
     if not ollama_start():
         return AIProviderStatus("Ollama", _OLLAMA_HOST + "/v1/chat/completions",
                                 [], "", running=False)
@@ -328,16 +273,20 @@ def _prepare_ollama(preferred_model):
     
     # Pruefen, was Ollama wirklich gerade im Speicher geladen hat
     active = ollama_active_model()
-    if not active or active not in models:
-        # Falls nichts geladen ist (oder das geladene nicht in der Liste der installierten ist),
-        # waehle das bevorzugte Modell oder Fallback
-        active = _pick_model(models, preferred_model)
+    preferred_match = _match_preferred_model(models, preferred_model)
 
-    # Auto-Pull: gewuenschtes Modell fehlt -> ziehen (nur wenn ueberhaupt eins gewuenscht)
-    if preferred_model and not active:
-        if ollama_pull(preferred_model):
+    # Auto-Pull: exakt gewuenschtes Modell fehlt. Ein beliebiger installierter
+    # Fallback darf diesen Download nicht unterdruecken.
+    if preferred_model and not preferred_match:
+        if ollama_pull(preferred_model, cancel_check=cancel_check):
             models = ollama_models()
-            active = _pick_model(models, preferred_model)
+            preferred_match = _match_preferred_model(models, preferred_model)
+        elif cancel_check and cancel_check():
+            raise InterruptedError("AI model download cancelled by user")
+
+    active = preferred_match or (active if active in models else "")
+    if not active:
+        active = _pick_model(models, preferred_model)
 
     return AIProviderStatus(
         "Ollama", _OLLAMA_HOST + "/v1/chat/completions",
@@ -410,21 +359,23 @@ def lms_start():
 
 
 def lms_models(port):
-    """Gibt nur anhand nativer Metadaten bestaetigte Audio-Modelle zurueck."""
+    """Gibt lokal installierte LM-Studio-Chatmodelle zurueck."""
     ok, data = _http_json(f"http://localhost:{port}/api/v1/models")
     if not ok or not data:
         return []
     inventory = data.get("models", [])
-    audio_models = [
+    chat_models = [
         model.get("key", "")
         for model in inventory
-        if _is_lms_audio_model(model) and model.get("key")
+        if model.get("type") == "llm"
+        and model.get("key")
+        and not _is_embedding_model(model.get("key", ""))
     ]
     logger.info(
-        "LM Studio: %d/%d Modelle als audiofaehig bestaetigt",
-        len(audio_models), len(inventory),
+        "LM Studio: %d/%d Chatmodelle verfuegbar",
+        len(chat_models), len(inventory),
     )
-    return audio_models
+    return chat_models
 
 
 def lms_load(model, port):
@@ -436,16 +387,53 @@ def lms_load(model, port):
     return _run_hidden([exe, "load", model, "--yes"], timeout=180) is not None
 
 
-def lms_get(model):
-    """Laedt ein LM-Studio-Modell aus dem Hub herunter (blockierend, gross)."""
+def lms_get(model, cancel_check=None):
+    """Laedt ein LM-Studio-Modell; optional kooperativ abbrechbar."""
     exe = _lms_exe()
     if not exe or not os.path.exists(exe):
         return False
     logger.info(f"LM Studio: get {model} ...")
-    return _run_hidden([exe, "get", model, "--yes"], timeout=1800) is not None
+    if cancel_check is None:
+        return _run_hidden([exe, "get", model, "--yes"], timeout=1800) is not None
+
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [exe, "get", model, "--yes"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+        deadline = time.monotonic() + 1800
+        while proc.poll() is None:
+            try:
+                cancelled = bool(cancel_check())
+            except Exception:
+                cancelled = True
+            if cancelled or time.monotonic() >= deadline:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                logger.info(f"LM-Studio-Download abgebrochen: {model}")
+                return False
+            time.sleep(0.5)
+        return proc.returncode == 0
+    except Exception as error:
+        logger.debug(f"LM-Studio-Download fehlgeschlagen {model}: {error}")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        return False
 
 
-def _prepare_lmstudio(preferred_model):
+def _prepare_lmstudio(preferred_model, cancel_check=None):
     port = lms_start()
     if not port:
         return AIProviderStatus("LM Studio", config.AI_API_URL_LMSTUDIO,
@@ -453,13 +441,17 @@ def _prepare_lmstudio(preferred_model):
 
     base = f"http://localhost:{port}/v1/chat/completions"
     models = lms_models(port)
-    active = _pick_model(models, preferred_model)
+    preferred_match = _match_preferred_model(models, preferred_model)
 
     # Auto-Get: gewuenschtes Modell weder geladen noch gelistet -> herunterladen
-    if preferred_model and not active:
-        if lms_get(preferred_model):
+    if preferred_model and not preferred_match:
+        if lms_get(preferred_model, cancel_check=cancel_check):
             models = lms_models(port)
-            active = _pick_model(models, preferred_model)
+            preferred_match = _match_preferred_model(models, preferred_model)
+        elif cancel_check and cancel_check():
+            raise InterruptedError("AI model download cancelled by user")
+
+    active = preferred_match or _pick_model(models, preferred_model)
 
     # Modell in den Speicher laden (LM Studio bedient /v1 erst nach load)
     if active and not lms_load(active, port):
@@ -472,14 +464,14 @@ def _prepare_lmstudio(preferred_model):
 # Oeffentliche High-Level-API
 # ---------------------------------------------------------------------------
 
-def prepare_provider(name, preferred_model=None):
+def prepare_provider(name, preferred_model=None, cancel_check=None):
     """Bereitet EINEN benannten Provider vor (Start + Modell-Liste)."""
     if name == "LM Studio":
-        return _prepare_lmstudio(preferred_model)
-    return _prepare_ollama(preferred_model)
+        return _prepare_lmstudio(preferred_model, cancel_check=cancel_check)
+    return _prepare_ollama(preferred_model, cancel_check=cancel_check)
 
 
-def detect_and_start(preferred=None, preferred_model=None):
+def detect_and_start(preferred=None, preferred_model=None, cancel_check=None):
     """
     Auto-detect beide Provider. Startet den ersten verfuegbaren.
 
@@ -493,7 +485,11 @@ def detect_and_start(preferred=None, preferred_model=None):
 
     last = None
     for prov in order:
-        status = prepare_provider(prov, preferred_model)
+        if cancel_check and cancel_check():
+            raise InterruptedError("AI provider detection cancelled by user")
+        status = prepare_provider(
+            prov, preferred_model, cancel_check=cancel_check
+        )
         last = status
         if status.running and status.models and status.active_model:
             logger.info(f"AI-Provider bereit: {status}")

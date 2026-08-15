@@ -246,7 +246,9 @@ class AIAnalysisWorker(QThread):
         try:
             from hpg_core import ai_launcher
             status = ai_launcher.detect_and_start(
-                preferred=self.provider, preferred_model=self.model
+                preferred=self.provider,
+                preferred_model=self.model,
+                cancel_check=self.isInterruptionRequested,
             )
             if status and status.running:
                 self.base_url = status.base_url
@@ -293,6 +295,24 @@ class AIAnalysisWorker(QThread):
                     track, provider=self.provider, model=self.model, url=self.base_url
                 )
                 if ai_data and not self._should_cancel:
+                    # Cache-I/O kann auf einen extern gehaltenen SQLite-Lock bis
+                    # zum Timeout warten. Es bleibt deshalb im AI-Worker und darf
+                    # niemals den Qt-GUI-Thread blockieren.
+                    track.ai_metadata = ai_data
+                    try:
+                        from hpg_core.caching import generate_cache_key, cache_track
+                        cache_key = generate_cache_key(
+                            track.filePath,
+                            getattr(track, "rekordbox_signature", ""),
+                        )
+                        if cache_key:
+                            cache_track(cache_key, track)
+                    except Exception as cache_exc:
+                        logger.warning(
+                            "KI-Metadaten konnten nicht gecacht werden fuer '%s': %s",
+                            filename,
+                            cache_exc,
+                        )
                     self.ai_finished.emit(track.filePath, ai_data)
                 else:
                     reason = (
@@ -328,7 +348,9 @@ class AIDetectWorker(QThread):
         try:
             from hpg_core import ai_launcher
             status = ai_launcher.detect_and_start(
-                preferred=self.preferred, preferred_model=self.preferred_model
+                preferred=self.preferred,
+                preferred_model=self.preferred_model,
+                cancel_check=self.isInterruptionRequested,
             )
         except Exception:
             status = None
@@ -721,6 +743,9 @@ class TransitionRenderWorker(QThread):
     def get_temp_files(self) -> list[str]:
         return self._temp_files.copy()
 
+    def get_temp_dir(self) -> str | None:
+        return self._temp_dir
+
     def run(self):
         from concurrent.futures import ProcessPoolExecutor
         from concurrent.futures.process import BrokenProcessPool
@@ -729,6 +754,9 @@ class TransitionRenderWorker(QThread):
             self._temp_dir = tempfile.mkdtemp(prefix=f"hpg_preview_{self._run_id}_")
         except OSError as exc:
             logger.error("Privates Preview-Temp-Verzeichnis konnte nicht angelegt werden: %s", exc)
+            if not self._should_cancel:
+                for i in range(len(self._transitions)):
+                    self.clip_error.emit(i, f"Temp-Verzeichnis nicht verfuegbar: {exc}")
             return
 
         for i, transition in enumerate(self._transitions):
@@ -1381,9 +1409,9 @@ class AdvancedParametersWidget(QWidget):
 
         # Row 2: Model Selection Label & ComboBox
         model_layout = QHBoxLayout()
-        model_label = QLabel("Audiofaehiges KI-Modell:")
+        model_label = QLabel("Lokales KI-Textmodell:")
         self.model_combo = QComboBox()
-        self.model_combo.setPlaceholderText("KI erkennen, um Audio-Modelle zu laden")
+        self.model_combo.setPlaceholderText("KI erkennen, um Modelle zu laden")
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
 
         model_layout.addWidget(model_label)
@@ -1410,11 +1438,11 @@ class AdvancedParametersWidget(QWidget):
         provider_outer.addLayout(btn_layout)
 
         # Tooltips fuer AI Provider Widget
-        self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) fuer das Mood-Tagging und Mix-Empfehlungen.")
+        self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) fuer Mood- und Subgenre-Tags aus vorhandenen Track-Metadaten.")
         self.ollama_radio.setToolTip("Nutze Ollama als lokalen KI-Dienst. Läuft sehr stabil auf AMD-Grafikkarten unter Windows.")
         self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt fuer detaillierte Modellkonfigurationen.")
-        self.model_combo.setToolTip("Zeigt nur Modelle, deren lokaler Provider die Audio-Faehigkeit bestaetigt.")
-        self.ai_refresh_btn.setToolTip("Sucht lokale KI-Instanzen und laedt nur verifizierte audiofaehige Modelle.")
+        self.model_combo.setToolTip("Zeigt lokal verfuegbare Textmodelle. HPG sendet Metadaten, keine Audiodateien.")
+        self.ai_refresh_btn.setToolTip("Sucht lokale KI-Instanzen und deren verfuegbare Textmodelle.")
         self.test_ai_btn.setToolTip("Fuehrt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu pruefen.")
 
         self._ai_controls = [
@@ -1653,19 +1681,18 @@ class AdvancedParametersWidget(QWidget):
         if not status.models:
             self.model_combo.blockSignals(True)
             self.model_combo.clear()
-            self.model_combo.setPlaceholderText("Keine verifizierten Audio-Modelle")
+            self.model_combo.setPlaceholderText("Keine verfuegbaren Modelle")
             self.model_combo.blockSignals(False)
             self.detected_base_url = status.base_url
             self.detected_provider = status.name
             self.detected_active_model = None
             self.test_ai_btn.setEnabled(False)
             self.ai_status_label.setText(
-                f"AI bereit — {status.name}: keine verifizierten Audio-Modelle. "
-                "Fuer Ollama werden nur Modelle mit gemeldeter Audio-Faehigkeit angezeigt."
+                f"AI bereit — {status.name}: keine verfuegbaren Modelle."
             )
             return
 
-        # Combo mit echten, audiofaehigen Modellen fuellen
+        # Combo mit den vom lokalen Provider gemeldeten Modellen fuellen
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(status.models)
@@ -1684,7 +1711,7 @@ class AdvancedParametersWidget(QWidget):
         if m:
             port = f" :{m.group(1)}"
         self.ai_status_label.setText(
-            f"AI bereit — {status.name}{port} · {len(status.models)} Audio-Modelle · "
+            f"AI bereit — {status.name}{port} · {len(status.models)} Modelle · "
             f"aktiv: {self.detected_active_model}"
         )
 
@@ -1702,7 +1729,7 @@ class AdvancedParametersWidget(QWidget):
         
         num_models = self.model_combo.count()
         self.ai_status_label.setText(
-            f"AI bereit — {provider}{port} · {num_models} Audio-Modelle · "
+            f"AI bereit — {provider}{port} · {num_models} Modelle · "
             f"aktiv: {self.detected_active_model}"
         )
 
@@ -1758,7 +1785,7 @@ class AdvancedParametersWidget(QWidget):
         # Statustext aktualisieren
         num_models = self.model_combo.count()
         self.ai_status_label.setText(
-            f"AI bereit — {provider}{port} · {num_models} Audio-Modelle · "
+            f"AI bereit — {provider}{port} · {num_models} Modelle · "
             f"aktiv: {responded_model}"
         )
 
@@ -2284,7 +2311,6 @@ class ShortcutsHelpWidget(QGroupBox):
             ("Ctrl+G", "Generate Playlist"),
             ("Ctrl+E", "Export Playlist"),
             ("Ctrl+1 - Ctrl+5", "Switch Navigation Panels"),
-            ("Space", "Play / Pause Preview")
         ]
         
         for key, desc in shortcuts:
@@ -2573,7 +2599,8 @@ class LibraryPanel(QWidget):
         self.start_button.setMinimumHeight(44)
         self.start_button.setToolTip(
             "Startet die Audio-Analyse und Playlist-Generierung.\n"
-            "Multi-Core-Verarbeitung: nutzt alle verfuegbaren CPU-Kerne."
+            f"Multi-Core-Verarbeitung: nutzt bis zu "
+            f"{hpg_config.PARALLEL_AUTO_MAX_WORKERS} parallele Analyseprozesse."
         )
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self.start_analysis.emit)
@@ -3021,6 +3048,22 @@ class PlaylistPanel(QWidget):
         item.setToolTip(f"{label}: {int(score)}% Passung zum vorherigen Track.")
         return item
 
+    @staticmethod
+    def _make_ai_insights_item(track):
+        """Erzeugt die AI-Spalte aus dem persistierten Track-Zustand."""
+        metadata = getattr(track, "ai_metadata", {}) or {}
+        moods = metadata.get("moods", [])
+        if isinstance(moods, list):
+            text = ", ".join(str(mood) for mood in moods)
+        else:
+            text = str(moods)
+        sub_genre = str(metadata.get("sub_genre", "") or "").strip()
+        if sub_genre:
+            text = f"[{sub_genre}] {text}".strip()
+        item = QTableWidgetItem(text or "-")
+        item.setToolTip(str(metadata.get("description", "") or ""))
+        return item
+
     def _populate_table(self):
         """Tabelle mit Performance-Optimierung befuellen."""
         self.table.setUpdatesEnabled(False)
@@ -3107,6 +3150,10 @@ class PlaylistPanel(QWidget):
                 transition_score if i > 0 else None
             )
             self.table.setItem(i, 14, score_item)
+
+            # KI-Metadaten gehoeren zum Track und muessen auch nach einer
+            # kompletten Tabellen-Neubevoelkerung sichtbar bleiben.
+            self.table.setItem(i, 15, self._make_ai_insights_item(track))
 
         self.table.setUpdatesEnabled(True)
 
@@ -3212,6 +3259,8 @@ class PlaylistPanel(QWidget):
 class MixTipsPanel(QWidget):
     """Mix-Empfehlungen als Scroll-Cards."""
 
+    preview_state_changed = pyqtSignal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.transition_recommendations = []
@@ -3224,6 +3273,7 @@ class MixTipsPanel(QWidget):
         self._preview_queue = deque(maxlen=8)
         self._preview_cache = OrderedDict()
         self._preview_cache_limit = 8
+        self._preview_temp_dirs: set[str] = set()
         self._active_preview_index = None
         # Aktiver Render-Worker (kann None sein)
         self._render_worker: TransitionRenderWorker | None = None
@@ -3527,17 +3577,22 @@ class MixTipsPanel(QWidget):
         self._active_preview_index = index
         worker = TransitionRenderWorker([self._preview_transitions[index]], self)
         self._render_worker = worker
+        self.preview_state_changed.emit(True)
         worker.clip_ready.connect(
             lambda _local, path, requested=index: self._on_clip_ready(requested, path)
         )
         worker.clip_error.connect(
             lambda _local, error, requested=index: self._on_clip_error(requested, error)
         )
-        worker.finished.connect(self._on_preview_worker_finished)
+        worker.finished.connect(
+            lambda source=worker: self._on_preview_worker_finished(source)
+        )
         worker.start()
 
-    def _on_preview_worker_finished(self):
-        worker = self._render_worker
+    def _on_preview_worker_finished(self, source_worker=None):
+        worker = source_worker or self._render_worker
+        if worker is not self._render_worker:
+            return
         self._render_worker = None
         self._active_preview_index = None
         if worker:
@@ -3547,15 +3602,38 @@ class MixTipsPanel(QWidget):
             # jetzt dem _preview_cache (LRU/Cleanup verwaltet sie), hier loeschen
             # wuerde dem User die gerade fertige Vorschau wegnehmen.
             active_paths = set(self._preview_cache.values())
+            temp_dir = worker.get_temp_dir()
+            if temp_dir:
+                self._preview_temp_dirs.add(temp_dir)
             for path in worker.get_temp_files():
                 if path not in active_paths:
-                    try:
-                        if os.path.exists(path):
-                            os.remove(path)
-                    except OSError:
-                        pass
+                    self._remove_preview_path(path)
+            if temp_dir and not any(
+                os.path.dirname(path) == temp_dir for path in active_paths
+            ):
+                self._remove_preview_dir(temp_dir)
             worker.deleteLater()
         self._start_next_preview()
+        if self._render_worker is None and not self._preview_queue:
+            self.preview_state_changed.emit(False)
+
+    def _remove_preview_dir(self, directory: str) -> None:
+        if directory not in self._preview_temp_dirs:
+            return
+        try:
+            os.rmdir(directory)
+        except OSError:
+            return
+        self._preview_temp_dirs.discard(directory)
+
+    def _remove_preview_path(self, path: str) -> None:
+        directory = os.path.dirname(path)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            return
+        self._remove_preview_dir(directory)
 
     def _insert_preview_widget(self, index: int, widget: TransitionPreviewWidget):
         """Haengt das Preview-Widget an das card_layout des jeweiligen Uebergangs."""
@@ -3620,12 +3698,11 @@ class MixTipsPanel(QWidget):
         self._preview_queue.clear()
         self._active_preview_index = None
         for path in self._preview_cache.values():
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError:
-                pass
+            self._remove_preview_path(path)
         self._preview_cache.clear()
+        for directory in list(self._preview_temp_dirs):
+            self._remove_preview_dir(directory)
+        self.preview_state_changed.emit(False)
 
     def _on_clip_ready(self, index: int, wav_path: str):
         """Aufgerufen wenn ein Clip fertig gerendert ist."""
@@ -3640,11 +3717,7 @@ class MixTipsPanel(QWidget):
                     stale_widget.stop_and_reset()
                 except RuntimeError:
                     pass
-            try:
-                if os.path.exists(stale_path):
-                    os.remove(stale_path)
-            except OSError:
-                pass
+            self._remove_preview_path(stale_path)
         if index in self._preview_widgets:
             self._preview_widgets[index].set_wav_path(wav_path)
         button = self._preview_buttons.get(index)
@@ -3895,14 +3968,17 @@ class CamelotWheelWidget(QWidget):
             if num:
                 parsed.append((tr, num, letter))
 
-        used_nums = {num for _, num, _ in parsed}
+        used_nodes = {(num, letter) for _, num, letter in parsed}
+
+        def ring(letter):
+            return r_b if letter == "B" else r_a
 
         # 24 Knoten zeichnen
         for num in range(1, 13):
             for r, letter in ((r_a, "A"), (r_b, "B")):
                 pt = pos(num, r)
                 col = self._key_color(num)
-                used = num in used_nums
+                used = (num, letter) in used_nodes
                 if not used:
                     col.setAlpha(90)
                 p.setPen(Qt.PenStyle.NoPen)
@@ -3920,9 +3996,9 @@ class CamelotWheelWidget(QWidget):
 
         # Set-Pfad (Kanten mit Pfeil-Farbe nach Qualitaet)
         for i in range(len(parsed) - 1):
-            _, n1, _ = parsed[i]
-            _, n2, _ = parsed[i + 1]
-            p1, p2 = pos(n1, r_a), pos(n2, r_a)
+            _, n1, letter1 = parsed[i]
+            _, n2, letter2 = parsed[i + 1]
+            p1, p2 = pos(n1, ring(letter1)), pos(n2, ring(letter2))
             col = self._edge_color(parsed[i][0], parsed[i + 1][0])
             pen = QPen(col, 2.0)
             if col.name() == QColor(COLORS["accent_danger"]).name():
@@ -3930,9 +4006,9 @@ class CamelotWheelWidget(QWidget):
             p.setPen(pen)
             p.drawLine(p1, p2)
 
-        # Reihenfolge-Badges auf besuchten A-Knoten
-        for idx, (_, num, _) in enumerate(parsed):
-            pt = pos(num, r_a)
+        # Reihenfolge-Badges auf dem tatsaechlich besuchten A-/B-Knoten
+        for idx, (_, num, letter) in enumerate(parsed):
+            pt = pos(num, ring(letter))
             p.setPen(QPen(self._key_color(num), 1.5))
             p.setBrush(QBrush(QColor(COLORS["bg_main"])))
             p.drawEllipse(pt, 8.5, 8.5)
@@ -4059,6 +4135,7 @@ class MainWindow(QMainWindow):
         self.ai_worker = None
         self._dependency_worker = None
         self.run_state = RunState.IDLE
+        self._run_settings = None
         self._run_id = 0
         self._close_pending = False
 
@@ -4115,7 +4192,7 @@ class MainWindow(QMainWindow):
         if not ai_online:
             # M4-Fix: Hinweis passend zum gewaehlten Provider statt hardcodiert Ollama
             port = "1234" if ai_provider == "LM Studio" else "11434"
-            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Der AI-Layer ist inaktiv. Moods und Mixing-Tips bleiben leer. Bitte starten Sie {ai_provider} auf Port {port}.")
+            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Optionale KI-Moods und Subgenres werden nicht ergaenzt; deterministische Mixing-Tips bleiben verfuegbar. Bitte starten Sie {ai_provider} auf Port {port}.")
         if rekordbox_running:
             # Rekordbox checkpointet sein WAL erst beim Beenden nach master.db.
             # Waehrend es laeuft, liest HPG einen aelteren Stand.
@@ -4222,6 +4299,9 @@ class MainWindow(QMainWindow):
         self.playlist_panel.preview_clicked.connect(self.preview_transitions)
         self.playlist_panel.restart_clicked.connect(self.restart_app)
         self.playlist_panel.playlist_reordered.connect(self._on_playlist_reordered)
+        self.mix_tips_panel.preview_state_changed.connect(
+            self._on_preview_state_changed
+        )
 
     def _on_nav_changed(self, index):
         self.content_stack.setCurrentIndex(index)
@@ -4252,16 +4332,36 @@ class MainWindow(QMainWindow):
         """Beruecksichtigt Zustand und alle mutierenden Hauptworker."""
         worker_alive = bool(self.worker and self.worker.isRunning())
         ai_alive = bool(self.ai_worker and self.ai_worker.isRunning())
-        # MED-Fix: laufenden Preview-Render-Worker mitzaehlen. RunState.PREVIEW
-        # wird nie gesetzt — ohne diesen Check gilt der Lauf als inaktiv, waehrend
-        # im Hintergrund noch ein Preview-ProcessPool die CPU belegt (parallele
-        # Analyse waere sonst unbeabsichtigte CPU-Konkurrenz).
+        # Den Worker zusaetzlich zum Zustand pruefen, damit auch das kurze Fenster
+        # zwischen Threadstart und Preview-State sicher als aktiv gilt.
         render_worker = getattr(getattr(self, "mix_tips_panel", None), "_render_worker", None)
         render_alive = bool(render_worker and render_worker.isRunning())
         return (
             self.run_state in ACTIVE_RUN_STATES
             or worker_alive or ai_alive or render_alive
         )
+
+    def _on_preview_state_changed(self, active: bool) -> None:
+        """Spiegelt On-Demand-Rendering in RunState und Cancel-UI."""
+        if active:
+            if self.run_state not in {
+                RunState.AUDIO,
+                RunState.AI,
+                RunState.PLAYLIST,
+                RunState.CANCELLING,
+            }:
+                self._set_run_state(RunState.PREVIEW)
+                self.status_bar.show_progress()
+                self.status_bar.set_progress(0)
+                self.status_bar.set_status("Transition-Vorschau wird gerendert...")
+            return
+        if self.run_state == RunState.CANCELLING:
+            if not (self.worker and self.worker.isRunning()) and not (
+                self.ai_worker and self.ai_worker.isRunning()
+            ):
+                self._finish_run(RunState.CANCELLED, "Vorschau abgebrochen.")
+        elif self.run_state == RunState.PREVIEW:
+            self._finish_run(RunState.SUCCESS, "Transition-Vorschau bereit.")
 
     def _finish_run(self, state: RunState, status: str) -> None:
         """Stellt die UI in jedem terminalen Pfad deterministisch wieder her."""
@@ -4291,6 +4391,22 @@ class MainWindow(QMainWindow):
                 self, "No Folder Selected", "Please select a music folder first."
             )
             return
+
+        advanced = self.library_panel.advanced_params
+        # Ein Lauf verwendet einen unveraenderlichen Snapshot. Aenderungen an
+        # Controls waehrend der Audioanalyse gelten erst fuer den naechsten Lauf.
+        self._run_settings = {
+            "folder": settings["folder"],
+            "strategy": settings["strategy"],
+            "bpm_tolerance": settings["bpm_tolerance"],
+            "advanced_params": dict(settings["advanced_params"]),
+            "ai_provider": advanced.detected_provider or (
+                "LM Studio" if advanced.lmstudio_radio.isChecked() else "Ollama"
+            ),
+            "ai_model": advanced.model_combo.currentText(),
+            "ai_base_url": advanced.detected_base_url,
+        }
+        settings = self._run_settings
 
         # Buttons deaktivieren
         self.library_panel.start_button.setEnabled(False)
@@ -4414,9 +4530,8 @@ class MainWindow(QMainWindow):
         logger = logging.getLogger("hpg_core.ai_engine")
         logger.info(f"AI result for '{os.path.basename(track_path)}': {mood_str}")
 
-        # Speichere die ai_metadata im Track-Objekt und im Cache!
-        from hpg_core.caching import generate_cache_key, cache_track
-        
+        # Der Worker hat Metadaten und Cache bereits ausserhalb des GUI-Threads
+        # aktualisiert. Hier wird nur noch der sichtbare Zustand synchronisiert.
         found_track = None
         found_row = -1
         
@@ -4430,20 +4545,12 @@ class MainWindow(QMainWindow):
         for track in self.analyzed_raw_tracks:
             if track.filePath == track_path:
                 track.ai_metadata = ai_data
-                
-                # Persist to SQLite Cache
-                cache_key = generate_cache_key(
-                    track.filePath, getattr(track, "rekordbox_signature", "")
-                )
-                if cache_key:
-                    cache_track(cache_key, track)
                 found_track = track
                 break
 
         if found_row != -1 and found_track:
             # 1. Update AI Insights column (col 15)
-            ai_item = QTableWidgetItem(mood_str)
-            ai_item.setToolTip(ai_data.get("description", ""))
+            ai_item = self.playlist_panel._make_ai_insights_item(found_track)
             self.playlist_panel.table.setItem(found_row, 15, ai_item)
             
             # 2. Update Mix In / Mix Out columns (col 10 & 11)
@@ -4500,12 +4607,17 @@ class MainWindow(QMainWindow):
         self.status_bar.set_progress(95)
         
         # 1. Playlist zum ersten Mal generieren, jetzt wo alle Audio- und AI-Features da sind!
-        settings = self.library_panel.get_current_settings()
+        settings = self._run_settings or self.library_panel.get_current_settings()
         mode = settings["strategy"]
         bpm_tolerance = settings["bpm_tolerance"]
         advanced_params = settings["advanced_params"]
         
-        from hpg_core.playlist import generate_playlist, calculate_playlist_quality, compute_transition_recommendations
+        from hpg_core.playlist import (
+            generate_playlist,
+            calculate_playlist_quality,
+            compute_adjacent_transition_metrics,
+            compute_transition_recommendations,
+        )
         
         # Wir speichern das aktuelle Profil
         self.current_playlist_mode = mode
@@ -4538,11 +4650,20 @@ class MainWindow(QMainWindow):
         # 2. Metriken und Transition-Empfehlungen berechnen — mit demselben
         # Scoring-Kontext wie die Generierung (HPG-001)
         scoring_context = self.current_scoring_context
-        self.quality_metrics = calculate_playlist_quality(
+        transition_metrics = compute_adjacent_transition_metrics(
             self.playlist, bpm_tolerance, scoring_context
         )
+        self.quality_metrics = calculate_playlist_quality(
+            self.playlist,
+            bpm_tolerance,
+            scoring_context,
+            transition_metrics=transition_metrics,
+        )
         transition_plan = compute_transition_recommendations(
-            self.playlist, bpm_tolerance, scoring_context=scoring_context
+            self.playlist,
+            bpm_tolerance,
+            scoring_context=scoring_context,
+            transition_metrics=transition_metrics,
         )
         self.playlist_panel.quality_metrics = self.quality_metrics
         self.playlist_panel.transition_recommendations = transition_plan
@@ -4664,7 +4785,8 @@ class MainWindow(QMainWindow):
         self.analyzed_raw_tracks = playlist
 
         ap = self.library_panel.advanced_params
-        ai_enabled = ap.get_parameters().get("ai_enabled", False)
+        run_settings = self._run_settings or self.library_panel.get_current_settings()
+        ai_enabled = run_settings["advanced_params"].get("ai_enabled", False)
 
         # Die deterministische Playlist steht immer sofort zur Verfuegung.
         self.on_ai_worker_finished(
@@ -4679,11 +4801,11 @@ class MainWindow(QMainWindow):
         self.status_bar.show_progress()
         self.library_panel.progress_widget.set_progress(80)
         self.status_bar.set_progress(80)
-        provider = ap.detected_provider or (
+        provider = run_settings.get("ai_provider") or ap.detected_provider or (
             "LM Studio" if ap.lmstudio_radio.isChecked() else "Ollama"
         )
-        model = ap.model_combo.currentText()
-        base_url = ap.detected_base_url
+        model = run_settings.get("ai_model") or ap.model_combo.currentText()
+        base_url = run_settings.get("ai_base_url") or ap.detected_base_url
         
         # Der AI-Worker analysiert alle rohen, importierten Tracks, um deren Moods/Subgenres einzusammeln!
         self.ai_worker = AIAnalysisWorker(
@@ -5008,7 +5130,6 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     # Logging initialisieren (MUSS vor allen anderen Modulen passieren)
-    from hpg_core import config as hpg_config
     setup_logging(hpg_config.LOG_LEVEL)
 
     # Qt-Logging-Handler hinzufügen

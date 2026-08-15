@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 import requests
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QShortcut
 from PyQt6.QtWidgets import QApplication
 
 import main
@@ -70,6 +70,44 @@ def test_ai_analysis_worker_cancel_and_exception(monkeypatch):
   worker.failed.connect(failures.append)
   worker.run()
   assert failures == ["KI-Verarbeitung gestoppt: schema crash"]
+
+
+def test_ai_analysis_worker_persists_metadata_off_gui_thread(monkeypatch):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+  cached = []
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.ai_metadata_matches", lambda *args: False
+  )
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.fetch_ai_analysis", lambda *args, **kwargs: metadata
+  )
+  monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *args: "key")
+  monkeypatch.setattr(
+    "hpg_core.caching.cache_track", lambda key, value: cached.append((key, value))
+  )
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+
+  worker.run()
+
+  assert track.ai_metadata == metadata
+  assert cached == [("key", track)]
+
+
+def test_detect_worker_passes_cooperative_cancel(monkeypatch):
+  captured = {}
+
+  def detect_and_start(**kwargs):
+    captured.update(kwargs)
+    return None
+
+  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect_and_start)
+  worker = main.AIDetectWorker("Ollama", "model")
+  worker.run()
+
+  assert captured["cancel_check"] == worker.isInterruptionRequested
 
 
 def test_detect_worker_emits_success_and_failure(monkeypatch):
@@ -206,6 +244,20 @@ def test_render_executor_terminates_children_before_shutdown():
   assert events == ["terminate", "shutdown"]
 
 
+def test_render_worker_reports_temp_directory_failure(monkeypatch):
+  worker = main.TransitionRenderWorker([Mock()])
+  errors = []
+  worker.clip_error.connect(lambda *args: errors.append(args))
+  monkeypatch.setattr(
+    main.tempfile, "mkdtemp", Mock(side_effect=OSError("disk full"))
+  )
+
+  worker.run()
+
+  assert errors and errors[0][0] == 0
+  assert "disk full" in errors[0][1]
+
+
 def test_analysis_worker_empty_folder(tmp_path):
   worker = main.AnalysisWorker(str(tmp_path))
   finished = []
@@ -281,6 +333,42 @@ def test_mainwindow_terminal_state_and_empty_analysis(qtbot, monkeypatch):
   window.analysis_finished([], {})
   assert window.run_state == main.RunState.ERROR
   assert "no results" in window.status_bar.status_label.text().lower()
+
+
+def test_final_generation_reuses_one_adjacent_metrics_snapshot(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  tracks = [
+    Track(filePath="C:/a.wav", fileName="a.wav", bpm=128.0),
+    Track(filePath="C:/b.wav", fileName="b.wav", bpm=129.0),
+  ]
+  metrics = [Mock()]
+  quality = {"overall_score": 0.8}
+  compute_metrics = Mock(return_value=metrics)
+  calculate_quality = Mock(return_value=quality)
+  recommendations = Mock(return_value=[])
+  monkeypatch.setattr("hpg_core.playlist.generate_playlist", lambda *a, **k: tracks)
+  monkeypatch.setattr(
+    "hpg_core.playlist.compute_adjacent_transition_metrics", compute_metrics
+  )
+  monkeypatch.setattr(
+    "hpg_core.playlist.calculate_playlist_quality", calculate_quality
+  )
+  monkeypatch.setattr(
+    "hpg_core.playlist.compute_transition_recommendations", recommendations
+  )
+  window.analyzed_raw_tracks = tracks
+  window._run_settings = {
+    "folder": "C:/",
+    "strategy": "Harmonic Flow",
+    "bpm_tolerance": 3.0,
+    "advanced_params": {"ai_enabled": False},
+  }
+
+  window.on_ai_worker_finished(ai_completed=False, finalize=True)
+
+  compute_metrics.assert_called_once()
+  assert calculate_quality.call_args.kwargs["transition_metrics"] is metrics
+  assert recommendations.call_args.kwargs["transition_metrics"] is metrics
 
 
 def test_shortcuts_use_window_scoped_ctrl_navigation(qtbot, monkeypatch):

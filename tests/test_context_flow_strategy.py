@@ -5,15 +5,24 @@ Energie-Trend, Genre-Fatigue, Repetition-/Cliff-Penalties auf korrekter
 Camelot-Basis (calculate_compatibility).
 """
 
-from hpg_core.playlist import STRATEGIES, _sort_context_flow, generate_playlist
+from hpg_core.playlist import (
+  STRATEGIES,
+  _sort_context_flow,
+  _sort_genre_flow,
+  generate_playlist,
+)
 from tests.fixtures.track_factories import make_track
 
 
 def _mk(bpm, energy, camelot="8A", genre="Techno", title=None):
   t = make_track()
+  identity = title or f"{bpm}-{energy}-{camelot}-{genre}"
+  t.filePath = f"/test/{identity}.mp3"
+  t.fileName = f"{identity}.mp3"
   t.bpm = bpm
   t.energy = energy
   t.camelotCode = camelot
+  t.genre = genre
   t.detected_genre = genre
   if title:
     t.title = title
@@ -64,3 +73,70 @@ class TestContextFlowStrategy:
     tracks = [_mk(120 + i, 30 + i * 6) for i in range(6)]
     result = generate_playlist(tracks, mode="Context Flow", bpm_tolerance=8.0)
     assert len(result) == 6
+
+  def test_peak_position_changes_auto_energy_arc(self):
+    energies = [10, 20, 30, 40, 50, 60, 70, 80, 90]
+    early = _sort_context_flow(
+      [_mk(128, energy) for energy in energies],
+      bpm_tolerance=3.0,
+      peak_position=40,
+    )
+    late = _sort_context_flow(
+      [_mk(128, energy) for energy in energies],
+      bpm_tolerance=3.0,
+      peak_position=80,
+    )
+
+    assert [track.energy for track in early] != [track.energy for track in late]
+    early_peak = next(i for i, track in enumerate(early) if track.energy == 90)
+    late_peak = next(i for i, track in enumerate(late) if track.energy == 90)
+    assert early_peak < late_peak
+
+  def test_context_genre_weight_changes_candidate_ranking(self):
+    genres = ["Techno", "Trance", "Minimal", "Tech House", "Deep House", "Psytrance"]
+    no_genre = _sort_context_flow(
+      [_mk(128, 50, genre=genre, title=genre) for genre in genres],
+      bpm_tolerance=3.0,
+      genre_mixing=True,
+      genre_weight=0.0,
+    )
+    genre_first = _sort_context_flow(
+      [_mk(128, 50, genre=genre, title=genre) for genre in genres],
+      bpm_tolerance=3.0,
+      genre_mixing=True,
+      genre_weight=1.0,
+    )
+
+    assert [track.detected_genre for track in no_genre] != [
+      track.detected_genre for track in genre_first
+    ]
+
+  def test_genre_flow_falls_back_from_unknown_detection_to_id3(self):
+    tracks = [
+      _mk(128, 50, genre="Techno", title="T1"),
+      _mk(128, 50, genre="Trance", title="R"),
+      _mk(128, 50, genre="Techno", title="T2"),
+    ]
+    for track in tracks:
+      track.detected_genre = "Unknown"
+
+    result = _sort_genre_flow(tracks, bpm_tolerance=3.0)
+
+    assert [track.title for track in result] == ["T1", "T2", "R"]
+
+  def test_genre_flow_weight_blends_transition_and_genre_scores(self):
+    genres = ["Techno", "Trance", "Minimal", "Tech House", "Deep House", "Psytrance"]
+    transition_first = _sort_genre_flow(
+      [_mk(128, 50, genre=genre, title=genre) for genre in genres],
+      bpm_tolerance=3.0,
+      genre_weight=0.0,
+    )
+    genre_first = _sort_genre_flow(
+      [_mk(128, 50, genre=genre, title=genre) for genre in genres],
+      bpm_tolerance=3.0,
+      genre_weight=1.0,
+    )
+
+    assert [track.detected_genre for track in transition_first] != [
+      track.detected_genre for track in genre_first
+    ]

@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QThread
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QLabel, QPushButton
 
+import main
 from main import (
   AIAnalysisWorker,
   AdvancedParametersWidget,
@@ -230,6 +231,61 @@ def test_playlist_shows_colored_transition_fit_column(qtbot):
   accent_color, _, label = transition_score_style(score / 100.0)
   assert label in score_item.text()
   assert score_item.background().color().name() == QColor(accent_color).name()
+
+
+def test_playlist_repopulation_preserves_ai_insights(qtbot):
+  panel = PlaylistPanel()
+  qtbot.addWidget(panel)
+  track = Track(
+    filePath="C:/set/a.wav",
+    fileName="a.wav",
+    bpm=128.0,
+    ai_metadata={
+      "moods": ["dark", "driving"],
+      "sub_genre": "Peak Techno",
+      "description": "late-night",
+    },
+  )
+
+  panel.set_playlist_data([track], {})
+
+  assert panel.table.item(0, 15).text() == "[Peak Techno] dark, driving"
+  assert panel.table.item(0, 15).toolTip() == "late-night"
+
+
+def test_preview_temp_directory_is_removed_after_cache_cleanup(qtbot, tmp_path):
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  directory = tmp_path / "hpg_preview_test"
+  directory.mkdir()
+  clip = directory / "preview.wav"
+  clip.write_bytes(b"wav")
+  worker = main.TransitionRenderWorker([])
+  worker._temp_dir = str(directory)
+  worker._temp_files = [str(clip)]
+  panel._render_worker = worker
+  panel._preview_cache[0] = str(clip)
+
+  panel._on_preview_worker_finished(worker)
+  assert directory.exists()
+
+  panel._cleanup_existing_previews()
+  assert not clip.exists()
+  assert not directory.exists()
+
+
+def test_preview_state_controls_cancel_visibility(qtbot, monkeypatch):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow()
+  qtbot.addWidget(window)
+
+  window._on_preview_state_changed(True)
+  assert window.run_state == RunState.PREVIEW
+  assert not window.status_bar.cancel_btn.isHidden()
+
+  window._on_preview_state_changed(False)
+  assert window.run_state == RunState.SUCCESS
+  assert window.status_bar.cancel_btn.isHidden()
 
 
 def test_mix_tip_uses_same_transition_fit_color(qtbot):

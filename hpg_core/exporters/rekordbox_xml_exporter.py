@@ -121,7 +121,13 @@ class RekordboxXMLExporter(BaseExporter):
         unique_tracks = []
         seen_locations = set()
         for track in playlist:
-            loc = os.path.normcase(os.path.abspath(track.filePath or ""))
+            if not track.filePath:
+                errors.append(
+                    "Track uebersprungen (kein Dateipfad): "
+                    + (track.title or track.fileName or "?")
+                )
+                continue
+            loc = os.path.normcase(os.path.abspath(track.filePath))
             if loc in seen_locations:
                 errors.append(f"Track uebersprungen (Duplikat): {track.filePath}")
                 continue
@@ -171,7 +177,7 @@ class RekordboxXMLExporter(BaseExporter):
             # Fehlerliste (die GUI zeigt dafuer bereits eine Warnung an).
             if tracks_written == 0:
                 raise IOError(
-                    f"Kein Track exportierbar (0/{len(unique_tracks)}): "
+                    f"Kein Track exportierbar (0/{len(playlist)}): "
                     + "; ".join(errors[:3])
                 )
             if tracks_written != len(unique_tracks):
@@ -226,7 +232,13 @@ class RekordboxXMLExporter(BaseExporter):
         rb_track["TrackID"] = str(track_id)
         rb_track["Name"] = track.title or os.path.basename(track.filePath)
         rb_track["Artist"] = track.artist or "Unknown Artist"
-        rb_track["Genre"] = track.genre or ""
+        detected_genre = (track.detected_genre or "").strip()
+        raw_genre = (track.genre or "").strip()
+        rb_track["Genre"] = (
+            detected_genre
+            if detected_genre and detected_genre.casefold() != "unknown"
+            else raw_genre
+        )
 
         # Duration
         if track.duration:

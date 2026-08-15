@@ -103,10 +103,7 @@ class TestBpmOutOfTolerance:
     t1 = _make_track(bpm=128.0, camelot="8A")
     t2 = _make_track(bpm=100.0, camelot="8A")
     result = predict_transition_type(t1, t2, bpm_tolerance=3.0)
-    # BPM diff > 3, but harmony could be high (same key)
-    # effective_bpm_diff(128, 100): direct=28, half candidates differ
-    # With big diff and some harmony -> breakdown_bridge or cold_cut
-    assert result in ("breakdown_bridge", "cold_cut")
+    assert result == "breakdown_bridge"
 
   def test_large_bpm_diff_bad_harmony_cold_cut(self):
     """Grosse BPM-Diff + schlechte Harmonie = cold_cut."""
@@ -217,6 +214,14 @@ class TestGoodHarmony:
     t2 = _make_track(bpm=136.0, camelot="9A", energy=65, genre="Techno")
     result = predict_transition_type(t1, t2)
     assert result == "pro_eq_swap"
+
+  def test_unknown_detection_uses_id3_genre(self):
+    t1 = _make_track(bpm=135.0, camelot="8A", energy=70)
+    t2 = _make_track(bpm=136.0, camelot="9A", energy=65)
+    t1.genre = "Techno"
+    t2.genre = "Techno"
+
+    assert predict_transition_type(t1, t2) == "pro_eq_swap"
 
   def test_minimal_bass_swap(self):
     """Minimal mit guter Harmonie = pro_eq_swap."""
