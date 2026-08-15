@@ -97,18 +97,9 @@ jobs:
         Start-Sleep -Seconds 8
         if ($app.HasExited) { throw "Installed application exited with $($app.ExitCode)" }
 
-        $installedProcesses = @(
-          Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -eq $installedExe }
-        )
-        if ($installedProcesses.Count -eq 0) {
-          throw "No installed application process found"
-        }
-        foreach ($process in $installedProcesses) {
-          & taskkill.exe /PID $process.Id /T /F | Out-Host
-          if ($LASTEXITCODE -ne 0 -and -not $process.HasExited) {
-            throw "Failed to stop installed application process tree $($process.Id)"
-          }
+        & taskkill.exe /PID $app.Id /T /F | Out-Host
+        if ($LASTEXITCODE -ne 0 -and -not $app.HasExited) {
+          throw "Failed to stop installed application process tree $($app.Id)"
         }
         Start-Sleep -Seconds 2
         $remainingProcesses = @(

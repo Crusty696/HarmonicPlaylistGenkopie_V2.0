@@ -19,7 +19,7 @@ pyrekordbox==0.4.4 # Optional zur Laufzeit: Rekordbox-Datenbank-Import
 
 # Signal-Processing
 scipy==1.13.1      # Required for transition_renderer
-pedalboard==0.9.22 # Transition-Effekte & Dynamik; 0.9.24 crasht auf Windows-CI nativ
+pedalboard==0.9.24 # Transition-Effekte & Dynamik
 pyloudnorm==0.2.0  # EBU R128 / ITU-R BS.1770 Loudness (LUFS)
 
 # GUI & HTTP

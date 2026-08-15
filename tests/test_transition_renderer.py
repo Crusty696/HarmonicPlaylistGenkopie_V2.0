@@ -8,6 +8,7 @@ Verwenden synthetische Numpy-Arrays — kein echtes Audiomaterial noetig.
 import os
 import sys
 import types
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pytest
@@ -27,6 +28,7 @@ from hpg_core.transition_renderer import (
     _load_segment,
     _make_sos,
     _rms_normalize,
+    _render_clip_subprocess_wrapper,
     make_temp_output_path,
     render_transition_clip,
 )
@@ -66,6 +68,18 @@ def _make_stereo_signal(frames: int, sr: int = 44100,
     t = np.linspace(0, frames / sr, frames, endpoint=False, dtype=np.float32)
     wave = (np.sin(2 * np.pi * freq * t) * 0.5).astype(np.float32)
     return np.stack([wave, wave], axis=1)
+
+
+@pytest.fixture(scope="module")
+def native_compressor_outputs():
+    """Fuehrt den nativen Effekt wie die App in einem isolierten Worker aus."""
+    sr = 44100
+    normal = _make_stereo_signal(sr * 2)
+    loud = (normal * 1.8).astype(np.float32)
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        normal_result = executor.submit(_apply_compressor, normal, sr).result(timeout=30)
+        loud_result = executor.submit(_apply_compressor, loud, sr).result(timeout=30)
+    return normal, normal_result, loud_result
 
 
 # ---------------------------------------------------------------------------
@@ -981,28 +995,24 @@ class TestApplyCompressor:
         assert observed["sample_rate"] == self.SR
         np.testing.assert_array_equal(result, sig)
 
-    def test_output_hat_richtige_form(self):
+    def test_output_hat_richtige_form(self, native_compressor_outputs):
         """Output soll gleiche Shape wie Input haben."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        sig, result, _ = native_compressor_outputs
         assert result.shape == sig.shape
 
-    def test_output_ist_float32(self):
+    def test_output_ist_float32(self, native_compressor_outputs):
         """dtype soll float32 sein."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        _, result, _ = native_compressor_outputs
         assert result.dtype == np.float32
 
-    def test_kein_clipping(self):
+    def test_kein_clipping(self, native_compressor_outputs):
         """Output-Peak soll <= 1.0 sein (Compressor darf nicht verstaerken)."""
-        sig = self._make_signal(self.SR * 2, amplitude=0.9)
-        result = _apply_compressor(sig, self.SR)
+        _, _, result = native_compressor_outputs
         assert np.max(np.abs(result)) <= 1.0
 
-    def test_keine_nan_oder_inf(self):
+    def test_keine_nan_oder_inf(self, native_compressor_outputs):
         """Keine NaN oder Inf im Ergebnis."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        _, result, _ = native_compressor_outputs
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
 
@@ -1094,7 +1104,10 @@ class TestRenderTransitionClipMitNormalisierung:
             normalize_rms=True,
             use_compressor=True,
         )
-        render_transition_clip(spec, out_path)
+        with ProcessPoolExecutor(max_workers=1) as executor:
+            executor.submit(
+                _render_clip_subprocess_wrapper, (spec, out_path)
+            ).result(timeout=30)
 
         assert os.path.exists(out_path)
         info = sf.info(out_path)
