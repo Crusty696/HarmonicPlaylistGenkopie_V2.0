@@ -64,6 +64,13 @@ def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   assert 'Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe"' in installer_ci
 
 
+def test_custom_installer_dialogs_are_disabled_in_silent_mode():
+  installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+
+  assert "if not WizardSilent then" in installer
+  assert "if (CurStep = ssPostInstall) and (not WizardSilent) then" in installer
+
+
 def test_auto_merge_cleanup_is_limited_to_confirmed_merged_heads():
   workflow = (
     ROOT / ".github/workflows/auto-merge-all-prs.yml"
