@@ -74,6 +74,7 @@ jobs:
       run: call build_installer.bat
 
     - name: Silent install, startup smoke, and uninstall
+      timeout-minutes: 5
       shell: pwsh
       run: |
         $setups = @(Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe" -File)
@@ -82,7 +83,11 @@ jobs:
         }
         $setup = $setups[0].FullName
         $installDir = Join-Path $env:RUNNER_TEMP "HPG-Installer-Smoke"
-        $install = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -Wait -PassThru
+        $install = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -PassThru
+        if (-not $install.WaitForExit(120000)) {
+          Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+          throw "Installer timed out"
+        }
         if ($install.ExitCode -ne 0) { throw "Installer failed with $($install.ExitCode)" }
         $installedExe = Join-Path $installDir "HarmonicPlaylistGenerator.exe"
         if (-not (Test-Path $installedExe)) { throw "Installed executable missing" }
@@ -99,18 +104,26 @@ jobs:
         if ($installedProcesses.Count -eq 0) {
           throw "No installed application process found"
         }
-        $installedProcesses | Stop-Process -Force
+        foreach ($process in $installedProcesses) {
+          & taskkill.exe /PID $process.Id /T /F | Out-Host
+          if ($LASTEXITCODE -ne 0 -and -not $process.HasExited) {
+            throw "Failed to stop installed application process tree $($process.Id)"
+          }
+        }
         Start-Sleep -Seconds 2
         $remainingProcesses = @(
-          Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -eq $installedExe }
+          Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue
         )
         if ($remainingProcesses.Count -ne 0) {
           throw "Installed application processes did not stop"
         }
 
         $uninstaller = Join-Path $installDir "unins000.exe"
-        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
+        if (-not $uninstall.WaitForExit(120000)) {
+          Stop-Process -Id $uninstall.Id -Force -ErrorAction SilentlyContinue
+          throw "Uninstaller timed out"
+        }
         if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with $($uninstall.ExitCode)" }
         Start-Sleep -Seconds 2
         if (Test-Path $installedExe) { throw "Uninstall left the application executable behind" }

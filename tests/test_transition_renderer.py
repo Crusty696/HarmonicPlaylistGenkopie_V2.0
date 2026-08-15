@@ -6,6 +6,8 @@ Verwenden synthetische Numpy-Arrays — kein echtes Audiomaterial noetig.
 """
 
 import os
+import sys
+import types
 
 import numpy as np
 import pytest
@@ -949,6 +951,35 @@ class TestApplyCompressor:
         t = np.linspace(0, frames / self.SR, frames, endpoint=False, dtype=np.float32)
         wave = (np.sin(2 * np.pi * 440 * t) * amplitude).astype(np.float32)
         return np.stack([wave, wave], axis=1)
+
+    def test_pedalboard_erhaelt_zusammenhaengendes_kanal_layout(self, monkeypatch):
+        """Die native Grenze bekommt float32 im Layout (channels, frames)."""
+        observed = {}
+
+        class FakePedalboard:
+            def __init__(self, effects):
+                assert len(effects) == 1
+
+            def __call__(self, audio, sample_rate):
+                observed["audio"] = audio
+                observed["sample_rate"] = sample_rate
+                return audio
+
+        fake_module = types.SimpleNamespace(
+            Pedalboard=FakePedalboard,
+            Compressor=lambda **kwargs: kwargs,
+        )
+        monkeypatch.setitem(sys.modules, "pedalboard", fake_module)
+
+        sig = self._make_signal(128)
+        result = _apply_compressor(sig, self.SR)
+
+        native_audio = observed["audio"]
+        assert native_audio.shape == (2, 128)
+        assert native_audio.dtype == np.float32
+        assert native_audio.flags.c_contiguous
+        assert observed["sample_rate"] == self.SR
+        np.testing.assert_array_equal(result, sig)
 
     def test_output_hat_richtige_form(self):
         """Output soll gleiche Shape wie Input haben."""

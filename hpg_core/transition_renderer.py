@@ -712,8 +712,11 @@ def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
             _pedalboard_warned = True
         return mixed
 
-    # pedalboard erwartet (channels, frames) — wir haben (frames, channels)
-    stereo = mixed.T
+    # pedalboard erwartet ein zusammenhaengendes float32-Array im Layout
+    # (channels, frames). mixed.T ist nur ein nicht zusammenhaengender View;
+    # dessen native Verarbeitung kann auf Windows mit einer Access Violation
+    # enden, statt einen Python-Fehler zu liefern.
+    stereo = np.ascontiguousarray(mixed.T, dtype=np.float32)
     board = Pedalboard([
         Compressor(
             threshold_db=-12.0,  # Erst ab -12 dBFS komprimieren
