@@ -498,3 +498,114 @@ def test_real_window_shows_rekordbox_warning_end_to_end(qtbot, monkeypatch):
   qtbot.waitUntil(
     lambda: "Rekordbox laeuft" in window.status_bar.toolTip(), timeout=5000
   )
+
+
+# --- Rekordbox-Abdeckung nach dem Lauf --------------------------------------
+
+
+def _coverage(**kwargs):
+  from hpg_core.rekordbox_importer import RekordboxCoverage
+
+  defaults = dict(available=True, total=34, with_analysis=15)
+  defaults.update(kwargs)
+  return RekordboxCoverage(**defaults)
+
+
+def test_hint_survives_later_status_updates(qtbot, monkeypatch):
+  """Der Befund darf nicht von 'Complete — N tracks' ueberschrieben werden."""
+  window = _window(qtbot, monkeypatch)
+  window.status_bar.set_hint("Rekordbox: 19/34 ohne Daten", "Details")
+
+  window.status_bar.set_status("Complete — 34 tracks, Quality 82%")
+
+  # isVisible() ist False, solange das Fenster selbst nicht gezeigt wird —
+  # isHidden() prueft den gesetzten Zustand statt der Bildschirmsichtbarkeit.
+  assert not window.status_bar.hint_label.isHidden()
+  assert "19/34" in window.status_bar.hint_label.text()
+  assert window.status_bar.status_label.text().startswith("Complete")
+
+
+def test_unanalyzed_collection_tracks_produce_hint(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+
+  window._on_rekordbox_coverage(
+    _coverage(without_analysis=19, examples_without_analysis=["Antinomy.aiff"])
+  )
+
+  assert not window.status_bar.hint_label.isHidden()
+  assert "19/34" in window.status_bar.hint_label.text()
+  tooltip = window.status_bar.hint_label.toolTip()
+  assert "nicht analysiert" in tooltip
+  assert "Antinomy.aiff" in tooltip
+
+
+def test_ambiguous_records_produce_hint(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+
+  window._on_rekordbox_coverage(
+    _coverage(ambiguous=2, examples_ambiguous=["Doppelt.aiff"])
+  )
+
+  assert "mehrdeutige" in window.status_bar.hint_label.toolTip()
+  assert "Doppelt.aiff" in window.status_bar.hint_label.toolTip()
+
+
+def test_tracks_outside_collection_are_not_a_finding(qtbot, monkeypatch):
+  """497 fremde Tracks sind normal — dafuer darf keine Warnung erscheinen."""
+  window = _window(qtbot, monkeypatch)
+
+  window._on_rekordbox_coverage(
+    _coverage(total=1400, with_analysis=903, not_in_collection=497)
+  )
+
+  assert window.status_bar.hint_label.isHidden()
+
+
+def test_no_hint_without_rekordbox(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  window._on_rekordbox_coverage(
+    _coverage(available=False, total=0, with_analysis=0, without_analysis=0)
+  )
+  assert window.status_bar.hint_label.isHidden()
+
+
+def test_worker_emits_coverage_for_analyzed_paths(monkeypatch, tmp_path):
+  captured = {}
+
+  def fake_summarize(paths):
+    captured["paths"] = list(paths)
+    return _coverage(without_analysis=19)
+
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.get_rekordbox_importer",
+    lambda: SimpleNamespace(summarize_coverage=fake_summarize),
+  )
+  worker = main.AnalysisWorker(str(tmp_path))
+  emitted = []
+  worker.rekordbox_coverage.connect(emitted.append)
+
+  worker._report_rekordbox_coverage(
+    [Track(filePath="C:/x/a.wav", fileName="a.wav")]
+  )
+
+  assert captured["paths"] == ["C:/x/a.wav"]
+  assert emitted and emitted[0].without_analysis == 19
+
+
+def test_coverage_failure_never_breaks_a_finished_run(monkeypatch, tmp_path):
+  """Ein Diagnose-Fehler darf ein fertiges Analyseergebnis nicht kippen."""
+  def boom():
+    raise RuntimeError("DB weg")
+
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.get_rekordbox_importer", boom
+  )
+  worker = main.AnalysisWorker(str(tmp_path))
+  emitted = []
+  worker.rekordbox_coverage.connect(emitted.append)
+
+  worker._report_rekordbox_coverage(
+    [Track(filePath="C:/x/a.wav", fileName="a.wav")]
+  )
+
+  assert emitted == []

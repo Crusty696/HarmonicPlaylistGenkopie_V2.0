@@ -19,7 +19,7 @@ import os
 import hashlib
 import json
 from typing import Optional, Dict, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from .models import CAMELOT_MAP
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,30 @@ class RekordboxTrackData:
     # Downbeat-Feature 2026-07-17: DB-Content-ID fuer den lazy ANLZ-Zugriff
     # (Beatgrid/PQTZ liegt in den .DAT-Analysedateien, nicht in master.db)
     content_id: Optional[str] = None
+
+
+
+@dataclass
+class RekordboxCoverage:
+    """Wie viele Tracks eines Laufs konnten Rekordbox-Daten nutzen?
+
+    Trennt die drei Faelle, die im Log sonst alle gleich aussehen:
+    analysiert, in der Collection aber unanalysiert, gar nicht vorhanden.
+    """
+
+    available: bool = False
+    total: int = 0
+    with_analysis: int = 0
+    without_analysis: int = 0
+    ambiguous: int = 0
+    not_in_collection: int = 0
+    examples_without_analysis: List[str] = field(default_factory=list)
+    examples_ambiguous: List[str] = field(default_factory=list)
+
+    @property
+    def degraded(self) -> int:
+        """Tracks, die Rekordbox-Daten haetten haben koennen, aber keine hatten."""
+        return self.without_analysis + self.ambiguous
 
 
 class RekordboxImporter:
@@ -525,6 +549,47 @@ class RekordboxImporter:
             return ""
         payload = json.dumps(data.__dict__, sort_keys=True, default=str)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def summarize_coverage(self, file_paths) -> "RekordboxCoverage":
+        """Zaehlt aus, wie viele der Dateien Rekordbox-Daten liefern konnten.
+
+        Ohne diese Auswertung faellt HPG bei unanalysierten Collection-Tracks
+        still auf die Librosa-Vollanalyse zurueck — das Ergebnis ist brauchbar,
+        aber langsamer und ohne Rekordbox-Beatgrid, und niemand erfaehrt davon.
+        """
+        summary = RekordboxCoverage(available=self.is_available())
+        if not summary.available:
+            return summary
+
+        for file_path in file_paths:
+            summary.total += 1
+            data = self.get_track_data(file_path)
+            if data is not None and data.bpm:
+                summary.with_analysis += 1
+                continue
+
+            name = os.path.basename(file_path)
+            if data is not None:
+                # Record vorhanden, aber in Rekordbox nie analysiert (BPM 0).
+                summary.without_analysis += 1
+                if len(summary.examples_without_analysis) < 3:
+                    summary.examples_without_analysis.append(name)
+                continue
+
+            normalized = os.path.normpath(file_path).lower()
+            basename = os.path.basename(normalized)
+            is_ambiguous = normalized in self._ambiguous_paths or (
+                basename in self.basename_cache
+                and self.basename_cache[basename] is None
+            )
+            if is_ambiguous:
+                summary.ambiguous += 1
+                if len(summary.examples_ambiguous) < 3:
+                    summary.examples_ambiguous.append(name)
+            else:
+                summary.not_in_collection += 1
+
+        return summary
 
     def get_available_count(self) -> int:
         """Get number of tracks available in Rekordbox database"""

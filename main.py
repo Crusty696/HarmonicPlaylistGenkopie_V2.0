@@ -477,6 +477,7 @@ class AnalysisWorker(QThread):
     # emittierten Signal heraus einen noch laufenden QThread zerstoeren
     # ("QThread: Destroyed while thread is still running").
     analysis_done = pyqtSignal(list, dict)  # playlist, quality_metrics
+    rekordbox_coverage = pyqtSignal(object)  # RekordboxCoverage
 
     def __init__(
         self,
@@ -496,6 +497,32 @@ class AnalysisWorker(QThread):
     def request_cancel(self):
         """Cooperative cancel — setzt Flag, das in run() geprueft wird."""
         self._should_cancel = True
+
+    def _report_rekordbox_coverage(self, analyzed_tracks):
+        """Meldet, wie viele Tracks Rekordbox-Daten nutzen konnten.
+
+        Laeuft bewusst im Worker-Thread. Der Importer-Singleton existiert nur
+        in den Analyse-Subprozessen — der erste Zugriff im GUI-Prozess liest
+        die komplette Rekordbox-DB und wuerde die Oberflaeche einfrieren.
+        """
+        try:
+            from hpg_core.rekordbox_importer import get_rekordbox_importer
+
+            paths = [t.filePath for t in analyzed_tracks if getattr(t, "filePath", "")]
+            coverage = get_rekordbox_importer().summarize_coverage(paths)
+        except Exception as e:
+            # Ein Diagnose-Fehler darf ein fertiges Analyseergebnis nie kippen.
+            logger.warning(f"Rekordbox-Abdeckung nicht ermittelbar: {e}")
+            return
+
+        if coverage.degraded:
+            logger.warning(
+                "Rekordbox-Abdeckung: %d von %d Tracks ohne nutzbare Daten "
+                "(%d unanalysiert, %d mehrdeutig) -> Librosa-Vollanalyse.",
+                coverage.degraded, coverage.total,
+                coverage.without_analysis, coverage.ambiguous,
+            )
+        self.rekordbox_coverage.emit(coverage)
 
     def run(self):
         """The main work of the thread - now with multi-core processing."""
@@ -626,6 +653,7 @@ class AnalysisWorker(QThread):
                 return
 
             logger.info(f"Feature extraction complete: {len(analyzed_tracks)} tracks successfully analyzed.")
+            self._report_rekordbox_coverage(analyzed_tracks)
             self.phase_changed.emit(1, "completed")
             self.status_update.emit(
                 f"Audio-Analyse abgeschlossen. Starte KI-Veredelung fuer {len(analyzed_tracks)} Tracks..."
@@ -2132,6 +2160,21 @@ class StatusBarWidget(QWidget):
         """)
         layout.addWidget(self.status_label, 1)
 
+        # Hinweis-Label: bleibt stehen, auch wenn set_status() den Statustext
+        # ueberschreibt. Fuer Befunde, die den Lauf nicht abbrechen, aber das
+        # Ergebnis erklaeren (z. B. unanalysierte Rekordbox-Tracks).
+        self.hint_label = QLabel("")
+        self.hint_label.setStyleSheet(f"""
+            QLabel {{
+                color: #ffaa00;
+                font-family: {FONT_FAMILY};
+                font-size: 11px;
+                font-weight: bold;
+            }}
+        """)
+        self.hint_label.hide()
+        layout.addWidget(self.hint_label)
+
         # Progress-Bar (konstant sichtbar)
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(240)
@@ -2168,6 +2211,17 @@ class StatusBarWidget(QWidget):
 
     def set_status(self, text):
         self.status_label.setText(text)
+
+    def set_hint(self, text, tooltip=""):
+        """Dauerhafter Hinweis neben dem Statustext."""
+        self.hint_label.setText(text)
+        self.hint_label.setToolTip(tooltip or text)
+        self.hint_label.setVisible(bool(text))
+
+    def clear_hint(self):
+        self.hint_label.clear()
+        self.hint_label.setToolTip("")
+        self.hint_label.hide()
 
     def set_progress(self, value):
         bounded = max(0, min(100, int(value)))
@@ -4245,6 +4299,8 @@ class MainWindow(QMainWindow):
         # StatusBar: Progress zeigen
         self.status_bar.show_progress()
         self.status_bar.set_status("Starting analysis...")
+        # Befund des Vorlaufs verwerfen — er gilt fuer einen anderen Ordner.
+        self.status_bar.clear_hint()
 
         # Progress und Steps initialisieren
         self.library_panel.progress_widget.reset_steps()
@@ -4276,6 +4332,7 @@ class MainWindow(QMainWindow):
         self.worker.progress.connect(self._on_audio_progress)
         self.worker.phase_changed.connect(self.library_panel.progress_widget.set_step_status)
         self.worker.status_update.connect(self.status_bar.set_status)
+        self.worker.rekordbox_coverage.connect(self._on_rekordbox_coverage)
         # AUDIT-FIX T1 (2026-07-24): Ergebnis ueber analysis_done; Cleanup erst
         # beim ECHTEN QThread.finished (Thread ist dann garantiert beendet).
         self.worker.analysis_done.connect(self.analysis_finished)
@@ -4529,6 +4586,51 @@ class MainWindow(QMainWindow):
                 else f"Complete — {len(self.playlist)} tracks, Quality {overall:.0%}"
             )
             self._finish_run(final_state, final_message)
+
+    def _on_rekordbox_coverage(self, coverage):
+        """Zeigt an, wenn Tracks ohne Rekordbox-Daten analysiert wurden.
+
+        Ohne diesen Hinweis sieht ein Lauf gegen unanalysierte Collection-Tracks
+        identisch zu einem sauberen Lauf aus — nur langsamer und ohne
+        Rekordbox-Beatgrid.
+        """
+        if not coverage.available or not coverage.degraded:
+            return
+
+        lines = [
+            f"{coverage.degraded} von {coverage.total} analysierten Tracks "
+            f"konnten keine Rekordbox-Daten nutzen und wurden komplett neu "
+            f"berechnet (ohne Rekordbox-Beatgrid)."
+        ]
+        if coverage.without_analysis:
+            lines.append("")
+            lines.append(
+                f"• {coverage.without_analysis} Track(s) stehen in der "
+                f"Collection, sind dort aber nicht analysiert. In Rekordbox "
+                f"analysieren, Rekordbox schliessen, Lauf wiederholen."
+            )
+            for name in coverage.examples_without_analysis:
+                lines.append(f"    – {name}")
+        if coverage.ambiguous:
+            lines.append("")
+            lines.append(
+                f"• {coverage.ambiguous} Track(s) haben mehrdeutige "
+                f"Rekordbox-Eintraege (mehrere Records mit widerspruechlichen "
+                f"Werten). HPG verwirft solche Daten bewusst, statt zu raten."
+            )
+            for name in coverage.examples_ambiguous:
+                lines.append(f"    – {name}")
+        if coverage.not_in_collection:
+            lines.append("")
+            lines.append(
+                f"{coverage.not_in_collection} weitere(r) Track(s) sind gar "
+                f"nicht in Rekordbox — das ist erwartet und kein Fehler."
+            )
+
+        self.status_bar.set_hint(
+            f"Rekordbox: {coverage.degraded}/{coverage.total} ohne Daten",
+            "\n".join(lines),
+        )
 
     def analysis_finished(self, playlist, quality_metrics):
         """Audio-Analyse fertig — bereite KI-Veredelung vor, bevor die Playlist generiert wird."""
