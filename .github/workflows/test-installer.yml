@@ -87,10 +87,27 @@ jobs:
         $installedExe = Join-Path $installDir "HarmonicPlaylistGenerator.exe"
         if (-not (Test-Path $installedExe)) { throw "Installed executable missing" }
 
-        $app = Start-Process -FilePath $installedExe -PassThru
+        $env:HPG_CACHE_FILE = Join-Path $env:RUNNER_TEMP "hpg_installer_smoke_cache.db"
+        $app = Start-Process -FilePath $installedExe -WindowStyle Hidden -PassThru
         Start-Sleep -Seconds 8
         if ($app.HasExited) { throw "Installed application exited with $($app.ExitCode)" }
-        Stop-Process -Id $app.Id -Force
+
+        $installedProcesses = @(
+          Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -eq $installedExe }
+        )
+        if ($installedProcesses.Count -eq 0) {
+          throw "No installed application process found"
+        }
+        $installedProcesses | Stop-Process -Force
+        Start-Sleep -Seconds 2
+        $remainingProcesses = @(
+          Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -eq $installedExe }
+        )
+        if ($remainingProcesses.Count -ne 0) {
+          throw "Installed application processes did not stop"
+        }
 
         $uninstaller = Join-Path $installDir "unins000.exe"
         $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
@@ -134,7 +151,7 @@ jobs:
         pip install -r requirements.txt
 
     - name: Run Tests
-      run: python -m pytest tests/ -q
+      run: python -m pytest tests/ -q -n 0
 
     - name: Check Code Quality
       run: |

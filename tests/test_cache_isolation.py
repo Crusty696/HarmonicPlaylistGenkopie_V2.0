@@ -17,7 +17,7 @@ def test_pytest_uses_dedicated_cache_file():
 
   assert active_cache != production_cache
   assert active_cache.name == "hpg_cache_test.db"
-  assert os.environ["HPG_CACHE_FILE"] == caching.CACHE_FILE
+  assert Path(os.environ["HPG_CACHE_FILE"]).resolve() == active_cache
 
 
 def test_relative_cache_override_is_bound_to_absolute_path(tmp_path, monkeypatch):
