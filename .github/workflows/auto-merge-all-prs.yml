@@ -59,6 +59,8 @@ jobs:
           prs = sorted(repo.get_pulls(state='open'), key=lambda x: x.updated_at, reverse=True)
           
           merge_log = []
+          merged_heads = []
+          failures = []
           
           if not prs:
               print("✅ Keine offenen PRs gefunden!")
@@ -100,11 +102,19 @@ jobs:
                   
                   # Merge-Methode
                   if merge_strategy == 'squash':
-                      pr.merge(merge_method='squash', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                      result = pr.merge(merge_method='squash', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
                   elif merge_strategy == 'rebase':
-                      pr.merge(merge_method='rebase', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                      result = pr.merge(merge_method='rebase', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
                   else:
-                      pr.merge(merge_method='create_merge_commit', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                      result = pr.merge(merge_method='merge', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+
+                  if not result.merged:
+                      raise RuntimeError(result.message or "GitHub hat den Merge abgelehnt")
+
+                  # Nur Branches dieses Repositories und nur nach bestaetigtem
+                  # Merge duerfen spaeter geloescht werden. Forks bleiben unangetastet.
+                  if pr.head.repo and pr.head.repo.full_name == repo.full_name:
+                      merged_heads.append(pr_branch)
                   
                   merge_log.append({
                       'pr_number': pr_number,
@@ -125,6 +135,7 @@ jobs:
                       'branch': pr.head.ref
                   })
                   print(f"   ⚠️ Error: {error_msg}")
+                  failures.append(f"PR #{pr.number}: {error_msg}")
                   time.sleep(1)
           
           print("\n" + "="*80)
@@ -139,39 +150,45 @@ jobs:
           # Branch-Cleanup
           print("\n🧹 Starting branch cleanup...")
           try:
-              # Fetch alle Branches
-              branches = repo.get_branches()
               delete_count = 0
-              
-              for branch in branches:
-                  if branch.name != repo.default_branch:
-                      try:
-                          ref = repo.get_git_ref(f"heads/{branch.name}")
-                          ref.delete()
-                          print(f"   🗑️  Deleted: {branch.name}")
-                          delete_count += 1
-                          time.sleep(0.5)
-                      except Exception as e:
-                          print(f"   ⚠️  Could not delete {branch.name}: {str(e)[:50]}")
+
+              for branch_name in sorted(set(merged_heads)):
+                  if branch_name == repo.default_branch:
+                      continue
+                  try:
+                      ref = repo.get_git_ref(f"heads/{branch_name}")
+                      ref.delete()
+                      print(f"   🗑️  Deleted merged branch: {branch_name}")
+                      delete_count += 1
+                      time.sleep(0.5)
+                  except Exception as e:
+                      message = f"Branch {branch_name}: {e}"
+                      failures.append(message)
+                      print(f"   ⚠️  Could not delete {branch_name}: {str(e)[:50]}")
               
               print(f"\n✅ Deleted {delete_count} branches!")
               
           except Exception as e:
+              failures.append(f"Branch cleanup: {e}")
               print(f"⚠️ Branch cleanup error: {str(e)}")
           
-          print("\n🎉 Auto-merge workflow completed!")
+          if failures:
+              print("\n❌ Auto-merge unvollstaendig:")
+              for failure in failures:
+                  print(f" - {failure}")
+              raise SystemExit(1)
+          print("\n🎉 Alle Merges wurden bestaetigt; nur deren Branches wurden bereinigt.")
           PYTHON_SCRIPT
 
       - name: 📊 Generate Summary Report
         if: always()
         run: |
-          echo "## ✅ Auto-Merge Workflow Completed" >> $GITHUB_STEP_SUMMARY
+          echo "## Auto-Merge Workflow: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📈 Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Merge Strategy**: ${{ github.event.inputs.merge_strategy }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Workflow Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
-          echo "- **Main Branch**: Updated with all changes" >> $GITHUB_STEP_SUMMARY
-          echo "- **Feature Branches**: Cleaned up" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch cleanup is restricted to branches of confirmed merged PRs." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "1. Pull the latest changes: \`git pull origin main\`" >> $GITHUB_STEP_SUMMARY

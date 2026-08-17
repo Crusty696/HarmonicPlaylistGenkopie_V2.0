@@ -1,15 +1,36 @@
-# Direkte Dependencies — gepinnt auf getestete Versionen (H1 Audit-Fix)
+# HPG V2.0 - Production Dependencies
+# Umgebung: Python 3.12.x (mind. 3.12.1, NICHT 3.13+ - numba unterstuetzt das nicht).
+# Die Pins spiegeln die getestete venv312-Umgebung. Vor jeder Aenderung:
+# `pip list` gegen diese Datei halten und die volle Suite fahren.
+
+# Audio-Analyse (librosa-Stack - die vier Pins haengen voneinander ab)
 librosa==0.11.0
-numpy==1.26.4  # <2.0 erzwungen durch numba 0.59.1 (librosa-Stack, NICHT anheben)
-numba==0.59.1  # Constraint-Pin fuer librosa (nicht direkt importiert)
-llvmlite==0.42.0  # Constraint-Pin fuer numba (nicht direkt importiert)
-# AUDIT-FIX R1/R2 (2026-07-24): direkte Imports, die bisher nur transitiv kamen
-soundfile>=0.12.1  # Direkt importiert in main.py, transition_renderer.py, analysis.py
-SQLAlchemy>=2.0  # Direkt importiert in rekordbox_importer.py (joinedload)
-PyQt6==6.10.2
+numpy==1.26.4      # <2.0 erzwungen durch numba 0.59.1 (NICHT einzeln anheben)
+numba==0.59.1      # Constraint-Pin fuer librosa (nicht direkt importiert)
+llvmlite==0.42.0   # Constraint-Pin fuer numba (nicht direkt importiert)
+
+# Audio I/O
+soundfile==0.14.0  # Direkt importiert in main.py, transition_renderer.py, analysis.py
 mutagen==1.47.0
-pyrekordbox>=0.4.4  # Optional: Rekordbox database import (v3.0+)
-scipy==1.13.1  # Required for transition_renderer
-pedalboard>=0.9.14  # Required for professional transition effects & dynamics compression
-pyloudnorm>=0.1.1  # EBU R128 / ITU-R BS.1770 Loudness (LUFS-Feature 2026-07-17)
-requests==2.34.2  # HTTP-Client fuer ai_engine/ai_launcher (LM Studio API)
+
+# Datenbank (Rekordbox-Import)
+SQLAlchemy==2.0.51 # Direkt importiert in rekordbox_importer.py (joinedload)
+pyrekordbox==0.4.4 # Optional zur Laufzeit: Rekordbox-Datenbank-Import
+
+# Signal-Processing
+scipy==1.13.1      # Required for transition_renderer
+pedalboard==0.9.24 # Transition-Effekte & Dynamik
+pyloudnorm==0.2.0  # EBU R128 / ITU-R BS.1770 Loudness (LUFS)
+
+# GUI & HTTP
+PyQt6==6.10.2
+requests==2.34.2   # HTTP-Client fuer ai_engine/ai_launcher
+
+# Test-Toolchain - von pytest.ini vorausgesetzt (-n auto, --cov, qtbot)
+pytest==9.1.1
+pytest-cov==7.1.0
+pytest-xdist==3.8.0
+pytest-qt==4.5.0
+
+# Reproduzierbarer Frozen-Build
+pyinstaller==6.21.0

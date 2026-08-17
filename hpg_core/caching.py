@@ -36,7 +36,48 @@ logger = logging.getLogger(__name__)
 # gemessene Phrase-Units/erweiterte Novelty.
 # AUDIT-FIX 2026-07-26: Mixpoints verwenden -1.0 als "nicht gesetzt";
 # 0.0 bleibt ein gueltiger Zeitpunkt.
-CACHE_VERSION = 24
+# AUDIT-FIX 2026-08-14: 24 -> 25. Drei Analysewerte aendern sich messbar und
+# muessen neu berechnet werden:
+#   - LUFS: die blockweise Messung lieferte fuer 24 von 52 Tracks NaN
+#     ("lufs_status": "invalid", lufs 0.0), weil die Blockzahl aufgerundet
+#     wurde und der letzte 400-ms-Block nicht mehr ins Signal passte.
+#   - bass_intensity: die Skala endete bei einem Bass-Anteil von 0.5 und
+#     klemmte real gemessene 0.78-0.89 auf konstant 100 (ein einziger
+#     distinkter Wert ueber die ganze Bibliothek).
+#   - bpm: ID3-Tags werden jetzt gegen das Audio auf Halftime/Doubletime und
+#     2/3-Fehltagging geprueft; betroffene Tracks aendern BPM, Genre und
+#     phrase_unit.
+# AUDIT-FIX 2026-08-14 (Runde 2): 25 -> 26. Die Downbeat-Schaetzung wurde an
+# zwei Stellen korrigiert: die Taktlaenge kam aus einem hop-gerasterten
+# Median (-2,5 % Bias, der linear mit der Tracklaenge wuchs — bis 4,2 s
+# Ankerfehler bei 330 s), und ein inkommensurables librosa-Beatraster
+# (11 von 34 Tracks) lieferte Takte einer fremden Metrik. Folge:
+# first_downbeat aendert sich auf 34/34 gemessenen Tracks,
+# downbeat_confidence faellt bei 11/34 auf 0.0, phrase_anchor und die
+# Sektions-Startzeiten verschieben sich — und damit die Mixpunkte.
+# AUDIT-FIX 2026-08-14 (Runde 3): 26 -> 27. Die Downbeat-Feinausrichtung
+# rastete auf den staerksten Bass-Onset-FRAME (46-ms-Hopraster) und lag
+# dadurch ueber 35 Referenztracks konsistent +116 ms zu spaet (Gruppen-
+# laufzeit des Onset-Detektors). Ersetzt durch nullphasigen Tiefpass +
+# beat-synchrone Faltung: Sub-Beat-Fehler 117 ms -> 16 ms Median.
+# Zusaetzlich ist die Konfidenz-Skala neu normiert (der alte 2/3-Deckel
+# war ein Artefakt der Vote-Normierung, 1.0 bleibt Rekordbox vorbehalten).
+# first_downbeat UND downbeat_confidence aendern sich auf jedem selbst
+# geschaetzten Track; phrase_anchor, Sektionsgrenzen und Mixpunkte folgen.
+# AUDIT-FIX 2026-08-14 (Runde 4): 27 -> 28. Das Phrasen-Voting faltet jetzt
+# auf die GEMESSENE Periode, bevor es bewertet. Grund: Psytrance/Trance
+# sind die einzigen Genres mit phrase_unit=16, viele Tracks haben real
+# aber eine 8-Bar-Periode. Dann sammeln zwei Bins (p und p+8) dieselbe
+# echte Phrasengrenze, die Margin bricht zusammen — und zwar umso mehr,
+# je klarer die Struktur ist. Gefaltet wird nur bei zirkularer
+# Selbstkorrelation >= 0.70 (kalibriert: echte 16-Bar-Tracks max 0.60,
+# erkannte 8-Bar-Tracks min 0.78).
+# Geaendert: first_phrase, phrase_confidence und darueber phrase_anchor,
+# sections sowie alle Mixpunkte.
+# AUDIT-FIX 2026-08-15: 28 -> 29. Context-/Genre-Flow, Transition-Typ und
+# abgeleitete Camelot-Werte wurden korrigiert. Damit alte Genre-/Mixpoint-
+# Ausgaben die neuen Verträge nicht maskieren, wird ein neuer Cache genutzt.
+CACHE_VERSION = 29
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -55,7 +96,16 @@ def _default_cache_file() -> str:
     return str((base_dir / f"hpg_cache_v{CACHE_VERSION}.db").resolve())
 
 
-CACHE_FILE = _CACHE_FILE_OVERRIDE or _default_cache_file()
+def _resolve_cache_file(override: str) -> str:
+    """Bindet auch relative Overrides einmalig an einen absoluten Pfad."""
+    return (
+        str(Path(override).expanduser().resolve())
+        if override
+        else _default_cache_file()
+    )
+
+
+CACHE_FILE = _resolve_cache_file(_CACHE_FILE_OVERRIDE)
 LOCK_FILE = os.path.splitext(CACHE_FILE)[0] + ".lock"
 
 SQLITE_BUSY_CODES = {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
@@ -171,20 +221,6 @@ def _quarantine_cache_row_on_connection(
     conn.commit()
 
 
-def _quarantine_cache_row(cache_key: str, data: str, error: Exception) -> None:
-    """Isoliert nur den ungueltigen Record; die restliche DB bleibt erhalten."""
-    # Audit-Fix 2026-07-21: `with sqlite3.Connection` committet zwar, SCHLIESST
-    # die Verbindung aber NICHT -> jeder quarantinisierte Record leakte ein
-    # Datei-Handle (auf Windows blockiert das spaeter das Verschieben der DB).
-    # Explizit schliessen wie alle anderen Cache-Zugriffe.
-    with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
-        conn = _connect_cache()
-        try:
-            _quarantine_cache_row_on_connection(conn, cache_key, data, error)
-        finally:
-            conn.close()
-
-
 def _sqlite_error_code(error: sqlite3.Error) -> int | None:
     """Extrahiert den primaeren SQLite-Code ohne Extended-Code-Bits."""
     code = getattr(error, "sqlite_errorcode", None)
@@ -220,12 +256,6 @@ def _is_confirmed_corrupt_on_connection() -> bool:
     finally:
         if conn is not None:
             conn.close()
-
-
-def _is_confirmed_corrupt() -> bool:
-    """Prueft die Cache-Integritaet unter dem Cross-Process-Lock."""
-    with file_lock(LOCK_FILE, timeout=CACHE_LOCK_TIMEOUT):
-        return _is_confirmed_corrupt_on_connection()
 
 
 def _quarantine_corrupt_cache() -> bool:
@@ -602,4 +632,3 @@ def file_lock(lock_path: str, timeout: float = 5.0):
                 lock_file_handle.close()
             except OSError:
                 pass
-

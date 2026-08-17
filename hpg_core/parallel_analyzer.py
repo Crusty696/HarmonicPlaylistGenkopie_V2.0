@@ -372,6 +372,12 @@ class ParallelAnalyzer:
                 recovery_executor = None
                 try:
                     for idx in unprocessed_indices:
+                        if cancel_callback and cancel_callback():
+                            if recovery_executor is not None:
+                                _terminate_executor_processes(recovery_executor)
+                                recovery_executor = None
+                            raise InterruptedError("Analysis cancelled by user")
+
                         file_path = file_paths[idx]
                         logger.info(f"Analysiere im Safe-Modus: {os.path.basename(file_path)}")
 
@@ -383,7 +389,22 @@ class ParallelAnalyzer:
                                     max_workers=1, initializer=_worker_init
                                 )
                             future = recovery_executor.submit(_analyze_track_wrapper, file_path)
-                            track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
+                            deadline = (
+                                time.monotonic() + config.PARALLEL_ANALYSIS_TIMEOUT
+                            )
+                            while True:
+                                if cancel_callback and cancel_callback():
+                                    _terminate_executor_processes(recovery_executor)
+                                    recovery_executor = None
+                                    raise InterruptedError("Analysis cancelled by user")
+                                done, _ = wait(
+                                    {future}, timeout=0.5, return_when=FIRST_COMPLETED
+                                )
+                                if done:
+                                    track = future.result()
+                                    break
+                                if time.monotonic() >= deadline:
+                                    raise TimeoutError()
                             if track:
                                 completed_count += 1
                                 status_msg = f"Analyzed (Safe Mode): {os.path.basename(file_path)}"
@@ -409,6 +430,8 @@ class ParallelAnalyzer:
                                 recovery_executor = None
                             status_msg = f"[TIMEOUT] {os.path.basename(file_path)}"
                             track = None
+                        except InterruptedError:
+                            raise
                         except Exception as e:
                             # Normaler Fehler kam als Ergebnis zurueck — der Pool
                             # ist intakt und wird weiterverwendet

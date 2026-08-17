@@ -1,4 +1,6 @@
+import math
 import logging
+import os
 from typing import List
 from .models import Track
 from .config import SECURITY_MAX_FILE_SIZE, SECURITY_MAX_TRACK_DURATION, SECURITY_MAX_PLAYLIST_SIZE
@@ -20,28 +22,11 @@ def validate_playlist_security(tracks: List[Track]) -> bool:
         logger.error(f"Playlist too large: {len(tracks)} tracks exceeds limit of {SECURITY_MAX_PLAYLIST_SIZE}")
         return False
         
-    # Validate individual tracks
+    # Derselbe Einzeltrack-Vertrag gilt fuer Listen und fuer sanitize_playlist.
     for i, track in enumerate(tracks):
-        # Check for missing essential fields
-        if not hasattr(track, 'filePath') or not track.filePath:
-            logger.warning(f"Track at index {i} has no filePath")
-            continue
-            
-        # Validate file size (if available)
-        try:
-            import os
-            file_size = os.path.getsize(track.filePath)
-            if file_size > SECURITY_MAX_FILE_SIZE:
-                logger.warning(f"Track {track.filePath} exceeds max file size: {file_size} bytes")
-                return False
-        except OSError as e:
-            logger.debug(f"Could not check file size for track {track.filePath}: {e}")
-            
-        # Validate track duration if available
-        if hasattr(track, 'duration') and track.duration:
-            if track.duration > SECURITY_MAX_TRACK_DURATION:
-                logger.warning(f"Track {track.filePath} exceeds max duration: {track.duration}s")
-                return False
+        if not validate_track_security(track):
+            logger.warning(f"Track at index {i} failed security validation")
+            return False
                 
     return True
 
@@ -93,18 +78,28 @@ def validate_track_security(track: Track) -> bool:
         logger.error("Track missing filePath")
         return False
         
-    # Check file size
+    # Ein fehlender/nicht lesbarer Pfad darf nicht als sicher gelten: Der
+    # Aufrufer koennte sonst eine nicht validierte Datei spaeter exportieren.
     try:
-        import os
+        if not os.path.isfile(track.filePath):
+            logger.warning(f"Track file does not exist: {track.filePath}")
+            return False
         file_size = os.path.getsize(track.filePath)
         if file_size > SECURITY_MAX_FILE_SIZE:
             logger.warning(f"Track {track.filePath} exceeds max file size: {file_size} bytes")
             return False
     except OSError as e:
-        logger.debug(f"Could not check file size for track {track.filePath}: {e}")
+        logger.warning(f"Could not validate file for track {track.filePath}: {e}")
+        return False
         
-    # Check duration if available
-    if hasattr(track, 'duration') and track.duration:
+    # Check duration if available (siehe Begruendung oben: NaN und negative
+    # Werte muessen explizit raus, `if track.duration:` genuegt nicht)
+    if hasattr(track, 'duration') and track.duration is not None:
+        if not math.isfinite(track.duration) or track.duration <= 0:
+            logger.warning(
+                f"Track {track.filePath} hat ungueltige Dauer: {track.duration!r}"
+            )
+            return False
         if track.duration > SECURITY_MAX_TRACK_DURATION:
             logger.warning(f"Track {track.filePath} exceeds max duration: {track.duration}s")
             return False

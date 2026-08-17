@@ -5,10 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 import requests
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QShortcut
 from PyQt6.QtWidgets import QApplication
 
 import main
+from hpg_core.exporters import ExportReport
 from hpg_core.models import Track
 
 
@@ -69,6 +70,44 @@ def test_ai_analysis_worker_cancel_and_exception(monkeypatch):
   worker.failed.connect(failures.append)
   worker.run()
   assert failures == ["KI-Verarbeitung gestoppt: schema crash"]
+
+
+def test_ai_analysis_worker_persists_metadata_off_gui_thread(monkeypatch):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+  cached = []
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.ai_metadata_matches", lambda *args: False
+  )
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.fetch_ai_analysis", lambda *args, **kwargs: metadata
+  )
+  monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *args: "key")
+  monkeypatch.setattr(
+    "hpg_core.caching.cache_track", lambda key, value: cached.append((key, value))
+  )
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+
+  worker.run()
+
+  assert track.ai_metadata == metadata
+  assert cached == [("key", track)]
+
+
+def test_detect_worker_passes_cooperative_cancel(monkeypatch):
+  captured = {}
+
+  def detect_and_start(**kwargs):
+    captured.update(kwargs)
+    return None
+
+  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect_and_start)
+  worker = main.AIDetectWorker("Ollama", "model")
+  worker.run()
+
+  assert captured["cancel_check"] == worker.isInterruptionRequested
 
 
 def test_detect_worker_emits_success_and_failure(monkeypatch):
@@ -205,6 +244,20 @@ def test_render_executor_terminates_children_before_shutdown():
   assert events == ["terminate", "shutdown"]
 
 
+def test_render_worker_reports_temp_directory_failure(monkeypatch):
+  worker = main.TransitionRenderWorker([Mock()])
+  errors = []
+  worker.clip_error.connect(lambda *args: errors.append(args))
+  monkeypatch.setattr(
+    main.tempfile, "mkdtemp", Mock(side_effect=OSError("disk full"))
+  )
+
+  worker.run()
+
+  assert errors and errors[0][0] == 0
+  assert "disk full" in errors[0][1]
+
+
 def test_analysis_worker_empty_folder(tmp_path):
   worker = main.AnalysisWorker(str(tmp_path))
   finished = []
@@ -282,6 +335,42 @@ def test_mainwindow_terminal_state_and_empty_analysis(qtbot, monkeypatch):
   assert "no results" in window.status_bar.status_label.text().lower()
 
 
+def test_final_generation_reuses_one_adjacent_metrics_snapshot(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  tracks = [
+    Track(filePath="C:/a.wav", fileName="a.wav", bpm=128.0),
+    Track(filePath="C:/b.wav", fileName="b.wav", bpm=129.0),
+  ]
+  metrics = [Mock()]
+  quality = {"overall_score": 0.8}
+  compute_metrics = Mock(return_value=metrics)
+  calculate_quality = Mock(return_value=quality)
+  recommendations = Mock(return_value=[])
+  monkeypatch.setattr("hpg_core.playlist.generate_playlist", lambda *a, **k: tracks)
+  monkeypatch.setattr(
+    "hpg_core.playlist.compute_adjacent_transition_metrics", compute_metrics
+  )
+  monkeypatch.setattr(
+    "hpg_core.playlist.calculate_playlist_quality", calculate_quality
+  )
+  monkeypatch.setattr(
+    "hpg_core.playlist.compute_transition_recommendations", recommendations
+  )
+  window.analyzed_raw_tracks = tracks
+  window._run_settings = {
+    "folder": "C:/",
+    "strategy": "Harmonic Flow",
+    "bpm_tolerance": 3.0,
+    "advanced_params": {"ai_enabled": False},
+  }
+
+  window.on_ai_worker_finished(ai_completed=False, finalize=True)
+
+  compute_metrics.assert_called_once()
+  assert calculate_quality.call_args.kwargs["transition_metrics"] is metrics
+  assert recommendations.call_args.kwargs["transition_metrics"] is metrics
+
+
 def test_shortcuts_use_window_scoped_ctrl_navigation(qtbot, monkeypatch):
   window = _window(qtbot, monkeypatch)
   shortcuts = {
@@ -306,7 +395,7 @@ def test_cue_heuristic_checkbox_is_not_exposed(qtbot):
   assert not hasattr(panel, "_on_force_cues_changed")
 
 
-def test_preview_error_releases_widget_and_allows_retry(qtbot):
+def test_preview_error_shows_message_in_widget_and_allows_retry(qtbot):
   transition = SimpleNamespace(
     from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
     to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
@@ -322,9 +411,21 @@ def test_preview_error_releases_widget_and_allows_retry(qtbot):
 
   panel._on_clip_error(0, "decoder")
 
-  assert 0 not in panel._preview_widgets
+  # Widget bleibt stehen und zeigt den Fehler an (set_error ist verdrahtet)
+  assert panel._preview_widgets[0] is widget
+  assert widget._error_msg == "decoder"
+  assert not widget._play_btn.isEnabled()
+  assert widget._time_label.text() == "Fehler"
+  assert "⚠" in widget._title_label.text()
+  assert widget._title_label.toolTip() == "decoder"
+  assert "decoder" in widget._waveform._placeholder
   assert button.isEnabled()
   assert "erneut" in button.text()
+
+  # Zweiter Fehlschlag haengt kein zweites ⚠ an
+  panel._on_clip_error(0, "decoder")
+  assert widget._title_label.text().count("⚠") == 1
+
   widget.deleteLater()
   button.deleteLater()
 
@@ -351,6 +452,14 @@ def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   window.playlist = [Track(filePath="C:/a.wav", fileName="a.wav")]
   window.current_playlist_mode = "Harmonic Flow"
   m3u8_exporter = Mock()
+  # Beide Exporter liefern denselben Typ: ExportReport (nicht None, nicht dict).
+  m3u8_exporter.export.return_value = ExportReport(
+    status="success",
+    output_path=str(tmp_path / "set.m3u8"),
+    tracks_written=1,
+    cues_written=0,
+    beatgrids_written=0,
+  )
   monkeypatch.setattr(main, "M3U8Exporter", lambda: m3u8_exporter)
   info = Mock()
   warning = Mock()
@@ -409,3 +518,182 @@ def test_mainwindow_repeated_widget_start_close_smoke(qapp, monkeypatch):
     window.deleteLater()
     QApplication.sendPostedEvents()
     QApplication.processEvents()
+
+
+def _dependency_stub():
+  """Minimales MainWindow-Double: _on_dependencies_checked fasst nur
+  _dependency_worker und status_bar an."""
+  recorded = {"status": None, "tooltip": None}
+  status_bar = SimpleNamespace(
+    set_status=lambda text: recorded.__setitem__("status", text),
+    setToolTip=lambda text: recorded.__setitem__("tooltip", text),
+    setStyleSheet=lambda text: None,
+  )
+  window = SimpleNamespace(_dependency_worker=None, status_bar=status_bar)
+  return window, recorded
+
+
+def test_running_rekordbox_produces_stale_metadata_warning():
+  window, recorded = _dependency_stub()
+
+  main.MainWindow._on_dependencies_checked(
+    window, True, True, True, "LM Studio"
+  )
+
+  assert recorded["status"] is not None
+  assert "Rekordbox laeuft" in recorded["tooltip"]
+  assert "schliessen" in recorded["tooltip"]
+
+
+def test_closed_rekordbox_produces_no_warning():
+  window, recorded = _dependency_stub()
+
+  main.MainWindow._on_dependencies_checked(
+    window, True, True, False, "LM Studio"
+  )
+
+  assert recorded["status"] is None
+  assert recorded["tooltip"] is None
+
+
+def test_dependency_worker_emits_rekordbox_state(monkeypatch):
+  monkeypatch.setattr(requests, "get", lambda *a, **k: SimpleNamespace())
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.is_rekordbox_running", lambda: True
+  )
+  worker = main.DependencyCheckWorker("LM Studio", "http://localhost:1234/v1")
+  emitted = []
+  worker.checked.connect(lambda *args: emitted.append(args))
+
+  worker.run()
+
+  assert emitted and emitted[0][2] is True
+
+
+def test_real_window_shows_rekordbox_warning_end_to_end(qtbot, monkeypatch):
+  """Vollstaendige Kette: Worker-Signal (3 Argumente) -> Lambda -> Handler ->
+  Statuszeile. Faengt Signaturbrueche, die Unit-Doubles durchlassen."""
+  # Original sichern, bevor _window() die Methode fuer den Aufbau stilllegt.
+  check = main.MainWindow.check_dependencies_and_warn
+  window = _window(qtbot, monkeypatch)
+
+  monkeypatch.setattr(requests, "get", lambda *a, **k: SimpleNamespace())
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.is_rekordbox_running", lambda: True
+  )
+  check(window)
+
+  qtbot.waitUntil(
+    lambda: "Rekordbox laeuft" in window.status_bar.toolTip(), timeout=5000
+  )
+
+
+# --- Rekordbox-Abdeckung nach dem Lauf --------------------------------------
+
+
+def _coverage(**kwargs):
+  from hpg_core.rekordbox_importer import RekordboxCoverage
+
+  defaults = dict(available=True, total=34, with_analysis=15)
+  defaults.update(kwargs)
+  return RekordboxCoverage(**defaults)
+
+
+def test_hint_survives_later_status_updates(qtbot, monkeypatch):
+  """Der Befund darf nicht von 'Complete — N tracks' ueberschrieben werden."""
+  window = _window(qtbot, monkeypatch)
+  window.status_bar.set_hint("Rekordbox: 19/34 ohne Daten", "Details")
+
+  window.status_bar.set_status("Complete — 34 tracks, Quality 82%")
+
+  # isVisible() ist False, solange das Fenster selbst nicht gezeigt wird —
+  # isHidden() prueft den gesetzten Zustand statt der Bildschirmsichtbarkeit.
+  assert not window.status_bar.hint_label.isHidden()
+  assert "19/34" in window.status_bar.hint_label.text()
+  assert window.status_bar.status_label.text().startswith("Complete")
+
+
+def test_unanalyzed_collection_tracks_produce_hint(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+
+  window._on_rekordbox_coverage(
+    _coverage(without_analysis=19, examples_without_analysis=["Antinomy.aiff"])
+  )
+
+  assert not window.status_bar.hint_label.isHidden()
+  assert "19/34" in window.status_bar.hint_label.text()
+  tooltip = window.status_bar.hint_label.toolTip()
+  assert "nicht analysiert" in tooltip
+  assert "Antinomy.aiff" in tooltip
+
+
+def test_ambiguous_records_produce_hint(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+
+  window._on_rekordbox_coverage(
+    _coverage(ambiguous=2, examples_ambiguous=["Doppelt.aiff"])
+  )
+
+  assert "mehrdeutige" in window.status_bar.hint_label.toolTip()
+  assert "Doppelt.aiff" in window.status_bar.hint_label.toolTip()
+
+
+def test_tracks_outside_collection_are_not_a_finding(qtbot, monkeypatch):
+  """497 fremde Tracks sind normal — dafuer darf keine Warnung erscheinen."""
+  window = _window(qtbot, monkeypatch)
+
+  window._on_rekordbox_coverage(
+    _coverage(total=1400, with_analysis=903, not_in_collection=497)
+  )
+
+  assert window.status_bar.hint_label.isHidden()
+
+
+def test_no_hint_without_rekordbox(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  window._on_rekordbox_coverage(
+    _coverage(available=False, total=0, with_analysis=0, without_analysis=0)
+  )
+  assert window.status_bar.hint_label.isHidden()
+
+
+def test_worker_emits_coverage_for_analyzed_paths(monkeypatch, tmp_path):
+  captured = {}
+
+  def fake_summarize(paths):
+    captured["paths"] = list(paths)
+    return _coverage(without_analysis=19)
+
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.get_rekordbox_importer",
+    lambda: SimpleNamespace(summarize_coverage=fake_summarize),
+  )
+  worker = main.AnalysisWorker(str(tmp_path))
+  emitted = []
+  worker.rekordbox_coverage.connect(emitted.append)
+
+  worker._report_rekordbox_coverage(
+    [Track(filePath="C:/x/a.wav", fileName="a.wav")]
+  )
+
+  assert captured["paths"] == ["C:/x/a.wav"]
+  assert emitted and emitted[0].without_analysis == 19
+
+
+def test_coverage_failure_never_breaks_a_finished_run(monkeypatch, tmp_path):
+  """Ein Diagnose-Fehler darf ein fertiges Analyseergebnis nicht kippen."""
+  def boom():
+    raise RuntimeError("DB weg")
+
+  monkeypatch.setattr(
+    "hpg_core.rekordbox_importer.get_rekordbox_importer", boom
+  )
+  worker = main.AnalysisWorker(str(tmp_path))
+  emitted = []
+  worker.rekordbox_coverage.connect(emitted.append)
+
+  worker._report_rekordbox_coverage(
+    [Track(filePath="C:/x/a.wav", fileName="a.wav")]
+  )
+
+  assert emitted == []

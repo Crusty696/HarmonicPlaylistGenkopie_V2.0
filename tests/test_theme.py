@@ -57,6 +57,23 @@ def test_score_color_from_theme():
     assert score_color(0.5) == COLORS["accent_danger"]
     assert score_color(90) == COLORS["accent_success"] # scales 90 * 0.01 = 0.9
 
+
+def test_transition_score_style_has_five_distinct_visible_levels():
+    from hpg_core.theme import transition_score_style
+
+    styles = [transition_score_style(score) for score in (90, 75, 60, 45, 20)]
+
+    assert [style[2] for style in styles] == [
+        "Sehr gut",
+        "Gut",
+        "Passend",
+        "Schwach",
+        "Riskant",
+    ]
+    assert len({style[0] for style in styles}) == 5
+    assert transition_score_style(0.9) == transition_score_style(90)
+
+
 def test_apply_dark_theme_with_all_roles():
     from PyQt6.QtGui import QPalette
     mock_app = MagicMock()

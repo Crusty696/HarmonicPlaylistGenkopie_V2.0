@@ -9,7 +9,7 @@ from hpg_core.dj_brain import (
     _get_intro_end_from_sections,
     _get_outro_start_from_sections,
 )
-from hpg_core.models import Track, quantize_to_grid
+from hpg_core.models import Track
 
 PASS = []
 FAIL = []

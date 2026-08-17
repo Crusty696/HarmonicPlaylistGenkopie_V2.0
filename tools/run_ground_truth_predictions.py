@@ -35,6 +35,21 @@ def git_commit() -> str:
   return result.stdout.strip()
 
 
+def require_clean_worktree() -> None:
+  result = subprocess.run(
+    ["git", "status", "--porcelain"],
+    cwd=ROOT,
+    capture_output=True,
+    text=True,
+    check=True,
+  )
+  if result.stdout.strip():
+    raise RuntimeError(
+      "Ground-Truth-Predictions verweigern einen dirty Worktree, weil der "
+      "aufgezeichnete Commit den ausgefuehrten Code sonst nicht eindeutig beschreibt."
+    )
+
+
 def prediction_from_track(track_id: str, audio_sha256: str, track) -> dict:
   return {
     "track_id": track_id,
@@ -62,6 +77,8 @@ def main() -> int:
   )
   parser.add_argument("--allow-rekordbox", action="store_true")
   args = parser.parse_args()
+
+  require_clean_worktree()
 
   if not args.allow_rekordbox:
     os.environ["HPG_DISABLE_REKORDBOX"] = "1"

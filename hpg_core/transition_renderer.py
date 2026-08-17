@@ -22,6 +22,7 @@ from scipy.signal import butter, sosfiltfilt
 import librosa
 
 from .config import MAX_TRANSITION_OVERLAP_SECONDS, METER
+from .downbeat import DOWNBEAT_RELIABLE_MIN, REFERENCE_BEATGRID_CONFIDENCE
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +64,27 @@ class TransitionClipSpec:
     bpm_b: float = 120.0         # BPM von Track B (fuer Time-Stretching)
     # Downbeat-Feature 2026-07-17: bekannte erste Downbeats (Sekunden) beider
     # Tracks — ermoeglicht exaktes Beat-Alignment ohne Laufzeit-Schaetzung.
-    # downbeat_reliable_* = True nur bei hoher Konfidenz (ANLZ-Beatgrid);
-    # 0.0 ist dann ein LEGITIMER Anker (Track startet auf der "1").
-    # Validierung 2026-07-17: die eigene Schaetzung ist fuers sample-genaue
-    # Alignment zu ungenau (30-380ms Phasenfehler) -> dort Segment-Schaetzung.
+    # 0.0 ist ein LEGITIMER Anker (Track startet auf der "1").
+    #
+    # AUDIT-FIX D-03 (2026-08-14): ZWEI getrennte Verlaesslichkeits-Stufen,
+    # weil die Eigenschaetzung genau eine der beiden Groessen belastbar liefert.
+    #   downbeat_reliable_*  — die BEAT-Phase stimmt (Flam-Kriterium).
+    #       Gilt ab downbeat_confidence >= DOWNBEAT_RELIABLE_MIN. Gemessen an
+    #       35 ANLZ-Referenzen: Sub-Beat-Fehler Median 16 ms, Max 43 ms,
+    #       also unter der hoerbaren Grenze von 1/8 Beat (54 ms).
+    #   bar_phase_reliable_* — zusaetzlich stimmt die TAKT-Phase (welcher
+    #       Beat ist die "1"). Das leistet nur das Rekordbox-ANLZ-Beatgrid
+    #       (Konfidenz exakt 1.0); das eigene 4-Bin-Voting lag bei 9 von 19
+    #       Schaetzungen um ganze Beats daneben, ohne dass die Konfidenz das
+    #       getrennt haette (bester Fehlgriff: 0.87 bei 1 Beat Versatz).
+    # Folge: mit Eigenschaetzung wird auf BEAT-Ebene aligned (Kick auf Kick),
+    # auf TAKT-Ebene nur mit beidseitigem Referenz-Beatgrid.
     first_downbeat_a: float = 0.0
     first_downbeat_b: float = 0.0
     downbeat_reliable_a: bool = False
     downbeat_reliable_b: bool = False
+    bar_phase_reliable_a: bool = False
+    bar_phase_reliable_b: bool = False
     # Lautheits-Normalisierung (Research 2026-02-28: verhindert Lautheitssprunge)
     normalize_rms: bool = True          # RMS-Normalisierung vor Crossfade
     normalize_target_db: float = -14.0  # Ziel-Pegel in dBRMS (EBU R128: -14 LUFS)
@@ -97,10 +111,20 @@ class TransitionClipSpec:
             first_downbeat_a=float(getattr(from_track, "first_downbeat", 0.0) or 0.0),
             first_downbeat_b=float(getattr(to_track, "first_downbeat", 0.0) or 0.0),
             downbeat_reliable_a=(
-                getattr(from_track, "downbeat_confidence", 0.0) >= 0.9
+                getattr(from_track, "downbeat_confidence", 0.0)
+                >= DOWNBEAT_RELIABLE_MIN
             ),
             downbeat_reliable_b=(
-                getattr(to_track, "downbeat_confidence", 0.0) >= 0.9
+                getattr(to_track, "downbeat_confidence", 0.0)
+                >= DOWNBEAT_RELIABLE_MIN
+            ),
+            bar_phase_reliable_a=(
+                getattr(from_track, "downbeat_confidence", 0.0)
+                == REFERENCE_BEATGRID_CONFIDENCE
+            ),
+            bar_phase_reliable_b=(
+                getattr(to_track, "downbeat_confidence", 0.0)
+                == REFERENCE_BEATGRID_CONFIDENCE
             ),
             lufs_a=float(getattr(from_track, "lufs", 0.0) or 0.0),
             lufs_b=float(getattr(to_track, "lufs", 0.0) or 0.0),
@@ -213,8 +237,20 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         # die Preview-Semantik unabhaengig davon, ob Track-LUFS vorhanden ist.
         seg_a = _rms_normalize(seg_a, spec.normalize_target_db)
         seg_b = _rms_normalize(seg_b, spec.normalize_target_db)
+        # AUDIT-FIX 2026-08-14: Hier stand vorher spec.lufs_a/spec.lufs_b — die
+        # Lautheit der GANZEN Tracks, gemessen VOR dieser Normalisierung. Da
+        # _rms_normalize die beiden Segmente aber bereits angeglichen hat
+        # (gemessen: Restdifferenz 0.62 dB), zog das Delta sie anschliessend
+        # wieder auseinander statt sie zusammenzufuehren: 6.62 dB Ueber-
+        # korrektur, im fertigen Clip 9.83 dB Pegelsprung zwischen den Tracks.
+        # Korrigiert wird jetzt die RESTdifferenz der normalisierten Segmente.
+        # spec.lufs_a/lufs_b bleiben als Analyse-Metadaten erhalten (dj_brain
+        # nutzt sie fuer gain_advice), steuern hier aber nichts mehr.
         seg_a, seg_b = _apply_lufs_delta(
-            seg_a, seg_b, spec.lufs_a, spec.lufs_b
+            seg_a,
+            seg_b,
+            _measure_segment_loudness(seg_a, sr),
+            _measure_segment_loudness(seg_b, sr)
         )
 
     # Soll-Laengen in Frames
@@ -239,10 +275,19 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
             known_a = known_b = None
+            bar_aligned = False
             if spec.downbeat_reliable_a and spec.downbeat_reliable_b:
                 # AUDIT-FIX C1 (2026-07-26): Phase innerhalb des TAKTS (Bar)
                 # statt innerhalb des Beats — das Alignment setzt Beat 1 von B
                 # auf Beat 1 von A, nicht nur Kick auf Kick.
+                # AUDIT-FIX D-03 (2026-08-14): Die Takt-Ebene setzt voraus,
+                # dass BEIDE Anker aus einem Referenz-Beatgrid stammen. Die
+                # Eigenschaetzung liefert die Beat-Phase praezise, die
+                # Takt-Phase aber nur in 10 von 19 gemessenen Faellen richtig
+                # — auf ihr zu takten waere eine unbelegte Behauptung.
+                bar_aligned = (
+                    spec.bar_phase_reliable_a and spec.bar_phase_reliable_b
+                )
                 bar_sec_a = (60.0 / spec.bpm_a) * METER
                 known_a = (spec.first_downbeat_a - spec.mix_out_sec) % bar_sec_a
                 bar_sec_b = (
@@ -258,7 +303,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
             seg_b = _align_beat_phase(
                 seg_a[pre_frames:], seg_b, spec.bpm_a, sr,
                 known_first_beat_a=known_a, known_first_beat_b=known_b,
-                lead_frames=b_lead_frames,
+                lead_frames=b_lead_frames, bar_aligned=bar_aligned,
             )
         except Exception as align_err:
             logger.warning(f"Beat-Phase-Alignment fehlgeschlagen: {align_err}")
@@ -342,7 +387,8 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
                       bpm: float, sr: int,
                       known_first_beat_a: float | None = None,
                       known_first_beat_b: float | None = None,
-                      lead_frames: int = 0) -> np.ndarray:
+                      lead_frames: int = 0,
+                      bar_aligned: bool = False) -> np.ndarray:
     """
     Verschiebt seg_b, sodass sein Beat-Raster auf das von ref_seg (Track A im
     Crossfade-Bereich) faellt.
@@ -362,6 +408,12 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
     Ohne Vorlauf (lead_frames == 0, Mix-In am Track-Anfang) bleibt das alte
     Verhalten: naechstgelegene Verschiebung, nach vorne = Cut, nach hinten =
     Null-Padding (< 1/2 Grid, unhoerbar da im Fade-In).
+
+    AUDIT-FIX D-03 (2026-08-14): `bar_aligned` entscheidet ueber die
+    Gitterweite des Exakt-Pfads — Takt (METER Beats) nur mit beidseitigem
+    Referenz-Beatgrid, sonst Beat. Die uebergebenen Phasen sind in beiden
+    Faellen dieselben Takt-Phasen; modulo beat_len ergibt daraus die
+    Beat-Phase.
     """
     lead_frames = max(0, min(int(lead_frames), len(seg_b)))
     if bpm <= 0 or len(ref_seg) < sr or len(seg_b) < sr:
@@ -370,18 +422,21 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
     if beat_len <= 0:
         return seg_b[lead_frames:]
 
-    # AUDIT-FIX C1 (2026-07-26): Auf dem EXAKT-Pfad (beide Downbeats aus
-    # verlaesslichen Beatgrids bekannt) wird jetzt auf TAKT-Phase aligned
-    # (Modulo Bar-Laenge) statt nur auf Beat-Phase. Vorher konnte die Kick
-    # zwar auf der Kick sitzen, aber Beat 1 von B auf Beat 3 von A — der
-    # Snare-Backbeat und die Taktstruktur lagen versetzt. Der Schaetz-Pfad
-    # (8-s-Fenster, 30-380 ms Fehler) bleibt bewusst auf Beat-Ebene: eine
+    # AUDIT-FIX C1 (2026-07-26): Auf dem EXAKT-Pfad mit Referenz-Beatgrid wird
+    # auf TAKT-Phase aligned (Modulo Bar-Laenge) statt nur auf Beat-Phase.
+    # Vorher konnte die Kick zwar auf der Kick sitzen, aber Beat 1 von B auf
+    # Beat 3 von A — der Snare-Backbeat und die Taktstruktur lagen versetzt.
+    # Der Laufzeit-Schaetz-Pfad (8-s-Fenster) bleibt auf Beat-Ebene: eine
     # Verschiebung um ganze Takte auf Basis einer unsicheren Schaetzung waere
-    # riskanter als der Beat-Fehler, den sie korrigieren soll.
+    # riskanter als der Beat-Fehler, den sie korrigieren soll. Dasselbe gilt
+    # seit D-03 fuer bekannte Anker aus der EIGENSCHAETZUNG (bar_aligned=False).
     if known_first_beat_a is not None and known_first_beat_b is not None:
         t_a = float(known_first_beat_a)
         t_b = float(known_first_beat_b)
-        grid_len = beat_len * 4  # Takt-Phase (METER=4)
+        # D-03: Takt-Phase nur mit beidseitigem Referenz-Beatgrid, sonst
+        # Beat-Phase. Die uebergebenen Phasen sind Takt-Phasen; modulo
+        # beat_len ergibt daraus korrekt die Beat-Phase.
+        grid_len = beat_len * METER if bar_aligned else beat_len
     else:
         t_a = _estimate_first_beat(ref_seg, sr, bpm)
         t_b = _estimate_first_beat(seg_b, sr, bpm)
@@ -566,6 +621,34 @@ def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
     return (seg * gain).astype(np.float32)
 
 
+def _measure_segment_loudness(seg: np.ndarray, sr: int) -> float:
+    """Integrated Loudness eines bereits normalisierten Segments (BS.1770).
+
+    Returns:
+        LUFS (negativ) oder 0.0 als "unbekannt"-Sentinel — mit 0.0 wird
+        _apply_lufs_delta zum No-Op, was hier die sichere Variante ist:
+        die RMS-Normalisierung allein trifft die Lautheit bereits auf ~0.6 dB.
+    """
+    if seg is None or len(seg) == 0 or sr <= 0:
+        return 0.0
+    try:
+        import pyloudnorm as pyln
+
+        data = np.asarray(seg, dtype=np.float64)
+        if data.ndim == 1:
+            data = data[:, None]
+        meter = pyln.Meter(sr, filter_class="DeMan")
+        if len(data) < int(meter.block_size * sr):
+            return 0.0
+        value = float(meter.integrated_loudness(data))
+        if not np.isfinite(value) or value >= 0.0 or value < -70.0:
+            return 0.0
+        return value
+    except Exception as error:  # pyloudnorm fehlt oder Messung scheitert
+        logger.debug("Segment-Loudness nicht messbar: %s", error)
+        return 0.0
+
+
 def _apply_lufs_delta(
     seg_a: np.ndarray,
     seg_b: np.ndarray,
@@ -629,8 +712,11 @@ def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
             _pedalboard_warned = True
         return mixed
 
-    # pedalboard erwartet (channels, frames) — wir haben (frames, channels)
-    stereo = mixed.T
+    # pedalboard erwartet ein zusammenhaengendes float32-Array im Layout
+    # (channels, frames). mixed.T ist nur ein nicht zusammenhaengender View;
+    # dessen native Verarbeitung kann auf Windows mit einer Access Violation
+    # enden, statt einen Python-Fehler zu liefern.
+    stereo = np.ascontiguousarray(mixed.T, dtype=np.float32)
     board = Pedalboard([
         Compressor(
             threshold_db=-12.0,  # Erst ab -12 dBFS komprimieren

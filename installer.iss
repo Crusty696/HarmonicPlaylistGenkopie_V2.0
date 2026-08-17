@@ -80,21 +80,22 @@ Type: filesandordirs; Name: "{app}\*.log"
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  MsgBox('Welcome to Harmonic Playlist Generator v3.7.2 Setup!' + #13#10 + #13#10 +
-         'This installer will install HPG on your computer.' + #13#10 + #13#10 +
-         'Features:' + #13#10 +
-         '  - 4-6x faster audio analysis (multi-core)' + #13#10 +
-         '  - Optional Rekordbox integration (12x speedup)' + #13#10 +
-         '  - 8 advanced playlist algorithms' + #13#10 +
-         '  - DJ-optimized mix points (phrase-aligned)' + #13#10 +
-         '  - M3U8 and Rekordbox XML export' + #13#10 + #13#10 +
-         'Click Next to continue.',
-         mbInformation, MB_OK);
+  if not WizardSilent then
+    MsgBox('Welcome to Harmonic Playlist Generator v3.7.2 Setup!' + #13#10 + #13#10 +
+           'This installer will install HPG on your computer.' + #13#10 + #13#10 +
+           'Features:' + #13#10 +
+           '  - 4-6x faster audio analysis (multi-core)' + #13#10 +
+           '  - Optional Rekordbox integration (12x speedup)' + #13#10 +
+           '  - 8 advanced playlist algorithms' + #13#10 +
+           '  - DJ-optimized mix points (phrase-aligned)' + #13#10 +
+           '  - M3U8 and Rekordbox XML export' + #13#10 + #13#10 +
+           'Click Next to continue.',
+           mbInformation, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
+  if (CurStep = ssPostInstall) and (not WizardSilent) then
   begin
     MsgBox('Installation Complete!' + #13#10 + #13#10 +
            'HPG has been successfully installed.' + #13#10 + #13#10 +
@@ -103,8 +104,8 @@ begin
            '  2. Drag & drop your music folder' + #13#10 +
            '  3. Choose playlist strategy' + #13#10 +
            '  4. Click Generate Playlist' + #13#10 + #13#10 +
-           'For Rekordbox integration, install pyrekordbox:' + #13#10 +
-           '  pip install pyrekordbox' + #13#10 + #13#10 +
+           'Die optionale Rekordbox-Integration ist bereits enthalten und wird' + #13#10 +
+           'automatisch aktiviert, wenn eine kompatible lokale Datenbank vorhanden ist.' + #13#10 + #13#10 +
          'Enjoy harmonically optimized playlists!',
            mbInformation, MB_OK);
   end;

@@ -12,7 +12,7 @@ Design-Philosophie:
   - 1px solid Borders — duenn, kaum sichtbar
 
 Stellt bereit:
-  - COLORS, GENRE_COLORS, RISK_STYLES  — Farbkonstanten
+  - COLORS, GENRE_COLORS              — Farbkonstanten
   - get_app_stylesheet()               — Globale QSS
   - apply_dark_theme(app)              — QPalette + QSS anwenden
   - score_color(value)                 — Dynamische Score-Farbe
@@ -102,29 +102,6 @@ GENRE_COLORS = {
 
 # Standard-Farbe fuer unbekannte Genres
 GENRE_DEFAULT = ("#8592b0", "#141d3a")
-
-# ──────────────────────────────────────────────────────────────
-# Risk-Styles fuer Mix Tips (bg_color, accent_color)
-# ──────────────────────────────────────────────────────────────
-
-RISK_STYLES = {
-  "low":        ("#12233a", "#7bb091"),  # Gedaempftes Gruen
-  "medium-low": ("#1c2418", "#b0c46f"),  # Gedaempftes Olive-Lime
-  "medium":     ("#241f10", "#e0b34a"),  # Amber
-  "high":       ("#2a1420", "#d47472"),  # Gedaempftes Rot
-}
-RISK_DEFAULT = ("#141d3a", "#8592b0")
-
-# ──────────────────────────────────────────────────────────────
-# DJ-freundliche Risk-Labels
-# ──────────────────────────────────────────────────────────────
-
-RISK_LABELS = {
-  "low":        "Smooth",
-  "medium-low": "Solid",
-  "medium":     "Aufpassen",
-  "high":       "Riskant",
-}
 
 # ──────────────────────────────────────────────────────────────
 # Energie-Phasen-Farben (fuer Set Timing)
@@ -228,6 +205,17 @@ TRANSITION_TYPE_COLORS = {
   "cold_cut":          "#9fb0c0",  # Blaugrau
 }
 
+# Gut unterscheidbare Ampelskala fuer Uebergangs-Scores.
+# Tupel: (Mindestwert, Akzentfarbe, dunkler Kartenhintergrund, Label)
+TRANSITION_SCORE_STYLES = (
+  (0.85, "#22c55e", "#102c24", "Sehr gut"),
+  (0.70, "#a3e635", "#263211", "Gut"),
+  (0.55, "#facc15", "#332b0b", "Passend"),
+  (0.40, "#f97316", "#351d10", "Schwach"),
+  (0.00, "#ef4444", "#34151c", "Riskant"),
+)
+TRANSITION_SCORE_TEXT = "#071019"
+
 
 # ──────────────────────────────────────────────────────────────
 # Hilfsfunktionen
@@ -242,6 +230,21 @@ def score_color(value: float) -> str:
   elif value >= 0.6:
     return COLORS["accent_warning"]
   return COLORS["accent_danger"]
+
+
+def transition_score_style(value: float) -> tuple[str, str, str]:
+  """Akzent, Kartenhintergrund und Label fuer eine Uebergangs-Passung."""
+  if value != value:  # NaN
+    value = 0.0
+  if value > 1.0:
+    value = value / 100.0
+  value = max(0.0, min(1.0, value))
+
+  for threshold, accent, background, label in TRANSITION_SCORE_STYLES:
+    if value >= threshold:
+      return accent, background, label
+
+  return TRANSITION_SCORE_STYLES[-1][1:]
 
 
 def html_style_block() -> str:

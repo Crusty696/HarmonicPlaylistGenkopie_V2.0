@@ -1,9 +1,13 @@
 """Gezielte Tests fuer Pipelinezustand und einheitlichen Fortschritt."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QLabel, QPushButton
 
+import main
 from main import (
   AIAnalysisWorker,
   AdvancedParametersWidget,
@@ -13,9 +17,12 @@ from main import (
   PlaylistPanel,
   RunState,
   StatusBarWidget,
+  TransitionPreviewWidget,
+  WaveformWidget,
   map_phase_progress,
 )
 from hpg_core.models import Track
+from hpg_core.playlist import TransitionRecommendation
 
 
 def test_phase_progress_mapping_is_bounded_and_monotonic():
@@ -125,6 +132,63 @@ def test_thousand_transitions_create_no_eager_players_or_render_jobs(qtbot):
   assert len(panel._preview_queue) == 0
 
 
+def test_peak_worker_class_is_module_level_and_drains(qtbot):
+  """Regression: _PeakWorker lag frueher IN WaveformWidget.load() — jeder
+  Aufruf erzeugte ein neues Klassenobjekt (eigenes pyqtSignal/QMetaObject)."""
+  import main as main_module
+
+  assert isinstance(main_module._PeakWorker, type)
+  assert issubclass(main_module._PeakWorker, QThread)
+
+  widget = WaveformWidget()
+  qtbot.addWidget(widget)
+  # Nicht existierender Pfad: run() faellt in den Fehlerzweig, der Lifecycle
+  # (Registrierung + finished -> discard) ist derselbe.
+  seen = []
+  for _ in range(3):
+    widget.load("C:/does-not-exist-peak-probe.wav", 8.0)
+    worker = widget._peak_worker
+    seen.append(type(worker))
+    assert worker.parent() is None  # nie am Widget haengen
+    assert worker in main_module._PEAK_WORKERS
+    qtbot.waitUntil(lambda: len(main_module._PEAK_WORKERS) == 0, timeout=5000)
+
+  assert len({id(cls) for cls in seen}) == 1
+  assert seen[0] is main_module._PeakWorker
+
+  main_module.stop_peaks()
+  assert len(main_module._PEAK_WORKERS) == 0
+
+
+def test_preview_error_keeps_widget_and_retry_clears_it(qtbot):
+  """Regression: set_error() war toter Code — der Fehlerpfad loeschte das
+  Widget, statt die dokumentierte Fehlermeldung darin anzuzeigen."""
+  transition = SimpleNamespace(
+    from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
+    to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
+    plan=SimpleNamespace(mix_out_a=30.0, mix_in_b=0.0, overlap=8.0),
+    transition_type="blend",
+  )
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = TransitionPreviewWidget(0, transition, panel)
+  panel._preview_widgets[0] = widget
+  panel._preview_buttons[0] = QPushButton("laufend")
+
+  panel._on_clip_error(0, "render abgebrochen")
+
+  assert panel._preview_widgets[0] is widget
+  assert widget._error_msg == "render abgebrochen"
+  assert not widget._play_btn.isEnabled()
+  assert not widget._slider.isEnabled()
+  assert "render abgebrochen" in widget._waveform._placeholder
+
+  widget.clear_error()
+  assert widget._error_msg is None
+  assert widget._title_label.text() == widget._base_title
+  assert widget._waveform._placeholder == "Wellenform wird geladen …"
+
+
 def test_reorder_uses_full_track_identity_for_duplicate_basenames(qtbot):
   panel = PlaylistPanel()
   qtbot.addWidget(panel)
@@ -146,6 +210,116 @@ def test_reorder_uses_full_track_identity_for_duplicate_basenames(qtbot):
     second.track_id,
     first.track_id,
   ]
+
+
+def test_playlist_shows_colored_transition_fit_column(qtbot):
+  from hpg_core.theme import transition_score_style
+
+  panel = PlaylistPanel()
+  qtbot.addWidget(panel)
+  tracks = [
+    Track(filePath="C:/set/a.wav", fileName="a.wav", bpm=128.0),
+    Track(filePath="C:/set/b.wav", fileName="b.wav", bpm=128.0),
+  ]
+
+  panel.set_playlist_data(tracks, {})
+
+  assert panel.table.horizontalHeaderItem(14).text() == "Passung"
+  assert panel.table.item(0, 14).text() == "—"
+  score_item = panel.table.item(1, 14)
+  score = score_item.data(Qt.ItemDataRole.UserRole)
+  accent_color, _, label = transition_score_style(score / 100.0)
+  assert label in score_item.text()
+  assert score_item.background().color().name() == QColor(accent_color).name()
+
+
+def test_playlist_repopulation_preserves_ai_insights(qtbot):
+  panel = PlaylistPanel()
+  qtbot.addWidget(panel)
+  track = Track(
+    filePath="C:/set/a.wav",
+    fileName="a.wav",
+    bpm=128.0,
+    ai_metadata={
+      "moods": ["dark", "driving"],
+      "sub_genre": "Peak Techno",
+      "description": "late-night",
+    },
+  )
+
+  panel.set_playlist_data([track], {})
+
+  assert panel.table.item(0, 15).text() == "[Peak Techno] dark, driving"
+  assert panel.table.item(0, 15).toolTip() == "late-night"
+
+
+def test_preview_temp_directory_is_removed_after_cache_cleanup(qtbot, tmp_path):
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  directory = tmp_path / "hpg_preview_test"
+  directory.mkdir()
+  clip = directory / "preview.wav"
+  clip.write_bytes(b"wav")
+  worker = main.TransitionRenderWorker([])
+  worker._temp_dir = str(directory)
+  worker._temp_files = [str(clip)]
+  panel._render_worker = worker
+  panel._preview_cache[0] = str(clip)
+
+  panel._on_preview_worker_finished(worker)
+  assert directory.exists()
+
+  panel._cleanup_existing_previews()
+  assert not clip.exists()
+  assert not directory.exists()
+
+
+def test_preview_state_controls_cancel_visibility(qtbot, monkeypatch):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow()
+  qtbot.addWidget(window)
+
+  window._on_preview_state_changed(True)
+  assert window.run_state == RunState.PREVIEW
+  assert not window.status_bar.cancel_btn.isHidden()
+
+  window._on_preview_state_changed(False)
+  assert window.run_state == RunState.SUCCESS
+  assert window.status_bar.cancel_btn.isHidden()
+
+
+def test_mix_tip_uses_same_transition_fit_color(qtbot):
+  from hpg_core.theme import transition_score_style
+
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  recommendation = TransitionRecommendation(
+    index=0,
+    from_track=Track(filePath="C:/set/a.wav", fileName="a.wav", bpm=128.0),
+    to_track=Track(filePath="C:/set/b.wav", fileName="b.wav", bpm=129.0),
+    fade_out_start=30.0,
+    fade_out_end=40.0,
+    fade_in_start=0.0,
+    mix_entry=0.0,
+    overlap=10.0,
+    bpm_delta=1.0,
+    energy_delta=2,
+    compatibility_score=75,
+    risk_level="medium-low",
+    notes="",
+  )
+
+  panel.set_recommendations([recommendation])
+
+  summary = next(
+    label
+    for label in panel.findChildren(QLabel)
+    if "Score 75/100" in label.text()
+  )
+  accent_color, _, label = transition_score_style(0.75)
+  assert label in summary.text()
+  assert accent_color in summary.styleSheet()
+  assert accent_color in summary.parentWidget().styleSheet()
 
 
 def test_strategy_ui_disables_parameters_that_are_not_consumed(qtbot):

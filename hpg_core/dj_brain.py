@@ -11,6 +11,7 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -128,8 +129,23 @@ def calculate_genre_aware_mix_points(
       (ggf. spaeten) Phrasen-Anker. None = Fallback auf anchor
       (Alt-Verhalten fuer Aufrufer ohne Downbeat-Info).
   """
-  if not sections or bpm <= 0 or duration <= 0:
-    return 0.0, duration, 0, 0
+  # AUDIT-FIX Z1 (2026-08-14): Der Guard reichte die ungueltige duration
+  # unveraendert als mix_out durch — bei duration=-5.0 kam (0.0, -5.0) heraus
+  # und verletzte damit genau die Invariante 0 <= mix_in < mix_out, die er
+  # schuetzen soll. Zusaetzlich griffen die Vergleiche bei NaN/inf gar nicht
+  # (NaN-Vergleiche sind immer False), die Funktion lief ungebremst durch und
+  # lieferte Mix-Punkte ohne jede Dauer-Begrenzung. Jetzt explizit auf
+  # Endlichkeit pruefen und nie einen negativen/nicht-endlichen mix_out
+  # zurueckgeben.
+  if (
+    not sections
+    or not math.isfinite(bpm)
+    or not math.isfinite(duration)
+    or bpm <= 0
+    or duration <= 0
+  ):
+    safe_duration = duration if math.isfinite(duration) and duration > 0 else 0.0
+    return 0.0, safe_duration, 0, 0
 
   profile = get_mix_profile(genre)
   seconds_per_beat = 60.0 / bpm
@@ -204,15 +220,25 @@ def calculate_genre_aware_mix_points(
   # dem Phrasen-Gitter, wenn das ohne Fenster-Kollaps moeglich ist. Vorher
   # gingen reine Prozentwerte (duration*0.15/0.85) ungefiltert und off-grid
   # in Track.mix_in_point/mix_out_point.
-  if grid_seconds > 0:
+  # AUDIT-FIX N5b (2026-08-14): Die Quantisierung wurde vorher nur auf dem
+  # PHRASEN-Gitter versucht. Kollabiert das Fenster dort (kurze Tracks, enge
+  # Sektionen), blieben die rohen Prozentwerte off-grid stehen — auf
+  # synthetischen Kurztracks bis zu 12.6 s neben der Phrasengrenze. Analog zu
+  # align_ai_mix_points wird jetzt das feinere Bar-Gitter als zweite Stufe
+  # versucht; erst wenn auch das kein gueltiges Fenster liefert, bleibt der
+  # Rohwert (Invariante 1 hat Vorrang vor Invariante 2).
+  for candidate_grid in (grid_seconds, seconds_per_bar):
+    if candidate_grid <= 0:
+      continue
     q_in = quantize_to_grid(
-      mix_in_time - grid_epsilon, grid_seconds, anchor, "ceil"
+      mix_in_time - grid_epsilon, candidate_grid, anchor, "ceil"
     )
     q_out = quantize_to_grid(
-      mix_out_time + grid_epsilon, grid_seconds, anchor, "floor"
+      mix_out_time + grid_epsilon, candidate_grid, anchor, "floor"
     )
     if 0.0 <= q_in < q_out <= duration:
       mix_in_time, mix_out_time = q_in, q_out
+      break
 
   # In Bars umrechnen
   mix_in_bars = seconds_to_bars(mix_in_time, bpm)
@@ -427,7 +453,11 @@ class DJRecommendation:
   # -1.0 = nicht berechnet -> UI nutzt track.mix_out_point / track.mix_in_point
   adjusted_mix_out_a: float = -1.0   # Angepasster Mix-Out fuer Track A (Sekunden)
   adjusted_mix_in_b: float = -1.0    # Angepasster Mix-In fuer Track B (Sekunden)
-  overlap_seconds: float = 0.0       # Berechnete Overlap-Dauer des Uebergangs
+  # Berechnete Overlap-Dauer des Uebergangs (Tail von A, begrenzt durch den
+  # Rest von B). Hinweis: in der Playlist-Pipeline ist transition_bars die
+  # autoritative Overlap-Quelle — playlist.compute_transition_recommendations
+  # ueberschreibt overlap_seconds danach mit seconds_per_bar * transition_bars.
+  overlap_seconds: float = 0.0
 
 
 def generate_dj_recommendation(
@@ -480,11 +510,17 @@ def generate_dj_recommendation(
   # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
   adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
   overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
-  # M1-Fix: Overlap darf nicht ueber das Intro-Ende von Track B hinauslaufen,
-  # sonst laeuft der Crossfade in den Body von B (Bass-Kollision)
-  intro_window_b = _get_intro_end(track_b) - adjusted_mix_in_b
-  if intro_window_b > 0:
-    overlap_seconds = min(overlap_seconds, intro_window_b)
+  # AUDIT-FIX B3/M1 (2026-08-14): Der alte "M1-Deckel" war
+  #   intro_window_b = _get_intro_end(track_b) - adjusted_mix_in_b
+  # und sollte verhindern, dass der Crossfade ueber das Intro-Ende von B
+  # hinauslaeuft. Seit der Intro-Guard in calculate_paired_mix_points den
+  # Mix-In auf ceil(intro_end) legt, ist diese Differenz per Konstruktion
+  # <= 0 — der Deckel griff auf 51 realen Paaren genau 1x (und auch nur im
+  # Sonderfall "Track B ohne Intro-Sektion", der jetzt ebenfalls geschlossen
+  # ist). Der tatsaechlich bindende Deckel ist der Rest von Track B nach dem
+  # Mix-In: laenger als B noch spielt kann der Uebergang nicht sein.
+  room_b = max(0.0, track_b.duration - adjusted_mix_in_b)
+  overlap_seconds = min(overlap_seconds, room_b)
 
   # Struktur-Kontext auf Basis der wirklich empfohlenen paarspezifischen Punkte
   outgoing_section = _get_section_at_time(track_a, adjusted_mix_out_a, "out")
@@ -493,7 +529,9 @@ def generate_dj_recommendation(
 
 
   # Risiko-Bewertung
-  risk_notes = _assess_transition_risks(track_a, track_b, compat)
+  risk_notes = _assess_transition_risks(
+    track_a, track_b, compat, adjusted_mix_out_a, adjusted_mix_in_b
+  )
   
   # Texture Similarity (Phase 3)
   texture_sim = _calculate_texture_similarity(track_a.timbre_fingerprint, track_b.timbre_fingerprint)
@@ -636,17 +674,23 @@ def calculate_paired_mix_points(
 
   Diese Funktion loest das: Overlap = min(intro_dauer_B, outro_dauer_A).
 
-  Beispiel Psytrance:
+  ACHTUNG (AUDIT-FIX N3, 2026-08-14): Dieser Overlap steuert nur die
+  A-SEITE. Mix-In B ergibt sich ausschliesslich aus dem Intro-Guard
+  (Invariante 5: nie im Intro mixen) — die fruehere Rechnung
+  "Mix-In B = intro_end - overlap" landete per Definition im Intro und
+  wurde vom Guard in 50 von 51 realen Paaren sofort wieder ueberschrieben.
+
+  Beispiel Psytrance (phrase_unit=16, ~1.68 s/Bar):
     Track A: Duration 420s, Outro ab 367s -> Outro-Dauer = 53s
-    Track B: Intro bis 106s -> Intro-Dauer = 106s
-    Overlap = min(106, 53) = 53s
-    -> Mix-In B = max(0.0, 106 - 53) = 53s  (ab Bar 33, NICHT Bar 1!)
-    -> Mix-Out A = max(367, 420 - 53) = max(367, 367) = 367s (unveraendert)
+    Track B: Intro bis 106s
+    Overlap (A-Seite) = min(106, 53) = 53s
+    -> Mix-Out A = max(367, 420 - 53) = 367s (unveraendert)
+    -> Mix-In B  = ceil(106) auf die naechste 16-Bar-Phrasengrenze
 
   Kurzes Intro (Track B Intro = 26s, Track A Outro = 53s):
-    Overlap = min(26, 53) = 26s
-    -> Mix-In B = max(0.0, 26 - 26) = 0.0  (Bar 1, voll von Anfang)
+    Overlap (A-Seite) = min(26, 53) = 26s
     -> Mix-Out A = max(367, 420 - 26) = 394s  (spaeter als Original!)
+    -> Mix-In B  = ceil(26) auf die naechste Phrasengrenze
 
   Args:
     track_a: Ausgehender Track (dessen Mix-Out angepasst wird)
@@ -687,29 +731,42 @@ def calculate_paired_mix_points(
   # Overlap nicht ueber die halbe Laenge eines der beiden Tracks ziehen
   target_overlap = min(target_overlap, track_a.duration * 0.5, track_b.duration * 0.5)
 
-  # --- Track B Mix-In: Starte so spaet, dass noch genau target_overlap bleibt ---
-  adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
-
   # --- Track A Mix-Out: target_overlap Sekunden vor Track-Ende ---
+  # target_overlap steuert AUSSCHLIESSLICH die A-Seite (siehe N3 unten).
   adjusted_mix_out_a = track_a.duration - target_overlap
   # Aber nicht frueher als das urspruenglich berechnete Mix-Out
   # (wir verschieben nur nach hinten, nie nach vorne -- das waere schlechter)
   adjusted_mix_out_a = max(outro_start_a, adjusted_mix_out_a)
 
-  # --- Guard: Mix-In B NIEMALS im Intro ---
-  # Invariante 1: aufs PHRASEN-Gitter (seconds_per_bar * phrase_unit)
-  # quantisieren, nicht auf einen einzelnen Bar — sonst weicht der Mix-Punkt
-  # bei Trance/Psytrance (phrase_unit=16) bis zu 15 Bars von der Phrasengrenze
-  # ab (H2-Fix, konsistent mit calculate_genre_aware_mix_points/align_ai).
+  # --- Track B Mix-In: Intro-Guard ist die Autoritaet ---
+  # AUDIT-FIX N3 (2026-08-14): Vorher stand hier
+  #   adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
+  # und direkt danach ein Guard, der jeden Wert unterhalb des Intro-Endes
+  # wieder auf ceil(intro_end) hochzog. Da target_overlap immer > 0 ist, lag
+  # der Startwert per Definition VOR dem Intro-Ende — der Guard feuerte in
+  # 50 von 51 realen Paaren und ueberschrieb das Ergebnis vollstaendig.
+  # target_overlap war fuer Track B also rechnerisch tot und suggerierte eine
+  # Wirkung, die es nie hatte. Invariante 5 (Mix-In nie im Intro) verlangt
+  # ohnehin genau das Guard-Ergebnis, deshalb wird es jetzt direkt berechnet.
+  # Der 51. Fall (Track B ohne Intro-Sektion) lief in den Sonderfall unten:
+  # _get_intro_end faellt dort auf track_b.mix_in_point zurueck, und
+  # (mix_in_point - target_overlap) schob den Mix-In faktisch an den
+  # Track-Anfang (gemessen 85.7 s -> 3.4 s, mitten in den ersten Drop).
   intro_end_sections_b = _get_intro_end_from_sections(track_b.sections or [])
   phrase_seconds_b = seconds_per_bar_b * profile_b.phrase_unit
+  anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
   if intro_end_sections_b > 0:
-    # ceil auf naechste Phrasengrenze nach Intro-Ende (downbeat-verankert)
-    if adjusted_mix_in_b < intro_end_sections_b:
-      anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
-      adjusted_mix_in_b = quantize_to_grid(
-        intro_end_sections_b, phrase_seconds_b, anchor_b, "ceil"
-      )
+    # ceil auf naechste Phrasengrenze nach Intro-Ende (downbeat-verankert).
+    # Invariante 2: PHRASEN-Gitter (seconds_per_bar * phrase_unit), nicht ein
+    # einzelner Bar — sonst weicht der Punkt bei Trance/Psytrance
+    # (phrase_unit=16) bis zu 15 Bars von der Phrasengrenze ab (H2-Fix).
+    adjusted_mix_in_b = quantize_to_grid(
+      intro_end_sections_b, phrase_seconds_b, anchor_b, "ceil"
+    )
+  else:
+    # Kein Intro erkannt: der per-Track berechnete Mix-In ist der beste
+    # verfuegbare Schaetzwert und wird nicht nach vorn verschoben.
+    adjusted_mix_in_b = max(0.0, track_b.mix_in_point)
 
   # --- Guard: Mix-Out A NIEMALS im Outro ---
   profile_a = get_mix_profile(track_a.detected_genre or "Unknown")
@@ -749,13 +806,21 @@ def calculate_paired_mix_points(
   # Mix-In ceil (nie davor). Quantisierte Werte nur uebernehmen, wenn sie
   # die Sicherheitsgrenzen nicht verletzen.
   anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
-  anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
+  # AUDIT-FIX N3b (2026-08-14): Epsilon gegen Float-Rauschen. Ein Wert, der
+  # bereits exakt auf dem Gitter liegt, darf durch ceil/floor nicht eine
+  # ganze Phrase weit springen (bei Psytrance ~27 s) — dieselbe Konvention
+  # wie in align_ai_mix_points und calculate_genre_aware_mix_points.
+  grid_epsilon = 1e-9
   if phrase_seconds_a > 0:
-    q_out = quantize_to_grid(adjusted_mix_out_a, phrase_seconds_a, anchor_a, "floor")
+    q_out = quantize_to_grid(
+      adjusted_mix_out_a + grid_epsilon, phrase_seconds_a, anchor_a, "floor"
+    )
     if seconds_per_bar_a <= q_out <= track_a.duration - seconds_per_bar_a:
       adjusted_mix_out_a = q_out
   if phrase_seconds_b > 0:
-    q_in = quantize_to_grid(adjusted_mix_in_b, phrase_seconds_b, anchor_b, "ceil")
+    q_in = quantize_to_grid(
+      adjusted_mix_in_b - grid_epsilon, phrase_seconds_b, anchor_b, "ceil"
+    )
     if 0.0 <= q_in < track_b.duration:
       adjusted_mix_in_b = q_in
     elif q_in >= track_b.duration:
@@ -817,10 +882,11 @@ def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) 
   if not track.sections or time_seconds < 0:
     return "unknown"
 
-  for section in track.sections:
+  for index, section in enumerate(track.sections):
     start = section.get("start_time", 0.0)
     end = section.get("end_time", 0.0)
-    if start <= time_seconds <= end:
+    is_last = index == len(track.sections) - 1
+    if start <= time_seconds < end or (is_last and time_seconds == end):
       return section.get("label", "unknown")
 
   if fallback_edge == "in":
@@ -1201,8 +1267,18 @@ def _assess_transition_risks(
   track_a: Track,
   track_b: Track,
   genre_compat: float,
+  mix_out_a: float | None = None,
+  mix_in_b: float | None = None,
 ) -> list[str]:
-  """Bewertet Risiken einer Transition."""
+  """Bewertet Risiken einer Transition.
+
+  AUDIT-FIX N2 (2026-08-14): mix_out_a/mix_in_b sind die PAARSPEZIFISCHEN
+  Mix-Punkte (adjusted_mix_out_a/adjusted_mix_in_b). Ohne sie bewertete der
+  Bass-Kollisions-Check die gespeicherten Track-Punkte — also eine Stelle,
+  die in diesem Uebergang gar nicht gemixt wird. Auf 51 realen Paaren kippte
+  dadurch das Kollisions-Urteil in 2 Faellen und die Dominanz-Warnung in 9.
+  None = Fallback auf die Track-Punkte (Alt-Aufrufer/Tests).
+  """
   risks = []
 
   # BPM-Check mit Half/Double-Time-Erkennung
@@ -1250,8 +1326,13 @@ def _assess_transition_risks(
     start, end = s.get('start_time'), s.get('end_time')
     return start is not None and end is not None and start <= t <= end
 
-  out_sec_data = next((s for s in track_a.sections if _section_covers(s, track_a.mix_out_point)), {})
-  in_sec_data = next((s for s in track_b.sections if _section_covers(s, track_b.mix_in_point)), {})
+  # Sentinel-Regel (config.MIX_POINT_UNSET = -1.0): 0.0 ist ein gueltiger
+  # Mix-Punkt, deshalb >= 0.0 und nicht > 0 pruefen.
+  point_a = mix_out_a if mix_out_a is not None and mix_out_a >= 0.0 else track_a.mix_out_point
+  point_b = mix_in_b if mix_in_b is not None and mix_in_b >= 0.0 else track_b.mix_in_point
+
+  out_sec_data = next((s for s in track_a.sections if _section_covers(s, point_a)), {})
+  in_sec_data = next((s for s in track_b.sections if _section_covers(s, point_b)), {})
   
   bass_a = out_sec_data.get('avg_bass', track_a.avg_bass)
   bass_b = in_sec_data.get('avg_bass', track_b.avg_bass)

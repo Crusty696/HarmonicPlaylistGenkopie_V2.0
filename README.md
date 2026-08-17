@@ -52,7 +52,7 @@ Ollama or LM Studio can optionally add validated Mood/Subgenre metadata after th
 
 ### Performance
 - **4-12x faster** audio analysis with smart multi-core scaling
-- **Scales automatically** with CPU capabilities (up to 50% of cores)
+- **Scales automatically** with CPU capabilities (up to 50% of cores, capped at 4 worker processes — `config.PARALLEL_AUTO_MAX_WORKERS`)
 - **12x faster** when using Rekordbox import
 - Thread-safe caching with file-locking for parallel processing
 
@@ -65,7 +65,7 @@ Ollama or LM Studio can optionally add validated Mood/Subgenre metadata after th
 ## Installation (Developers)
 
 ### Prerequisites
-- Python 3.12.1+ (3.12.10 tested)
+- Python 3.12.1+ — 3.12.x only, **not** 3.13+ (numba). 3.12.10 tested.
 - Windows 10/11
 
 ### Setup

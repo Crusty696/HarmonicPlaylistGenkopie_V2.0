@@ -29,10 +29,28 @@ jobs:
         echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
         echo "Version: $VERSION"
 
+    - name: Verify tag matches application version
+      shell: pwsh
+      run: |
+        $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+        $appVersion = python -c "from hpg_core.app_metadata import APP_VERSION; print(APP_VERSION)"
+        if ($LASTEXITCODE -ne 0 -or $tagVersion -ne $appVersion.Trim()) {
+          throw "Tag version $tagVersion does not match APP_VERSION $appVersion"
+        }
+
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
+    - name: Run release test gate
+      run: python -m pytest tests/ -q
+
+    - name: Compile Python sources
+      shell: pwsh
+      run: |
+        python -m compileall -q main.py hpg_core tools
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Build Executable
       run: |
@@ -60,6 +78,39 @@ jobs:
           Write-Error "❌ EXE not found!"
           exit 1
         }
+
+    - name: Frozen application startup smoke
+      shell: pwsh
+      run: |
+        $process = Start-Process -FilePath ".\HarmonicPlaylistGenerator.exe" -PassThru
+        Start-Sleep -Seconds 8
+        if ($process.HasExited) {
+          throw "Frozen application exited during startup smoke with code $($process.ExitCode)"
+        }
+        Stop-Process -Id $process.Id -Force
+
+    - name: Install Inno Setup
+      shell: pwsh
+      run: choco install innosetup --yes --no-progress
+
+    - name: Build installer
+      shell: cmd
+      run: call build_installer.bat
+
+    - name: Verify installer
+      shell: pwsh
+      run: |
+        $installerPath = "installer_output\HPG_${{ github.ref_name }}_Setup.exe"
+        if (-not (Test-Path $installerPath)) {
+          throw "Installer artifact missing"
+        }
+
+    - name: Create release manifest
+      run: >-
+        python tools/release_manifest.py
+        HarmonicPlaylistGenerator.exe
+        installer_output/HPG_${{ github.ref_name }}_Setup.exe
+        --output release-manifest.json
 
     - name: Create Release Notes
       shell: pwsh
@@ -97,9 +148,12 @@ jobs:
         $NOTES | Out-File -FilePath "release_notes.md" -Encoding UTF8
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: HarmonicPlaylistGenerator.exe
+        files: |
+          HarmonicPlaylistGenerator.exe
+          installer_output/HPG_${{ github.ref_name }}_Setup.exe
+          release-manifest.json
         body_path: release_notes.md
         draft: false
         prerelease: false
@@ -111,5 +165,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: HarmonicPlaylistGenerator-${{ steps.get_version.outputs.VERSION }}
-        path: HarmonicPlaylistGenerator.exe
+        path: |
+          HarmonicPlaylistGenerator.exe
+          installer_output/HPG_${{ github.ref_name }}_Setup.exe
+          release-manifest.json
         retention-days: 30

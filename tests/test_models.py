@@ -108,6 +108,19 @@ class TestKeyToCamelot:
     key_to_camelot(track)
     assert track.camelotCode == ""
 
+  def test_cleared_key_invalidates_stale_camelot_code(self):
+    track = Track(
+      filePath="/test.mp3",
+      fileName="test.mp3",
+      keyNote="",
+      keyMode="Minor",
+      camelotCode="8A",
+    )
+
+    key_to_camelot(track)
+
+    assert track.camelotCode == ""
+
   def test_empty_mode_no_assignment(self):
     """Leere Mode = keine Zuweisung."""
     track = Track(filePath="/test.mp3", fileName="test.mp3",

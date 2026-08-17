@@ -1,4 +1,6 @@
 @echo off
+setlocal EnableDelayedExpansion
+cd /d "%~dp0"
 REM =========================================================
 REM Harmonic Playlist Generator v3.7.2 - Build Script
 REM One-Click Build: Creates standalone Windows executable
@@ -12,7 +14,11 @@ echo.
 
 REM Find Python (explicit path to avoid Windows Store stub)
 set "PYTHON_EXE="
-if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+if defined GITHUB_ACTIONS (
+    set "PYTHON_EXE=python"
+) else if exist "venv312\Scripts\python.exe" (
+    set "PYTHON_EXE=venv312\Scripts\python.exe"
+) else if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
     set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 ) else (
     REM Fallback: py-Launcher mit 3.12
@@ -24,19 +30,24 @@ if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
         echo [INFO]  Erwarteter Pfad: %LOCALAPPDATA%\Programs\Python\Python312\python.exe
         echo [INFO]  Numba ist inkompatibel mit Python 3.13 und hoeher.
         echo [INFO]  Download: https://www.python.org/downloads/release/python-3120/
-        pause
         exit /b 1
     )
 )
 
-"%PYTHON_EXE%" --version >nul 2>&1
+"!PYTHON_EXE!" --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not working! Check installation.
-    pause
     exit /b 1
 )
 
-echo [1/6] Python found: %PYTHON_EXE%
+"!PYTHON_EXE!" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) and sys.version_info >= (3, 12, 1) else 1)"
+if errorlevel 1 (
+    echo [ERROR] Build requires Python 3.12.1 or newer within the 3.12 series.
+    "!PYTHON_EXE!" --version
+    exit /b 1
+)
+
+echo [1/6] Python found: !PYTHON_EXE!
 echo.
 
 REM Check if running in GitHub Actions
@@ -48,7 +59,11 @@ if defined GITHUB_ACTIONS (
     REM Local build - use virtual environment
     if not exist "venv312\" (
         echo [2/6] Creating virtual environment...
-        "%PYTHON_EXE%" -m venv venv312
+        "!PYTHON_EXE!" -m venv venv312
+        if errorlevel 1 (
+            echo [ERROR] Virtual environment creation failed.
+            exit /b 1
+        )
         echo [SUCCESS] Virtual environment created
         echo.
     ) else (
@@ -60,27 +75,33 @@ if defined GITHUB_ACTIONS (
     call venv312\Scripts\activate.bat
     if errorlevel 1 (
         echo [ERROR] Failed to activate virtual environment
-        pause
         exit /b 1
     )
+    set "PYTHON_EXE=venv312\Scripts\python.exe"
     echo.
 )
 
 REM Install dependencies from requirements.txt
 echo [3/6] Installing dependencies...
-pip install --upgrade pip -q
-pip install -r requirements.txt -q
+"!PYTHON_EXE!" -m pip install --upgrade pip -q
 if errorlevel 1 (
-    echo [WARNING] Some dependencies may have failed to install - continuing...
+    echo [ERROR] pip upgrade failed.
+    exit /b 1
+)
+"!PYTHON_EXE!" -m pip install -r requirements.txt -q
+if errorlevel 1 (
+    echo [ERROR] Dependency installation failed.
+    exit /b 1
 )
 echo [SUCCESS] Dependencies installed
 echo.
 
-REM Install/upgrade PyInstaller
-echo [4/6] Installing PyInstaller...
-pip install --upgrade pyinstaller -q
+REM Verify pinned PyInstaller from requirements.txt
+echo [4/6] Verifying PyInstaller...
+"!PYTHON_EXE!" -c "import PyInstaller; raise SystemExit(0 if PyInstaller.__version__ == '6.21.0' else 1)"
 if errorlevel 1 (
-    echo [WARNING] PyInstaller installation had errors - trying to continue...
+    echo [ERROR] Required PyInstaller 6.21.0 is not installed.
+    exit /b 1
 )
 echo [SUCCESS] PyInstaller ready
 echo.
@@ -96,11 +117,10 @@ echo.
 REM Build executable
 echo [6/6] Building executable (this may take 2-5 minutes)...
 echo [INFO] Please wait...
-pyinstaller --clean --noconfirm HPG.spec
+"!PYTHON_EXE!" -m PyInstaller --clean --noconfirm HPG.spec
 if errorlevel 1 (
     echo.
     echo [ERROR] Build failed! Check error messages above.
-    pause
     exit /b 1
 )
 echo.
@@ -114,7 +134,6 @@ if exist "dist\HarmonicPlaylistGenerator.exe" (
     echo [SUCCESS] Executable: HarmonicPlaylistGenerator.exe
 ) else (
     echo [ERROR] Executable not found in dist folder!
-    pause
     exit /b 1
 )
 
@@ -138,4 +157,4 @@ echo.
 echo ========================================================
 echo.
 
-pause
+endlocal

@@ -73,43 +73,6 @@ def test_embedding_models_are_detected(model):
   assert launcher._is_embedding_model(model) is True
 
 
-def test_ollama_audio_capability_is_confirmed_by_provider(monkeypatch):
-  response = SimpleNamespace(
-    status_code=200,
-    json=lambda: {"capabilities": ["completion", "audio", "thinking"]},
-  )
-  monkeypatch.setattr(launcher.requests, "post", lambda *args, **kwargs: response)
-
-  assert launcher._is_audio_capable_ollama_model("gemma4:12b") is True
-
-
-def test_ollama_audio_capability_rejects_unconfirmed_models(monkeypatch):
-  response = SimpleNamespace(
-    status_code=200,
-    json=lambda: {"capabilities": ["completion", "tools"]},
-  )
-  monkeypatch.setattr(launcher.requests, "post", lambda *args, **kwargs: response)
-
-  assert launcher._is_audio_capable_ollama_model("text-only") is False
-
-
-def test_lmstudio_audio_model_detection_uses_capabilities_and_metadata():
-  assert launcher._is_lms_audio_model(
-    {"type": "llm", "key": "future/audio-model", "capabilities": {"audio": True}}
-  ) is True
-  assert launcher._is_lms_audio_model(
-    {
-      "type": "llm",
-      "key": "google/gemma-4-e4b",
-      "architecture": "gemma4",
-      "capabilities": {"vision": True},
-    }
-  ) is True
-  assert launcher._is_lms_audio_model(
-    {"type": "llm", "key": "stable-audio-generator", "architecture": "sa3-dit"}
-  ) is False
-
-
 def test_pick_model_priority_and_fallbacks():
   models = ["nomic-embed", "llama3:latest", "google/gemma-4-e4b"]
 
@@ -133,12 +96,8 @@ def test_ollama_queries(monkeypatch):
     ),
   }
   monkeypatch.setattr(launcher, "_http_json", lambda url: payloads[url])
-  monkeypatch.setattr(
-    launcher, "_is_audio_capable_ollama_model", lambda model: model == "gemma4:12b"
-  )
-
   assert launcher.ollama_running() is True
-  assert launcher.ollama_models() == ["gemma4:12b"]
+  assert launcher.ollama_models() == ["llama3:latest", "gemma4:12b"]
   assert launcher.ollama_active_model() == "gemma4:12b"
 
 
@@ -202,7 +161,9 @@ def test_ollama_already_running_missing_exe_and_auto_pull(monkeypatch):
   model_lists = iter([[], ["llama3:latest"]])
   monkeypatch.setattr(launcher, "ollama_models", lambda: next(model_lists))
   monkeypatch.setattr(launcher, "ollama_active_model", lambda: "")
-  monkeypatch.setattr(launcher, "ollama_pull", lambda _model: True)
+  monkeypatch.setattr(
+    launcher, "ollama_pull", lambda _model, cancel_check=None: True
+  )
   status = launcher._prepare_ollama("llama3")
   assert status.models == ["llama3:latest"]
   assert status.active_model == "llama3:latest"
@@ -259,11 +220,12 @@ def test_lms_models_load_get_and_prepare(monkeypatch):
             "capabilities": {"vision": True},
           },
           {"type": "llm", "key": "text-only", "capabilities": {}},
+          {"type": "embedding", "key": "nomic-embed"},
         ]
       },
     ),
   )
-  assert launcher.lms_models(1234) == ["google/gemma-4-e2b"]
+  assert launcher.lms_models(1234) == ["google/gemma-4-e2b", "text-only"]
 
   monkeypatch.setattr(launcher, "_lms_exe", lambda: "lms.exe")
   monkeypatch.setattr(launcher.os.path, "exists", lambda _path: True)
@@ -308,7 +270,9 @@ def test_lms_empty_helpers_and_auto_get(monkeypatch):
   monkeypatch.setattr(launcher, "lms_start", lambda: 1234)
   model_lists = iter([[], ["provider/model"]])
   monkeypatch.setattr(launcher, "lms_models", lambda _port: next(model_lists))
-  monkeypatch.setattr(launcher, "lms_get", lambda _model: True)
+  monkeypatch.setattr(
+    launcher, "lms_get", lambda _model, cancel_check=None: True
+  )
   monkeypatch.setattr(launcher, "lms_load", lambda _model, _port: True)
   status = launcher._prepare_lmstudio("model")
   assert status.active_model == "provider/model"
@@ -317,8 +281,8 @@ def test_lms_empty_helpers_and_auto_get(monkeypatch):
 def test_provider_dispatch_and_detection_order(monkeypatch):
   calls = []
 
-  def prepare(name, preferred_model):
-    calls.append((name, preferred_model))
+  def prepare(name, preferred_model, cancel_check=None):
+    calls.append((name, preferred_model, cancel_check))
     return launcher.AIProviderStatus(
       name,
       "http://local",
@@ -331,22 +295,32 @@ def test_provider_dispatch_and_detection_order(monkeypatch):
   status = launcher.detect_and_start(preferred="LM Studio", preferred_model="model")
 
   assert status.name == "Ollama"
-  assert calls == [("LM Studio", "model"), ("Ollama", "model")]
+  assert calls == [("LM Studio", "model", None), ("Ollama", "model", None)]
 
 
 def test_prepare_provider_dispatch(monkeypatch):
-  monkeypatch.setattr(launcher, "_prepare_lmstudio", lambda model: ("lm", model))
-  monkeypatch.setattr(launcher, "_prepare_ollama", lambda model: ("ollama", model))
+  monkeypatch.setattr(
+    launcher,
+    "_prepare_lmstudio",
+    lambda model, cancel_check=None: ("lm", model, cancel_check),
+  )
+  monkeypatch.setattr(
+    launcher,
+    "_prepare_ollama",
+    lambda model, cancel_check=None: ("ollama", model, cancel_check),
+  )
 
-  assert launcher.prepare_provider("LM Studio", "m") == ("lm", "m")
-  assert launcher.prepare_provider("unknown", "m") == ("ollama", "m")
+  assert launcher.prepare_provider("LM Studio", "m") == ("lm", "m", None)
+  assert launcher.prepare_provider("unknown", "m") == ("ollama", "m", None)
 
 
 def test_detection_returns_last_failure(monkeypatch):
   monkeypatch.setattr(
     launcher,
     "prepare_provider",
-    lambda name, model: launcher.AIProviderStatus(name, "url", [], "", False),
+    lambda name, model, cancel_check=None: launcher.AIProviderStatus(
+      name, "url", [], "", False
+    ),
   )
 
   status = launcher.detect_and_start()
@@ -358,7 +332,42 @@ def test_detection_rejects_provider_without_active_model(monkeypatch):
   not_loaded = launcher.AIProviderStatus(
     "LM Studio", "http://local", ["model"], "", running=True
   )
-  monkeypatch.setattr(launcher, "prepare_provider", lambda *args: not_loaded)
+  monkeypatch.setattr(launcher, "prepare_provider", lambda *args, **kwargs: not_loaded)
   status = launcher.detect_and_start("LM Studio")
   assert status.running is False
   assert status.active_model == ""
+
+
+def test_preferred_model_is_downloaded_even_with_installed_fallback(monkeypatch):
+  monkeypatch.setattr(launcher, "ollama_start", lambda: True)
+  model_lists = iter([["fallback-audio"], ["preferred:latest", "fallback-audio"]])
+  monkeypatch.setattr(launcher, "ollama_models", lambda: next(model_lists))
+  monkeypatch.setattr(launcher, "ollama_active_model", lambda: "fallback-audio")
+  pulled = []
+  monkeypatch.setattr(
+    launcher,
+    "ollama_pull",
+    lambda model, cancel_check=None: pulled.append((model, cancel_check)) or True,
+  )
+
+  status = launcher._prepare_ollama("preferred")
+
+  assert pulled == [("preferred", None)]
+  assert status.active_model == "preferred:latest"
+
+
+def test_cancel_callback_is_propagated_to_lm_download(monkeypatch):
+  monkeypatch.setattr(launcher, "lms_start", lambda: 1234)
+  monkeypatch.setattr(launcher, "lms_models", lambda _port: ["fallback-audio"])
+  cancelled = lambda: True
+  received = []
+  monkeypatch.setattr(
+    launcher,
+    "lms_get",
+    lambda model, cancel_check=None: received.append(cancel_check) or False,
+  )
+
+  with pytest.raises(InterruptedError):
+    launcher._prepare_lmstudio("preferred", cancel_check=cancelled)
+
+  assert received == [cancelled]

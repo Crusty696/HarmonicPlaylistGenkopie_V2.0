@@ -389,7 +389,7 @@ class TestInitCache:
 
 
 class TestCacheKeyPathNormalization:
-  """Regression: QFileDialog (D:/pfad) vs os.walk (D:\pfad) muessen
+  r"""Regression: QFileDialog (D:/pfad) vs os.walk (D:\pfad) muessen
   denselben Cache-Key ergeben -- sonst doppelte Analyse in der GUI."""
 
   def test_forward_and_backslash_same_key(self, temp_audio_file):

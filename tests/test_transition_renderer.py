@@ -6,6 +6,9 @@ Verwenden synthetische Numpy-Arrays — kein echtes Audiomaterial noetig.
 """
 
 import os
+import sys
+import types
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pytest
@@ -25,6 +28,7 @@ from hpg_core.transition_renderer import (
     _load_segment,
     _make_sos,
     _rms_normalize,
+    _render_clip_subprocess_wrapper,
     make_temp_output_path,
     render_transition_clip,
 )
@@ -64,6 +68,18 @@ def _make_stereo_signal(frames: int, sr: int = 44100,
     t = np.linspace(0, frames / sr, frames, endpoint=False, dtype=np.float32)
     wave = (np.sin(2 * np.pi * freq * t) * 0.5).astype(np.float32)
     return np.stack([wave, wave], axis=1)
+
+
+@pytest.fixture(scope="module")
+def native_compressor_outputs():
+    """Fuehrt den nativen Effekt wie die App in einem isolierten Worker aus."""
+    sr = 44100
+    normal = _make_stereo_signal(sr * 2)
+    loud = (normal * 1.8).astype(np.float32)
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        normal_result = executor.submit(_apply_compressor, normal, sr).result(timeout=30)
+        loud_result = executor.submit(_apply_compressor, loud, sr).result(timeout=30)
+    return normal, normal_result, loud_result
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +334,10 @@ class TestApplyEqCrossfade:
 class TestAlignBeatPhaseLead:
     """AUDIT-FIX N-02: Das C1-Bar-Alignment darf nie in den Einsatz von
     Track B schneiden — der Cut konsumiert ausschliesslich den mit
-    1 Takt Vorlauf geladenen Bereich davor."""
+    1 Takt Vorlauf geladenen Bereich davor.
+
+    Alle Faelle hier beschreiben den TAKT-Pfad, seit D-03 explizit ueber
+    `bar_aligned=True` angefordert (vorher implizit an bekannten Ankern)."""
 
     SR = 1000        # kleine Abtastrate fuer schnelle, exakte Sample-Rechnung
     BPM = 120.0      # beat_len = 500 Samples, Takt (grid) = 2000 Samples
@@ -342,7 +361,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.0, known_first_beat_b=0.3,
-            lead_frames=self.LEAD,
+            lead_frames=self.LEAD, bar_aligned=True,
         )
         # raw = 300 -> cut = 300 (<= lead), Einsatz-Impuls bei 2000-300 = 1700
         assert out[1700, 0] == 1.0
@@ -355,7 +374,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.25, known_first_beat_b=0.25,
-            lead_frames=self.LEAD,
+            lead_frames=self.LEAD, bar_aligned=True,
         )
         assert out[0, 0] == 1.0
 
@@ -367,7 +386,7 @@ class TestAlignBeatPhaseLead:
             out = _align_beat_phase(
                 self._ref(), seg_b, self.BPM, self.SR,
                 known_first_beat_a=0.0, known_first_beat_b=offset_sec,
-                lead_frames=self.LEAD,
+                lead_frames=self.LEAD, bar_aligned=True,
             )
             idx = np.flatnonzero(out[:, 0] == 1.0)
             assert idx.size == 1, f"Einsatz verworfen bei offset={offset_sec}"
@@ -389,7 +408,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.0, known_first_beat_b=0.3,
-            lead_frames=0,
+            lead_frames=0, bar_aligned=True,
         )
         # cut = 300 -> Marker wandert von 500 auf 200
         assert out[200, 0] == 1.0
@@ -401,7 +420,7 @@ class TestAlignBeatPhaseLead:
         out = _align_beat_phase(
             self._ref(), seg_b, self.BPM, self.SR,
             known_first_beat_a=0.0, known_first_beat_b=1.7,
-            lead_frames=0,
+            lead_frames=0, bar_aligned=True,
         )
         # offset = 1700 > 1000 -> pad = 300
         assert out[300, 0] == 1.0
@@ -418,6 +437,73 @@ class TestAlignBeatPhaseLead:
         )
         assert out[0, 0] == 1.0
         assert len(out) == 800
+
+
+class TestAlignBeatPhaseGridWidth:
+    """AUDIT-FIX D-03 (2026-08-14): Bekannte Anker allein rechtfertigen noch
+    kein TAKT-Alignment. Nur das Rekordbox-Referenz-Beatgrid belegt, welcher
+    Beat die "1" ist; die Eigenschaetzung lag an 19 gemessenen Tracks bei 9
+    um ganze Beats daneben. Ohne `bar_aligned` wird deshalb auf BEAT-Ebene
+    ausgerichtet — Kick auf Kick, ohne Takt-Behauptung."""
+
+    SR = 1000
+    BPM = 120.0     # beat_len = 500, Takt = 2000
+
+    def _seg(self, marker_at: int, frames: int = 10000) -> np.ndarray:
+        seg = np.zeros((frames, 2), dtype=np.float32)
+        seg[marker_at] = 1.0
+        return seg
+
+    def _ref(self) -> np.ndarray:
+        return np.zeros((8000, 2), dtype=np.float32)
+
+    def test_ohne_bar_aligned_ist_das_gitter_ein_beat(self):
+        """Versatz 0.3 s, Vorlauf 2000: auf Beat-Gitter (500) ist der
+        groesste phasengleiche Schnitt 1800, auf Takt-Gitter (2000) nur 300."""
+        out = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=False,
+        )
+        idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+        assert idx == 200, f"Beat-Gitter erwartet (200), war {idx}"
+
+    def test_bar_aligned_nutzt_das_taktgitter(self):
+        out = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=True,
+        )
+        idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+        assert idx == 1700, f"Takt-Gitter erwartet (1700), war {idx}"
+
+    def test_beat_gitter_ist_die_vorgabe(self):
+        """Der Default darf nicht versehentlich das Taktgitter sein."""
+        default = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000,
+        )
+        explicit = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=False,
+        )
+        assert np.array_equal(default, explicit)
+
+    def test_takt_phasen_modulo_beat_bleiben_korrekt(self):
+        """Die uebergebenen Phasen sind Takt-Phasen. Auf dem Beat-Gitter
+        muss der Restversatz nach dem Cut ein Vielfaches des Beats sein."""
+        for a_phase, b_phase in ((0.0, 1.7), (0.25, 1.95), (1.2, 0.4)):
+            out = _align_beat_phase(
+                self._ref(), self._seg(2000), self.BPM, self.SR,
+                known_first_beat_a=a_phase, known_first_beat_b=b_phase,
+                lead_frames=2000, bar_aligned=False,
+            )
+            idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+            raw = int(round((b_phase - a_phase) * self.SR))
+            assert (2000 - idx - raw) % 500 == 0
+            assert 0 <= idx < 500
 
 
 # ---------------------------------------------------------------------------
@@ -880,28 +966,53 @@ class TestApplyCompressor:
         wave = (np.sin(2 * np.pi * 440 * t) * amplitude).astype(np.float32)
         return np.stack([wave, wave], axis=1)
 
-    def test_output_hat_richtige_form(self):
-        """Output soll gleiche Shape wie Input haben."""
-        sig = self._make_signal(self.SR * 2)
+    def test_pedalboard_erhaelt_zusammenhaengendes_kanal_layout(self, monkeypatch):
+        """Die native Grenze bekommt float32 im Layout (channels, frames)."""
+        observed = {}
+
+        class FakePedalboard:
+            def __init__(self, effects):
+                assert len(effects) == 1
+
+            def __call__(self, audio, sample_rate):
+                observed["audio"] = audio
+                observed["sample_rate"] = sample_rate
+                return audio
+
+        fake_module = types.SimpleNamespace(
+            Pedalboard=FakePedalboard,
+            Compressor=lambda **kwargs: kwargs,
+        )
+        monkeypatch.setitem(sys.modules, "pedalboard", fake_module)
+
+        sig = self._make_signal(128)
         result = _apply_compressor(sig, self.SR)
+
+        native_audio = observed["audio"]
+        assert native_audio.shape == (2, 128)
+        assert native_audio.dtype == np.float32
+        assert native_audio.flags.c_contiguous
+        assert observed["sample_rate"] == self.SR
+        np.testing.assert_array_equal(result, sig)
+
+    def test_output_hat_richtige_form(self, native_compressor_outputs):
+        """Output soll gleiche Shape wie Input haben."""
+        sig, result, _ = native_compressor_outputs
         assert result.shape == sig.shape
 
-    def test_output_ist_float32(self):
+    def test_output_ist_float32(self, native_compressor_outputs):
         """dtype soll float32 sein."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        _, result, _ = native_compressor_outputs
         assert result.dtype == np.float32
 
-    def test_kein_clipping(self):
+    def test_kein_clipping(self, native_compressor_outputs):
         """Output-Peak soll <= 1.0 sein (Compressor darf nicht verstaerken)."""
-        sig = self._make_signal(self.SR * 2, amplitude=0.9)
-        result = _apply_compressor(sig, self.SR)
+        _, _, result = native_compressor_outputs
         assert np.max(np.abs(result)) <= 1.0
 
-    def test_keine_nan_oder_inf(self):
+    def test_keine_nan_oder_inf(self, native_compressor_outputs):
         """Keine NaN oder Inf im Ergebnis."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        _, result, _ = native_compressor_outputs
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
 
@@ -993,7 +1104,10 @@ class TestRenderTransitionClipMitNormalisierung:
             normalize_rms=True,
             use_compressor=True,
         )
-        render_transition_clip(spec, out_path)
+        with ProcessPoolExecutor(max_workers=1) as executor:
+            executor.submit(
+                _render_clip_subprocess_wrapper, (spec, out_path)
+            ).result(timeout=30)
 
         assert os.path.exists(out_path)
         info = sf.info(out_path)

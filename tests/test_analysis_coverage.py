@@ -43,6 +43,38 @@ def test_structure_windows_include_real_tail_and_mark_gap(monkeypatch):
   assert outro_covered is True
 
 
+def test_structure_windows_degrades_when_tail_decode_fails(monkeypatch):
+  from hpg_core import analysis
+
+  sr = 10
+  head_audio = np.zeros(360 * sr, dtype=np.float32)
+
+  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0):
+    duration = len(audio) / sample_rate
+    return TrackStructure(
+      sections=[TrackSection("outro", 0.0, duration, 0, 180, 50.0)],
+      total_bars=180,
+      phrase_unit=8,
+    )
+
+  monkeypatch.setattr(analysis, "analyze_structure", fake_structure)
+
+  def fail_tail_decode(*args, **kwargs):
+    raise RuntimeError("tail decode failed")
+
+  monkeypatch.setattr(analysis.librosa, "load", fail_tail_decode)
+
+  structure, coverage, outro_covered = analyze_structure_windows(
+    "long.wav", head_audio, sr, 120.0, "Techno", 600.0
+  )
+
+  assert coverage == [{"start": 0.0, "end": 360.0}]
+  assert structure.sections[0].label == "main"
+  assert structure.sections[-1].label == "unanalysed"
+  assert structure.sections[-1].end_time == 600.0
+  assert outro_covered is False
+
+
 def test_file_lufs_uses_complete_native_stereo(tmp_path):
   import soundfile as sf
 

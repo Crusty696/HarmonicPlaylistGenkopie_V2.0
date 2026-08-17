@@ -11,10 +11,40 @@ Diese Erweiterung integriert lokale Large Language Models (LLMs) in den Harmonic
 Die Einstellungen befinden sich in `hpg_core/config.py`:
 
 ```python
-AI_ENABLED = True
-AI_API_URL = \"http://localhost:11434/v1/chat/completions\" # Ollama Standard
-AI_MODEL = \"llama3\" # Das installierte Modell (Ollama/LM Studio)
+AI_PROVIDER = \"LM Studio\"          # oder \"Ollama\"
+AI_MODEL = \"granite-4.0-h-tiny\"   # gemessener Sieger, siehe unten
+AI_MAX_TOKENS = 400                # Pflicht bei erzwungenem JSON-Schema
 ```
+
+## Modellwahl — gemessen, nicht geschaetzt (2026-08-14)
+
+Getestet wurde gegen den echten Vertrag der App: eigener System-Prompt,
+`response_format=json_schema` mit `strict: true`, volle Validierung inklusive
+Provenienz. 8 reale Tracks je Modell, RX 7800 XT, LM Studio auf Vulkan.
+
+| Modell | gueltig | Latenz | Laden | Groesse |
+|---|---|---|---|---|
+| **granite-4.0-h-tiny** | **8/8** | **2,7 s** | 20 s | 4,2 GB |
+| llama-3.2-8x3b-dark-champion | 8/8 | 2,8 s | 40 s | 10,7 GB |
+| ministral-3-14b-reasoning | 8/8 | 6,7 s | 51 s | 12,0 GB |
+| qwen3.5-9b | 0/8 | — | 45 s | 10,5 GB |
+| ornith-1.0-9b | 0/8 | — | 39 s | 9,5 GB |
+
+Bei 500 Tracks: rund 22 Minuten mit granite gegen ueber 11 Stunden mit einem
+27B-Reasoning-Modell (81 s/Track gemessen).
+
+`qwen3.5-9b` und `ornith-1.0-9b` liefern unter dem Strict-Schema **leeren
+Inhalt bei jedem Token-Budget** (400 / 1500 / 4000 / unbegrenzt, jeweils
+`finish_reason='length'`, `content_len=0`). Sie sind fuer diesen Pfad
+unbrauchbar — unabhaengig von der Modellgroesse.
+
+**Warum `AI_MAX_TOKENS` gesetzt sein muss:** Unter erzwungenem Schema kann ein
+Modell, das in eine ungeschlossene Struktur laeuft, nicht stoppen. Ohne Limit
+verbrannte qwen3.5-9b 65,5 s pro Track fuer ein leeres Ergebnis, mit Limit
+9,5 s — bei gleichem Ausgang.
+
+**AMD-Hinweis:** ROCm unterstuetzt RDNA3 (gfx1101, RX 7800 XT) unter Windows
+nicht. In LM Studio die **Vulkan**-Runtime waehlen.
 
 ## Setup (Lokal)
 1. **Ollama**:

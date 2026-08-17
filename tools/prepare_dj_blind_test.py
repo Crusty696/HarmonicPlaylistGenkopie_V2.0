@@ -6,6 +6,7 @@ import argparse
 import csv
 import hashlib
 import random
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -135,8 +136,22 @@ def prepare(
   key_path.parent.mkdir(parents=True, exist_ok=True)
   temporary_key = key_path.with_name(f".{key_path.name}.{uuid.uuid4().hex}.tmp")
   _write_csv(temporary_key, key_rows)
-  staging.rename(output_dir)
-  temporary_key.rename(key_path)
+  key_published = False
+  try:
+    # Erst der private Schluessel, dann die Session. Schlaegt die zweite
+    # Publikation fehl, wird der Schluessel wieder entfernt; eine sichtbare
+    # Session ohne zugehoerigen Schluessel kann so nicht entstehen.
+    temporary_key.replace(key_path)
+    key_published = True
+    staging.rename(output_dir)
+  except Exception:
+    if key_published:
+      key_path.unlink(missing_ok=True)
+    raise
+  finally:
+    temporary_key.unlink(missing_ok=True)
+    if staging.exists():
+      shutil.rmtree(staging, ignore_errors=True)
   public_path = output_dir / "blind_session.csv"
   return public_path, key_path
 

@@ -296,6 +296,32 @@ class TestRekordboxExport:
     assert fake_xml.tracks[0].get("Artist") == "Djane Cosmic"
     assert fake_xml.tracks[0].get("Name") == "Night Drive"
 
+  def test_export_prefers_detected_genre(self, tmp_path):
+    playlist = [
+      make_track(
+        title="T1", genre="Unknown", detected_genre="Techno", bpm=128.0
+      )
+    ]
+    out = str(tmp_path / "genre.xml")
+    fake_xml = FakeRekordboxXml()
+
+    make_export(playlist, out, fake_xml=fake_xml)
+
+    assert fake_xml.tracks[0].get("Genre") == "Techno"
+
+  def test_export_skips_track_without_path(self, tmp_path):
+    playlist = [
+      make_track(title="Pathless", filePath=""),
+      make_track(title="Valid", filePath="/test/valid.mp3"),
+    ]
+    out = str(tmp_path / "pathless.xml")
+    fake_xml = FakeRekordboxXml()
+
+    make_export(playlist, out, fake_xml=fake_xml)
+
+    assert len(fake_xml.tracks) == 1
+    assert fake_xml.tracks[0]["Location"] == os.path.abspath("/test/valid.mp3")
+
   def test_export_setzt_track_id(self, tmp_path):
     playlist = [
       make_track(title="T1", filePath="/test/track_1.mp3"),

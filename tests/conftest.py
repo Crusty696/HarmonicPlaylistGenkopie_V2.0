@@ -20,10 +20,12 @@ _TEST_CACHE_DIR = tempfile.mkdtemp(prefix=f"hpg_pytest_{os.getpid()}_")
 _TEST_CACHE_FILE = os.path.join(_TEST_CACHE_DIR, "hpg_cache_test.db")
 os.environ["HPG_CACHE_FILE"] = _TEST_CACHE_FILE
 
+from hpg_core.caching import CACHE_VERSION
+
 _PRODUCTION_CACHE = os.path.join(
   os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
   "HPG",
-  "hpg_cache_v24.db",
+  f"hpg_cache_v{CACHE_VERSION}.db",
 )
 
 
@@ -295,9 +297,8 @@ def pytest_collection_modifyitems(config, items):
     if "audio" in item.nodeid.lower() or "bpm" in item.nodeid.lower():
       item.add_marker(pytest.mark.audio)
 
-    # Mark slow tests
-    if "integration" in item.nodeid or "playlist" in item.nodeid:
-      item.add_marker(pytest.mark.slow)
+    # Slow ist eine Laufzeiteigenschaft, keine Dateinamen-Eigenschaft.
+    # Echte Audio-/Langlaeufer markieren sich explizit am Test.
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -305,6 +306,6 @@ def pytest_sessionfinish(session, exitstatus):
   after = _file_fingerprint(_PRODUCTION_CACHE)
   if after != _PRODUCTION_CACHE_BEFORE:
     raise pytest.UsageError(
-      "Produktivcache hpg_cache_v24.db wurde waehrend der Tests veraendert"
+      f"Produktivcache hpg_cache_v{CACHE_VERSION}.db wurde waehrend der Tests veraendert"
     )
   shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)

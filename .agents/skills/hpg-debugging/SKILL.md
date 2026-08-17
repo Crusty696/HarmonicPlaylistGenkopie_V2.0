@@ -1,43 +1,58 @@
 ---
 name: hpg-debugging
-description: Use when debugging HPG — Tests laufen lassen, Analyse-Pipeline-Fehler, Cache-Probleme (hpg_cache_v11.db), BrokenProcessPool/C-Level-Crashes, QThread/UI-Freezes, ImportError beim Start, oder wenn build.bat/config.py Fehler wirft.
+description: Use when something in HPG misbehaves at runtime — App startet nicht, Analyse haengt oder bricht ab, BrokenProcessPool, UI-Freeze oder Crash beim zweiten Lauf, Preview fehlt, Werte aendern sich trotz Codeaenderung nicht, ImportError, oder ein Worker meldet still einen Fehler.
 ---
 
 # HPG Debugging
 
-## Overview
+Einstiegspunkt bei Laufzeitproblemen. Diese Tabelle sagt, **wo** das Problem
+sitzt; die Detailregeln stehen im jeweiligen Fach-Skill.
 
-PyQt6-App (main.py, ~3500 Zeilen) + hpg_core/. Business-Logik läuft in QThreads, Ergebnisse NUR über pyqtSignals in den GUI-Thread. Audio-Analyse in Subprozessen (librosa kann auf C-Ebene crashen).
+## Symptom → Ursache → Skill
 
-## Umgebung & Tests
+| Symptom | Zuerst pruefen | Skill |
+|---|---|---|
+| Codeaenderung zeigt keine Wirkung, alte Analysewerte | Cache-Hit. `CACHE_VERSION` (caching.py:39) gebumpt? | `hpg-cache-persistence` |
+| Mix-Out mitten im Track, Mixpoint off-grid | Anker/Gitter, Fenster-Artefakt, Notfall-Prozentpfad | `hpg-mixpoint-engineering` |
+| Lange Tracks: Outro wirkt erfunden | `LIBROSA_MAX_DURATION` + Tail-Fenster, `outro_covered` | `hpg-audio-analysis` |
+| `BrokenProcessPool` im Log | designtes Recovery. Welche Datei ist `[CRASHED/SKIPPED]`? | `hpg-parallel-performance` |
+| Analyse haengt, kein Fortschritt | Per-Task-Timeout 60 s vs. Inaktivitaets-Deadline; blockiert ein `shutdown(wait=True)`? | `hpg-parallel-performance` |
+| Abbruch wirkt nicht | `cancel_callback` bis in den Pool durchgereicht? | `hpg-parallel-performance` |
+| "QThread: Destroyed while thread is still running" | Ergebnis-Signal heisst `finished`; Cleanup am falschen Signal | `hpg-qt-gui` |
+| Statuszeile springt zwischen Laeufen | Source-Guard im Slot fehlt | `hpg-qt-gui` |
+| UI-Freeze | Datei-I/O oder Rechnung im GUI-Thread | `hpg-qt-gui` |
+| Preview fehlt oder ist stumm | `clip_error`-Signal, Render-Timeout, degenerierter Plan (`overlap <= 0`) | `hpg-transition-render` |
+| Preview verstimmt / zu leise / uebersteuert | Stretch-Rate, Equal-Power, LUFS-vs-dBRMS | `hpg-transition-render` |
+| Alle Tracks Camelot gleich oder Genre "Unknown" | Key-Fallback ohne Sentinel; `"Unknown"` ist truthy | `hpg-audio-analysis`, `hpg-genres` |
+| `ValueError: Genre-Tabellen inkonsistent` beim Import | fehlende Cross-Paare — die Fehlermeldung listet sie | `hpg-genres` |
+| Rekordbox-Track liefert keine Metadaten | mehrdeutiger Pfad/Basename → bewusst `None` | `hpg-rekordbox` |
+| Playlist-Score passt nicht zur Anzeige | `scoring_context` nicht durchgereicht | `hpg-playlist-scoring` |
+| numba/numpy-Fehler beim Start | falscher Interpreter — nur `venv312` | `hpg-testing-verification` |
+| EXE verhaelt sich anders als der Quellcode | Hidden-Imports/Data-Files im `HPG.spec` | `hpg-release-build` |
 
-- **Python fixiert**: `C:\Users\david\AppData\Local\Programs\Python\Python312\python.exe` — NIE System-Python 3.14 (numba braucht <3.13, siehe AUDIT_REPORT.md).
-- Tests: `powershell -Command "& '<python.exe>' -m pytest tests/ --tb=short -q"` — pytest.ini erzwingt `--cov-fail-under=70`, `-n auto` (xdist), UserWarnings aus hpg_core werden zu Fehlern.
-- Test-Helper: `assert_mix_points_valid` [tests/conftest.py:186](tests/conftest.py:186), `assert_phrase_aligned` [:215](tests/conftest.py:215), Track-Factories (`make_house_track`, `make_dnb_track`), `performance_fixtures.py` (vor-analysierte Tracks, kein Audio nötig).
-- Einzelne Testklasse ohne Coverage-Zwang: `-p no:cacheprovider --no-cov` anhängen.
+## Grundregeln
 
-## Symptom → Ursache
+**Worker werfen nie nach oben.** Sie melden per `status_update` und emittieren
+ein leeres Ergebnis (`analysis_done.emit([], {})`). Wer nach einer Exception im
+Terminal sucht, sucht falsch — in die Statuszeile und ins Log schauen.
 
-| Symptom | Prüfe |
-|---------|-------|
-| App startet nicht / SyntaxError | [config.py:136-141](hpg_core/config.py:136) — bekanntes verwaistes AI-Prompt-Fragment nach `AI_MODELS_AVAILABLE` (Stand 2026-07: uncommitted defekt) |
-| ImportError `error_reporter`/`playlist_security` | main.py:53-87 importiert untracked Module — existieren `hpg_core/error_reporter.py`, `hpg_core/playlist_security.py`? |
-| build.bat schlägt fehl | [build.bat:14-34](build.bat:14) — defekte if/else-Kette, PYTHON_EXE mehrfach überschrieben, zeigt auf Python 3.14 |
-| `BrokenProcessPool` bei Analyse | Erwartetes Verhalten: [parallel_analyzer.py:175-236](hpg_core/parallel_analyzer.py:175) fängt Crash, Safe-Mode retry einzeln (`max_workers=1`), korrupte Datei → `[CRASHED/SKIPPED]` |
-| Analyse hängt | Future-Timeout `PARALLEL_ANALYSIS_TIMEOUT=60s` [parallel_analyzer.py:162](hpg_core/parallel_analyzer.py:162); Preview-Rendering 30s-Timeout [main.py:513-516](main.py:513) |
-| Alte Analyse-Werte trotz Code-Änderung | Cache-Hit! `hpg_cache_v11.db` (SQLite, NICHT shelve). Key = `{filepath}-{size}-{mtime}` [caching.py:111](hpg_core/caching.py:111). Bei geänderter Analyse-Logik: `CACHE_VERSION` [caching.py:18](hpg_core/caching.py:18) hochzählen → kompletter Flush |
-| UI-Freeze | UI-Update aus Worker-Thread? Regel: NUR Signale. Progress ist auf 100ms gedrosselt [main.py:319-330](main.py:319) |
-| Preview-Clip fehlt | `clip_error`-Signal + Subprocess-Timeout prüfen; Renderer-Kette siehe hpg-mixpoint-engineering Skill |
+**Logs:**
+- `logs/hpg.log` (`logging_config.setup_logging`, Level ueber `config.LOG_LEVEL`)
+- `logs/error_report.json` (`error_reporter`, Rotation 200 Eintraege)
+- Terminal-Log der Analyse kommt aus `hpg_core.parallel_analyzer`
 
-## Cache-Regeln
+**Reproduzieren vor Reparieren.** Erst den Fehlfall als Test oder als kurzes
+Skript festhalten, dann fixen. Bei Analyse-Themen: Cache vorher isolieren
+(`HPG_CACHE_FILE`), sonst debuggt man gegen alte Werte.
 
-- Geschützt (nie editieren/löschen ohne Ankündigung): `track_cache.*`, `hpg_cache_v*.db`, `*.lock`.
-- Versions-Mismatch → automatischer `DELETE FROM cache` [caching.py:97-104](hpg_core/caching.py:97).
-- AI-Overrides werden im Cache persistiert — Cache-Flush verwirft auch LLM-Mixpoints.
+**Geschuetzte Dateien:** `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`,
+`track_cache.*` — nie loeschen oder editieren ohne Ankuendigung. Zum Ansehen
+`tools/_inspect_cache.py`.
 
 ## Common Mistakes
 
-- Debugging mit System-Python 3.14 → numba-Fehler, die wie Code-Bugs aussehen.
-- Cache nicht bedacht → "Fix wirkt nicht", obwohl Code korrekt.
-- BrokenProcessPool als Bug behandeln — ist designtes Recovery, Log auf `[CRASHED/SKIPPED]` prüfen (welche Datei ist korrupt?).
-- Worker-Exceptions suchen: Worker werfen nie, sie melden per `status_update` + leeres `finished([], {})` [main.py:279ff](main.py:279).
+- Recovery-Mechanismen (BrokenProcessPool, `[TIMEOUT]`, `[CRASHED/SKIPPED]`)
+  als Bug behandeln.
+- Ohne Cache-Isolation debuggen.
+- Mit System-Python statt `venv312` reproduzieren.
+- Symptom im GUI fixen, obwohl die Ursache in der Analyse liegt.

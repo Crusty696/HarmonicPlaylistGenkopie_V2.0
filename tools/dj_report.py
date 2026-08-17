@@ -36,16 +36,16 @@ print(f"  Energy  : {track.energy:.1f}")
 print(f"  Bass    : {track.bass_intensity:.1f}")
 print(f"  Dauer   : {track.duration:.1f}s ({track.duration / 60:.1f} min)")
 
-seconds_per_phrase = (60.0 / track.bpm) * 4 * 8
 seconds_per_bar = (60.0 / track.bpm) * 4
-# DJ Brain quantisiert Mix-Punkte auf 4-Bar-Grid (nicht 8-Bar-Phrase)
-MIX_GRID_BARS = 4
-seconds_per_grid = seconds_per_bar * MIX_GRID_BARS
+phrase_unit = max(1, int(getattr(track, "phrase_unit", 8) or 8))
+phrase_anchor = float(getattr(track, "phrase_anchor", 0.0) or 0.0)
+seconds_per_phrase = seconds_per_bar * phrase_unit
+seconds_per_grid = seconds_per_phrase
 
 print(f"\n[2] Phrasing-Analyse (BPM={track.bpm:.1f})")
 print(f"  Sekunden/Bar    : {seconds_per_bar:.2f}s")
-print(f"  Sekunden/Phrase : {seconds_per_phrase:.2f}s (8 Bars)")
-print(f"  Mix-Grid        : {seconds_per_grid:.2f}s (4 Bars, DJ Brain-Raster)")
+print(f"  Sekunden/Phrase : {seconds_per_phrase:.2f}s ({phrase_unit} Bars)")
+print(f"  Phrasen-Anker   : {phrase_anchor:.2f}s")
 
 mix_in = track.mix_in_point
 mix_out = track.mix_out_point
@@ -54,12 +54,12 @@ print(f"  Mix-In  : {mix_in:.1f}s")
 print(f"  Mix-Out : {mix_out:.1f}s")
 print(f"  Overlap : {mix_out - mix_in:.1f}s Platz zum Mixen")
 
-# Phrasing-Check gegen 4-Bar-Grid (reales DJ Brain-Raster)
+# Phrasing-Check gegen den gemessenen Track-Anker und seine Phrasenlaenge
 bars_at_mix_in = mix_in / seconds_per_bar
-grid_at_mix_in = mix_in / seconds_per_grid
+grid_at_mix_in = (mix_in - phrase_anchor) / seconds_per_grid
 grid_deviation = abs(grid_at_mix_in - round(grid_at_mix_in)) * seconds_per_grid
-# Auch 8-Bar-Phrase-Alignment pruefen (ideal)
-phrase_at_mix_in = mix_in / seconds_per_phrase
+# Dieselbe Track-spezifische Phrase als lesbare Zusatzangabe
+phrase_at_mix_in = (mix_in - phrase_anchor) / seconds_per_phrase
 phrase_deviation = abs(phrase_at_mix_in - round(phrase_at_mix_in)) * seconds_per_phrase
 
 bars_at_mix_out = mix_out / seconds_per_bar
@@ -67,20 +67,20 @@ outro_bars = (track.duration - mix_out) / seconds_per_bar
 
 print("\n[4] Phrase-Alignment Check")
 print(
-    f"  Mix-In bei Bar  : {bars_at_mix_in:.1f} (4-Bar-Grid: {grid_at_mix_in:.2f}, 8-Bar-Phrase: {phrase_at_mix_in:.2f})"
+    f"  Mix-In bei Bar  : {bars_at_mix_in:.1f} (Phrasen-Grid: {grid_at_mix_in:.2f}, {phrase_unit}-Bar-Phrase: {phrase_at_mix_in:.2f})"
 )
 
-# Bewertung: Primaer 4-Bar-Grid (DJ Brain-Standard), sekundaer 8-Bar-Phrase (Ideal)
+# Bewertung gegen den Produktionsvertrag des Tracks
 status = OK if grid_deviation < 0.5 else (WARN if grid_deviation < 2.0 else ERR)
 if grid_deviation < 0.5 and phrase_deviation < 0.5:
-    label = "Exakt auf 8-Bar-Phrasegrenze (perfekt!)"
+    label = f"Exakt auf {phrase_unit}-Bar-Phrasegrenze"
 elif grid_deviation < 0.5:
-    label = f"Auf 4-Bar-Grid (8-Bar-Abw. {phrase_deviation:.1f}s)"
+    label = f"Auf Phrasen-Grid (Abw. {phrase_deviation:.1f}s)"
 elif grid_deviation < 2.0:
     label = f"Leichte Grid-Abweichung ({grid_deviation:.1f}s)"
 else:
     label = f"NICHT auf Grid! ({grid_deviation:.1f}s)"
-print(f"  4-Bar-Grid-Abw. : {grid_deviation:.1f}s  {status} {label}")
+print(f"  Phrasen-Abw.    : {grid_deviation:.1f}s  {status} {label}")
 
 print(f"  Mix-Out bei Bar : {bars_at_mix_out:.1f}")
 status = OK if outro_bars >= 8 else (WARN if outro_bars >= 4 else ERR)
@@ -136,7 +136,7 @@ print("FAZIT:")
 issues = []
 warnings = []
 if grid_deviation >= 2.0:
-    issues.append(f"Mix-In nicht auf 4-Bar-Grid ({grid_deviation:.1f}s Abweichung)")
+    issues.append(f"Mix-In nicht auf Phrasen-Grid ({grid_deviation:.1f}s Abweichung)")
 if outro_bars < 4:
     issues.append(f"Zu wenig Outro ({outro_bars:.1f} Bars)")
 elif outro_bars < 8:

@@ -210,6 +210,23 @@ class TestEdgeCases:
     valid_bpms = [t.bpm for t in result if t.bpm > 0]
     assert len(valid_bpms) >= 1
 
+  @pytest.mark.parametrize("invalid_bpm", [float("nan"), float("inf"), -float("inf")])
+  def test_tracks_with_non_finite_bpm_filtered(self, invalid_bpm):
+    invalid = make_track(camelotCode="8A", bpm=invalid_bpm)
+    valid = make_track(camelotCode="8A", bpm=128.0, title="valid")
+
+    result = generate_playlist([invalid, valid], "Harmonic Flow", bpm_tolerance=3.0)
+
+    assert result == [valid]
+
+  def test_all_invalid_bpms_return_empty_playlist(self):
+    tracks = [
+      make_track(camelotCode="8A", bpm=0.0),
+      make_track(camelotCode="8A", bpm=float("nan")),
+    ]
+
+    assert generate_playlist(tracks, "Harmonic Flow", bpm_tolerance=3.0) == []
+
   def test_harmonic_flow_fallback_prefers_half_time(self, monkeypatch):
     """Fallback wählt Half-Time (effektive BPM-Differenz) statt roher Distanz.
 
@@ -249,3 +266,38 @@ def test_strategy_config_filters_and_clamps_visible_parameters():
   assert set(config.effective_kwargs("Peak-Time")) == {
     "peak_position", "harmonic_strictness", "allow_experimental"
   }
+
+
+class TestDuplicateTrackReferences:
+  """Regression: dieselbe Track-Instanz mehrfach in der Eingabeliste.
+
+  Audit 2026-08-14: In _sort_directional_bpm (Warm-Up/Cool-Down) passte der
+  Guard ``len(remaining) > 1`` nicht zum Filter ``other is not candidate``.
+  Standen zwei Referenzen auf DASSELBE Track-Objekt in derselben BPM-Gruppe,
+  filterte der Generator alle Kandidaten heraus und ``max()`` lief auf einer
+  leeren Sequenz -> ValueError mitten in der Generierung.
+  """
+
+  @pytest.mark.parametrize("strategy", sorted(STRATEGIES))
+  def test_same_instance_three_times(self, strategy):
+    """Dieselbe Instanz 3x, identische BPM -> kein Crash, nichts verloren."""
+    track = make_track(camelotCode="8A", bpm=138.0, energy=70, title="Dupe")
+    tracks = [track, track, track]
+    result = generate_playlist(tracks, strategy, bpm_tolerance=3.0)
+    assert len(result) == 3
+
+  @pytest.mark.parametrize("strategy", sorted(STRATEGIES))
+  def test_duplicate_plus_distinct_same_bpm(self, strategy):
+    """Doppelte Instanz + fremder Track bei gleicher BPM."""
+    dupe = make_track(camelotCode="8A", bpm=138.0, energy=70, title="Dupe")
+    other = make_track(camelotCode="9A", bpm=138.0, energy=75, title="Other")
+    result = generate_playlist([dupe, dupe, other], strategy, bpm_tolerance=3.0)
+    assert len(result) == 3
+
+  @pytest.mark.parametrize("strategy", sorted(STRATEGIES))
+  def test_partially_duplicated_set(self, strategy):
+    """Groesseres Set mit mehreren doppelten Instanzen."""
+    base = make_dj_set()
+    tracks = list(base) + list(base[:3])
+    result = generate_playlist(tracks, strategy, bpm_tolerance=3.0)
+    assert len(result) == len(tracks)

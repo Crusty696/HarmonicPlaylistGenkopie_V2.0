@@ -7,6 +7,7 @@ import sys
 import time
 import glob
 import traceback
+import pytest
 
 # Projekt-Pfad
 sys.path.insert(0, os.path.dirname(__file__))
@@ -25,6 +26,7 @@ def check(name, condition, detail=""):
     else:
         RESULTS["fail"] += 1
         print(f"  [FAIL] {name} — {detail}")
+        raise AssertionError(f"{name}: {detail or 'Bedingung ist False'}")
 
 
 def warn(name, detail=""):
@@ -47,6 +49,7 @@ def get_test_files(n=5):
 # ============================================================
 # TEST 1: Einzeltrack-Analyse — Datenqualitaet
 # ============================================================
+@pytest.mark.slow
 def test_single_track_quality():
     print("\n" + "=" * 60)
     print("TEST 1: Einzeltrack-Analyse — Datenqualitaet")
@@ -147,6 +150,7 @@ def test_single_track_quality():
 # ============================================================
 # TEST 2: Cache-Integritaet
 # ============================================================
+@pytest.mark.slow
 def test_cache_integrity():
     print("\n" + "=" * 60)
     print("TEST 2: Cache-Integritaet")
@@ -168,7 +172,7 @@ def test_cache_integrity():
             continue
 
         # Cache-Key generieren
-        cache_key = generate_cache_key(fp)
+        cache_key = generate_cache_key(fp, track1.rekordbox_signature)
         check(f"{fname}: Cache-Key generiert", cache_key is not None)
 
         # Cache-Lookup (mit file_path fuer TOCTOU-Check)
@@ -200,6 +204,7 @@ def test_cache_integrity():
 # ============================================================
 # TEST 3: Parallel-Analyse — Datenfluss
 # ============================================================
+@pytest.mark.slow
 def test_parallel_analysis():
     print("\n" + "=" * 60)
     print("TEST 3: Parallel-Analyse — Datenfluss")
@@ -246,6 +251,7 @@ def test_parallel_analysis():
 # ============================================================
 # TEST 4: Playlist-Generierung — End-to-End
 # ============================================================
+@pytest.mark.slow
 def test_playlist_generation():
     print("\n" + "=" * 60)
     print("TEST 4: Playlist-Generierung — End-to-End")
@@ -360,7 +366,11 @@ def test_edge_cases():
 
     # Cache-Key fuer nicht existierende Datei
     key = generate_cache_key("nonexistent_file.wav")
-    check("generate_cache_key('nonexistent') = None", key is None)
+    check(
+        "generate_cache_key('nonexistent') ist deterministisch",
+        isinstance(key, str) and len(key) == 64,
+        f"key={key!r}",
+    )
 
     # Parallel-Analyse mit leerer Liste
     from hpg_core.parallel_analyzer import ParallelAnalyzer

@@ -10,6 +10,7 @@ from hpg_core.playlist import (
   calculate_enhanced_compatibility,
   calculate_playlist_quality,
   calculate_transition_objective,
+  compute_adjacent_transition_metrics,
   compute_transition_recommendations,
   generate_playlist,
   resolve_scoring_context,
@@ -130,6 +131,40 @@ def test_playlist_quality_uses_the_same_enhanced_transition_contract():
   )
   assert quality["overall_score"] == pytest.approx(
     recommendation.compatibility_score / 100.0, abs=0.01
+  )
+
+
+def test_recommendation_and_quality_use_identical_display_rounding():
+  first = _track("round-a", "8A", 0)
+  second = _track("round-b", "12A", 20)
+
+  recommendation = compute_transition_recommendations([first, second], 3.0)[0]
+  quality = calculate_playlist_quality([first, second], 3.0)
+
+  assert recommendation.compatibility_score == 78
+  assert quality["avg_transition_score"] == 78
+
+
+def test_precomputed_adjacent_metrics_are_shared_by_consumers():
+  tracks = [
+    _track("shared-a", "8A", 20),
+    _track("shared-b", "9A", 40),
+    _track("shared-c", "10A", 60),
+  ]
+  metrics = compute_adjacent_transition_metrics(tracks, 3.0)
+
+  recommendations = compute_transition_recommendations(
+    tracks, 3.0, transition_metrics=metrics
+  )
+  quality = calculate_playlist_quality(
+    tracks, 3.0, transition_metrics=metrics
+  )
+
+  assert [item.compatibility_score for item in recommendations] == [
+    round(item.overall_score * 100) for item in metrics
+  ]
+  assert quality["avg_transition_score"] == pytest.approx(
+    sum(item.compatibility_score for item in recommendations) / len(recommendations)
   )
 
 

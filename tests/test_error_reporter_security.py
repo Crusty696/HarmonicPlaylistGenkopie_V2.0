@@ -16,6 +16,12 @@ from hpg_core.config import SECURITY_MAX_PLAYLIST_SIZE, SECURITY_MAX_TRACK_DURAT
 from tests.fixtures.track_factories import make_track
 
 
+def make_existing_track(tmp_path, **overrides):
+  path = tmp_path / "track.mp3"
+  path.write_bytes(b"audio-fixture")
+  return make_track(filePath=str(path), **overrides)
+
+
 class TestErrorReporter:
   def test_log_and_read_roundtrip(self, tmp_path):
     reporter = ErrorReporter(log_dir=str(tmp_path))
@@ -54,27 +60,42 @@ class TestErrorReporter:
   def test_singleton(self):
     assert get_error_reporter() is get_error_reporter()
 
+  def test_zero_count_returns_empty_list(self, tmp_path):
+    reporter = ErrorReporter(log_dir=str(tmp_path))
+    reporter.log_error("analysis", "one")
+
+    assert reporter.get_recent_errors(0) == []
+
+  def test_atomic_write_leaves_no_temporary_file(self, tmp_path):
+    reporter = ErrorReporter(log_dir=str(tmp_path))
+    reporter.log_error("analysis", "one")
+
+    assert list(tmp_path.glob("*.tmp")) == []
+
 
 class TestPlaylistSecurity:
   def test_canonical_resource_limits_module_exports_sanitizer(self):
     assert sanitize_resource_limits([]) == []
 
-  def test_sanitize_removes_none_and_invalid(self):
-    good = make_track()
+  def test_sanitize_removes_none_and_invalid(self, tmp_path):
+    good = make_existing_track(tmp_path)
     bad = make_track()
     bad.filePath = ""
     result = sanitize_playlist([None, good, bad, None])
     assert result == [good]
 
-  def test_sanitize_removes_overlong_track(self):
-    good = make_track()
-    too_long = make_track()
+  def test_sanitize_removes_overlong_track(self, tmp_path):
+    good = make_existing_track(tmp_path)
+    too_long = make_existing_track(tmp_path)
     too_long.duration = SECURITY_MAX_TRACK_DURATION + 1
     result = sanitize_playlist([good, too_long])
     assert result == [good]
 
-  def test_sanitize_truncates_oversized_playlist(self):
-    tracks = [make_track() for _ in range(SECURITY_MAX_PLAYLIST_SIZE + 5)]
+  def test_sanitize_truncates_oversized_playlist(self, tmp_path):
+    tracks = [
+      make_existing_track(tmp_path)
+      for _ in range(SECURITY_MAX_PLAYLIST_SIZE + 5)
+    ]
     result = sanitize_playlist(tracks)
     assert len(result) == SECURITY_MAX_PLAYLIST_SIZE
 
@@ -82,13 +103,26 @@ class TestPlaylistSecurity:
     tracks = [make_track() for _ in range(SECURITY_MAX_PLAYLIST_SIZE + 1)]
     assert validate_playlist_security(tracks) is False
 
-  def test_validate_accepts_normal_playlist(self):
-    assert validate_playlist_security([make_track() for _ in range(3)]) is True
+  def test_validate_accepts_normal_playlist(self, tmp_path):
+    tracks = [make_existing_track(tmp_path) for _ in range(3)]
+    assert validate_playlist_security(tracks) is True
 
-  def test_validate_track_rejects_overlong(self):
-    t = make_track()
+  def test_validate_track_rejects_overlong(self, tmp_path):
+    t = make_existing_track(tmp_path)
     t.duration = SECURITY_MAX_TRACK_DURATION + 1
     assert validate_track_security(t) is False
+
+  def test_missing_path_is_rejected_consistently(self):
+    track = make_track(filePath="")
+
+    assert validate_track_security(track) is False
+    assert validate_playlist_security([track]) is False
+
+  def test_nonexistent_path_is_rejected_consistently(self, tmp_path):
+    track = make_track(filePath=str(tmp_path / "missing.wav"))
+
+    assert validate_track_security(track) is False
+    assert validate_playlist_security([track]) is False
 
   def test_empty_playlist(self):
     assert sanitize_playlist([]) == []

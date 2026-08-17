@@ -102,7 +102,7 @@ class TestRecommendationFields:
     )
     monkeypatch.setattr(
       "hpg_core.playlist._process_dj_brain_recommendations",
-      lambda *_: (oversized, [], 120.0, 240.0),
+      lambda *_: (oversized, [], 120.0),
     )
 
     rec = compute_transition_recommendations(pair)[0]
@@ -225,3 +225,70 @@ class TestNotes:
     assert any(kw in notes_lower for kw in ("tonart", "harmoni", "safe", "kompatibel", "perfekte")), (
       f"Notes enthalten keine Tonart-Info: '{recs[0].notes}'"
     )
+
+
+class TestOverlapWindowClamp:
+  """Regression: der Overlap darf am realen Sections-Layout nicht kollabieren.
+
+  Audit 2026-08-14: die B-Seite von _clamp_transition_overlap begrenzte auf
+  ``intro_end_B - mix_in_b``. dj_brain garantiert per Design
+  ``mix_in_b >= intro_end_B`` (tests/test_dj_brain.py), der Term war also
+  immer <= 0. An 52 echten Tracks wurden dadurch 50 von 51 Uebergaengen auf
+  overlap=0.0 geklemmt — der Renderer bekam ueberall harte Schnitte.
+  Die bisherigen Overlap-Tests liefen ueber _make_pair() OHNE sections und
+  haben den Zweig nie erreicht.
+  """
+
+  def _pair_with_sections(self, intro_end=60.0, duration=420.0):
+    """Track-Paar im realen Layout: Mix-In liegt am Intro-Ende."""
+    return [
+      make_track(
+        camelotCode="8A", bpm=138.0, duration=duration, energy=70,
+        mix_in_point=intro_end, mix_out_point=duration - 60.0,
+        sections=_sections(intro_end=intro_end, duration=duration),
+      ),
+      make_track(
+        camelotCode="8A", bpm=138.0, duration=duration, energy=72,
+        mix_in_point=intro_end, mix_out_point=duration - 60.0,
+        sections=_sections(intro_end=intro_end, duration=duration),
+      ),
+    ]
+
+  def test_overlap_survives_sections(self):
+    """Mit sections + Mix-In am Intro-Ende bleibt der Overlap nutzbar."""
+    rec = compute_transition_recommendations(
+      self._pair_with_sections(), bpm_tolerance=3.0, default_overlap=16.0
+    )[0]
+    assert rec.overlap > 0.0, "Overlap auf 0 geklemmt (Intro-Fenster-Bug)"
+    assert rec.plan.overlap == rec.overlap
+
+  def test_overlap_survives_mix_in_after_intro(self):
+    """Auch wenn der Mix-In HINTER dem Intro-Ende liegt, bleibt Overlap > 0."""
+    tracks = self._pair_with_sections(intro_end=60.0)
+    tracks[1].mix_in_point = 115.0  # deutlich hinter intro_end
+    rec = compute_transition_recommendations(
+      tracks, bpm_tolerance=3.0, default_overlap=16.0
+    )[0]
+    assert rec.overlap > 0.0
+
+  def test_overlap_limited_by_remaining_audio(self):
+    """Der Overlap bleibt im real vorhandenen Audio beider Tracks."""
+    tracks = self._pair_with_sections(duration=420.0)
+    rec = compute_transition_recommendations(
+      tracks, bpm_tolerance=3.0, default_overlap=64.0
+    )[0]
+    a_rest = rec.from_track.duration - rec.plan.mix_out_a
+    b_rest = rec.to_track.duration - rec.plan.mix_in_b
+    assert rec.overlap <= a_rest + 1e-6, "Overlap laeuft hinter das Ende von A"
+    assert rec.overlap <= b_rest + 1e-6, "Overlap laeuft hinter das Ende von B"
+
+  def test_short_incoming_track_limits_overlap(self):
+    """Ein kurzer B-Track begrenzt den Overlap wirklich."""
+    tracks = self._pair_with_sections()
+    tracks[1].duration = 70.0
+    tracks[1].mix_in_point = 60.0
+    tracks[1].sections = _sections(intro_end=60.0, outro_start=65.0, duration=70.0)
+    rec = compute_transition_recommendations(
+      tracks, bpm_tolerance=3.0, default_overlap=64.0
+    )[0]
+    assert rec.overlap <= 10.0 + 1e-6, f"Overlap {rec.overlap}s > Restdauer von B"

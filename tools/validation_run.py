@@ -82,7 +82,7 @@ def classify_key_result(detected_code: str, truth_code: str) -> str:
     return "falsch"
 
 
-def main() -> None:
+def main() -> int:
     os.makedirs(OUT_DIR, exist_ok=True)
     t0 = time.time()
 
@@ -104,6 +104,7 @@ def main() -> None:
             "not_independently_labeled": ["sections", "mixpoints", "transition_quality"],
         },
     }
+    failures = []
 
     for label, folder in FOLDERS.items():
         files = sample_folder(folder, SAMPLE_PER_FOLDER)
@@ -118,6 +119,18 @@ def main() -> None:
             if t is not None
         ]
         print(f"[{label}] analysiert: {len(tracks)}/{len(files)}", flush=True)
+        if len(tracks) != len(files):
+            failures.append(
+                f"{label}: nur {len(tracks)}/{len(files)} Tracks analysiert"
+            )
+        if len(tracks) < 2:
+            failures.append(f"{label}: weniger als zwei analysierte Tracks")
+            report["folders"][label] = {
+                "sample_size": len(files),
+                "analyzed": len(tracks),
+                "error": "zu wenige Tracks fuer Playlist und Transition",
+            }
+            continue
 
         # --- Ground-Truth-Vergleich ---
         gt_rows = []
@@ -194,6 +207,10 @@ def main() -> None:
                 print(f"[{label}] Preview gerendert: {out_path}", flush=True)
             except Exception as e:
                 print(f"[{label}] Preview {i} fehlgeschlagen: {e}", flush=True)
+                failures.append(f"{label}: Preview {i} fehlgeschlagen: {e}")
+
+        if not OWN_DETECTION and not idxs:
+            failures.append(f"{label}: keine renderbare Transition vorhanden")
 
         report["folders"][label] = {
             "sample_size": len(files),
@@ -222,12 +239,23 @@ def main() -> None:
     report["mode"] = "eigene Erkennung (ohne Rekordbox)" if OWN_DETECTION else "Fast-Path (Rekordbox)"
     suffix = "_own" if OWN_DETECTION else ""
     out_json = os.path.join(OUT_DIR, f"validation_report{suffix}.json")
+    if failures:
+        report["failures"] = failures
     with open(out_json, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
-    # Marker fuer detachte Ausfuehrung
-    open(os.path.join(OUT_DIR, f"DONE{suffix}.marker"), "w").write("ok")
+    if failures:
+        print("\nVALIDIERUNG FEHLGESCHLAGEN:", flush=True)
+        for failure in failures:
+            print(f"  - {failure}", flush=True)
+        print(f"Teilbericht in {report['runtime_seconds']}s -> {out_json}", flush=True)
+        return 1
+
+    # Marker fuer detachte Ausfuehrung nur nach vollstaendig erfolgreichem Lauf
+    with open(os.path.join(OUT_DIR, f"DONE{suffix}.marker"), "w") as marker:
+        marker.write("ok")
     print(f"\nFERTIG in {report['runtime_seconds']}s -> {out_json}", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -19,7 +19,7 @@ import os
 import hashlib
 import json
 from typing import Optional, Dict, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from .models import CAMELOT_MAP
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,30 @@ class RekordboxTrackData:
     # Downbeat-Feature 2026-07-17: DB-Content-ID fuer den lazy ANLZ-Zugriff
     # (Beatgrid/PQTZ liegt in den .DAT-Analysedateien, nicht in master.db)
     content_id: Optional[str] = None
+
+
+
+@dataclass
+class RekordboxCoverage:
+    """Wie viele Tracks eines Laufs konnten Rekordbox-Daten nutzen?
+
+    Trennt die drei Faelle, die im Log sonst alle gleich aussehen:
+    analysiert, in der Collection aber unanalysiert, gar nicht vorhanden.
+    """
+
+    available: bool = False
+    total: int = 0
+    with_analysis: int = 0
+    without_analysis: int = 0
+    ambiguous: int = 0
+    not_in_collection: int = 0
+    examples_without_analysis: List[str] = field(default_factory=list)
+    examples_ambiguous: List[str] = field(default_factory=list)
+
+    @property
+    def degraded(self) -> int:
+        """Tracks, die Rekordbox-Daten haetten haben koennen, aber keine hatten."""
+        return self.without_analysis + self.ambiguous
 
 
 class RekordboxImporter:
@@ -285,6 +309,23 @@ class RekordboxImporter:
         ):
             if left_value is not None and right_value is not None and left_value != right_value:
                 return True
+        if (
+            left.content_id
+            and right.content_id
+            and left.content_id != right.content_id
+        ):
+            return True
+        if left.cue_points and right.cue_points:
+            left_cues = sorted(
+                json.dumps(cue, sort_keys=True, default=str)
+                for cue in left.cue_points
+            )
+            right_cues = sorted(
+                json.dumps(cue, sort_keys=True, default=str)
+                for cue in right.cue_points
+            )
+            if left_cues != right_cues:
+                return True
         return False
 
     def _convert_key_to_camelot(self, rekordbox_key: str) -> Optional[str]:
@@ -465,11 +506,6 @@ class RekordboxImporter:
         return None
 
     @staticmethod
-    def _time_to_seconds(raw_time) -> Optional[float]:
-        """Kompatibilitaetshelfer; neue Pfade nutzen die explizite Millisekunden-API."""
-        return RekordboxImporter._milliseconds_to_seconds(raw_time)
-
-    @staticmethod
     def _milliseconds_to_seconds(raw_time) -> Optional[float]:
         """Normalisiert einen Rekordbox-Zeitwert aus Millisekunden."""
         try:
@@ -531,6 +567,47 @@ class RekordboxImporter:
         payload = json.dumps(data.__dict__, sort_keys=True, default=str)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    def summarize_coverage(self, file_paths) -> "RekordboxCoverage":
+        """Zaehlt aus, wie viele der Dateien Rekordbox-Daten liefern konnten.
+
+        Ohne diese Auswertung faellt HPG bei unanalysierten Collection-Tracks
+        still auf die Librosa-Vollanalyse zurueck — das Ergebnis ist brauchbar,
+        aber langsamer und ohne Rekordbox-Beatgrid, und niemand erfaehrt davon.
+        """
+        summary = RekordboxCoverage(available=self.is_available())
+        if not summary.available:
+            return summary
+
+        for file_path in file_paths:
+            summary.total += 1
+            data = self.get_track_data(file_path)
+            if data is not None and data.bpm:
+                summary.with_analysis += 1
+                continue
+
+            name = os.path.basename(file_path)
+            if data is not None:
+                # Record vorhanden, aber in Rekordbox nie analysiert (BPM 0).
+                summary.without_analysis += 1
+                if len(summary.examples_without_analysis) < 3:
+                    summary.examples_without_analysis.append(name)
+                continue
+
+            normalized = os.path.normpath(file_path).lower()
+            basename = os.path.basename(normalized)
+            is_ambiguous = normalized in self._ambiguous_paths or (
+                basename in self.basename_cache
+                and self.basename_cache[basename] is None
+            )
+            if is_ambiguous:
+                summary.ambiguous += 1
+                if len(summary.examples_ambiguous) < 3:
+                    summary.examples_ambiguous.append(name)
+            else:
+                summary.not_in_collection += 1
+
+        return summary
+
     def get_available_count(self) -> int:
         """Get number of tracks available in Rekordbox database"""
         return len(self.track_cache) - len(self._ambiguous_paths)
@@ -580,3 +657,21 @@ def get_rekordbox_importer() -> RekordboxImporter:
     if _rekordbox_importer is None:
         _rekordbox_importer = RekordboxImporter()
     return _rekordbox_importer
+
+
+def is_rekordbox_running() -> bool:
+    """True, wenn gerade ein Rekordbox-Prozess laeuft.
+
+    Rekordbox haelt seine Aenderungen im SQLite-WAL und checkpointet erst beim
+    Beenden nach master.db. Solange die App laeuft, liest HPG daher womoeglich
+    einen veralteten Stand — frisch analysierte Tracks fehlen dann noch.
+    """
+    if not REKORDBOX_AVAILABLE:
+        return False
+    try:
+        from pyrekordbox.utils import get_rekordbox_pid
+
+        return bool(get_rekordbox_pid())
+    except Exception as exc:  # psutil-Ausfall darf den Start nicht kippen
+        logger.debug("Rekordbox-Prozesspruefung fehlgeschlagen: %s", exc)
+        return False

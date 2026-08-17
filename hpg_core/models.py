@@ -255,5 +255,6 @@ class Track:
 
 def key_to_camelot(track: Track):
     """Assigns a Camelot code to a track based on its key."""
-    if track.keyNote and track.keyMode:
-        track.camelotCode = CAMELOT_MAP.get((track.keyNote, track.keyMode), "")
+    # camelotCode ist ein abgeleitetes Feld. Auch ein geloeschter oder
+    # ungueltiger Key muss deshalb einen zuvor berechneten Wert invalidieren.
+    track.camelotCode = CAMELOT_MAP.get((track.keyNote, track.keyMode), "")

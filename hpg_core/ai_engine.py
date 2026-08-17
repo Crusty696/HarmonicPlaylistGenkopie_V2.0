@@ -99,6 +99,10 @@ def validate_ai_analysis(
     ):
         raise ValueError("description muss ein nichtleerer String sein")
 
+    for key in ("mix_in_time", "mix_out_time"):
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{key} muss eine JSON-Zahl sein")
     mix_in = float(data["mix_in_time"])
     mix_out = float(data["mix_out_time"])
     if not math.isfinite(mix_in) or not math.isfinite(mix_out):
@@ -188,6 +192,16 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
         ],
         "temperature": 0,
         "seed": 0,
+        # AUDIT-FIX 2026-08-14: max_tokens war nicht gesetzt. Unter
+        # response_format=json_schema erzwingt die Runtime eine Grammatik; ein
+        # Modell, das dabei in eine ungeschlossene Struktur laeuft, KANN nicht
+        # mehr stoppen, weil das Schema den Abschluss verlangt. LM Studio
+        # dokumentiert das ausdruecklich und empfiehlt immer ein Token-Limit.
+        # Ohne Limit frisst ein einziger solcher Track die vollen AI_TIMEOUT
+        # Sekunden - bei einer Bibliothek mit hunderten Tracks summiert sich das.
+        # Die erwartete Antwort ist klein (Sub-Genre, 2-3 Moods, ein Satz,
+        # zwei Zahlen); 400 Tokens sind grosszuegig bemessen.
+        "max_tokens": config.AI_MAX_TOKENS,
     }
     
     payload["response_format"] = {

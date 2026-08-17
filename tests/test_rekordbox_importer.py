@@ -592,6 +592,32 @@ class TestRekordboxTrackData:
     assert data.camelot_code == "8A"
     assert data.duration == 240.0
 
+  def test_different_content_ids_are_conflicting(self):
+    left = RekordboxTrackData(bpm=128.0, content_id="old")
+    right = RekordboxTrackData(bpm=128.0, content_id="new")
+
+    assert RekordboxImporter._track_data_conflicts(left, right) is True
+
+  def test_different_cue_sets_are_conflicting(self):
+    left = RekordboxTrackData(
+      bpm=128.0, cue_points=[{"name": "MIX IN", "position": 30.0}]
+    )
+    right = RekordboxTrackData(
+      bpm=128.0, cue_points=[{"name": "MIX IN", "position": 90.0}]
+    )
+
+    assert RekordboxImporter._track_data_conflicts(left, right) is True
+
+  def test_same_cues_in_different_order_are_not_conflicting(self):
+    cues = [
+      {"name": "IN", "position": 30.0},
+      {"name": "OUT", "position": 240.0},
+    ]
+    left = RekordboxTrackData(bpm=128.0, cue_points=cues)
+    right = RekordboxTrackData(bpm=128.0, cue_points=list(reversed(cues)))
+
+    assert RekordboxImporter._track_data_conflicts(left, right) is False
+
 
 # ─── Tests: Singleton ────────────────────────────────────────────────────────
 
@@ -616,3 +642,118 @@ class TestSingleton:
       assert i1 is i2
     finally:
       rb_module._rekordbox_importer = None  # Cleanup
+
+
+# --- Prozesspruefung: warnt die App, wenn Rekordbox noch offen ist? ---------
+
+
+def test_is_rekordbox_running_reports_live_process(monkeypatch):
+  """Laufender Prozess -> True. Rekordbox checkpointet sein WAL erst beim
+  Beenden, HPG liest solange einen veralteten Stand."""
+  import pyrekordbox.utils as rb_utils
+
+  monkeypatch.setattr(rb_module, "REKORDBOX_AVAILABLE", True)
+  monkeypatch.setattr(rb_utils, "get_rekordbox_pid", lambda *a, **k: 4711)
+  assert rb_module.is_rekordbox_running() is True
+
+  monkeypatch.setattr(rb_utils, "get_rekordbox_pid", lambda *a, **k: 0)
+  assert rb_module.is_rekordbox_running() is False
+
+
+def test_is_rekordbox_running_survives_psutil_failure(monkeypatch):
+  """Ein Fehler in der Prozessliste darf den App-Start nicht kippen."""
+  import pyrekordbox.utils as rb_utils
+
+  def boom(*a, **k):
+    raise OSError("Zugriff verweigert")
+
+  monkeypatch.setattr(rb_module, "REKORDBOX_AVAILABLE", True)
+  monkeypatch.setattr(rb_utils, "get_rekordbox_pid", boom)
+  assert rb_module.is_rekordbox_running() is False
+
+
+def test_is_rekordbox_running_false_without_pyrekordbox(monkeypatch):
+  monkeypatch.setattr(rb_module, "REKORDBOX_AVAILABLE", False)
+  assert rb_module.is_rekordbox_running() is False
+
+
+# --- summarize_coverage: warum konnte ein Track keine RB-Daten nutzen? ------
+
+# Keine Backslash-Literale: os.path.join baut die Windows-Pfade auf.
+MUSIC_DIR = os.path.join("C:", os.sep, "Music")
+
+
+def _music(name):
+  return os.path.join(MUSIC_DIR, name)
+
+
+class TestSummarizeCoverage:
+  """Trennt analysiert / unanalysiert / mehrdeutig / nicht in Collection."""
+
+  def test_analysierter_track_zaehlt_als_nutzbar(self):
+    imp = make_importer_with_track(MUSIC_DIR, "a.mp3", bpm=14000)
+    cov = imp.summarize_coverage([_music("a.mp3")])
+    assert cov.available is True
+    assert (cov.total, cov.with_analysis, cov.degraded) == (1, 1, 0)
+
+  def test_record_ohne_bpm_gilt_als_unanalysiert(self):
+    """Davids Realfall: Track ist in der Collection, aber nie analysiert."""
+    imp = make_importer_with_track(MUSIC_DIR, "a.mp3", bpm=0)
+    cov = imp.summarize_coverage([_music("a.mp3")])
+    assert cov.without_analysis == 1
+    assert cov.with_analysis == 0
+    assert cov.not_in_collection == 0
+    assert cov.degraded == 1
+    assert cov.examples_without_analysis == ["a.mp3"]
+
+  def test_fremder_track_ist_kein_befund(self):
+    imp = make_importer_with_track(MUSIC_DIR, "a.mp3", bpm=14000)
+    cov = imp.summarize_coverage([_music("fremd.mp3")])
+    assert cov.not_in_collection == 1
+    assert cov.degraded == 0
+
+  def test_mehrdeutiger_pfad_wird_getrennt_gezaehlt(self):
+    """Widerspruechliche Records fuer denselben Pfad -> bewusst verworfen."""
+    contents = [
+      FakeContent(folder_path=MUSIC_DIR, filename="a.mp3", bpm=12800),
+      FakeContent(folder_path=MUSIC_DIR, filename="a.mp3", bpm=14000),
+    ]
+    imp = make_importer(db=FakeDatabase(contents))
+    assert imp._ambiguous_paths, "Fixture erzeugt keinen Konflikt"
+    cov = imp.summarize_coverage([_music("a.mp3")])
+    assert cov.ambiguous == 1
+    assert cov.without_analysis == 0
+    assert cov.degraded == 1
+    assert cov.examples_ambiguous == ["a.mp3"]
+
+  def test_summanden_ergeben_immer_die_gesamtzahl(self):
+    contents = [
+      FakeContent(folder_path=MUSIC_DIR, filename="ok.mp3", bpm=14000),
+      FakeContent(folder_path=MUSIC_DIR, filename="leer.mp3", bpm=0),
+    ]
+    imp = make_importer(db=FakeDatabase(contents))
+    paths = [_music("ok.mp3"), _music("leer.mp3"), _music("weg.mp3")]
+    cov = imp.summarize_coverage(paths)
+    assert cov.total == 3
+    assert (
+      cov.with_analysis + cov.without_analysis
+      + cov.ambiguous + cov.not_in_collection
+    ) == cov.total
+
+  def test_ohne_rekordbox_kein_befund(self):
+    with patch("hpg_core.rekordbox_importer.REKORDBOX_AVAILABLE", False):
+      imp = RekordboxImporter()
+    cov = imp.summarize_coverage([_music("a.mp3")])
+    assert cov.available is False
+    assert cov.total == 0
+    assert cov.degraded == 0
+
+  def test_beispiele_sind_gedeckelt(self):
+    contents = [
+      FakeContent(folder_path=MUSIC_DIR, filename=f"t{i}.mp3", bpm=0)
+      for i in range(6)
+    ]
+    imp = make_importer(db=FakeDatabase(contents))
+    cov = imp.summarize_coverage([_music(f"t{i}.mp3") for i in range(6)])
+    assert cov.without_analysis == 6
+    assert len(cov.examples_without_analysis) == 3

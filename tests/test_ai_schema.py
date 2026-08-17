@@ -3,6 +3,8 @@
 import json
 from unittest.mock import Mock
 
+import pytest
+
 from hpg_core.ai_engine import (
   AI_PROMPT_VERSION,
   AI_SCHEMA_VERSION,
@@ -98,6 +100,19 @@ def test_ai_metadata_cache_requires_exact_provenance():
 def test_fetch_ai_analysis_rejects_overlong_schema_values(monkeypatch):
   invalid = _valid_data()
   invalid["sub_genre"] = "x" * 101
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.requests.post", Mock(return_value=_response(invalid))
+  )
+
+  assert fetch_ai_analysis(_track(), url="http://local/test") == {}
+
+
+@pytest.mark.parametrize("invalid_number", [True, "32.0"])
+def test_fetch_ai_analysis_rejects_non_json_number_mixpoints(
+  monkeypatch, invalid_number
+):
+  invalid = _valid_data()
+  invalid["mix_in_time"] = invalid_number
   monkeypatch.setattr(
     "hpg_core.ai_engine.requests.post", Mock(return_value=_response(invalid))
   )

@@ -100,6 +100,8 @@ print("=" * 110)
 
 falsch = []
 unbekannt = []
+fehlgeschlagen = []
+analysiert = 0
 
 for i, t in enumerate(tracks, 1):
     name = t.name
@@ -115,11 +117,15 @@ for i, t in enumerate(tracks, 1):
         tr = analyze_track(str(t))
     except Exception as e:
         print(f"{i:>3}  {'ERROR':>6}  {'---':<14}  {fname_genre:<25}  {'ERROR':<22}  {'---':>5}  {str(e)[:20]}")
+        fehlgeschlagen.append((i, name, str(e)))
         continue
         
     if not tr:
         print(f"{i:>3}  {'FAIL':>6}  {'---':<14}  {fname_genre:<25}  {'---':<22}  {'---':>5}  FAILED")
+        fehlgeschlagen.append((i, name, "analyze_track lieferte kein Ergebnis"))
         continue
+
+    analysiert += 1
 
     audio_genre = getattr(tr, 'detected_genre', 'Unknown') or "Unknown"
     conf = getattr(tr, 'genre_confidence', 0) or 0
@@ -140,9 +146,10 @@ for i, t in enumerate(tracks, 1):
 
 print("=" * 110)
 print("\nERGEBNIS:")
-print(f"  Richtig erkannt : {len(tracks) - len(falsch) - len(unbekannt)}/{len(tracks)}")
+print(f"  Richtig erkannt : {analysiert - len(falsch) - len(unbekannt)}/{analysiert}")
 print(f"  Falsch erkannt  : {len(falsch)}")
 print(f"  Unbekannt/n/a   : {len(unbekannt)}")
+print(f"  Analysefehler   : {len(fehlgeschlagen)}")
 
 if falsch:
     print("\n[X] FALSCH ERKANNTE TRACKS (Audio passt nicht zu Dateiname):")
@@ -150,3 +157,10 @@ if falsch:
         i, name, fg, ag, bpm = entry
         print(f"  {i:>2}. {name[:55]}")
         print(f"      Datei: {fg}  ->  Erkannt: {ag}  (BPM: {bpm:.1f})")
+
+if fehlgeschlagen:
+    print("\n[X] NICHT ANALYSIERTE TRACKS:")
+    for i, name, error in fehlgeschlagen:
+        print(f"  {i:>2}. {name[:55]}: {error}")
+
+raise SystemExit(1 if falsch or fehlgeschlagen else 0)

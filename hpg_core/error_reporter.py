@@ -7,7 +7,9 @@ Thread-safe via Lock (Worker-Threads schreiben parallel).
 """
 import json
 import logging
+import os
 import sys
+import tempfile
 import threading
 import traceback
 from datetime import datetime
@@ -42,26 +44,35 @@ class ErrorReporter:
             errors = self._read_errors()
             errors.append(error_entry)
             errors = errors[-MAX_ENTRIES:]
+            temp_path = None
             try:
-                with open(self.error_log_file, 'w', encoding='utf-8') as f:
+                with tempfile.NamedTemporaryFile(
+                    mode='w',
+                    encoding='utf-8',
+                    dir=self.error_log_file.parent,
+                    prefix=f".{self.error_log_file.name}.",
+                    suffix='.tmp',
+                    delete=False,
+                ) as f:
+                    temp_path = Path(f.name)
                     json.dump(errors, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, self.error_log_file)
             except OSError as e:
                 logger.error(f"Fehlerprotokoll nicht schreibbar: {e}")
+                if temp_path is not None:
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
     def get_recent_errors(self, count=10):
         """Gibt die letzten Fehler zurueck (neueste zuletzt)."""
+        if count <= 0:
+            return []
         with self._lock:
             return self._read_errors()[-count:]
-
-    def clear_errors(self):
-        """Loescht alle Fehlermeldungen."""
-        with self._lock:
-            try:
-                with open(self.error_log_file, 'w', encoding='utf-8') as f:
-                    json.dump([], f)
-                logger.info("Fehlerprotokoll geloescht")
-            except OSError as e:
-                logger.error(f"Fehler beim Loeschen des Fehlerprotokolls: {e}")
 
     def _read_errors(self):
         """Liest bestehende Eintraege; korrupte/fehlende Datei ergibt leere Liste."""
