@@ -195,6 +195,38 @@ def mine_mix(pfad: Path) -> tuple[list[dict], list[TransitionSample]]:
 # Reine Logik (kein Audio, kein Dateizugriff) — hier testbar
 # ---------------------------------------------------------------------------
 
+def _skalen_aus(deltas: list[dict]) -> dict[str, float]:
+    """Groesster beobachteter Betrag je Faktor — Bezugsgroesse fuers Normieren."""
+    skalen: dict[str, float] = {}
+    for faktor in AUC_RICHTUNG:
+        werte = [abs(float(d[faktor])) for d in deltas if faktor in d]
+        skalen[faktor] = max(werte) if werte else 1.0
+    return skalen
+
+
+def kombinierter_score(
+    delta: dict, gewichte: dict[str, float], skalen: dict[str, float]
+) -> float:
+    """Gewichteter Gesamtscore eines Paares; hoeher = eher echter Uebergang.
+
+    Faktoren, bei denen ein NIEDRIGER Wert fuer einen Uebergang spricht
+    (Abstaende), werden umgedreht, damit alle in dieselbe Richtung zeigen.
+    """
+    summe = 0.0
+    gewicht_summe = 0.0
+    for faktor, hoeher_ist_besser in AUC_RICHTUNG.items():
+        if faktor not in delta:
+            continue
+        w = gewichte.get(faktor, 0.0)
+        if w <= 0.0:
+            continue
+        skala = skalen.get(faktor) or 1.0
+        wert = min(1.0, abs(float(delta[faktor])) / skala)
+        summe += w * (wert if hoeher_ist_besser else 1.0 - wert)
+        gewicht_summe += w
+    return summe / gewicht_summe if gewicht_summe > 0 else 0.0
+
+
 def baue_zufallspaare(
     fenster: list[TransitionSample], anzahl: int = ZUFALLSPAARE_JE_MIX,
     seed: int = ZUFALLS_SEED,
@@ -324,7 +356,18 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Keine Uebergangsstellen in einem der Mixe gefunden — Abbruch.")
         return 1
 
-    zufalls_deltas = zufallsdeltas_aus_fenstern(alle_fenster)
+    # Die Genauigkeit der AUC haengt an der KLEINEREN der beiden Klassen.
+    # Ein fester Deckel von 30 Negativbeispielen macht 167 gesammelte
+    # Uebergaenge wertlos: das Konfidenzintervall bleibt so breit wie bei
+    # 30 gegen 30. Deshalb mindestens so viele Zufallspaare wie echte
+    # Uebergaenge ziehen.
+    zufalls_deltas = zufallsdeltas_aus_fenstern(
+        alle_fenster, anzahl=max(ZUFALLSPAARE_JE_MIX, len(echte_deltas))
+    )
+
+    # Gewichte schon hier lernen: der Holdout braucht sie, um den
+    # GESAMTSCORE zu pruefen statt eines einzelnen Faktors.
+    gewichte_roh = learn_weights(berechne_auc_richtung(echte_deltas, zufalls_deltas))
 
     holdout_ergebnis: bool | None = None
     if args.holdout:
@@ -333,10 +376,18 @@ def main(argv: list[str] | None = None) -> int:
             logger.warning("Holdout-Mix konnte nicht verarbeitet werden.")
         else:
             holdout_echte, holdout_fenster = holdout_daten
-            holdout_zufall = zufallsdeltas_aus_fenstern(holdout_fenster)
+            holdout_zufall = zufallsdeltas_aus_fenstern(
+                holdout_fenster,
+                anzahl=max(ZUFALLSPAARE_JE_MIX, len(holdout_echte)),
+            )
+            # Geprueft wird der GELERNTE GESAMTSCORE, nicht ein einzelner
+            # Faktor. Frueher stand hier groove_sim allein — ausgerechnet der
+            # schwaechste der fuenf. Der Test verwarf damit Kalibrierungen,
+            # die von timbre_sim und sub_delta klar gestuetzt wurden.
+            skalen = _skalen_aus(echte_deltas + zufalls_deltas)
             holdout_ergebnis = holdout_passed(
-                [d["groove_sim"] for d in holdout_echte],
-                [d["groove_sim"] for d in holdout_zufall],
+                [kombinierter_score(d, gewichte_roh, skalen) for d in holdout_echte],
+                [kombinierter_score(d, gewichte_roh, skalen) for d in holdout_zufall],
             )
             if not holdout_ergebnis:
                 logger.warning(
