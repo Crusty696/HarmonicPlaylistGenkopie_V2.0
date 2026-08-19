@@ -113,3 +113,64 @@ def deltas_between(a: TransitionSample, b: TransitionSample) -> dict[str, float]
         "brightness_delta": abs(a.brightness - b.brightness),
         "timbre_sim": float(timbre_sim) if timbre_sim is not None else 0.0,
     }
+
+
+# Ab dieser AUC gilt die Trennung als belastbar genug fuer den Einbau.
+HOLDOUT_AUC_MIN = 0.65
+
+
+def discrimination_auc(
+    echte: list[float], zufaellige: list[float], hoeher_ist_besser: bool = True
+) -> float:
+    """Trennschaerfe als AUC: Anteil der Paare, die richtig geordnet sind.
+
+    0.5 heisst "der Faktor unterscheidet echte Uebergaenge nicht von
+    zufaelligen" und fuehrt spaeter zu geringem Gewicht.
+    """
+    if not echte or not zufaellige:
+        return 0.5
+    treffer = 0.0
+    gesamt = 0
+    for e in echte:
+        for z in zufaellige:
+            gesamt += 1
+            if e == z:
+                treffer += 0.5
+            elif (e > z) == hoeher_ist_besser:
+                treffer += 1.0
+    return float(treffer / gesamt) if gesamt else 0.5
+
+
+def tolerance_percentile(werte: list[float], perzentil: float = 90.0) -> float | None:
+    """Grenze, die in `perzentil` Prozent der echten Uebergaenge gilt."""
+    if not werte:
+        return None
+    return float(np.percentile(np.asarray(werte, dtype=float), perzentil))
+
+
+def learn_weights(auc: dict[str, float], gesamt: float = 0.30) -> dict[str, float]:
+    """Verteilt `gesamt` auf die Faktoren nach ihrer Trennschaerfe.
+
+    Grundlage ist der Abstand zu 0.5 — ein Faktor, der nichts unterscheidet,
+    bekommt nur den Gleichanteil.
+    """
+    if not auc:
+        return {}
+    ueberschuss = {k: max(0.0, v - 0.5) for k, v in auc.items()}
+    summe = sum(ueberschuss.values())
+    if summe <= 0.0:
+        gleich = gesamt / len(auc)
+        return {k: gleich for k in auc}
+    return {k: gesamt * (v / summe) for k, v in ueberschuss.items()}
+
+
+def holdout_passed(
+    echte_scores: list[float], zufall_scores: list[float],
+    schwelle: float = HOLDOUT_AUC_MIN,
+) -> bool:
+    """Prueft am zurueckgehaltenen Mix, ob echte Uebergaenge hoeher scoren.
+
+    Faellt der Test durch, taugen die gelernten Werte fuer dieses Genre nicht
+    und werden NICHT eingebaut.
+    """
+    return discrimination_auc(echte_scores, zufall_scores, True) >= schwelle

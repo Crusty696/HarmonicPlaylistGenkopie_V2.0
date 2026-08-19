@@ -86,3 +86,57 @@ def test_deltas_between_offbeat_gegen_gerade_ist_unaehnlich():
     d = deltas_between(a, b)
     assert d["groove_sim"] < 0.2
     assert d["timbre_sim"] < 0.2
+
+
+from hpg_core.mix_analysis import (
+    discrimination_auc, holdout_passed, learn_weights, tolerance_percentile,
+)
+
+
+def test_discrimination_auc_perfekte_trennung_ist_eins():
+    assert discrimination_auc([0.9, 0.95, 0.92], [0.1, 0.2, 0.15], True) == pytest.approx(1.0)
+
+
+def test_discrimination_auc_keine_trennung_ist_halb():
+    werte = [0.5, 0.5, 0.5]
+    assert discrimination_auc(werte, werte, True) == pytest.approx(0.5)
+
+
+def test_discrimination_auc_umgekehrte_richtung():
+    # Bei Abstaenden ist NIEDRIGER besser.
+    assert discrimination_auc([0.1, 0.15], [0.8, 0.9], False) == pytest.approx(1.0)
+
+
+def test_tolerance_percentile_nimmt_90er():
+    assert tolerance_percentile(list(range(101)), 90.0) == pytest.approx(90.0, abs=1.0)
+
+
+def test_tolerance_percentile_leer_gibt_none():
+    assert tolerance_percentile([], 90.0) is None
+
+
+def test_learn_weights_summiert_auf_dreissig_prozent():
+    auc = {"groove": 1.0, "bass": 0.5, "timbre": 0.5, "mood": 0.5}
+    gewichte = learn_weights(auc, gesamt=0.30)
+    assert sum(gewichte.values()) == pytest.approx(0.30)
+    assert gewichte["groove"] > gewichte["bass"]
+    assert all(w >= 0.0 for w in gewichte.values())
+
+
+def test_learn_weights_ohne_trennschaerfe_verteilt_gleich():
+    auc = {"groove": 0.5, "bass": 0.5, "timbre": 0.5, "mood": 0.5}
+    gewichte = learn_weights(auc, gesamt=0.30)
+    for wert in gewichte.values():
+        assert wert == pytest.approx(0.075)
+
+
+def test_holdout_passed_bei_klarer_trennung():
+    assert holdout_passed([0.8, 0.85, 0.9], [0.3, 0.35, 0.4]) is True
+
+
+def test_holdout_failed_ohne_trennung():
+    assert holdout_passed([0.5, 0.5], [0.5, 0.5]) is False
+
+
+def test_holdout_failed_bei_umgekehrter_ordnung():
+    assert holdout_passed([0.2, 0.25], [0.8, 0.9]) is False
