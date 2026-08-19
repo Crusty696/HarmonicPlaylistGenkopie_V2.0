@@ -29,6 +29,7 @@ from .config import (
 from .dj_brain import align_ai_mix_points, calculate_genre_aware_mix_points
 from .downbeat import estimate_first_downbeat, estimate_first_phrase
 from .genre_classifier import GenreClassification, classify_genre
+from .groove import GrooveFeatures, extract_groove
 from .models import CAMELOT_MAP, Track, get_camelot_components
 from .rekordbox_importer import get_rekordbox_importer
 from .structure_analyzer import (
@@ -180,6 +181,29 @@ def analyze_frequency_bands(
     b, m, h = get_e(bass_mask), get_e(mids_mask), get_e(highs_mask)
     t = b + m + h + 1e-6
     return round(b/t*100, 1), round(m/t*100, 1), round(h/t*100, 1)
+
+def compute_groove_fields(
+    y: np.ndarray,
+    sr: int,
+    bpm: float,
+    first_downbeat: float,
+    downbeat_confidence: float,
+    feature_cache: FeatureCache | None = None,
+) -> GrooveFeatures:
+    """Groove-Features berechnen, aber nur auf belastbarem Taktraster.
+
+    Ein Muster auf einem erfundenen Raster ist schlechter als gar keins —
+    deshalb Abbruch bei downbeat_confidence 0.0.
+    """
+    if downbeat_confidence <= 0.0 or bpm <= 0:
+        return GrooveFeatures()
+    try:
+        return extract_groove(
+            y, sr, bpm, first_downbeat, feature_cache=feature_cache
+        )
+    except Exception as exc:  # Groove darf die Analyse nie kippen
+        logger.warning(f"Groove-Extraktion fehlgeschlagen: {exc}")
+        return GrooveFeatures()
 
 def analyze_rhythm_complexity(
     y: np.ndarray,
@@ -1680,6 +1704,13 @@ def analyze_track(file_path: str) -> Track | None:
             avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr, feature_cache)
             track_pr, track_sf = analyze_rhythm_complexity(y, sr, feature_cache)
 
+            # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
+            # compute_groove_fields). y/sr sind hier das Fast-Path-Audio.
+            groove = compute_groove_fields(
+                y, sr, rekordbox_data.bpm, first_downbeat, downbeat_confidence,
+                feature_cache=feature_cache,
+            )
+
             # Update each section with detailed frequency and rhythm data
             updated_sections = []
             for sec_dict in section_dicts:
@@ -1728,6 +1759,7 @@ def analyze_track(file_path: str) -> Track | None:
             timbre_fp = []
             avg_b = avg_m = avg_h = 0.0
             track_pr = track_sf = 0.0
+            groove = GrooveFeatures()
 
         # Create Track object with Rekordbox data
         track = Track(
@@ -1737,6 +1769,11 @@ def analyze_track(file_path: str) -> Track | None:
             spectral_flatness=track_sf,
             percussive_ratio=track_pr,
             timbre_fingerprint=timbre_fp,
+            groove_pattern=groove.groove_pattern,
+            bass_pattern=groove.bass_pattern,
+            syncopation=groove.syncopation,
+            sub_energy=groove.sub_energy,
+            bass_punch=groove.bass_punch,
             filePath=file_path,
             fileName=os.path.basename(file_path),
             artist=artist,
@@ -2088,13 +2125,26 @@ def analyze_track(file_path: str) -> Track | None:
             
             avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr, feature_cache)
             track_pr, track_sf = analyze_rhythm_complexity(y, sr, feature_cache)
+
+            # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
+            # compute_groove_fields).
+            groove = compute_groove_fields(
+                y, sr, bpm, first_downbeat, downbeat_confidence,
+                feature_cache=feature_cache,
+            )
         except Exception as e:
             logger.warning(f"Librosa-Phase-2 fehlgeschlagen: {e}")
             timbre_fp = []
             avg_b = avg_m = avg_h = 0.0
             track_pr = track_sf = 0.0
+            groove = GrooveFeatures()
 
         track = Track(
+            groove_pattern=groove.groove_pattern,
+            bass_pattern=groove.bass_pattern,
+            syncopation=groove.syncopation,
+            sub_energy=groove.sub_energy,
+            bass_punch=groove.bass_punch,
             filePath=file_path,
             fileName=os.path.basename(file_path),
             artist=artist,

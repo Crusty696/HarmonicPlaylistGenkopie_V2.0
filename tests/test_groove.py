@@ -186,3 +186,18 @@ def test_track_hat_groove_felder_mit_defaults():
 
 def test_cache_version_ist_30():
     assert CACHE_VERSION == 30
+
+
+def test_groove_wird_nur_bei_belastbarem_downbeat_berechnet():
+    """downbeat_confidence 0.0 heisst: kein Raster, also kein Muster."""
+    from hpg_core.analysis import compute_groove_fields
+
+    y, sr = _click_track()
+    mit = compute_groove_fields(y, sr, bpm=120.0, first_downbeat=0.0,
+                                downbeat_confidence=1.0, feature_cache=None)
+    ohne = compute_groove_fields(y, sr, bpm=120.0, first_downbeat=0.0,
+                                 downbeat_confidence=0.0, feature_cache=None)
+
+    assert len(mit.groove_pattern) == BAR_SLOTS
+    assert ohne.groove_pattern == []
+    assert ohne.syncopation == 0.0
