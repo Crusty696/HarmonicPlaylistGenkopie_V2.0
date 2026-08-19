@@ -227,21 +227,48 @@ def kombinierter_score(
     return summe / gewicht_summe if gewicht_summe > 0 else 0.0
 
 
+def ist_echter_uebergang(i: int, j: int) -> bool:
+    """True, wenn (i, j) das Fensterpaar eines echten Uebergangs ist.
+
+    Die Fensterliste eines Mixes liegt als [vor0, nach0, vor1, nach1, ...] —
+    das Paar (2k, 2k+1) IST Uebergang k und gehoert damit in die Positiv-,
+    nicht in die Negativklasse.
+    """
+    return i != j and i // 2 == j // 2
+
+
 def baue_zufallspaare(
     fenster: list[TransitionSample], anzahl: int = ZUFALLSPAARE_JE_MIX,
     seed: int = ZUFALLS_SEED,
 ) -> list[tuple[int, int]]:
-    """Zieht `anzahl` zufaellige, unterschiedliche Fensterpaare (Indizes).
+    """Zieht bis zu `anzahl` verschiedene Fensterpaare (Indizes).
 
     Fester Seed macht das Ergebnis reproduzierbar. Bei weniger als zwei
     Fenstern gibt es keine gueltigen Paare.
+
+    Zwei Filter: echte Uebergangspaare werden verworfen (sie sind die
+    Positivklasse), und dieselbe Fensterkombination wird nur einmal
+    gezogen. Dedupliziert wird ueber `frozenset`, weil alle Deltas
+    symmetrisch sind — (i, j) und (j, i) liefern dieselben Zahlen.
     """
     if len(fenster) < 2:
         return []
     rng = random.Random(seed)
     paare: list[tuple[int, int]] = []
-    for _ in range(anzahl):
+    gesehen: set[frozenset[int]] = set()
+    # Rueckweisungs-Ziehung mit Deckel: bei wenigen Fenstern ist der Vorrat
+    # gueltiger Paare endlich, dann bricht der Deckel die Schleife ab.
+    versuche_max = anzahl * 20 + 100
+    for _ in range(versuche_max):
+        if len(paare) >= anzahl:
+            break
         i, j = rng.sample(range(len(fenster)), 2)
+        if ist_echter_uebergang(i, j):
+            continue
+        schluessel = frozenset((i, j))
+        if schluessel in gesehen:
+            continue
+        gesehen.add(schluessel)
         paare.append((i, j))
     return paare
 
@@ -253,6 +280,32 @@ def zufallsdeltas_aus_fenstern(
     """Berechnet die Deltas fuer zufaellige Fensterpaare (die Negativklasse)."""
     paare = baue_zufallspaare(fenster, anzahl=anzahl, seed=seed)
     return [deltas_between(fenster[i], fenster[j]) for i, j in paare]
+
+
+def zufallsdeltas_je_mix(
+    fenster_je_mix: list[list[TransitionSample]],
+    echte_je_mix: list[list[dict]],
+    seed: int = ZUFALLS_SEED,
+) -> list[list[dict]]:
+    """Zieht die Negativklasse JE MIX und liefert sie mixweise gruppiert.
+
+    Ueber alle Mixe gepoolt zu ziehen macht die Aufgabe leichter als sie in
+    Wirklichkeit ist: der Klassifikator trennt dann teilweise "gleiche
+    Aufnahme-Session" von "andere Session" (Mastering, Lautheit,
+    Aufnahmekette). Im Einsatz vergleicht die App zwei Tracks derselben
+    Bibliothek — dieser Unterschied existiert dort nicht.
+
+    Je Mix werden `max(ZUFALLSPAARE_JE_MIX, Anzahl echter Uebergaenge dieses
+    Mixes)` Paare gezogen.
+    """
+    ergebnis: list[list[dict]] = []
+    for index, fenster in enumerate(fenster_je_mix):
+        echte = echte_je_mix[index] if index < len(echte_je_mix) else []
+        anzahl = max(ZUFALLSPAARE_JE_MIX, len(echte))
+        ergebnis.append(
+            zufallsdeltas_aus_fenstern(fenster, anzahl=anzahl, seed=seed)
+        )
+    return ergebnis
 
 
 def berechne_auc_richtung(echte: list[dict], zufall: list[dict]) -> dict[str, float]:
@@ -342,15 +395,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
 
-    alle_echten_deltas: list[dict] = []
-    alle_fenster: list[TransitionSample] = []
+    echte_je_mix: list[list[dict]] = []
+    fenster_je_mix: list[list[TransitionSample]] = []
     for mix in args.mixe:
         ergebnis = verarbeite_mix(mix)
         if ergebnis is None:
             continue
         echte_deltas, fenster = ergebnis
-        alle_echten_deltas.extend(echte_deltas)
-        alle_fenster.extend(fenster)
+        echte_je_mix.append(echte_deltas)
+        fenster_je_mix.append(fenster)
+
+    alle_echten_deltas = [d for mix_deltas in echte_je_mix for d in mix_deltas]
 
     if not alle_echten_deltas:
         logger.error("Keine Uebergangsstellen in einem der Mixe gefunden — Abbruch.")
@@ -360,10 +415,9 @@ def main(argv: list[str] | None = None) -> int:
     # Ein fester Deckel von 30 Negativbeispielen macht 167 gesammelte
     # Uebergaenge wertlos: das Konfidenzintervall bleibt so breit wie bei
     # 30 gegen 30. Deshalb mindestens so viele Zufallspaare wie echte
-    # Uebergaenge ziehen.
-    zufalls_deltas = zufallsdeltas_aus_fenstern(
-        alle_fenster, anzahl=max(ZUFALLSPAARE_JE_MIX, len(alle_echten_deltas))
-    )
+    # Uebergaenge ziehen — aber JE MIX, nicht ueber alle Mixe gepoolt.
+    zufall_je_mix = zufallsdeltas_je_mix(fenster_je_mix, echte_je_mix)
+    zufalls_deltas = [d for mix_deltas in zufall_je_mix for d in mix_deltas]
 
     # Gewichte schon hier lernen: der Holdout braucht sie, um den
     # GESAMTSCORE zu pruefen statt eines einzelnen Faktors.

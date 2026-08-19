@@ -12,6 +12,7 @@ import pytest
 
 from tools.mix_mining import (
     baue_zufallspaare,
+    zufallsdeltas_je_mix,
     berechne_auc_richtung,
     baue_ergebnis,
 )
@@ -122,3 +123,35 @@ class TestBaueErgebnis:
             holdout=True,
         )
         assert ergebnis["holdout"] is True
+
+
+class TestZufallspaareBleibenImMix:
+    """FIX 1: Die Negativklasse darf nicht mix-uebergreifend gezogen werden."""
+
+    def test_echte_uebergaenge_sind_keine_zufallspaare(self):
+        # alle_fenster liegt als [vor0, nach0, vor1, nach1, ...] — das Paar
+        # (2k, 2k+1) IST Uebergang k und gehoert nicht in die Negativklasse.
+        fenster = [_sample([1.0, 0.0], float(i)) for i in range(4)]
+        paare = baue_zufallspaare(fenster, anzahl=50, seed=42)
+        assert paare, "es muss gueltige Paare geben"
+        for i, j in paare:
+            assert {i, j} not in ({0, 1}, {2, 3})
+
+    def test_keine_duplikate(self):
+        fenster = [_sample([1.0, 0.0], float(i)) for i in range(6)]
+        paare = baue_zufallspaare(fenster, anzahl=100, seed=7)
+        als_mengen = [frozenset(p) for p in paare]
+        assert len(als_mengen) == len(set(als_mengen))
+
+    def test_deltas_stammen_aus_demselben_mix(self):
+        # Mix A hat kleine sub_energy, Mix B eine sehr grosse. Ein
+        # mix-uebergreifendes Paar wuerde ein sub_delta um 1000 erzeugen.
+        mix_a = [_sample([1.0, 0.0], float(i)) for i in range(6)]
+        mix_b = [_sample([1.0, 0.0], 1000.0 + i) for i in range(6)]
+        echte_je_mix = [[{}] * 3, [{}] * 3]
+        deltas_je_mix = zufallsdeltas_je_mix([mix_a, mix_b], echte_je_mix)
+        assert len(deltas_je_mix) == 2
+        for deltas in deltas_je_mix:
+            assert deltas
+            for d in deltas:
+                assert d["sub_delta"] < 100.0
