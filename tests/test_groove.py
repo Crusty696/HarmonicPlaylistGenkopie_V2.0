@@ -65,6 +65,46 @@ def test_fold_to_bar_leicht_zu_frueh_landet_trotzdem_auf_der_zaehlzeit():
     assert belegt == [0, 4, 8, 12]
 
 
+def _impuls_zug(bpm=128.0, dauer=360.0, fps=100.0):
+    """Impulsfolge exakt auf den Zaehlzeiten, ueber ein langes Fenster."""
+    n = int(dauer * fps)
+    env = np.zeros(n, dtype=float)
+    times = np.arange(n) / fps
+    beat = 60.0 / bpm
+    t = 0.0
+    while t < dauer:
+        i = int(round(t * fps))
+        if i < n:
+            env[i] = 1.0
+        t += beat
+    return env, times
+
+
+def test_fold_to_bar_exaktes_tempo_liefert_konzentriertes_muster():
+    env, times = _impuls_zug(bpm=128.0)
+
+    pattern = fold_to_bar(env, times, bpm=128.0, first_downbeat=0.0)
+
+    assert len(pattern) == BAR_SLOTS
+    assert max(pattern) * BAR_SLOTS >= 3.0
+
+
+def test_fold_to_bar_verschobenes_tempo_gibt_leere_liste():
+    # Gleiche Impulsfolge, aber mit 0,5 BPM falschem Tempo gefaltet: die
+    # Phase laeuft ueber 360 s um mehrere Slots weg, das Muster wird flach.
+    env, times = _impuls_zug(bpm=128.0)
+
+    assert fold_to_bar(env, times, bpm=127.5, first_downbeat=0.0) == []
+
+
+def test_fold_to_bar_gleichverteilte_huellkurve_gibt_leere_liste():
+    n = 36000
+    env = np.ones(n, dtype=float)
+    times = np.arange(n) / 100.0
+
+    assert fold_to_bar(env, times, bpm=120.0, first_downbeat=0.0) == []
+
+
 def test_fold_to_bar_leere_huellkurve_gibt_leere_liste():
     assert fold_to_bar(np.array([]), np.array([]), bpm=120.0, first_downbeat=0.0) == []
 

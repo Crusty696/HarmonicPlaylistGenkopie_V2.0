@@ -16,6 +16,34 @@ from .config import HOP_LENGTH, METER
 # Ein 4/4-Takt hat 16 Sechzehntel — das ist die Aufloesung des Musters.
 BAR_SLOTS = 16
 
+# Mindest-Konzentration des gefalteten Musters, als Vielfaches der
+# Gleichverteilung (1/slots). Darunter gilt das Muster als nicht bestimmbar
+# und `fold_to_bar` liefert eine leere Liste.
+#
+# WARUM: ueber ein langes Fenster laeuft ein Tempofehler als Phase weg
+# (Drift = Fensterlaenge * dBPM / BPM). Bei 360 s Analysefenster
+# (LIBROSA_FAST_PATH_DURATION) und 0,5 BPM Fehler auf 128 BPM sind das 1,4 s
+# — mehr als ein ganzer Takt. Das Muster wird dann flach, bleibt aber 16
+# Zahlen und wuerde vom Scoring als gueltiges Signal gelesen. Genau das soll
+# der Vertrag "leer = nicht bestimmt" verhindern.
+#
+# KALIBRIERUNG (2026-08-19, 50 Tracks der Sammlung, 360-s-Fenster, BPM aus
+# Rekordbox, Spitze als Vielfaches der Gleichverteilung):
+#   korrektes Tempo   Onset  min 1,133  Median 1,52  max 2,62
+#                     Bass   min 1,137  Median 1,40  max 2,24
+#   Tempo +0,5 BPM    Onset  max 1,187  Median 1,11
+#                     Bass   max 1,225  Median 1,09
+#   synthetisch: exakter Impulszug 4,00 / +0,5 BPM 1,02 / gleichverteilt 1,00
+# Auf ECHTEM Audio ueberlappen die beiden Verteilungen — anders als beim
+# synthetischen Impulszug gibt es keinen Schwellwert, der sauber trennt.
+# 1,10 liegt unter dem Minimum aller 100 gemessenen Muster mit korrektem
+# Tempo (1,133) und ueber der Gleichverteilung samt synthetischem
+# Drift-Fall (1,02). Der Gate verwirft damit sicher das, was nachweislich
+# Rauschen ist, ohne belastbare Muster zu verlieren. Ein hoeherer Wert
+# (etwa 1,5) wuerde die Mehrheit der korrekt analysierten Tracks
+# wegwerfen — siehe Median 1,40 bis 1,52.
+GROOVE_MIN_PEAK_RATIO = 1.10
+
 
 def fold_to_bar(
     envelope: np.ndarray,
@@ -62,7 +90,14 @@ def fold_to_bar(
     total = float(acc.sum())
     if total <= 0.0:
         return []
-    return (acc / total).tolist()
+    muster = acc / total
+
+    # Konzentrations-Gate: ein von der Gleichverteilung nicht unterscheidbares
+    # Muster ist kein Muster, sondern ein auf falschem Tempo verschmiertes
+    # Signal (siehe GROOVE_MIN_PEAK_RATIO).
+    if float(muster.max()) < GROOVE_MIN_PEAK_RATIO / slots:
+        return []
+    return muster.tolist()
 
 
 # Zaehlzeiten und die dazwischenliegenden Achtel im 16-Slot-Raster.
