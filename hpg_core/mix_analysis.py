@@ -5,10 +5,13 @@ tools/mix_mining.py. Grundlage der Kalibrierung.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 import librosa
 
 from .config import HOP_LENGTH
+from .transition_features import cosine_similarity
 
 # Ein DJ-Mix blendet ueber; die Blend-Zone selbst ist unbrauchbar, weil dort
 # beide Tracks uebereinanderliegen und jede Messung ein Mischwert waere.
@@ -65,3 +68,48 @@ def find_transitions(
         if all(abs(t - g) >= min_abstand_s for g in gewaehlt):
             gewaehlt.append(t)
     return sorted(gewaehlt)
+
+
+@dataclass
+class TransitionSample:
+    """Messwerte eines stabilen Fensters neben einer Uebergangsstelle."""
+
+    groove_pattern: list[float] = field(default_factory=list)
+    bass_pattern: list[float] = field(default_factory=list)
+    sub_energy: float = 0.0
+    bass_punch: float = 0.0
+    brightness: float = 0.0
+    timbre: list[float] = field(default_factory=list)
+
+
+def window_bounds(
+    stelle: float, dauer: float,
+    blend: float = BLEND_HALBBREITE_S, fenster: float = FENSTER_S,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Grenzen der stabilen Fenster vor und hinter einer Uebergangsstelle.
+
+    None, wenn eines der Fenster nicht vollstaendig ins Signal passt — ein
+    angeschnittenes Fenster wuerde verzerrte Kennzahlen liefern.
+    """
+    vor_ende = stelle - blend
+    vor_start = vor_ende - fenster
+    nach_start = stelle + blend
+    nach_ende = nach_start + fenster
+    if vor_start < 0.0 or nach_ende > dauer:
+        return None
+    return (vor_start, vor_ende), (nach_start, nach_ende)
+
+
+def deltas_between(a: TransitionSample, b: TransitionSample) -> dict[str, float]:
+    """Die vier Kennzahlen eines Uebergangs."""
+    groove_sim = cosine_similarity(a.bass_pattern, b.bass_pattern)
+    if groove_sim is None:
+        groove_sim = cosine_similarity(a.groove_pattern, b.groove_pattern)
+    timbre_sim = cosine_similarity(a.timbre, b.timbre)
+    return {
+        "groove_sim": float(groove_sim) if groove_sim is not None else 0.0,
+        "sub_delta": abs(a.sub_energy - b.sub_energy),
+        "punch_delta": abs(a.bass_punch - b.bass_punch),
+        "brightness_delta": abs(a.brightness - b.brightness),
+        "timbre_sim": float(timbre_sim) if timbre_sim is not None else 0.0,
+    }
