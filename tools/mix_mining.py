@@ -362,12 +362,14 @@ def main(argv: list[str] | None = None) -> int:
     # 30 gegen 30. Deshalb mindestens so viele Zufallspaare wie echte
     # Uebergaenge ziehen.
     zufalls_deltas = zufallsdeltas_aus_fenstern(
-        alle_fenster, anzahl=max(ZUFALLSPAARE_JE_MIX, len(echte_deltas))
+        alle_fenster, anzahl=max(ZUFALLSPAARE_JE_MIX, len(alle_echten_deltas))
     )
 
     # Gewichte schon hier lernen: der Holdout braucht sie, um den
     # GESAMTSCORE zu pruefen statt eines einzelnen Faktors.
-    gewichte_roh = learn_weights(berechne_auc_richtung(echte_deltas, zufalls_deltas))
+    gewichte_roh = learn_weights(
+        berechne_auc_richtung(alle_echten_deltas, zufalls_deltas)
+    )
 
     holdout_ergebnis: bool | None = None
     if args.holdout:
@@ -384,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
             # Faktor. Frueher stand hier groove_sim allein — ausgerechnet der
             # schwaechste der fuenf. Der Test verwarf damit Kalibrierungen,
             # die von timbre_sim und sub_delta klar gestuetzt wurden.
-            skalen = _skalen_aus(echte_deltas + zufalls_deltas)
+            skalen = _skalen_aus(alle_echten_deltas + zufalls_deltas)
             holdout_ergebnis = holdout_passed(
                 [kombinierter_score(d, gewichte_roh, skalen) for d in holdout_echte],
                 [kombinierter_score(d, gewichte_roh, skalen) for d in holdout_zufall],
