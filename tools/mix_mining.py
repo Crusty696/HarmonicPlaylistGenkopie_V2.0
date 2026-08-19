@@ -169,11 +169,25 @@ def mine_mix(pfad: Path) -> tuple[list[dict], list[TransitionSample]]:
         (vor_start, vor_ende), (nach_start, nach_ende) = grenzen
         vor = miss_fenster(y[int(vor_start * sr):int(vor_ende * sr)], sr)
         nach = miss_fenster(y[int(nach_start * sr):int(nach_ende * sr)], sr)
-        echte_deltas.append(deltas_between(vor, nach))
+        delta = deltas_between(vor, nach)
+        # Zeitstempel mitschreiben: ohne ihn laesst sich nicht pruefen, ob
+        # eine gefundene Stelle ein echter DJ-Uebergang ist oder nur eine
+        # Moderationsgrenze. Bei Sendungen mit Sprechanteilen ballen sich
+        # Fehltreffer typischerweise am Anfang und um die Talkbloecke.
+        delta["stelle_s"] = float(stelle)
+        echte_deltas.append(delta)
         alle_fenster.append(vor)
         alle_fenster.append(nach)
 
     logger.info("%d Fenster gemessen", len(alle_fenster))
+    if echte_deltas:
+        zeiten = [d["stelle_s"] for d in echte_deltas]
+        abstaende = [b - a for a, b in zip(zeiten, zeiten[1:])]
+        logger.info(
+            "Stellen von %.0f s bis %.0f s, Abstand Median %.0f s",
+            zeiten[0], zeiten[-1],
+            sorted(abstaende)[len(abstaende) // 2] if abstaende else 0.0,
+        )
     return echte_deltas, alle_fenster
 
 
@@ -262,6 +276,10 @@ def baue_ergebnis(
         "gewichte": gewichte,
         "toleranzen": berechne_toleranzen(echte_deltas),
         "holdout": holdout,
+        # Fundstellen in Sekunden — die Pruefspur fuer die Frage, ob die
+        # Erkennung echte Uebergaenge getroffen hat oder Sprechgrenzen.
+        "stellen_s": [round(d["stelle_s"], 1) for d in echte_deltas
+                      if "stelle_s" in d],
     }
 
 
