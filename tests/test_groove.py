@@ -59,3 +59,44 @@ def test_fold_to_bar_leere_huellkurve_gibt_leere_liste():
 def test_fold_to_bar_ungueltige_bpm_gibt_leere_liste():
     env, times = _envelope_with_peaks([0.0], duration=1.0)
     assert fold_to_bar(env, times, bpm=0.0, first_downbeat=0.0) == []
+
+
+from hpg_core.groove import bass_punch_from_band, syncopation_from_pattern
+
+
+def test_syncopation_null_bei_reinen_vierteln():
+    pattern = [0.0] * 16
+    for slot in (0, 4, 8, 12):
+        pattern[slot] = 0.25
+    assert syncopation_from_pattern(pattern) == pytest.approx(0.0)
+
+
+def test_syncopation_eins_bei_reinem_offbeat():
+    pattern = [0.0] * 16
+    for slot in (2, 6, 10, 14):
+        pattern[slot] = 0.25
+    assert syncopation_from_pattern(pattern) == pytest.approx(1.0)
+
+
+def test_syncopation_haelfte_bei_gleichverteilung_auf_on_und_off():
+    pattern = [0.0] * 16
+    for slot in (0, 4, 8, 12, 2, 6, 10, 14):
+        pattern[slot] = 0.125
+    assert syncopation_from_pattern(pattern) == pytest.approx(0.5)
+
+
+def test_syncopation_leeres_muster_gibt_null():
+    assert syncopation_from_pattern([]) == 0.0
+
+
+def test_bass_punch_hoch_bei_spitzen_niedrig_bei_teppich():
+    spitzen = np.zeros(1000)
+    spitzen[::100] = 1.0
+    teppich = np.full(1000, 0.5)
+
+    assert bass_punch_from_band(spitzen) > bass_punch_from_band(teppich)
+    assert bass_punch_from_band(teppich) == pytest.approx(1.0, abs=0.05)
+
+
+def test_bass_punch_leeres_signal_gibt_null():
+    assert bass_punch_from_band(np.array([])) == 0.0

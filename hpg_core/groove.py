@@ -48,3 +48,44 @@ def fold_to_bar(
     if total <= 0.0:
         return []
     return (acc / total).tolist()
+
+
+# Zaehlzeiten und die dazwischenliegenden Achtel im 16-Slot-Raster.
+ON_BEAT_SLOTS = (0, 4, 8, 12)
+OFF_BEAT_SLOTS = (2, 6, 10, 14)
+
+
+def syncopation_from_pattern(pattern: list[float]) -> float:
+    """Anteil der Offbeat-Energie an der Energie auf dem Achtel-Raster.
+
+    0.0 = alles auf den Zaehlzeiten, 1.0 = alles dazwischen. Slots ausserhalb
+    des Achtel-Rasters (Sechzehntel) bleiben unberuecksichtigt, weil sie die
+    Frage "gerade oder offbeat" nicht beantworten.
+    """
+    if not pattern or len(pattern) < BAR_SLOTS:
+        return 0.0
+    on = sum(pattern[s] for s in ON_BEAT_SLOTS)
+    off = sum(pattern[s] for s in OFF_BEAT_SLOTS)
+    total = on + off
+    if total <= 0.0:
+        return 0.0
+    return float(off / total)
+
+
+def bass_punch_from_band(band_envelope: np.ndarray) -> float:
+    """Crest-Faktor des Bassbands: Spitze durch Mittelwert.
+
+    Ein durchgehender Sub-Teppich liefert Werte nahe 1.0, ein punchy
+    Kick-Bass mit kurzen, dominanten Impulsen deutlich mehr. Die Spitze
+    ist das Maximum, weil ein Perzentil bei duennen Impulsmustern
+    (wenige Prozent der Frames tragen den Kick) die Spitze selbst
+    wegmitteln und keinen Unterschied zum Teppich mehr zeigen wuerde.
+    """
+    if band_envelope is None or len(band_envelope) == 0:
+        return 0.0
+    arr = np.asarray(band_envelope, dtype=float)
+    mean = float(np.mean(np.abs(arr)))
+    if mean <= 0.0:
+        return 0.0
+    peak = float(np.max(np.abs(arr)))
+    return peak / mean
