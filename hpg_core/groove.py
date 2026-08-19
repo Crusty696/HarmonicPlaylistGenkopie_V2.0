@@ -233,7 +233,15 @@ def extract_groove(
     freqs = librosa.fft_frequencies(sr=sr, n_fft=(magnitude.shape[0] - 1) * 2)
 
     bass_env = _band_envelope(magnitude, freqs, SUB_LOW, BASS_HIGH)
-    sub_env = _band_envelope(magnitude, freqs, SUB_LOW, SUB_HIGH)
+
+    # sub_energy ist ein ENERGIE-Anteil, also aus der Leistung zu bilden:
+    # Leistung ist das Quadrat der Magnitude. Zaehler und Nenner stammen
+    # beide aus derselben quadrierten Matrix, damit bleibt der Wert
+    # verstaerkungsinvariant (geprueft bei 0 dB und -20 dB: identisch).
+    # bass_env bleibt bewusst auf der Magnitude — bass_punch ist ein
+    # Crest-Faktor und dort kalibriert (1,26 bis 2,65).
+    leistung = np.asarray(magnitude, dtype=float) ** 2
+    sub_leistung = _band_envelope(leistung, freqs, SUB_LOW, SUB_HIGH)
 
     # Die Bass-Huellkurve kann durch abweichende Frame-Zahl minimal laenger
     # oder kuerzer sein als die Onset-Huellkurve — auf die kuerzere kappen.
@@ -241,8 +249,8 @@ def extract_groove(
     groove_pattern = fold_to_bar(onset[:n], times[:n], bpm, first_downbeat)
     bass_pattern = fold_to_bar(bass_env[:n], times[:n], bpm, first_downbeat)
 
-    gesamt = float(magnitude.sum())
-    sub_energy = float(sub_env.sum() / gesamt) if gesamt > 0.0 else 0.0
+    gesamt = float(leistung.sum())
+    sub_energy = float(sub_leistung.sum() / gesamt) if gesamt > 0.0 else 0.0
 
     return GrooveFeatures(
         groove_pattern=groove_pattern,

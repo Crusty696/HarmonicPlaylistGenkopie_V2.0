@@ -234,6 +234,24 @@ def test_extract_groove_legt_keine_zweiten_cache_eintraege_an():
     assert set(cache._stft.keys()) == stft_vorher
 
 
+def test_sub_energy_ist_ein_leistungsverhaeltnis():
+    """40 Hz mit Amplitude 1.0 gegen 4 kHz mit Amplitude 0.5.
+
+    Leistung verhaelt sich wie das Quadrat der Amplitude: 1 / (1 + 0.25) =
+    0.80. Ueber die reine Magnitude waeren es 1 / (1 + 0.5) = 0.67 — das ist
+    kein Energieanteil, auch wenn das Feld so heisst.
+    """
+    sr = 22050
+    t = np.arange(sr * 20) / sr
+    y = (np.sin(2 * np.pi * 40 * t) + 0.5 * np.sin(2 * np.pi * 4000 * t)).astype(
+        np.float32
+    )
+
+    features = extract_groove(y, sr, bpm=128.0, first_downbeat=0.0)
+
+    assert features.sub_energy == pytest.approx(0.80, abs=0.03)
+
+
 def test_extract_groove_ohne_bpm_liefert_leere_muster():
     y, sr = _click_track()
     features = extract_groove(y, sr, bpm=0.0, first_downbeat=0.0)

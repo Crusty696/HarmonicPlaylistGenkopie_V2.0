@@ -16,12 +16,19 @@ from .tolerances import get_tolerances
 BASS_PATTERN_SHARE = 0.6
 
 # Sprungbreiten, ab denen der jeweilige Faktor auf 0 faellt, falls das Genre
-# keine gelernten Werte hat. Gemessen an 18 Tracks der Sammlung (2026-08-19,
-# 60-s-Ausschnitte), Abstaende zwischen zufaelligen Trackpaaren:
-#   sub_energy  Median 0,063  p90 0,135  max 0,242  -> 0,25 deckt den Bereich
+# keine gelernten Werte hat. Gemessen an 18 Tracks der Sammlung (60-s-
+# Ausschnitte), Abstaende zwischen zufaelligen Trackpaaren:
 #   bass_punch  Median 0,436  p90 0,923  max 1,393  -> 1,4 deckt den Bereich
+#     (2026-08-19, unveraendert: bass_punch ist weiterhin ein Crest-Faktor
+#      aus der Magnitude)
+#   sub_energy  Median 0,140  p90 0,306  max 0,502  -> 0,50 deckt den Bereich
+#     (NEU gemessen 2026-08-19, nachdem sub_energy von der Magnitude auf die
+#      LEISTUNG umgestellt wurde. Die alten Zahlen — Median 0,063 / p90 0,135
+#      / max 0,242 mit Toleranz 0,25 — galten fuer das Magnituden-Verhaeltnis
+#      und sind seither ungueltig. Das Quadrieren spreizt den Wertebereich:
+#      Einzelwerte jetzt 0,288 bis 0,790, Median 0,506.)
 # Ein zu grosser Wert macht den Faktor konstant und damit wirkungslos.
-DEFAULT_SUB_DELTA_MAX = 0.25
+DEFAULT_SUB_DELTA_MAX = 0.50
 DEFAULT_PUNCH_DELTA_MAX = 1.4
 DEFAULT_BRIGHTNESS_DELTA_MAX = 60.0
 DEFAULT_FLATNESS_DELTA_MAX = 0.15
