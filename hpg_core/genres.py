@@ -484,8 +484,17 @@ _TOLERANCE_DEFAULTS = {
   "bass_weight": 0.080,
   "timbre_weight": 0.050,
   "mood_weight": 0.050,
-  "groove_sim_floor": 0.35,
-  "bass_delta_max": 0.25,
+  # Gemessen an 276 Paaren aus 24 Tracks (2026-08-19): kein Paar faellt
+  # unter 0,654 Groove-Aehnlichkeit. Der Boden spreizt den Faktor auf den
+  # vollen Bereich, statt ihn zwischen 0,65 und 1,0 zu quetschen.
+  "groove_sim_floor": 0.65,
+  # 0,50 statt frueher 0,25: sub_energy ist seit c01e8f0 ein LEISTUNGS-
+  # verhaeltnis (Magnitude quadriert), die Werte haben sich dadurch etwa
+  # verdoppelt. Neu gemessen an 18 Tracks: Spanne 0,288 bis 0,790,
+  # paarweiser Abstand Median 0,140 / p90 0,306 / max 0,502.
+  # Dieser Tabellenwert schlaegt DEFAULT_SUB_DELTA_MAX in
+  # transition_features.py — beide muessen zusammen gepflegt werden.
+  "bass_delta_max": 0.50,
   "brightness_delta_max": 60.0,
   "groove_veto_enabled": False,
 }

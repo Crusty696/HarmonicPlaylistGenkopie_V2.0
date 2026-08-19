@@ -30,6 +30,9 @@ BASS_PATTERN_SHARE = 0.6
 # Ein zu grosser Wert macht den Faktor konstant und damit wirkungslos.
 DEFAULT_SUB_DELTA_MAX = 0.50
 DEFAULT_PUNCH_DELTA_MAX = 1.4
+# Gemessener Boden der Groove-Aehnlichkeit (siehe _spreize). Wird von der
+# Genre-Tabelle ueberschrieben, sobald aus Mixen gelernte Werte vorliegen.
+DEFAULT_GROOVE_SIM_FLOOR = 0.65
 DEFAULT_BRIGHTNESS_DELTA_MAX = 60.0
 DEFAULT_FLATNESS_DELTA_MAX = 0.15
 
@@ -49,6 +52,21 @@ def cosine_similarity(a, b) -> float | None:
     return max(0.0, min(1.0, punkt / (na * nb)))
 
 
+def _spreize(wert: float, boden: float) -> float:
+    """Dehnt [boden, 1.0] auf [0.0, 1.0].
+
+    Zwei zufaellige Tracks erreichen nie eine Groove-Aehnlichkeit von 0: alle
+    4/4-Muster teilen sich das Grundraster. Gemessen an 276 Paaren aus 24
+    Tracks der Sammlung (2026-08-19, Rekordbox-Tempo und ANLZ-Downbeat):
+    min 0,654, p10 0,819, Median 0,922, p90 0,976, max 0,996.
+    Ohne Spreizung laege der Faktor immer zwischen 0,65 und 1,0 und wuerde
+    zwei Drittel seines Wertebereichs verschenken.
+    """
+    if boden >= 1.0:
+        return wert
+    return max(0.0, min(1.0, (wert - boden) / (1.0 - boden)))
+
+
 def _normiert(delta: float, maximum: float) -> float:
     """Wandelt einen Absolutabstand in eine Aehnlichkeit in [0, 1]."""
     if maximum <= 0.0:
@@ -64,10 +82,15 @@ def groove_match(track_a: Track, track_b: Track, genre: str) -> float | None:
     if onset_sim is None and bass_sim is None:
         return None
     if bass_sim is None:
-        return onset_sim
-    if onset_sim is None:
-        return bass_sim
-    return BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
+        roh = onset_sim
+    elif onset_sim is None:
+        roh = bass_sim
+    else:
+        roh = BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
+
+    return _spreize(roh, get_tolerances(genre).get(
+        "groove_sim_floor", DEFAULT_GROOVE_SIM_FLOOR
+    ))
 
 
 def bass_continuity(track_a: Track, track_b: Track, genre: str) -> float | None:
