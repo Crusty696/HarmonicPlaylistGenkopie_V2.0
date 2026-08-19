@@ -1565,7 +1565,12 @@ class AdvancedParametersWidget(QWidget):
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(0, 100)
             slider.setValue(start)  # Startgewicht * 100 aus Spec 7.2
-            slider.valueChanged.connect(self._on_transition_weight_changed)
+            # Waehrend des Ziehens NICHT schreiben: valueChanged feuert bei
+            # jeder Mausbewegung und wuerde die Override-Datei dutzendfach
+            # neu schreiben. sliderReleased deckt die Maus ab, valueChanged
+            # mit isSliderDown()-Guard die Tastatur und setValue().
+            slider.sliderReleased.connect(self._on_transition_weight_changed)
+            slider.valueChanged.connect(self._on_transition_weight_value_changed)
             self.transition_weight_sliders[schluessel] = slider
             weight_layout.addWidget(QLabel(f"{label}:"))
             weight_layout.addWidget(slider)
@@ -1581,6 +1586,17 @@ class AdvancedParametersWidget(QWidget):
         weight_layout.addWidget(reset_button)
 
         layout.addWidget(weight_group)
+
+    def _on_transition_weight_value_changed(self) -> None:
+        """Schreibt nur, wenn der Wert nicht gerade gezogen wird.
+
+        Deckt Tastatureingabe und setValue() ab; beim Ziehen mit der Maus
+        uebernimmt sliderReleased, damit nicht jede Zwischenposition auf die
+        Platte geht.
+        """
+        if any(s.isSliderDown() for s in self.transition_weight_sliders.values()):
+            return
+        self._on_transition_weight_changed()
 
     def _on_transition_weight_changed(self) -> None:
         """Schreibt die Regler in die Override-Datei und verwirft den Cache.
