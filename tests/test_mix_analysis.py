@@ -140,3 +140,64 @@ def test_holdout_failed_ohne_trennung():
 
 def test_holdout_failed_bei_umgekehrter_ordnung():
     assert holdout_passed([0.2, 0.25], [0.8, 0.9]) is False
+
+
+from hpg_core.mix_analysis import zyklische_aehnlichkeit
+
+
+def _asymmetrisches_muster():
+    """16-Slot-Muster mit Akzenten auf den vier Beats, aber ungleich stark.
+
+    Ungleich stark ist wichtig: ein Muster mit Periode 4 waere gegen jede
+    Vier-Slot-Rotation invariant und koennte den Test nicht tragen.
+    """
+    muster = [0.0] * 16
+    for slot, wert in zip((0, 4, 8, 12), (1.0, 0.5, 0.8, 0.2)):
+        muster[slot] = wert
+    return muster
+
+
+def test_zyklische_aehnlichkeit_identisch_ist_eins():
+    muster = _asymmetrisches_muster()
+    assert zyklische_aehnlichkeit(muster, muster) == pytest.approx(1.0)
+
+
+def test_zyklische_aehnlichkeit_um_vier_rotiert_ist_eins():
+    muster = _asymmetrisches_muster()
+    rotiert = muster[-4:] + muster[:-4]
+    assert zyklische_aehnlichkeit(muster, rotiert) == pytest.approx(1.0)
+
+
+def test_zyklische_aehnlichkeit_um_eins_rotiert_ist_klar_kleiner():
+    # Eine Verschiebung um 1, 2 oder 3 Slots ist keine gueltige Taktphase,
+    # sondern ein Messfehler — sie darf nicht wegoptimiert werden.
+    muster = _asymmetrisches_muster()
+    rotiert = muster[-1:] + muster[:-1]
+    assert zyklische_aehnlichkeit(muster, rotiert) < 0.5
+
+
+def test_zyklische_aehnlichkeit_offbeat_gegen_gerade_ist_niedrig():
+    gerade = [0.0] * 16
+    offbeat = [0.0] * 16
+    for s in (0, 4, 8, 12):
+        gerade[s] = 0.25
+    for s in (2, 6, 10, 14):
+        offbeat[s] = 0.25
+    assert zyklische_aehnlichkeit(gerade, offbeat) < 0.2
+
+
+def test_zyklische_aehnlichkeit_leer_oder_ungleich_lang_ist_none():
+    assert zyklische_aehnlichkeit([], []) is None
+    assert zyklische_aehnlichkeit([1.0, 2.0], [1.0]) is None
+
+
+def test_deltas_between_nutzt_rotationsinvarianten_groove():
+    muster = _asymmetrisches_muster()
+    rotiert = muster[-4:] + muster[:-4]
+    a = TransitionSample(groove_pattern=muster, bass_pattern=muster,
+                         sub_energy=0.3, bass_punch=3.0, brightness=50.0,
+                         timbre=[1.0, 2.0, 3.0])
+    b = TransitionSample(groove_pattern=rotiert, bass_pattern=rotiert,
+                         sub_energy=0.3, bass_punch=3.0, brightness=50.0,
+                         timbre=[1.0, 2.0, 3.0])
+    assert deltas_between(a, b)["groove_sim"] == pytest.approx(1.0)

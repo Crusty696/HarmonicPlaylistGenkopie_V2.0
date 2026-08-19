@@ -100,11 +100,42 @@ def window_bounds(
     return (vor_start, vor_ende), (nach_start, nach_ende)
 
 
+# Die vier moeglichen Takt-Phasen bei beat-ausgerichteten 16-Slot-Mustern.
+# Eine Verschiebung um 1, 2 oder 3 Slots waere keine Taktphase, sondern ein
+# Messfehler — sie darf nicht wegoptimiert werden.
+TAKT_PHASEN = (0, 4, 8, 12)
+
+
+def zyklische_aehnlichkeit(a: list[float], b: list[float],
+                           schritte: tuple[int, ...] = TAKT_PHASEN) -> float | None:
+    """Groesste Kosinus-Aehnlichkeit ueber die zyklischen Verschiebungen von `b`.
+
+    Eine falsche Taktphase verwischt ein Rhythmusmuster nicht, sie ROTIERT
+    es. Ohne bekannten Downbeat sitzt Slot 0 zwar auf einem Beat, aber nicht
+    zwingend auf der Eins — der rohe Vergleich bestraft dann zwei identische
+    Grooves, nur weil sie unterschiedlich einsteigen.
+
+    None bei leeren oder ungleich langen Vektoren.
+    """
+    if not a or not b or len(a) != len(b):
+        return None
+    beste: float | None = None
+    for schritt in schritte:
+        versatz = schritt % len(b)
+        gedreht = list(b[-versatz:]) + list(b[:-versatz]) if versatz else list(b)
+        wert = cosine_similarity(a, gedreht)
+        if wert is None:
+            continue
+        if beste is None or wert > beste:
+            beste = wert
+    return beste
+
+
 def deltas_between(a: TransitionSample, b: TransitionSample) -> dict[str, float]:
     """Die vier Kennzahlen eines Uebergangs."""
-    groove_sim = cosine_similarity(a.bass_pattern, b.bass_pattern)
+    groove_sim = zyklische_aehnlichkeit(a.bass_pattern, b.bass_pattern)
     if groove_sim is None:
-        groove_sim = cosine_similarity(a.groove_pattern, b.groove_pattern)
+        groove_sim = zyklische_aehnlichkeit(a.groove_pattern, b.groove_pattern)
     timbre_sim = cosine_similarity(a.timbre, b.timbre)
     return {
         "groove_sim": float(groove_sim) if groove_sim is not None else 0.0,

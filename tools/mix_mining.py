@@ -128,9 +128,14 @@ def beschaffe_audio(mix: str, ziel_verzeichnis: Path) -> Path | None:
 
 def miss_fenster(y: np.ndarray, sr: int) -> TransitionSample:
     """Misst ein Fenster-Ausschnitt und baut daraus ein TransitionSample."""
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr, units="time")
     bpm = float(tempo) if np.ndim(tempo) == 0 else float(tempo[0])
-    groove = extract_groove(y=y, sr=sr, bpm=bpm, first_downbeat=0.0)
+    # 0.0 hiesse "Anfang des Messfensters" — das Fenster beginnt aber an
+    # einer beliebigen Stelle im Takt. Der erste erkannte Beat setzt Slot 0
+    # wenigstens auf einen Beat; welcher der vier die Eins ist, bleibt offen
+    # und wird beim Vergleich ueber zyklische_aehnlichkeit aufgeloest.
+    anker = float(beats[0]) if len(beats) else 0.0
+    groove = extract_groove(y=y, sr=sr, bpm=bpm, first_downbeat=anker)
 
     centroid = librosa.feature.spectral_centroid(y=y, sr=sr).mean()
     brightness = min(100.0, float(centroid) / BRIGHTNESS_HZ_TEILER)
