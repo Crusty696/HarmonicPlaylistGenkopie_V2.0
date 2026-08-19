@@ -119,6 +119,11 @@ SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung
 BPM_HALF_DOUBLE_ENABLED = True  # 140 BPM ↔ 70 BPM als kompatibel erkennen
 BPM_HALF_DOUBLE_PENALTY = 0.85  # Leichter Abzug fuer Half/Double Transitions (0-1)
 
+# === Erweitertes Scoring: Groove/Bass/Timbre/Mood ===
+# Groove-/Bass-/Timbre-/Mood-Scoring (Spec 2026-08-19).
+# False = bit-identisches Verhalten zum Stand vor der Erweiterung.
+TRANSITION_FEATURES_ENABLED = False
+
 # === Logging & Debugging ===
 LOG_LEVEL = "INFO"  # Standard-Level: DEBUG, INFO, WARNING, ERROR (INFO fuer Produktion)
 
