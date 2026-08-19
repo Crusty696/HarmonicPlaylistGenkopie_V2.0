@@ -100,3 +100,65 @@ def test_bass_punch_hoch_bei_spitzen_niedrig_bei_teppich():
 
 def test_bass_punch_leeres_signal_gibt_null():
     assert bass_punch_from_band(np.array([])) == 0.0
+
+
+from hpg_core.analysis import FeatureCache
+from hpg_core.groove import GrooveFeatures, extract_groove
+
+
+def _click_track(bpm=120.0, sr=22050, bars=8, offbeat=False):
+    """Erzeugt ein Klick-Signal auf den Zaehlzeiten (oder dazwischen)."""
+    beat = 60.0 / bpm
+    dauer = bars * 4 * beat
+    y = np.zeros(int(dauer * sr), dtype=np.float32)
+    versatz = beat / 2.0 if offbeat else 0.0
+    t = versatz
+    while t < dauer:
+        i = int(t * sr)
+        if i + 200 < len(y):
+            # kurzer Bass-Impuls bei 50 Hz
+            n = np.arange(200)
+            y[i:i + 200] += (np.sin(2 * np.pi * 50 * n / sr) * np.exp(-n / 40.0)).astype(np.float32)
+        t += beat
+    return y, sr
+
+
+def test_extract_groove_liefert_muster_fuer_klick_track():
+    y, sr = _click_track()
+    features = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0)
+
+    assert isinstance(features, GrooveFeatures)
+    assert len(features.groove_pattern) == BAR_SLOTS
+    assert len(features.bass_pattern) == BAR_SLOTS
+    assert features.sub_energy > 0.0
+    assert features.bass_punch > 0.0
+
+
+def test_extract_groove_trennt_gerade_von_offbeat():
+    y_gerade, sr = _click_track(offbeat=False)
+    y_offbeat, _ = _click_track(offbeat=True)
+
+    gerade = extract_groove(y_gerade, sr, bpm=120.0, first_downbeat=0.0)
+    off = extract_groove(y_offbeat, sr, bpm=120.0, first_downbeat=0.0)
+
+    assert gerade.syncopation < 0.35
+    assert off.syncopation > 0.65
+
+
+def test_extract_groove_nutzt_uebergebenen_feature_cache():
+    y, sr = _click_track()
+    cache = FeatureCache(y, sr)
+    cache.get_onset_strength()  # vorbelegen
+
+    features = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0, feature_cache=cache)
+
+    assert len(features.groove_pattern) == BAR_SLOTS
+
+
+def test_extract_groove_ohne_bpm_liefert_leere_muster():
+    y, sr = _click_track()
+    features = extract_groove(y, sr, bpm=0.0, first_downbeat=0.0)
+
+    assert features.groove_pattern == []
+    assert features.bass_pattern == []
+    assert features.syncopation == 0.0

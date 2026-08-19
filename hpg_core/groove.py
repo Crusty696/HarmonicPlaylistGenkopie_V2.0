@@ -6,9 +6,12 @@ ueberpruefbar (siehe Spec Abschnitt 4).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
+import librosa
 import numpy as np
 
-from .config import METER
+from .config import HOP_LENGTH, METER
 
 # Ein 4/4-Takt hat 16 Sechzehntel — das ist die Aufloesung des Musters.
 BAR_SLOTS = 16
@@ -89,3 +92,85 @@ def bass_punch_from_band(band_envelope: np.ndarray) -> float:
         return 0.0
     peak = float(np.max(np.abs(arr)))
     return peak / mean
+
+
+# Frequenzgrenzen der Baender in Hz.
+SUB_LOW, SUB_HIGH = 20.0, 60.0
+BASS_HIGH = 150.0
+
+
+@dataclass
+class GrooveFeatures:
+    """Ergebnis der Groove-Extraktion eines Tracks oder Ausschnitts."""
+
+    groove_pattern: list[float] = field(default_factory=list)
+    bass_pattern: list[float] = field(default_factory=list)
+    syncopation: float = 0.0
+    sub_energy: float = 0.0
+    bass_punch: float = 0.0
+
+
+def _band_envelope(
+    magnitude: np.ndarray, freqs: np.ndarray, low: float, high: float
+) -> np.ndarray:
+    """Summiert die STFT-Magnitude eines Frequenzbands je Frame."""
+    maske = (freqs >= low) & (freqs < high)
+    if not np.any(maske):
+        return np.zeros(magnitude.shape[1], dtype=float)
+    return magnitude[maske, :].sum(axis=0)
+
+
+def extract_groove(
+    y: np.ndarray,
+    sr: int,
+    bpm: float,
+    first_downbeat: float,
+    feature_cache=None,
+    hop_length: int = HOP_LENGTH,
+) -> GrooveFeatures:
+    """Extrahiert Rhythmusmuster und Bass-Kennwerte aus einem Signal.
+
+    Nutzt den uebergebenen FeatureCache, wenn dessen Signal identisch ist —
+    Onset und STFT sind die teuren Operationen und liegen dort meist schon
+    vor (siehe Spec Abschnitt 5.4).
+    """
+    if y is None or len(y) == 0 or sr <= 0:
+        return GrooveFeatures()
+
+    passend = (
+        feature_cache is not None
+        and getattr(feature_cache, "y", None) is not None
+        and len(feature_cache.y) == len(y)
+    )
+
+    if passend:
+        onset = feature_cache.get_onset_strength(hop_length)
+        magnitude = feature_cache.get_stft_magnitude(hop_length=hop_length)
+    else:
+        onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+        magnitude = np.abs(librosa.stft(y, hop_length=hop_length))
+
+    times = librosa.frames_to_time(
+        np.arange(len(onset)), sr=sr, hop_length=hop_length
+    )
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=(magnitude.shape[0] - 1) * 2)
+
+    bass_env = _band_envelope(magnitude, freqs, SUB_LOW, BASS_HIGH)
+    sub_env = _band_envelope(magnitude, freqs, SUB_LOW, SUB_HIGH)
+
+    # Die Bass-Huellkurve kann durch abweichende Frame-Zahl minimal laenger
+    # oder kuerzer sein als die Onset-Huellkurve — auf die kuerzere kappen.
+    n = min(len(onset), len(bass_env), len(times))
+    groove_pattern = fold_to_bar(onset[:n], times[:n], bpm, first_downbeat)
+    bass_pattern = fold_to_bar(bass_env[:n], times[:n], bpm, first_downbeat)
+
+    gesamt = float(magnitude.sum())
+    sub_energy = float(sub_env.sum() / gesamt) if gesamt > 0.0 else 0.0
+
+    return GrooveFeatures(
+        groove_pattern=groove_pattern,
+        bass_pattern=bass_pattern,
+        syncopation=syncopation_from_pattern(bass_pattern or groove_pattern),
+        sub_energy=sub_energy,
+        bass_punch=bass_punch_from_band(bass_env),
+    )
