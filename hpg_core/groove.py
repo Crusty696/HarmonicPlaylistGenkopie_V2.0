@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import librosa
 import numpy as np
 
-from .config import HOP_LENGTH, METER
+from .config import METER
 
 # Ein 4/4-Takt hat 16 Sechzehntel — das ist die Aufloesung des Musters.
 BAR_SLOTS = 16
@@ -146,6 +146,21 @@ def bass_punch_from_band(band_envelope: np.ndarray) -> float:
     return peak / mean
 
 
+# Onset und STFT werden bei diesem Hop aus dem FeatureCache gelesen. 512 ist
+# librosas Default und genau der Hop, den calculate_danceability unmittelbar
+# vor dem Groove-Aufruf materialisiert (Onset ohne Argument -> Cache-Schluessel
+# None, STFT unter (2048, 512)). Mit dem frueheren HOP_LENGTH (1024) wurden
+# beide Groessen ein zweites Mal berechnet.
+# Bei sr=22050 sind 512 Samples 23 ms je Frame gegen ein Sechzehntel von
+# 117 ms bei 128 BPM — auch die bessere Abtastung.
+GROOVE_HOP_LENGTH = 512
+
+# librosas Default-Hop fuer onset_strength. Ein Aufruf OHNE hop_length landet
+# im FeatureCache unter dem Schluessel None, rechnet aber mit genau diesem
+# Wert. Deshalb wird bei Gleichheit None uebergeben, sonst entstuende ein
+# zweiter Eintrag mit identischem Inhalt.
+LIBROSA_DEFAULT_ONSET_HOP = 512
+
 # Frequenzgrenzen der Baender in Hz.
 SUB_LOW, SUB_HIGH = 20.0, 60.0
 BASS_HIGH = 150.0
@@ -178,7 +193,7 @@ def extract_groove(
     bpm: float,
     first_downbeat: float,
     feature_cache=None,
-    hop_length: int = HOP_LENGTH,
+    hop_length: int = GROOVE_HOP_LENGTH,
 ) -> GrooveFeatures:
     """Extrahiert Rhythmusmuster und Bass-Kennwerte aus einem Signal.
 
@@ -196,11 +211,21 @@ def extract_groove(
     )
 
     if passend:
-        onset = feature_cache.get_onset_strength(hop_length)
-        magnitude = feature_cache.get_stft_magnitude(hop_length=hop_length)
+        onset_key = (
+            None if hop_length == LIBROSA_DEFAULT_ONSET_HOP else hop_length
+        )
+        onset = feature_cache.get_onset_strength(onset_key)
+        # n_fft bleibt bei 2048 — das ist die Groesse, die der Cache haelt.
+        # Das Analysefenster von 93 ms steht damit einem Sechzehntel von
+        # 117 ms (128 BPM) gegenueber; die Bassmuster koennen deshalb nicht
+        # beliebig scharf werden. Bekannte, akzeptierte Grenze: ein kuerzeres
+        # Fenster wuerde die Aufloesung im Sub-Bass (20-60 Hz) zerstoeren.
+        magnitude = feature_cache.get_stft_magnitude(
+            n_fft=2048, hop_length=hop_length
+        )
     else:
         onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
-        magnitude = np.abs(librosa.stft(y, hop_length=hop_length))
+        magnitude = np.abs(librosa.stft(y, n_fft=2048, hop_length=hop_length))
 
     times = librosa.frames_to_time(
         np.arange(len(onset)), sr=sr, hop_length=hop_length

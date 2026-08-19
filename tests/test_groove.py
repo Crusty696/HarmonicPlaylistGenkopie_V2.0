@@ -214,6 +214,26 @@ def test_extract_groove_nutzt_uebergebenen_feature_cache():
     assert len(features.groove_pattern) == BAR_SLOTS
 
 
+def test_extract_groove_legt_keine_zweiten_cache_eintraege_an():
+    """Der Groove darf Onset und STFT nicht ein zweites Mal berechnen.
+
+    So belegt die Pipeline den Cache vor dem Groove-Aufruf:
+    calculate_danceability ruft get_onset_strength() ohne Argument (Schluessel
+    None, librosa-Default-Hop 512) und get_stft_magnitude(2048, 512).
+    """
+    y, sr = _click_track()
+    cache = FeatureCache(y, sr)
+    cache.get_onset_strength()
+    cache.get_stft_magnitude(n_fft=2048, hop_length=512)
+    onset_vorher = set(cache._onset.keys())
+    stft_vorher = set(cache._stft.keys())
+
+    extract_groove(y, sr, bpm=120.0, first_downbeat=0.0, feature_cache=cache)
+
+    assert set(cache._onset.keys()) == onset_vorher
+    assert set(cache._stft.keys()) == stft_vorher
+
+
 def test_extract_groove_ohne_bpm_liefert_leere_muster():
     y, sr = _click_track()
     features = extract_groove(y, sr, bpm=0.0, first_downbeat=0.0)
