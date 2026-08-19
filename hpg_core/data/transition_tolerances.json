@@ -1,1 +1,30 @@
-{}
+{
+  "Psytrance": {
+    "groove_weight": 0.0848,
+    "bass_weight": 0.0939,
+    "timbre_weight": 0.1006,
+    "mood_weight": 0.0206,
+    "harmonic_weight": 0.246,
+    "bpm_weight": 0.157,
+    "energy_weight": 0.157,
+    "genre_weight": 0.14,
+    "groove_sim_floor": 0.65,
+    "groove_veto_enabled": false,
+    "bass_delta_max": 0.3967,
+    "brightness_delta_max": 11.2582
+  },
+  "Techno": {
+    "groove_weight": 0.0439,
+    "bass_weight": 0.0839,
+    "timbre_weight": 0.1305,
+    "mood_weight": 0.0416,
+    "harmonic_weight": 0.246,
+    "bpm_weight": 0.157,
+    "energy_weight": 0.157,
+    "genre_weight": 0.14,
+    "groove_sim_floor": 0.65,
+    "groove_veto_enabled": false,
+    "bass_delta_max": 0.2941,
+    "brightness_delta_max": 12.2178
+  }
+}
