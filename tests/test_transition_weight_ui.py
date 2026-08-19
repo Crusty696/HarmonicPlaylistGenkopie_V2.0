@@ -6,6 +6,7 @@ import pytest
 
 import main
 from hpg_core.genres import CANONICAL_GENRES
+from hpg_core.playlist import TransitionMetrics
 from hpg_core.tolerances import reset_cache
 
 pytestmark = pytest.mark.gui
@@ -102,3 +103,66 @@ def test_reset_button_restores_default_start_values(qtbot, monkeypatch, tmp_path
   assert sliders["timbre_weight"].value() == 5
   assert sliders["mood_weight"].value() == 5
   assert override_pfad.is_file()
+
+
+def test_passung_tooltip_zeigt_alle_acht_faktoren(qtbot):
+  panel = main.PlaylistPanel()
+  qtbot.addWidget(panel)
+
+  metrics = TransitionMetrics(
+    harmonic_score=80,
+    bpm_smoothness=0.7,
+    energy_flow=0.6,
+    genre_compatibility=0.9,
+    overall_score=0.75,
+    groove_match=0.5,
+    bass_continuity=0.4,
+    timbre_match=0.3,
+    mood_match=0.2,
+  )
+
+  tooltip = panel._passung_tooltip(metrics)
+
+  assert "Harmonik" in tooltip
+  assert "80" in tooltip
+  assert "BPM" in tooltip and "70" in tooltip
+  assert "Energie" in tooltip and "60" in tooltip
+  assert "Genre" in tooltip and "90" in tooltip
+  assert "Groove" in tooltip and "50" in tooltip
+  assert "Bassdruck" in tooltip and "40" in tooltip
+  assert "Klangfarbe" in tooltip and "30" in tooltip
+  assert "Stimmung" in tooltip and "20" in tooltip
+  # Acht Faktor-Zeilen plus mindestens eine Ueberschrift.
+  assert len(tooltip.strip().splitlines()) >= 9
+
+
+def test_passung_tooltip_zeigt_nicht_bestimmbar_statt_null_prozent(qtbot):
+  panel = main.PlaylistPanel()
+  qtbot.addWidget(panel)
+
+  metrics = TransitionMetrics(
+    harmonic_score=80,
+    bpm_smoothness=0.7,
+    energy_flow=0.6,
+    genre_compatibility=0.9,
+    overall_score=0.75,
+    groove_match=None,
+    bass_continuity=0.4,
+    timbre_match=0.3,
+    mood_match=0.2,
+  )
+
+  tooltip = panel._passung_tooltip(metrics)
+
+  groove_zeile = next(
+    zeile for zeile in tooltip.splitlines() if "Groove" in zeile
+  )
+  assert "nicht bestimmbar" in groove_zeile
+  assert "0 %" not in groove_zeile
+
+
+def test_passung_tooltip_ohne_metrics_ist_leer(qtbot):
+  panel = main.PlaylistPanel()
+  qtbot.addWidget(panel)
+
+  assert panel._passung_tooltip(None) == ""

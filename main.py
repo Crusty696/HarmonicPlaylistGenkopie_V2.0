@@ -3120,6 +3120,35 @@ class PlaylistPanel(QWidget):
 
         self.quality_layout.addStretch()
 
+    def _passung_tooltip(self, metrics) -> str:
+        """Schluesselt den Passungs-Score in seine acht Faktoren auf.
+
+        "nicht bestimmbar" statt 0 % ist wichtig: ein fehlender Faktor wird
+        beim Scoring umverteilt, nicht bestraft. Eine 0 waere fuer den
+        Nutzer nicht von einer schlechten Passung zu unterscheiden.
+        """
+        if metrics is None:
+            return ""
+
+        def fmt(wert, ist_prozent_0_100=False):
+            if wert is None:
+                return "nicht bestimmbar"
+            prozent = wert if ist_prozent_0_100 else wert * 100
+            return f"{prozent:.0f} %"
+
+        zeilen = [
+            "Passung im Detail:",
+            f"Harmonik: {fmt(metrics.harmonic_score, ist_prozent_0_100=True)}",
+            f"BPM: {fmt(metrics.bpm_smoothness)}",
+            f"Energie: {fmt(metrics.energy_flow)}",
+            f"Genre: {fmt(metrics.genre_compatibility)}",
+            f"Groove: {fmt(metrics.groove_match)}",
+            f"Bassdruck: {fmt(metrics.bass_continuity)}",
+            f"Klangfarbe: {fmt(metrics.timbre_match)}",
+            f"Stimmung: {fmt(metrics.mood_match)}",
+        ]
+        return "\n".join(zeilen)
+
     @staticmethod
     def _make_transition_score_item(score):
         """Erzeugt die einheitliche Passungsanzeige fuer eine Tabellenzeile."""
@@ -3161,6 +3190,7 @@ class PlaylistPanel(QWidget):
 
         for i, track in enumerate(self.playlist):
             transition_score = 0
+            compatibility = None
             if i > 0:
                 prev_track = self.playlist[i - 1]
                 compatibility = calculate_enhanced_compatibility(
@@ -3239,6 +3269,9 @@ class PlaylistPanel(QWidget):
             score_item = self._make_transition_score_item(
                 transition_score if i > 0 else None
             )
+            tooltip = self._passung_tooltip(compatibility)
+            if tooltip:
+                score_item.setToolTip(tooltip)
             self.table.setItem(i, 14, score_item)
 
             # KI-Metadaten gehoeren zum Track und muessen auch nach einer
@@ -3302,6 +3335,7 @@ class PlaylistPanel(QWidget):
 
             transition_score = 0
             texture_val = 0.0
+            compatibility = None
             if i > 0 and i < len(self.playlist):
                 prev_track = self.playlist[i - 1]
                 current_track = self.playlist[i]
@@ -3332,6 +3366,9 @@ class PlaylistPanel(QWidget):
             score_item = self._make_transition_score_item(
                 transition_score if i > 0 else None
             )
+            tooltip = self._passung_tooltip(compatibility)
+            if tooltip:
+                score_item.setToolTip(tooltip)
             self.table.setItem(i, 14, score_item)
 
         # Quality neu berechnen — mit aktivem Scoring-Kontext (HPG-001)
