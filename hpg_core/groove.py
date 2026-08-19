@@ -79,10 +79,15 @@ def bass_punch_from_band(band_envelope: np.ndarray) -> float:
     """Crest-Faktor des Bassbands: Spitze durch Mittelwert.
 
     Ein durchgehender Sub-Teppich liefert Werte nahe 1.0, ein punchy
-    Kick-Bass mit kurzen, dominanten Impulsen deutlich mehr. Die Spitze
-    ist das Maximum, weil ein Perzentil bei duennen Impulsmustern
-    (wenige Prozent der Frames tragen den Kick) die Spitze selbst
-    wegmitteln und keinen Unterschied zum Teppich mehr zeigen wuerde.
+    Kick-Bass deutlich mehr. Die Spitze ist das 95. Perzentil, damit ein
+    einzelner Frame — ein Klick, ein Clipping-Artefakt — den Wert nicht
+    bestimmt.
+
+    Messung an 18 Tracks der Sammlung (2026-08-19, 60-s-Ausschnitte):
+    Wertebereich 1,26 bis 2,65, Median 1,95. Bass-Huellkurven aus dem STFT
+    tragen in 98-100 % der Frames Energie; das Perzentil ist dort stabil.
+    Das Maximum laege systematisch 10-33 % hoeher und haenge an einem
+    einzigen Frame.
     """
     if band_envelope is None or len(band_envelope) == 0:
         return 0.0
@@ -90,7 +95,7 @@ def bass_punch_from_band(band_envelope: np.ndarray) -> float:
     mean = float(np.mean(np.abs(arr)))
     if mean <= 0.0:
         return 0.0
-    peak = float(np.max(np.abs(arr)))
+    peak = float(np.percentile(np.abs(arr), 95))
     return peak / mean
 
 
