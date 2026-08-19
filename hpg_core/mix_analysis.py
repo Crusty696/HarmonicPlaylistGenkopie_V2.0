@@ -239,6 +239,34 @@ def learn_weights(auc: dict[str, float], gesamt: float = 0.30) -> dict[str, floa
     return {k: gesamt * (v / summe) for k, v in ueberschuss.items()}
 
 
+def learn_weights_bounded(
+    grenzen: dict[str, tuple[float, float, float]],
+    budget_max: float = 0.30,
+) -> dict[str, float]:
+    """Verteilt Gewicht nach der UNTEREN Konfidenzgrenze, nicht nach dem
+    Punktschaetzer.
+
+    `grenzen` bildet Faktor -> (auc, untere_grenze, obere_grenze) ab.
+
+    Ein Faktor, dessen Intervall die 0,5 beruehrt, ist nicht von "misst
+    nichts" zu unterscheiden und bekommt NULL. Das Gesamtbudget waechst
+    mit der Staerke des besten gesicherten Faktors — ueberlebt keiner,
+    ist es 0 und die Defaults bleiben stehen. Damit kann das Verfahren
+    sich nicht mehr selbst ueberreden.
+    """
+    if not grenzen:
+        return {}
+    roh = {
+        faktor: max(0.0, float(werte[1]) - 0.5) * 2.0
+        for faktor, werte in grenzen.items()
+    }
+    summe = sum(roh.values())
+    if summe <= 0.0:
+        return {faktor: 0.0 for faktor in grenzen}
+    budget = budget_max * min(1.0, max(roh.values()))
+    return {faktor: budget * (wert / summe) for faktor, wert in roh.items()}
+
+
 def holdout_passed(
     echte_scores: list[float], zufall_scores: list[float],
     schwelle: float = HOLDOUT_AUC_MIN,

@@ -36,10 +36,12 @@ from hpg_core.groove import extract_groove
 from hpg_core.mix_analysis import (
     TransitionSample,
     deltas_between,
+    cluster_bootstrap_auc,
     discrimination_auc,
     find_transitions,
     holdout_passed,
     learn_weights,
+    learn_weights_bounded,
     tolerance_percentile,
     window_bounds,
 )
@@ -323,6 +325,24 @@ def berechne_auc_richtung(echte: list[dict], zufall: list[dict]) -> dict[str, fl
     return auc
 
 
+def berechne_auc_grenzen(
+    echte_je_mix: list[list[dict]], zufall_je_mix: list[list[dict]],
+) -> dict[str, tuple[float, float, float]]:
+    """AUC je Faktor samt 95-%-Bereich, geclustert nach Mix.
+
+    Uebergaenge desselben Sets sind nicht unabhaengig; das Intervall
+    entsteht deshalb ueber einen Bootstrap ueber MIXE.
+    """
+    grenzen: dict[str, tuple[float, float, float]] = {}
+    for faktor, hoeher_ist_besser in AUC_RICHTUNG.items():
+        echte_werte = [[d[faktor] for d in mix] for mix in echte_je_mix]
+        zufalls_werte = [[d[faktor] for d in mix] for mix in zufall_je_mix]
+        grenzen[faktor] = cluster_bootstrap_auc(
+            echte_werte, zufalls_werte, hoeher_ist_besser
+        )
+    return grenzen
+
+
 def berechne_toleranzen(echte: list[dict]) -> dict[str, float | None]:
     """Toleranzgrenzen aus den echten Uebergaengen.
 
@@ -348,10 +368,20 @@ def baue_ergebnis(
     echte_deltas: list[dict],
     zufalls_deltas: list[dict],
     holdout: bool | None,
+    grenzen: dict[str, tuple[float, float, float]] | None = None,
 ) -> dict:
-    """Fasst AUC, gelernte Gewichte, Toleranzen und Holdout zum Ausgabe-JSON zusammen."""
+    """Fasst AUC, gelernte Gewichte, Toleranzen und Holdout zum Ausgabe-JSON zusammen.
+
+    Liegen `grenzen` vor (AUC mit geclustertem Konfidenzbereich), wird das
+    Gewichtsbudget daraus abgeleitet — ein Faktor, dessen Intervall die 0,5
+    beruehrt, bekommt nichts. Ohne `grenzen` bleibt es beim alten festen
+    Budget von 0,30.
+    """
     auc = berechne_auc_richtung(echte_deltas, zufalls_deltas)
-    roh_gewichte = learn_weights(auc)
+    if grenzen:
+        roh_gewichte = learn_weights_bounded(grenzen)
+    else:
+        roh_gewichte = learn_weights(auc)
     gewichte = {
         "groove_weight": roh_gewichte.get("groove_sim", 0.0),
         "bass_weight": roh_gewichte.get("sub_delta", 0.0) + roh_gewichte.get("punch_delta", 0.0),
@@ -370,6 +400,12 @@ def baue_ergebnis(
         # Erkennung echte Uebergaenge getroffen hat oder Sprechgrenzen.
         "stellen_s": [round(d["stelle_s"], 1) for d in echte_deltas
                       if "stelle_s" in d],
+        # Der 95-%-Bereich je Faktor, geclustert nach Mix — ohne ihn ist
+        # nicht zu sehen, welcher AUC-Wert getragen ist und welcher nicht.
+        "auc_grenzen": {
+            faktor: [round(w, 4) for w in werte]
+            for faktor, werte in (grenzen or {}).items()
+        },
     }
 
 
@@ -424,11 +460,21 @@ def main(argv: list[str] | None = None) -> int:
     zufall_je_mix = zufallsdeltas_je_mix(fenster_je_mix, echte_je_mix)
     zufalls_deltas = [d for mix_deltas in zufall_je_mix for d in mix_deltas]
 
+    # AUC mit Konfidenzbereich, geclustert nach Mix.
+    grenzen = berechne_auc_grenzen(echte_je_mix, zufall_je_mix)
+
     # Gewichte schon hier lernen: der Holdout braucht sie, um den
     # GESAMTSCORE zu pruefen statt eines einzelnen Faktors.
-    gewichte_roh = learn_weights(
-        berechne_auc_richtung(alle_echten_deltas, zufalls_deltas)
-    )
+    gewichte_roh = learn_weights_bounded(grenzen)
+    budget = sum(gewichte_roh.values())
+    if budget <= 0.0:
+        logger.warning(
+            "Budget 0.0 — fuer %s wurde NICHTS gelernt: kein Faktor haelt "
+            "mit seiner unteren Konfidenzgrenze Abstand zu 0.5. Die "
+            "Default-Gewichte bleiben stehen.", args.genre,
+        )
+    else:
+        logger.info("Gelerntes Gewichtsbudget: %.4f", budget)
 
     holdout_ergebnis: bool | None = None
     if args.holdout:
@@ -456,7 +502,9 @@ def main(argv: list[str] | None = None) -> int:
                     "nicht belastbar genug fuer den Einbau.", args.genre
                 )
 
-    ergebnis = baue_ergebnis(args.genre, alle_echten_deltas, zufalls_deltas, holdout_ergebnis)
+    ergebnis = baue_ergebnis(
+        args.genre, alle_echten_deltas, zufalls_deltas, holdout_ergebnis, grenzen
+    )
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(ergebnis, f, indent=2, ensure_ascii=False)

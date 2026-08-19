@@ -155,3 +155,47 @@ class TestZufallspaareBleibenImMix:
             assert deltas
             for d in deltas:
                 assert d["sub_delta"] < 100.0
+
+
+class TestBaueErgebnisMitGrenzen:
+    """FIX 4: mit Konfidenzgrenzen kommt das Budget aus der Effektstaerke."""
+
+    _ECHTE = [
+        {"groove_sim": 0.9, "sub_delta": 1.0, "punch_delta": 1.0,
+         "brightness_delta": 2.0, "timbre_sim": 0.9}
+    ]
+    _ZUFALL = [
+        {"groove_sim": 0.2, "sub_delta": 10.0, "punch_delta": 5.0,
+         "brightness_delta": 20.0, "timbre_sim": 0.3}
+    ]
+
+    def test_grenzen_landen_im_json(self):
+        grenzen = {
+            "groove_sim": (0.646, 0.570, 0.723),
+            "timbre_sim": (0.674, 0.599, 0.748),
+            "sub_delta": (0.627, 0.550, 0.705),
+            "punch_delta": (0.535, 0.454, 0.615),
+            "brightness_delta": (0.536, 0.455, 0.616),
+        }
+        ergebnis = baue_ergebnis(
+            genre="Psytrance", echte_deltas=self._ECHTE,
+            zufalls_deltas=self._ZUFALL, holdout=None, grenzen=grenzen,
+        )
+        assert set(ergebnis["auc_grenzen"]) == set(grenzen)
+        assert ergebnis["auc_grenzen"]["groove_sim"] == [0.646, 0.57, 0.723]
+        # Budget skaliert mit timbre_sim (untere Grenze 0,599 -> roh 0,198).
+        summe = sum(ergebnis["gewichte"].values())
+        assert summe == pytest.approx(0.30 * 0.198, abs=1e-6)
+        assert summe < 0.30
+
+    def test_ohne_gesicherten_faktor_bleibt_alles_null(self):
+        grenzen = {
+            faktor: (0.52, 0.44, 0.60)
+            for faktor in ("groove_sim", "timbre_sim", "sub_delta",
+                           "punch_delta", "brightness_delta")
+        }
+        ergebnis = baue_ergebnis(
+            genre="Techno", echte_deltas=self._ECHTE,
+            zufalls_deltas=self._ZUFALL, holdout=None, grenzen=grenzen,
+        )
+        assert sum(ergebnis["gewichte"].values()) == pytest.approx(0.0)

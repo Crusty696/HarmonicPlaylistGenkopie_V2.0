@@ -241,3 +241,47 @@ def test_cluster_bootstrap_auc_richtung_niedriger_ist_besser():
     auc, unten, _ = cluster_bootstrap_auc(echte, zufall, hoeher_ist_besser=False)
     assert auc == pytest.approx(1.0)
     assert unten > 0.5
+
+
+from hpg_core.mix_analysis import learn_weights_bounded
+
+
+def test_learn_weights_bounded_alle_intervalle_beruehren_null_fuenf():
+    grenzen = {
+        "groove_sim": (0.53, 0.46, 0.60),
+        "timbre_sim": (0.51, 0.44, 0.58),
+        "sub_delta": (0.50, 0.42, 0.58),
+    }
+    gewichte = learn_weights_bounded(grenzen)
+    assert set(gewichte) == set(grenzen)
+    assert all(w == pytest.approx(0.0) for w in gewichte.values())
+
+
+def test_learn_weights_bounded_starker_faktor_bekommt_mehr():
+    grenzen = {
+        "stark": (0.80, 0.75, 0.85),
+        "schwach": (0.60, 0.52, 0.68),
+    }
+    gewichte = learn_weights_bounded(grenzen, budget_max=0.30)
+    assert gewichte["stark"] > gewichte["schwach"]
+    assert gewichte["schwach"] > 0.0
+    assert sum(gewichte.values()) <= 0.30 + 1e-9
+
+
+def test_learn_weights_bounded_einzelner_perfekter_faktor_bekommt_alles():
+    grenzen = {"stark": (1.0, 1.0, 1.0)}
+    gewichte = learn_weights_bounded(grenzen, budget_max=0.30)
+    assert gewichte["stark"] == pytest.approx(0.30)
+
+
+def test_learn_weights_bounded_budget_skaliert_mit_dem_besten_faktor():
+    # Bester gesicherter Faktor hat untere Grenze 0,60 -> roh 0,20 ->
+    # Budget 0,30 * 0,20 = 0,06.
+    grenzen = {"a": (0.65, 0.60, 0.70), "b": (0.52, 0.45, 0.59)}
+    gewichte = learn_weights_bounded(grenzen, budget_max=0.30)
+    assert sum(gewichte.values()) == pytest.approx(0.06)
+    assert gewichte["b"] == pytest.approx(0.0)
+
+
+def test_learn_weights_bounded_leer_gibt_leer():
+    assert learn_weights_bounded({}) == {}
