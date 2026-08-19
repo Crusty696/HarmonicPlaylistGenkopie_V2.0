@@ -1,4 +1,5 @@
 """Tests fuer die beat-synchrone Mustererkennung."""
+import librosa
 import numpy as np
 import pytest
 
@@ -250,6 +251,56 @@ def test_sub_energy_ist_ein_leistungsverhaeltnis():
     features = extract_groove(y, sr, bpm=128.0, first_downbeat=0.0)
 
     assert features.sub_energy == pytest.approx(0.80, abs=0.03)
+
+
+def test_fold_to_bar_hat_keine_abweichende_slot_zahl_mehr():
+    """Der `slots`-Parameter ist entfallen.
+
+    ON_BEAT_SLOTS/OFF_BEAT_SLOTS beschreiben ein 16-Slot-Raster; bei jeder
+    anderen Slot-Zahl lieferte syncopation_from_pattern stillschweigend 0.0.
+    """
+    env, times = _envelope_with_peaks([0.0, 0.5, 1.0, 1.5], duration=2.0)
+
+    with pytest.raises(TypeError):
+        fold_to_bar(env, times, bpm=120.0, first_downbeat=0.0, slots=8)
+
+
+class _KurzerOnsetCache:
+    """FeatureCache-Attrappe: Onset kuerzer als die STFT-Frames."""
+
+    def __init__(self, y, sr, anteil):
+        self.y = y
+        self.sr = sr
+        self._magnitude = np.abs(librosa.stft(y, n_fft=2048, hop_length=512))
+        voll = librosa.onset.onset_strength(y=y, sr=sr, hop_length=512)
+        self._onset = voll[: int(len(voll) * anteil)]
+
+    def get_onset_strength(self, hop_length=None):
+        return self._onset
+
+    def get_stft_magnitude(self, n_fft=2048, hop_length=512):
+        return self._magnitude
+
+
+def test_sub_energy_und_bass_punch_nutzen_dieselbe_kappung_wie_die_muster():
+    """Erste Haelfte 40 Hz, zweite Haelfte 4 kHz.
+
+    Wird der Onset auf die erste Haelfte gekappt, gelten alle Kennwerte fuer
+    diese Haelfte — sonst mischt sub_energy Frames bei, die im Muster gar
+    nicht vorkommen.
+    """
+    sr = 22050
+    t = np.arange(sr * 20) / sr
+    y = np.where(
+        t < 10.0, np.sin(2 * np.pi * 40 * t), np.sin(2 * np.pi * 4000 * t)
+    ).astype(np.float32)
+
+    cache = _KurzerOnsetCache(y, sr, anteil=0.5)
+    features = extract_groove(y, sr, bpm=128.0, first_downbeat=0.0,
+                              feature_cache=cache)
+
+    # Nur die 40-Hz-Haelfte zaehlt -> fast die gesamte Leistung liegt im Sub.
+    assert features.sub_energy > 0.9
 
 
 def test_extract_groove_ohne_bpm_liefert_leere_muster():

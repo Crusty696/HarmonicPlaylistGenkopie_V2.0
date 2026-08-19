@@ -50,13 +50,18 @@ def fold_to_bar(
     times: np.ndarray,
     bpm: float,
     first_downbeat: float,
-    slots: int = BAR_SLOTS,
 ) -> list[float]:
     """Faltet eine Huellkurve auf einen Takt und normiert auf Summe 1.
 
     Jeder Frame wird ueber seinen Zeitstempel einem der `slots` Sechzehntel
     zugeordnet, verankert am ersten Downbeat. Rueckgabe ist eine leere Liste,
     wenn kein belastbares Raster bestimmt werden kann.
+
+    Die Slot-Zahl ist fest BAR_SLOTS (16). Ein frei waehlbarer Parameter waere
+    eine Scheinfreiheit: ON_BEAT_SLOTS/OFF_BEAT_SLOTS beschreiben genau dieses
+    Raster, und syncopation_from_pattern lieferte bei jeder anderen Zahl
+    stillschweigend 0.0. Weggelassen statt hergeleitet, weil kein Aufrufer je
+    eine andere Zahl brauchte.
 
     Die Slots sind auf dem Raster ZENTRIERT, nicht daran ausgerichtet: Slot 0
     umfasst [-halbe Slotbreite, +halbe Slotbreite) um den Downbeat. Laege der
@@ -72,8 +77,10 @@ def fold_to_bar(
         return []
     if len(envelope) == 0 or len(times) == 0 or len(envelope) != len(times):
         return []
-    if bpm <= 0 or slots <= 0:
+    if bpm <= 0:
         return []
+
+    slots = BAR_SLOTS
 
     bar_duration = (60.0 / bpm) * METER
     if bar_duration <= 0:
@@ -245,9 +252,14 @@ def extract_groove(
 
     # Die Bass-Huellkurve kann durch abweichende Frame-Zahl minimal laenger
     # oder kuerzer sein als die Onset-Huellkurve — auf die kuerzere kappen.
+    # Die Kappung gilt fuer ALLE Kennwerte, nicht nur fuer die Muster: sonst
+    # beschriebe sub_energy einen anderen Ausschnitt als bass_pattern.
     n = min(len(onset), len(bass_env), len(times))
+    bass_env = bass_env[:n]
+    sub_leistung = sub_leistung[:n]
+    leistung = leistung[:, :n]
     groove_pattern = fold_to_bar(onset[:n], times[:n], bpm, first_downbeat)
-    bass_pattern = fold_to_bar(bass_env[:n], times[:n], bpm, first_downbeat)
+    bass_pattern = fold_to_bar(bass_env, times[:n], bpm, first_downbeat)
 
     gesamt = float(leistung.sum())
     sub_energy = float(sub_leistung.sum() / gesamt) if gesamt > 0.0 else 0.0
