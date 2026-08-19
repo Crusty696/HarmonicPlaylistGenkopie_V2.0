@@ -114,3 +114,71 @@ def test_bpm_hard_gate_bleibt_wirksam(monkeypatch):
     a, b = _paar()
     b.bpm = 175.0
     assert calculate_enhanced_compatibility(a, b, bpm_tolerance=6.0).overall_score == 0.0
+
+
+# ── HPG-001-Vertrag: alle Konsumenten sehen dieselben acht Faktoren ────────
+
+def test_adjacent_metrics_tragen_die_vier_neuen_faktoren(monkeypatch):
+    """compute_adjacent_transition_metrics ist die Quelle fuer Anzeige,
+    Quality und Empfehlungen — es muss dieselben Felder liefern wie die
+    Sortierung."""
+    import hpg_core.playlist as pl
+
+    monkeypatch.setattr(pl, "TRANSITION_FEATURES_ENABLED", True)
+    a, b = _paar()
+    for t in (a, b):
+        t.groove_pattern = t.bass_pattern = _gerade()
+        t.timbre_fingerprint = [1.0, 2.0, 3.0]
+        t.brightness = 50
+
+    metriken = pl.compute_adjacent_transition_metrics([a, b], bpm_tolerance=6.0)
+
+    assert len(metriken) == 1
+    m = metriken[0]
+    assert m.groove_match is not None
+    assert m.timbre_match is not None
+    assert m.mood_match is not None
+
+
+def test_quality_und_sortierziel_stimmen_ueberein(monkeypatch):
+    """HPG-001: die angezeigte Qualitaet darf nicht gegen ein anderes Ziel
+    optimieren als die Sortierung. Beide muessen durch dieselbe
+    Zielfunktion laufen."""
+    import hpg_core.playlist as pl
+
+    monkeypatch.setattr(pl, "TRANSITION_FEATURES_ENABLED", True)
+    a, b = _paar()
+    for t in (a, b):
+        t.groove_pattern = t.bass_pattern = _gerade()
+        t.timbre_fingerprint = [1.0, 2.0, 3.0]
+        t.brightness = 50
+
+    paar_score = pl.calculate_enhanced_compatibility(
+        a, b, bpm_tolerance=6.0
+    ).overall_score
+    quality = pl.calculate_playlist_quality([a, b], bpm_tolerance=6.0)
+
+    # calculate_playlist_quality mittelt bewusst die GERUNDETEN 0-100-Werte,
+    # damit die Gesamtzahl in der UI nicht um einen Punkt neben der einzelnen
+    # Empfehlung liegt. Der Vertrag ist also "gleiche Zielfunktion nach
+    # Anzeige-Rundung", nicht "gleicher Float".
+    assert quality["overall_score"] == pytest.approx(
+        round(paar_score * 100) / 100.0, abs=1e-6
+    )
+
+
+def test_schalter_bewegt_auch_die_angezeigte_qualitaet(monkeypatch):
+    """Waere die Anzeige vom Schalter unabhaengig, liefe die Sortierung
+    gegen acht Faktoren, waehrend der Nutzer eine Zahl aus vieren sieht."""
+    import hpg_core.playlist as pl
+
+    a, b = _paar()
+    a.groove_pattern, a.bass_pattern = _gerade(), _gerade()
+    b.groove_pattern, b.bass_pattern = _offbeat(), _offbeat()
+
+    monkeypatch.setattr(pl, "TRANSITION_FEATURES_ENABLED", False)
+    aus = pl.calculate_playlist_quality([a, b], bpm_tolerance=6.0)["overall_score"]
+    monkeypatch.setattr(pl, "TRANSITION_FEATURES_ENABLED", True)
+    an = pl.calculate_playlist_quality([a, b], bpm_tolerance=6.0)["overall_score"]
+
+    assert an != pytest.approx(aus, abs=1e-6)
