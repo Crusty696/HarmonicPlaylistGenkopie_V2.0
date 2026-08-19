@@ -94,8 +94,25 @@ def beschaffe_audio(mix: str, ziel_verzeichnis: Path) -> Path | None:
             ],
             check=True, capture_output=True, text=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        logger.warning("Download fehlgeschlagen fuer %s: %s", mix, exc)
+    except subprocess.CalledProcessError as exc:
+        # Die eigentliche Ursache steht in stderr, nicht im Exception-Text.
+        # Ohne diese Zeile meldet das Log nur "exit status 1" und den
+        # Aufrufbefehl — der Grund (403, fehlende JS-Laufzeit, geoblockt,
+        # Video privat) bleibt unsichtbar und muss von Hand nachgestellt
+        # werden.
+        grund = (exc.stderr or "").strip().splitlines()
+        logger.warning(
+            "Download fehlgeschlagen fuer %s (exit %s): %s",
+            mix, exc.returncode, grund[-1] if grund else "keine Fehlerausgabe",
+        )
+        for zeile in grund[-4:-1]:
+            logger.warning("  %s", zeile)
+        return None
+    except FileNotFoundError:
+        logger.warning(
+            "yt-dlp nicht gefunden — fuer URLs noetig, lokale Dateien "
+            "funktionieren ohne. Uebersprungen: %s", mix,
+        )
         return None
 
     treffer = list(ziel_verzeichnis.glob("download.*"))
