@@ -52,6 +52,19 @@ def test_fold_to_bar_beruecksichtigt_downbeat_versatz():
     assert belegt == [0, 4, 8, 12]
 
 
+def test_fold_to_bar_leicht_zu_frueh_landet_trotzdem_auf_der_zaehlzeit():
+    # Der geschaetzte Downbeat traegt einen Sub-Beat-Fehler (Median 16 ms,
+    # Max 43 ms laut Kalibrierung in downbeat.py). Spitzen 8 ms VOR der
+    # Zaehlzeit muessen weiterhin auf 0/4/8/12 fallen, nicht auf 3/7/11/15.
+    peaks = [0.5 - 0.008, 1.0 - 0.008, 1.5 - 0.008, 2.0 - 0.008]
+    env, times = _envelope_with_peaks(peaks, duration=2.5, sr_frames=1000.0)
+
+    pattern = fold_to_bar(env, times, bpm=120.0, first_downbeat=0.0)
+
+    belegt = [i for i, v in enumerate(pattern) if v > 0.0]
+    assert belegt == [0, 4, 8, 12]
+
+
 def test_fold_to_bar_leere_huellkurve_gibt_leere_liste():
     assert fold_to_bar(np.array([]), np.array([]), bpm=120.0, first_downbeat=0.0) == []
 

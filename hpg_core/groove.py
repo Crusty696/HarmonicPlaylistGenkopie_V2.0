@@ -29,6 +29,16 @@ def fold_to_bar(
     Jeder Frame wird ueber seinen Zeitstempel einem der `slots` Sechzehntel
     zugeordnet, verankert am ersten Downbeat. Rueckgabe ist eine leere Liste,
     wenn kein belastbares Raster bestimmt werden kann.
+
+    Die Slots sind auf dem Raster ZENTRIERT, nicht daran ausgerichtet: Slot 0
+    umfasst [-halbe Slotbreite, +halbe Slotbreite) um den Downbeat. Laege der
+    Downbeat am linken Rand von Slot 0, saesse jede Zaehlzeit exakt auf einer
+    Bin-Grenze — der Punkt mit der groessten Streuung. Der geschaetzte
+    Downbeat traegt laut Kalibrierung in downbeat.py auch bei guter Konfidenz
+    einen Sub-Beat-Fehler (Median 16 ms, Max 43 ms); das reicht regelmaessig,
+    um Energie ueber die Grenze in den Sechzehntel VOR der Zaehlzeit zu
+    schieben (gemessen: 42 % der Bassenergie eines reinen On-Beat-Kicks
+    landeten in 3/7/11/15).
     """
     if envelope is None or times is None:
         return []
@@ -44,7 +54,9 @@ def fold_to_bar(
 
     acc = np.zeros(slots, dtype=float)
     rel = np.mod(np.asarray(times, dtype=float) - float(first_downbeat), bar_duration)
-    idx = np.floor(rel / slot_width).astype(int) % slots
+    # +0.5 verschiebt die Bin-Grenze um eine halbe Slotbreite: der Downbeat
+    # liegt damit in der Mitte von Slot 0 statt an dessen linkem Rand.
+    idx = np.floor(rel / slot_width + 0.5).astype(int) % slots
     np.add.at(acc, idx, np.asarray(envelope, dtype=float))
 
     total = float(acc.sum())
