@@ -168,3 +168,21 @@ def test_extract_groove_ohne_bpm_liefert_leere_muster():
     assert features.groove_pattern == []
     assert features.bass_pattern == []
     assert features.syncopation == 0.0
+
+
+from hpg_core.caching import CACHE_VERSION
+from hpg_core.models import Track
+
+
+def test_track_hat_groove_felder_mit_defaults():
+    t = Track(filePath="x.mp3", fileName="x.mp3")
+
+    assert t.groove_pattern == []
+    assert t.bass_pattern == []
+    assert t.syncopation == 0.0
+    assert t.sub_energy == 0.0
+    assert t.bass_punch == 0.0
+
+
+def test_cache_version_ist_30():
+    assert CACHE_VERSION == 30

@@ -77,7 +77,11 @@ logger = logging.getLogger(__name__)
 # AUDIT-FIX 2026-08-15: 28 -> 29. Context-/Genre-Flow, Transition-Typ und
 # abgeleitete Camelot-Werte wurden korrigiert. Damit alte Genre-/Mixpoint-
 # Ausgaben die neuen Verträge nicht maskieren, wird ein neuer Cache genutzt.
-CACHE_VERSION = 29
+# FEATURE 2026-08-19: 29 -> 30. Neue Groove-Features (groove_pattern,
+# bass_pattern, syncopation, sub_energy, bass_punch) auf Track. Alte Rows
+# kennen diese Felder nicht, ein neuer Cache erzwingt Neuanalyse statt
+# stiller Default-Werte.
+CACHE_VERSION = 30
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -132,7 +136,7 @@ def _ensure_cache_schema(conn: sqlite3.Connection) -> None:
 
 
 TRACK_FIELD_NAMES = {field.name for field in fields(Track)}
-TRACK_LIST_FIELDS = {"sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage"}
+TRACK_LIST_FIELDS = {"sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage", "groove_pattern", "bass_pattern"}
 TRACK_DICT_FIELDS = {"ai_metadata"}
 TRACK_CONFIDENCE_FIELDS = {"downbeat_confidence", "key_confidence", "genre_confidence"}
 TRACK_NUMERIC_FIELDS = {

@@ -239,6 +239,14 @@ class Track:
     percussive_ratio: float = 0.0
     mfcc_fingerprint: list = field(default_factory=list)  # MFCC-Vektor fuer Similarity
     timbre_fingerprint: list = field(default_factory=list)  # Gemittelter MFCC-Fingerabdruck
+    # Groove-Features (2026-08-19): beat-synchrone Rhythmusmuster, verankert
+    # am first_downbeat. Leere Liste = nicht bestimmt (z. B. downbeat_confidence
+    # 0.0); das Scoring verteilt das Gewicht dann um, statt zu bestrafen.
+    groove_pattern: list = field(default_factory=list)  # 16 Slots, L1-normiert
+    bass_pattern: list = field(default_factory=list)    # 16 Slots, nur <150 Hz
+    syncopation: float = 0.0    # 0-1, Offbeat-Anteil im Achtel-Raster
+    sub_energy: float = 0.0     # 20-60 Hz, Anteil an der Gesamtenergie
+    bass_punch: float = 0.0     # Crest-Faktor des Bassbands
     ai_metadata: dict = field(default_factory=dict)  # LLM Analysis Results
     # Signatur der verwendeten Rekordbox-Metadaten fuer Cache-Invalidierung.
     rekordbox_signature: str = ""
