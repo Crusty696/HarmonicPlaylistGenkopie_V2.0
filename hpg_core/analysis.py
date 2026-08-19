@@ -27,7 +27,11 @@ from .config import (
     SECURITY_MAX_TRACK_DURATION,
 )
 from .dj_brain import align_ai_mix_points, calculate_genre_aware_mix_points
-from .downbeat import estimate_first_downbeat, estimate_first_phrase
+from .downbeat import (
+    DOWNBEAT_RELIABLE_MIN,
+    estimate_first_downbeat,
+    estimate_first_phrase,
+)
 from .genre_classifier import GenreClassification, classify_genre
 from .groove import GrooveFeatures, extract_groove
 from .models import CAMELOT_MAP, Track, get_camelot_components
@@ -192,10 +196,19 @@ def compute_groove_fields(
 ) -> GrooveFeatures:
     """Groove-Features berechnen, aber nur auf belastbarem Taktraster.
 
-    Ein Muster auf einem erfundenen Raster ist schlechter als gar keins —
-    deshalb Abbruch bei downbeat_confidence 0.0.
+    Ein Muster auf einem erfundenen Raster ist schlechter als gar keins. Eine
+    falsche TAKT-Phase verwischt das Muster naemlich nicht, sie ROTIERT es um
+    4, 8 oder 12 Slots — der denkbar schlechteste Fehler fuer einen
+    Fingerabdruck, dessen einziger Zweck der Vergleich zweier Tracks ist.
+
+    Die Schwelle ist DOWNBEAT_RELIABLE_MIN (0.30) aus downbeat.py, kalibriert
+    an 35 Tracks mit Rekordbox-ANLZ-Beatgrid als Ground Truth: ab 0.30 liegt
+    der Sub-Beat-Fehler im Median bei 16 ms (Max 43 ms), waehrend die Zone
+    <= 0.241 ALLE Ausreisser (83 / 153 / 188 ms) enthaelt. Dieselbe Schwelle
+    entscheidet bereits in transition_renderer.py und main.py ueber das
+    Beat-Phase-Alignment.
     """
-    if downbeat_confidence <= 0.0 or bpm <= 0:
+    if downbeat_confidence < DOWNBEAT_RELIABLE_MIN or bpm <= 0:
         return GrooveFeatures()
     try:
         return extract_groove(

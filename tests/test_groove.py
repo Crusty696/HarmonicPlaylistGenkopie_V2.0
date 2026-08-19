@@ -242,8 +242,9 @@ def test_cache_version_ist_30():
 
 
 def test_groove_wird_nur_bei_belastbarem_downbeat_berechnet():
-    """downbeat_confidence 0.0 heisst: kein Raster, also kein Muster."""
+    """Unterhalb von DOWNBEAT_RELIABLE_MIN gibt es kein belastbares Raster."""
     from hpg_core.analysis import compute_groove_fields
+    from hpg_core.downbeat import DOWNBEAT_RELIABLE_MIN
 
     y, sr = _click_track()
     mit = compute_groove_fields(y, sr, bpm=120.0, first_downbeat=0.0,
@@ -254,3 +255,21 @@ def test_groove_wird_nur_bei_belastbarem_downbeat_berechnet():
     assert len(mit.groove_pattern) == BAR_SLOTS
     assert ohne.groove_pattern == []
     assert ohne.syncopation == 0.0
+    assert DOWNBEAT_RELIABLE_MIN == 0.30
+
+
+def test_groove_leer_bei_konfidenz_unter_dem_kalibrierten_minimum():
+    """0.2 liegt in der Zone mit ALLEN Phasen-Ausreissern (83-188 ms).
+
+    Eine falsche TAKT-Phase verwischt das Muster nicht, sie ROTIERT es um 4,
+    8 oder 12 Slots — der schlimmste Fall fuer einen Vergleichs-Fingerabdruck.
+    """
+    from hpg_core.analysis import compute_groove_fields
+
+    y, sr = _click_track()
+    schwach = compute_groove_fields(y, sr, bpm=120.0, first_downbeat=0.0,
+                                    downbeat_confidence=0.2, feature_cache=None)
+
+    assert schwach.groove_pattern == []
+    assert schwach.bass_pattern == []
+    assert schwach.syncopation == 0.0
