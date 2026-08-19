@@ -172,6 +172,50 @@ def discrimination_auc(
     return float(treffer / gesamt) if gesamt else 0.5
 
 
+def cluster_bootstrap_auc(
+    echte_je_mix: list[list[float]],
+    zufall_je_mix: list[list[float]],
+    hoeher_ist_besser: bool = True,
+    ziehungen: int = 2000,
+    seed: int = 42,
+) -> tuple[float, float, float]:
+    """Punktschaetzer und 95-%-Bereich der AUC, geclustert nach Mix.
+
+    Gezogen werden MIXE mit Zuruecklegen, nicht einzelne Uebergaenge.
+    Uebergaenge desselben Sets teilen Mastering, Genre-Nische und
+    Aufnahmekette; sie als unabhaengig zu behandeln macht das Intervall
+    zu eng.
+    """
+    echte_flach = [w for mix in echte_je_mix for w in mix]
+    zufall_flach = [w for mix in zufall_je_mix for w in mix]
+    punkt = discrimination_auc(echte_flach, zufall_flach, hoeher_ist_besser)
+
+    # Mit einem einzigen Cluster laesst sich die Streuung zwischen Mixen
+    # nicht schaetzen — dann gibt es schlicht keine Aussage.
+    anzahl_mixe = max(len(echte_je_mix), len(zufall_je_mix))
+    if anzahl_mixe < 2:
+        return (punkt, 0.0, 1.0)
+
+    rng = np.random.default_rng(seed)
+    verteilung: list[float] = []
+    for _ in range(ziehungen):
+        auswahl_e = rng.integers(0, len(echte_je_mix), size=len(echte_je_mix))
+        auswahl_z = rng.integers(0, len(zufall_je_mix), size=len(zufall_je_mix))
+        probe_e = [w for i in auswahl_e for w in echte_je_mix[i]]
+        probe_z = [w for i in auswahl_z for w in zufall_je_mix[i]]
+        if not probe_e or not probe_z:
+            continue
+        verteilung.append(
+            discrimination_auc(probe_e, probe_z, hoeher_ist_besser)
+        )
+
+    if not verteilung:
+        return (punkt, 0.0, 1.0)
+    unten = float(np.percentile(verteilung, 2.5))
+    oben = float(np.percentile(verteilung, 97.5))
+    return (punkt, unten, oben)
+
+
 def tolerance_percentile(werte: list[float], perzentil: float = 90.0) -> float | None:
     """Grenze, die in `perzentil` Prozent der echten Uebergaenge gilt."""
     if not werte:

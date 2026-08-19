@@ -201,3 +201,43 @@ def test_deltas_between_nutzt_rotationsinvarianten_groove():
                          sub_energy=0.3, bass_punch=3.0, brightness=50.0,
                          timbre=[1.0, 2.0, 3.0])
     assert deltas_between(a, b)["groove_sim"] == pytest.approx(1.0)
+
+
+from hpg_core.mix_analysis import cluster_bootstrap_auc
+
+
+def test_cluster_bootstrap_auc_perfekte_trennung_untergrenze_ueber_null_fuenf():
+    echte = [[0.9, 0.92, 0.95] for _ in range(4)]
+    zufall = [[0.1, 0.15, 0.2] for _ in range(4)]
+    auc, unten, oben = cluster_bootstrap_auc(echte, zufall)
+    assert auc == pytest.approx(1.0)
+    assert unten > 0.5
+    assert oben <= 1.0
+
+
+def test_cluster_bootstrap_auc_gleiche_verteilung_enthaelt_null_fuenf():
+    werte = [[0.1, 0.5, 0.9], [0.2, 0.4, 0.8], [0.3, 0.6, 0.7]]
+    auc, unten, oben = cluster_bootstrap_auc(werte, [list(w) for w in werte])
+    assert unten <= 0.5 <= oben
+
+
+def test_cluster_bootstrap_auc_ein_einziger_mix_gibt_keine_aussage():
+    auc, unten, oben = cluster_bootstrap_auc([[0.9, 0.8]], [[0.1, 0.2]])
+    assert auc == pytest.approx(1.0)
+    assert (unten, oben) == (0.0, 1.0)
+
+
+def test_cluster_bootstrap_auc_ist_reproduzierbar():
+    echte = [[0.9, 0.6], [0.7, 0.8], [0.55, 0.95]]
+    zufall = [[0.1, 0.4], [0.3, 0.2], [0.45, 0.05]]
+    a = cluster_bootstrap_auc(echte, zufall, seed=7)
+    b = cluster_bootstrap_auc(echte, zufall, seed=7)
+    assert a == b
+
+
+def test_cluster_bootstrap_auc_richtung_niedriger_ist_besser():
+    echte = [[0.1, 0.15], [0.12, 0.08], [0.09, 0.11]]
+    zufall = [[0.8, 0.9], [0.85, 0.95], [0.7, 0.75]]
+    auc, unten, _ = cluster_bootstrap_auc(echte, zufall, hoeher_ist_besser=False)
+    assert auc == pytest.approx(1.0)
+    assert unten > 0.5
