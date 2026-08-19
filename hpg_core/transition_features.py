@@ -95,7 +95,15 @@ def groove_match(track_a: Track, track_b: Track, genre: str) -> float | None:
 
 def bass_continuity(track_a: Track, track_b: Track, genre: str) -> float | None:
     """Kontinuitaet des Bassdrucks an der Nahtstelle."""
-    if track_a.sub_energy <= 0.0 and track_b.sub_energy <= 0.0:
+    # ODER, nicht UND: liefert EIN Track keinen Wert, ist der Vergleich nicht
+    # bestimmbar. Mit UND schluepfte der haeufige Fall durch — ein Track mit
+    # Werten gegen einen ohne ergab 0.0, also die haerteste Strafe fuer genau
+    # die Tracks, die die Umverteilung schuetzen soll. compute_groove_fields
+    # liefert bei downbeat_confidence < DOWNBEAT_RELIABLE_MIN ein leeres
+    # GrooveFeatures(), und dessen sub_energy ist 0.0.
+    # Ein echter Track hat immer sub_energy > 0 (gemessen 0,288 bis 0,790);
+    # eine 0 bedeutet hier zuverlaessig "nicht gemessen".
+    if track_a.sub_energy <= 0.0 or track_b.sub_energy <= 0.0:
         return None
 
     tol = get_tolerances(genre)
@@ -115,7 +123,10 @@ def timbre_match(track_a: Track, track_b: Track, genre: str) -> float | None:
 
 def mood_match(track_a: Track, track_b: Track, genre: str) -> float | None:
     """Stimmungs-Passung aus Helligkeit, Flachheit und Tongeschlecht."""
-    if track_a.brightness <= 0 and track_b.brightness <= 0:
+    # ODER statt UND, gleiche Begruendung wie bei bass_continuity.
+    # analysis.py setzt brightness bei gescheiterter Feature-Phase explizit
+    # auf 0; ein normal analysierter Track liegt darueber.
+    if track_a.brightness <= 0 or track_b.brightness <= 0:
         return None
 
     tol = get_tolerances(genre)

@@ -132,3 +132,29 @@ def test_mood_match_ohne_brightness_ist_none():
     a = _track(brightness=0, spectral_flatness=0.0)
     b = _track(brightness=0, spectral_flatness=0.0)
     assert mood_match(a, b, "Psytrance") is None
+
+
+def test_ein_track_ohne_groove_daten_macht_alle_faktoren_unbestimmbar():
+    """Regression: frueher pruefte die None-Bedingung mit UND statt ODER.
+
+    compute_groove_fields liefert bei zu niedriger downbeat_confidence ein
+    leeres GrooveFeatures() — sub_energy und bass_punch sind dann 0.0, und
+    analysis.py setzt brightness bei gescheiterter Feature-Phase auf 0. Ein
+    solcher Track gegen einen normal analysierten ergab 0.0 bzw. 0.2, also
+    die haerteste Strafe fuer genau die Tracks, die die Umverteilung
+    schuetzen soll.
+    """
+    voll = _track(groove_pattern=_gerade(), bass_pattern=_gerade(),
+                  sub_energy=0.5, bass_punch=2.0, brightness=55,
+                  spectral_flatness=0.05, timbre_fingerprint=[1.0, 2.0, 3.0])
+    leer = _track(groove_pattern=[], bass_pattern=[],
+                  sub_energy=0.0, bass_punch=0.0, brightness=0,
+                  spectral_flatness=0.0, timbre_fingerprint=[])
+
+    assert groove_match(voll, leer, "Psytrance") is None
+    assert bass_continuity(voll, leer, "Psytrance") is None
+    assert mood_match(voll, leer, "Psytrance") is None
+    assert timbre_match(voll, leer, "Psytrance") is None
+    # und in der Gegenrichtung
+    assert bass_continuity(leer, voll, "Psytrance") is None
+    assert mood_match(leer, voll, "Psytrance") is None
