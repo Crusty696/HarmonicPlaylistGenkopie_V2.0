@@ -1543,6 +1543,80 @@ class AdvancedParametersWidget(QWidget):
 
         layout.addWidget(genre_group)
 
+        # Uebergangs-Gewichte (Spec 2026-08-19). Gelten fuer alle Strategien,
+        # die die erweiterte Zielfunktion nutzen — deshalb bewusst NICHT in
+        # apply_strategy_support eingetragen und nie ausgegraut.
+        weight_group = QGroupBox("Uebergangs-Gewichte")
+        self.transition_weight_group = weight_group
+        weight_group.setToolTip(
+            "Wie stark Groove, Bassdruck, Klangfarbe und Stimmung\n"
+            "die Reihenfolge beeinflussen. Aenderungen wirken ab der\n"
+            "naechsten Generierung und erfordern KEINE Neuanalyse."
+        )
+        weight_layout = QVBoxLayout(weight_group)
+
+        self.transition_weight_sliders = {}
+        for schluessel, label, start in (
+            ("groove_weight", "Groove", 12),
+            ("bass_weight", "Bassdruck", 8),
+            ("timbre_weight", "Klangfarbe", 5),
+            ("mood_weight", "Stimmung", 5),
+        ):
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(start)  # Startgewicht * 100 aus Spec 7.2
+            slider.valueChanged.connect(self._on_transition_weight_changed)
+            self.transition_weight_sliders[schluessel] = slider
+            weight_layout.addWidget(QLabel(f"{label}:"))
+            weight_layout.addWidget(slider)
+
+        # Eigenes Label: main.py hat KEINE QMainWindow-Statusleiste.
+        self.transition_weight_status = QLabel("")
+        self.transition_weight_status.setWordWrap(True)
+        self.transition_weight_status.setStyleSheet("font-size: 11px;")
+        weight_layout.addWidget(self.transition_weight_status)
+
+        reset_button = QPushButton("Auf gelernte Werte zuruecksetzen")
+        reset_button.clicked.connect(self._on_transition_weights_reset)
+        weight_layout.addWidget(reset_button)
+
+        layout.addWidget(weight_group)
+
+    def _on_transition_weight_changed(self) -> None:
+        """Schreibt die Regler in die Override-Datei und verwirft den Cache.
+
+        Gewichte liegen ausserhalb des Analyse-Caches — eine Aenderung kostet
+        deshalb nur ein Neuberechnen der Scores, keine Neuanalyse. Die
+        Kompatibilitaets-Caches in playlist.py sind ausserhalb von
+        generate_playlist None und brauchen kein Zutun.
+        """
+        from hpg_core.tolerances import reset_cache, write_override
+
+        gewichte = {
+            schluessel: slider.value() / 100.0
+            for schluessel, slider in self.transition_weight_sliders.items()
+        }
+        try:
+            write_override(gewichte)
+        except ValueError as exc:
+            self.transition_weight_status.setText(f"Gewichte ungueltig: {exc}")
+            return
+        reset_cache()
+        self.transition_weight_status.setText(
+            "Gespeichert — wirkt ab der naechsten Generierung."
+        )
+
+    def _on_transition_weights_reset(self) -> None:
+        """Setzt die Regler auf die ausgelieferten Startgewichte zurueck."""
+        from hpg_core.genres import CANONICAL_GENRES, GENRE_TRANSITION_TOLERANCES
+
+        standard = GENRE_TRANSITION_TOLERANCES[CANONICAL_GENRES[0]]
+        for schluessel, slider in self.transition_weight_sliders.items():
+            slider.blockSignals(True)
+            slider.setValue(int(round(standard[schluessel] * 100)))
+            slider.blockSignals(False)
+        self._on_transition_weight_changed()
+
     # ----- AI Provider Auto-Detect / Auto-Start -----
 
     def _set_ai_enabled(self, enabled):
