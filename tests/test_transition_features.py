@@ -11,6 +11,30 @@ from hpg_core.transition_features import (
 )
 
 
+@pytest.fixture(autouse=True)
+def feste_toleranzen(monkeypatch):
+    """Entkoppelt diese Tests von den ausgelieferten Kalibrierdaten.
+
+    `mood_match` und `bass_continuity` lesen ihre Schwellen ueber
+    `get_tolerances` aus `hpg_core/data/transition_tolerances.json`. Diese
+    Datei wird aus echten DJ-Mixen neu gelernt — als die gemessenen Werte
+    einzogen, fiel `brightness_delta_max` von 60 auf 11,3 und ein Test
+    kippte, obwohl die geprueften Funktionen sich nicht geaendert hatten.
+
+    Diese Datei prueft das VERHALTEN der Vergleichsfunktionen, nicht den
+    Stand der Kalibrierung. Deshalb hier fest die Defaults aus genres.py.
+    Wer die gelernten Werte pruefen will, tut das in test_tolerances.py.
+    """
+    import hpg_core.transition_features as tf
+    from hpg_core.genres import GENRE_TRANSITION_TOLERANCES
+
+    monkeypatch.setattr(
+        tf, "get_tolerances", lambda genre: GENRE_TRANSITION_TOLERANCES.get(
+            genre, GENRE_TRANSITION_TOLERANCES["Psytrance"]
+        )
+    )
+
+
 def _track(**kwargs) -> Track:
     t = Track(filePath=kwargs.pop("path", "a.mp3"), fileName="a.mp3")
     for k, v in kwargs.items():
@@ -92,7 +116,7 @@ def test_timbre_match_identisch_ist_hoch():
                         _track(timbre_fingerprint=fp), "Psytrance") > 0.95
 
 
-def test_mood_match_gleiche_stimmung_ist_hoch():
+def test_mood_match_gleiche_stimmung_ist_hoch(feste_toleranzen):
     a = _track(brightness=50, spectral_flatness=0.05, keyMode="Minor")
     b = _track(brightness=52, spectral_flatness=0.05, keyMode="Minor")
     assert mood_match(a, b, "Psytrance") > 0.9
