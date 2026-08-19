@@ -1623,15 +1623,40 @@ class AdvancedParametersWidget(QWidget):
         )
 
     def _on_transition_weights_reset(self) -> None:
-        """Setzt die Regler auf die ausgelieferten Startgewichte zurueck."""
-        from hpg_core.genres import CANONICAL_GENRES, GENRE_TRANSITION_TOLERANCES
+        """Verwirft die eigenen Regler-Werte und stellt die gelernten her.
 
-        standard = GENRE_TRANSITION_TOLERANCES[CANONICAL_GENRES[0]]
+        WICHTIG: hier darf NICHT geschrieben werden. Die Override-Datei
+        liegt in der Ladekette UEBER den mitgelieferten, aus echten DJ-Mixen
+        gelernten Werten. Wer beim Zuruecksetzen Defaults schreibt, verdeckt
+        die gelernten Werte dauerhaft — der Knopf taete dann das Gegenteil
+        seiner Beschriftung. Richtig ist: Override loeschen, Cache verwerfen,
+        Regler aus dem dann wirksamen Stand neu befuellen.
+        """
+        from hpg_core.tolerances import entferne_override, get_tolerances, reset_cache
+
+        entferne_override()
+        reset_cache()
+        self._lade_transition_regler()
+        self.transition_weight_status.setText(
+            "Eigene Werte verworfen — die gelernten Gewichte sind wieder aktiv."
+        )
+
+    def _lade_transition_regler(self) -> None:
+        """Befuellt die Regler aus dem tatsaechlich wirksamen Stand.
+
+        Ohne das zeigen die Regler ihre hartkodierten Startwerte, waehrend
+        real die gelernten oder zuvor gespeicherten Gewichte gelten — der
+        erste Klick wuerde dann ungewollt einen ganz anderen Zustand
+        schreiben.
+        """
+        from hpg_core.genres import CANONICAL_GENRES
+        from hpg_core.tolerances import get_tolerances
+
+        wirksam = get_tolerances(CANONICAL_GENRES[0])
         for schluessel, slider in self.transition_weight_sliders.items():
             slider.blockSignals(True)
-            slider.setValue(int(round(standard[schluessel] * 100)))
+            slider.setValue(int(round(float(wirksam.get(schluessel, 0.0)) * 100)))
             slider.blockSignals(False)
-        self._on_transition_weight_changed()
 
     # ----- AI Provider Auto-Detect / Auto-Start -----
 

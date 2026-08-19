@@ -102,7 +102,12 @@ def test_reset_button_restores_default_start_values(qtbot, monkeypatch, tmp_path
   assert sliders["bass_weight"].value() == 8
   assert sliders["timbre_weight"].value() == 5
   assert sliders["mood_weight"].value() == 5
-  assert override_pfad.is_file()
+  # Zuruecksetzen LOESCHT den Override, es schreibt ihn nicht. Die alte
+  # Zusicherung (`is_file()`) hielt genau den Fehler fest: ein geschriebener
+  # Default liegt in der Ladekette UEBER den mitgelieferten, aus echten Mixen
+  # gelernten Werten und verdeckt sie dauerhaft — der Knopf taete dann das
+  # Gegenteil seiner Beschriftung.
+  assert not override_pfad.exists()
 
 
 def test_passung_tooltip_zeigt_alle_acht_faktoren(qtbot):

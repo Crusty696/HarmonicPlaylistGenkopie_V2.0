@@ -31,7 +31,12 @@ def _override_pfad() -> Path:
 
 def _merge(ziel: dict[str, dict], quelle: dict) -> None:
     """Uebernimmt nur bekannte Genres und ueberschreibt einzelne Schluessel."""
-    for genre, werte in (quelle or {}).items():
+    # json.loads liefert jeden JSON-Wurzeltyp — eine Liste, eine Zahl, null.
+    # Ohne diesen Guard wirft `.items()` einen AttributeError, den der
+    # Aufrufer nicht faengt, und die erste Playlist-Generierung stirbt.
+    if not isinstance(quelle, dict):
+        raise ValueError(f"Toleranz-Datei ist kein Objekt, sondern {type(quelle).__name__}")
+    for genre, werte in quelle.items():
         if genre in ziel and isinstance(werte, dict):
             ziel[genre].update(werte)
 
@@ -47,7 +52,8 @@ def load_tolerances() -> dict[str, dict]:
         try:
             if pfad.is_file():
                 _merge(werte, json.loads(pfad.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError, ValueError) as exc:
+        except (json.JSONDecodeError, OSError, ValueError,
+                TypeError, AttributeError) as exc:
             logger.warning(f"Toleranz-Datei {pfad} nicht lesbar: {exc}")
     return werte
 
@@ -58,6 +64,23 @@ def get_tolerances(genre: str) -> dict:
     if _cache is None:
         _cache = load_tolerances()
     return _cache.get(genre) or _cache[CANONICAL_GENRES[0]]
+
+
+def entferne_override() -> bool:
+    """Loescht die Nutzer-Override-Datei; True, wenn eine da war.
+
+    Zuruecksetzen heisst LOESCHEN, nicht Defaults schreiben: der Override
+    liegt in der Ladekette ueber den mitgelieferten gelernten Werten, ein
+    geschriebener Default wuerde sie also dauerhaft verdecken.
+    """
+    pfad = _override_pfad()
+    try:
+        if pfad.is_file():
+            pfad.unlink()
+            return True
+    except OSError as exc:
+        logger.warning(f"Override-Datei {pfad} nicht loeschbar: {exc}")
+    return False
 
 
 def reset_cache() -> None:
