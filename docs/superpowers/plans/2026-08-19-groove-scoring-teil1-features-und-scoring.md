@@ -680,7 +680,7 @@ Expected: `2` — je einer pro Pfad. Bei `1` fehlt ein Pfad.
 - [ ] **Step 7: Volle Suite laufen lassen**
 
 Run: `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q --no-cov`
-Expected: keine neuen Fehlschlaege gegenueber der Baseline von 1389 Tests.
+Expected: keine neuen Fehlschlaege. Baseline auf diesem Branch: 1506 passed, Coverage 77,29 % (selbst gemessen 2026-08-19). Aeltere Zahlen in CLAUDE.md (1389) und im Testing-Skill (1492/1303) sind datierte Snapshots — immer selbst zaehlen.
 
 - [ ] **Step 8: Commit**
 
@@ -1549,7 +1549,7 @@ Expected: 8 passed
 - [ ] **Step 7: Volle Suite — Regressionsnachweis**
 
 Run: `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q --no-cov`
-Expected: 1389+ passed, 0 failed. Jeder Fehlschlag hier bedeutet, dass der Altpfad nicht bit-identisch ist.
+Expected: 1506+ passed, 0 failed. Jeder Fehlschlag hier bedeutet, dass der Altpfad nicht bit-identisch ist. Dieser Abschlusslauf MUSS ohne --no-cov laufen: pytest.ini erzwingt --cov-fail-under=70, und --no-cov ist laut Testing-Skill nur fuer Entwicklungslaeufe zulaessig, nie als Beleg.
 
 - [ ] **Step 8: Commit**
 
@@ -1625,20 +1625,82 @@ git commit -m "fix(scoring): propagate context to all five consumers"
 ## Task 11: GUI-Panel fuer die Gewichte
 
 **Files:**
-- Modify: `main.py` (Advanced-Einstellungen)
+- Modify: `main.py` (Advanced-Einstellungen, `PlaylistPanel`-Tooltip)
+
+### Vorab: KEINE neuen Tabellenspalten
+
+Spec 7.4 verlangt, dass die vier neuen Faktoren in der GUI sichtbar werden. Der naheliegende Weg — vier neue Spalten — ist hier der falsche. `PlaylistPanel` [main.py:2642] hat bereits **16 Spalten (0-15)**, und ein Spaltenindex steht an **sechs** Stellen: `setHorizontalHeaderLabels`, die Tooltip-Liste, `setColumnWidth`, die Delegate-Indizes, `_populate_table` und `_update_table_after_reorder`. Vier neue Spalten bedeuten vierundzwanzig Aenderungspunkte und eine Tabelle mit 20 Spalten.
+
+Stattdessen: Spalte 14 ("Passung", `TransitionScoreDelegate`) zeigt bereits den Gesamtscore des Uebergangs. Die vier Teilwerte kommen in ihren **Tooltip**. Ein Ort, keine Indexverschiebung, und der Nutzer sieht die Aufschluesselung genau dort, wo die Zahl steht, die sie erklaeren.
+
+```python
+    # Aufschluesselung des Passungs-Scores (Spec 7.4): die vier neuen Faktoren
+    # sichtbar machen, ohne die Tabelle um vier Spalten zu verbreitern.
+    def _passung_tooltip(self, metrics) -> str:
+        zeilen = ["Passung setzt sich zusammen aus:"]
+        for label, wert in (
+            ("Harmonik", metrics.harmonic_score / 100.0),
+            ("BPM", metrics.bpm_smoothness),
+            ("Energie", metrics.energy_flow),
+            ("Genre", metrics.genre_compatibility),
+            ("Groove", metrics.groove_match),
+            ("Bass", metrics.bass_continuity),
+            ("Klangfarbe", metrics.timbre_match),
+            ("Stimmung", metrics.mood_match),
+        ):
+            if wert is None:
+                zeilen.append(f"  {label}: nicht bestimmbar (Gewicht umverteilt)")
+            else:
+                zeilen.append(f"  {label}: {wert * 100:.0f} %")
+        return "\n".join(zeilen)
+```
+
+"nicht bestimmbar" statt eines Zahlenwerts ist wichtig: es macht die Umverteilungsregel aus 7.3 fuer den Nutzer sichtbar, statt ihm ein stilles 0 % zu zeigen, das er als schlechte Passung lesen wuerde.
+
+### Regler
 
 - [ ] **Step 1: Panel ergaenzen**
 
-Im Advanced-Bereich vier `QSlider` (0-100, Schrittweite 1) fuer Groove, Bass, Timbre, Mood plus einen `QPushButton` "Zuruecksetzen". UI-Aenderungen ausschliesslich im Main-Thread.
+Die Regler kommen in `AdvancedParametersWidget.init_ui` [main.py:1312] als eigene `QGroupBox`, im Stil der bestehenden `energy_group`. Vier `QSlider` (0-100) fuer Groove, Bass, Timbre, Mood plus ein `QPushButton` "Zuruecksetzen". UI-Aenderungen ausschliesslich im Main-Thread.
 
 ```python
-        self.groove_slider = QSlider(Qt.Orientation.Horizontal)
-        self.groove_slider.setRange(0, 100)
-        self.groove_slider.setValue(12)  # entspricht Gewicht 0.120
-        self.groove_slider.valueChanged.connect(self._on_transition_weight_changed)
+        # Uebergangs-Gewichte (Spec 2026-08-19). Gelten fuer alle Strategien,
+        # die die erweiterte Zielfunktion nutzen — deshalb NICHT ueber
+        # apply_strategy_support ausgrauen.
+        weight_group = QGroupBox("Uebergangs-Gewichte")
+        self.transition_weight_group = weight_group
+        weight_group.setToolTip(
+            "Wie stark Groove, Bassdruck, Klangfarbe und Stimmung\n"
+            "die Reihenfolge beeinflussen. Aenderungen wirken ab der\n"
+            "naechsten Generierung und erfordern KEINE Neuanalyse."
+        )
+        weight_layout = QVBoxLayout(weight_group)
+
+        for attr, label, start in (
+            ("groove_slider", "Groove", 12),
+            ("bass_slider", "Bassdruck", 8),
+            ("timbre_slider", "Klangfarbe", 5),
+            ("mood_slider", "Stimmung", 5),
+        ):
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(start)  # Startgewicht * 100 aus Spec 7.2
+            slider.valueChanged.connect(self._on_transition_weight_changed)
+            setattr(self, attr, slider)
+            weight_layout.addWidget(QLabel(f"{label}:"))
+            weight_layout.addWidget(slider)
+
+        # Eigenes Label: main.py hat KEINE QMainWindow-Statusleiste
+        # (verifiziert — `statusBar()` kommt im ganzen File nicht vor).
+        self.transition_weight_status = QLabel("")
+        self.transition_weight_status.setWordWrap(True)
+        self.transition_weight_status.setStyleSheet("font-size: 11px;")
+        weight_layout.addWidget(self.transition_weight_status)
+
+        layout.addWidget(weight_group)
 ```
 
-analog fuer `bass_slider` (8), `timbre_slider` (5), `mood_slider` (5).
+**Wichtig:** `apply_strategy_support` graut Advanced-Parameter aus, die die gewaehlte Strategie nicht konsumiert. Die Uebergangs-Gewichte gelten fuer jede Strategie, die ueber `calculate_enhanced_compatibility` sortiert — pruefen, dass die Funktion die neue Gruppe **nicht** miterfasst, und sie andernfalls ausdruecklich ausnehmen.
 
 - [ ] **Step 2: Handler schreiben**
 

@@ -435,7 +435,7 @@ Tracks ab, deren Analyse degradiert ist, nicht nur Altbestaende.
   bit-identisch zum heutigen Stand.
 - Drift-Test: `GENRE_TRANSITION_TOLERANCES` deckt alle 9 kanonischen Genres ab
   und wird von der bestehenden Validierung in `genres.py` erfasst.
-- Die bestehende Baseline von 1389 Tests bleibt gruen.
+- Die bestehende Baseline bleibt gruen: 1506 passed, Coverage 77,29 % (gemessen 2026-08-19). Der Abschlusslauf laeuft mit Coverage, nicht mit --no-cov.
 
 Aufruf: `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`
 
