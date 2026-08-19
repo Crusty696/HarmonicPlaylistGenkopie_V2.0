@@ -472,6 +472,29 @@ _GENRE_COMPATIBILITY_NORMALIZED = {
 _MIX_PROFILES_NORMALIZED = {k.casefold(): v for k, v in GENRE_MIX_PROFILES.items()}
 
 
+# Uebergangs-Toleranzen je Genre (Spec 2026-08-19, Abschnitt 9).
+# Die Gewichte summieren je Genre auf 1.0. Bis zur Kalibrierung aus echten
+# DJ-Mixen tragen alle Genres dieselben Startwerte.
+_TOLERANCE_DEFAULTS = {
+  "harmonic_weight": 0.246,
+  "bpm_weight": 0.157,
+  "energy_weight": 0.157,
+  "genre_weight": 0.140,
+  "groove_weight": 0.120,
+  "bass_weight": 0.080,
+  "timbre_weight": 0.050,
+  "mood_weight": 0.050,
+  "groove_sim_floor": 0.35,
+  "bass_delta_max": 0.25,
+  "brightness_delta_max": 60.0,
+  "groove_veto_enabled": False,
+}
+
+GENRE_TRANSITION_TOLERANCES: dict[str, dict] = {
+  genre: dict(_TOLERANCE_DEFAULTS) for genre in CANONICAL_GENRES
+}
+
+
 # === Konsistenz-Validierung (Drift-Schutz) ===
 
 def _validate_genre_tables() -> None:
@@ -522,6 +545,22 @@ def _validate_genre_tables() -> None:
     for genre, profile in GENRE_MIX_PROFILES.items():
         if profile.phrase_unit not in (8, 16, 32):
             problems.append(f"Ungueltige phrase_unit fuer {genre}: {profile.phrase_unit}")
+
+    if set(GENRE_TRANSITION_TOLERANCES) != canonical:
+        problems.append(
+            f"GENRE_TRANSITION_TOLERANCES-Genres != CANONICAL_GENRES: "
+            f"fehlend={sorted(canonical - set(GENRE_TRANSITION_TOLERANCES))}, "
+            f"ueberzaehlig={sorted(set(GENRE_TRANSITION_TOLERANCES) - canonical)}"
+        )
+    for genre, werte in GENRE_TRANSITION_TOLERANCES.items():
+        summe = sum(
+            werte[k] for k in (
+                "harmonic_weight", "bpm_weight", "energy_weight", "genre_weight",
+                "groove_weight", "bass_weight", "timbre_weight", "mood_weight",
+            )
+        )
+        if abs(summe - 1.0) > 1e-6:
+            problems.append(f"Gewichte von {genre} summieren auf {summe}, nicht 1.0")
 
     if problems:
         raise ValueError("Genre-Tabellen inkonsistent:\n" + "\n".join(problems))
