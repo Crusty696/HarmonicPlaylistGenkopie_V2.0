@@ -20,6 +20,14 @@ from .config import (
     METER,
     DEFAULT_BPM,
     MAX_TRANSITION_OVERLAP_SECONDS,
+    TRANSITION_FEATURES_ENABLED,
+)
+from .tolerances import get_tolerances
+from .transition_features import (
+    bass_continuity,
+    groove_match,
+    mood_match,
+    timbre_match,
 )
 import logging
 import heapq
@@ -96,6 +104,13 @@ class TransitionMetrics:
     genre_compatibility: float
     overall_score: float
     ai_bonus: float = 0.0
+    # Vier neue Transition-Faktoren (nur befuellt bei TRANSITION_FEATURES_ENABLED).
+    # None = nicht bestimmbar (Umverteilung): der Faktor faellt samt Gewicht aus
+    # der gewichteten Summe, statt als 0 still zu bestrafen.
+    groove_match: Optional[float] = None
+    bass_continuity: Optional[float] = None
+    timbre_match: Optional[float] = None
+    mood_match: Optional[float] = None
 
 
 @dataclass
@@ -361,12 +376,45 @@ def calculate_enhanced_compatibility(
     remaining = 1.0 - genre_weight
 
     # Overall weighted score
-    overall_score = (
-        (remaining * 0.44) * (harmonic_score / 100.0)
-        + (remaining * 0.28) * bpm_smoothness
-        + (remaining * 0.28) * energy_flow
-        + genre_weight * genre_compatibility
-    )
+    groove_val = bass_val = timbre_val = mood_val = None
+
+    if TRANSITION_FEATURES_ENABLED:
+        # genre_a (abgehender Track) setzt den Kontext des Uebergangs.
+        tol = get_tolerances(genre_a)
+        groove_val = groove_match(track1, track2, genre_a)
+        bass_val = bass_continuity(track1, track2, genre_a)
+        timbre_val = timbre_match(track1, track2, genre_a)
+        mood_val = mood_match(track1, track2, genre_a)
+        overall_score = combine_weighted(
+            {
+                "harmonic": harmonic_score / 100.0,
+                "bpm": bpm_smoothness,
+                "energy": energy_flow,
+                "genre": genre_compatibility,
+                "groove": groove_val,
+                "bass": bass_val,
+                "timbre": timbre_val,
+                "mood": mood_val,
+            },
+            {
+                "harmonic": tol["harmonic_weight"],
+                "bpm": tol["bpm_weight"],
+                "energy": tol["energy_weight"],
+                "genre": tol["genre_weight"],
+                "groove": tol["groove_weight"],
+                "bass": tol["bass_weight"],
+                "timbre": tol["timbre_weight"],
+                "mood": tol["mood_weight"],
+            },
+        )
+    else:
+        # Unveraenderter Altpfad — Referenz fuer den Regressionstest.
+        overall_score = (
+            (remaining * 0.44) * (harmonic_score / 100.0)
+            + (remaining * 0.28) * bpm_smoothness
+            + (remaining * 0.28) * energy_flow
+            + genre_weight * genre_compatibility
+        )
 
     ai_bonus = calculate_ai_compatibility_bonus(track1, track2)
     overall_score = min(1.0, overall_score + ai_bonus)
@@ -395,6 +443,10 @@ def calculate_enhanced_compatibility(
         genre_compatibility=genre_compatibility,
         overall_score=overall_score,
         ai_bonus=ai_bonus,
+        groove_match=groove_val,
+        bass_continuity=bass_val,
+        timbre_match=timbre_val,
+        mood_match=mood_val,
     )
     if _ENHANCED_COMPAT_CACHE is not None:
         _ENHANCED_COMPAT_CACHE[cache_key] = metrics
