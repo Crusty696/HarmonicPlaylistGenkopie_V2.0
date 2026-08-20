@@ -87,7 +87,14 @@ logger = logging.getLogger(__name__)
 # den Mix-In eine GANZE Phrase weiter (gemessen: 82,29 s -> 109,72 s, also
 # vom Intro-Ende mitten in den Drop). Alle gecachten Mixpunkte sind damit
 # neu zu berechnen.
-CACHE_VERSION = 31
+# FEATURE 2026-08-20: 31 -> 32. Zwei Aenderungen an gecachten Inhalten:
+# Das Groove-Muster wird jetzt nur noch ueber Sektionen mit Beat (main,
+# drop) gefaltet, und die Sektionen tragen zusaetzlich sub_energy und
+# bass_punch fuer den Nahtstellen-Vergleich des Bassdrucks. Alte Zeilen
+# kennen die Sektions-Schluessel nicht und halten Muster aus dem gesamten
+# Fenster — sie wuerden stille Altwerte liefern, die neu berechnete Tracks
+# still anders bewerten als gecachte.
+CACHE_VERSION = 32
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
