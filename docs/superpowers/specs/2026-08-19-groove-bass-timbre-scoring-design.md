@@ -7,8 +7,8 @@ Design-Spec · 2026-08-19 · HPG v3.7.2
 Die Reihenfolge einer HPG-Playlist entsteht heute weitgehend aus vier
 Faktoren, aber nicht einheitlich. `calculate_enhanced_compatibility`
 (`hpg_core/playlist.py:291`, nicht `:256`) ist **nicht** die einzige
-Zielfunktion beim Sortieren: Genre Flow (`playlist.py:1096`) und Context Flow
-(`playlist.py:1941`) nutzen stattdessen `calculate_compatibility` (reine
+Zielfunktion beim Sortieren: Genre Flow (`_sort_genre_flow`) und Context Flow
+(`_sort_context_flow`) nutzen stattdessen `calculate_compatibility` (reine
 Harmonik), Energy Wave nutzt gar keine Kompatibilitaetsfunktion. Von den 8
 Strategien konsumieren nur Harmonic Flow und Consistent die acht Faktoren
 voll; Warm-Up, Cool-Down, Peak-Time und Genre Flow nachrangig/teilweise;
@@ -150,9 +150,12 @@ gegen einzelne Ausreisser.
 
 Vorgesehen ist, dass **nur ueber Sektionen mit Beat** (`main`, `drop`)
 gemittelt wird — ein Breakdown ohne Drums wuerde das Muster sonst
-verwaessern. **Status: nicht umgesetzt** in der urspruenglichen Fassung
-dieser Spec; ein paralleler Auftrag baut die Sektionsfilterung gerade nach,
-siehe Commit-Historie.
+verwaessern. **Status: umgesetzt** (geprueft 2026-08-20).
+`extract_groove` nimmt `beat_sektionen` entgegen (`hpg_core/groove.py:287`);
+maskiert wird ueber die Frames, das Audio wird nicht zusammengeschnitten.
+`compute_groove_fields` bekommt die Sektionen aus beiden Analysepfaden
+uebergeben (Aufruf mit `sections=section_dicts` in `analysis.py`, je einmal
+im Rekordbox-Fast-Path und im Voll-Path).
 
 ### 5.2 Neue Track-Felder
 
@@ -168,30 +171,33 @@ Vorgesehen ist, dass `sub_energy` und `bass_punch` **zweifach** gefuehrt
 werden: als Trackmittel in den obigen Feldern (Anzeige, Fallback) und
 zusaetzlich je Sektion in den Section-Dicts von `Track.sections` (Abschnitt
 5.3). Das Scoring soll die Sektionswerte nutzen; die Trackmittel sollen nur
-greifen, wenn fuer die betreffende Sektion kein Wert vorliegt. **Status: nicht
-umgesetzt** in der urspruenglichen Fassung dieser Spec; wird gerade
-nachgebaut, siehe Commit-Historie.
+greifen, wenn fuer die betreffende Sektion kein Wert vorliegt. **Status: umgesetzt**
+(geprueft 2026-08-20): `sec_dict['sub_energy']` wird in beiden Analysepfaden
+gesetzt (Schleife ueber `section_dicts`, je einmal im Fast-Path und im
+Voll-Path; die Reihenfolge gegenueber `compute_groove_fields` ist in den
+beiden Pfaden unterschiedlich, das Ergebnis identisch).
 
 ### 5.3 Bewusste Asymmetrie: Groove track-weit, Bass sektionsweise
 
 Der Groove eines Tracks ist ueber seine Laenge weitgehend stabil, der
 Bassdruck nicht — Intro und Drop unterscheiden sich massiv. Da die Sektionen
-in `Track.sections` bereits `avg_bass` tragen (`dj_brain.py:1337` nutzt das),
+in `Track.sections` bereits `avg_bass` tragen (`dj_brain` nutzt das),
 kommt `sub_energy` dort daneben.
 
 Beim Paar-Vergleich soll deshalb fuer den Bass **Outro von A gegen Intro von
 B** gemessen werden, nicht Trackmittel gegen Trackmittel — ob zwei Tracks im
 Durchschnitt aehnlich basslastig sind, ist fuer den Uebergang irrelevant; es
-zaehlt, was an der Nahtstelle passiert. **Status:** in der urspruenglichen
-Fassung dieser Spec verglichen sowohl `bass_continuity` als auch `mood_match`
-ausschliesslich Trackmittel gegen Trackmittel — keines der beiden nutzte die
-Nahtstelle. Fuer den Bass wird die Nahtstellen-Messung gerade nachgebaut
-(siehe Commit-Historie); fuer `mood_match` bleibt es bewusst beim Trackmittel,
-diese Aussage gilt nur fuer den Bass.
+zaehlt, was an der Nahtstelle passiert. **Status: umgesetzt** fuer den Bass
+(geprueft 2026-08-20): `bass_continuity` vergleicht ueber `_naht_werte` die
+Sektion am Mix-Out von A gegen die Sektion am Mix-In von B
+(`_naht_werte(track_a, "out")` / `_naht_werte(track_b, "in")` in
+`bass_continuity`) — nicht "Outro gegen Intro" und
+nicht Trackmittel gegen Trackmittel. Fuer `mood_match` bleibt es bewusst beim
+Trackmittel; diese Aussage gilt nur fuer den Bass.
 
 ### 5.4 Rechenaufwand
 
-`FeatureCache` (`analysis.py:53`) haelt Onset, STFT und HPSS bereits vor —
+`FeatureCache` (Klasse in `analysis.py`) haelt Onset, STFT und HPSS bereits vor —
 genau die teuren Operationen, die hier gebraucht werden. Die Extraktion greift
 auf vorhandene Matrizen zu. Regel aus dem Bestand: **erst pruefen, ob der
 Cache die Groesse schon hat**, nie neu rechnen. Der Laengenvergleich
@@ -212,7 +218,7 @@ Vier reine Funktionen, jeweils Rueckgabe in [0, 1]:
 |---|---|
 | `groove_match(a, b)` | Kosinus-Aehnlichkeit von `groove_pattern` und `bass_pattern`, gewichtet zusammengefasst |
 | `bass_continuity(a, b)` | Differenz von `sub_energy` und `bass_punch` an der Nahtstelle (Outro A / Intro B); `bass_punch` wird gegen die feste Modulkonstante `DEFAULT_PUNCH_DELTA_MAX` normiert, **nicht** gegen die Genre-Toleranztabelle — sie ist darueber nicht uebersteuerbar |
-| `timbre_match(a, b)` | Kosinus-Aehnlichkeit der `timbre_fingerprint`; nutzt **nicht** die Logik aus `dj_brain.py:1382`, sondern eine eigene `cosine_similarity` in `transition_features.py:43`, die semantisch abweicht (die `dj_brain`-Variante verwirft den MFCC-Koeffizienten 0 und klemmt nicht auf [0,1]) |
+| `timbre_match(a, b)` | Kosinus-Aehnlichkeit der `timbre_fingerprint`; nutzt **nicht** `_calculate_texture_similarity` aus `dj_brain.py`, sondern eine eigene `cosine_similarity` in `transition_features.py`, die semantisch abweicht (die `dj_brain`-Variante verwirft den MFCC-Koeffizienten 0 und klemmt nicht auf [0,1]) |
 | `mood_match(a, b)` | kombiniert `brightness`, `spectral_flatness` und den Dur/Moll-Wechsel aus `keyMode` |
 
 Alle vier bekommen den Genre-Kontext uebergeben, da die Toleranzen
@@ -351,8 +357,9 @@ liegen nicht vor und werden auch nicht benoetigt (Abschnitt 10.4).
 
 ### 10.2 Beschaffung: kein Umwandeln
 
-HPG laedt Audio ueber `librosa.load` (`analysis.py:1316`, `:1468`, `:1850`)
-und `sf.blocks` (`analysis.py:513`). Gemessen: libsndfile 1.2.2, soundfile 0.14.0,
+HPG laedt Audio ueber `librosa.load` (Tail-Fenster in
+`analyze_structure_windows`, Fast-Path und Voll-Path in `analyze_track`)
+und ueber `sf.blocks` in der LUFS-Messung. Gemessen: libsndfile 1.2.2, soundfile 0.14.0,
 librosa 0.11.0. Lesbar sind unter anderem WAV, AIFF, FLAC, MP3 und OGG
 (Vorbis **und** Opus).
 
@@ -497,7 +504,7 @@ Aufruf: `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`
 
 1. `groove.py` mit Tests, ohne Anbindung.
 2. Track-Felder, `analysis.py`-Anbindung, `CACHE_VERSION`-Bump (geplant 30,
-   tatsaechlich inzwischen bei 31, steigt gerade auf 32).
+   tatsaechlich inzwischen bei 33, Stand 2026-08-20).
 3. `transition_features.py` mit Tests, ohne Anbindung.
 4. Genre-Tabelle mit den Startgewichten aus 7.2, Drift-Validierung.
 5. Scoring-Integration hinter `TRANSITION_FEATURES_ENABLED`, alle fuenf
