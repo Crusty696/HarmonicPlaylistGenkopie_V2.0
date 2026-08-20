@@ -8,7 +8,8 @@ den Geschmack des Nutzers abbilden statt einer Hilfsannahme darueber.
 
 Aufruf:
     python tools/rate_transitions.py prepare --anzahl 100 --out D:\\hoertest
-    (Nutzer traegt in D:\\hoertest\\bewertung.csv Zahlen von 1 bis 5 ein)
+    python tools/hoertest_server.py --dir D:\\hoertest
+    (Nutzer bewertet im Browser mit 1 bis 5, die Seite schreibt bewertung.csv)
     python tools/rate_transitions.py fit --dir D:\\hoertest
 
 Trennung von reiner Logik und Aussenwelt (Testbarkeit):
@@ -16,7 +17,7 @@ Trennung von reiner Logik und Aussenwelt (Testbarkeit):
   `verbinde_bewertungen`, `zu_zielgroesse`, `negative_log_likelihood`,
   `fit_logistic`, `bootstrap_intervalle`, `waehle_merkmale`,
   `datenlage_urteil`,
-  `leite_gewichte_ab`, `baue_genre_gewichte`, `streuung`,
+  `leite_gewichte_ab`, `baue_genre_gewichte`, `streuung`, `filtere_nach_genre`,
   `crossfade_reserve`, `baue_ausgabe_json`.
 - AUSSENWELT: `lade_tracks_aus_cache` (SQLite), `sammle_kandidaten` (Core-
   Scoring), `geplanter_overlap` (Core-Scoring), `rendere_paar` (Audio),
@@ -641,6 +642,27 @@ def sammle_kandidaten(
     return kandidaten
 
 
+def filtere_nach_genre(kandidaten: list[dict], genre: str) -> list[dict]:
+    """Behaelt nur Paare, bei denen BEIDE Tracks das genannte Genre tragen.
+
+    Warum beide: der Hoertest soll ein Genre am Stueck vermessen. Ein
+    Genrewechsel traegt zwei Toleranzprofile gleichzeitig, seine Note laesst
+    sich keinem der beiden zuordnen. Gemessen am 160er-Satz sind die
+    Wechsel-Uebergaenge ausserdem systematisch schlechter bewertet worden
+    (Mittel 1.58 gegen 2.39) — ein Satz mit Wechseln haette kaum
+    Positivfaelle, und ohne die schaetzt keine Logistik etwas.
+
+    Genre wird wie im Scoring aufgeloest (`loese_genre_auf`), damit der Satz
+    dieselbe Sicht hat wie die Bewertung, die er spaeter steuert.
+    """
+    return [
+        k
+        for k in kandidaten
+        if loese_genre_auf(k["track_a"]) == genre
+        and loese_genre_auf(k["track_b"]) == genre
+    ]
+
+
 def geplanter_overlap(a: Track, b: Track, mix_out_a: float, mix_in_b: float) -> float:
     """Die Blendenlaenge, die HPG fuer genau dieses Paar plant.
 
@@ -787,6 +809,9 @@ def befehl_prepare(args: argparse.Namespace) -> int:
 
     kandidaten = sammle_kandidaten(tracks, args.bpm_toleranz)
     print(f"Mixbare Kandidatenpaare mit vollstaendigen Faktoren: {len(kandidaten)}")
+    if getattr(args, "nur_genre", None):
+        kandidaten = filtere_nach_genre(kandidaten, args.nur_genre)
+        print(f"davon reine {args.nur_genre}-Uebergaenge: {len(kandidaten)}")
     if not kandidaten:
         print("Keine Kandidaten — nichts zu rendern.")
         return 1
@@ -859,9 +884,11 @@ def befehl_prepare(args: argparse.Namespace) -> int:
         print(f"  {name:9s} min {werte['min']:.3f}  median "
               f"{werte['median']:.3f}  max {werte['max']:.3f}")
     print()
-    print(f"Jetzt {out / 'bewertung.csv'} oeffnen und je Clip eine Zahl von "
-          f"{BEWERTUNG_MIN} bis {BEWERTUNG_MAX} eintragen "
-          f"({BEWERTUNG_MIN} = geht gar nicht, {BEWERTUNG_MAX} = sehr gut).")
+    print(f"Jetzt bewerten ({BEWERTUNG_MIN} = geht gar nicht, "
+          f"{BEWERTUNG_MAX} = sehr gut):")
+    print(f"    python tools/hoertest_server.py --dir {out}")
+    print(f"Die Seite spielt die Clips und schreibt die Noten selbst nach "
+          f"{out / 'bewertung.csv'}.")
     return 0
 
 
@@ -969,6 +996,12 @@ def main(argv=None) -> int:
                    default=STANDARD_BPM_TOLERANZ)
     p.add_argument("--cache", default=None, help="Abweichende Cache-Datenbank")
     p.add_argument("--seed", type=int, default=STANDARD_SEED)
+    # Bewusst NICHT --genre: bei `fit` steuert --genre die Ausgabe der
+    # Genre-Gewichte, hier die Auswahl der Paare. Gleicher Name, andere
+    # Wirkung waere eine Falle.
+    p.add_argument("--nur-genre", dest="nur_genre", default=None,
+                   choices=list(CANONICAL_GENRES),
+                   help="Nur Paare, bei denen beide Tracks dieses Genre tragen")
     p.set_defaults(funktion=befehl_prepare)
 
     f = unter.add_parser("fit", help="Gewichte aus den Bewertungen schaetzen")

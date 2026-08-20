@@ -30,6 +30,7 @@ from tools.rate_transitions import (
     baue_genre_gewichte,
     bootstrap_intervalle,
     datenlage_urteil,
+    filtere_nach_genre,
     fit_logistic,
     leite_gewichte_ab,
     maximin_auswahl,
@@ -503,3 +504,54 @@ def test_crossfade_reserve_erkennt_zu_wenig_audio_hinter_mix_out_a():
 def test_streuung_leer():
     werte = streuung([])
     assert werte == {"min": None, "median": None, "max": None}
+
+
+# ---------------------------------------------------------------------------
+# Genre-Filter fuer prepare
+# ---------------------------------------------------------------------------
+
+class _GenreTrack:
+    """Minimaler Track-Ersatz: `loese_genre_auf` liest genau diese zwei Felder."""
+
+    def __init__(self, detected_genre="", genre=""):
+        self.detected_genre = detected_genre
+        self.genre = genre
+
+
+def _paar(a, b):
+    return {"track_a": a, "track_b": b, "merkmale": {}}
+
+
+def test_filtere_nach_genre_behaelt_nur_reine_paare():
+    psy = _GenreTrack(detected_genre="Psytrance")
+    techno = _GenreTrack(detected_genre="Techno")
+    kandidaten = [_paar(psy, psy), _paar(psy, techno), _paar(techno, techno)]
+    ergebnis = filtere_nach_genre(kandidaten, "Psytrance")
+    assert len(ergebnis) == 1
+    assert ergebnis[0]["track_a"] is psy and ergebnis[0]["track_b"] is psy
+
+
+def test_filtere_nach_genre_wirft_wechsel_in_beide_richtungen_weg():
+    psy = _GenreTrack(detected_genre="Psytrance")
+    techno = _GenreTrack(detected_genre="Techno")
+    kandidaten = [_paar(psy, techno), _paar(techno, psy)]
+    assert filtere_nach_genre(kandidaten, "Psytrance") == []
+
+
+def test_filtere_nach_genre_nutzt_dieselbe_aufloesung_wie_das_scoring():
+    """Erkanntes Genre schlaegt das Tag — sonst haette der Satz eine andere
+    Genre-Sicht als die Bewertung, die er steuert."""
+    getaggt = _GenreTrack(detected_genre="Psytrance", genre="Techno")
+    kandidaten = [_paar(getaggt, getaggt)]
+    assert len(filtere_nach_genre(kandidaten, "Psytrance")) == 1
+    assert filtere_nach_genre(kandidaten, "Techno") == []
+
+
+def test_filtere_nach_genre_ignoriert_unknown():
+    unbekannt = _GenreTrack()
+    kandidaten = [_paar(unbekannt, unbekannt)]
+    assert filtere_nach_genre(kandidaten, "Psytrance") == []
+
+
+def test_filtere_nach_genre_leere_eingabe_bleibt_leer():
+    assert filtere_nach_genre([], "Psytrance") == []
