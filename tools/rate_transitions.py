@@ -19,7 +19,8 @@ Trennung von reiner Logik und Aussenwelt (Testbarkeit):
   `leite_gewichte_ab`, `baue_genre_gewichte`, `streuung`,
   `crossfade_reserve`, `baue_ausgabe_json`.
 - AUSSENWELT: `lade_tracks_aus_cache` (SQLite), `sammle_kandidaten` (Core-
-  Scoring), `rendere_paar` (Audio), `lies_csv` / `schreibe_csv`, `main`.
+  Scoring), `geplanter_overlap` (Core-Scoring), `rendere_paar` (Audio),
+  `lies_csv` / `schreibe_csv`, `main`.
 """
 from __future__ import annotations
 
@@ -40,10 +41,15 @@ from scipy.optimize import minimize
 
 from hpg_core.caching import CACHE_FILE, dict_to_track
 from hpg_core.dj_brain import calculate_paired_mix_points
+from hpg_core.downbeat import (
+    DOWNBEAT_RELIABLE_MIN,
+    REFERENCE_BEATGRID_CONFIDENCE,
+)
 from hpg_core.genres import CANONICAL_GENRES, GENRE_TRANSITION_TOLERANCES
 from hpg_core.models import Track, effective_bpm_diff
 from hpg_core.playlist import (
     calculate_enhanced_compatibility,
+    compute_transition_recommendations,
     predict_transition_type,
 )
 from hpg_core.transition_features import (
@@ -69,9 +75,16 @@ STANDARD_BPM_TOLERANZ = 6.0
 MIN_HARMONIC_SCORE = 60
 # Fester Seed: eine Vorbereitung mit denselben Tracks liefert denselben Satz.
 STANDARD_SEED = 20260820
-# Konstante Crossfade-Laenge fuer ALLE Clips. Absicht: die Renderlaenge als
-# Stoergroesse festhalten — was der Nutzer unterschiedlich hoert, kommt dann
-# von den Tracks und nicht von unterschiedlich langen Blenden.
+# Rueckfall-Crossfade, wenn fuer ein Paar keine Uebergangs-Empfehlung
+# vorliegt. Der Regelfall ist die INDIVIDUELLE Blendenlaenge des Paares
+# (siehe rendere_paar): die App plant sie pro Uebergang aus transition_bars,
+# gemessen an 148 Paaren Median 46,1 s bei einer Spanne von 17,3 bis 64,0 s.
+# Eine feste Laenge fuer alle Clips waere zwar als Stoergroesse sauber
+# kontrolliert, wuerde aber einen Uebergang bewerten lassen, den die App so
+# nie baut. Preis dieser Entscheidung: die ungemessenen transition_bars-
+# Intervalle aus genres.py gehen ins Urteil mit ein — eine schlechte Note
+# kann "Faktoren passen nicht" ODER "Blende war zu lang" heissen. Deshalb
+# wird die tatsaechlich benutzte Laenge je Clip in merkmale.csv mitgefuehrt.
 CROSSFADE_SEK = 32.0
 PRE_ROLL_SEK = 8.0
 POST_ROLL_SEK = 8.0
@@ -165,18 +178,33 @@ def maximin_auswahl(
 
 
 def crossfade_reserve(
-    mix_out_a: float, dauer_b: float, mix_in_b: float
+    mix_out_a: float, dauer_a: float, dauer_b: float, mix_in_b: float
 ) -> tuple[float, float]:
-    """Wieviel Zeit steht in beiden Tracks fuer den Crossfade zur Verfuegung.
+    """Wieviel Audio steht in beiden Tracks fuer den Crossfade zur Verfuegung.
 
-    Track A muss vor dem Mix-Out noch den Vorlauf hergeben, Track B nach dem
-    Mix-In noch den Nachlauf. Reicht es nicht, wird das Paar verworfen statt
-    die Blende zu kuerzen: ein Clip mit 2 s Blende zwischen lauter
-    32-s-Blenden waere nicht vergleichbar — die Renderlaenge muss als
-    Stoergroesse konstant bleiben.
+    Beide Tracks laufen waehrend der Blende VORWAERTS ab ihrem Mixpunkt
+    (Vertrag mit dem Renderer, siehe Ladefenster in render_transition_clip:
+    `a_start = mix_out - pre_roll`, `a_dur = pre_roll + cf_sec`).
+    Nutzbar ist damit die Restdauer HINTER dem jeweiligen Mixpunkt.
+
+    Fix 2026-08-20: die A-Seite rechnete vorher ``mix_out_a - PRE_ROLL_SEK``,
+    also das Audio VOR dem Mix-Out. Das ist die falsche Region — der Vorlauf
+    wird vom Renderer ohnehin auf 0 geklemmt, wenn er nicht reicht (C1-Fix),
+    waehrend fehlendes Audio hinter dem Mix-Out von ``_ensure_len`` still mit
+    Nullen aufgefuellt wird.
+
+    Reichweite des Fixes, damit sie nicht ueberschaetzt wird: BEI DER FESTEN
+    32-s-BLENDE waeren 12 von 148 Paaren mitten in der Blende in Stille
+    gelaufen, bis zu 14,7 s lang. Mit dem Plan-Overlap sind es 0 von 148,
+    weil ``_clamp_transition_overlap`` in playlist.py den Overlap
+    bereits auf ``duration_a - mix_out_a`` klemmt — die kleinste gemessene
+    Blende von 17,3 s ist genau dieser Klemmfall. Der Fix sichert damit den
+    Fallback-Pfad ab (CROSSFADE_SEK), nicht den Regelfall.
+
+    Reicht es nicht, wird das Paar verworfen statt die Blende zu kuerzen.
     """
     return (
-        float(mix_out_a) - PRE_ROLL_SEK,
+        float(dauer_a) - float(mix_out_a),
         float(dauer_b) - float(mix_in_b) - POST_ROLL_SEK,
     )
 
@@ -613,23 +641,79 @@ def sammle_kandidaten(
     return kandidaten
 
 
-def rendere_paar(kandidat: dict, pair_id: str, clips_dir: Path) -> str:
-    """Rendert einen Uebergangs-Clip; gibt den relativen Clip-Pfad zurueck."""
+def geplanter_overlap(a: Track, b: Track, mix_out_a: float, mix_in_b: float) -> float:
+    """Die Blendenlaenge, die HPG fuer genau dieses Paar plant.
+
+    Quelle ist ``compute_transition_recommendations`` — derselbe Weg, den die
+    App und die Vorschau nehmen (playlist.py:1684-1695: transition_bars mal
+    seconds_per_bar, geklemmt auf das real vorhandene Audio).
+
+    Der Wert wird nur uebernommen, wenn ZWEI Bedingungen halten: es gibt eine
+    DJ-Brain-Empfehlung, und sie steht auf DENSELBEN Mixpunkten wie der Clip.
+    Fehlt die Empfehlung (kein erkanntes Genre, oder eine Ausnahme in
+    generate_dj_recommendation), rechnet playlist.py mit eigenen
+    Ersatz-Mixpunkten und dem Default-Overlap von 12 s; dieser Wert gehoert
+    dann nicht zu diesem Clip. Die Mixpunkt-Pruefung allein genuegt nicht —
+    fielen die Ersatzpunkte zufaellig mit den unseren zusammen, kaeme die
+    fremde Laenge still durch. In beiden Faellen: Rueckfall auf CROSSFADE_SEK.
+    """
+    try:
+        empfehlungen = compute_transition_recommendations([a, b])
+    except Exception as exc:  # noqa: BLE001 — Empfehlung ist optional
+        logger.warning("Overlap-Empfehlung fehlgeschlagen: %s", exc)
+        return CROSSFADE_SEK
+    if not empfehlungen:
+        return CROSSFADE_SEK
+    plan = getattr(empfehlungen[0], "plan", None)
+    if plan is None:
+        return CROSSFADE_SEK
+    if getattr(empfehlungen[0], "dj_rec", None) is None:
+        logger.warning(
+            "Keine DJ-Brain-Empfehlung fuer das Paar — Rueckfall auf %.0f s",
+            CROSSFADE_SEK,
+        )
+        return CROSSFADE_SEK
+    passt = (
+        abs(float(plan.mix_out_a) - float(mix_out_a)) < 0.05
+        and abs(float(plan.mix_in_b) - float(mix_in_b)) < 0.05
+    )
+    if not passt:
+        logger.warning(
+            "Empfehlung steht auf anderen Mixpunkten (%.2f/%.2f statt "
+            "%.2f/%.2f) — Rueckfall auf %.0f s",
+            plan.mix_out_a, plan.mix_in_b, mix_out_a, mix_in_b, CROSSFADE_SEK,
+        )
+        return CROSSFADE_SEK
+    overlap = float(empfehlungen[0].overlap)
+    return overlap if overlap > 0 else CROSSFADE_SEK
+
+
+def rendere_paar(
+    kandidat: dict, pair_id: str, clips_dir: Path
+) -> tuple[str, float]:
+    """Rendert einen Uebergangs-Clip.
+
+    Gibt den relativen Clip-Pfad und die tatsaechlich benutzte Blendenlaenge
+    zurueck. Die Laenge wandert nach merkmale.csv, weil sie von Paar zu Paar
+    verschieden ist und sonst als unkontrollierte Stoergroesse im Fit landet.
+    """
     a: Track = kandidat["track_a"]
     b: Track = kandidat["track_b"]
     mix_out_a, mix_in_b = calculate_paired_mix_points(a, b)
 
+    crossfade = geplanter_overlap(a, b, float(mix_out_a), float(mix_in_b))
+
     rest_a, rest_b = crossfade_reserve(
         float(mix_out_a),
+        float(getattr(a, "duration", 0.0) or 0.0),
         float(getattr(b, "duration", 0.0) or 0.0),
         float(mix_in_b),
     )
-    if min(rest_a, rest_b) < CROSSFADE_SEK:
+    if min(rest_a, rest_b) < crossfade:
         raise ValueError(
-            f"Crossfade von {CROSSFADE_SEK:.0f} s passt nicht "
+            f"Crossfade von {crossfade:.0f} s passt nicht "
             f"(Rest A {rest_a:.1f} s, Rest B {rest_b:.1f} s)"
         )
-    crossfade = CROSSFADE_SEK
     spec = TransitionClipSpec(
         track_a_path=a.filePath,
         track_b_path=b.filePath,
@@ -641,10 +725,40 @@ def rendere_paar(kandidat: dict, pair_id: str, clips_dir: Path) -> str:
         post_roll_sec=POST_ROLL_SEK,
         bpm_a=float(a.bpm or 120.0),
         bpm_b=float(b.bpm or 120.0),
+        # Beatgrid-Anker weiterreichen — dieselben Felder und dieselben
+        # Schwellen wie in TransitionClipSpec.from_plan, wo die Begruendung
+        # steht (Feld-Kommentar zu downbeat_reliable_* in
+        # TransitionClipSpec, AUDIT-FIX D-03). Ohne sie bleiben die
+        # Dataclass-Defaults stehen, der Renderer schaetzt den ersten Beat aus
+        # einem 8-s-Fenster und richtet nur auf BEAT-Ebene aus. Der Bestand
+        # traegt das Rekordbox-Referenz-Beatgrid (gemessen: 199 von 200 Tracks
+        # mit downbeat_confidence 1.0) — es wegzuwerfen und stattdessen zu
+        # schaetzen ist der schlechtere Weg.
+        # Wirkung mit bar_phase_reliable: das Alignment rastert auf TAKTE statt
+        # auf Beats, Beat 1 von B landet auf Beat 1 von A. Das verschiebt den
+        # Einsatz von B um bis zu einen Takt gegenueber der Beat-Ebene — so
+        # macht es die App auch, und genau das soll der Hoertest abbilden.
+        # lufs_a/lufs_b bleiben bewusst ungesetzt: sie steuern den Render
+        # nicht mehr, _apply_lufs_delta bekommt gemessene Segment-Loudness
+        # (siehe _apply_lufs_delta-Aufruf in render_transition_clip).
+        first_downbeat_a=float(getattr(a, "first_downbeat", 0.0) or 0.0),
+        first_downbeat_b=float(getattr(b, "first_downbeat", 0.0) or 0.0),
+        downbeat_reliable_a=(
+            getattr(a, "downbeat_confidence", 0.0) >= DOWNBEAT_RELIABLE_MIN
+        ),
+        downbeat_reliable_b=(
+            getattr(b, "downbeat_confidence", 0.0) >= DOWNBEAT_RELIABLE_MIN
+        ),
+        bar_phase_reliable_a=(
+            getattr(a, "downbeat_confidence", 0.0) == REFERENCE_BEATGRID_CONFIDENCE
+        ),
+        bar_phase_reliable_b=(
+            getattr(b, "downbeat_confidence", 0.0) == REFERENCE_BEATGRID_CONFIDENCE
+        ),
     )
     ziel = clips_dir / f"{pair_id}.wav"
     render_transition_clip(spec, str(ziel))
-    return f"clips/{pair_id}.wav"
+    return f"clips/{pair_id}.wav", crossfade
 
 
 def lies_csv(pfad: Path) -> list[dict]:
@@ -698,7 +812,7 @@ def befehl_prepare(args: argparse.Namespace) -> int:
         pair_id = f"{nummer:03d}"
         print(f"[{nummer}/{args.anzahl}] rendere {pair_id} ...", flush=True)
         try:
-            clip = rendere_paar(kandidat, pair_id, clips_dir)
+            clip, crossfade = rendere_paar(kandidat, pair_id, clips_dir)
         except Exception as exc:  # noqa: BLE001 — ein defekter Clip darf den Lauf nicht abbrechen
             fehlgeschlagen += 1
             logger.warning("Paar %s uebersprungen: %s", pair_id, exc)
@@ -711,6 +825,11 @@ def befehl_prepare(args: argparse.Namespace) -> int:
         zeile.update(
             {n: round(kandidat["merkmale"][n], 6) for n in ALLE_FAKTOREN}
         )
+        # Die Blendenlaenge variiert von Paar zu Paar. Sie wird mitgeschrieben,
+        # damit die Konfundierung nachtraeglich von Hand pruefbar ist: der Fit
+        # liest sie NICHT (verbinde_bewertungen nimmt nur ALLE_FAKTOREN), sie
+        # geht also nicht als Kontrollvariable ins Modell ein.
+        zeile["crossfade_sek"] = round(float(crossfade), 2)
         zeile["track_a"] = kandidat["track_a"].filePath
         zeile["track_b"] = kandidat["track_b"].filePath
         merkmal_zeilen.append(zeile)
@@ -723,7 +842,7 @@ def befehl_prepare(args: argparse.Namespace) -> int:
                  bewertung_zeilen)
     schreibe_csv(
         out / "merkmale.csv",
-        ("pair_id", *ALLE_FAKTOREN, "track_a", "track_b"),
+        ("pair_id", *ALLE_FAKTOREN, "crossfade_sek", "track_a", "track_b"),
         merkmal_zeilen,
     )
 

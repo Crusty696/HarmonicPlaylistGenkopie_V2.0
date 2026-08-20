@@ -12,16 +12,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import math
+import pathlib
 
 import numpy as np
 import pytest
 
+from tools import rate_transitions
 from tools.rate_transitions import (
     ALLE_FAKTOREN,
     BUDGET_MAX,
     CROSSFADE_SEK,
     POST_ROLL_SEK,
-    PRE_ROLL_SEK,
     crossfade_reserve,
     L2_STAERKE,
     MIN_EREIGNISSE_JE_MERKMAL,
@@ -333,16 +334,170 @@ def test_streuung_liefert_min_median_max():
 
 
 def test_crossfade_reserve_reicht_bei_langen_tracks():
-    rest_a, rest_b = crossfade_reserve(mix_out_a=400.0, dauer_b=420.0, mix_in_b=100.0)
-    assert rest_a == pytest.approx(400.0 - PRE_ROLL_SEK)
+    rest_a, rest_b = crossfade_reserve(
+        mix_out_a=400.0, dauer_a=460.0, dauer_b=420.0, mix_in_b=100.0
+    )
+    assert rest_a == pytest.approx(460.0 - 400.0)
     assert rest_b == pytest.approx(420.0 - 100.0 - POST_ROLL_SEK)
     assert min(rest_a, rest_b) >= CROSSFADE_SEK
 
 
 def test_crossfade_reserve_erkennt_zu_spaeten_mix_in():
     """Mix-In dicht am Ende von Track B — die Blende passt nicht mehr."""
-    _rest_a, rest_b = crossfade_reserve(mix_out_a=400.0, dauer_b=420.0, mix_in_b=418.0)
+    _rest_a, rest_b = crossfade_reserve(
+        mix_out_a=400.0, dauer_a=460.0, dauer_b=420.0, mix_in_b=418.0
+    )
     assert rest_b < CROSSFADE_SEK
+
+
+class _FakeTrack:
+    """Minimaler Track fuer den Spec-Aufbau in rendere_paar."""
+    def __init__(self, pfad, bpm, dauer, first_downbeat, confidence):
+        self.filePath = pfad
+        self.bpm = bpm
+        self.duration = dauer
+        self.first_downbeat = first_downbeat
+        self.downbeat_confidence = confidence
+        self.mix_in_point = 30.0
+        self.mix_out_point = dauer - 60.0
+        self.sections = [
+            {"start_time": 0.0, "end_time": 30.0, "label": "intro"},
+            {"start_time": 30.0, "end_time": dauer - 60.0, "label": "main"},
+            {"start_time": dauer - 60.0, "end_time": dauer, "label": "outro"},
+        ]
+        self.detected_genre = "Psytrance"
+        self.genre = "Psytrance"
+        self.phrase_anchor = first_downbeat
+
+
+def test_rendere_paar_reicht_das_beatgrid_an_den_renderer_durch(monkeypatch):
+    """Ohne diese Felder schaetzt der Renderer den ersten Beat statt das
+    bekannte Rekordbox-Beatgrid zu nutzen — und alignt nur auf Beat-Ebene."""
+    a = _FakeTrack("A.wav", 140.0, 400.0, first_downbeat=0.0123, confidence=1.0)
+    b = _FakeTrack("B.wav", 140.0, 400.0, first_downbeat=0.0456, confidence=1.0)
+    gesehen = {}
+
+    monkeypatch.setattr(
+        rate_transitions, "calculate_paired_mix_points", lambda x, y: (300.0, 30.0))
+    monkeypatch.setattr(
+        rate_transitions, "geplanter_overlap", lambda *a_, **k: 32.0)
+    monkeypatch.setattr(
+        rate_transitions, "predict_transition_type", lambda *a_, **k: "pro_eq_swap")
+    monkeypatch.setattr(
+        rate_transitions, "render_transition_clip",
+        lambda spec, ziel: gesehen.setdefault("spec", spec))
+
+    rate_transitions.rendere_paar(
+        {"track_a": a, "track_b": b}, "001", pathlib.Path("."))
+
+    spec = gesehen["spec"]
+    assert spec.first_downbeat_a == pytest.approx(0.0123)
+    assert spec.first_downbeat_b == pytest.approx(0.0456)
+    assert spec.downbeat_reliable_a is True
+    assert spec.downbeat_reliable_b is True
+    assert spec.bar_phase_reliable_a is True
+    assert spec.bar_phase_reliable_b is True
+
+
+def test_rendere_paar_meldet_unsicheres_beatgrid_als_unsicher(monkeypatch):
+    """Ohne Referenz-Beatgrid darf NICHT auf Taktebene aligned werden —
+    eine Taktverschiebung auf Basis einer Schaetzung waere riskanter als
+    der Beat-Fehler, den sie korrigieren soll (D-03)."""
+    a = _FakeTrack("A.wav", 140.0, 400.0, first_downbeat=0.5, confidence=0.62)
+    b = _FakeTrack("B.wav", 140.0, 400.0, first_downbeat=0.7, confidence=0.11)
+    gesehen = {}
+
+    monkeypatch.setattr(
+        rate_transitions, "calculate_paired_mix_points", lambda x, y: (300.0, 30.0))
+    monkeypatch.setattr(
+        rate_transitions, "geplanter_overlap", lambda *a_, **k: 32.0)
+    monkeypatch.setattr(
+        rate_transitions, "predict_transition_type", lambda *a_, **k: "pro_eq_swap")
+    monkeypatch.setattr(
+        rate_transitions, "render_transition_clip",
+        lambda spec, ziel: gesehen.setdefault("spec", spec))
+
+    rate_transitions.rendere_paar(
+        {"track_a": a, "track_b": b}, "002", pathlib.Path("."))
+
+    spec = gesehen["spec"]
+    assert spec.downbeat_reliable_a is True    # 0.62 >= DOWNBEAT_RELIABLE_MIN
+    assert spec.downbeat_reliable_b is False   # 0.11 darunter
+    assert spec.bar_phase_reliable_a is False  # kein Referenz-Beatgrid
+    assert spec.bar_phase_reliable_b is False
+
+
+class _FakePlan:
+    def __init__(self, mix_out_a, mix_in_b):
+        self.mix_out_a = mix_out_a
+        self.mix_in_b = mix_in_b
+
+
+class _FakeEmpfehlung:
+    def __init__(self, overlap, plan, dj_rec=object()):
+        self.overlap = overlap
+        self.plan = plan
+        self.dj_rec = dj_rec
+
+
+def test_geplanter_overlap_nimmt_den_wert_der_empfehlung(monkeypatch):
+    """Regelfall: Empfehlung passt zu den Mixpunkten -> ihr Overlap gilt."""
+    monkeypatch.setattr(
+        rate_transitions, "compute_transition_recommendations",
+        lambda tracks: [_FakeEmpfehlung(46.1, _FakePlan(400.0, 100.0))],
+    )
+    assert rate_transitions.geplanter_overlap(
+        object(), object(), 400.0, 100.0
+    ) == pytest.approx(46.1)
+
+
+def test_geplanter_overlap_faellt_zurueck_bei_fremden_mixpunkten(monkeypatch):
+    """Die Empfehlung steht auf anderen Punkten — ihr Overlap gehoert nicht
+    zu diesem Clip."""
+    monkeypatch.setattr(
+        rate_transitions, "compute_transition_recommendations",
+        lambda tracks: [_FakeEmpfehlung(12.0, _FakePlan(380.0, 60.0))],
+    )
+    assert rate_transitions.geplanter_overlap(
+        object(), object(), 400.0, 100.0
+    ) == pytest.approx(CROSSFADE_SEK)
+
+
+def test_geplanter_overlap_faellt_zurueck_ohne_dj_brain(monkeypatch):
+    """Ohne DJ-Brain-Empfehlung stammt der Overlap aus dem Default-Pfad —
+    auch wenn die Ersatz-Mixpunkte zufaellig passen."""
+    monkeypatch.setattr(
+        rate_transitions, "compute_transition_recommendations",
+        lambda tracks: [_FakeEmpfehlung(12.0, _FakePlan(400.0, 100.0), dj_rec=None)],
+    )
+    assert rate_transitions.geplanter_overlap(
+        object(), object(), 400.0, 100.0
+    ) == pytest.approx(CROSSFADE_SEK)
+
+
+def test_geplanter_overlap_faellt_zurueck_ohne_empfehlung(monkeypatch):
+    monkeypatch.setattr(
+        rate_transitions, "compute_transition_recommendations",
+        lambda tracks: [],
+    )
+    assert rate_transitions.geplanter_overlap(
+        object(), object(), 400.0, 100.0
+    ) == pytest.approx(CROSSFADE_SEK)
+
+
+def test_crossfade_reserve_erkennt_zu_wenig_audio_hinter_mix_out_a():
+    """Track A endet kurz nach dem Mix-Out — die Blende liefe in Stille.
+
+    Regression zum Fix 2026-08-20: die A-Seite mass vorher das Audio VOR dem
+    Mix-Out (mix_out_a minus Vorlauf) und haette hier 392 s Reserve gemeldet,
+    obwohl real nur 17,3 s hinter dem Mix-Out liegen. _ensure_len haette den
+    Rest still mit Nullen aufgefuellt.
+    """
+    rest_a, _rest_b = crossfade_reserve(
+        mix_out_a=400.0, dauer_a=417.3, dauer_b=420.0, mix_in_b=100.0
+    )
+    assert rest_a == pytest.approx(17.3)
+    assert rest_a < CROSSFADE_SEK
 
 
 def test_streuung_leer():
