@@ -836,6 +836,19 @@ def _apply_eq_crossfade(
         # fuer Techno/Psy/Tech-House (Hauptpfad). cos/sin haelt
         # fo^2 + fi^2 == 1 konstant (0 dB am Mittelpunkt). Der harte
         # Bass-Swap oben bleibt unveraendert hart.
+        # 2026-08-20 geprueft und VERWORFEN: eine Mitten-Mulde (Bandgain
+        # ueber der Blendkurve) wurde gebaut und wieder zurueckgebaut. In
+        # echten DJ-Mixen liegt das Mittenband waehrend eines Uebergangs
+        # tiefer als davor und danach (275 Uebergaenge aus 13 Mixen,
+        # geclustert nach Mix: AUC 0.655 [0.601, 0.715]) — aber als
+        # gleichmaessige Absenkung, nicht als Mulde. Die Tiefe der MULDE
+        # (Differenz Blendenmitte gegen Blendenrand) enthaelt in allen
+        # Laengengruppen die Null: kurz +0.015 [-0.022, +0.049], mittel
+        # +0.022 [-0.007, +0.073], lang +0.066 [-0.015, +0.134].
+        # Eine fruehere Messung ergab fuer lange Blenden +0.151 [+0.090,
+        # +0.205] — sie mass aber 250-2500 Hz, waehrend der Renderer hier bei
+        # fc1 = 120 Hz trennt. Die Oktave 120-250 Hz traegt keine Mulde und
+        # halbiert den Effekt. Reproduzierbar: tools/eq_verlauf_messen.py.
         mids_a_env = fo
         mids_b_env = fi
 

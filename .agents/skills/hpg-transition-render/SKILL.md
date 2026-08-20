@@ -92,6 +92,22 @@ gleichzeitig), Mitten und Hoehen per **Equal-Power (cos/sin)**.
 in der Mitte ein -3,01-dB-Loch. Jede neue Blend-Kurve muss cos/sin sein — das
 gilt fuer alle Baender ausser dem harten Bass-Swap.
 
+Davon zu unterscheiden waere ein **gemessener Bandgain ueber der Blendkurve**:
+liegt derselbe Faktor auf A und B, bleibt `fo^2 + fi^2 == 1` unberuehrt, der
+Effekt ist signalunabhaengig und an den Blendenraendern neutral — das waere
+keine N-01-Regression. **Aktuell gibt es keinen solchen Bandgain im Code.**
+
+Ein Versuch dazu wurde am 2026-08-20 gebaut und wieder zurueckgebaut. Messung
+an 275 Uebergaengen aus 13 DJ-Mixen (`tools/eq_verlauf_messen.py`, geclustert
+nach Mix): das Mittenband liegt waehrend eines Uebergangs tiefer als davor und
+danach (AUC 0.655 [0.601, 0.715], Hoehen 0.608 [0.551, 0.665], Sub 0.426
+[0.380, 0.477] ohne Beleg). Die Absenkung ist aber **gleichmaessig**, keine
+Mulde: die Differenz Blendenmitte gegen Blendenrand enthaelt in allen
+Laengengruppen die Null. Lehre daraus: die Messbaender muessen die
+Renderer-Crossover treffen (120/2500). Eine erste Fassung mass 250-2500 Hz und
+lieferte scheinbar klare Werte, weil die Oktave 120-250 Hz fehlte — die der
+Renderer aber mit anfassen wuerde.
+
 ## Pegel
 
 Reihenfolge in `render_transition_clip` [:210-217]:

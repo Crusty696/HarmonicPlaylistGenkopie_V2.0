@@ -103,3 +103,9 @@ validation_output/
 
 # PyInstaller Build-/Verify-Artefakte (regenerierbar, >100MB, GitHub lehnt ab)
 build-verify-freeze-support/
+
+# Lokale Wegwerf-Skripte und Mitschriften manueller Laeufe (nicht committen)
+tmp_*.py
+tmp_*.ps1
+_tmp_*.py
+manual_test_logs/
