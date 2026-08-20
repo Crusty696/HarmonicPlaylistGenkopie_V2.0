@@ -1,121 +1,179 @@
-# Handoff — Groove-Scoring, Stand 2026-08-20
+# Handoff — Groove-Scoring und Uebergaenge, Stand 2026-08-20 (abends)
 
-Branch `feature/groove-scoring`, 47 Commits ueber `main`. Suite **1658 gruen**,
-Coverage-Gate gehalten. Arbeitsbaum sauber.
+Branch `feature/groove-scoring`. Suite **1690 gruen**, `verify_wave4.py`
+6 von 6.
 
-Wer hier weitermacht, liest zuerst `CLAUDE.md` (Waechter-Pflicht) und den
-fachlich passenden Agenten unter `.agents/agents/`.
+Zur Testzahl, weil sie in der Vorfassung dieses Dokuments nicht stimmte:
+dort stand „1658 gruen“. Nachgemessen am Branch-Kopf ohne die heutigen
+Aenderungen waren es **1654**. Woher die 1658 kamen, ist nicht
+rekonstruierbar — moeglicherweise ein Lauf mit anderen Optionen. Die 36
+neuen Tests dieser Sitzung verteilen sich auf 7 fuer das Hoertest-Werkzeug,
+14 fuer das EQ-Messwerkzeug und 15 fuer den Cue-Guard.
 
-## Worum es ging
+Wer hier weitermacht, liest zuerst `CLAUDE.md` (Waechter-Pflicht an zwei
+Toren) und den fachlich passenden Skill unter `.claude/skills/`.
 
-Die Playlist-Reihenfolge entstand aus vier Faktoren: Camelot-Harmonik, BPM,
-Energie, Genre. Der Nutzer — DJ, 2480 Tracks in Rekordbox — nannte vier Dinge,
-die dabei fehlen: Groove, Bassdruck, Klangfarbe, Stimmung. Ziel war, diese
-Faktoren zu ergaenzen und ihre Gewichte **aus echten DJ-Mixen zu lernen**
-statt sie zu raten.
+**Regel, die sich heute mehrfach bewaehrt hat:** jede Zahl vor dem Gebrauch
+nachrechnen — auch die eigene, auch die aus einem Subagenten-Bericht. Drei
+Befunde dieser Sitzung sind daran gestorben, zwei davon erst nach der
+Umsetzung.
 
-## Was gebaut wurde
+## Was heute entstanden ist
 
-| Datei | Zweck |
+### A — Hoertest-Werkzeug (`tools/rate_transitions.py`)
+
+Drei Aenderungen, alle gemessen begruendet:
+
+| Aenderung | Anlass |
 |---|---|
-| `hpg_core/groove.py` | Onset-Huellkurve auf einen Takt falten (16 Slots, am `first_downbeat` verankert), Synkopierung, Bass-Kennwerte |
-| `hpg_core/transition_features.py` | vier paarweise Vergleiche, je `float` oder `None` |
-| `hpg_core/tolerances.py` | Gewichte als Daten laden: Defaults, mitgeliefertes JSON, Nutzer-Override |
-| `hpg_core/mix_analysis.py` | Uebergaenge in Mixen finden, AUC, Cluster-Bootstrap, Gewichtsableitung |
-| `tools/mix_mining.py` | Kalibrierung aus DJ-Mixen |
-| `tools/rate_transitions.py` | Hoertest: Clips erzeugen, Bewertungen fitten |
+| Individuelle Blendenlaenge je Paar statt fester 32 s | die App plant Median 46,1 s (min 17,3, max 64,0, gemessen an 148 Paaren); der Hoertest bewertete eine Laenge, die so nie gebaut wird |
+| `crossfade_reserve` misst die richtige Region | die A-Seite prueft jetzt `duration_a - mix_out_a` statt `mix_out_a - PRE_ROLL`; bei fester 32-s-Blende waeren 12 von 148 Clips mitten in die Stille gelaufen, bis 14,7 s |
+| Rekordbox-Beatgrid wird durchgereicht | 199 von 200 Tracks tragen `downbeat_confidence 1.0`, das Werkzeug warf es weg und liess den Renderer schaetzen |
 
-Dazu: fuenf Track-Felder, beide Analysepfade verdrahtet, Score-Integration
-hinter `TRANSITION_FEATURES_ENABLED`, GUI-Regler, Tooltip-Aufschluesselung.
+Der Beatgrid-Fix ist der einzige, dessen Wirkung gehoert wurde: drei
+Probeclips gingen von „alle schlecht" auf 3 / 1 / 4. Das Alignment
+korrigiert jetzt auf Taktebene (gemessen 1860 ms bei 129 BPM = exakt ein
+Takt) statt auf Bruchteile eines Beats.
 
-**Der Schalter steht auf `False`.** Bei `False` ist das Scoring bit-identisch
-zum Stand davor; die Analyse rechnet die Groove-Felder trotzdem mit (bewusst,
-damit ein spaeteres Einschalten keine Neuanalyse braucht).
+### B — Renderer: ein Befund, kein Eingriff
 
-## Was die Messungen ergaben
+`hpg_core/transition_renderer.py` traegt **nur einen Kommentar**, kein
+geaendertes Verhalten. Eine Mitten-Mulde wurde gebaut und wieder
+zurueckgebaut.
 
-**Die Kalibrierung ist gescheitert, und das ist ein Ergebnis.** Nach Korrektur
-von vier methodischen Fehlern — Negativpaare nur noch innerhalb eines Mixes,
-Groove phasenrichtig und rotationsinvariant, Unsicherheit ueber Mixe
-geclustert, Budget an die untere Konfidenzgrenze gekoppelt — blieb:
+Die Messung dazu ist neu und bleibt: `tools/eq_verlauf_messen.py` (14 Tests).
+Sie misst den Baenderverlauf um Uebergaenge in echten DJ-Mixen, mit
+Kontrollgruppe aus demselben Material und nach Mix geclustert.
 
-| Genre | Uebergaenge | gelerntes Budget |
-|---|---|---|
-| Psytrance | 99 aus 6 eigenen Sets | 0,0121 |
-| Techno | 101 aus 8 eigenen Sets | **0,0000** |
+Ergebnis ueber 275 Uebergaenge aus 13 Mixen:
 
-Die bindende Grenze ist die **Zahl unabhaengiger Mixe** (6-8), nicht die Zahl
-der Uebergaenge. Fuer belastbare Aussagen braeuchte es grob 25-30 je Genre.
-`hpg_core/data/transition_tolerances.json` steht deshalb auf `{}` — es gelten
-die ungemessenen Defaults.
+```
+sub     AUC 0.426 [0.380, 0.477]   kein Beleg
+mitten  AUC 0.655 [0.601, 0.715]   trennt
+hoehen  AUC 0.608 [0.551, 0.665]   trennt
+```
 
-**Nebenbefund, der wichtiger ist als das Vorhaben selbst:** die Zahlen, die
-die Reihenfolge heute tatsaechlich bestimmen, sind nie gemessen worden —
-`0.44 / 0.28 / 0.28` in der Gewichtssumme und `GENRE_WEIGHT_WITH_DJ_BRAIN =
-0.2`, multipliziert mit 36 handgesetzten Genre-Kompatibilitaetswerten. Fast
-alle *gemessenen* Zahlen des Repos liegen dagegen hinter dem ausgeschalteten
-Schalter.
+Das Mittenband liegt waehrend eines Uebergangs also tiefer als davor und
+danach. Aber **gleichmaessig**, nicht als Mulde: die Differenz zwischen
+Blendenmitte und Blendenrand enthaelt in allen Laengengruppen die Null
+(kurz +0.015 [-0.022, +0.049], mittel +0.022 [-0.007, +0.073], lang
++0.066 [-0.015, +0.134]).
 
-## Der Fehler, den das Ohr gefunden hat
+**Warum das erst im zweiten Anlauf sichtbar wurde:** die erste Messung nahm
+das Mittenband als 250-2500 Hz und lieferte fuer lange Blenden scheinbar
+klare +0.151 [+0.090, +0.205]. Der Renderer trennt aber bei **120** Hz. Die
+Oktave 120-250 Hz — Kick-Body und untere Bassline — traegt keine Mulde,
+waere aber mit abgesenkt worden. Mit korrigierten Bandgrenzen halbiert sich
+der Effekt und verliert die Signifikanz.
 
-Beim ersten Clip des Hoertests hoerte der Nutzer sofort, dass an falschen
-Stellen gemischt wird. Ursache: Sektionsgrenzen kommen gerundet aus der
-Analyse; lag eine Grenze 3 ms hinter einem Rasterpunkt, schob `ceil` den
-Mix-In eine **ganze Phrase** weiter — 27 s bei 16-Bar-Phrasen, vom Intro-Ende
-mitten in den Drop. Zwei volle Tracks liefen dann 32 s uebereinander.
+Lehre fuer den naechsten Versuch: **Messbaender muessen die Crossover des
+Renderers treffen.** Eine gleichmaessige Absenkung waere zwar belegt, sie
+ist an den Blendenraendern aber nicht neutral — das ist ein groesserer
+Eingriff als eine Mulde und braucht ein eigenes Vorhaben.
 
-Kein Test war rot. Behoben ueber `QUANTIZE_TOLERANCE_SEC` in `models.py`
-(Commit `839ba41`).
+### C — Cue-Heuristik umgeht den Intro-Guard
+
+Der einzige echte Eingriff in die Analyse. `CACHE_VERSION` **32 → 33**.
+
+Invariante 5 (Mix-In nie im Intro) war nur in
+`calculate_genre_aware_mix_points` gesichert. Die Uebernahme von
+Rekordbox-Cues umging sie vollstaendig: bei unbeschrifteten Cues nimmt
+`analysis.py` blind `dedup_positions[1]`, also den zweiten Hot Cue — und
+DJs setzen den typisch bei rund 30 s, also im Intro. Danach folgte nur
+`0 <= in < out <= duration`, kein Intro-Guard.
+
+Gemessen an 232 Tracks: **24 mit Mix-In im fuehrenden Intro**, bis 56,5 s
+tief, Median 29,0 s. Herkunft geprueft gegen die Rekordbox-Cues: **alle 24
+aus dem Heuristik-Zweig, kein einziger aus einem benannten Cue.**
+
+Der Guard gilt deshalb nur fuer die Heuristik. Ein benannter Cue
+(`MIX IN`, `IN`, `START`) bleibt unangetastet — der Nutzer kennt seinen
+Track besser als die Sektionsanalyse. Diese Ausnahme steht als Nachtrag in
+`docs/superpowers/specs/2026-03-11-mix-point-intro-outro-guard-design.md`.
+
+Der falsche Wert ging bis dahin ueber
+`exporters/rekordbox_xml_exporter.py` als Cue „MIX IN" **zurueck in die
+Rekordbox-Datenbank** und in die Bass-Nahtstellenmessung
+(`transition_features.py`).
+
+## Was gemessen und verworfen wurde
+
+| Behauptung | Warum sie fiel |
+|---|---|
+| „Der Renderer fuehrt den EQ-Tausch nicht aus" | er tut es, baendergetrennt nachgemessen: Bass springt am Mittelpunkt hart um, Mitten equal-power, Hoehen asymmetrisch 1/4..3/4 |
+| „Die App plant 16 s Overlap" | das ist der Feld-Default von `TransitionPlan`; der Funktionsparameter `default_overlap` steht sogar auf 12 s. Beide greifen im Regelfall nicht — real Median 46,1 s aus `transition_bars` |
+| „Du mischst nie im Einbruch" | galt bei 73 Stellen aus einem Set, fiel bei 805 aus 13 Sets in sich zusammen (18,6 % gegen 17,0 % bei Zufall) |
+| „Du steigst zu 50 % in einem Drop ein" | die Sektionsstatistik ist mit diesen Mitteln unentscheidbar; Wilson-95 % fuer „drop" reicht von 14 bis 50 %, und die Basisrate liegt schon bei 37 % |
+| „HPG steigt eine Phrase zu frueh ein" | zwei schwellenfreie Schaetzer widersprechen sich (-6 s gegen +19 s); die Datenlage traegt keine Aenderung an den Mixpunkten |
+| „Die Mitten-Mulde ist belegt" | nur mit falschen Bandgrenzen, siehe B |
+
+Der Mixpunkt-Guard, der urspruenglich beauftragt war, **findet nicht
+statt**. Das ist das Ergebnis der Analyse, nicht ihr Scheitern.
 
 ## Offene Punkte, nach Wichtigkeit
 
-1. **Neuanalyse mit CACHE_VERSION 32.** Der Cache traegt noch v31; die
-   Sektions-Schluessel `sub_energy`/`bass_punch` und die auf Beat-Sektionen
-   eingeschraenkte Groove-Faltung fehlen darin. Rund 40 Tracks/min bei
-   funktionierendem Pool, geschlossenes Rekordbox empfohlen.
-   Skript: `scratchpad/teilanalyse.py` (mit `__main__`-Guard, ohne den
-   stuerzt der Pool ab und faellt auf einen Worker zurueck).
-2. **160 Hoertest-Clips neu rendern.** Die vorhandenen unter
-   `C:\Users\david\Music\HPG-Hoertest\` stammen von vor dem Rundungsfix.
+1. **Neuanalyse nach dem CACHE_VERSION-Bump.** Ohne sie behalten die 24
+   Tracks ihren falschen Mix-In und Vorhaben C sieht wirkungslos aus.
+   Rekordbox schliessen. Skript mit `__main__`-Guard verwenden, sonst
+   stuerzt der Prozesspool ab und faellt still auf einen Worker zurueck.
+2. **160 Hoertest-Clips neu rendern**, erst nach der Neuanalyse:
    `python tools/rate_transitions.py prepare --anzahl 160 --out <dir>`.
-   Die Bewertungsseite `bewerten.html` liegt dort und funktioniert weiter.
-3. **Mix-In liegt bei 57 von 200 Tracks in einer Intro-Sektion** — entgegen
-   Invariante 5. Vorbestehend, nicht von diesem Vorhaben verursacht, aber
-   ungeprueft. Betrifft die Funktion, die der Nutzer als die wichtigste
-   bezeichnet: wo gemischt wird.
-4. **„Nur eine Einblendung, kein richtiger Mix."** Der Nutzer hoerte das beim
-   ersten Clip; der Uebergangstyp war `pro_eq_swap`. Ob der Renderer den
-   EQ-Tausch wirklich ausfuehrt oder auf eine Lautstaerkeblende zurueckfaellt,
-   ist **nicht geprueft**. Wenn er es nicht tut, ist das fuer den Klang
-   wichtiger als jede Gewichtung.
-5. **Spec meldet zwei gebaute Mechanismen als „nicht umgesetzt"** —
-   `docs/superpowers/specs/2026-08-19-*`, Abschnitte 5.1 und 5.3. Seit
-   `c4bba95` und `0c48b21` erledigt.
-6. **Energy Wave und Context Flow** sortieren ueber reine Harmonik, waehrend
-   die Anzeige einen Acht-Faktoren-Score zeigt. Bei Context Flow ist das
-   Absicht (Kommentar im Code). Produktentscheidung, keine technische.
+   Die Bewertungsseite schreibt inzwischen direkt in `bewertung.csv`
+   (kleiner lokaler Server, liegt beim Clip-Satz).
+3. **Energy Wave ist BPM-blind.** `_sort_energy_wave` sortiert
+   ausschliesslich nach `track.energy`; der Parameter `bpm_tolerance` wird
+   nicht benutzt. Gemessen an einem Pool von 80 Tracks: bei breiter
+   BPM-Spanne (93-146) sind **63 %** der Nachbarpaare unmixbar
+   (Median-BPM-Differenz 10,0), Peak-Time 37 %. Bei engem Pool (137-141)
+   beide 0 %.
 
-## Wie es weitergehen koennte
+   Eine Variante mit BPM-Nebenbedingung ist gemessen: dieselbe Wellenform,
+   aber der naechste Track wird unter den BPM-vertraeglichen Kandidaten der
+   gewuenschten Energierichtung gewaehlt. Ergebnis: unmixbar faellt von
+   63 % auf **14 %**, der Score steigt von 0,00 auf 0,66 — bei praktisch
+   unveraenderter Wellenform (77 statt 78 Richtungswechsel, Energie-
+   Spannweite in beiden Faellen 33 bis 100). Die Nebenbedingung kostet die
+   Strategie also nichts von ihrem Zweck.
 
-Der Hoertest ist das schaerfste vorhandene Werkzeug, und er kann mehr als
-urspruenglich gedacht: dieselben Bewertungen lassen sich gegen **alle acht**
-Faktoren rechnen, also auch gegen die vier ungemessenen, die heute sortieren.
-Das braucht keine zusaetzliche Arbeit vom Nutzer, nur einen zweiten Durchlauf
-derselben Zahlen.
+   Produktentscheidung des Nutzers: so lassen, die Nebenbedingung einziehen,
+   oder in der GUI warnen, wenn der Pool zu breit ist. Kein Code geaendert.
+4. **Spiegelbildliche Luecke bei `cue_out` — gemessen, kein Handlungsbedarf.**
+   `dedup_positions[-1]` hat am Track-Ende keinen Guard gegen `outro_start`.
+   Gemessen an 231 Tracks: **0** haben einen Mix-Out im Outro, Invariante 1
+   haelt im Bestand. Die Luecke besteht strukturell weiter, ist aber nicht
+   wirksam.
+5. **Rekordbox-Track ohne BPM, aber mit Cues** landet im Voll-Path, und
+   dort werden Cues kommentarlos verworfen. Vorbestehend.
+6. **LUFS-Abschnitt im Renderer-Skill ist veraltet** — er beschreibt den
+   Doppelzaehlungs-Defekt als offen, im Code ist er behoben.
 
-Faustregel aus `tools/rate_transitions.py`: 10 Ereignisse je Merkmal **und
-Klasse**. Bei vier Merkmalen also rund 40 „gut" und 40 „nicht gut".
+## Was der Hoertest noch messen koennte
 
-## Was diese Sitzung gelehrt hat
+Der gebaute Satz beantwortet mehr als die vier neuen Faktoren: dieselben
+Bewertungen lassen sich gegen **alle acht** rechnen, also auch gegen die
+vier ungemessenen, die heute sortieren (`0.44 / 0.28 / 0.28` und
+`GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2` mal 36 handgesetzte Genre-Werte).
 
-Sechs Fehler sind entstanden, an denen **kein Test rot wurde**: drei erfundene
-Code-Referenzen in einem Plan, eine Toleranzkonstante um Faktor drei daneben,
-eine Schleifenvariable statt der zusammengefuehrten Liste, eine
-zurueckgestellte und dann vergessene Aufgabe, ausgelieferte Gewichte trotz
-rotem Freigabe-Gate, und ein von einem Subagenten behaupteter Bug, den es
-nicht gab.
+Der groessere Hebel waere ein **paarweiser Vergleich**: dasselbe Trackpaar
+zweimal rendern, mit unterschiedlicher Blendenlaenge oder unterschiedlichem
+Einstiegspunkt, und den Nutzer A gegen B stellen. Weil beide Varianten
+dieselben Tracks enthalten, kuerzen sich Tonart, BPM, Energie, Genre und
+Geschmack vollstaendig heraus — uebrig bleibt genau die variierte Groesse.
+Das ist mit ein paar hundert Vergleichen schaetzbar und braucht keine
+unabhaengigen Mixe, nur Ohren. Der Nutzer hat es als Ziel benannt
+(„ein Modell, das es individuell anwenden kann"), aber bis zur Fertigstellung
+des Laufenden zurueckgestellt.
 
-Daraus entstand `hpg-waechter` — ein Pruefer ohne Schreibwerkzeug, an zwei
-Toren, wobei das **vor** der Umsetzung das wichtigere ist. Bei seinem ersten
-Einsatz hat er eine Aenderung des Autors zurueckgewiesen und dabei mit Zahlen
-belegt, dass sowohl die neue als auch die alte Variante falsch war.
+## Datenlage, ehrlich
+
+- 13 DJ-Mixe, 17,1 h, 275 bis 805 Uebergaenge je nach Erkennungsschwelle.
+  Fuer Aussagen ueber **diesen** Nutzer reicht das; fuer allgemeine
+  Aussagen ueber ein Genre nicht.
+- Das Set mit bekannter Trackliste („Studio 54 Schlaflos OffBeat", 33
+  Tracks, 26 im Bestand wiedergefunden) ist die einzige Quelle, die
+  Ein- und Ausstiegspunkte **im Track** zeigt. Ein Set, ein Abend, ein
+  Cluster — eine Zwischen-Set-Varianz laesst sich damit nicht schaetzen.
+- Die frueheren Kalibrierungs-Grenzen gelten unveraendert: fuer belastbare
+  Gewichte braeuchte es grob 25-30 unabhaengige Mixe je Genre.
+  `hpg_core/data/transition_tolerances.json` steht weiter auf `{}`,
+  `TRANSITION_FEATURES_ENABLED` weiter auf `False`.
