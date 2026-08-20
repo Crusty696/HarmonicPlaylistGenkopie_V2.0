@@ -496,7 +496,6 @@ _TOLERANCE_DEFAULTS = {
   # transition_features.py — beide muessen zusammen gepflegt werden.
   "bass_delta_max": 0.50,
   "brightness_delta_max": 60.0,
-  "groove_veto_enabled": False,
 }
 
 GENRE_TRANSITION_TOLERANCES: dict[str, dict] = {

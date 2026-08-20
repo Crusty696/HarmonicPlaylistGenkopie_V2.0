@@ -660,9 +660,11 @@ def _sort_harmonic_flow(
                 next_remaining = [t for t in remaining if t is not candidate]
                 _, future_score = _lookahead_score(candidate, next_remaining, depth - 1)
 
-            total_score = (
-                immediate_score + 0.7 * future_score
-            )  # Weight immediate higher
+            # Konstante statt Literal: derselbe Wert stand hier doppelt, ein
+            # Aendern von LOOKAHEAD_FUTURE_WEIGHT haette nur die andere
+            # Fundstelle erwischt und die Gewichtung still auseinanderlaufen
+            # lassen. Sofort-Score wiegt schwerer als die Vorausschau.
+            total_score = immediate_score + LOOKAHEAD_FUTURE_WEIGHT * future_score
             if total_score > best_total_score:
                 best_total_score = total_score
                 best_candidate = candidate

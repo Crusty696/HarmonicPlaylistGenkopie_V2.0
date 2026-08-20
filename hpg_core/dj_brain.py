@@ -445,7 +445,6 @@ class DJRecommendation:
   transition_type: str = "smooth_blend"  # Transition-Typ (fuer Farben in UI)
 
   # Advanced Audio Alignment
-  texture_score: float = 0.0
   bass_match_advice: str = ""
   rhythm_advice: str = ""
   
@@ -534,7 +533,6 @@ def generate_dj_recommendation(
   )
   
   # Texture Similarity (Phase 3)
-  texture_sim = _calculate_texture_similarity(track_a.timbre_fingerprint, track_b.timbre_fingerprint)
   
   # Rhythm Advice
   pr_a = track_a.percussive_ratio
@@ -565,7 +563,6 @@ def generate_dj_recommendation(
     incoming_section=incoming_section,
     structure_note=structure_note,
     risk_notes=risk_notes,
-    texture_score=round(texture_sim, 2),
     rhythm_advice=rhythm_adv,
     bpm_advice=bpm_advice,
     key_advice=key_advice,
