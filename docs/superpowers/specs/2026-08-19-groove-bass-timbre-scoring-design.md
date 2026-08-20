@@ -4,10 +4,17 @@ Design-Spec · 2026-08-19 · HPG v3.7.2
 
 ## 1. Problem
 
-Die Reihenfolge einer HPG-Playlist entsteht ausschliesslich aus vier Faktoren.
-`calculate_enhanced_compatibility` (`hpg_core/playlist.py:256`) ist die einzige
-Zielfunktion beim Sortieren; mit `GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2` verteilen
-sich ihre Gewichte so:
+Die Reihenfolge einer HPG-Playlist entsteht heute weitgehend aus vier
+Faktoren, aber nicht einheitlich. `calculate_enhanced_compatibility`
+(`hpg_core/playlist.py:291`, nicht `:256`) ist **nicht** die einzige
+Zielfunktion beim Sortieren: Genre Flow (`playlist.py:1096`) und Context Flow
+(`playlist.py:1941`) nutzen stattdessen `calculate_compatibility` (reine
+Harmonik), Energy Wave nutzt gar keine Kompatibilitaetsfunktion. Von den 8
+Strategien konsumieren nur Harmonic Flow und Consistent die acht Faktoren
+voll; Warm-Up, Cool-Down, Peak-Time und Genre Flow nachrangig/teilweise;
+Energy Wave und Context Flow gar nicht. Fuer die Strategien, die
+`calculate_enhanced_compatibility` nutzen, verteilen sich die Gewichte mit
+`GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2` so:
 
 | Faktor | Gewicht | Datenquelle |
 |---|---|---|
@@ -47,10 +54,11 @@ Score, nach dem sortiert wird, ist offen.
 
 ### 1.2 Ausgangslage, die das Vorhaben traegt
 
-`first_downbeat` liegt fuer die Sammlung flaechendeckend vor. Stichprobe von
-120 zufaelligen Tracks gegen `RekordboxImporter.get_first_downbeat()`:
-120 Treffer, 0 Fehlschlaege, `downbeat_confidence = 1.0` aus dem
-Rekordbox-ANLZ-Beatgrid.
+**Nicht verifizierbar** (nicht erneut geprueft, hier nur wiedergegeben statt
+geloescht): `first_downbeat` liegt fuer die Sammlung flaechendeckend vor.
+Stichprobe von 120 zufaelligen Tracks gegen
+`RekordboxImporter.get_first_downbeat()`: 120 Treffer, 0 Fehlschlaege,
+`downbeat_confidence = 1.0` aus dem Rekordbox-ANLZ-Beatgrid.
 
 Das ist die Voraussetzung des gesamten Designs. Ein beat-synchrones
 Rhythmusmuster, das um einen halben Beat verschoben gemessen wird, ist
@@ -58,8 +66,9 @@ Rauschen. Ohne verlaessliche Eins waere Groove-Matching nicht umsetzbar.
 
 ### 1.3 Sammlung
 
-2480 Tracks in der Rekordbox-`master.db` (2477 mit BPM, 2480 mit Key, 2467 mit
-Cues).
+**Nicht verifizierbar** (Sammlungsstatistik und ID3-Verteilung nicht erneut
+geprueft, hier nur wiedergegeben statt geloescht): 2480 Tracks in der
+Rekordbox-`master.db` (2477 mit BPM, 2480 mit Key, 2467 mit Cues).
 
 Die Genre-Verteilung stammt aus dem XML-Export `Sammlung-rekordbox-2026.xml`
 (2476 Tracks), da `master.db` das ID3-Genre nicht in gleicher Form
@@ -77,16 +86,21 @@ unerheblich.
 | Deep House | 41 | 1,7 % |
 | uebrige (Electronica 14, Loop Samples 8, House 6, Dance/Electro Pop 4, ohne Genre 3, Trance 2, Drum & Bass 2, Indie Dance 1) | 40 | 1,6 % |
 
-Im aktuellen Cache (`hpg_cache_v29.db`) liegen 53 analysierte Tracks. Eine
-vollstaendige Analyse der Sammlung hat nie stattgefunden.
+Im Cache lagen zum Zeitpunkt der urspruenglichen Fassung dieser Spec
+(`hpg_cache_v29.db`) 53 analysierte Tracks; diese Angabe ist **veraltet**, der
+Cache ist seither weitergelaufen und die Version hat sich geaendert (siehe
+Abschnitt 12). Eine vollstaendige Analyse der Sammlung hat nie stattgefunden.
 
 ## 2. Ziel
 
 Die Reihenfolge soll zusaetzlich davon abhaengen, wie gut zwei Tracks
 rhythmisch, im Bassdruck, im Klangcharakter und in der Stimmung
-zusammenpassen. Die Gewichte dieser Faktoren werden **aus echten DJ-Mixen
-gelernt**, nicht geraten, und sind fuer alle 9 kanonischen Genres separat
-bestimmt.
+zusammenpassen. Die Gewichte dieser Faktoren **sollten** aus echten DJ-Mixen
+gelernt werden, nicht geraten, und fuer alle 9 kanonischen Genres separat
+bestimmt sein. **Das ist nicht umgesetzt**: der Kalibrierungsversuch (Abschnitt
+10/11) ist gescheitert, alle 9 Genres tragen aktuell identische, ungemessene
+Defaultwerte. Das Ziel bleibt richtig, das bisherige Ergebnis war negativ —
+siehe "Was das Vorhaben gelehrt hat" am Ende dieser Spec.
 
 ## 3. Nicht-Ziele
 
@@ -99,13 +113,18 @@ bestimmt.
 
 ## 4. Architektur
 
-Drei neue Module, bewusst klein und ohne Abhaengigkeit nach oben:
+Fuenf neue Module (nicht drei, wie eine fruehere Fassung dieser Spec sagte),
+bewusst klein und ohne Abhaengigkeit nach oben. Zusaetzlich zu den drei
+urspruenglich geplanten kamen `hpg_core/tolerances.py` und
+`hpg_core/mix_analysis.py` dazu:
 
 | Datei | Zweck | Abhaengigkeiten |
 |---|---|---|
 | `hpg_core/groove.py` | beat-synchrone Mustererkennung, reine Funktionen | numpy, librosa |
-| `hpg_core/transition_features.py` | paarweise Vergleiche, reine Funktionen | `models`, `genres` |
-| `tools/mix_mining.py` | Kalibrierung, laeuft offline und nie in der App | `groove`, yt-dlp, ffmpeg |
+| `hpg_core/transition_features.py` | paarweise Vergleiche, reine Funktionen | `.models`, `.tolerances` |
+| `hpg_core/tolerances.py` | Laden/Validieren der Genre-Toleranzen und -Gewichte | `.genres` |
+| `hpg_core/mix_analysis.py` | Hilfsfunktionen fuer die Mix-Kalibrierung | `.groove` |
+| `tools/mix_mining.py` | Kalibrierung, laeuft offline und nie in der App | `groove`, `mix_analysis`, yt-dlp, ffmpeg |
 
 Erweitert werden: `models.py` (Felder), `analysis.py` (Aufruf),
 `playlist.py` (Score), `genres.py` (Toleranzen), `config.py` (Schalter,
@@ -122,14 +141,18 @@ dafuer, dass die gelernten Werte ueberpruefbar bleiben.
 Die Onset-Staerke wird auf **einen Takt gefaltet**: 16 Slots je ein
 Sechzehntel, verankert am `first_downbeat`, gemittelt ueber alle Takte des
 analysierten Fensters. Ergebnis ist ein 16-stelliger, L1-normierter Vektor —
-der Rhythmus-Fingerabdruck. Dasselbe getrennt fuer alles unter 150 Hz.
+der Rhythmus-Fingerabdruck. Dasselbe getrennt fuer das Band 20-150 Hz;
+unter 20 Hz ist ausgeschlossen.
 
 16 Slots, weil ein 4/4-Takt genau 16 Sechzehntel hat; bei 140 BPM entspricht
 das 1,71 s pro Takt. Die Mittelung ueber viele Takte macht das Muster robust
 gegen einzelne Ausreisser.
 
-Gemittelt wird **nur ueber Sektionen mit Beat** (`main`, `drop`). Ein
-Breakdown ohne Drums wuerde das Muster sonst verwaessern.
+Vorgesehen ist, dass **nur ueber Sektionen mit Beat** (`main`, `drop`)
+gemittelt wird — ein Breakdown ohne Drums wuerde das Muster sonst
+verwaessern. **Status: nicht umgesetzt** in der urspruenglichen Fassung
+dieser Spec; ein paralleler Auftrag baut die Sektionsfilterung gerade nach,
+siehe Commit-Historie.
 
 ### 5.2 Neue Track-Felder
 
@@ -141,11 +164,13 @@ sub_energy:     float = 0.0                          # 20-60 Hz, relativ zur Ges
 bass_punch:     float = 0.0                          # Crest-Faktor des Bassbands
 ```
 
-`sub_energy` und `bass_punch` werden **zweifach** gefuehrt: als Trackmittel in
-den obigen Feldern (Anzeige, Fallback) und zusaetzlich je Sektion in den
-Section-Dicts von `Track.sections` (Abschnitt 5.3). Das Scoring nutzt die
-Sektionswerte; die Trackmittel greifen nur, wenn fuer die betreffende Sektion
-kein Wert vorliegt.
+Vorgesehen ist, dass `sub_energy` und `bass_punch` **zweifach** gefuehrt
+werden: als Trackmittel in den obigen Feldern (Anzeige, Fallback) und
+zusaetzlich je Sektion in den Section-Dicts von `Track.sections` (Abschnitt
+5.3). Das Scoring soll die Sektionswerte nutzen; die Trackmittel sollen nur
+greifen, wenn fuer die betreffende Sektion kein Wert vorliegt. **Status: nicht
+umgesetzt** in der urspruenglichen Fassung dieser Spec; wird gerade
+nachgebaut, siehe Commit-Historie.
 
 ### 5.3 Bewusste Asymmetrie: Groove track-weit, Bass sektionsweise
 
@@ -154,14 +179,19 @@ Bassdruck nicht — Intro und Drop unterscheiden sich massiv. Da die Sektionen
 in `Track.sections` bereits `avg_bass` tragen (`dj_brain.py:1337` nutzt das),
 kommt `sub_energy` dort daneben.
 
-Beim Paar-Vergleich wird deshalb **Outro von A gegen Intro von B** gemessen,
-nicht Trackmittel gegen Trackmittel. Ob zwei Tracks im Durchschnitt aehnlich
-basslastig sind, ist fuer den Uebergang irrelevant; es zaehlt, was an der
-Nahtstelle passiert.
+Beim Paar-Vergleich soll deshalb fuer den Bass **Outro von A gegen Intro von
+B** gemessen werden, nicht Trackmittel gegen Trackmittel — ob zwei Tracks im
+Durchschnitt aehnlich basslastig sind, ist fuer den Uebergang irrelevant; es
+zaehlt, was an der Nahtstelle passiert. **Status:** in der urspruenglichen
+Fassung dieser Spec verglichen sowohl `bass_continuity` als auch `mood_match`
+ausschliesslich Trackmittel gegen Trackmittel — keines der beiden nutzte die
+Nahtstelle. Fuer den Bass wird die Nahtstellen-Messung gerade nachgebaut
+(siehe Commit-Historie); fuer `mood_match` bleibt es bewusst beim Trackmittel,
+diese Aussage gilt nur fuer den Bass.
 
 ### 5.4 Rechenaufwand
 
-`FeatureCache` (`analysis.py:48`) haelt Onset, STFT und HPSS bereits vor —
+`FeatureCache` (`analysis.py:53`) haelt Onset, STFT und HPSS bereits vor —
 genau die teuren Operationen, die hier gebraucht werden. Die Extraktion greift
 auf vorhandene Matrizen zu. Regel aus dem Bestand: **erst pruefen, ob der
 Cache die Groesse schon hat**, nie neu rechnen. Der Laengenvergleich
@@ -181,8 +211,8 @@ Vier reine Funktionen, jeweils Rueckgabe in [0, 1]:
 | Funktion | Berechnung |
 |---|---|
 | `groove_match(a, b)` | Kosinus-Aehnlichkeit von `groove_pattern` und `bass_pattern`, gewichtet zusammengefasst |
-| `bass_continuity(a, b)` | Differenz von `sub_energy` und `bass_punch` an der Nahtstelle (Outro A / Intro B), gegen die Genre-Toleranz normiert |
-| `timbre_match(a, b)` | Kosinus-Aehnlichkeit der `timbre_fingerprint` (nutzt die bestehende Logik aus `dj_brain.py:1382`) |
+| `bass_continuity(a, b)` | Differenz von `sub_energy` und `bass_punch` an der Nahtstelle (Outro A / Intro B); `bass_punch` wird gegen die feste Modulkonstante `DEFAULT_PUNCH_DELTA_MAX` normiert, **nicht** gegen die Genre-Toleranztabelle — sie ist darueber nicht uebersteuerbar |
+| `timbre_match(a, b)` | Kosinus-Aehnlichkeit der `timbre_fingerprint`; nutzt **nicht** die Logik aus `dj_brain.py:1382`, sondern eine eigene `cosine_similarity` in `transition_features.py:43`, die semantisch abweicht (die `dj_brain`-Variante verwirft den MFCC-Koeffizienten 0 und klemmt nicht auf [0,1]) |
 | `mood_match(a, b)` | kombiniert `brightness`, `spectral_flatness` und den Dur/Moll-Wechsel aus `keyMode` |
 
 Alle vier bekommen den Genre-Kontext uebergeben, da die Toleranzen
@@ -259,12 +289,17 @@ nicht beurteilen, ob die Aenderung die Reihenfolge verbessert.
 
 Gewichte und Toleranzen sind **Daten, keine Konstanten im Quelltext**.
 
-- Gelernte Werte: `hpg_core/data/transition_tolerances.json`, mitgeliefert.
+- Vorgesehen: gelernte Werte in `hpg_core/data/transition_tolerances.json`,
+  mitgeliefert. **Status:** die mitgelieferte Datei ist `{}`. Der
+  Lernversuch bestand das eigene Holdout-Gate (Abschnitt 11) in keinem Lauf;
+  die gelernten Werte wurden zurueckgezogen (Commit `d661bac`). Aktiv sind
+  die eingebauten Defaults.
 - Nutzer-Override: `%LOCALAPPDATA%\HPG\transition_tolerances.json` schlaegt die
   mitgelieferte Datei. Damit ueberlebt eine Anpassung Updates und die EXE.
 - Fehlt die Datei oder ist ihr JSON kaputt, greifen die eingebauten Defaults.
-  Ein defektes JSON darf den Start nicht verhindern; der Fehler geht nach
-  `logs/error_report.json`.
+  Ein defektes JSON darf den Start nicht verhindern; `hpg_core/tolerances.py`
+  protokolliert den Fehler nur per `logger.warning` — der `error_reporter`
+  (`logs/error_report.json`) ist dort **nicht** eingebunden.
 - GUI: Panel in den Advanced-Einstellungen mit Reglern fuer die vier neuen
   Gewichte und einem Reset auf die gelernten Werte.
 
@@ -284,7 +319,7 @@ Eintrag je kanonischem Genre:
 ```python
 groove_weight, bass_weight, timbre_weight, mood_weight   # Gewichte
 groove_sim_floor        # Aehnlichkeit, unter der es Abzug gibt
-bass_delta_max          # akzeptierter Sub-Sprung in dB
+bass_delta_max          # akzeptierter Sub-Sprung als dimensionsloses Leistungsverhaeltnis, kein dB-Wert
 brightness_delta_max    # akzeptierter Helligkeitssprung
 ```
 
@@ -300,10 +335,11 @@ falsch bedienen.
 inkonsistent sind. Die Drift-Validierung **muss die neue Tabelle mit
 abdecken**, sonst kann ein Genre stillschweigend ohne Toleranzen dastehen.
 
-Vetos (harte Ausschluesse statt Abzug) werden strukturell vorbereitet, aber
-standardmaessig nicht scharf geschaltet. Ein Genre bekommt ein Veto nur, wenn
-das Mix-Mining zeigt, dass echte DJs diesen Uebergang dort praktisch nie
-machen.
+Vetos (harte Ausschluesse statt Abzug) sind **nicht** strukturell vorbereitet
+im Sinne einer funktionierenden Mechanik — vorbereitet ist lediglich ein
+Dict-Schluessel `groove_veto_enabled` ohne jeden Leser. Ein Genre soll ein
+Veto nur bekommen, wenn das Mix-Mining zeigt, dass echte DJs diesen Uebergang
+dort praktisch nie machen.
 
 ## 10. Kalibrierung (`tools/mix_mining.py`)
 
@@ -315,8 +351,8 @@ liegen nicht vor und werden auch nicht benoetigt (Abschnitt 10.4).
 
 ### 10.2 Beschaffung: kein Umwandeln
 
-HPG laedt Audio ueber `librosa.load` und `sf.blocks`
-(`analysis.py:1431`, `:476`). Gemessen: libsndfile 1.2.2, soundfile 0.14.0,
+HPG laedt Audio ueber `librosa.load` (`analysis.py:1316`, `:1468`, `:1850`)
+und `sf.blocks` (`analysis.py:513`). Gemessen: libsndfile 1.2.2, soundfile 0.14.0,
 librosa 0.11.0. Lesbar sind unter anderem WAV, AIFF, FLAC, MP3 und OGG
 (Vorbis **und** Opus).
 
@@ -338,9 +374,13 @@ Schnitte — die Blend-Zone selbst wird deshalb **ausgespart** und je ein
 stabiles Fenster davor und dahinter gemessen. Im Blend liegen beide Tracks
 uebereinander; dort gemessene Features waeren Mischwerte und damit wertlos.
 
-Auf diese Fenster laeuft **exakt dieselbe** `groove.py` wie in der App. Das
-ist Bedingung, nicht Bequemlichkeit: wuerden Kalibrierung und Anwendung
+Auf diese Fenster **soll** exakt dieselbe `groove.py` laufen wie in der App —
+das ist Bedingung, nicht Bequemlichkeit: wuerden Kalibrierung und Anwendung
 unterschiedlich messen, waeren die gelernten Zahlen nicht uebertragbar.
+**Das war nicht der Fall:** der Miner ankerte auf `librosa.beat_track`, die
+Produktion auf den Rekordbox-ANLZ-Downbeat, und der Miner vergleicht
+rotationsinvariant. Deshalb wurde `groove_weight` verworfen (Commit
+`e64e488`) — siehe "Was das Vorhaben gelehrt hat" am Ende dieser Spec.
 
 ### 10.4 Von Verteilungen zu Zahlen
 
@@ -368,10 +408,12 @@ hier dokumentiert, nicht bewertet.
 
 ### 10.6 Reihenfolge
 
-Alle 9 kanonischen Genres bekommen einen Toleranzsatz. Die Reihenfolge der
-Bearbeitung richtet sich nach dem Anteil an der Sammlung: Psytrance,
-Progressive, Techno, Melodic Techno, Tech House zuerst (zusammen 94,4 %),
-danach Minimal, Deep House, Trance, Drum & Bass.
+Alle 9 kanonischen Genres sollen einen gelernten Toleranzsatz bekommen. Die
+Reihenfolge der Bearbeitung richtet sich nach dem Anteil an der Sammlung:
+Psytrance, Progressive, Techno, Melodic Techno, Tech House zuerst (zusammen
+94,4 %), danach Minimal, Deep House, Trance, Drum & Bass. **Status:** wie in
+Abschnitt 2 und "Was das Vorhaben gelehrt hat" beschrieben, tragen aktuell
+alle 9 Genres identische, ungemessene Defaults statt gelernter Werte.
 
 Fuer Trance und Drum & Bass enthaelt die Sammlung derzeit je 2 Tracks, fuer
 Deep House 41 und Minimal 58. Ihre Toleranzen wirken sich vorerst auf kaum
@@ -386,24 +428,32 @@ muss gelten: echte Uebergaenge erhalten einen hoeheren Score als Zufallspaare.
 Trifft das nicht zu, taugen die gelernten Werte fuer dieses Genre nichts und
 werden nicht eingebaut — der Befund wird berichtet statt kaschiert.
 
+**Status:** beim ersten Einbau wurde diese Regel nicht eingehalten — die
+gelernten Werte gingen trotz rotem Holdout-Gate in den Code und wurden erst
+spaeter zurueckgezogen (Commits `d661bac`, `e64e488`). Das gehoert als Lehre
+in diese Spec, nicht wegretuschiert; siehe "Was das Vorhaben gelehrt hat" am
+Ende.
+
 Zusaetzlich der Nutzer-A/B ueber `TRANSITION_FEATURES_ENABLED`: gleiche
 Trackauswahl, alte gegen neue Sortierung.
 
 ## 12. Cache und Migration
 
-`CACHE_VERSION` steigt von 29 auf 30. Alte Eintraege werden dadurch nicht mehr
+`CACHE_VERSION` sollte von 29 auf 30 steigen. **Status:** der Stand ist
+seither weitergelaufen, `CACHE_VERSION` steht inzwischen bei 31 und steigt
+gerade auf 32. Alte Eintraege werden bei jedem Versionssprung nicht mehr
 gelesen.
 
-Der Nutzer wuenscht zusaetzlich das Loeschen der Altdateien in
-`C:\Users\david\AppData\Local\HPG\` (25 Dateien, `hpg_cache_v18` bis `v29`
-samt `-wal`, `-shm`, `.lock`, zusammen 1,46 MB). Das ist eine irreversible
-Aktion und wird **unmittelbar vor dem ersten vollen Analyselauf** ausgefuehrt,
-nicht frueher — vorher geloescht waeren die 53 vorhandenen Tracks zweimal
-umsonst gerechnet. Musikdateien und die Rekordbox-Datenbank bleiben unberuehrt.
+Das Loeschen der Altdateien in `C:\Users\david\AppData\Local\HPG\` (frueher
+als offen beschrieben, 25 Dateien `hpg_cache_v18` bis `v29` samt `-wal`,
+`-shm`, `.lock`, zusammen 1,46 MB) **ist inzwischen erledigt**. Musikdateien
+und die Rekordbox-Datenbank blieben davon unberuehrt.
 
 Anschliessend laeuft eine vollstaendige Analyse der Sammlung (2480 Tracks).
-Auf 16 Kernen und ueberwiegend im Rekordbox-Fast-Path ist mit einer
-Groessenordnung von 15-40 Minuten zu rechnen.
+**Nicht verifizierbar** (Laufzeitangabe nicht erneut geprueft, hier nur
+wiedergegeben statt geloescht): auf 16 Kernen und ueberwiegend im
+Rekordbox-Fast-Path ist mit einer Groessenordnung von 15-40 Minuten zu
+rechnen.
 
 Die Umverteilungsregel aus 7.3 bleibt trotz des Loeschens im Code: sie deckt
 Tracks ab, deren Analyse degradiert ist, nicht nur Altbestaende.
@@ -415,8 +465,9 @@ Tracks ab, deren Analyse degradiert ist, nicht nur Altbestaende.
 - `first_downbeat` ohne Konfidenz (`downbeat_confidence == 0.0`): kein
   Groove-Pattern berechnen. Ein Muster auf erfundenem Raster ist schlechter als
   gar keins.
-- Defektes `transition_tolerances.json`: Defaults greifen, Fehler nach
-  `logs/error_report.json`, App startet normal.
+- Defektes `transition_tolerances.json`: Defaults greifen, Fehler geht **nicht**
+  nach `logs/error_report.json` — `hpg_core/tolerances.py` protokolliert nur
+  per `logger.warning` (siehe Abschnitt 8), App startet normal.
 - `mix_mining.py` bei nicht ladbarer Datei: Mix ueberspringen, Grund
   protokollieren, restliche Mixe weiterverarbeiten.
 - Analyse-Fehler behalten das bestehende Verhalten: `analysis_degraded` setzen,
@@ -435,14 +486,18 @@ Tracks ab, deren Analyse degradiert ist, nicht nur Altbestaende.
   bit-identisch zum heutigen Stand.
 - Drift-Test: `GENRE_TRANSITION_TOLERANCES` deckt alle 9 kanonischen Genres ab
   und wird von der bestehenden Validierung in `genres.py` erfasst.
-- Die bestehende Baseline bleibt gruen: 1506 passed, Coverage 77,29 % (gemessen 2026-08-19). Der Abschlusslauf laeuft mit Coverage, nicht mit --no-cov.
+- Die bestehende Baseline bleibt gruen. **Nicht verifizierbar** (Testzahl
+  nicht erneut geprueft, hier nur wiedergegeben statt geloescht): 1506
+  passed, Coverage 77,29 % (gemessen 2026-08-19). Der Abschlusslauf laeuft mit
+  Coverage, nicht mit --no-cov.
 
 Aufruf: `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`
 
 ## 15. Umsetzungsreihenfolge
 
 1. `groove.py` mit Tests, ohne Anbindung.
-2. Track-Felder, `analysis.py`-Anbindung, `CACHE_VERSION` 30.
+2. Track-Felder, `analysis.py`-Anbindung, `CACHE_VERSION`-Bump (geplant 30,
+   tatsaechlich inzwischen bei 31, steigt gerade auf 32).
 3. `transition_features.py` mit Tests, ohne Anbindung.
 4. Genre-Tabelle mit den Startgewichten aus 7.2, Drift-Validierung.
 5. Scoring-Integration hinter `TRANSITION_FEATURES_ENABLED`, alle fuenf
@@ -453,3 +508,17 @@ Aufruf: `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`
 9. Holdout-Validierung, gelernte Werte einsetzen, A/B durch den Nutzer.
 
 Schritte 1-6 aendern das Verhalten der App nicht, solange der Schalter aus ist.
+
+## 16. Was das Vorhaben gelehrt hat
+
+- Die Kalibrierung scheiterte nicht an der Zahl der Uebergaenge, sondern an
+  der Zahl unabhaengiger Mixe (6-8 Cluster). Noetig waeren grob 25-30 je
+  Genre.
+- Die Zahlen, die die Reihenfolge heute tatsaechlich bestimmen, sind
+  ungemessen: `0.44/0.28/0.28` in `playlist.py:413-415` und
+  `GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2`, multipliziert mit 36 handgesetzten
+  Genre-Kompatibilitaetswerten. Fast alle gemessenen Zahlen des Repos liegen
+  dagegen hinter einem Schalter, der auf `False` steht.
+- Ein Rundungsfehler in `quantize_to_grid` verschob Mixpunkte um eine volle
+  Phrase (27 s bei 16-Bar-Phrasen); gefunden nicht durch Tests, sondern beim
+  Hoeren des ersten Clips (Commit `839ba41`).
