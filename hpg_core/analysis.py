@@ -26,7 +26,11 @@ from .config import (
     SECURITY_MAX_FILE_SIZE,
     SECURITY_MAX_TRACK_DURATION,
 )
-from .dj_brain import align_ai_mix_points, calculate_genre_aware_mix_points
+from .dj_brain import (
+    _get_intro_end_from_sections,
+    align_ai_mix_points,
+    calculate_genre_aware_mix_points,
+)
 from .downbeat import (
     DOWNBEAT_RELIABLE_MIN,
     estimate_first_downbeat,
@@ -39,7 +43,12 @@ from .groove import (
     bass_kennwerte,
     extract_groove,
 )
-from .models import CAMELOT_MAP, Track, get_camelot_components
+from .models import (
+    CAMELOT_MAP,
+    QUANTIZE_TOLERANCE_SEC,
+    Track,
+    get_camelot_components,
+)
 from .rekordbox_importer import get_rekordbox_importer
 from .structure_analyzer import (
     GENRE_PHRASE_UNITS,
@@ -1430,6 +1439,40 @@ def analyze_structure_windows(
     return merged, coverage, tail_end >= duration - 1.0
 
 
+def cue_in_verwerfen(
+    cue_in: float | None,
+    benannter_cue: bool,
+    intro_ende: float,
+) -> bool:
+    """Soll ein per Heuristik geratener Mix-In-Cue verworfen werden?
+
+    Invariante 5 (Mix-In nie im Intro) galt bisher nur in
+    calculate_genre_aware_mix_points; die Cue-Uebernahme umging sie. Gemessen
+    an 232 Tracks lagen dadurch 24 Mix-Punkte im fuehrenden Intro, bis zu
+    56,5 s tief — alle aus dem Heuristik-Zweig (``dedup_positions[1]``, der
+    zweite Hot Cue liegt bei DJs typisch bei rund 30 s), kein einziger aus
+    einem benannten Cue.
+
+    Ein BENANNTER Cue wird nie verworfen: er ist eine bewusste Entscheidung
+    des Nutzers (Ausnahme in der Guard-Spec vom 2026-03-11 festgehalten).
+
+    Ohne Sektionen (``intro_ende <= 0``) gibt es kein Urteil — dann bleibt der
+    Cue stehen, statt auf gut Glueck verworfen zu werden.
+
+    Das Epsilon faengt Quantisierungsrauschen. Gemessen an denselben 232
+    Tracks liegen 36 um weniger als 0,5 s unter dem Intro-Ende — tatsaechlich
+    aber alle unter 5 ms (Median 3,2 ms, Maximum 4,9 ms). Benutzt wird
+    QUANTIZE_TOLERANCE_SEC statt eines eigenen Werts: dieselbe Konstante
+    entscheidet in `quantize_to_grid`, wann ein Punkt noch als "auf dem
+    Raster" gilt. Ein kleineres Epsilon (1 ms) faenge nur 3 der 36.
+    """
+    if cue_in is None or benannter_cue:
+        return False
+    if intro_ende <= 0.0:
+        return False
+    return cue_in < intro_ende - QUANTIZE_TOLERANCE_SEC
+
+
 def analyze_track(file_path: str) -> Track | None:
     """Analyzes a single audio file for all v3.0 metadata, using a cache."""
     if not file_path:
@@ -1602,6 +1645,7 @@ def analyze_track(file_path: str) -> Track | None:
             # erster Treffer gewinnt (deterministisch statt letzter-gewinnt).
             if rekordbox_data.cue_points:
                 cue_in, cue_out = None, None
+                benannter_in = False   # unterscheidet benannten Cue von Heuristik
                 # "OUTRO" ist ein gaengiger Mix-Out-Cue-Name; "INTRO" markiert
                 # dagegen den Intro-START und ist KEIN Mix-In-Punkt
                 in_pattern = re.compile(r"\b(MIX[- ]?IN|IN|START)\b")
@@ -1612,6 +1656,7 @@ def analyze_track(file_path: str) -> Track | None:
                     name_upper = cue["name"].upper()
                     if cue_in is None and in_pattern.search(name_upper):
                         cue_in = float(cue["position"])
+                        benannter_in = True
                     elif cue_out is None and out_pattern.search(name_upper):
                         cue_out = float(cue["position"])
 
@@ -1653,9 +1698,58 @@ def analyze_track(file_path: str) -> Track | None:
                             f"in={cue_in:.1f}s, out={cue_out:.1f}s aus {len(dedup_positions)} Cues"
                         )
 
+                # Invariante 5 (Mix-In nie im Intro) gilt auch hier. Sie war
+                # bisher nur in calculate_genre_aware_mix_points gesichert; der
+                # Cue-Block umging sie vollstaendig. Gemessen an 232 Tracks:
+                # 24 hatten dadurch einen Mix-In im fuehrenden Intro, bis zu
+                # 56,5 s tief, Median 29,0 s. Alle 24 stammten aus dem
+                # HEURISTIK-Zweig unten (dedup_positions[1]), kein einziger aus
+                # einem benannten Cue — geprueft gegen die Rekordbox-Cues.
+                #
+                # Der Guard gilt deshalb NUR fuer die Heuristik. Ein benannter
+                # Cue ("MIX IN", "IN", "START") ist eine bewusste Entscheidung
+                # des Nutzers und bleibt unangetastet; er kennt seinen Track
+                # besser als die Sektionsanalyse.
+                intro_ende = _get_intro_end_from_sections(section_dicts)
+                guard_hat_zugeschlagen = cue_in_verwerfen(
+                    cue_in, benannter_in, intro_ende
+                )
+                if guard_hat_zugeschlagen:
+                    logger.info(
+                        f"Cue-Heuristik verworfen: in={cue_in:.1f}s liegt im "
+                        f"Intro (endet {intro_ende:.1f}s) — behalte den "
+                        f"berechneten Mix-In {mix_in_point:.1f}s"
+                    )
+                    cue_in = None
+
                 candidate_in = cue_in if cue_in is not None else mix_in_point
                 candidate_out = cue_out if cue_out is not None else mix_out_point
-                if 0 <= candidate_in < candidate_out <= duration:
+                # Mindestfenster NUR im Guard-Fall: verwirft der Guard den
+                # Mix-In, entsteht die Mischung aus berechnetem In und
+                # Cue-Out, die ein Fenster von wenigen Sekunden ergeben kann.
+                # align_ai_mix_points prueft nur in < out; die
+                # Zwei-Phrasen-Regel garantiert sonst allein
+                # calculate_genre_aware_mix_points (dj_brain, `min_window`).
+                #
+                # Ohne die Einschraenkung auf den Guard-Fall wuerde die
+                # Bedingung auch BENANNTE Cue-Paare verwerfen und damit genau
+                # die Ausnahme aushebeln, die zehn Zeilen weiter oben und im
+                # Guard-Spec-Nachtrag zugesichert ist. Gemessen am Bestand
+                # trifft sie derzeit 0 von 210 Tracks mit verwertbarem
+                # Cue-Paar — sie ist eine Absicherung, kein Eingriff.
+                #
+                # Geprueft wird VOR der Quantisierung. align_ai_mix_points
+                # kann das Fenster danach noch verkleinern (ceil auf den
+                # Mix-In, floor auf den Mix-Out, im Kollapsfall Ausweichen
+                # aufs Bar-Gitter); eine Garantie nach der Quantisierung ist
+                # das hier also nicht.
+                min_fenster = (
+                    (60.0 / rekordbox_data.bpm) * METER * structure.phrase_unit * 2
+                    if guard_hat_zugeschlagen else 0.0
+                )
+                if 0 <= candidate_in < candidate_out <= duration and (
+                    candidate_out - candidate_in >= min_fenster
+                ):
                     # Gleiche Quantisierungs-Pipeline wie der AI-Override
                     mix_in_point, mix_out_point = align_ai_mix_points(
                         candidate_in,
@@ -1670,8 +1764,10 @@ def analyze_track(file_path: str) -> Track | None:
                     mix_out_bars = int(mix_out_point / seconds_per_bar)
                 else:
                     logger.warning(
-                        f"Rekordbox-Cues ungueltig (in={cue_in}, out={cue_out}, "
-                        f"duration={duration:.1f}) — behalte berechnete Mix-Punkte"
+                        f"Rekordbox-Cues ungueltig oder Mixfenster zu kurz "
+                        f"(in={candidate_in:.1f}, out={candidate_out:.1f}, "
+                        f"noetig {min_fenster:.1f}s, duration={duration:.1f}) — "
+                        f"behalte berechnete Mix-Punkte"
                     )
 
             # Audio Feature Extensions

@@ -18,6 +18,15 @@ Mix-In und Mix-Out Punkte koennen aktuell in Intro- oder Outro-Sektionen gesetzt
 > **Mix-Out-Point** muss VOR dem Beginn aller Outro-Sektionen liegen.
 > Keine Ausnahmen. Kein Genre-Override.
 
+Nachtrag 2026-08-20 — eine bewusste Ausnahme: ein vom Nutzer BENANNTER
+Rekordbox-Cue ("MIX IN", "IN", "START") wird uebernommen, auch wenn er
+im Intro liegt. Er ist eine Entscheidung des Nutzers, der seinen Track
+besser kennt als die Sektionsanalyse. Fuer die HEURISTIK bei
+unbeschrifteten Cues gilt der Guard dagegen uneingeschraenkt; sie hatte
+ihn bis dahin vollstaendig umgangen (gemessen: 24 von 232 Tracks mit
+Mix-In im fuehrenden Intro, bis 56,5 s tief, alle aus dem
+Heuristik-Zweig, kein einziger aus einem benannten Cue).
+
 ## Design
 
 ### Prinzip: Intelligent pro Track, nie pauschal
