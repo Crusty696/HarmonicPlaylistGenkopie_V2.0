@@ -1448,7 +1448,7 @@ def cue_in_verwerfen(
 
     Invariante 5 (Mix-In nie im Intro) galt bisher nur in
     calculate_genre_aware_mix_points; die Cue-Uebernahme umging sie. Gemessen
-    an 232 Tracks lagen dadurch 24 Mix-Punkte im fuehrenden Intro, bis zu
+    an 231 Tracks lagen dadurch 24 Mix-Punkte im fuehrenden Intro, bis zu
     56,5 s tief — alle aus dem Heuristik-Zweig (``dedup_positions[1]``, der
     zweite Hot Cue liegt bei DJs typisch bei rund 30 s), kein einziger aus
     einem benannten Cue.
@@ -1456,10 +1456,19 @@ def cue_in_verwerfen(
     Ein BENANNTER Cue wird nie verworfen: er ist eine bewusste Entscheidung
     des Nutzers (Ausnahme in der Guard-Spec vom 2026-03-11 festgehalten).
 
+    Geprueft wird der ROHE Cue, nicht der quantisierte Wert — und das ist der
+    Unterschied zwischen 24 und 35 betroffenen Tracks. `align_ai_mix_points`
+    hebt einen Cue per ceil auf die naechste Phrasengrenze; liegt der Cue
+    knapp im Intro, landet er dadurch oft exakt auf dem Intro-Ende und sieht
+    im Cache sauber aus. Nachgemessen an der Neuanalyse mit CACHE_VERSION 33:
+    24 Tracks hatten einen sichtbar im Intro liegenden Mix-In, weitere 11
+    einen rohen Cue im Intro, den die Quantisierung kaschierte (Beispiel:
+    roher Cue 30,3 s bei Intro-Ende 34,0 s, gespeichert waren 34,0 s).
+
     Ohne Sektionen (``intro_ende <= 0``) gibt es kein Urteil — dann bleibt der
     Cue stehen, statt auf gut Glueck verworfen zu werden.
 
-    Das Epsilon faengt Quantisierungsrauschen. Gemessen an denselben 232
+    Das Epsilon faengt Quantisierungsrauschen. Gemessen an denselben 231
     Tracks liegen 36 um weniger als 0,5 s unter dem Intro-Ende — tatsaechlich
     aber alle unter 5 ms (Median 3,2 ms, Maximum 4,9 ms). Benutzt wird
     QUANTIZE_TOLERANCE_SEC statt eines eigenen Werts: dieselbe Konstante
@@ -1700,7 +1709,7 @@ def analyze_track(file_path: str) -> Track | None:
 
                 # Invariante 5 (Mix-In nie im Intro) gilt auch hier. Sie war
                 # bisher nur in calculate_genre_aware_mix_points gesichert; der
-                # Cue-Block umging sie vollstaendig. Gemessen an 232 Tracks:
+                # Cue-Block umging sie vollstaendig. Gemessen an 231 Tracks:
                 # 24 hatten dadurch einen Mix-In im fuehrenden Intro, bis zu
                 # 56,5 s tief, Median 29,0 s. Alle 24 stammten aus dem
                 # HEURISTIK-Zweig unten (dedup_positions[1]), kein einziger aus

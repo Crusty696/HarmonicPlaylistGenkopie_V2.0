@@ -97,7 +97,7 @@ logger = logging.getLogger(__name__)
 # FIX 2026-08-20: 32 -> 33. Der Intro-Guard greift jetzt auch in der
 # Rekordbox-Cue-Uebernahme (analysis.py, `cue_in_verwerfen`). Gecachte
 # mix_in_point-Werte aus dem Heuristik-Zweig koennen im Intro liegen —
-# gemessen 24 von 232 Tracks, bis 56,5 s tief. Ohne Bump behalten sie ihren
+# gemessen 24 von 231 Tracks, bis 56,5 s tief. Ohne Bump behalten sie ihren
 # falschen Wert, weil der Cache-Key nur an Pfad und Rekordbox-Signatur haengt
 # und es keine selektive Invalidierung gibt.
 CACHE_VERSION = 33
