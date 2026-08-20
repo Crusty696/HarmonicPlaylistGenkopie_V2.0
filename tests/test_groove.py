@@ -377,3 +377,36 @@ def test_groove_leer_bei_konfidenz_unter_dem_kalibrierten_minimum():
     assert schwach.groove_pattern == []
     assert schwach.bass_pattern == []
     assert schwach.syncopation == 0.0
+
+
+# --- Mechanismus 1a: reine Bass-Kennwerte ohne Musterfaltung (Spec 5.3) ---
+
+
+def test_bass_kennwerte_stimmen_mit_extract_groove_ueberein():
+    """Eine Quelle: extract_groove muss dieselbe Berechnung benutzen."""
+    from hpg_core.groove import bass_kennwerte
+
+    y, sr = _click_track()
+    sub, punch = bass_kennwerte(y, sr)
+    voll = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0)
+
+    assert sub == pytest.approx(voll.sub_energy, abs=1e-9)
+    assert punch == pytest.approx(voll.bass_punch, abs=1e-9)
+
+
+def test_bass_kennwerte_leeres_signal_gibt_nullen():
+    from hpg_core.groove import bass_kennwerte
+
+    assert bass_kennwerte(np.array([], dtype=np.float32), 22050) == (0.0, 0.0)
+
+
+def test_bass_kennwerte_trennt_basslastig_von_hoehenlastig():
+    from hpg_core.groove import bass_kennwerte
+
+    sr = 22050
+    t = np.arange(sr * 10) / sr
+    tief = np.sin(2 * np.pi * 40 * t).astype(np.float32)
+    hoch = np.sin(2 * np.pi * 4000 * t).astype(np.float32)
+
+    assert bass_kennwerte(tief, sr)[0] > 0.9
+    assert bass_kennwerte(hoch, sr)[0] < 0.05

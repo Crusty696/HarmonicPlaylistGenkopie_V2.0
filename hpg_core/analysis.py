@@ -33,7 +33,12 @@ from .downbeat import (
     estimate_first_phrase,
 )
 from .genre_classifier import GenreClassification, classify_genre
-from .groove import GrooveFeatures, extract_groove
+from .groove import (
+    BASS_KENNWERTE_MIN_SEC,
+    GrooveFeatures,
+    bass_kennwerte,
+    extract_groove,
+)
 from .models import CAMELOT_MAP, Track, get_camelot_components
 from .rekordbox_importer import get_rekordbox_importer
 from .structure_analyzer import (
@@ -1749,6 +1754,16 @@ def analyze_track(file_path: str) -> Track | None:
                     )
                     sec_dict['percussive_ratio'] = percussive_ratio
                     sec_dict['spectral_flatness'] = spectral_flatness
+
+                    # Bassdruck der Sektion fuer den Nahtstellen-Vergleich
+                    # (Spec 5.3). Zu kurze Sektionen bekommen die Schluessel
+                    # NICHT — transition_features faellt dann auf das
+                    # Trackmittel zurueck, statt einen aus wenigen Frames
+                    # geschaetzten Wert vorzutaeuschen.
+                    if len(y_seg) >= BASS_KENNWERTE_MIN_SEC * sr:
+                        sec_sub, sec_punch = bass_kennwerte(y_seg, sr)
+                        sec_dict['sub_energy'] = sec_sub
+                        sec_dict['bass_punch'] = sec_punch
                 else:
                     # Audit-Fix 2026-07-21: Sektion liegt ausserhalb des geladenen
                     # Audiofensters (Fast-Path 360s / Full 600s) oder ist zu kurz.
@@ -2133,6 +2148,13 @@ def analyze_track(file_path: str) -> Track | None:
                         'percussive_ratio': percussive_ratio,
                         'spectral_flatness': spectral_flatness,
                     })
+
+                    # Bassdruck der Sektion fuer den Nahtstellen-Vergleich
+                    # (Spec 5.3), gleiche Regel wie im Rekordbox-Fast-Path.
+                    if len(y_seg) >= BASS_KENNWERTE_MIN_SEC * sr:
+                        sec_sub, sec_punch = bass_kennwerte(y_seg, sr)
+                        sec_dict['sub_energy'] = sec_sub
+                        sec_dict['bass_punch'] = sec_punch
                 updated_sections.append(sec_dict)
             section_dicts = updated_sections
             

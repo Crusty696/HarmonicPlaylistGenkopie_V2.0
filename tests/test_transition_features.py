@@ -158,3 +158,136 @@ def test_ein_track_ohne_groove_daten_macht_alle_faktoren_unbestimmbar():
     # und in der Gegenrichtung
     assert bass_continuity(leer, voll, "Psytrance") is None
     assert mood_match(leer, voll, "Psytrance") is None
+
+
+# --- Mechanismus 1: Bassdruck an der Nahtstelle (Spec 5.3) ---
+
+
+def _sektion(label, start, ende, sub=None, punch=None):
+    """Baut ein Section-Dict; sub/punch nur setzen, wenn angegeben."""
+    d = {
+        "label": label,
+        "start_time": start,
+        "end_time": ende,
+        "avg_energy": 5.0,
+        "avg_bass": 40.0,
+        "avg_mids": 40.0,
+        "avg_highs": 20.0,
+        "percussive_ratio": 0.5,
+        "spectral_flatness": 0.05,
+        "analysis_status": "ok",
+    }
+    if sub is not None:
+        d["sub_energy"] = sub
+    if punch is not None:
+        d["bass_punch"] = punch
+    return d
+
+
+def test_naht_werte_out_nimmt_letzte_sektion_ohne_intro():
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.10, punch=1.0),
+        _sektion("main", 30.0, 200.0, sub=0.40, punch=2.0),
+        _sektion("outro", 200.0, 260.0, sub=0.55, punch=4.0),
+    ])
+
+    assert _naht_werte(t, "out") == (0.55, 4.0)
+
+
+def test_naht_werte_in_nimmt_erste_sektion_ohne_intro():
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.10, punch=1.0),
+        _sektion("build", 30.0, 60.0, sub=0.45, punch=2.5),
+        _sektion("main", 60.0, 200.0, sub=0.40, punch=2.0),
+    ])
+
+    assert _naht_werte(t, "in") == (0.45, 2.5)
+
+
+def test_naht_werte_faellt_ohne_sektionen_auf_trackmittel_zurueck():
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[])
+
+    assert _naht_werte(t, "out") == (0.30, 3.0)
+    assert _naht_werte(t, "in") == (0.30, 3.0)
+
+
+def test_naht_werte_faellt_ohne_schluessel_auf_trackmittel_zurueck():
+    """Zu kurze Sektionen bekommen die Schluessel gar nicht erst."""
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("main", 30.0, 31.0),
+        _sektion("outro", 31.0, 32.0),
+    ])
+
+    assert _naht_werte(t, "out") == (0.30, 3.0)
+    assert _naht_werte(t, "in") == (0.30, 3.0)
+
+
+def test_naht_werte_nur_intro_faellt_auf_trackmittel_zurueck():
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.10, punch=1.0),
+    ])
+
+    assert _naht_werte(t, "out") == (0.30, 3.0)
+    assert _naht_werte(t, "in") == (0.30, 3.0)
+
+
+def test_bass_continuity_misst_die_nahtstelle_nicht_das_trackmittel():
+    """Gleiches Trackmittel, weit auseinanderliegende Nahtstellen.
+
+    Beide Paare haben identische Trackmittel. Nur die Nahtstellen
+    unterscheiden sich — genau das muss den Unterschied machen.
+    """
+    gleich_a = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
+        _sektion("outro", 30.0, 260.0, sub=0.30, punch=3.0),
+    ])
+    gleich_b = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
+        _sektion("main", 30.0, 260.0, sub=0.30, punch=3.0),
+    ])
+
+    weit_a = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
+        _sektion("outro", 30.0, 260.0, sub=0.60, punch=5.0),
+    ])
+    weit_b = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
+        _sektion("main", 30.0, 260.0, sub=0.10, punch=1.2),
+    ])
+
+    nah = bass_continuity(gleich_a, gleich_b, "Psytrance")
+    fern = bass_continuity(weit_a, weit_b, "Psytrance")
+
+    assert nah > 0.95
+    assert fern < 0.5
+    assert nah - fern > 0.4
+
+
+def test_bass_continuity_ohne_sektionen_bleibt_beim_trackmittel():
+    a = _track(sub_energy=0.30, bass_punch=3.0, sections=[])
+    b = _track(sub_energy=0.30, bass_punch=3.0, sections=[])
+
+    assert bass_continuity(a, b, "Psytrance") > 0.95
+
+
+def test_bass_continuity_none_regel_gilt_trotz_sektionen():
+    """Das Gate haengt am Trackmittel, nicht an den Sektionswerten."""
+    a = _track(sub_energy=0.0, bass_punch=0.0, sections=[
+        _sektion("main", 30.0, 200.0, sub=0.40, punch=2.0),
+    ])
+    b = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+        _sektion("main", 30.0, 200.0, sub=0.40, punch=2.0),
+    ])
+
+    assert bass_continuity(a, b, "Psytrance") is None
+    assert bass_continuity(b, a, "Psytrance") is None

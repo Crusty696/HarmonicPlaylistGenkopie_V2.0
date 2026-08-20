@@ -93,6 +93,44 @@ def groove_match(track_a: Track, track_b: Track, genre: str) -> float | None:
     ))
 
 
+def _naht_werte(track: Track, rolle: str) -> tuple[float, float]:
+    """Bassdruck an der Nahtstelle; Trackmittel als Rueckfallebene.
+
+    rolle "out" = die Sektion, aus der Track A herauslaeuft (letzte
+    Sektion mit Beat), rolle "in" = die Sektion, in die Track B
+    hineingemischt wird (erste Sektion nach dem Intro).
+
+    Ob zwei Tracks im Mittel aehnlich basslastig sind, ist fuer den Uebergang
+    irrelevant — es zaehlt, was an der Nahtstelle passiert (Spec 5.3).
+
+    Intros werden uebersprungen: in ein Intro mischt man HINEIN, gemessen
+    wird aber, was danach kommt. Dort — auf der ersten Sektion mit vollem
+    Bass — entscheidet sich, ob die Baesse mit dem auslaufenden Track
+    kollidieren. Ein duennes Intro gegen ein volles Outro zu messen wuerde
+    jeden Uebergang kuenstlich schlecht bewerten.
+
+    Fehlen Sektionen oder die Schluessel (zu kurze Sektionen bekommen sie
+    gar nicht erst, siehe groove.BASS_KENNWERTE_MIN_SEC), gilt das
+    Trackmittel.
+    """
+    mittel = (track.sub_energy, track.bass_punch)
+    sections = getattr(track, "sections", None) or []
+
+    kandidaten = [
+        sec for sec in sections
+        if isinstance(sec, dict) and sec.get("label") != "intro"
+    ]
+    if not kandidaten:
+        return mittel
+
+    sec = kandidaten[-1] if rolle == "out" else kandidaten[0]
+    sub = sec.get("sub_energy")
+    punch = sec.get("bass_punch")
+    if sub is None or punch is None:
+        return mittel
+    return float(sub), float(punch)
+
+
 def bass_continuity(track_a: Track, track_b: Track, genre: str) -> float | None:
     """Kontinuitaet des Bassdrucks an der Nahtstelle."""
     # ODER, nicht UND: liefert EIN Track keinen Wert, ist der Vergleich nicht
@@ -109,10 +147,13 @@ def bass_continuity(track_a: Track, track_b: Track, genre: str) -> float | None:
     tol = get_tolerances(genre)
     sub_max = tol.get("bass_delta_max", DEFAULT_SUB_DELTA_MAX)
 
-    sub_sim = _normiert(track_a.sub_energy - track_b.sub_energy, sub_max)
-    punch_sim = _normiert(
-        track_a.bass_punch - track_b.bass_punch, DEFAULT_PUNCH_DELTA_MAX
-    )
+    # Verglichen wird Outro von A gegen Intro-Nachfolger von B, nicht
+    # Trackmittel gegen Trackmittel (Spec 5.3).
+    sub_a, punch_a = _naht_werte(track_a, "out")
+    sub_b, punch_b = _naht_werte(track_b, "in")
+
+    sub_sim = _normiert(sub_a - sub_b, sub_max)
+    punch_sim = _normiert(punch_a - punch_b, DEFAULT_PUNCH_DELTA_MAX)
     return 0.6 * sub_sim + 0.4 * punch_sim
 
 

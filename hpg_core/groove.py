@@ -194,6 +194,59 @@ def _band_envelope(
     return magnitude[maske, :].sum(axis=0)
 
 
+# Kuerzere Ausschnitte tragen bei 22050 Hz und Hop 512 unter 90 STFT-Frames;
+# Perzentil und Energieanteil werden dann von einzelnen Frames bestimmt.
+# Sektionen darunter bekommen die Kennwerte gar nicht erst (siehe
+# analysis.py), damit der Nahtstellen-Fallback auf das Trackmittel greift.
+BASS_KENNWERTE_MIN_SEC = 2.0
+
+
+def _bass_kennwerte_aus_magnitude(
+    magnitude: np.ndarray, freqs: np.ndarray
+) -> tuple[float, float, np.ndarray]:
+    """sub_energy, bass_punch und Bass-Huellkurve einer STFT-Magnitude.
+
+    Einzige Quelle dieser Berechnung: `extract_groove` und `bass_kennwerte`
+    rufen beide hierher, damit Trackmittel und Sektionswerte nie
+    auseinanderlaufen koennen.
+
+    sub_energy ist ein ENERGIE-Anteil, also aus der Leistung zu bilden:
+    Leistung ist das Quadrat der Magnitude. Zaehler und Nenner stammen beide
+    aus derselben quadrierten Matrix, damit bleibt der Wert
+    verstaerkungsinvariant (geprueft bei 0 dB und -20 dB: identisch).
+    Die Bass-Huellkurve bleibt bewusst auf der Magnitude — bass_punch ist ein
+    Crest-Faktor und dort kalibriert (1,26 bis 2,65).
+    """
+    # Erst nach float64 wandeln, dann summieren: float32-Akkumulation ueber
+    # tausende Frames weicht sonst je nach Aufrufweg in der 8. Stelle ab, und
+    # Sektionswerte und Trackmittel liefen minimal auseinander.
+    magnitude = np.asarray(magnitude, dtype=float)
+    bass_env = _band_envelope(magnitude, freqs, SUB_LOW, BASS_HIGH)
+    leistung = magnitude ** 2
+    sub_leistung = _band_envelope(leistung, freqs, SUB_LOW, SUB_HIGH)
+    gesamt = float(leistung.sum())
+    sub_energy = float(sub_leistung.sum() / gesamt) if gesamt > 0.0 else 0.0
+    return sub_energy, bass_punch_from_band(bass_env), bass_env
+
+
+def bass_kennwerte(
+    y: np.ndarray, sr: int, hop_length: int = GROOVE_HOP_LENGTH
+) -> tuple[float, float]:
+    """sub_energy und bass_punch eines Ausschnitts, ohne Musterfaltung.
+
+    Fuer den Nahtstellen-Vergleich (Spec 5.3) werden diese Kennwerte je
+    Sektion gebraucht. `extract_groove` komplett je Sektion zu rufen wuerde
+    zusaetzlich Onset und Faltung rechnen — beides ist pro Sektion sinnlos,
+    weil das Muster ueber den ganzen Track gebildet wird.
+    """
+    if y is None or len(y) == 0 or sr <= 0:
+        return 0.0, 0.0
+    magnitude = np.abs(librosa.stft(y, n_fft=2048, hop_length=hop_length))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=(magnitude.shape[0] - 1) * 2)
+    sub_energy, punch, _ = _bass_kennwerte_aus_magnitude(magnitude, freqs)
+    return sub_energy, punch
+
+
 def extract_groove(
     y: np.ndarray,
     sr: int,
@@ -239,35 +292,22 @@ def extract_groove(
     )
     freqs = librosa.fft_frequencies(sr=sr, n_fft=(magnitude.shape[0] - 1) * 2)
 
-    bass_env = _band_envelope(magnitude, freqs, SUB_LOW, BASS_HIGH)
+    # Die STFT kann durch abweichende Frame-Zahl minimal laenger oder kuerzer
+    # sein als die Onset-Huellkurve — auf die kuerzere kappen. Die Kappung
+    # gilt fuer ALLE Kennwerte, nicht nur fuer die Muster: sonst beschriebe
+    # sub_energy einen anderen Ausschnitt als bass_pattern.
+    n = min(len(onset), magnitude.shape[1], len(times))
+    magnitude = magnitude[:, :n]
 
-    # sub_energy ist ein ENERGIE-Anteil, also aus der Leistung zu bilden:
-    # Leistung ist das Quadrat der Magnitude. Zaehler und Nenner stammen
-    # beide aus derselben quadrierten Matrix, damit bleibt der Wert
-    # verstaerkungsinvariant (geprueft bei 0 dB und -20 dB: identisch).
-    # bass_env bleibt bewusst auf der Magnitude — bass_punch ist ein
-    # Crest-Faktor und dort kalibriert (1,26 bis 2,65).
-    leistung = np.asarray(magnitude, dtype=float) ** 2
-    sub_leistung = _band_envelope(leistung, freqs, SUB_LOW, SUB_HIGH)
+    sub_energy, punch, bass_env = _bass_kennwerte_aus_magnitude(magnitude, freqs)
 
-    # Die Bass-Huellkurve kann durch abweichende Frame-Zahl minimal laenger
-    # oder kuerzer sein als die Onset-Huellkurve — auf die kuerzere kappen.
-    # Die Kappung gilt fuer ALLE Kennwerte, nicht nur fuer die Muster: sonst
-    # beschriebe sub_energy einen anderen Ausschnitt als bass_pattern.
-    n = min(len(onset), len(bass_env), len(times))
-    bass_env = bass_env[:n]
-    sub_leistung = sub_leistung[:n]
-    leistung = leistung[:, :n]
     groove_pattern = fold_to_bar(onset[:n], times[:n], bpm, first_downbeat)
     bass_pattern = fold_to_bar(bass_env, times[:n], bpm, first_downbeat)
-
-    gesamt = float(leistung.sum())
-    sub_energy = float(sub_leistung.sum() / gesamt) if gesamt > 0.0 else 0.0
 
     return GrooveFeatures(
         groove_pattern=groove_pattern,
         bass_pattern=bass_pattern,
         syncopation=syncopation_from_pattern(bass_pattern or groove_pattern),
         sub_energy=sub_energy,
-        bass_punch=bass_punch_from_band(bass_env),
+        bass_punch=punch,
     )
