@@ -410,3 +410,143 @@ def test_bass_kennwerte_trennt_basslastig_von_hoehenlastig():
 
     assert bass_kennwerte(tief, sr)[0] > 0.9
     assert bass_kennwerte(hoch, sr)[0] < 0.05
+
+
+# --- Mechanismus 2: nur ueber Sektionen mit Beat falten (Spec 5.1) ---
+
+
+def _gemischter_track(bpm=120.0, sr=22050, bars_je_haelfte=12):
+    """Erste Haelfte gerade Viertel, zweite Haelfte Offbeat-Achtel.
+
+    Beide Haelften liegen auf DERSELBEN absoluten Zeitachse mit Downbeat 0.0,
+    damit die Maske und nicht ein verschobenes Raster den Unterschied macht.
+    """
+    beat = 60.0 / bpm
+    haelfte = bars_je_haelfte * 4 * beat
+    dauer = 2 * haelfte
+    y = np.zeros(int(dauer * sr), dtype=np.float32)
+    n = np.arange(200)
+    impuls = (np.sin(2 * np.pi * 50 * n / sr) * np.exp(-n / 40.0)).astype(np.float32)
+
+    t = 0.0
+    while t < haelfte:
+        i = int(t * sr)
+        if i + 200 < len(y):
+            y[i:i + 200] += impuls
+        t += beat
+    t = haelfte + beat / 2.0
+    while t < dauer:
+        i = int(t * sr)
+        if i + 200 < len(y):
+            y[i:i + 200] += impuls
+        t += beat
+    return y, sr, haelfte, dauer
+
+
+def test_beat_sektionen_maske_waehlt_das_gerade_muster():
+    y, sr, haelfte, dauer = _gemischter_track()
+
+    features = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0,
+                              beat_sektionen=[(0.0, haelfte)])
+
+    assert features.syncopation < 0.35
+
+
+def test_beat_sektionen_maske_waehlt_das_offbeat_muster():
+    y, sr, haelfte, dauer = _gemischter_track()
+
+    features = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0,
+                              beat_sektionen=[(haelfte, dauer)])
+
+    assert features.syncopation > 0.65
+
+
+def test_beat_sektionen_maske_veraendert_das_muster_ueberhaupt():
+    y, sr, haelfte, dauer = _gemischter_track()
+
+    ohne = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0)
+    mit = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0,
+                         beat_sektionen=[(0.0, haelfte)])
+
+    assert ohne.bass_pattern != mit.bass_pattern
+    assert mit.syncopation < ohne.syncopation
+
+
+def test_leere_maske_faellt_auf_das_gesamtfenster_zurueck():
+    y, sr, haelfte, dauer = _gemischter_track()
+
+    ohne = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0)
+    leer = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0,
+                          beat_sektionen=[])
+
+    assert leer.bass_pattern == ohne.bass_pattern
+
+
+def test_zu_kurze_maske_faellt_auf_das_gesamtfenster_zurueck():
+    """Ein Muster aus zu wenig Material ist schlechter als eines mit
+    etwas Breakdown darin."""
+    from hpg_core.groove import GROOVE_MIN_BARS
+
+    y, sr, haelfte, dauer = _gemischter_track()
+    # Deutlich weniger als GROOVE_MIN_BARS Takte (Takt = 2 s bei 120 BPM).
+    kurz = (GROOVE_MIN_BARS - 4) * 2.0
+
+    ohne = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0)
+    zu_kurz = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0,
+                             beat_sektionen=[(0.0, kurz)])
+
+    assert zu_kurz.bass_pattern == ohne.bass_pattern
+
+
+def test_maske_ausserhalb_des_signals_faellt_zurueck():
+    y, sr, haelfte, dauer = _gemischter_track()
+
+    ohne = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0)
+    daneben = extract_groove(y, sr, bpm=120.0, first_downbeat=0.0,
+                             beat_sektionen=[(dauer + 100.0, dauer + 200.0)])
+
+    assert daneben.bass_pattern == ohne.bass_pattern
+
+
+def test_compute_groove_fields_faltet_nur_ueber_main_und_drop():
+    """Breakdown und Intro duerfen das Muster nicht verwaessern."""
+    from hpg_core.analysis import compute_groove_fields
+
+    y, sr, haelfte, dauer = _gemischter_track()
+    sections = [
+        {'label': 'intro', 'start_time': 0.0, 'end_time': 0.0},
+        {'label': 'main', 'start_time': 0.0, 'end_time': haelfte},
+        {'label': 'breakdown', 'start_time': haelfte, 'end_time': dauer},
+    ]
+
+    mit = compute_groove_fields(
+        y, sr, bpm=120.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        feature_cache=None, sections=sections,
+    )
+    ohne = compute_groove_fields(
+        y, sr, bpm=120.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        feature_cache=None,
+    )
+
+    assert mit.syncopation < 0.35
+    assert mit.bass_pattern != ohne.bass_pattern
+
+
+def test_compute_groove_fields_ohne_beat_sektionen_nimmt_das_gesamtfenster():
+    from hpg_core.analysis import compute_groove_fields
+
+    y, sr, haelfte, dauer = _gemischter_track()
+    nur_breakdown = [
+        {'label': 'breakdown', 'start_time': 0.0, 'end_time': dauer},
+    ]
+
+    mit = compute_groove_fields(
+        y, sr, bpm=120.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        feature_cache=None, sections=nur_breakdown,
+    )
+    ohne = compute_groove_fields(
+        y, sr, bpm=120.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        feature_cache=None,
+    )
+
+    assert mit.bass_pattern == ohne.bass_pattern

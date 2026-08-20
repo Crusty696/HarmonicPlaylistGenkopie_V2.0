@@ -6,12 +6,15 @@ ueberpruefbar (siehe Spec Abschnitt 4).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import librosa
 import numpy as np
 
 from .config import METER
+
+logger = logging.getLogger(__name__)
 
 # Ein 4/4-Takt hat 16 Sechzehntel — das ist die Aufloesung des Musters.
 BAR_SLOTS = 16
@@ -247,6 +250,33 @@ def bass_kennwerte(
     return sub_energy, punch
 
 
+# Mindestmaterial fuer eine belastbare Faltung, in Takten. Unter 8 Takten
+# traegt jeder Slot nur eine Handvoll Ereignisse; ein einzelner Fill oder ein
+# ausgelassener Kick verschiebt das Muster dann sichtbar. Bleibt nach der
+# Maskierung weniger uebrig, wird ueber das GESAMTE Fenster gefaltet: ein
+# Muster aus zu wenig Material ist schlechter als eines mit etwas Breakdown
+# darin.
+GROOVE_MIN_BARS = 8
+
+
+def _sektions_maske(
+    times: np.ndarray, bereiche: list[tuple[float, float]]
+) -> np.ndarray:
+    """Bool-Maske ueber die Frames, die in einen der Bereiche fallen."""
+    maske = np.zeros(len(times), dtype=bool)
+    for start_s, end_s in bereiche:
+        if end_s <= start_s:
+            continue
+        maske |= (times >= float(start_s)) & (times < float(end_s))
+    return maske
+
+
+def _mindest_frames(bpm: float, sr: int, hop_length: int) -> int:
+    """Frame-Zahl, die GROOVE_MIN_BARS Takten entspricht."""
+    bar_duration = (60.0 / bpm) * METER
+    return int(GROOVE_MIN_BARS * bar_duration * sr / hop_length)
+
+
 def extract_groove(
     y: np.ndarray,
     sr: int,
@@ -254,12 +284,20 @@ def extract_groove(
     first_downbeat: float,
     feature_cache=None,
     hop_length: int = GROOVE_HOP_LENGTH,
+    beat_sektionen: list[tuple[float, float]] | None = None,
 ) -> GrooveFeatures:
     """Extrahiert Rhythmusmuster und Bass-Kennwerte aus einem Signal.
 
     Nutzt den uebergebenen FeatureCache, wenn dessen Signal identisch ist —
     Onset und STFT sind die teuren Operationen und liegen dort meist schon
     vor (siehe Spec Abschnitt 5.4).
+
+    beat_sektionen: Bereiche (start_s, end_s) mit Beat. Ist die Liste
+    gesetzt, gehen nur Frames innerhalb dieser Bereiche in die FALTUNG ein
+    (Spec 5.1: ein Breakdown ohne Drums wuerde das Muster verwaessern).
+    Maskiert wird ueber die Frames, das Audio wird NICHT zusammengeschnitten:
+    ein Schnitt wuerde die Taktphase zerstoeren, waehrend die Maske die
+    Zeitachse absolut laesst und die Verankerung am first_downbeat erhaelt.
     """
     if y is None or len(y) == 0 or sr <= 0:
         return GrooveFeatures()
@@ -301,8 +339,31 @@ def extract_groove(
 
     sub_energy, punch, bass_env = _bass_kennwerte_aus_magnitude(magnitude, freqs)
 
-    groove_pattern = fold_to_bar(onset[:n], times[:n], bpm, first_downbeat)
-    bass_pattern = fold_to_bar(bass_env, times[:n], bpm, first_downbeat)
+    onset_f = np.asarray(onset[:n], dtype=float)
+    times_f = np.asarray(times[:n], dtype=float)
+    falt_bass = bass_env
+
+    if beat_sektionen:
+        maske = _sektions_maske(times_f, beat_sektionen)
+        genug = _mindest_frames(bpm, sr, hop_length)
+        if int(maske.sum()) >= genug:
+            onset_f = onset_f[maske]
+            falt_bass = np.asarray(falt_bass)[maske]
+            times_f = times_f[maske]
+        else:
+            logger.info(
+                "Groove: nur %d von %d Frames in Beat-Sektionen (Minimum %d "
+                "fuer %d Takte) — falte ueber das gesamte Fenster",
+                int(maske.sum()), len(times_f), genug, GROOVE_MIN_BARS,
+            )
+
+    # sub_energy und bass_punch bleiben bewusst auf dem GESAMTEN Fenster:
+    # sie sind das Trackmittel und dienen in transition_features als
+    # Rueckfallebene fuer die Sektionswerte an der Nahtstelle. Auf die
+    # Beat-Sektionen eingeschraenkt waeren sie kein Trackmittel mehr und
+    # nicht mehr mit den Sektionswerten vergleichbar.
+    groove_pattern = fold_to_bar(onset_f, times_f, bpm, first_downbeat)
+    bass_pattern = fold_to_bar(falt_bass, times_f, bpm, first_downbeat)
 
     return GrooveFeatures(
         groove_pattern=groove_pattern,

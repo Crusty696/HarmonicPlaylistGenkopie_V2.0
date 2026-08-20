@@ -191,6 +191,30 @@ def analyze_frequency_bands(
     t = b + m + h + 1e-6
     return round(b/t*100, 1), round(m/t*100, 1), round(h/t*100, 1)
 
+# Sektions-Label, die verlaesslich Drums tragen. Nur ueber diese wird das
+# Groove-Muster gefaltet (Spec 5.1) — ein Breakdown ohne Drums oder ein
+# Ambient-Intro wuerde das Muster sonst verwaessern.
+BEAT_SECTION_LABELS = ("main", "drop")
+
+
+def _beat_sektionen(sections: list | None) -> list[tuple[float, float]]:
+    """Sammelt die Zeitbereiche der Sektionen mit Beat."""
+    if not sections:
+        return []
+    bereiche = []
+    for sec in sections:
+        if not isinstance(sec, dict):
+            continue
+        if sec.get('label') not in BEAT_SECTION_LABELS:
+            continue
+        start_s = sec.get('start_time')
+        end_s = sec.get('end_time')
+        if start_s is None or end_s is None or end_s <= start_s:
+            continue
+        bereiche.append((float(start_s), float(end_s)))
+    return bereiche
+
+
 def compute_groove_fields(
     y: np.ndarray,
     sr: int,
@@ -198,6 +222,7 @@ def compute_groove_fields(
     first_downbeat: float,
     downbeat_confidence: float,
     feature_cache: FeatureCache | None = None,
+    sections: list | None = None,
 ) -> GrooveFeatures:
     """Groove-Features berechnen, aber nur auf belastbarem Taktraster.
 
@@ -217,7 +242,8 @@ def compute_groove_fields(
         return GrooveFeatures()
     try:
         return extract_groove(
-            y, sr, bpm, first_downbeat, feature_cache=feature_cache
+            y, sr, bpm, first_downbeat, feature_cache=feature_cache,
+            beat_sektionen=_beat_sektionen(sections),
         )
     except Exception as exc:  # Groove darf die Analyse nie kippen
         logger.warning(f"Groove-Extraktion fehlgeschlagen: {exc}")
@@ -1726,7 +1752,7 @@ def analyze_track(file_path: str) -> Track | None:
             # compute_groove_fields). y/sr sind hier das Fast-Path-Audio.
             groove = compute_groove_fields(
                 y, sr, rekordbox_data.bpm, first_downbeat, downbeat_confidence,
-                feature_cache=feature_cache,
+                feature_cache=feature_cache, sections=section_dicts,
             )
 
             # Update each section with detailed frequency and rhythm data
@@ -2165,7 +2191,7 @@ def analyze_track(file_path: str) -> Track | None:
             # compute_groove_fields).
             groove = compute_groove_fields(
                 y, sr, bpm, first_downbeat, downbeat_confidence,
-                feature_cache=feature_cache,
+                feature_cache=feature_cache, sections=section_dicts,
             )
         except Exception as e:
             logger.warning(f"Librosa-Phase-2 fehlgeschlagen: {e}")
