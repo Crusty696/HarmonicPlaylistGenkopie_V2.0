@@ -22,6 +22,26 @@ CAMELOT_MAP = {
 # in Track.sections liegen serialisierte Section-Dicts.
 
 
+# Toleranz, innerhalb derer ein Zeitpunkt als AUF dem Raster liegend gilt.
+#
+# WARUM: Sektionsgrenzen kommen gerundet aus der Analyse (zwei Nachkommastellen,
+# also bis zu 5 ms Fehler) und sind zusaetzlich frame-quantisiert (bei Hop 512
+# und 22050 Hz rund 23 ms). Liegt eine solche Grenze rechnerisch 3 ms HINTER
+# einem Rasterpunkt, schiebt `ceil` den Mixpunkt um eine GANZE Phrase nach
+# hinten — bei 16-Bar-Phrasen und 140 BPM sind das 27 Sekunden.
+#
+# Real gemessen (Paar 001 des Hoertests, 2026-08-20): Intro-Ende 82,29 s,
+# Raster 27,4286 s, drei Raster = 82,2867 s. Ueberschuss 0,0033 s ->
+# rel = 3,00012 -> ceil = 4 -> Mix-In 109,72 s statt 82,29 s, also mitten in
+# den Drop statt ans Intro-Ende.
+#
+# 50 ms ist bewusst gewaehlt: groesser als die Rundungs- und Frame-Fehler
+# oben, aber unter der hoerbaren Flam-Grenze von 1/8 Beat (54 ms bei 138 BPM,
+# siehe downbeat.py) — die Toleranz kann also keine echte Rastergrenze
+# ueberspringen, die ein Hoerer als Versatz wahrnaehme.
+QUANTIZE_TOLERANCE_SEC = 0.05
+
+
 def quantize_to_grid(
     t: float, grid: float, anchor: float = 0.0, mode: str = "round"
 ) -> float:
@@ -30,16 +50,23 @@ def quantize_to_grid(
     Downbeat-Feature 2026-07-17: das Takt-/Phrasen-Raster ist am ersten
     Downbeat verankert statt an t=0. Formel: (t - anchor)/grid quantisieren,
     dann + anchor. Bei anchor=0.0 bit-identisch zum bisherigen Verhalten.
+
+    `ceil` und `floor` arbeiten mit QUANTIZE_TOLERANCE_SEC Spielraum: ein
+    Zeitpunkt, der nur durch Rundungsrauschen knapp neben einem Rasterpunkt
+    liegt, wird als AUF dem Raster liegend behandelt statt eine volle Phrase
+    weit verschoben zu werden.
     """
     if grid <= 0:
         return t
     rel = (t - anchor) / grid
+    # Toleranz im Raster-Massstab: absolute Sekunden durch die Rasterbreite.
+    eps = QUANTIZE_TOLERANCE_SEC / grid
     if mode == "ceil":
         from math import ceil as _ceil
-        idx = _ceil(rel)
+        idx = _ceil(rel - eps)
     elif mode == "floor":
         from math import floor as _floor
-        idx = _floor(rel)
+        idx = _floor(rel + eps)
     else:
         idx = round(rel)
     return idx * grid + anchor

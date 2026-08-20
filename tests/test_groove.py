@@ -326,8 +326,23 @@ def test_track_hat_groove_felder_mit_defaults():
     assert t.bass_punch == 0.0
 
 
-def test_cache_version_ist_30():
-    assert CACHE_VERSION == 30
+def test_cache_version_traegt_die_groove_felder_und_steckt_im_dateinamen():
+    """Prueft die Wirkung des Bumps, nicht die Zahl.
+
+    Ein `assert CACHE_VERSION == 30` behauptete nur, eine Konstante sei
+    gleich sich selbst: es musste bei jedem Bump von Hand nachgezogen werden
+    und fing nichts. Entscheidend ist zweierlei — die Version darf nicht
+    unter den Stand fallen, ab dem die Groove-Felder existieren (30), und
+    sie muss im Dateinamen stehen, damit ein Bump wirklich eine neue
+    Datenbank erzeugt statt alte Zeilen weiterzulesen.
+    """
+    from hpg_core.caching import _resolve_cache_file
+
+    assert CACHE_VERSION >= 30
+    # Ohne Override (Produktivfall) muss die Version im Dateinamen stehen.
+    # Im Test setzt conftest HPG_CACHE_FILE auf einen Temp-Pfad, deshalb wird
+    # hier die Pfadbildung direkt geprueft statt der aufgeloeste CACHE_FILE.
+    assert f"hpg_cache_v{CACHE_VERSION}.db" in _resolve_cache_file("")
 
 
 def test_groove_wird_nur_bei_belastbarem_downbeat_berechnet():

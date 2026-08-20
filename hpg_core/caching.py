@@ -81,7 +81,13 @@ logger = logging.getLogger(__name__)
 # bass_pattern, syncopation, sub_energy, bass_punch) auf Track. Alte Rows
 # kennen diese Felder nicht, ein neuer Cache erzwingt Neuanalyse statt
 # stiller Default-Werte.
-CACHE_VERSION = 30
+# FIX 2026-08-20: 30 -> 31. quantize_to_grid arbeitet in "ceil"/"floor" jetzt
+# mit QUANTIZE_TOLERANCE_SEC Spielraum. Sektionsgrenzen kommen gerundet aus
+# der Analyse; lag eine Grenze 3 ms hinter einem Rasterpunkt, schob `ceil`
+# den Mix-In eine GANZE Phrase weiter (gemessen: 82,29 s -> 109,72 s, also
+# vom Intro-Ende mitten in den Drop). Alle gecachten Mixpunkte sind damit
+# neu zu berechnen.
+CACHE_VERSION = 31
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
