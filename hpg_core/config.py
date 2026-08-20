@@ -7,6 +7,11 @@ Centralizes all magic numbers and configurable parameters.
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)
 MAX_TRANSITION_OVERLAP_SECONDS = 64.0
+# Kuerzeste Blende in Takten. Unter diese Laenge wird nie gekuerzt — lieber
+# eine Blende, die ein Stueck ins Outro laeuft, als ein Uebergang, der zum
+# harten Schnitt zusammenfaellt. Gleiche Untergrenze wie in dj_brain
+# (`_dynamic_transition_bars`, `calculate_paired_mix_points`).
+MIN_TRANSITION_BARS = 8
 
 # === Intro/Outro Detection (RMS-Fallback, research-basiert 2026-07-17) ===
 # Suchfenster-Pruning nach Bittner et al. (ISMIR 2017, Spotify):

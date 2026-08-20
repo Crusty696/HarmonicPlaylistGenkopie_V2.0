@@ -18,6 +18,24 @@ Mix-In und Mix-Out Punkte koennen aktuell in Intro- oder Outro-Sektionen gesetzt
 > **Mix-Out-Point** muss VOR dem Beginn aller Outro-Sektionen liegen.
 > Keine Ausnahmen. Kein Genre-Override.
 
+Erweiterung 2026-08-21 — die Regel gilt fuer die BLENDE, nicht nur fuer den
+Punkt:
+
+> Auch das ENDE der Blende darf nicht im Outro liegen:
+> `mix_out_a + overlap <= outro_start_a`.
+
+Anlass: die Punkte hielten die Regel, die Blende nicht. Der Renderer laeuft
+ab dem Mix-Out vorwaerts (`transition_renderer.py:159-160`, `:322-324`),
+waehrend die Blendenlaenge aus dem Genre-Mittel kam und den Punkt gar nicht
+kannte. Gemessen an 160 gerenderten Uebergaengen lief die Blende in 109
+Faellen ins Outro von A (Median 17.3 s, max 48.5 s); die Intro-Seite war in
+0 von 280 Faellen verletzt.
+
+Umgesetzt in `_outro_overlap_limit` (`hpg_core/playlist.py`), angewandt in
+`_clamp_transition_overlap`. Zwei bewusste Grenzen der Regel: ohne erkanntes
+Outro greift sie nicht, und unter `MIN_TRANSITION_BARS` (8 Takte) Kopfraum
+wird nicht gekuerzt — dort waere die Alternative ein harter Schnitt.
+
 Nachtrag 2026-08-20 — eine bewusste Ausnahme: ein vom Nutzer BENANNTER
 Rekordbox-Cue ("MIX IN", "IN", "START") wird uebernommen, auch wenn er
 im Intro liegt. Er ist eine Entscheidung des Nutzers, der seinen Track

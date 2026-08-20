@@ -6,6 +6,7 @@ from .models import (
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
+    _get_outro_start_from_sections,
     get_genre_compatibility,
     generate_dj_recommendation,
 )
@@ -20,6 +21,7 @@ from .config import (
     METER,
     DEFAULT_BPM,
     MAX_TRANSITION_OVERLAP_SECONDS,
+    MIN_TRANSITION_BARS,
     TRANSITION_FEATURES_ENABLED,
 )
 from .tolerances import get_tolerances
@@ -1300,6 +1302,12 @@ def _clamp_transition_overlap(
     Uebergaengen auf overlap=0.0 geklemmt (Mittel 0.67 s statt 37 s), der
     Renderer bekam faktisch ueberall harte Schnitte und der overlap-Parameter
     blieb wirkungslos. Korrekt ist die Restdauer von B hinter dem Mix-In.
+
+    Dritte Fenstergrenze (2026-08-21): die Blende endet spaetestens am
+    Outro-Beginn von A, siehe `_outro_overlap_limit`. Sie gilt bewusst nur
+    unter ``limit_to_windows`` — der Zweig ohne Fensterlogik bedient alte
+    externe Recommendation-Shims, die keine belastbaren Sektionen mitbringen,
+    und behaelt den reinen 64-s-Deckel.
     """
     limits = [float(MAX_TRANSITION_OVERLAP_SECONDS)]
     if limit_to_windows:
@@ -1307,7 +1315,53 @@ def _clamp_transition_overlap(
             limits.append(max(0.0, float(current.duration) - current_mix_out))
         if upcoming.duration > 0:
             limits.append(max(0.0, float(upcoming.duration) - next_mix_in))
+        outro_limit = _outro_overlap_limit(current, current_mix_out)
+        if outro_limit is not None:
+            limits.append(outro_limit)
     return max(0.0, min(float(overlap), *limits))
+
+
+def _outro_overlap_limit(
+    current: Track, current_mix_out: float
+) -> Optional[float]:
+    """Laenge, die A hinter dem Mix-Out noch traegt — bis sein Outro beginnt.
+
+    Warum: der Mix-Out selbst liegt per Outro-Guard (dj_brain) immer VOR dem
+    Outro, die Blende laeuft aber vorwaerts ab diesem Punkt
+    (transition_renderer.py:159-160, 322-324) und damit ueber die Grenze
+    hinaus. Gemessen an 160 gerenderten Uebergaengen lief die Blende in 109
+    Faellen ins Outro von A, im Median 17.3 s, im schlimmsten Fall 48.5 s —
+    A duennt aus, waehrend er noch tragen soll.
+
+    Die Laenge kommt damit aus dem Material dieses Tracks statt aus dem
+    Genre-Mittel: gemessen ueber dieselben Uebergaenge liegt der Kopfraum im
+    Median bei 34.4 s (Psytrance 54.9 s) und streut von 0 bis 105 s.
+    Abgerundet wird auf ganze TAKTE, nicht auf Phrasen: Phrasen-Rundung warf
+    die Streuung wieder weg (simuliert: 49 von 120 Psy-Clips auf demselben
+    Wert), ganze Takte halten den Ausstieg trotzdem auf der Taktgrenze.
+
+    Rueckgabe None heisst "keine Grenze": kein erkanntes Outro, unbrauchbare
+    Werte, oder ein Kopfraum unter MIN_TRANSITION_BARS. Der letzte Fall ist
+    Absicht — dort waere die Alternative ein harter Schnitt.
+    """
+    sections = getattr(current, "sections", None)
+    duration = float(getattr(current, "duration", 0.0) or 0.0)
+    bpm = float(getattr(current, "bpm", 0.0) or 0.0)
+    if not sections or duration <= 0 or bpm <= 0:
+        return None
+
+    outro_start = _get_outro_start_from_sections(sections, duration)
+    # Kein Outro erkannt: die Funktion gibt dann die Trackdauer zurueck.
+    if outro_start >= duration:
+        return None
+
+    headroom = outro_start - float(current_mix_out)
+    seconds_per_bar = (60.0 / bpm) * METER
+    if seconds_per_bar <= 0:
+        return None
+    if headroom < MIN_TRANSITION_BARS * seconds_per_bar:
+        return None
+    return (headroom // seconds_per_bar) * seconds_per_bar
 
 
 def _handoff_pair_point_risks(
@@ -1706,7 +1760,14 @@ def compute_transition_recommendations(
         # Daten wird er spaeter genau einmal durch transition_bars ersetzt.
         transition_duration = effective_overlap
 
-        fade_out_start = max(0.0, current_mix_out - transition_duration)
+        # Die Blende laeuft VORWAERTS ab dem Mix-Out — genauso rendert sie der
+        # Renderer (transition_renderer.py:159-160: a_start = mix_out - pre_roll,
+        # a_dur = pre_roll + cf_sec; :322-324: a_cf = seg_a[pre_frames:]).
+        # Fix 2026-08-21: hier stand `current_mix_out - transition_duration`,
+        # also die Rueckwaerts-Konvention. Plan und Anzeige lagen damit um die
+        # volle Blendenlaenge neben dem, was tatsaechlich klang; in der GUI
+        # endete die Blende scheinbar am Mix-Out und lief nie ins Outro.
+        fade_out_start = current_mix_out
         fade_in_start = next_mix_in
         overlap = transition_duration
 
@@ -1764,7 +1825,7 @@ def compute_transition_recommendations(
             # reinen 64-s-Sicherheitsdeckel.
             limit_to_windows=dj_rec is None or has_dynamic_bar_source,
         )
-        fade_out_start = max(0.0, current_mix_out - overlap)
+        fade_out_start = current_mix_out
 
         if dj_rec is not None:
             dj_rec.overlap_seconds = overlap
@@ -1779,7 +1840,7 @@ def compute_transition_recommendations(
 
         # Empfehlung, Timeline und Renderer muessen dieselbe Dauer verwenden.
         overlap = min(float(overlap), MAX_TRANSITION_OVERLAP_SECONDS)
-        fade_out_start = max(0.0, current_mix_out - overlap)
+        fade_out_start = current_mix_out
 
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
         # has_dj_brain=True vermeidet doppelte BPM/Key-Warnungen
@@ -1806,11 +1867,19 @@ def compute_transition_recommendations(
             if current.bpm > 0 and upcoming.bpm > 0
             else 1.0
         )
+        # Ende der Blende, begrenzt auf das real vorhandene Audio von A. Ohne
+        # die Begrenzung koennte der Wert auf dem Pfad limit_to_windows=False
+        # (nur 64-s-Deckel) hinter die Trackdauer fallen und eine Blende
+        # anzeigen, die es nicht gibt.
+        fade_out_end = current_mix_out + overlap
+        if current.duration > 0:
+            fade_out_end = min(fade_out_end, float(current.duration))
+
         plan = TransitionPlan(
             mix_out_a=float(current_mix_out),
             mix_in_b=float(next_mix_in),
             fade_out_start=float(fade_out_start),
-            fade_out_end=float(current_mix_out),
+            fade_out_end=float(fade_out_end),
             overlap=float(overlap),
             transition_type=transition_type,
             eq_mode=transition_type,
@@ -1822,7 +1891,7 @@ def compute_transition_recommendations(
                 from_track=current,
                 to_track=upcoming,
                 fade_out_start=float(fade_out_start),
-                fade_out_end=float(current_mix_out),
+                fade_out_end=float(fade_out_end),
                 fade_in_start=float(fade_in_start),
                 mix_entry=float(next_mix_in),
                 overlap=float(overlap),

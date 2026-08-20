@@ -4,7 +4,14 @@ Prueft ob Uebergangsempfehlungen DJ-taugliche Werte liefern.
 """
 from types import SimpleNamespace
 
-from hpg_core.playlist import compute_set_timeline, compute_transition_recommendations
+import pytest
+
+from hpg_core.playlist import (
+  _clamp_transition_overlap,
+  _outro_overlap_limit,
+  compute_set_timeline,
+  compute_transition_recommendations,
+)
 from hpg_core.transition_renderer import TransitionClipSpec
 from tests.fixtures.track_factories import make_track
 
@@ -87,7 +94,16 @@ class TestRecommendationFields:
     spec = TransitionClipSpec.from_plan(rec.plan, rec.from_track, rec.to_track)
     timeline = compute_set_timeline(pair, transition_plans=[rec.plan])
 
-    assert spec.mix_out_sec == rec.plan.mix_out_a == rec.fade_out_end
+    # Die Blende laeuft vorwaerts ab dem Mix-Out (Renderer:
+    # transition_renderer.py:159-160/:322-324) — der Mix-Out ist also ihr
+    # START. Bis 2026-08-21 stand hier fade_out_end; das hielt die
+    # Rueckwaerts-Konvention aus playlist.py fest, die dem Renderer
+    # widersprach und in der GUI eine Blende zeigte, die vor dem Mix-Out
+    # endete.
+    assert spec.mix_out_sec == rec.plan.mix_out_a == rec.fade_out_start
+    assert rec.fade_out_end == pytest.approx(
+        min(rec.fade_out_start + rec.overlap, rec.from_track.duration)
+    )
     assert spec.mix_in_sec == rec.plan.mix_in_b == rec.mix_entry
     assert spec.crossfade_sec == rec.plan.overlap == rec.overlap
     assert rec.plan.crossfade_frames == round(rec.plan.overlap * rec.plan.target_sr)
@@ -166,7 +182,7 @@ class TestTimingValues:
     assert rec.dj_rec is not None
     # Der interne Timing-Vertrag bleibt ungerundet; gerundet wird erst in
     # Anzeige-/Exportpfaden.
-    assert rec.fade_out_end == rec.dj_rec.adjusted_mix_out_a
+    assert rec.fade_out_start == rec.dj_rec.adjusted_mix_out_a
     assert rec.mix_entry == rec.dj_rec.adjusted_mix_in_b
 
 
@@ -292,3 +308,68 @@ class TestOverlapWindowClamp:
       tracks, bpm_tolerance=3.0, default_overlap=64.0
     )[0]
     assert rec.overlap <= 10.0 + 1e-6, f"Overlap {rec.overlap}s > Restdauer von B"
+
+
+# ---------------------------------------------------------------------------
+# Outro-Grenze der Blende (2026-08-21)
+#
+# Anlass, gemessen an 160 gerenderten Uebergaengen: die Blende lief bei 109
+# davon in das Outro von Track A, im Median 17.3 s. Der Mix-Out selbst liegt
+# per dj_brain-Guard immer VOR dem Outro — die Blende laeuft aber vorwaerts
+# ab diesem Punkt darueber hinaus.
+# ---------------------------------------------------------------------------
+
+class TestOutroOverlapLimit:
+
+  def _track(self, bpm=120.0, duration=420.0, outro_start=360.0, sections=True):
+    return make_track(
+      camelotCode="8A", bpm=bpm, duration=duration, energy=70,
+      mix_in_point=60.0, mix_out_point=outro_start - 60.0,
+      sections=_sections(outro_start=outro_start, duration=duration) if sections else [],
+    )
+
+  def test_blende_endet_spaetestens_am_outro(self):
+    """Kernaussage: Mix-Out + Blende laeuft nicht ueber den Outro-Beginn."""
+    track = self._track(bpm=120.0, outro_start=360.0)
+    mix_out = 300.0                      # 60 s Kopfraum = 30 Takte bei 120 BPM
+    grenze = _outro_overlap_limit(track, mix_out)
+    assert grenze is not None
+    assert mix_out + grenze <= 360.0 + 1e-9
+
+  def test_grenze_liegt_auf_ganzen_takten(self):
+    """Ganze Takte, nicht ganze Phrasen — sonst kollabiert die Streuung."""
+    track = self._track(bpm=120.0, outro_start=360.0)
+    sekunden_pro_takt = (60.0 / 120.0) * 4          # 2.0 s
+    grenze = _outro_overlap_limit(track, 301.0)     # 59 s Kopfraum
+    # 29 volle Takte. Auf Phrasen gerundet (8 Takte = 16 s bei 120 BPM) waeren
+    # es 48.0 — genau die Vergroeberung, die die Streuung wieder wegwirft.
+    assert grenze == pytest.approx(58.0)
+    assert (grenze / sekunden_pro_takt) % 1 == pytest.approx(0.0)
+
+  def test_kurzer_kopfraum_wird_nicht_gekuerzt(self):
+    """Unter 8 Takten lieber ins Outro laufen als harter Schnitt."""
+    track = self._track(bpm=120.0, outro_start=360.0)
+    # 10 s Kopfraum = 5 Takte, unter MIN_TRANSITION_BARS
+    assert _outro_overlap_limit(track, 350.0) is None
+
+  def test_ohne_erkanntes_outro_keine_grenze(self):
+    track = self._track(sections=False)
+    assert _outro_overlap_limit(track, 100.0) is None
+
+  def test_unbrauchbare_werte_ergeben_keine_grenze(self):
+    assert _outro_overlap_limit(self._track(bpm=0.0), 100.0) is None
+    assert _outro_overlap_limit(self._track(duration=0.0), 100.0) is None
+
+  def test_klemme_wendet_die_outro_grenze_an(self):
+    a = self._track(bpm=120.0, duration=420.0, outro_start=360.0)
+    b = self._track(bpm=120.0, duration=420.0, outro_start=360.0)
+    gekuerzt = _clamp_transition_overlap(64.0, a, b, 320.0, 60.0)
+    assert gekuerzt == pytest.approx(40.0)   # 40 s Kopfraum, 20 volle Takte
+
+  def test_klemme_ohne_fenster_ignoriert_die_outro_grenze(self):
+    """limit_to_windows=False ist der Pfad ohne Fensterlogik — dort gilt nur der Deckel."""
+    a = self._track(bpm=120.0, outro_start=360.0)
+    b = self._track(bpm=120.0, outro_start=360.0)
+    assert _clamp_transition_overlap(
+      64.0, a, b, 320.0, 60.0, limit_to_windows=False
+    ) == pytest.approx(64.0)
