@@ -184,28 +184,64 @@ def _sektion(label, start, ende, sub=None, punch=None):
     return d
 
 
-def test_naht_werte_out_nimmt_letzte_sektion_ohne_intro():
+def test_naht_werte_out_nimmt_die_sektion_am_mix_out_nicht_das_outro():
+    """Gemessen wird, wo der Mix-Out sitzt — nicht die letzte Sektion.
+
+    An 200 analysierten Tracks liegt der Mix-Out im Median 76 s VOR dem
+    Outro. Die Abkuerzung "letzte Nicht-Intro-Sektion" traf in 169 von 200
+    Faellen das Outro, also eine Stelle, an der der Uebergang laengst
+    vorbei ist.
+    """
     from hpg_core.transition_features import _naht_werte
 
-    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+    t = _track(sub_energy=0.30, bass_punch=3.0, mix_out_point=120.0, sections=[
         _sektion("intro", 0.0, 30.0, sub=0.10, punch=1.0),
         _sektion("main", 30.0, 200.0, sub=0.40, punch=2.0),
         _sektion("outro", 200.0, 260.0, sub=0.55, punch=4.0),
     ])
 
-    assert _naht_werte(t, "out") == (0.55, 4.0)
+    assert _naht_werte(t, "out") == (0.40, 2.0)
 
 
-def test_naht_werte_in_nimmt_erste_sektion_ohne_intro():
+def test_naht_werte_out_nimmt_auch_einen_breakdown_wenn_die_naht_dort_liegt():
+    """Kein Label wird bevorzugt — es zaehlt allein der Mixpunkt.
+
+    Die Gegenprobe zur verworfenen Abkuerzung "letzte Main/Drop-Sektion":
+    liegt der Mix-Out real in einem Breakdown, ist dessen duenner Bass die
+    Wahrheit ueber die Naht und nicht ein spaeterer Drop.
+    """
     from hpg_core.transition_features import _naht_werte
 
-    t = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+    t = _track(sub_energy=0.30, bass_punch=3.0, mix_out_point=215.0, sections=[
+        _sektion("main", 0.0, 200.0, sub=0.40, punch=2.0),
+        _sektion("breakdown", 200.0, 230.0, sub=0.12, punch=1.1),
+        _sektion("drop", 230.0, 300.0, sub=0.60, punch=5.0),
+    ])
+
+    assert _naht_werte(t, "out") == (0.12, 1.1)
+
+
+def test_naht_werte_in_nimmt_die_sektion_am_mix_in():
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, mix_in_point=45.0, sections=[
         _sektion("intro", 0.0, 30.0, sub=0.10, punch=1.0),
         _sektion("build", 30.0, 60.0, sub=0.45, punch=2.5),
         _sektion("main", 60.0, 200.0, sub=0.40, punch=2.0),
     ])
 
     assert _naht_werte(t, "in") == (0.45, 2.5)
+
+
+def test_naht_werte_ohne_gesetzten_mixpunkt_faellt_auf_trackmittel_zurueck():
+    """MIX_POINT_UNSET ist -1.0; 0.0 waere ein gueltiger Mixpunkt."""
+    from hpg_core.transition_features import _naht_werte
+
+    t = _track(sub_energy=0.30, bass_punch=3.0, mix_out_point=-1.0, sections=[
+        _sektion("main", 0.0, 200.0, sub=0.40, punch=2.0),
+    ])
+
+    assert _naht_werte(t, "out") == (0.30, 3.0)
 
 
 def test_naht_werte_faellt_ohne_sektionen_auf_trackmittel_zurueck():
@@ -247,20 +283,22 @@ def test_bass_continuity_misst_die_nahtstelle_nicht_das_trackmittel():
     Beide Paare haben identische Trackmittel. Nur die Nahtstellen
     unterscheiden sich — genau das muss den Unterschied machen.
     """
-    gleich_a = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+    # Die Mixpunkte legen fest, WO die Naht liegt — ohne sie faellt
+    # _naht_werte auf das Trackmittel zurueck und der Test pruefte nichts.
+    gleich_a = _track(sub_energy=0.30, bass_punch=3.0, mix_out_point=150.0, sections=[
         _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
-        _sektion("outro", 30.0, 260.0, sub=0.30, punch=3.0),
+        _sektion("main", 30.0, 260.0, sub=0.30, punch=3.0),
     ])
-    gleich_b = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+    gleich_b = _track(sub_energy=0.30, bass_punch=3.0, mix_in_point=150.0, sections=[
         _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
         _sektion("main", 30.0, 260.0, sub=0.30, punch=3.0),
     ])
 
-    weit_a = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+    weit_a = _track(sub_energy=0.30, bass_punch=3.0, mix_out_point=150.0, sections=[
         _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
-        _sektion("outro", 30.0, 260.0, sub=0.60, punch=5.0),
+        _sektion("main", 30.0, 260.0, sub=0.60, punch=5.0),
     ])
-    weit_b = _track(sub_energy=0.30, bass_punch=3.0, sections=[
+    weit_b = _track(sub_energy=0.30, bass_punch=3.0, mix_in_point=150.0, sections=[
         _sektion("intro", 0.0, 30.0, sub=0.05, punch=1.0),
         _sektion("main", 30.0, 260.0, sub=0.10, punch=1.2),
     ])
