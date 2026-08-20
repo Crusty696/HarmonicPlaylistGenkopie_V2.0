@@ -82,9 +82,18 @@ Rekordbox-Cues umging sie vollstaendig: bei unbeschrifteten Cues nimmt
 DJs setzen den typisch bei rund 30 s, also im Intro. Danach folgte nur
 `0 <= in < out <= duration`, kein Intro-Guard.
 
-Gemessen an 232 Tracks: **24 mit Mix-In im fuehrenden Intro**, bis 56,5 s
+Gemessen an 231 Tracks: **24 mit Mix-In im fuehrenden Intro**, bis 56,5 s
 tief, Median 29,0 s. Herkunft geprueft gegen die Rekordbox-Cues: **alle 24
 aus dem Heuristik-Zweig, kein einziger aus einem benannten Cue.**
+
+Nach der Neuanalyse zeigte sich, dass die Wirkung groesser ist: **35 von 231
+Tracks** haben einen anderen Mix-In als vorher. Die 11 zusaetzlichen hatten
+einen rohen Cue im Intro, den `align_ai_mix_points` per ceil auf die
+Intro-Kante hob — im Cache sahen sie deshalb sauber aus (Beispiel
+„Firedance": roher Cue 30,3 s bei Intro-Ende 34,0 s, gespeichert 34,0 s).
+Die Quantisierung kaschierte das Problem, sie behob es nicht. Wirkungs-
+nachweis: Mix-In im fuehrenden Intro **24 -> 0**, Mix-Out bei allen 231
+Tracks unveraendert.
 
 Der Guard gilt deshalb nur fuer die Heuristik. Ein benannter Cue
 (`MIX IN`, `IN`, `START`) bleibt unangetastet — der Nutzer kennt seinen
@@ -120,23 +129,24 @@ statt**. Das ist das Ergebnis der Analyse, nicht ihr Scheitern.
    `python tools/rate_transitions.py prepare --anzahl 160 --out <dir>`.
    Die Bewertungsseite schreibt inzwischen direkt in `bewertung.csv`
    (kleiner lokaler Server, liegt beim Clip-Satz).
-3. **Energy Wave ist BPM-blind.** `_sort_energy_wave` sortiert
-   ausschliesslich nach `track.energy`; der Parameter `bpm_tolerance` wird
-   nicht benutzt. Gemessen an einem Pool von 80 Tracks: bei breiter
-   BPM-Spanne (93-146) sind **63 %** der Nachbarpaare unmixbar
-   (Median-BPM-Differenz 10,0), Peak-Time 37 %. Bei engem Pool (137-141)
-   beide 0 %.
+3. **Energy Wave: BPM-Naehe eingezogen — erledigt.** Die Strategie
+   sortierte ausschliesslich nach `track.energy` und nahm `bpm_tolerance`
+   entgegen, ohne sie zu benutzen; gemessen an 80 Tracks mit 93-146 BPM
+   waren 63 % der Nachbarpaare unmixbar.
 
-   Eine Variante mit BPM-Nebenbedingung ist gemessen: dieselbe Wellenform,
-   aber der naechste Track wird unter den BPM-vertraeglichen Kandidaten der
-   gewuenschten Energierichtung gewaehlt. Ergebnis: unmixbar faellt von
-   63 % auf **14 %**, der Score steigt von 0,00 auf 0,66 — bei praktisch
-   unveraenderter Wellenform (77 statt 78 Richtungswechsel, Energie-
-   Spannweite in beiden Faellen 33 bis 100). Die Nebenbedingung kostet die
-   Strategie also nichts von ihrem Zweck.
+   Jetzt wird innerhalb der naechsten `ENERGY_WAVE_FENSTER = 8` Kandidaten
+   einer Seite nach BPM-Naehe gewaehlt. Der Wert ist eine Abwaegung, und die
+   Messung dazu steht im Code: freie Wahl haette 14 % unmixbar erreicht,
+   aber den Amplitudenaufbau der Welle zerstoert (Korrelation zwischen
+   Position und Abstand zur Startenergie faellt von 0,819 auf -0,071). Mit
+   Fenster 8 liegt sie bei 0,599 bis 0,742 je nach Pool, unmixbar bei
+   23-28 %.
 
-   Produktentscheidung des Nutzers: so lassen, die Nebenbedingung einziehen,
-   oder in der GUI warnen, wenn der Pool zu breit ist. Kein Code geaendert.
+   Die erste Fassung dieser Aenderung waehlte frei ueber die ganze Seite und
+   wurde verworfen, nachdem der Amplitudenaufbau gemessen war — die
+   urspruengliche Behauptung "die Wellenform bleibt erhalten" galt nur fuer
+   Alternation und Spannweite, nicht fuer den Verlauf.
+
 4. **Spiegelbildliche Luecke bei `cue_out` — gemessen, kein Handlungsbedarf.**
    `dedup_positions[-1]` hat am Track-Ende keinen Guard gegen `outro_start`.
    Gemessen an 231 Tracks: **0** haben einen Mix-Out im Outro, Invariante 1

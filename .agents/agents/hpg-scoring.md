@@ -21,10 +21,13 @@ ueber Funktionskoerper fuehrt in die Irre. In dieser Codebasis wurde deshalb
 schon behauptet, nur zwei von acht Strategien nutzten die erweiterte Funktion
 — es sind sechs.
 
-Nicht alle Strategien nutzen dieselbe Zielfunktion. Energy Wave nutzt gar
-keine, Context Flow bewusst nur die Harmonik, damit `genre_weight=0` wirklich
-genre-neutral bedeutet. Das steht als Begruendung im Code und ist kein
-Versehen.
+Nicht alle Strategien nutzen dieselbe Zielfunktion. Energy Wave nutzt keine
+Kompatibilitaetsfunktion, seit 2026-08-20 aber die BPM-Naehe als Praeferenz
+innerhalb eines Fensters (`ENERGY_WAVE_FENSTER`). Vorher war es reine
+Energiesortierung — gemessen an 80 Tracks mit 93-146 BPM waren dadurch 63 %
+der Nachbarpaare unmixbar. Context Flow nutzt bewusst nur die Harmonik, damit
+`genre_weight=0` wirklich genre-neutral bedeutet; das steht als Begruendung
+im Code und ist kein Versehen.
 
 ## HPG-001
 

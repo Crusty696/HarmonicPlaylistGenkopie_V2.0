@@ -5,7 +5,9 @@ Prueft ob jede Strategie korrekt sortiert und keine Tracks verliert.
 import pytest
 from hpg_core.playlist import (
   generate_playlist, STRATEGIES, STRATEGY_ALIASES, _sort_harmonic_flow,
+  _sort_energy_wave, ENERGY_WAVE_FENSTER,
 )
+from hpg_core.models import effective_bpm_diff
 from tests.fixtures.track_factories import (
   make_track, make_house_track, make_dj_set,
 )
@@ -301,3 +303,132 @@ class TestDuplicateTrackReferences:
     tracks = list(base) + list(base[:3])
     result = generate_playlist(tracks, strategy, bpm_tolerance=3.0)
     assert len(result) == len(tracks)
+
+
+class TestEnergyWaveBpmNaehe:
+  """Energy Wave beruecksichtigt seit 2026-08-20 die BPM-Naehe.
+
+  Vorher sortierte die Strategie ausschliesslich nach `track.energy` und
+  nahm `bpm_tolerance` entgegen, ohne sie zu benutzen: an einem Pool von 80
+  Tracks mit 93-146 BPM waren dadurch 63 % der Nachbarpaare unmixbar. Vor
+  dieser Klasse gab es KEINEN Test, der die Reihenfolge von Energy Wave
+  geprueft haette — ein Rueckbau waere lautlos geblieben.
+  """
+
+  def _wellen_pool(self, anzahl=10):
+    """Energie und BPM absichtlich gegenlaeufig: wer nur nach Energie
+    sortiert, springt zwangslaeufig durch das ganze BPM-Feld.
+
+    Jeder Track bekommt einen EIGENEN filePath — Track vergleicht sich ueber
+    track_id (den Pfad), und die Fixture vergibt sonst fuer alle denselben.
+    """
+    return [
+      make_track(
+        camelotCode="8A",
+        bpm=128.0 if i % 2 == 0 else 140.0,
+        energy=(i + 1) * (100 // anzahl),
+        title=f"T{i}",
+        filePath=f"/test/wave_{i}.mp3",
+      )
+      for i in range(anzahl)
+    ]
+
+  def _mittlerer_bpm_sprung(self, ordnung):
+    spruenge = [
+      effective_bpm_diff(a.bpm, b.bpm)[0] for a, b in zip(ordnung, ordnung[1:])
+    ]
+    return sum(spruenge) / len(spruenge)
+
+  def test_bpm_spruenge_werden_kleiner(self):
+    """Der Kern der Aenderung.
+
+    Die Schwelle ist so gesetzt, dass das ALTE Verhalten durchfaellt: mit
+    Fenster 1 liegt der mittlere Sprung an diesem Pool bei 6,67, mit dem
+    aktuellen Fenster bei 1,33. Eine grosszuegigere Schwelle (etwa 12) waere
+    wirkungslos — sie bestuende auch bei reiner Energiesortierung.
+    """
+    ordnung = _sort_energy_wave(self._wellen_pool(), 3.0)
+    assert self._mittlerer_bpm_sprung(ordnung) < 3.0
+
+  def test_altes_verhalten_faellt_durch(self, monkeypatch):
+    """Gegenprobe: mit Fenster 1 ist die Strategie wieder BPM-blind.
+
+    Ohne diesen Test laesst sich nicht unterscheiden, ob die Schwelle oben
+    die Aenderung misst oder ohnehin gilt.
+    """
+    import hpg_core.playlist as pl
+    monkeypatch.setattr(pl, "ENERGY_WAVE_FENSTER", 1)
+    ordnung = pl._sort_energy_wave(self._wellen_pool(), 3.0)
+    assert self._mittlerer_bpm_sprung(ordnung) > 3.0
+
+  def test_kein_track_geht_verloren(self):
+    pool = self._wellen_pool()
+    ordnung = _sort_energy_wave(list(pool), 3.0)
+    assert len(ordnung) == len(pool)
+    assert {t.title for t in ordnung} == {t.title for t in pool}
+
+  def test_welle_beginnt_in_der_mitte(self):
+    """Die Dramaturgie bleibt: Start bei mittlerer Energie, dann wachsende
+    Ausschlaege. Wird das aufgegeben, ist es keine Welle mehr."""
+    pool = self._wellen_pool()
+    ordnung = _sort_energy_wave(list(pool), 3.0)
+    energien = [t.energy for t in ordnung]
+    start = energien[0]
+    assert min(energien) < start < max(energien)
+    # Der Abstand zur Startenergie waechst ueber die Position
+    abstaende = [abs(e - start) for e in energien]
+    erste_haelfte = sum(abstaende[: len(abstaende) // 2])
+    zweite_haelfte = sum(abstaende[len(abstaende) // 2 :])
+    assert zweite_haelfte > erste_haelfte
+
+  def test_energie_alterniert(self):
+    pool = self._wellen_pool()
+    ordnung = _sort_energy_wave(list(pool), 3.0)
+    energien = [t.energy for t in ordnung]
+    richtungen = [
+      1 if b > a else -1 for a, b in zip(energien, energien[1:])
+    ]
+    wechsel = sum(1 for a, b in zip(richtungen, richtungen[1:]) if a != b)
+    # Bei alternierender Auswahl wechselt die Richtung fast jeden Schritt
+    assert wechsel >= len(richtungen) - 3
+
+  def test_fenster_ist_gesetzt_und_plausibel(self):
+    """1 waere das alte Verhalten, sehr grosse Werte zerstoeren die Welle."""
+    assert 2 <= ENERGY_WAVE_FENSTER <= 16
+
+  def test_freie_wahl_wuerde_den_aufbau_zerstoeren(self, monkeypatch):
+    """Der Grund fuer das Fenster, an einem Pool der gross genug ist.
+
+    Die Welle soll vom Zentrum aus immer weiter ausschlagen. Gemessen als
+    Korrelation zwischen Position und Abstand zur Startenergie. Bei freier
+    Wahl ueber die ganze Seite bricht dieser Aufbau zusammen — genau
+    deshalb ist ENERGY_WAVE_FENSTER begrenzt und nicht unendlich.
+    """
+    import hpg_core.playlist as pl
+
+    def aufbau(fenster):
+      monkeypatch.setattr(pl, "ENERGY_WAVE_FENSTER", fenster)
+      ordnung = pl._sort_energy_wave(self._wellen_pool(anzahl=40), 3.0)
+      energien = [float(t.energy) for t in ordnung]
+      abstaende = [abs(e - energien[0]) for e in energien]
+      n = len(abstaende)
+      mittel_pos = (n - 1) / 2
+      mittel_ab = sum(abstaende) / n
+      zaehler = sum((i - mittel_pos) * (a - mittel_ab)
+                    for i, a in enumerate(abstaende))
+      nenner = (sum((i - mittel_pos) ** 2 for i in range(n)) ** 0.5
+                * sum((a - mittel_ab) ** 2 for a in abstaende) ** 0.5)
+      return zaehler / nenner if nenner else 0.0
+
+    mit_fenster = aufbau(ENERGY_WAVE_FENSTER)
+    frei = aufbau(10_000)
+    assert mit_fenster > frei
+    assert mit_fenster > 0.3
+
+  def test_kurze_listen_unveraendert(self):
+    zwei = [
+      make_track(camelotCode="8A", bpm=128.0, energy=30, title="A"),
+      make_track(camelotCode="8A", bpm=140.0, energy=70, title="B"),
+    ]
+    assert [t.title for t in _sort_energy_wave(zwei, 3.0)] == ["A", "B"]
+    assert _sort_energy_wave([], 3.0) == []

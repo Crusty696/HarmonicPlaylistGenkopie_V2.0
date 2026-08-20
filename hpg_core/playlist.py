@@ -881,10 +881,55 @@ def _prepare_track_metrics(
     return metrics
 
 
+# Energy Wave waehlt innerhalb der naechsten ENERGY_WAVE_FENSTER Kandidaten
+# einer Seite nach BPM-Naehe. 1 waere exakt das alte Verhalten (immer der
+# zentrumsnaechste), unendlich waere freie Wahl ueber die ganze Seite.
+#
+# Der Wert ist eine Abwaegung zwischen zwei Zielen der Strategie, gemessen an
+# den ersten 80 Tracks des Cache-Stands v32 (93-146 BPM). Am spaeteren Stand
+# v33 ergibt dasselbe Fenster 28 % unmixbar bei Amplitude 0.742 — andere
+# Trackauswahl, gleiche Richtung:
+#
+#   Fenster   unmixbare Nachbarpaare   Amplitudenaufbau
+#         1            63 %                  0.819   (= altes Verhalten)
+#         2            49 %                  0.773
+#         5            41 %                  0.740
+#         8            23 %                  0.599
+#      frei            14 %                 -0.071   (Aufbau vollstaendig weg)
+#
+# "Unmixbar" heisst overall_score == 0 wegen des BPM-Hard-Gates.
+# "Amplitudenaufbau" ist die Korrelation zwischen Position und Abstand zur
+# Startenergie: die Welle soll vom Zentrum aus immer weiter ausschlagen.
+# Freie Wahl macht die Uebergaenge am besten mixbar, zerstoert aber genau
+# diese Dramaturgie — deshalb das Fenster statt freier Wahl.
+ENERGY_WAVE_FENSTER = 8
+
+
 def _sort_energy_wave(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
-    """Create a wave-like journey that alternates between higher and lower energy tracks."""
+    """Wellenfoermige Reise: abwechselnd hoehere und niedrigere Energie,
+    vom Zentrum aus mit wachsendem Ausschlag.
+
+    Die Reihenfolge der Seiten und der wachsende Ausschlag sind unveraendert.
+    Neu ist nur die AUSWAHL innerhalb einer Seite: statt immer den
+    zentrumsnaechsten Track zu nehmen, wird unter den naechsten
+    ENERGY_WAVE_FENSTER Kandidaten der mit der kleinsten effektiven
+    BPM-Differenz zum zuletzt gesetzten Track gewaehlt.
+
+    Anlass: die Strategie nahm `bpm_tolerance` entgegen und benutzte sie nie.
+    Gemessen an 80 Tracks mit 93-146 BPM waren dadurch 63 % der Nachbarpaare
+    unmixbar (Median-BPM-Differenz 10,0) — zum Vergleich liegen Harmonic
+    Flow, Warm-Up, Cool-Down und Consistent bei 2-5 %. Bei einem engen Pool
+    (137-141 BPM) trat das Problem nicht auf; es trifft, wer die Strategie
+    auf einen gemischten Bestand anwendet.
+
+    Kein Hard-Gate, sondern eine Praeferenz: es wird immer der BPM-naechste
+    Kandidat des Fensters genommen, ohne Schwellenvergleich. Ein Gate wuerde
+    die Welle abbrechen lassen, sobald eine Seite erschoepft ist, und die
+    Strategie hat keine Zielfunktion, auf die sie ausweichen koennte.
+    `bpm_tolerance` bleibt deshalb ungenutzt — die Naehe entscheidet.
+    """
     if not tracks:
         return []
 
@@ -896,21 +941,37 @@ def _sort_energy_wave(
     center_index = (count - 1) // 2
     result: list[Track] = [ordered_by_energy[center_index]]
 
-    left = center_index - 1
-    right = center_index + 1
+    # Zentrumsnaechster Kandidat steht in beiden Listen vorne
+    nach_unten = list(reversed(ordered_by_energy[:center_index]))
+    nach_oben = ordered_by_energy[center_index + 1:]
     take_high = True
 
-    while left >= 0 or right < count:
-        if take_high and right < count:
-            result.append(ordered_by_energy[right])
-            right += 1
-        elif left >= 0:
-            result.append(ordered_by_energy[left])
-            left -= 1
-        else:
-            # If no left values remain, continue with the right side
-            result.append(ordered_by_energy[right])
-            right += 1
+    while nach_unten or nach_oben:
+        seite = nach_oben if (take_high and nach_oben) else (
+            nach_unten if nach_unten else nach_oben
+        )
+        if not seite:
+            break
+        aktuell = result[-1]
+        grenze = min(len(seite), max(1, ENERGY_WAVE_FENSTER))
+        # Ueber den INDEX waehlen, nicht ueber den Wert: Track vergleicht
+        # sich ueber `track_id`, also den normalisierten Dateipfad
+        # (models.py, `__eq__`). Zwei Objekte mit demselben Pfad sind gleich,
+        # unabhaengig von BPM und Energie. `list.remove(track)` entfernte
+        # deshalb den erstbesten Treffer statt des gewaehlten — im Test mit
+        # der Fixture `make_track`, die allen Tracks denselben Default-Pfad
+        # gibt, verschwanden dadurch Tracks aus der Playlist.
+        #
+        # Tie-Break bewusst gegen den ZULETZT GESETZTEN Track, nicht gegen das
+        # Zentrum: bei gleicher BPM-Naehe gewinnt der sanftere Energiesprung.
+        index = min(
+            range(grenze),
+            key=lambda i: (
+                effective_bpm_diff(aktuell.bpm, seite[i].bpm)[0],
+                abs(seite[i].energy - aktuell.energy),
+            ),
+        )
+        result.append(seite.pop(index))
         take_high = not take_high
 
     return result
