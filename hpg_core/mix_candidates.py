@@ -279,9 +279,11 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             ph = _phrase_at(phrases, k.t)
             k.phrase_label = ph["label"] if ph else ""
         if len(kandidaten) > KANDIDATEN_MAX_JE_SEITE:
-            # Tiebreak explizit ueber die Zeit (frueher = zuerst), nicht ueber
-            # die Einfuegereihenfolge
-            kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema), k.t))
+            # Tiebreak explizit ueber die Zeit, nicht ueber die Einfuegereihenfolge.
+            # In: frueh zuerst, Out: spaet zuerst — der Tiebreak folgt der
+            # musikalischen Rolle der Seite (Out-Punkte nahe am Outro ueberleben).
+            t_richtung = 1.0 if seite == "in" else -1.0
+            kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema), t_richtung * k.t))
             kandidaten = kandidaten[:KANDIDATEN_MAX_JE_SEITE]
         kandidaten.sort(key=lambda k: k.t)
         if 0 < len(kandidaten) < KANDIDATEN_MIN_JE_SEITE:
@@ -386,8 +388,10 @@ def _neuheit(y_vor, y_nach, sr, fc_vor, fc_nach) -> float | None:
     from .analysis import generate_timbre_fingerprint
     if y_vor is None or y_nach is None or len(y_vor) < sr or len(y_nach) < sr:
         return None
-    d_v = len(librosa.onset.onset_detect(y=y_vor, sr=sr, units="frames")) / (len(y_vor) / sr)
-    d_n = len(librosa.onset.onset_detect(y=y_nach, sr=sr, units="frames")) / (len(y_nach) / sr)
+    # Onset-Huellkurve aus dem FeatureCache (Standard-Hop 512 = librosa-Default
+    # von onset_detect), statt y ein zweites Mal zu analysieren
+    d_v = len(librosa.onset.onset_detect(onset_envelope=fc_vor.get_onset_strength(), sr=sr, units="frames")) / (len(y_vor) / sr)
+    d_n = len(librosa.onset.onset_detect(onset_envelope=fc_nach.get_onset_strength(), sr=sr, units="frames")) / (len(y_nach) / sr)
     rhythmus = abs(d_n - d_v) / max(d_n, d_v, 1e-9)
     laut = float(np.clip(abs(_rms_db(y_nach) - _rms_db(y_vor)) / NEUHEIT_LAUT_DB, 0.0, 1.0))
     fp_v = generate_timbre_fingerprint(y_vor, sr, fc_vor)
@@ -448,6 +452,10 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
                           "key_mode": mode})
     except Exception as exc:
         logger.warning("Harmonie lokal: %s", exc)
+    # Ein FeatureCache je Haelfte: traegt_allein (Groove auf y_nach) und
+    # _neuheit teilen sich STFT/Onset statt sie doppelt zu rechnen.
+    fc_v = FeatureCache(y_vor, sr) if len(y_vor) >= sr else None
+    fc_n = FeatureCache(y_nach, sr) if len(y_nach) >= sr else None
     try:
         cand.bass_rms_dbfs = _bass_rms_dbfs(y, sr)
         sub, punch = bass_kennwerte(y, sr)
@@ -459,16 +467,14 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
             cand.syncopation_lokal = round(syncopation_from_pattern(g.bass_pattern or g.groove_pattern), 4)
             cand.kick_aktiv = _kick_aktiv(g.bass_pattern, cand.bass_rms_dbfs)
             # traegt_allein: Kick + Bass NACH t aktiv
-            if len(y_nach) >= sr:
-                g_n = extract_groove(y_nach, sr, bpm, first_downbeat - cand.t, feature_cache=None)
+            if fc_n is not None:
+                g_n = extract_groove(y_nach, sr, bpm, first_downbeat - cand.t, feature_cache=fc_n)
                 cand.traegt_allein = _kick_aktiv(g_n.bass_pattern, _bass_rms_dbfs(y_nach, sr))
                 if cand.traegt_allein is None:
                     cand.traegt_allein = False
     except Exception as exc:
         logger.warning("Bass/Groove lokal: %s", exc)
     try:
-        fc_v = FeatureCache(y_vor, sr) if len(y_vor) >= sr else None
-        fc_n = FeatureCache(y_nach, sr) if len(y_nach) >= sr else None
         if fc_v is not None and fc_n is not None:
             cand.neuheit = _neuheit(y_vor, y_nach, sr, fc_v, fc_n)
     except Exception as exc:

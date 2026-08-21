@@ -151,6 +151,19 @@ def test_kappung_auf_acht_mit_prioritaet():
     assert nur_auto and nur_auto[0] == 45.0 and nur_auto[-1] < 225.0
 
 
+def test_kappung_out_seite_behaelt_spaete_punkte():
+    cues = [{"t": float(t), "name": "", "typ": 0, "hot_cue": None, "provenance": "leer"} for t in range(35, 230, 10)]
+    ins, outs = collect_candidate_times(
+        seite_grid=[], sections=_sections(), phrases=[], cues=cues,
+        analyzer_in=60.0, analyzer_out=240.0, duration=300.0, grid_sec=15.0,
+        intro_end=30.0, outro_start=240.0, outro_covered=True, anchor=0.0,
+    )
+    nur_auto_out = [c.t for c in outs if c.schema == ["auto_cue"]]
+    assert nur_auto_out and nur_auto_out[-1] >= 195.0 and nur_auto_out[0] > 45.0   # spaete ueberleben, fruehe fallen
+    nur_auto_in = [c.t for c in ins if c.schema == ["auto_cue"]]
+    assert nur_auto_in and nur_auto_in[0] == 45.0                                   # In unveraendert: fruehe zuerst
+
+
 def _kick_track(tmp_path, bpm=128.0, sekunden=60.0, sr=22050, kick_ab=0.0, kick_bis=None):
     """Sinus-Kick (55 Hz, 120 ms) auf jeder Zaehlzeit + leises Rauschen; Kick nur in [kick_ab, kick_bis)."""
     n = int(sekunden * sr)
