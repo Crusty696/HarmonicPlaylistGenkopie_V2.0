@@ -473,14 +473,36 @@ _MIX_PROFILES_NORMALIZED = {k.casefold(): v for k, v in GENRE_MIX_PROFILES.items
 
 
 # Uebergangs-Toleranzen je Genre (Spec 2026-08-19, Abschnitt 9).
-# Die Gewichte summieren je Genre auf 1.0. Bis zur Kalibrierung aus echten
-# DJ-Mixen tragen alle Genres dieselben Startwerte.
+# Die Gewichte summieren je Genre auf 1.0. Bis zur Kalibrierung aus dem
+# Hoertest tragen alle Genres dieselben Startwerte.
+#
+# 2026-08-21: groove_weight 0.12 -> 0.30, verteilt aus harmonic (0.246 ->
+# 0.16), bpm/energy (0.157 -> 0.12) und genre (0.14 -> 0.12). Anlass: der
+# Nutzer hoert, dass die App Paare mit unpassendem Rhythmus waehlt; im
+# Hoertest war groove der staerkste Trenner (Spearman +0.53, n=84). Gemessen
+# an je einer Playlist aus 60 Psy- und 53 Progressive-Tracks (Harmonic Flow):
+#   Psytrance   Bestand:       groove-Median 0.90, 9 Uebergaenge <0.7, 40/59 Camelot>=80
+#               0.30 verteilt:               0.93, 4 Uebergaenge <0.7, 35/59
+#   Progressive Bestand:                     0.89, 10 <0.7, 31/52
+#               0.30 verteilt:               0.87,  7 <0.7, 33/52
+#   Melodic Techno (nur 23 Tracks, n=22 Uebergaenge — nicht robust):
+#               Bestand:                     0.86,  7 <0.7, 14/22, Harm-Med 80
+#               0.30 verteilt:               0.90,  3 <0.7,  7/22, Harm-Med 70
+#   Melodic Techno verliert damit die Haelfte der Camelot-Treffer. Das ist
+#   der gewaehlte Tausch, und das Genre war im Hoertest die Problemgruppe
+#   (36 Uebergaenge, keiner gut) — ob dort Tonart oder Rhythmus wichtiger
+#   ist, muessen die Noten zeigen. Die Tabelle ist je Genre ein eigener
+#   Dict; ein abweichender Eintrag braucht keine neue Mechanik.
+# "0.30 allein aus harmonic" (harmonic 0.066) gewann bei groove staerker,
+# kostete aber ein Drittel der guten Tonart-Uebergaenge (25/59 bzw. 23/52)
+# — fuer ein Werkzeug namens Harmonic Playlist Generator nicht vertretbar.
+# Startwert, kein bewiesener; die Hoertest-Noten ersetzen ihn.
 _TOLERANCE_DEFAULTS = {
-  "harmonic_weight": 0.246,
-  "bpm_weight": 0.157,
-  "energy_weight": 0.157,
-  "genre_weight": 0.140,
-  "groove_weight": 0.120,
+  "harmonic_weight": 0.160,
+  "bpm_weight": 0.120,
+  "energy_weight": 0.120,
+  "genre_weight": 0.120,
+  "groove_weight": 0.300,
   "bass_weight": 0.080,
   "timbre_weight": 0.050,
   "mood_weight": 0.050,

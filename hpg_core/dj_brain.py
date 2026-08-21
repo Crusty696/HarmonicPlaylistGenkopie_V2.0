@@ -539,9 +539,9 @@ def generate_dj_recommendation(
   pr_b = track_b.percussive_ratio
   rhythm_adv = ""
   if pr_a > 0.7 and pr_b > 0.7:
-      rhythm_adv = "Beide Tracks sehr perkussiv - Vorsicht vor Rhythmus-Salat, kurzen Übergang wählen"
+      rhythm_adv = "Beide Tracks sehr perkussiv - Vorsicht vor Rhythmus-Salat, kurzen Uebergang waehlen"
   elif pr_b < 0.3:
-      rhythm_adv = "Incoming Track sehr tonal - ideal für lange Filter-Blends"
+      rhythm_adv = "Incoming Track sehr tonal - ideal fuer lange Filter-Blends"
 
   # Konkrete Track-basierte Empfehlungen
 

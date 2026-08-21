@@ -1515,8 +1515,10 @@ class AdvancedParametersWidget(QWidget):
         self.genre_mixing = QCheckBox("Enable Genre Transitions")
         self.genre_mixing.setChecked(True)
         self.genre_mixing.setToolTip(
-            "Aktiviert: Genre-Aehnlichkeit fliesst in die Playlist-Sortierung ein\n"
-            "Deaktiviert: Genre wird ignoriert, nur BPM/Key/Energy zaehlen"
+            "Aktiviert: die Strategie Genre Flow sortiert nach Genre-Naehe\n"
+            "Deaktiviert: Genre Flow faellt auf Harmonic Flow zurueck.\n"
+            "Die Genre-Aehnlichkeit geht in beiden Faellen in den\n"
+            "Uebergangs-Score ein — dieser Schalter aendert nur die Sortierung."
         )
         genre_layout.addWidget(self.genre_mixing)
 
@@ -1557,7 +1559,7 @@ class AdvancedParametersWidget(QWidget):
 
         self.transition_weight_sliders = {}
         for schluessel, label, start in (
-            ("groove_weight", "Groove", 12),
+            ("groove_weight", "Groove", 30),
             ("bass_weight", "Bassdruck", 8),
             ("timbre_weight", "Klangfarbe", 5),
             ("mood_weight", "Stimmung", 5),
@@ -1581,9 +1583,16 @@ class AdvancedParametersWidget(QWidget):
         self.transition_weight_status.setStyleSheet("font-size: 11px;")
         weight_layout.addWidget(self.transition_weight_status)
 
-        reset_button = QPushButton("Auf gelernte Werte zuruecksetzen")
+        reset_button = QPushButton("Eigene Werte verwerfen")
         reset_button.clicked.connect(self._on_transition_weights_reset)
         weight_layout.addWidget(reset_button)
+
+        # Regler aus dem wirksamen Stand befuellen — sonst zeigen sie die
+        # hartkodierten Startwerte, waehrend real andere Gewichte gelten, und
+        # der erste Klick schreibt einen ganz anderen Zustand (siehe
+        # _lade_transition_regler). Bis 2026-08-21 wurde das nur im
+        # Reset-Handler gerufen, nie beim Aufbau.
+        self._lade_transition_regler()
 
         layout.addWidget(weight_group)
 
@@ -1623,14 +1632,20 @@ class AdvancedParametersWidget(QWidget):
         )
 
     def _on_transition_weights_reset(self) -> None:
-        """Verwirft die eigenen Regler-Werte und stellt die gelernten her.
+        """Verwirft die eigenen Regler-Werte; danach gilt wieder der Stand
+        aus Code und mitgelieferter Datei.
 
         WICHTIG: hier darf NICHT geschrieben werden. Die Override-Datei
-        liegt in der Ladekette UEBER den mitgelieferten, aus echten DJ-Mixen
-        gelernten Werten. Wer beim Zuruecksetzen Defaults schreibt, verdeckt
-        die gelernten Werte dauerhaft — der Knopf taete dann das Gegenteil
-        seiner Beschriftung. Richtig ist: Override loeschen, Cache verwerfen,
-        Regler aus dem dann wirksamen Stand neu befuellen.
+        liegt in der Ladekette UEBER den mitgelieferten Werten. Wer beim
+        Zuruecksetzen schreibt, verdeckt die darunterliegende Stufe
+        dauerhaft. Richtig ist: Override loeschen, Cache verwerfen, Regler aus
+        dem dann wirksamen Stand neu befuellen.
+
+        Stand 2026-08-21: die mitgelieferte Datei
+        hpg_core/data/transition_tolerances.json ist leer ({}), gelernte
+        Werte gibt es noch nicht — wirksam sind die Defaults aus genres.py.
+        Der Knopf hiess bis dahin "Auf gelernte Werte zuruecksetzen" und
+        versprach damit etwas, das es nicht gab.
         """
         from hpg_core.tolerances import entferne_override, get_tolerances, reset_cache
 
@@ -1638,7 +1653,7 @@ class AdvancedParametersWidget(QWidget):
         reset_cache()
         self._lade_transition_regler()
         self.transition_weight_status.setText(
-            "Eigene Werte verworfen — die gelernten Gewichte sind wieder aktiv."
+            "Eigene Werte verworfen — die Standard-Gewichte sind wieder aktiv."
         )
 
     def _lade_transition_regler(self) -> None:

@@ -20,12 +20,19 @@ def _clear_tolerances_cache():
   reset_cache()
 
 
-def test_sliders_exist_with_default_start_values(qtbot):
+def test_sliders_exist_with_default_start_values(qtbot, monkeypatch, tmp_path):
+  # Seit 2026-08-21 befuellt der Aufbau die Regler aus dem wirksamen Stand
+  # (_lade_transition_regler). Ohne Isolierung laese der Test die echte
+  # Toleranz-Datei des Entwicklerrechners und waere rechnerabhaengig rot.
+  monkeypatch.setenv("HPG_TOLERANCES_FILE", str(tmp_path / "leer.json"))
+  from hpg_core.tolerances import reset_cache
+  reset_cache()
   widget = main.AdvancedParametersWidget()
   qtbot.addWidget(widget)
 
   sliders = widget.transition_weight_sliders
-  assert sliders["groove_weight"].value() == 12
+  # groove 30 statt 12: Default in genres.py angehoben (Begruendung dort).
+  assert sliders["groove_weight"].value() == 30
   assert sliders["bass_weight"].value() == 8
   assert sliders["timbre_weight"].value() == 5
   assert sliders["mood_weight"].value() == 5
@@ -98,7 +105,7 @@ def test_reset_button_restores_default_start_values(qtbot, monkeypatch, tmp_path
   widget._on_transition_weights_reset()
 
   sliders = widget.transition_weight_sliders
-  assert sliders["groove_weight"].value() == 12
+  assert sliders["groove_weight"].value() == 30
   assert sliders["bass_weight"].value() == 8
   assert sliders["timbre_weight"].value() == 5
   assert sliders["mood_weight"].value() == 5

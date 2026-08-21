@@ -24,7 +24,12 @@ from .config import (
     MIN_TRANSITION_BARS,
     TRANSITION_FEATURES_ENABLED,
 )
+from .genres import CANONICAL_GENRES
 from .tolerances import get_tolerances
+
+# Fuer den Genre-Aufloesungs-Check in calculate_enhanced_compatibility:
+# derselbe casefold wie in dj_brain.get_genre_compatibility.
+_CANONICAL_CASEFOLD = frozenset(g.casefold() for g in CANONICAL_GENRES)
 from .transition_features import (
     bass_continuity,
     groove_match,
@@ -383,6 +388,29 @@ def calculate_enhanced_compatibility(
     if TRANSITION_FEATURES_ENABLED:
         # genre_a (abgehender Track) setzt den Kontext des Uebergangs.
         tol = get_tolerances(genre_a)
+        # Nicht aufgeloestes Genre: Gewicht halbieren. Der Altpfad tat das
+        # fuer "Unknown" ueber GENRE_WEIGHT_WITHOUT_DJ_BRAIN (0.1 statt 0.2);
+        # hier gilt es zusaetzlich fuer nicht-kanonische Tags wie "House",
+        # denen get_genre_compatibility denselben 0.5-Fallback gibt — auf
+        # vollem Gewicht verloeren zwei identische Tracks damit Punkte, die
+        # sie nicht verdienen (test_two_identical_tracks, gemessen:
+        # Altpfad 0.90, neuer Pfad ohne Halbierung 0.88, mit 0.93).
+        # combine_weighted renormiert auf die verbleibende Gewichtssumme.
+        # Vergleich casefold, weil get_genre_compatibility (dj_brain.py)
+        # Genres ebenfalls casefold aufloest — sonst bekaeme ein ID3-Tag
+        # "psytrance" den echten Matrix-Score bei halbiertem Gewicht.
+        genres_aufgeloest = (
+            has_dj_brain_genres
+            and genre_a.casefold() in _CANONICAL_CASEFOLD
+            and genre_b.casefold() in _CANONICAL_CASEFOLD
+        )
+        genre_tol_weight = (
+            tol["genre_weight"]
+            if genres_aufgeloest
+            else tol["genre_weight"] * (
+                GENRE_WEIGHT_WITHOUT_DJ_BRAIN / GENRE_WEIGHT_WITH_DJ_BRAIN
+            )
+        )
         groove_val = groove_match(track1, track2, genre_a)
         bass_val = bass_continuity(track1, track2, genre_a)
         timbre_val = timbre_match(track1, track2, genre_a)
@@ -402,7 +430,7 @@ def calculate_enhanced_compatibility(
                 "harmonic": tol["harmonic_weight"],
                 "bpm": tol["bpm_weight"],
                 "energy": tol["energy_weight"],
-                "genre": tol["genre_weight"],
+                "genre": genre_tol_weight,
                 "groove": tol["groove_weight"],
                 "bass": tol["bass_weight"],
                 "timbre": tol["timbre_weight"],
@@ -1671,6 +1699,15 @@ def _process_dj_brain_recommendations(
                 notes_parts.append(f"Energy: {dj_rec.energy_advice}")
             if getattr(dj_rec, "gain_advice", ""):
                 notes_parts.append(f"Gain: {dj_rec.gain_advice}")
+            # rhythm_advice wurde in dj_brain.py:537-544 berechnet und
+            # gesetzt, aber nie in die Notes uebernommen — das einzige
+            # GESETZTE advice-Feld, das fehlte (bass_match_advice fehlt auch,
+            # wird aber nirgends befuellt). Landet in der GUI wie "Gain:" in
+            # der grauen Meta-Zeile (main.py else-Zweig nach der
+            # Schluesselwortliste), nicht im DJ-Brain-Block; die Praefixliste
+            # dort anzufassen waere eine GUI-Aenderung.
+            if getattr(dj_rec, "rhythm_advice", ""):
+                notes_parts.append(f"Rhythmus: {dj_rec.rhythm_advice}")
 
             # DJ Brain Transition-Laenge uebernehmen
             if dj_rec.transition_bars > 0 and current.bpm > 0:

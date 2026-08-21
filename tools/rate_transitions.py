@@ -594,9 +594,10 @@ def _faktoren_vollstaendig(
 
     Die vier NEUEN Faktoren werden direkt aus `hpg_core.transition_features`
     geholt und nicht aus `TransitionMetrics` gelesen: die Metrik-Felder werden
-    nur bei TRANSITION_FEATURES_ENABLED befuellt, und das Flag steht in
-    hpg_core/config.py auf False — genau deshalb sind die Gewichte ja noch
-    ungemessen. Der direkte Weg liefert dieselben Werte, unabhaengig vom Flag.
+    nur bei TRANSITION_FEATURES_ENABLED befuellt. Der direkte Weg liefert
+    dieselben Werte, unabhaengig vom Flag — der Hoertest darf nicht davon
+    abhaengen, ob das Scoring die Faktoren gerade nutzt (Flag seit 2026-08-21
+    an, mit Startgewichten; die Noten sollen genau diese ersetzen).
     """
     genre_a = loese_genre_auf(track_a)
     werte = {

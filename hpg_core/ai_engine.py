@@ -109,15 +109,20 @@ def validate_ai_analysis(
         raise ValueError("KI-Mixpoints muessen endlich sein")
     if not 0.0 <= mix_in < mix_out <= float(track.duration):
         raise ValueError("KI-Mixpoints verletzen die Track-Grenzen")
-    if not getattr(track, "outro_covered", False):
-        raise ValueError("KI-Mix-Out ist ohne analysiertes Track-Ende unzulaessig")
+    # Ohne analysiertes Track-Ende ist der KI-Mix-Out nicht belastbar. Bis
+    # 2026-08-21 warf das das GESAMTE Ergebnis weg — auch sub_genre und
+    # moods, die in playlist.py (KI-Bonus) tatsaechlich wirken. Die Mixpunkte
+    # selbst liest kein Produktivpfad (sie sind "advisory", siehe
+    # docs/DATA_AND_VALIDATION_CONTRACT.md). Deshalb: nur die Mixpunkte
+    # verwerfen, den Rest durchlassen.
+    mixpunkte_gueltig = bool(getattr(track, "outro_covered", False))
 
     return {
         "sub_genre": data["sub_genre"].strip(),
         "moods": [mood.strip() for mood in moods],
         "description": data["description"].strip(),
-        "mix_in_time": mix_in,
-        "mix_out_time": mix_out,
+        "mix_in_time": mix_in if mixpunkte_gueltig else None,
+        "mix_out_time": mix_out if mixpunkte_gueltig else None,
         "_provenance": {
             "provider": provider,
             "model": model,

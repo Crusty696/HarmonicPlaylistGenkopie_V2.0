@@ -127,7 +127,14 @@ BPM_HALF_DOUBLE_PENALTY = 0.85  # Leichter Abzug fuer Half/Double Transitions (0
 # === Erweitertes Scoring: Groove/Bass/Timbre/Mood ===
 # Groove-/Bass-/Timbre-/Mood-Scoring (Spec 2026-08-19).
 # False = bit-identisches Verhalten zum Stand vor der Erweiterung.
-TRANSITION_FEATURES_ENABLED = False
+# True seit 2026-08-21 mit Startgewichten aus genres.py (groove 0.30) —
+# Begruendung und Messung dort. Bis dahin stand der Schalter aus, weil die
+# Kalibrierung aus fremden DJ-Mixen gescheitert war (Gewichtsbudget 0.012).
+# Im Acht-Faktoren-Pfad kommt das Genre-Gewicht aus der Toleranztabelle;
+# GENRE_WEIGHT_WITH/_WITHOUT_DJ_BRAIN wirken dort nur noch als VERHAELTNIS
+# (Halbierung bei unbekanntem Genre, siehe playlist.py
+# calculate_enhanced_compatibility), nicht mehr als Absolutwert.
+TRANSITION_FEATURES_ENABLED = True
 
 # === Logging & Debugging ===
 LOG_LEVEL = "INFO"  # Standard-Level: DEBUG, INFO, WARNING, ERROR (INFO fuer Produktion)

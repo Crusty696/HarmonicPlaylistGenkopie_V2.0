@@ -141,6 +141,13 @@ def test_recommendation_and_quality_use_identical_display_rounding():
   recommendation = compute_transition_recommendations([first, second], 3.0)[0]
   quality = calculate_playlist_quality([first, second], 3.0)
 
+  # Der Goldwert haengt an der Zielfunktion. Seit TRANSITION_FEATURES_ENABLED
+  # =True (2026-08-21) rechnet der Acht-Faktoren-Pfad; diese Tracks haben kein
+  # Genre, das Genre-Gewicht wird halbiert (wie im Altpfad ueber
+  # GENRE_WEIGHT_WITHOUT_DJ_BRAIN), und die Zahl bleibt zufaellig 78. Der
+  # Vertrag dieses Tests ist die GLEICHHEIT beider Anzeigen, nicht die 78 —
+  # aendert sich die Zielfunktion erneut, gehoert die Zahl nachgemessen und
+  # begruendet, nicht stumm getauscht.
   assert recommendation.compatibility_score == 78
   assert quality["avg_transition_score"] == 78
 

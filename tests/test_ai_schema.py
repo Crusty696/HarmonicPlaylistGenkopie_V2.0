@@ -73,13 +73,26 @@ def test_fetch_ai_analysis_rejects_observed_typo_key(monkeypatch):
   assert fetch_ai_analysis(_track(), url="http://local/test") == {}
 
 
-def test_fetch_ai_analysis_rejects_mixout_without_tail_coverage(monkeypatch):
+def test_fetch_ai_analysis_verwirft_nur_die_mixpunkte_ohne_tail_coverage(monkeypatch):
+  """Ohne analysiertes Track-Ende sind nur die KI-Mixpunkte unzulaessig.
+
+  Bis 2026-08-21 hiess dieser Test `..._rejects_mixout_without_tail_coverage`
+  und erwartete `{}`: das GESAMTE Ergebnis wurde verworfen — auch sub_genre
+  und moods, die im KI-Bonus (playlist.py) tatsaechlich wirken. Die Mixpunkte
+  selbst liest kein Produktivpfad (advisory, siehe
+  docs/DATA_AND_VALIDATION_CONTRACT.md). Regel nach Ruecksprache gelockert:
+  Mixpunkte None, Rest bleibt.
+  """
   monkeypatch.setattr(
     "hpg_core.ai_engine.requests.post",
     Mock(return_value=_response(_valid_data())),
   )
 
-  assert fetch_ai_analysis(_track(outro_covered=False), url="http://local/test") == {}
+  ergebnis = fetch_ai_analysis(_track(outro_covered=False), url="http://local/test")
+  assert ergebnis["sub_genre"]
+  assert ergebnis["moods"]
+  assert ergebnis["mix_in_time"] is None
+  assert ergebnis["mix_out_time"] is None
 
 
 def test_ai_metadata_cache_requires_exact_provenance():
