@@ -1320,6 +1320,34 @@ def _offset_section(
     )
 
 
+def _kandidaten_berechnen(
+    file_path: str, *, pfad: str, bpm: float, duration: float, first_downbeat: float,
+    downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
+    phrase_unit: int, sections: list, phrases: list, cues: list,
+    analyzer_in: float, analyzer_out: float, outro_covered: bool,
+) -> tuple[list, list]:
+    """Mix-Kandidaten beider Seiten berechnen; Fehler kippen die Analyse nie.
+    `pfad` ("fast"/"voll") erscheint im Log, damit tools/kandidaten_messen.py die
+    Laufzeit je Analysepfad trennen kann."""
+    t0 = time.perf_counter()
+    try:
+        mix_in, mix_out = build_track_candidates(
+            file_path, bpm=bpm, duration=duration, first_downbeat=first_downbeat,
+            downbeat_confidence=downbeat_confidence, phrase_confidence=phrase_confidence,
+            phrase_anchor=phrase_anchor, phrase_unit=phrase_unit, sections=sections,
+            phrases=phrases, cues=cues, analyzer_in=analyzer_in, analyzer_out=analyzer_out,
+            outro_covered=outro_covered,
+        )
+    except Exception as e:
+        logger.warning(f"Kandidaten [{pfad}] fehlgeschlagen: {e}")
+        return [], []
+    logger.info(
+        f"Kandidaten [{pfad}]: {len(mix_in)} in / {len(mix_out)} out "
+        f"in {time.perf_counter() - t0:.2f}s"
+    )
+    return mix_in, mix_out
+
+
 def analyze_structure_windows(
     file_path: str,
     head_audio: np.ndarray,
@@ -1858,26 +1886,16 @@ def analyze_track(file_path: str) -> Track | None:
         # sind die Listen bereits leer gesetzt und duerfen nicht ueberschrieben
         # werden (section_dicts/structure waeren dort Platzhalter).
         if not analysis_degraded:
-            kandidaten_start = time.perf_counter()
-            try:
-                mix_in_candidates, mix_out_candidates = build_track_candidates(
-                    file_path, bpm=rekordbox_data.bpm, duration=duration,
-                    first_downbeat=first_downbeat,
-                    downbeat_confidence=downbeat_confidence,
-                    phrase_confidence=phrase_confidence,
-                    phrase_anchor=phrase_anchor,
-                    phrase_unit=structure.phrase_unit, sections=section_dicts,
-                    phrases=phrases, cues=cue_points,
-                    analyzer_in=mix_in_point, analyzer_out=mix_out_point,
-                    outro_covered=outro_covered,
-                )
-            except Exception as e:
-                logger.warning(f"Kandidaten fehlgeschlagen: {e}")
-                mix_in_candidates, mix_out_candidates = [], []
-            logger.info(
-                f"Kandidaten: {len(mix_in_candidates)} in / "
-                f"{len(mix_out_candidates)} out in "
-                f"{time.perf_counter() - kandidaten_start:.2f}s"
+            mix_in_candidates, mix_out_candidates = _kandidaten_berechnen(
+                file_path, pfad="fast", bpm=rekordbox_data.bpm, duration=duration,
+                first_downbeat=first_downbeat,
+                downbeat_confidence=downbeat_confidence,
+                phrase_confidence=phrase_confidence,
+                phrase_anchor=phrase_anchor,
+                phrase_unit=structure.phrase_unit, sections=section_dicts,
+                phrases=phrases, cues=cue_points,
+                analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+                outro_covered=outro_covered,
             )
             phrase_grid = phrase_grid_from_phrases(phrases)
 
@@ -2278,26 +2296,16 @@ def analyze_track(file_path: str) -> Track | None:
         phrases: list[dict] = []
         cue_points: list[dict] = []
         phrase_grid: list[float] = []
-        kandidaten_start = time.perf_counter()
-        try:
-            mix_in_candidates, mix_out_candidates = build_track_candidates(
-                file_path, bpm=bpm, duration=duration,
-                first_downbeat=first_downbeat,
-                downbeat_confidence=downbeat_confidence,
-                phrase_confidence=phrase_confidence,
-                phrase_anchor=phrase_anchor,
-                phrase_unit=structure.phrase_unit, sections=section_dicts,
-                phrases=phrases, cues=cue_points,
-                analyzer_in=mix_in_point, analyzer_out=mix_out_point,
-                outro_covered=outro_covered,
-            )
-        except Exception as e:
-            logger.warning(f"Kandidaten fehlgeschlagen: {e}")
-            mix_in_candidates, mix_out_candidates = [], []
-        logger.info(
-            f"Kandidaten: {len(mix_in_candidates)} in / "
-            f"{len(mix_out_candidates)} out in "
-            f"{time.perf_counter() - kandidaten_start:.2f}s"
+        mix_in_candidates, mix_out_candidates = _kandidaten_berechnen(
+            file_path, pfad="voll", bpm=bpm, duration=duration,
+            first_downbeat=first_downbeat,
+            downbeat_confidence=downbeat_confidence,
+            phrase_confidence=phrase_confidence,
+            phrase_anchor=phrase_anchor,
+            phrase_unit=structure.phrase_unit, sections=section_dicts,
+            phrases=phrases, cues=cue_points,
+            analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+            outro_covered=outro_covered,
         )
 
         track = Track(
