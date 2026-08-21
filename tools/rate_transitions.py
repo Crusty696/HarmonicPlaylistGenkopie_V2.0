@@ -51,7 +51,6 @@ from hpg_core.models import Track, effective_bpm_diff
 from hpg_core.playlist import (
     calculate_enhanced_compatibility,
     compute_transition_recommendations,
-    predict_transition_type,
 )
 from hpg_core.transition_features import (
     bass_continuity,
@@ -74,6 +73,12 @@ ALLE_FAKTOREN: tuple[str, ...] = NEUE_FAKTOREN + KLASSISCHE_FAKTOREN
 # --- Auswahl / Rendern ----------------------------------------------------
 STANDARD_BPM_TOLERANZ = 6.0
 MIN_HARMONIC_SCORE = 60
+# Feste Blende fuer ALLE Hoertest-Clips: reine 3-Band-EQ-Blende ohne Echo,
+# Cut oder Filter-Sweep. Vorher lief je Paar predict_transition_type, damit
+# variierte der Effekt von Clip zu Clip und ging als nicht erfasste
+# Stoergroesse in die Note ein (Konfundierung). Umgestellt 2026-08-21, alle
+# Noten aus der Zeit davor wurden verworfen.
+HOERTEST_TRANSITION_TYPE = "pro_eq_swap"
 # Fester Seed: eine Vorbereitung mit denselben Tracks liefert denselben Satz.
 STANDARD_SEED = 20260820
 # Rueckfall-Crossfade, wenn fuer ein Paar keine Uebergangs-Empfehlung
@@ -743,7 +748,7 @@ def rendere_paar(
         mix_out_sec=float(mix_out_a),
         mix_in_sec=float(mix_in_b),
         crossfade_sec=float(crossfade),
-        transition_type=predict_transition_type(a, b, STANDARD_BPM_TOLERANZ),
+        transition_type=HOERTEST_TRANSITION_TYPE,
         pre_roll_sec=PRE_ROLL_SEK,
         post_roll_sec=POST_ROLL_SEK,
         bpm_a=float(a.bpm or 120.0),

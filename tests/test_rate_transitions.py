@@ -383,8 +383,6 @@ def test_rendere_paar_reicht_das_beatgrid_an_den_renderer_durch(monkeypatch):
     monkeypatch.setattr(
         rate_transitions, "geplanter_overlap", lambda *a_, **k: 32.0)
     monkeypatch.setattr(
-        rate_transitions, "predict_transition_type", lambda *a_, **k: "pro_eq_swap")
-    monkeypatch.setattr(
         rate_transitions, "render_transition_clip",
         lambda spec, ziel: gesehen.setdefault("spec", spec))
 
@@ -398,6 +396,7 @@ def test_rendere_paar_reicht_das_beatgrid_an_den_renderer_durch(monkeypatch):
     assert spec.downbeat_reliable_b is True
     assert spec.bar_phase_reliable_a is True
     assert spec.bar_phase_reliable_b is True
+    assert spec.transition_type == rate_transitions.HOERTEST_TRANSITION_TYPE
 
 
 def test_rendere_paar_meldet_unsicheres_beatgrid_als_unsicher(monkeypatch):
@@ -412,8 +411,6 @@ def test_rendere_paar_meldet_unsicheres_beatgrid_als_unsicher(monkeypatch):
         rate_transitions, "calculate_paired_mix_points", lambda x, y: (300.0, 30.0))
     monkeypatch.setattr(
         rate_transitions, "geplanter_overlap", lambda *a_, **k: 32.0)
-    monkeypatch.setattr(
-        rate_transitions, "predict_transition_type", lambda *a_, **k: "pro_eq_swap")
     monkeypatch.setattr(
         rate_transitions, "render_transition_clip",
         lambda spec, ziel: gesehen.setdefault("spec", spec))
