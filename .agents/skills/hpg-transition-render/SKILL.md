@@ -110,8 +110,15 @@ Renderer aber mit anfassen wuerde.
 
 ## Pegel
 
-Reihenfolge in `render_transition_clip` [:210-217]:
-`_rms_normalize(seg_a)` -> `_rms_normalize(seg_b)` -> `_apply_lufs_delta(...)`.
+Reihenfolge in `render_transition_clip` (seit 2026-08-21 HINTER dem
+Beat-Alignment und `_ensure_len`, nicht mehr direkt nach dem Time-Stretch):
+`_rms_normalize(seg_a, reference=seg_a[:pre_frames])` ->
+`_rms_normalize(seg_b, reference=seg_b[cf_frames:])` ->
+`_apply_lufs_delta(...)` mit LUFS der beiden Solo-Teile.
+Referenz fuer den Gain sind die SOLO-Teile (Vorlauf nur A, Nachlauf nur B),
+nicht das ganze Segment — sonst hebt ein Breakdown in der Blende das ganze
+Segment an und Vorlauf/Nachlauf springen um mehrere dB. Leere/stille/zu
+kurze Referenz (< `MIN_ACTIVE_FRAMES`) faellt auf den Segment-Pfad zurueck.
 
 - `normalize_rms` mit `normalize_target_db = -14.0` (dBRMS ueber die aktiven
   Frames, Gain geklemmt auf +12/-20 dB)

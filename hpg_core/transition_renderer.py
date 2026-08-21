@@ -224,35 +224,6 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         except Exception as ts_err:
             logger.warning(f"BPM Time-Stretching fehlgeschlagen: {ts_err}")
 
-    # Lautheits-Normalisierung: absolute Pegel ausschliesslich aus dem
-    # tatsaechlichen Preview-Segment bestimmen.
-    # AUDIT-FIX R-07 (2026-07-26): Wenn echte Track-LUFS aus der Analyse
-    # vorliegen (pyloudnorm, K-gewichtet nach BS.1770), wird der Gain direkt
-    # daraus berechnet — der ungewichtete RMS des Renderers unterschied sich
-    # je nach Spektrum um 2-4 LUFS (basslastiger Techno vs. heller Trance),
-    # genau der Lautheitssprung, den das Feature verhindern soll.
-    if spec.normalize_rms:
-        # -14 dB ist ein RMS-Ziel, kein LUFS-Ziel. Die gemessenen LUFS duerfen
-        # danach nur noch den relativen A/B-Unterschied korrigieren; so bleibt
-        # die Preview-Semantik unabhaengig davon, ob Track-LUFS vorhanden ist.
-        seg_a = _rms_normalize(seg_a, spec.normalize_target_db)
-        seg_b = _rms_normalize(seg_b, spec.normalize_target_db)
-        # AUDIT-FIX 2026-08-14: Hier stand vorher spec.lufs_a/spec.lufs_b — die
-        # Lautheit der GANZEN Tracks, gemessen VOR dieser Normalisierung. Da
-        # _rms_normalize die beiden Segmente aber bereits angeglichen hat
-        # (gemessen: Restdifferenz 0.62 dB), zog das Delta sie anschliessend
-        # wieder auseinander statt sie zusammenzufuehren: 6.62 dB Ueber-
-        # korrektur, im fertigen Clip 9.83 dB Pegelsprung zwischen den Tracks.
-        # Korrigiert wird jetzt die RESTdifferenz der normalisierten Segmente.
-        # spec.lufs_a/lufs_b bleiben als Analyse-Metadaten erhalten (dj_brain
-        # nutzt sie fuer gain_advice), steuern hier aber nichts mehr.
-        seg_a, seg_b = _apply_lufs_delta(
-            seg_a,
-            seg_b,
-            _measure_segment_loudness(seg_a, sr),
-            _measure_segment_loudness(seg_b, sr)
-        )
-
     # Soll-Laengen in Frames
     cf_frames   = int(cf_sec * sr)
     # C1-Fix: pre_frames muss die TATSAECHLICH geladene Vorlaufzeit abbilden.
@@ -317,6 +288,46 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Sicherstellen dass Segmente lang genug sind (Null-Padding falls noetig)
     seg_a = _ensure_len(seg_a, pre_frames + cf_frames)
     seg_b = _ensure_len(seg_b, cf_frames + post_frames)
+
+    # Lautheits-Normalisierung: absolute Pegel ausschliesslich aus dem
+    # tatsaechlichen Preview-Segment bestimmen.
+    # AUDIT-FIX R-07 (2026-07-26): Wenn echte Track-LUFS aus der Analyse
+    # vorliegen (pyloudnorm, K-gewichtet nach BS.1770), wird der Gain direkt
+    # daraus berechnet — der ungewichtete RMS des Renderers unterschied sich
+    # je nach Spektrum um 2-4 LUFS (basslastiger Techno vs. heller Trance),
+    # genau der Lautheitssprung, den das Feature verhindern soll.
+    # 2026-08-21: Referenz fuer den Gain sind die SOLO-Teile — Vorlauf (nur A
+    # hoerbar) und Nachlauf (nur B hoerbar), nicht mehr das ganze Segment.
+    # Hat ein Track in der Blende einen Breakdown, zog die Segment-RMS das
+    # ganze Segment hoch und der Solo-Teil landete mehrere dB ueber dem
+    # Ziel; zwischen Vorlauf und Nachlauf entstand ein Pegelsprung, den der
+    # Hoerer als Render-Fehler wahrnimmt. Der Block steht deshalb hinter dem
+    # Beat-Alignment, wo die Solo-Teile bekannt sind (Alignment ist
+    # pegelunabhaengig: onset-basiert, relativ).
+    if spec.normalize_rms:
+        # -14 dB ist ein RMS-Ziel, kein LUFS-Ziel. Die gemessenen LUFS duerfen
+        # danach nur noch den relativen A/B-Unterschied korrigieren; so bleibt
+        # die Preview-Semantik unabhaengig davon, ob Track-LUFS vorhanden ist.
+        seg_a = _rms_normalize(seg_a, spec.normalize_target_db,
+                               reference=seg_a[:pre_frames])
+        seg_b = _rms_normalize(seg_b, spec.normalize_target_db,
+                               reference=seg_b[cf_frames:])
+        # AUDIT-FIX 2026-08-14: Hier stand vorher spec.lufs_a/spec.lufs_b — die
+        # Lautheit der GANZEN Tracks, gemessen VOR dieser Normalisierung. Da
+        # _rms_normalize die beiden Segmente aber bereits angeglichen hat
+        # (gemessen: Restdifferenz 0.62 dB), zog das Delta sie anschliessend
+        # wieder auseinander statt sie zusammenzufuehren: 6.62 dB Ueber-
+        # korrektur, im fertigen Clip 9.83 dB Pegelsprung zwischen den Tracks.
+        # Korrigiert wird jetzt die RESTdifferenz der normalisierten Segmente —
+        # gemessen auf den Solo-Teilen, angewendet auf die ganzen Segmente.
+        # spec.lufs_a/lufs_b bleiben als Analyse-Metadaten erhalten (dj_brain
+        # nutzt sie fuer gain_advice), steuern hier aber nichts mehr.
+        seg_a, seg_b = _apply_lufs_delta(
+            seg_a,
+            seg_b,
+            _measure_segment_loudness(seg_a[:pre_frames], sr),
+            _measure_segment_loudness(seg_b[cf_frames:], sr)
+        )
 
     # Clip zusammenbauen
     part_pre  = seg_a[:pre_frames]             # Nur Track A vor dem Mix
@@ -583,9 +594,42 @@ def _apply_filter_ramp(
     ).astype(np.float32)
 
 
-def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
+MIN_ACTIVE_FRAMES = 100  # darunter gilt ein Ausschnitt nicht als belastbare Referenz
+
+
+def _active_rms(seg: np.ndarray) -> tuple[float, int]:
+    """RMS der aktiven Frames (obere 80 % Energie — ignoriert stille Passagen).
+
+    Rueckgabe: (RMS, Zahl der aktiven Frames). Bleiben weniger als
+    MIN_ACTIVE_FRAMES aktive Frames uebrig, wird ueber das ganze Segment
+    gemessen; der Aufrufer entscheidet anhand der Zahl, ob das als Referenz
+    taugt. Leere Eingabe -> (0.0, 0).
+    """
+    if len(seg) == 0:
+        return 0.0, 0
+    energy = np.mean(seg**2, axis=1)
+    threshold = np.percentile(energy, 20)
+    active = seg[energy > threshold]
+    n_active = len(active)
+    if n_active < MIN_ACTIVE_FRAMES:
+        active = seg
+    return float(np.sqrt(np.mean(active**2))), n_active
+
+
+def _rms_normalize(
+    seg: np.ndarray,
+    target_rms_db: float = -14.0,
+    reference: np.ndarray | None = None,
+) -> np.ndarray:
     """
     Normalisiert ein Audio-Segment auf einen Ziel-RMS-Pegel.
+
+    ``reference``: optionaler Ausschnitt (z.B. der Solo-Teil des Segments),
+    aus dem der Gain bestimmt wird; angewendet wird er auf das ganze Segment.
+    Ist die Referenz leer, still oder zu kurz (< MIN_ACTIVE_FRAMES aktive
+    Frames), gilt der
+    Segment-Pfad wie ohne Referenz — das Segment darf nie unnormalisiert
+    bleiben, nur weil der Solo-Teil aus Null-Padding besteht.
 
     Berechnet RMS nur anhand aktiver Frames (obere 80% Energie) um stille
     Intro/Outro-Bereiche zu ignorieren. Gain wird auf +12dB/-20dB begrenzt.
@@ -600,16 +644,14 @@ def _rms_normalize(seg: np.ndarray, target_rms_db: float = -14.0) -> np.ndarray:
     if len(seg) == 0:
         return seg
 
-    # Aktive Frames finden (obere 80% Energie — ignoriert stille Passagen)
-    energy = np.mean(seg**2, axis=1)
-    threshold = np.percentile(energy, 20)
-    active = seg[energy > threshold]
-
-    # Fallback: gesamtes Segment wenn zu wenige aktive Frames
-    if len(active) < 100:
-        active = seg
-
-    current_rms = np.sqrt(np.mean(active**2))
+    current_rms = 0.0
+    if reference is not None:
+        ref_rms, n_active = _active_rms(reference)
+        if n_active >= MIN_ACTIVE_FRAMES:
+            current_rms = ref_rms
+    if current_rms < 1e-6:
+        # Keine brauchbare Referenz (fehlt, leer, still, zu kurz) -> Segment-Pfad
+        current_rms, _ = _active_rms(seg)
     if current_rms < 1e-6:
         return seg  # Stilles Segment unveraendert lassen
 

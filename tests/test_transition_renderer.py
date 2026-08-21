@@ -920,6 +920,32 @@ class TestRmsNormalize:
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
 
+    def test_reference_bestimmt_den_gain(self):
+        """Gain kommt aus der Referenz (Solo-Teil), wird aber auf das ganze
+        Segment angewendet: lauter Referenz-Teil soll auf -14 dB landen, auch
+        wenn der Rest des Segments 20 dB leiser ist."""
+        loud = self._make_signal(self.SR * 4, amplitude=0.5)
+        quiet = self._make_signal(self.SR * 8, amplitude=0.05)
+        seg = np.concatenate([loud, quiet], axis=0)
+        result = _rms_normalize(seg, target_rms_db=-14.0, reference=loud)
+        rms_loud_out = self._rms_db(result[: self.SR * 4])
+        assert abs(rms_loud_out - (-14.0)) < 1.5, (
+            f"Referenz-Teil erwartet ~-14 dBRMS, bekommen {rms_loud_out:.1f}"
+        )
+        # Verhaeltnis laut/leise bleibt erhalten (ein Gain fuer alles)
+        rms_quiet_out = self._rms_db(result[self.SR * 4:])
+        assert abs((rms_loud_out - rms_quiet_out) - 20.0) < 0.5
+
+    def test_stille_oder_kurze_reference_faellt_auf_segment_zurueck(self):
+        """Stille oder zu kurze Referenz darf das Segment nicht unnormalisiert
+        lassen — dann gilt der Segment-Pfad wie ohne Referenz."""
+        sig = self._make_signal(self.SR * 4, amplitude=0.5)
+        erwartet = _rms_normalize(sig, target_rms_db=-14.0)
+        still = np.zeros((self.SR, 2), dtype=np.float32)
+        kurz = self._make_signal(10, amplitude=0.5)
+        for ref in (still, kurz, np.zeros((0, 2), dtype=np.float32)):
+            result = _rms_normalize(sig, target_rms_db=-14.0, reference=ref)
+            assert np.allclose(result, erwartet), "Fallback muss dem Segment-Pfad entsprechen"
 
 class TestLufsDelta:
     """LUFS darf nach der RMS-Norm nur noch relativ wirken."""
@@ -1063,6 +1089,46 @@ class TestRenderTransitionClipMitNormalisierung:
         info = sf.info(out_path)
         assert info.channels == 2
         assert info.samplerate == 44100
+
+    def test_solo_teile_gleich_laut_trotz_breakdown_in_der_blende(self, tmp_path):
+        """Track A bricht in der Blende ein (-20 dB), Track B ist in der Blende
+        noch leise und erst im Nachlauf laut. Der Pegel der beiden SOLO-Teile
+        (Vorlauf nur A, Nachlauf nur B) muss trotzdem gleich sein — sonst
+        verfaelscht ein Pegelsprung von mehreren dB die Bewertung des Uebergangs."""
+        sr = 44100
+        dur = 60.0
+        mix_out, mix_in, cf, pre, post = 40.0, 5.0, 10.0, 8.0, 8.0
+        t = np.linspace(0, dur, int(sr * dur), endpoint=False, dtype=np.float32)
+        env_a = np.where(t < mix_out, 0.3, 0.03).astype(np.float32)
+        env_b = np.where(t < mix_in + cf, 0.03, 0.3).astype(np.float32)
+        wave_a = np.sin(2 * np.pi * 440 * t).astype(np.float32) * env_a
+        wave_b = np.sin(2 * np.pi * 528 * t).astype(np.float32) * env_b
+        path_a = str(tmp_path / "a.wav")
+        path_b = str(tmp_path / "b.wav")
+        out_path = str(tmp_path / "solo.wav")
+        sf.write(path_a, np.stack([wave_a, wave_a], axis=1), sr, subtype="PCM_16")
+        sf.write(path_b, np.stack([wave_b, wave_b], axis=1), sr, subtype="PCM_16")
+
+        spec = TransitionClipSpec(
+            track_a_path=path_a, track_b_path=path_b,
+            mix_out_sec=mix_out, mix_in_sec=mix_in, crossfade_sec=cf,
+            transition_type="smooth_blend",
+            pre_roll_sec=pre, post_roll_sec=post,
+            normalize_rms=True, normalize_target_db=-14.0,
+        )
+        render_transition_clip(spec, out_path)
+        data, _ = sf.read(out_path, dtype="float32")
+
+        def rms_db(x):
+            return 20.0 * np.log10(max(float(np.sqrt(np.mean(x.astype(np.float64) ** 2))), 1e-10))
+
+        pre_db = rms_db(data[: int(pre * sr)])
+        post_db = rms_db(data[int((pre + cf) * sr):])
+        assert abs(pre_db - post_db) < 1.5, (
+            f"Solo-Teile ungleich laut: Vorlauf {pre_db:.1f} dB, Nachlauf {post_db:.1f} dB"
+        )
+        assert abs(pre_db - (-14.0)) < 2.0, f"Vorlauf {pre_db:.1f} dB statt ~-14"
+        assert abs(post_db - (-14.0)) < 2.0, f"Nachlauf {post_db:.1f} dB statt ~-14"
 
     def test_render_deaktivierte_normalisierung_kein_fehler(self, tmp_path):
         """normalize_rms=False soll genauso funktionieren wie vorher."""
