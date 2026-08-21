@@ -84,3 +84,19 @@ class TestConfigConsistency:
     bar_duration = spb * METER  # seconds per bar
     phrase_duration = bar_duration * BARS_PER_PHRASE  # seconds per phrase
     assert abs(phrase_duration - 16.0) < 0.01
+
+
+class TestKandidatenKonstanten:
+  """Konstanten fuer Mixpunkt-Kandidaten (Spec 2026-08-21, Abschnitt 1)."""
+
+  def test_kandidaten_konstanten_vorhanden_und_plausibel(self):
+    from hpg_core import config
+    assert config.KANDIDATEN_MAX_JE_SEITE == 8
+    assert config.KANDIDATEN_MIN_JE_SEITE == 3
+    assert config.KANDIDATEN_FENSTER_PHRASEN == 1
+    assert config.CUE_DEDUPE_SEC == 2.0
+    assert config.KICK_AKTIV_MIN_DBFS == -35.0
+    assert config.KICK_AKTIV_ONBEAT_MIN == 0.40
+    assert config.ENERGIE_TREND_SCHWELLE == 10
+    assert config.ENERGIE_NEUHEIT_MIN == 20
+    assert config.KANDIDATEN_AUDIO_SR == 22050

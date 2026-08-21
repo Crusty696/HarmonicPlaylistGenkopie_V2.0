@@ -63,6 +63,28 @@ GAIN_DIFF_WARN_DB = 3.0
 # docs/plans/2026-07-17-key-confidence-lufs.md)
 KEY_CONFIDENCE_UNCERTAIN = 0.5
 
+# === Mixpunkt-Kandidaten (Spec 2026-08-21, Abschnitt 1) ===
+# Anzahl Kandidaten je Seite (Mix-In / Mix-Out) nach Dedupe und Kappung.
+KANDIDATEN_MIN_JE_SEITE = 3
+KANDIDATEN_MAX_JE_SEITE = 8
+# Messfenster fuer lokale Werte: +-1 Phrase um den Kandidaten.
+KANDIDATEN_FENSTER_PHRASEN = 1
+# Audio fuer lokale Merkmale (wie alle uebrigen librosa-Merkmale, mono).
+# LUFS wird davon getrennt in nativer Samplerate/Kanalzahl gemessen.
+KANDIDATEN_AUDIO_SR = 22050
+# Cues naeher als 2 s gelten als Duplikat (bisher inline in analysis.py).
+CUE_DEDUPE_SEC = 2.0
+# kick_aktiv: Bass-RMS (<=160 Hz) ueber dieser Schwelle UND On-Beat-Anteil
+# des lokalen Bassmusters ueber KICK_AKTIV_ONBEAT_MIN. STARTWERTE, nicht
+# gemessen — der Hoertest (Teil 3) prueft sie.
+KICK_AKTIV_MIN_DBFS = -35.0
+KICK_AKTIV_ONBEAT_MIN = 0.40
+# energy_trend: |Energie nach - Energie vor| >= Schwelle → rising/falling.
+ENERGIE_TREND_SCHWELLE = 10
+# Schema "energie_neuheit": Sektionsgrenze zaehlt, wenn der Energiesprung
+# zwischen den Nachbarsektionen mindestens so gross ist (0-100-Skala).
+ENERGIE_NEUHEIT_MIN = 20
+
 # === DJ Brain Configuration ===
 # DJ_BRAIN_ENABLED entfernt (Konsolidierung 2026-07-17): der RMS-Fallback
 # delegiert jetzt selbst an calculate_genre_aware_mix_points — es gibt nur
