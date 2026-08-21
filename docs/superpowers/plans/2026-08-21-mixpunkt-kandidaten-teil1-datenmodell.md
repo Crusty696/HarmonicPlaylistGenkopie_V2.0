@@ -10,11 +10,11 @@
 
 **Auflagen des Nutzers:** genau so wie in der Spec, vollstaendig, keine Annahmen; jede Zahl gemessen oder als Startwert markiert. Waechter `hpg-waechter` an Tor 1 (Vorhaben) und Tor 2 (Diff) vor jedem Commit.
 
-**Vorab verifizierte Fakten (2026-08-21, 400 EXT-Dateien unter `D:\PIONEER\Master\share\PIONEER\USBANLZ`):**
+**Vorab verifizierte Fakten (2026-08-21; alle 2475 EXT-Dateien unter `D:\PIONEER\Master\share\PIONEER\USBANLZ`, Waechter-Nachmessung):**
 - `AnlzFile.parse_file(<ANLZ0000.EXT>).get_tag("PSSI").content` hat `mood`, `end_beat`, `entries[]` mit `index, beat, kind, k1, k2, k3, fill, beat_fill`.
-- `entry.beat` ist ein **1-basierter Index in die PQTZ-Beatliste** (`ANLZ0000.DAT`, `get_tag("PQTZ").get()` → `(beats, bpms, times)`); Zeit = `times[beat-1]`. Stichprobe: Phrasenstarts liegen auf `beatnum == 1` (Takt-1).
-- Mood-Verteilung: 387× mood 1, 12× mood 2, 1× mood 3. Mood 1 nutzt Kinds {1,2,3,5,6}; Kind 6 kommt genau einmal je Track (387) vor und steht am Ende → Outro; Kind 1 am Anfang → Intro. Mood 2/3 nutzen Kinds 1–10.
-- Zuordnung Mood 1: 1 Intro, 2 Up, 3 Down, 5 Chorus, 6 Outro (durch Position/Haeufigkeit in eigenen Daten gestuetzt). Mood 2/3: 1 Intro, 2–6 Verse 1–5, 7 Bridge, 8 Chorus, 9 Outro, 10 unbekannt — **aus der pyrekordbox-/crate-digger-Dokumentation, in eigenen Daten nur ueber 13 Tracks pruefbar**; Task 2 prueft Intro-zuerst/Outro-zuletzt per Test und loggt unbekannte Kinds.
+- `entry.beat` ist ein **1-basierter Index in die PQTZ-Beatliste** (`ANLZ0000.DAT`, `get_tag("PQTZ").get()` → `(beats, bpms, times)`); Zeit = `times[beat-1]` (0-basiert passt in 0 Faellen). Phrasenstarts liegen auf Takt-1, Ausnahme: der erste Eintrag (beat=1) liegt in 228 von 699 geprueften Dateien auf beatnum 2 (Beatgrid beginnt nicht auf der 1).
+- Mood-Verteilung: 2370× mood 1, 93× mood 2, 9× mood 3. Mood 1 nutzt Kinds {1,2,3,5,6}; Kind 1 ist in 2370/2370 der erste, Kind 6 in 2370/2370 der letzte Eintrag → 1 Intro, 2 Up, 3 Down, 5 Chorus, 6 Outro.
+- Mood 2/3: Kind 1 in 100/102 der erste, **Kind 10 in 100/102 der letzte** Eintrag → Zuordnung 1 Intro, 2–7 Verse 1–6, 8 Bridge, 9 Chorus, 10 Outro (Beat-Link-Schema, durch eigene Daten an Anfang/Ende gestuetzt; Verse/Bridge/Chorus dazwischen NICHT aus eigenen Daten pruefbar — so im Code kommentieren). Unbekannte Kinds (>10) werden "Unbekannt(n)" beschriftet und geloggt.
 
 ---
 
@@ -157,8 +157,8 @@ def _beatgrid(n_beats, spb=0.46875):  # 128 BPM
 
 def test_mood_high_labels():
     assert PHRASE_LABELS_HIGH == {1: "Intro", 2: "Up", 3: "Down", 5: "Chorus", 6: "Outro"}
-    assert PHRASE_LABELS_MIDLOW[1] == "Intro" and PHRASE_LABELS_MIDLOW[8] == "Chorus"
-    assert PHRASE_LABELS_MIDLOW[9] == "Outro"
+    assert PHRASE_LABELS_MIDLOW[1] == "Intro" and PHRASE_LABELS_MIDLOW[9] == "Chorus"
+    assert PHRASE_LABELS_MIDLOW[8] == "Bridge" and PHRASE_LABELS_MIDLOW[10] == "Outro"
 
 
 def test_phrasen_aus_high_mood_mit_zeiten_aus_pqtz():
@@ -177,9 +177,9 @@ def test_phrasen_aus_high_mood_mit_zeiten_aus_pqtz():
 
 def test_unbekannter_kind_wird_als_unbekannt_beschriftet_nicht_verworfen():
     times = _beatgrid(65)
-    pssi = _Tag(SimpleNamespace(mood=2, end_beat=65, entries=[_entry(1, 1, 1), _entry(2, 33, 10)]))
+    pssi = _Tag(SimpleNamespace(mood=2, end_beat=65, entries=[_entry(1, 1, 1), _entry(2, 17, 11), _entry(3, 33, 10)]))
     phrases = phrases_from_anlz(_Anlz({"PSSI": pssi}), _Anlz({"PQTZ": _Pqtz(times)}), duration=40.0)
-    assert phrases[1]["label"] == "Unbekannt(10)"
+    assert phrases[1]["label"] == "Unbekannt(11)" and phrases[2]["label"] == "Outro"
 
 
 def test_beat_ausserhalb_des_beatgrids_wird_geklemmt():
@@ -214,8 +214,8 @@ def test_phrase_grid_sind_die_phrasenstarts_plus_ende():
 Reine Funktionen ueber pyrekordbox-AnlzFile-Objekte (oder Objekte mit
 derselben Oberflaeche `get_tag(key).content`). Zeiten kommen aus dem
 Beatgrid (PQTZ, ANLZ0000.DAT): `entry.beat` ist ein 1-basierter Index in
-die PQTZ-Beatliste (verifiziert 2026-08-21 an 400 EXT-Dateien, Stichprobe:
-alle Phrasenstarts auf Takt-1).
+die PQTZ-Beatliste (verifiziert 2026-08-21 an 699 von 2475 EXT-Dateien;
+0-basiert passt nie; der erste Eintrag liegt in 228/699 auf beatnum 2).
 """
 from __future__ import annotations
 
@@ -223,15 +223,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Mood 1 ("high"): Kinds in eigenen Daten {1,2,3,5,6}; Kind 1 steht zuerst,
-# Kind 6 genau einmal je Track am Ende (387 von 387 Mood-1-Tracks).
+# Mood 1 ("high"): Kinds in eigenen Daten {1,2,3,5,6}; Kind 1 ist in
+# 2370/2370 Tracks der erste, Kind 6 in 2370/2370 der letzte Eintrag
+# (Messung 2026-08-21 ueber alle 2475 EXT-Dateien).
 PHRASE_LABELS_HIGH: dict[int, str] = {1: "Intro", 2: "Up", 3: "Down", 5: "Chorus", 6: "Outro"}
-# Mood 2 ("mid") und 3 ("low"): Zuordnung laut pyrekordbox-/crate-digger-
-# Dokumentation; in eigenen Daten nur 13 Tracks — Kind 10 dort gesehen,
-# Bedeutung unbekannt.
+# Mood 2 ("mid") und 3 ("low"): 102 eigene Tracks — Kind 1 in 100/102 der
+# erste, Kind 10 in 100/102 der letzte Eintrag (Intro/Outro belegt).
+# Verse/Bridge/Chorus dazwischen folgen dem Beat-Link-Schema und sind aus
+# eigenen Daten NICHT pruefbar.
 PHRASE_LABELS_MIDLOW: dict[int, str] = {
     1: "Intro", 2: "Verse 1", 3: "Verse 2", 4: "Verse 3", 5: "Verse 4",
-    6: "Verse 5", 7: "Bridge", 8: "Chorus", 9: "Outro",
+    6: "Verse 5", 7: "Verse 6", 8: "Bridge", 9: "Chorus", 10: "Outro",
 }
 MOOD_NAMES: dict[int, str] = {1: "high", 2: "mid", 3: "low"}
 
@@ -773,6 +775,7 @@ def test_collect_candidate_times_alle_schemata_mit_pssi_gitter():
     cues = [{"t": 45.0, "name": "MIX IN", "typ": 0, "hot_cue": None, "provenance": "manual"},
             {"t": 25.0, "name": "START", "typ": 0, "hot_cue": None, "provenance": "manual"},   # im Intro (bis 30 s)
             {"t": 61.0, "name": "CUE(Auto)", "typ": 0, "hot_cue": None, "provenance": "auto"},
+            {"t": 20.0, "name": "Drop 2", "typ": 0, "hot_cue": None, "provenance": "manual"},   # benannt, kein IN/OUT: Guard gilt
             {"t": 233.0, "name": "", "typ": 0, "hot_cue": None, "provenance": "leer"}]
     ins, outs = collect_candidate_times(
         seite_grid=grid, sections=_sections(), phrases=phrases, cues=cues,
@@ -784,7 +787,8 @@ def test_collect_candidate_times_alle_schemata_mit_pssi_gitter():
     assert 75.0 in t_in and "auto_cue" in t_in[75.0].schema            # 61 ceil → 75
     assert 60.0 in t_in and {"analyzer", "pssi_phrase", "sektion", "energie_neuheit"} <= set(t_in[60.0].schema)
     assert 30.0 in t_in and "benannter_cue" in t_in[30.0].schema       # 25 s ceil → 30, schlaegt den Guard
-    assert all(c.t >= 30.0 or "benannter_cue" in c.schema for c in ins)   # Intro-Guard fuer alle anderen
+    assert all(c.t >= 30.0 for c in ins)                                  # "Drop 2" @20 s: ceil → 30 (Guard), nicht 20
+    assert "benannter_cue" in t_in[30.0].schema and t_in[30.0].provenance == "rekordbox_manual"
     t_out = {c.t: c for c in outs}
     assert 225.0 in t_out and "auto_cue" in t_out[225.0].schema          # 233 floor → 225
     assert 240.0 in t_out and "analyzer" in t_out[240.0].schema
@@ -874,34 +878,38 @@ def _phrase_at(phrases: list[dict], t: float) -> dict | None:
     return None
 
 
-def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict[str, list[tuple[float, str]]]:
-    """Je Seite: [(t_roh, schema)]. Benannte Cues gehen nur auf ihre Seite,
-    alle anderen Quellen auf beide (die Gates sortieren aus)."""
-    beide: list[tuple[float, str]] = []
+def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict[str, list[tuple[float, str, bool]]]:
+    """Je Seite: [(t_roh, schema, guard_frei)]. Benannte Cues mit IN/OUT-Muster
+    gehen nur auf ihre Seite und sind guard_frei (Spec-Ausnahme); andere
+    benannte Cues ("Drop 2") sind Schema benannter_cue auf beiden Seiten MIT
+    Guard; Auto-/leere Cues Schema auto_cue. Uebrige Quellen auf beide Seiten."""
+    beide: list[tuple[float, str, bool]] = []
     rohe = {"in": [], "out": []}
     for c in cues:
         name = (c.get("name") or "").upper()
         if c["provenance"] == "manual" and CUE_IN_PATTERN.search(name):
-            rohe["in"].append((c["t"], "benannter_cue"))
+            rohe["in"].append((c["t"], "benannter_cue", True))
         elif c["provenance"] == "manual" and CUE_OUT_PATTERN.search(name):
-            rohe["out"].append((c["t"], "benannter_cue"))
+            rohe["out"].append((c["t"], "benannter_cue", True))
+        elif c["provenance"] == "manual":
+            beide.append((c["t"], "benannter_cue", False))
         else:
-            beide.append((c["t"], "auto_cue"))
+            beide.append((c["t"], "auto_cue", False))
     for p in phrases:
-        beide.append((float(p["start_s"]), "pssi_phrase"))
+        beide.append((float(p["start_s"]), "pssi_phrase", False))
     vorher = None
     for s in sections:
         if s.get("label") in ("intro", "outro", "unanalysed"):
             vorher = s
             continue
-        beide.append((float(s.get("start_time", 0.0)), "sektion"))
+        beide.append((float(s.get("start_time", 0.0)), "sektion", False))
         if vorher is not None and abs(float(s.get("avg_energy", 0.0)) - float(vorher.get("avg_energy", 0.0))) >= ENERGIE_NEUHEIT_MIN:
-            beide.append((float(s.get("start_time", 0.0)), "energie_neuheit"))
+            beide.append((float(s.get("start_time", 0.0)), "energie_neuheit", False))
         vorher = s
     if analyzer_in is not None and analyzer_in >= 0:
-        rohe["in"].append((float(analyzer_in), "analyzer"))
+        rohe["in"].append((float(analyzer_in), "analyzer", False))
     if analyzer_out is not None and analyzer_out >= 0:
-        rohe["out"].append((float(analyzer_out), "analyzer"))
+        rohe["out"].append((float(analyzer_out), "analyzer", False))
     rohe["in"].extend(beide)
     rohe["out"].extend(beide)
     return rohe
@@ -922,15 +930,15 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             ergebnis[seite] = []
             continue
         je_t: dict[float, MixCandidate] = {}
-        for t_roh, schema in rohe[seite]:
+        for t_roh, schema, guard_frei in rohe[seite]:
             tq = _quantize(t_roh, seite, seite_grid, grid_sec, anchor)
             if tq is None:
                 continue
             tq = round(float(tq), 3)
-            # Spec-Ausnahme: ein benannter Cue (MIX IN/IN/START bzw. OUT) ist
-            # eine bewusste Nutzerentscheidung und schlaegt den Intro/Outro-
-            # Guard; nur Trackgrenzen gelten. Alle anderen Quellen: volle Gates.
-            if schema == "benannter_cue":
+            # Spec-Ausnahme: ein benannter Cue mit MIX IN/IN/START bzw. OUT-
+            # Muster ist eine bewusste Nutzerentscheidung und schlaegt den
+            # Intro/Outro-Guard; nur Trackgrenzen gelten. Alle anderen: Gates.
+            if guard_frei:
                 gate_ok = 0.0 <= tq <= duration
             else:
                 gate_ok = passes_track_gates(tq, seite, intro_end=intro_end, outro_start=outro_start,
@@ -974,7 +982,7 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
 - Modify: `hpg_core/mix_candidates.py`
 - Test: `tests/test_mix_candidates.py`
 
-Messfenster: `[t - w, t + w]`, `w = grid_sec * KANDIDATEN_FENSTER_PHRASEN`. Audio wird **je Kandidat** per `librosa.load(file_path, sr=KANDIDATEN_AUDIO_SR, mono=True, offset, duration)` geladen (unabhaengig von Head-/Tail-Fenster der Strukturanalyse — das Tail-Audio wird dort nicht zurueckgegeben). LUFS getrennt mit `soundfile.read(file_path, start, stop)` in nativer Samplerate/Kanalzahl und `pyloudnorm.Meter(sr, filter_class="DeMan").integrated_loudness` ueber das Fenster (Bezeichnung `lufs_lokal`; das ist die integrierte Lautheit des 2-Phrasen-Fensters, kein 3-s-Short-Term).
+Messfenster: `[t - w, t + w]`, `w = grid_sec * KANDIDATEN_FENSTER_PHRASEN`. Audio wird **je Kandidat** per `librosa.load(file_path, sr=KANDIDATEN_AUDIO_SR, mono=True, offset, duration)` geladen (unabhaengig von Head-/Tail-Fenster der Strukturanalyse — das Tail-Audio wird dort nicht zurueckgegeben). LUFS getrennt mit `soundfile.read(file_path, start, stop)` in nativer Samplerate/Kanalzahl: **Short-Term-Lautheit** (3-s-Fenster `[t-1.5, t+1.5]`, BS.1771) via `pyloudnorm.Meter(sr, filter_class="DeMan").integrated_loudness` auf genau diesem Block — exakt die Spec ("lufs_lokal Short-Term, native Samplerate, Stereo").
 
 - [ ] **Step 1: Failing tests (synthetisches Audio, in tmp_path als WAV)**
 
@@ -1022,7 +1030,7 @@ def test_measure_window_liefert_alle_felder_und_kick_aktiv(tmp_path):
     assert c.avg_mids_lokal is not None and c.avg_highs_lokal is not None
     assert c.energy_lokal is not None and c.energy_trend in ("rising", "falling", "stable")
     assert c.lufs_lokal is not None and -70.0 < c.lufs_lokal < 0.0
-    assert set(c.mood) == {"brightness", "flatness", "key_mode"}
+    assert set(c.mood) == {"brightness", "flatness", "key_mode", "pssi_mood"}
     assert c.vocal_aktiv_lokal in (True, False)
     assert c.neuheit is not None and 0.0 <= c.neuheit <= 1.0
     assert c.traegt_allein is True
@@ -1079,14 +1087,20 @@ def _lade_fenster(file_path: str, start: float, ende: float, sr: int):
     return y
 
 
-def _lufs_fenster(file_path: str, start: float, ende: float) -> float | None:
-    """Integrierte Lautheit des Fensters in nativer Samplerate/Kanalzahl."""
+LUFS_SHORT_TERM_SEC = 3.0   # BS.1771 Short-Term-Fenster
+
+
+def _lufs_short_term(file_path: str, t: float, duration: float) -> float | None:
+    """Short-Term-Lautheit (3-s-Block um t) in nativer Samplerate/Kanalzahl."""
     try:
         import soundfile as sf
         import pyloudnorm as pyln
         info = sf.info(file_path)
-        a = int(max(0.0, start) * info.samplerate)
-        b = int(max(0.0, ende) * info.samplerate)
+        halb = LUFS_SHORT_TERM_SEC / 2.0
+        start = max(0.0, t - halb)
+        ende = min(float(duration), t + halb) if duration > 0 else t + halb
+        a = int(start * info.samplerate)
+        b = int(ende * info.samplerate)
         if b - a < info.samplerate:
             return None
         data, sr = sf.read(file_path, start=a, stop=b, dtype="float64", always_2d=True)
@@ -1096,7 +1110,7 @@ def _lufs_fenster(file_path: str, start: float, ende: float) -> float | None:
             return None
         return round(v, 2)
     except Exception as exc:
-        logger.warning("LUFS-Fenster nicht messbar (%s): %s", file_path, exc)
+        logger.warning("LUFS short-term nicht messbar (%s @ %.1f s): %s", file_path, t, exc)
         return None
 
 
@@ -1157,7 +1171,7 @@ def _neuheit(y_vor, y_nach, sr, fc_vor, fc_nach, e_vor, e_nach) -> float | None:
 
 def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, first_downbeat: float,
                              downbeat_confidence: float, grid_sec: float, duration: float,
-                             sections: list[dict]) -> MixCandidate:
+                             sections: list[dict], pssi_mood: int | None = None) -> MixCandidate:
     """Fuellt die lokalen Messwerte eines Kandidaten (Fenster +-1 Phrase).
     Fehler einzelner Messungen lassen das Feld auf None; die Analyse kippt nie."""
     from .analysis import (
@@ -1200,7 +1214,8 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
         note, mode, strength, margin, n2, m2 = get_key_with_confidence(chroma_vec)
         cand.camelot_lokal = CAMELOT_MAP.get((note, mode), "")
         cand.key_confidence_lokal = round(key_confidence_score(strength, margin, note, mode, n2, m2), 3)
-        cand.mood = {"brightness": cand.brightness_lokal, "flatness": cand.flatness_lokal, "key_mode": mode}
+        cand.mood = {"brightness": cand.brightness_lokal, "flatness": cand.flatness_lokal,
+                     "key_mode": mode, "pssi_mood": pssi_mood}
     except Exception as exc:
         logger.warning("Harmonie lokal: %s", exc)
     try:
@@ -1228,7 +1243,7 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
             cand.neuheit = _neuheit(y_vor, y_nach, sr, fc_v, fc_n, e_vor, e_nach)
     except Exception as exc:
         logger.warning("Neuheit lokal: %s", exc)
-    cand.lufs_lokal = _lufs_fenster(file_path, start, ende)
+    cand.lufs_lokal = _lufs_short_term(file_path, cand.t, duration)
     return cand
 ```
 
@@ -1286,7 +1301,8 @@ from .rekordbox_phrases import phrase_grid_from_phrases
 
 def candidate_confidence(*, downbeat_confidence: float, pssi_grid: bool, phrase_confidence: float,
                          key_confidence_lokal: float | None, covered: bool) -> float:
-    """Mittel der verfuegbaren Teilkonfidenzen (Spec: downbeat, phrase, key, Coverage)."""
+    """Mittel der verfuegbaren Teilkonfidenzen (Spec: downbeat, phrase, key,
+    Coverage). Das gleichgewichtete Mittel ist ein STARTWERT, nicht gemessen."""
     teile = [float(downbeat_confidence), 1.0 if pssi_grid else float(phrase_confidence),
              1.0 if covered else 0.0]
     if key_confidence_lokal is not None:
@@ -1316,7 +1332,8 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
     for cand in ins + outs:
         measure_candidate_window(file_path, cand, bpm=bpm, first_downbeat=first_downbeat,
                                  downbeat_confidence=downbeat_confidence, grid_sec=grid_sec,
-                                 duration=duration, sections=sections)
+                                 duration=duration, sections=sections,
+                                 pssi_mood=int(phrases[0]["mood"]) if phrases else None)
         sek = _section_at(sections, cand.t)
         covered = sek is not None and sek.get("label") != "unanalysed" and (covered_bis is None or cand.t <= covered_bis)
         cand.confidence = candidate_confidence(
@@ -1376,10 +1393,11 @@ Nach `anlz_downbeat = rekordbox_importer.get_first_downbeat(file_path)`:
 
 Cue-Block ersetzen (von `if rekordbox_data.cue_points:` bis vor `# Audio Feature Extensions`): nur noch **benannte** Cues als Override, `in_pattern`/`out_pattern` durch `CUE_IN_PATTERN`/`CUE_OUT_PATTERN`, Schleife ueber `cue_points` (`c["provenance"] == "manual"`, `c["name"].upper()`), **kein** Heuristik-Zweig, kein `cue_in_verwerfen`-Aufruf mehr (Guard greift nur fuer Heuristik; die Funktion bleibt fuer Tests bestehen, wird aber nicht mehr gerufen — im Kommentar festhalten), `min_fenster = 0.0`, Rest (`align_ai_mix_points`, Bars) unveraendert.
 
-Nach dem Advanced-Analysis-Block (vor `track = Track(`):
+Nach dem Advanced-Analysis-Block (vor `track = Track(`, also NACH dem `except`-Zweig — deshalb der Guard `if not analysis_degraded`, sonst wuerden die im except gesetzten leeren Listen ueberschrieben):
 
 ```python
-        try:
+        if not analysis_degraded:
+          try:
             mix_in_candidates, mix_out_candidates = build_track_candidates(
                 file_path, bpm=rekordbox_data.bpm, duration=duration,
                 first_downbeat=first_downbeat, downbeat_confidence=downbeat_confidence,
@@ -1388,16 +1406,17 @@ Nach dem Advanced-Analysis-Block (vor `track = Track(`):
                 cues=cue_points, analyzer_in=mix_in_point, analyzer_out=mix_out_point,
                 outro_covered=outro_covered,
             )
-        except Exception as e:
+          except Exception as e:
             logger.warning(f"Kandidaten fehlgeschlagen: {e}")
             mix_in_candidates, mix_out_candidates = [], []
-        from .rekordbox_phrases import phrase_grid_from_phrases
-        phrase_grid = phrase_grid_from_phrases(phrases)
+          phrase_grid = phrase_grid_from_phrases(phrases)
 ```
+
+(Einrueckung im echten Code mit 4 Leerzeichen je Ebene; `phrase_grid_from_phrases` oben bei den Imports: `from .rekordbox_phrases import phrase_grid_from_phrases`.)
 
 Im degradierten Zweig (`except (sf.LibsndfileError, ...)`) setzen: `phrases = []`, `cue_points = []`, `phrase_grid = []`, `mix_in_candidates = mix_out_candidates = []`. Im `Track(...)`-Konstruktor ergaenzen: `phrases=phrases, cue_points=cue_points, phrase_grid=phrase_grid, mix_in_candidates=mix_in_candidates, mix_out_candidates=mix_out_candidates`.
 
-`tests/test_cue_intro_guard.py`: Tests, die `cue_in_verwerfen` direkt pruefen, bleiben (Funktion existiert). Tests, die den Heuristik-Pfad ueber `analyze_track` pruefen, auf die neue Erwartung umstellen: unbenannte Cues erzeugen KEINEN Override mehr; stattdessen erscheinen sie in `track.cue_points` mit `provenance in ("auto","leer")` und als `auto_cue`-Schema in den Kandidaten.
+`tests/test_cue_intro_guard.py` bleibt unveraendert: die Datei testet ausschliesslich `cue_in_verwerfen` direkt (Zeilen 20-113), kein Test dort laeuft ueber `analyze_track` (Waechter Tor 1 geprueft). `cue_in_verwerfen` bleibt im Code (ungenutzt im Produktivpfad; Kommentar im Cue-Block: "Heuristik entfernt 2026-08-21, Spec Abschnitt 1").
 
 - [ ] **Step 4: Run** `tests/test_analyze_track.py tests/test_cue_intro_guard.py tests/test_analysis.py -q --no-cov` → PASS
 - [ ] **Step 5: Commit** `git commit -am "feat(analysis): Kandidaten im Rekordbox-Pfad, Cue-Heuristik entfernt (Spec 2026-08-21)"`
@@ -1522,7 +1541,7 @@ def main() -> int:
         from hpg_core import caching
         import sqlite3
         conn = sqlite3.connect(caching.CACHE_FILE)
-        for (row,) in conn.execute("SELECT data FROM cache"):
+        for (row,) in conn.execute("SELECT data FROM cache WHERE key <> 'version'"):
             tracks.append(json.loads(row))
     z = zusammenfassung(tracks)
     z["intro_outro_verletzungen"] = sum(_verletzungen(t) for t in tracks)
@@ -1538,18 +1557,18 @@ if __name__ == "__main__":
 ```
 
 - [ ] **Step 4: Run → PASS**
-- [ ] **Step 5: Commit** `git commit -am "tools: kandidaten_messen (Regression/Analysezeit)"`
+- [ ] **Step 5: Commit** `git add tools/kandidaten_messen.py tests/test_tools_kandidaten_messen.py && git commit -m "tools: kandidaten_messen (Regression/Analysezeit)"`
 
 ---
 
 ### Task 12: Messung an echten Tracks, Doku, Waechter Tor 2, Commit
 
-- [ ] **Step 1: Cache leeren ist NICHT noetig** — Version 34 legt eine neue DB `hpg_cache_v34.db` an. Liste der 231 analysierten Tracks aus der alten DB ziehen: `python - <<EOF ... sqlite3 %LOCALAPPDATA%\HPG\hpg_cache_v33.db SELECT file_path FROM cache EOF` → `scratch/tracks231.txt`.
-- [ ] **Step 2: Messen** `.\venv312\Scripts\python.exe tools/kandidaten_messen.py --liste scratch/tracks231.txt --json scratch/kandidaten_v34.json` (dauert: 231 Tracks × Analysezeit; laufen lassen, Zeit notieren). Pflicht-Ergebnisse ins Handoff: `intro_outro_verletzungen` (muss 0 sein), `ohne_in`/`ohne_out`, Median Kandidaten je Seite, Schemaverteilung, `mit_pssi` (erwartet nahe 231, da 2475 EXT-Dateien vorliegen), Analysezeit-Median (Vergleich: vorher ohne Kandidaten — einmal mit `HPG_CACHE_DIR` auf leeres Verzeichnis und auskommentiertem Kandidatenaufruf NICHT machen; stattdessen die Zeit je `build_track_candidates` in `analysis.py` per `logger.info` mitloggen und aus dem Log den Median ziehen).
+- [ ] **Step 1: Cache leeren ist NICHT noetig** — Version 34 legt eine neue DB `hpg_cache_v34.db` an. Liste der 231 analysierten Tracks aus der alten DB ziehen (Spalte heisst `filepath`, Metadaten-Zeile `key='version'` ausschliessen): `sqlite3 %LOCALAPPDATA%\HPG\hpg_cache_v33.db "SELECT filepath FROM cache WHERE key <> 'version'"` → in den Scratchpad-Ordner der Session (`%TEMP%\claude\...\scratchpad\tracks231.txt`), NICHT ins Repo.
+- [ ] **Step 2: Messen** `.\venv312\Scripts\python.exe tools/kandidaten_messen.py --liste <scratchpad>\tracks231.txt --json <scratchpad>\kandidaten_v34.json` (dauert: 231 Tracks × Analysezeit; laufen lassen, Zeit notieren). Pflicht-Ergebnisse ins Handoff: `intro_outro_verletzungen` (muss 0 sein), `ohne_in`/`ohne_out`, Median Kandidaten je Seite, Schemaverteilung, `mit_pssi` (erwartet nahe 231, da 2475 EXT-Dateien vorliegen), Analysezeit-Median (Vergleich: vorher ohne Kandidaten — einmal mit `HPG_CACHE_DIR` auf leeres Verzeichnis und auskommentiertem Kandidatenaufruf NICHT machen; stattdessen die Zeit je `build_track_candidates` in `analysis.py` per `logger.info` mitloggen und aus dem Log den Median ziehen).
 - [ ] **Step 3: Volle Suite** `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` — gruen inkl. Coverage-Gate 70.
-- [ ] **Step 4: Doku**: `CLAUDE.md` (CACHE_VERSION 34, neue Module in der Baumliste), `.agents/skills/hpg-mixpoint-engineering/SKILL.md` + `.claude/...` (Abschnitt "Kandidaten-Design" → "Teil 1 gebaut: Felder, Module, Heuristik entfernt"), `.agents/skills/hpg-cache-persistence/SKILL.md` (Version 34), `.agents/skills/hpg-rekordbox/SKILL.md` (`get_phrases`, PSSI), Handoff `docs/HANDOFF-<Datum>-kandidaten-teil1.md` mit den Messzahlen aus Step 2.
+- [ ] **Step 4: Doku**: `CLAUDE.md` (CACHE_VERSION 34, neue Module in der Baumliste), `.agents/skills/hpg-mixpoint-engineering/SKILL.md` + `.claude/...` (Abschnitt "Kandidaten-Design" → "Teil 1 gebaut: Felder, Module, Heuristik entfernt"; Regel "quantize_to_grid ist die einzige erlaubte Quantisierung" ergaenzen um `quantize_to_points` fuer das unregelmaessige PSSI-Gitter, gleiche ceil/floor-Toleranz), `.agents/skills/hpg-cache-persistence/SKILL.md` (Version 34), `.agents/skills/hpg-rekordbox/SKILL.md` (`get_phrases`, PSSI), Handoff `docs/HANDOFF-<Datum>-kandidaten-teil1.md` mit den Messzahlen aus Step 2.
 - [ ] **Step 5: Waechter Tor 2** mit dem Gesamt-Diff gegen dieses Plan-Dokument; Auflagen einarbeiten.
-- [ ] **Step 6: Commit + Push** `git commit -am "docs: Kandidaten Teil 1 gebaut — Messung, Skills, Handoff" && git push origin main`.
+- [ ] **Step 6: Commit + Push** `git add -A docs CLAUDE.md .agents && git commit -m "docs: Kandidaten Teil 1 gebaut — Messung, Skills, Handoff" && git push -u origin kandidaten-teil1`. Merge auf main danach ueber superpowers:finishing-a-development-branch (Nutzer: "am Ende alles auf main mergen").
 
 ---
 
@@ -1561,7 +1580,7 @@ if __name__ == "__main__":
 | `phrase_grid` PSSI vor Analyzer | 2 (`phrase_grid_from_phrases`), 6 (`_quantize`), 8 |
 | `cue_points` mit Provenienz, Heuristik entfaellt | 5 (`normalize_cues`), 9 |
 | `mix_in/out_candidates` 3–8 | 6 (Kappung/Minimum-Log), 8 |
-| Position: t, schema (5 Schemata + analyzer), provenance, confidence | 6, 8 |
+| Position: t, schema (5 Spec-Schemata + `analyzer`, s. offene Frage unten), provenance, confidence | 6, 8 |
 | Struktur: section_label, phrase_label, neuheit, traegt_allein | 6, 7 |
 | Rhythmus: groove/bass_pattern_lokal, syncopation, percussive_ratio | 7 |
 | Bass: sub_energy, bass_punch, bass_rms_dbfs, kick_aktiv | 7 |
@@ -1576,3 +1595,7 @@ if __name__ == "__main__":
 | Track.mix_*_point = Rang 1 | Teil 2/4 (in Teil 1 unveraendert: Analyzer + benannter Cue) |
 
 Placeholder-Scan: keine TBD/TODO. Typen: `MixCandidate.schema: list[str]`, `cue_points`-Dicts mit Schluesseln `t, name, typ, hot_cue, provenance` durchgaengig (Tasks 5, 6, 9); `phrases`-Dicts `start_s, end_s, label, mood, kind, fill` (Tasks 2, 6, 8).
+
+**Offene Entscheidung (Nutzer, vor Task 6):** Die Spec nennt fuenf Schemata (benannter Cue, Auto-Cue, PSSI-Phrasengrenze, Sektionsgrenze, Energie-Neuheit). Der Plan fuehrt zusaetzlich `analyzer` (der heutige `calculate_genre_aware_mix_points`-Punkt) als sechstes Schema, damit der heutige Track-Mixpunkt immer in der Kandidatenliste steht. Ohne Freigabe wird `analyzer` gestrichen (Task 6: `analyzer_in/analyzer_out` entfallen; `SCHEMA_PRIORITAET` ohne "analyzer"; Tests entsprechend).
+
+**Weitere Abweichungen von der Spec, benannt (Waechter Tor 1):** Cue-Dicts tragen zusaetzlich `hot_cue`, Phrasen-Dicts `kind`/`fill` (Rohdaten, keine Wirkung); `candidate_confidence` ist gleichgewichtetes Mittel = Startwert.
