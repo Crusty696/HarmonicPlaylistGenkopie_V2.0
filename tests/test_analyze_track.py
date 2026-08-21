@@ -420,3 +420,60 @@ class TestAnalyzeTrackCaching:
     assert track2.duration == track1.duration
     assert track2.bpm == track1.bpm
     assert track2.energy == track1.energy
+
+
+# ============================================================
+# Rekordbox-Fast-Path: Kandidaten statt Cue-Heuristik (Spec 2026-08-21)
+# ============================================================
+
+@pytest.mark.integration
+class TestAnalyzeTrackFastPathCandidates:
+  """Erfolgreicher Rekordbox-Fast-Path mit gemocktem Importer."""
+
+  def test_fast_path_fuellt_phrasen_cues_gitter_und_kandidaten(
+    self, monkeypatch, tmp_path
+  ):
+    """Rekordbox-Pfad: Track traegt phrases/cue_points/phrase_grid/mix_*_candidates;
+    die Cue-Positionsheuristik (2./letzter Cue) wird NICHT mehr angewendet."""
+    from hpg_core import analysis
+
+    wav = tmp_path / "fast.wav"
+    _create_click_wav(str(wav), bpm=128.0, duration=120.0)
+    data = RekordboxTrackData(
+      bpm=128.0, duration=120.0, camelot_code="8A", title="T", artist="A",
+      cue_points=[
+        {"position": p, "name": None, "type": 0,
+         "hot_cue_number": None, "color": None}
+        for p in (20.0, 61.0, 100.0)
+      ],
+      content_id="1",
+    )
+    importer = Mock()
+    importer.get_track_data.return_value = data
+    importer.get_track_signature.return_value = "rb-signature"
+    importer.get_first_downbeat.return_value = 0.0
+    importer.get_phrases.return_value = [
+      {"start_s": 0.0, "end_s": 30.0, "label": "Intro",
+       "mood": 1, "kind": 1, "fill": 0},
+      {"start_s": 30.0, "end_s": 120.0, "label": "Chorus",
+       "mood": 1, "kind": 5, "fill": 0},
+    ]
+    monkeypatch.setattr(analysis, "get_rekordbox_importer", lambda: importer)
+    monkeypatch.setattr(analysis, "get_cached_track", lambda *a, **k: None)
+    monkeypatch.setattr(analysis, "cache_track", Mock())
+
+    track = analysis.analyze_track(str(wav))
+
+    assert track is not None
+    assert [p["label"] for p in track.phrases] == ["Intro", "Chorus"]
+    assert track.phrase_grid == [0.0, 30.0, 120.0]
+    assert [c["provenance"] for c in track.cue_points] == ["leer", "leer", "leer"]
+    assert all(
+      "t" in c and "schema" in c and "confidence" in c
+      for c in track.mix_in_candidates + track.mix_out_candidates
+    )
+    assert track.mix_in_candidates, "Mix-In-Kandidaten fehlen"
+    # Heuristik weg: der 2. Cue (61 s) setzt den Mix-In NICHT mehr direkt
+    assert abs(track.mix_in_point - 61.0) > 0.5 or any(
+      "analyzer" in c["schema"] for c in track.mix_in_candidates
+    )
