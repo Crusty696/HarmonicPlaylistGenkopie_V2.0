@@ -28,7 +28,6 @@ from .config import (
     SECURITY_MAX_TRACK_DURATION,
 )
 from .dj_brain import (
-    _get_intro_end_from_sections,
     align_ai_mix_points,
     calculate_genre_aware_mix_points,
 )
@@ -38,17 +37,17 @@ from .downbeat import (
     estimate_first_phrase,
 )
 from .genre_classifier import GenreClassification, classify_genre
-from .mix_candidates import (
-    CUE_IN_PATTERN,
-    CUE_OUT_PATTERN,
-    build_track_candidates,
-    normalize_cues,
-)
 from .groove import (
     BASS_KENNWERTE_MIN_SEC,
     GrooveFeatures,
     bass_kennwerte,
     extract_groove,
+)
+from .mix_candidates import (
+    CUE_IN_PATTERN,
+    CUE_OUT_PATTERN,
+    build_track_candidates,
+    normalize_cues,
 )
 from .models import (
     CAMELOT_MAP,
@@ -1689,13 +1688,7 @@ def analyze_track(file_path: str) -> Track | None:
 
                 candidate_in = cue_in if cue_in is not None else mix_in_point
                 candidate_out = cue_out if cue_out is not None else mix_out_point
-                # Die Zwei-Phrasen-Pruefung galt nur im Guard-Fall der
-                # Heuristik und entfaellt mit ihr; align_ai_mix_points prueft
-                # in < out.
-                min_fenster = 0.0
-                if 0 <= candidate_in < candidate_out <= duration and (
-                    candidate_out - candidate_in >= min_fenster
-                ):
+                if 0 <= candidate_in < candidate_out <= duration:
                     # Gleiche Quantisierungs-Pipeline wie der AI-Override
                     mix_in_point, mix_out_point = align_ai_mix_points(
                         candidate_in,
@@ -1712,7 +1705,7 @@ def analyze_track(file_path: str) -> Track | None:
                     logger.warning(
                         f"Rekordbox-Cues ungueltig oder Mixfenster zu kurz "
                         f"(in={candidate_in:.1f}, out={candidate_out:.1f}, "
-                        f"noetig {min_fenster:.1f}s, duration={duration:.1f}) — "
+                        f"duration={duration:.1f}) — "
                         f"behalte berechnete Mix-Punkte"
                     )
 
