@@ -1255,6 +1255,14 @@ Hinweis: `extract_groove` liefert leere Muster, wenn das Konzentrations-Gate (`G
 
 ---
 
+**Abweichung bei der Umsetzung (Commit dfd7372, Entscheidung Koordinator):** Die
+oben gezeigte `_neuheit`-Formel war blind fuer Lautheitsbrueche (Kick weg →
+0.105). Umgesetzt wurde: `rhythmus` = |Δ Onset-Dichte/s| / max (onset_detect),
+`laut` = clip(|Δ RMS dB| / NEUHEIT_LAUT_DB=20, 0, 1) (Startwert), `timbre` =
+Kosinus-Distanz MFCC OHNE Koeffizient 0, `harm` = Chroma-Kosinus-Distanz;
+Mittel der vier. Gemessen: Kick weg 0.597, durchgehender Kick 0.03. Tests
+unveraendert. Rauschboden `rhythmus` ≈ 0.12 bei unveraendertem Signal bekannt.
+
 ### Task 8: `build_track_candidates` + Confidence
 
 **Files:**
