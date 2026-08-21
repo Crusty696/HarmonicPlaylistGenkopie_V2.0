@@ -1,15 +1,43 @@
 """Kandidaten-Regressionsmessung: analysiert eine Trackliste (oder liest den
 Cache) und berichtet Kandidatenzahl je Seite, Schemaverteilung, PSSI-Anteil,
-Intro/Outro-Verletzungen und Analysezeit je Track. Aufruf:
+Intro/Outro-Verletzungen, Analysezeit je Track sowie Kandidaten-Sekunden und
+Analysepfad (fast/voll) aus der Logzeile von _kandidaten_berechnen. Aufruf:
   python tools/kandidaten_messen.py --liste tracks.txt [--json out.json]
   python tools/kandidaten_messen.py --cache
 """
-import argparse, json, os, statistics, sys, time
+import argparse, json, logging, os, re, statistics, sys, time
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hpg_core.models import QUANTIZE_TOLERANCE_SEC
+
+_KANDIDATEN_LOG_RE = re.compile(r"Kandidaten \[(fast|voll)\]: \d+ in / \d+ out in ([0-9.]+)s")
+
+
+def parse_kandidaten_log(zeile: str) -> tuple[str, float] | None:
+    """Liest Pfad und Sekunden aus der Erfolgszeile von _kandidaten_berechnen."""
+    m = _KANDIDATEN_LOG_RE.search(zeile)
+    if m is None:
+        return None
+    return m.group(1), float(m.group(2))
+
+
+class _KandidatenLogFaenger(logging.Handler):
+    """Merkt sich das letzte geparste Kandidaten-Logergebnis."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.letzte: tuple[str, float] | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        tref = parse_kandidaten_log(record.getMessage())
+        if tref is not None:
+            self.letzte = tref
+
+    def abholen(self) -> tuple[str, float] | None:
+        tref, self.letzte = self.letzte, None
+        return tref
 
 
 def zusammenfassung(tracks: list[dict]) -> dict:
@@ -30,6 +58,8 @@ def zusammenfassung(tracks: list[dict]) -> dict:
         "kandidaten_out_median": med([len(t.get("mix_out_candidates", [])) for t in tracks]),
         "schemata_in": dict(sch_in), "schemata_out": dict(sch_out),
         "analyse_sekunden_median": med([t["analyse_sekunden"] for t in tracks if "analyse_sekunden" in t]),
+        "kandidaten_sekunden_median": med([t["kandidaten_sekunden"] for t in tracks if "kandidaten_sekunden" in t]),
+        "pfade": dict(Counter(t["pfad"] for t in tracks if "pfad" in t)),
     }
 
 
@@ -55,15 +85,26 @@ def main() -> int:
         from hpg_core.analysis import analyze_track
         with open(a.liste, encoding="utf-8") as fh:
             pfade = [line.strip() for line in fh]
-        for p in pfade:
-            if not p:
-                continue
-            t0 = time.perf_counter()
-            tr = analyze_track(p)
-            dt = time.perf_counter() - t0
-            if tr is None:
-                continue
-            d = track_to_dict(tr); d["analyse_sekunden"] = round(dt, 2); tracks.append(d)
+        faenger = _KandidatenLogFaenger()
+        analyse_logger = logging.getLogger("hpg_core.analysis")
+        analyse_logger.addHandler(faenger)
+        analyse_logger.setLevel(logging.INFO)
+        try:
+            for p in pfade:
+                if not p:
+                    continue
+                t0 = time.perf_counter()
+                tr = analyze_track(p)
+                dt = time.perf_counter() - t0
+                tref = faenger.abholen()
+                if tr is None:
+                    continue
+                d = track_to_dict(tr); d["analyse_sekunden"] = round(dt, 2)
+                if tref is not None:
+                    d["pfad"], d["kandidaten_sekunden"] = tref[0], tref[1]
+                tracks.append(d)
+        finally:
+            analyse_logger.removeHandler(faenger)
     elif a.cache:
         from hpg_core import caching
         import sqlite3

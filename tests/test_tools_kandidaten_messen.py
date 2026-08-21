@@ -30,3 +30,20 @@ def test_cache_modus_ohne_datei_meldet_fehler_und_legt_nichts_an(tmp_path, monke
     assert kandidaten_messen.main() == 1
     assert str(pfad) in capsys.readouterr().err
     assert not pfad.exists()
+
+
+def test_parse_kandidaten_log():
+    from tools.kandidaten_messen import parse_kandidaten_log
+    assert parse_kandidaten_log("Kandidaten [fast]: 8 in / 8 out in 18.40s") == ("fast", 18.4)
+    assert parse_kandidaten_log("Kandidaten [voll]: 2 in / 1 out in 1.19s") == ("voll", 1.19)
+    assert parse_kandidaten_log("Kandidaten [fast] fehlgeschlagen: boom") is None
+    assert parse_kandidaten_log("irgendwas") is None
+
+
+def test_zusammenfassung_mit_kandidaten_sekunden_und_pfaden():
+    from tools.kandidaten_messen import zusammenfassung
+    tracks = [{"mix_in_candidates": [], "mix_out_candidates": [], "phrases": [], "kandidaten_sekunden": 10.0, "pfad": "fast"},
+              {"mix_in_candidates": [], "mix_out_candidates": [], "phrases": [], "kandidaten_sekunden": 20.0, "pfad": "fast"},
+              {"mix_in_candidates": [], "mix_out_candidates": [], "phrases": []}]
+    z = zusammenfassung(tracks)
+    assert z["kandidaten_sekunden_median"] == 15.0 and z["pfade"] == {"fast": 2}
