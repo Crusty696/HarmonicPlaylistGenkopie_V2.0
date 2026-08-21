@@ -327,6 +327,14 @@ def phrase_grid_from_phrases(phrases: list[dict]) -> list[float]:
 
 ---
 
+**Abweichung bei der Umsetzung (Commit f403e30):** `phrases_from_anlz` und
+`phrase_grid_from_phrases` runden NICHT mehr auf 3 Dezimalen (der Test
+`test_beat_ausserhalb_des_beatgrids_wird_geklemmt` scheiterte an 4.219 vs.
+4.21875; Entscheidung: volle Praezision, 3-ms-Regel). Hinweis: Kandidaten-
+Zeitpunkte werden in `mix_candidates.py` weiterhin auf 3 Dezimalen gerundet
+(`normalize_cues`, `collect_candidate_times`) — unschaedlich gegen die
+50-ms-Toleranz, aber die Phrasen-Praezision kommt dort nicht an.
+
 ### Task 3: `RekordboxImporter.get_phrases` + ANLZ-Helfer
 
 **Files:**
