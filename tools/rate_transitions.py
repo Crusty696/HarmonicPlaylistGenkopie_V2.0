@@ -69,10 +69,37 @@ NEUE_FAKTOREN: tuple[str, ...] = ("groove", "bass", "timbre", "mood")
 # wuerde ihr Beitrag zum Urteil faelschlich den neuen Faktoren zugeschlagen.
 KLASSISCHE_FAKTOREN: tuple[str, ...] = ("harmonic", "bpm", "energy", "genre")
 ALLE_FAKTOREN: tuple[str, ...] = NEUE_FAKTOREN + KLASSISCHE_FAKTOREN
+# Protokollspalten in merkmale.csv — der Fit liest sie NICHT (kein Merkmal).
+ZUSATZ_SPALTEN: tuple[str, ...] = ("overall_score", "lufs_delta")
 
 # --- Auswahl / Rendern ----------------------------------------------------
-STANDARD_BPM_TOLERANZ = 6.0
+# Harte Nutzer-Grenze (2026-08-21): hoechstens 2 BPM Unterschied zwischen
+# zwei Tracks, die gemischt werden sollen (Grenze inklusive: 2.0 passt,
+# 2.1 nicht). Half/Double-Relationen rechnet effective_bpm_diff wie in der
+# App um. Dieselbe Regel gilt fuer die App (GUI-Slider Default 3, Bereich
+# 1-15) — dort noch NICHT umgesetzt, offene Aufgabe.
+STANDARD_BPM_TOLERANZ = 2.0
+# Toleranz, mit der das SCORING rechnet (bpm_smoothness = exp(-diff/(tol/2)),
+# harmonic_strictness/allow_experimental auf Defaults): der GUI-Default der
+# App, damit der Hoertest denselben Scoring-Vertrag prueft, den die App
+# benutzt (HPG-001) — nicht das Auswahl-Gate oben.
+SCORING_BPM_TOLERANZ = 3.0
 MIN_HARMONIC_SCORE = 60
+# Paar-Gate ueber ALLE Scoring-Gewichte (harmonic/bpm/energy/genre plus
+# groove/bass/timbre/mood): overall_score 0..1 aus
+# calculate_enhanced_compatibility. 0.70 ist die Paar-Stufe "Solide
+# Transition" der App (playlist.py, Transition-Beschreibung: >= 85
+# sicher, >= 70 solide, >= 55 machbar). Der Hoertest bewertet damit nur
+# Paare, die die App mit ihren aktuellen Gewichten als solide ansieht.
+# Folge, bewusst in Kauf genommen: das Gate enthaelt die Startgewichte
+# (groove 0.30), die die Noten ersetzen sollen, und es drueckt die Streuung
+# von timbre/mood im Satz — liefert der Fit dort
+# "Intervall enthaelt 0", heisst das "kein Kontrast im Satz", nicht
+# "Faktor egal".
+MIN_OVERALL_SCORE = 0.70
+# Groove-Untergrenze aus dem Tausch vom 21.08. (Paare mit groove < 0.5
+# wurden damals von Hand aus beiden Saetzen entfernt).
+MIN_GROOVE = 0.5
 # Feste Blende fuer ALLE Hoertest-Clips: reine 3-Band-EQ-Blende ohne Echo,
 # Cut oder Filter-Sweep. Vorher lief je Paar predict_transition_type, damit
 # variierte der Effekt von Clip zu Clip und ging als nicht erfasste
@@ -623,10 +650,16 @@ def _faktoren_vollstaendig(
 def sammle_kandidaten(
     tracks: list[Track], bpm_toleranz: float = STANDARD_BPM_TOLERANZ
 ) -> list[dict]:
-    """Bildet mixbare Kandidatenpaare mit vollstaendigen Faktorwerten.
+    """Bildet Kandidatenpaare, die die App mit allen Regeln als mixbar ansieht.
 
-    Nur mixbare Paare: bewertet der Nutzer "unmixbar", sagt das nichts ueber
-    die vier Faktoren aus, sondern nur ueber BPM und Tonart.
+    Gates: BPM-Abstand <= bpm_toleranz (hart, Nutzer-Regel 2 BPM), Tonart
+    (harmonic_score >= MIN_HARMONIC_SCORE), Gesamtwertung ueber alle Gewichte
+    (overall_score >= MIN_OVERALL_SCORE, Scoring mit SCORING_BPM_TOLERANZ)
+    und groove >= MIN_GROOVE. Der Hoertest benotet also nur Paare, die die App
+    auch waehlen wuerde; die Noten pruefen deren Gewichte. Lautheit ist in
+    keinem Scoring-Faktor und hat keinen belegten Schwellwert — sie wird als
+    lufs_delta protokolliert (der Renderer gleicht sie im Clip an, der Hoerer
+    kann sie nicht benoten); ihre Gewichtung gehoert ins Kandidaten-Design.
     """
     kandidaten: list[dict] = []
     for a in tracks:
@@ -638,13 +671,31 @@ def sammle_kandidaten(
             diff, _relation = effective_bpm_diff(float(a.bpm), float(b.bpm))
             if diff > bpm_toleranz:
                 continue
-            metrics = calculate_enhanced_compatibility(a, b, bpm_toleranz)
+            metrics = calculate_enhanced_compatibility(a, b, SCORING_BPM_TOLERANZ)
             if metrics.harmonic_score < MIN_HARMONIC_SCORE:
+                continue
+            if float(metrics.overall_score) < MIN_OVERALL_SCORE:
                 continue
             werte = _faktoren_vollstaendig(a, b, metrics)
             if werte is None:
                 continue
-            kandidaten.append({"track_a": a, "track_b": b, "merkmale": werte})
+            if werte["groove"] < MIN_GROOVE:
+                continue
+            # Protokollspalten fuer merkmale.csv (keine Regressions-Merkmale).
+            # lufs_delta nur, wenn beide Lautheiten gemessen sind (Sentinel 0.0
+            # bzw. lufs_status != "complete" hiesse sonst scheinbar 9 dB).
+            lufs_ok = (
+                float(a.lufs) < 0.0 and float(b.lufs) < 0.0
+                and getattr(a, "lufs_status", "complete") == "complete"
+                and getattr(b, "lufs_status", "complete") == "complete"
+            )
+            zusatz = {
+                "overall_score": round(float(metrics.overall_score), 4),
+                "lufs_delta": round(abs(float(a.lufs) - float(b.lufs)), 2) if lufs_ok else "",
+            }
+            kandidaten.append(
+                {"track_a": a, "track_b": b, "merkmale": werte, "zusatz": zusatz}
+            )
     return kandidaten
 
 
@@ -686,7 +737,9 @@ def geplanter_overlap(a: Track, b: Track, mix_out_a: float, mix_in_b: float) -> 
     fremde Laenge still durch. In beiden Faellen: Rueckfall auf CROSSFADE_SEK.
     """
     try:
-        empfehlungen = compute_transition_recommendations([a, b])
+        empfehlungen = compute_transition_recommendations(
+            [a, b], bpm_tolerance=SCORING_BPM_TOLERANZ
+        )
     except Exception as exc:  # noqa: BLE001 — Empfehlung ist optional
         logger.warning("Overlap-Empfehlung fehlgeschlagen: %s", exc)
         return CROSSFADE_SEK
@@ -861,6 +914,7 @@ def befehl_prepare(args: argparse.Namespace) -> int:
         # liest sie NICHT (verbinde_bewertungen nimmt nur ALLE_FAKTOREN), sie
         # geht also nicht als Kontrollvariable ins Modell ein.
         zeile["crossfade_sek"] = round(float(crossfade), 2)
+        zeile.update(kandidat.get("zusatz", {}))
         zeile["track_a"] = kandidat["track_a"].filePath
         zeile["track_b"] = kandidat["track_b"].filePath
         merkmal_zeilen.append(zeile)
@@ -873,7 +927,8 @@ def befehl_prepare(args: argparse.Namespace) -> int:
                  bewertung_zeilen)
     schreibe_csv(
         out / "merkmale.csv",
-        ("pair_id", *ALLE_FAKTOREN, "crossfade_sek", "track_a", "track_b"),
+        ("pair_id", *ALLE_FAKTOREN, "crossfade_sek", *ZUSATZ_SPALTEN,
+         "track_a", "track_b"),
         merkmal_zeilen,
     )
 

@@ -442,7 +442,7 @@ def test_geplanter_overlap_nimmt_den_wert_der_empfehlung(monkeypatch):
     """Regelfall: Empfehlung passt zu den Mixpunkten -> ihr Overlap gilt."""
     monkeypatch.setattr(
         rate_transitions, "compute_transition_recommendations",
-        lambda tracks: [_FakeEmpfehlung(46.1, _FakePlan(400.0, 100.0))],
+        lambda tracks, **_kw: [_FakeEmpfehlung(46.1, _FakePlan(400.0, 100.0))],
     )
     assert rate_transitions.geplanter_overlap(
         object(), object(), 400.0, 100.0
@@ -454,7 +454,7 @@ def test_geplanter_overlap_faellt_zurueck_bei_fremden_mixpunkten(monkeypatch):
     zu diesem Clip."""
     monkeypatch.setattr(
         rate_transitions, "compute_transition_recommendations",
-        lambda tracks: [_FakeEmpfehlung(12.0, _FakePlan(380.0, 60.0))],
+        lambda tracks, **_kw: [_FakeEmpfehlung(12.0, _FakePlan(380.0, 60.0))],
     )
     assert rate_transitions.geplanter_overlap(
         object(), object(), 400.0, 100.0
@@ -466,7 +466,7 @@ def test_geplanter_overlap_faellt_zurueck_ohne_dj_brain(monkeypatch):
     auch wenn die Ersatz-Mixpunkte zufaellig passen."""
     monkeypatch.setattr(
         rate_transitions, "compute_transition_recommendations",
-        lambda tracks: [_FakeEmpfehlung(12.0, _FakePlan(400.0, 100.0), dj_rec=None)],
+        lambda tracks, **_kw: [_FakeEmpfehlung(12.0, _FakePlan(400.0, 100.0), dj_rec=None)],
     )
     assert rate_transitions.geplanter_overlap(
         object(), object(), 400.0, 100.0
@@ -476,7 +476,7 @@ def test_geplanter_overlap_faellt_zurueck_ohne_dj_brain(monkeypatch):
 def test_geplanter_overlap_faellt_zurueck_ohne_empfehlung(monkeypatch):
     monkeypatch.setattr(
         rate_transitions, "compute_transition_recommendations",
-        lambda tracks: [],
+        lambda tracks, **_kw: [],
     )
     assert rate_transitions.geplanter_overlap(
         object(), object(), 400.0, 100.0
@@ -552,3 +552,86 @@ def test_filtere_nach_genre_ignoriert_unknown():
 
 def test_filtere_nach_genre_leere_eingabe_bleibt_leer():
     assert filtere_nach_genre([], "Psytrance") == []
+
+
+class _GateTrack:
+    """Minimaler Track fuer sammle_kandidaten (BPM, Pfad, LUFS)."""
+    def __init__(self, pfad, bpm, lufs=-9.0):
+        self.filePath = pfad
+        self.bpm = bpm
+        self.lufs = lufs
+
+
+class _Metrik:
+    def __init__(self, harmonic=80, overall=0.8):
+        self.harmonic_score = harmonic
+        self.overall_score = overall
+
+
+def _faktoren_mit(groove):
+    return {"groove": groove, "bass": 0.7, "timbre": 0.7, "mood": 0.7,
+            "harmonic": 0.8, "bpm": 0.9, "energy": 0.8, "genre": 1.0}
+
+
+def test_sammle_kandidaten_bpm_grenze_ist_zwei_scoring_app_default():
+    assert rate_transitions.STANDARD_BPM_TOLERANZ == 2.0
+    assert rate_transitions.SCORING_BPM_TOLERANZ == 3.0
+
+
+def test_sammle_kandidaten_scoring_nutzt_app_toleranz_nicht_das_gate(monkeypatch):
+    """Das Gate ist 2 BPM hart, das Scoring rechnet mit dem App-Default —
+    sonst prueft der Hoertest einen Vertrag, den die App nie benutzt."""
+    gesehen = {}
+    def fake_enhanced(x, y, tol):
+        gesehen["tol"] = tol
+        return _Metrik()
+    monkeypatch.setattr(rate_transitions, "calculate_enhanced_compatibility", fake_enhanced)
+    monkeypatch.setattr(rate_transitions, "_faktoren_vollstaendig",
+                        lambda x, y, m: _faktoren_mit(0.8))
+    rate_transitions.sammle_kandidaten([_GateTrack("A.wav", 140.0), _GateTrack("B.wav", 141.0)], 2.0)
+    assert gesehen["tol"] == rate_transitions.SCORING_BPM_TOLERANZ
+
+
+def test_sammle_kandidaten_gates_overall_und_groove(monkeypatch):
+    """Nur Paare, die die App mit ALLEN Gewichten als solide sieht
+    (overall >= 0.70) und deren Groove >= 0.5 ist, kommen in den Hoertest."""
+    a = _GateTrack("A.wav", 140.0, lufs=-8.0)
+    b = _GateTrack("B.wav", 141.0, lufs=-11.5)
+    faelle = [
+        (_Metrik(overall=0.8), 0.7, True),
+        (_Metrik(overall=0.70), 0.7, True),   # Grenze inklusive
+        (_Metrik(overall=0.65), 0.7, False),  # overall unter Gate
+        (_Metrik(overall=0.8), 0.4, False),   # groove unter Gate
+        (_Metrik(harmonic=50, overall=0.8), 0.7, False),  # Harmonik-Gate wie bisher
+    ]
+    for metrik, groove, erwartet in faelle:
+        monkeypatch.setattr(rate_transitions, "calculate_enhanced_compatibility",
+                            lambda x, y, tol, _m=metrik: _m)
+        monkeypatch.setattr(rate_transitions, "_faktoren_vollstaendig",
+                            lambda x, y, m, _g=groove: _faktoren_mit(_g))
+        kandidaten = rate_transitions.sammle_kandidaten([a, b], 2.0)
+        assert (len(kandidaten) > 0) is erwartet, (metrik.overall_score, groove)
+
+
+def test_sammle_kandidaten_schreibt_zusatzwerte(monkeypatch):
+    a = _GateTrack("A.wav", 140.0, lufs=-8.0)
+    b = _GateTrack("B.wav", 141.0, lufs=-11.5)
+    monkeypatch.setattr(rate_transitions, "calculate_enhanced_compatibility",
+                        lambda x, y, tol: _Metrik(overall=0.75))
+    monkeypatch.setattr(rate_transitions, "_faktoren_vollstaendig",
+                        lambda x, y, m: _faktoren_mit(0.8))
+    kandidaten = rate_transitions.sammle_kandidaten([a, b], 2.0)
+    zusatz = kandidaten[0]["zusatz"]
+    assert zusatz["overall_score"] == pytest.approx(0.75)
+    assert zusatz["lufs_delta"] == pytest.approx(3.5)
+    assert set(zusatz) == set(rate_transitions.ZUSATZ_SPALTEN)
+
+
+def test_sammle_kandidaten_bpm_grenze_inklusive(monkeypatch):
+    monkeypatch.setattr(rate_transitions, "calculate_enhanced_compatibility",
+                        lambda x, y, tol: _Metrik())
+    monkeypatch.setattr(rate_transitions, "_faktoren_vollstaendig",
+                        lambda x, y, m: _faktoren_mit(0.8))
+    a = _GateTrack("A.wav", 140.0)
+    assert rate_transitions.sammle_kandidaten([a, _GateTrack("B.wav", 142.0)]) != []
+    assert rate_transitions.sammle_kandidaten([a, _GateTrack("C.wav", 142.5)]) == []
