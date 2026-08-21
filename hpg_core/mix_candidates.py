@@ -13,10 +13,16 @@ import math
 import re
 from dataclasses import asdict, dataclass, field, fields
 
+import numpy as np
+
 from .config import (
-    CUE_DEDUPE_SEC, ENERGIE_NEUHEIT_MIN, KANDIDATEN_MAX_JE_SEITE, KANDIDATEN_MIN_JE_SEITE,
+    CUE_DEDUPE_SEC, ENERGIE_NEUHEIT_MIN, ENERGIE_TREND_SCHWELLE, KANDIDATEN_AUDIO_SR,
+    KANDIDATEN_FENSTER_PHRASEN, KANDIDATEN_MAX_JE_SEITE, KANDIDATEN_MIN_JE_SEITE,
+    KICK_AKTIV_MIN_DBFS, KICK_AKTIV_ONBEAT_MIN,
 )
-from .models import QUANTIZE_TOLERANCE_SEC, quantize_to_grid
+from .downbeat import DOWNBEAT_RELIABLE_MIN
+from .groove import ON_BEAT_SLOTS, bass_kennwerte, extract_groove, syncopation_from_pattern
+from .models import CAMELOT_MAP, QUANTIZE_TOLERANCE_SEC, quantize_to_grid
 
 logger = logging.getLogger(__name__)
 
@@ -277,3 +283,189 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
                         len(kandidaten), seite, KANDIDATEN_MIN_JE_SEITE)
         ergebnis[seite] = kandidaten
     return ergebnis["in"], ergebnis["out"]
+
+
+# ---------------------------------------------------------------------------
+# Lokale Messung je Kandidat (Spec Abschnitt 2): Fenster +-1 Phrase um t.
+# Audio wird je Kandidat frisch geladen (unabhaengig vom Head-/Tail-Fenster
+# der Strukturanalyse); LUFS getrennt in nativer Samplerate/Kanalzahl.
+# ---------------------------------------------------------------------------
+
+BASS_RMS_CUTOFF_HZ = 160.0   # wie die Downbeat-Low-Frequency-Onsets (<=160 Hz)
+LUFS_SHORT_TERM_SEC = 3.0    # BS.1771 Short-Term-Fenster
+NEUHEIT_LAUT_DB = 20.0       # RMS-Sprung (dB) fuer vollen Lautheitsbruch; Startwert, nicht gemessen
+
+
+def _lade_fenster(file_path: str, start: float, ende: float, sr: int):
+    import librosa
+    y, _ = librosa.load(file_path, sr=sr, mono=True, offset=max(0.0, start),
+                        duration=max(0.0, ende - max(0.0, start)))
+    return y
+
+
+def _lufs_short_term(file_path: str, t: float, duration: float) -> float | None:
+    """Short-Term-Lautheit (3-s-Block um t) in nativer Samplerate/Kanalzahl."""
+    try:
+        import soundfile as sf
+        import pyloudnorm as pyln
+        info = sf.info(file_path)
+        halb = LUFS_SHORT_TERM_SEC / 2.0
+        start = max(0.0, t - halb)
+        ende = min(float(duration), t + halb) if duration > 0 else t + halb
+        a = int(start * info.samplerate)
+        b = int(ende * info.samplerate)
+        if b - a < info.samplerate:
+            return None
+        data, sr = sf.read(file_path, start=a, stop=b, dtype="float64", always_2d=True)
+        meter = pyln.Meter(sr, filter_class="DeMan")
+        v = float(meter.integrated_loudness(data))
+        if not np.isfinite(v) or v >= 0.0 or v < -70.0:
+            return None
+        return round(v, 2)
+    except Exception as exc:
+        logger.warning("LUFS short-term nicht messbar (%s @ %.1f s): %s", file_path, t, exc)
+        return None
+
+
+def _bass_rms_dbfs(y: np.ndarray, sr: int) -> float | None:
+    from scipy.signal import butter, sosfiltfilt
+    if y is None or len(y) < sr // 4:
+        return None
+    sos = butter(4, BASS_RMS_CUTOFF_HZ, btype="low", fs=sr, output="sos")
+    low = sosfiltfilt(sos, np.asarray(y, dtype=float))
+    rms = float(np.sqrt(np.mean(low ** 2)))
+    if rms <= 0.0:
+        return -120.0
+    return round(20.0 * np.log10(rms), 2)
+
+
+def _kick_aktiv(bass_pattern: list[float], bass_rms_dbfs: float | None) -> bool | None:
+    if not bass_pattern or bass_rms_dbfs is None:
+        return None
+    onbeat = sum(bass_pattern[i] for i in ON_BEAT_SLOTS)
+    return bool(bass_rms_dbfs >= KICK_AKTIV_MIN_DBFS and onbeat >= KICK_AKTIV_ONBEAT_MIN)
+
+
+def _trend(e_vor: int, e_nach: int) -> str:
+    d = e_nach - e_vor
+    if d >= ENERGIE_TREND_SCHWELLE:
+        return "rising"
+    if d <= -ENERGIE_TREND_SCHWELLE:
+        return "falling"
+    return "stable"
+
+
+def _cos_dist(a, b) -> float:
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return 0.0
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na == 0 or nb == 0:
+        return 0.0
+    return float(np.clip(1.0 - float(np.dot(a, b) / (na * nb)), 0.0, 1.0))
+
+
+def _rms_db(x: np.ndarray) -> float:
+    return float(20.0 * np.log10(max(float(np.sqrt(np.mean(np.asarray(x, dtype=float) ** 2))), 1e-9)))
+
+
+def _neuheit(y_vor, y_nach, sr, fc_vor, fc_nach) -> float | None:
+    """Mittel aus vier normierten Spruengen vor/nach t:
+    rhythmus (Onset-Dichte je Sekunde, relativ), laut (RMS-Sprung in dB,
+    NEUHEIT_LAUT_DB = voller Bruch), timbre (Kosinus-Distanz MFCC ohne
+    Koeffizient 0 — der misst Lautheit und dominiert sonst, siehe
+    dj_brain._calculate_texture_similarity), harm (Kosinus-Distanz Chroma).
+    0 = nichts passiert, 1 = maximaler Bruch."""
+    import librosa
+    from .analysis import generate_timbre_fingerprint
+    if y_vor is None or y_nach is None or len(y_vor) < sr or len(y_nach) < sr:
+        return None
+    d_v = len(librosa.onset.onset_detect(y=y_vor, sr=sr, units="frames")) / (len(y_vor) / sr)
+    d_n = len(librosa.onset.onset_detect(y=y_nach, sr=sr, units="frames")) / (len(y_nach) / sr)
+    rhythmus = abs(d_n - d_v) / max(d_n, d_v, 1e-9)
+    laut = float(np.clip(abs(_rms_db(y_nach) - _rms_db(y_vor)) / NEUHEIT_LAUT_DB, 0.0, 1.0))
+    fp_v = generate_timbre_fingerprint(y_vor, sr, fc_vor)
+    fp_n = generate_timbre_fingerprint(y_nach, sr, fc_nach)
+    timbre = _cos_dist(fp_v[1:], fp_n[1:]) if len(fp_v) > 1 and len(fp_n) > 1 else 0.0
+    harm = _cos_dist(np.mean(fc_vor.get_chroma(), axis=1), np.mean(fc_nach.get_chroma(), axis=1))
+    return round(float(np.clip(np.mean([rhythmus, laut, timbre, harm]), 0.0, 1.0)), 3)
+
+
+def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, first_downbeat: float,
+                             downbeat_confidence: float, grid_sec: float, duration: float,
+                             sections: list[dict], pssi_mood: int | None = None) -> MixCandidate:
+    """Fuellt die lokalen Messwerte eines Kandidaten (Fenster +-1 Phrase).
+    Fehler einzelner Messungen lassen das Feld auf None; die Analyse kippt nie."""
+    # Lazy-Import: analysis importiert dieses Modul (Importzyklus vermeiden).
+    from .analysis import (
+        FeatureCache, analyze_frequency_bands, analyze_rhythm_complexity, calculate_brightness,
+        calculate_energy, detect_vocal_instrumental, generate_timbre_fingerprint,
+        get_key_with_confidence, key_confidence_score,
+    )
+    sr = KANDIDATEN_AUDIO_SR
+    w = grid_sec * KANDIDATEN_FENSTER_PHRASEN
+    start, ende = max(0.0, cand.t - w), min(duration, cand.t + w)
+    try:
+        y = _lade_fenster(file_path, start, ende, sr)
+    except Exception as exc:
+        logger.warning("Kandidatenfenster nicht ladbar (%s @ %.1f s): %s", file_path, cand.t, exc)
+        return cand
+    if y is None or len(y) < sr:
+        return cand
+    fc = FeatureCache(y, sr)
+    split = int((cand.t - start) * sr)
+    y_vor, y_nach = y[:split], y[split:]
+    try:
+        cand.energy_lokal = calculate_energy(y)
+        e_vor = calculate_energy(y_vor) if len(y_vor) else cand.energy_lokal
+        e_nach = calculate_energy(y_nach) if len(y_nach) else cand.energy_lokal
+        cand.energy_trend = _trend(e_vor, e_nach)
+    except Exception as exc:
+        logger.warning("Energie lokal: %s", exc)
+    try:
+        b, m, h = analyze_frequency_bands(y, sr, fc)
+        cand.avg_mids_lokal, cand.avg_highs_lokal = round(m, 3), round(h, 3)
+        pr, flat = analyze_rhythm_complexity(y, sr, fc)
+        cand.percussive_ratio_lokal, cand.flatness_lokal = round(pr, 4), round(flat, 4)
+        cand.brightness_lokal = calculate_brightness(y, sr, fc)
+        cand.timbre_fingerprint_lokal = generate_timbre_fingerprint(y, sr, fc)
+        cand.vocal_aktiv_lokal = detect_vocal_instrumental(y, sr, fc) == "vocal"
+    except Exception as exc:
+        logger.warning("Klangfarbe lokal: %s", exc)
+    cand.mood = {"pssi_mood": pssi_mood}   # bleibt auch bei Harmonie-Fehler erhalten
+    try:
+        chroma_vec = np.mean(fc.get_chroma(), axis=1)
+        note, mode, strength, margin, n2, m2 = get_key_with_confidence(chroma_vec)
+        cand.camelot_lokal = CAMELOT_MAP.get((note, mode), "")
+        cand.key_confidence_lokal = round(key_confidence_score(strength, margin, note, mode, n2, m2), 3)
+        cand.mood.update({"brightness": cand.brightness_lokal, "flatness": cand.flatness_lokal,
+                          "key_mode": mode})
+    except Exception as exc:
+        logger.warning("Harmonie lokal: %s", exc)
+    try:
+        cand.bass_rms_dbfs = _bass_rms_dbfs(y, sr)
+        sub, punch = bass_kennwerte(y, sr)
+        cand.sub_energy, cand.bass_punch = round(sub, 4), round(punch, 4)
+        if downbeat_confidence >= DOWNBEAT_RELIABLE_MIN and bpm > 0:
+            g = extract_groove(y, sr, bpm, first_downbeat - start, feature_cache=fc)
+            cand.groove_pattern_lokal = g.groove_pattern
+            cand.bass_pattern_lokal = g.bass_pattern
+            cand.syncopation_lokal = round(syncopation_from_pattern(g.bass_pattern or g.groove_pattern), 4)
+            cand.kick_aktiv = _kick_aktiv(g.bass_pattern, cand.bass_rms_dbfs)
+            # traegt_allein: Kick + Bass NACH t aktiv
+            if len(y_nach) >= sr:
+                g_n = extract_groove(y_nach, sr, bpm, first_downbeat - cand.t, feature_cache=None)
+                cand.traegt_allein = _kick_aktiv(g_n.bass_pattern, _bass_rms_dbfs(y_nach, sr))
+                if cand.traegt_allein is None:
+                    cand.traegt_allein = False
+    except Exception as exc:
+        logger.warning("Bass/Groove lokal: %s", exc)
+    try:
+        fc_v = FeatureCache(y_vor, sr) if len(y_vor) >= sr else None
+        fc_n = FeatureCache(y_nach, sr) if len(y_nach) >= sr else None
+        if fc_v is not None and fc_n is not None:
+            cand.neuheit = _neuheit(y_vor, y_nach, sr, fc_v, fc_n)
+    except Exception as exc:
+        logger.warning("Neuheit lokal: %s", exc)
+    cand.lufs_lokal = _lufs_short_term(file_path, cand.t, duration)
+    return cand

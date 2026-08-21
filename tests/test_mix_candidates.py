@@ -1,9 +1,11 @@
 """Tests fuer Mixpunkt-Kandidaten: Datenmodell, Cues, Gitter, Gates."""
+import numpy as np
 import pytest
+import soundfile as sf
 
 from hpg_core.mix_candidates import (
     MixCandidate, normalize_cues, quantize_to_points, passes_track_gates,
-    collect_candidate_times,
+    collect_candidate_times, measure_candidate_window,
 )
 
 
@@ -141,3 +143,73 @@ def test_kappung_auf_acht_mit_prioritaet():
     )
     assert len(ins) == 8 and len(outs) == 8
     assert any("analyzer" in c.schema for c in ins)   # hoehere Prioritaet ueberlebt die Kappung
+
+
+def _kick_track(tmp_path, bpm=128.0, sekunden=60.0, sr=22050, kick_ab=0.0, kick_bis=None):
+    """Sinus-Kick (55 Hz, 120 ms) auf jeder Zaehlzeit + leises Rauschen; Kick nur in [kick_ab, kick_bis)."""
+    n = int(sekunden * sr)
+    y = 0.01 * np.random.default_rng(0).standard_normal(n)
+    spb = 60.0 / bpm
+    kick_bis = sekunden if kick_bis is None else kick_bis
+    t_kick = np.arange(0, sekunden, spb)
+    for tk in t_kick:
+        if not (kick_ab <= tk < kick_bis):
+            continue
+        i0 = int(tk * sr); L = int(0.12 * sr)
+        tt = np.arange(L) / sr
+        y[i0:i0 + L] += 0.8 * np.sin(2 * np.pi * 55 * tt) * np.exp(-tt * 25)
+    p = tmp_path / "kick.wav"
+    sf.write(p, y.astype(np.float32), sr)
+    return str(p)
+
+
+def test_measure_window_liefert_alle_felder_und_kick_aktiv(tmp_path):
+    path = _kick_track(tmp_path)
+    c = MixCandidate(t=30.0, schema=["sektion"])
+    m = measure_candidate_window(
+        path, c, bpm=128.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        grid_sec=15.0, duration=60.0, sections=[{"label": "drop", "start_time": 0.0, "end_time": 60.0, "avg_energy": 80.0}],
+    )
+    assert m is c
+    assert len(c.bass_pattern_lokal) == 16 and len(c.groove_pattern_lokal) == 16
+    assert c.kick_aktiv is True and c.bass_rms_dbfs is not None and c.bass_rms_dbfs > -35.0
+    assert c.sub_energy is not None and c.bass_punch is not None
+    assert c.syncopation_lokal is not None and 0.0 <= c.syncopation_lokal <= 1.0
+    assert c.percussive_ratio_lokal is not None
+    assert c.camelot_lokal != "" and c.key_confidence_lokal is not None
+    assert len(c.timbre_fingerprint_lokal) > 0
+    assert c.brightness_lokal is not None and c.flatness_lokal is not None
+    assert c.avg_mids_lokal is not None and c.avg_highs_lokal is not None
+    assert c.energy_lokal is not None and c.energy_trend in ("rising", "falling", "stable")
+    assert c.lufs_lokal is not None and -70.0 < c.lufs_lokal < 0.0
+    assert set(c.mood) == {"brightness", "flatness", "key_mode", "pssi_mood"}
+    assert c.vocal_aktiv_lokal in (True, False)
+    assert c.neuheit is not None and 0.0 <= c.neuheit <= 1.0
+    assert c.traegt_allein is True
+
+
+def test_measure_window_ohne_kick_nach_t_traegt_nicht_allein_und_neuheit_hoch(tmp_path):
+    path = _kick_track(tmp_path, kick_ab=0.0, kick_bis=30.0)      # nach 30 s Stille
+    c = MixCandidate(t=30.0, schema=["sektion"])
+    measure_candidate_window(path, c, bpm=128.0, first_downbeat=0.0, downbeat_confidence=1.0,
+                             grid_sec=15.0, duration=60.0, sections=[])
+    assert c.traegt_allein is False
+    assert c.energy_trend == "falling"
+    assert c.neuheit > 0.3
+
+
+def test_measure_window_ohne_downbeat_keine_muster_aber_rest_gemessen(tmp_path):
+    path = _kick_track(tmp_path)
+    c = MixCandidate(t=30.0)
+    measure_candidate_window(path, c, bpm=128.0, first_downbeat=0.0, downbeat_confidence=0.0,
+                             grid_sec=15.0, duration=60.0, sections=[])
+    assert c.bass_pattern_lokal == [] and c.kick_aktiv is None
+    assert c.lufs_lokal is not None and c.energy_lokal is not None
+
+
+def test_measure_window_am_trackrand_klemmt_und_kurz_ist_kein_absturz(tmp_path):
+    path = _kick_track(tmp_path, sekunden=20.0)
+    c = MixCandidate(t=1.0)
+    measure_candidate_window(path, c, bpm=128.0, first_downbeat=0.0, downbeat_confidence=1.0,
+                             grid_sec=15.0, duration=20.0, sections=[])
+    assert c.energy_lokal is not None
