@@ -2382,32 +2382,74 @@ def _calculate_timeline_entries(
     tracks: list[Track], default_overlap: float,
     transition_plans: Optional[list[TransitionPlan]] = None,
 ) -> tuple[list[SetTimelineEntry], float]:
-    """Berechnet Start- und Endzeiten fuer jeden Track."""
+    """Berechnet Start- und Endzeiten fuer jeden Track.
+
+    Zeitmodell (Konvention seit dem Blenden-Fix 1ebaa96): Track B startet
+    seine Wiedergabe an mix_in_b in dem Moment, in dem Track A mix_out_a
+    erreicht; die Blende dauert overlap Sekunden, A ist also bis
+    mix_out_a + overlap hoerbar. Ein Track traegt damit nur das Stueck
+    zwischen Mix-In und Mix-Out zur Set-Laenge bei, nicht seine ganze Dauer.
+    Vorher galt playing_duration = dauer - overlap (Overlap am Track-ENDE
+    abgezogen) — das zeigte ein 10er-Set um rund 20 Minuten zu lang an.
+
+    Sonderfaelle: der erste Track beginnt bei Position 0 (der DJ spielt ihn
+    von vorn), der letzte spielt bis zu seinem Ende. Ohne Plan gelten die
+    Fallbacks aus _resolve_mix_points — dieselben wie in den Empfehlungen,
+    damit Timeline und Empfehlung nicht verschiedene Mixpunkte zeigen.
+    """
     entries: list[SetTimelineEntry] = []
     current_time = 0.0
+    n = len(tracks)
 
     for i, track in enumerate(tracks):
         track_dur = max(track.duration, 30.0)  # Minimum 30s pro Track
+        plan_in = transition_plans[i - 1] if (
+            transition_plans and 0 < i <= len(transition_plans)
+        ) else None
+        plan_out = transition_plans[i] if (
+            transition_plans and i < len(transition_plans)
+        ) else None
+        fallback_in, fallback_out = _resolve_mix_points(track, default_overlap)
 
-        # Overlap zum naechsten Track berechnen
-        if i < len(tracks) - 1:
-            if transition_plans and i < len(transition_plans):
-                overlap = transition_plans[i].overlap
+        # Mix-In: erster Track von vorn, sonst aus dem Plan des Vorgaengers
+        if i == 0:
+            mix_in = 0.0
+        elif plan_in is not None:
+            mix_in = float(plan_in.mix_in_b)
+        else:
+            mix_in = fallback_in
+        mix_in = min(max(mix_in, 0.0), track_dur)
+
+        # Mix-Out: aus dem eigenen Plan, sonst Fallback; nie vor dem Mix-In
+        if plan_out is not None:
+            mix_out = float(plan_out.mix_out_a)
+        else:
+            mix_out = fallback_out
+        if not (mix_in < mix_out <= track_dur):
+            mix_out = fallback_out
+        if not (mix_in < mix_out <= track_dur):
+            mix_out = track_dur
+
+        # Overlap zum naechsten Track
+        if i < n - 1:
+            if plan_out is not None:
+                overlap = float(plan_out.overlap)
             else:
-                mix_out = (
-                    track.mix_out_point if track.mix_out_point >= 0 else track_dur * 0.85
-                )
                 overlap = track_dur - mix_out
                 overlap = max(4.0, min(overlap, default_overlap, track_dur * 0.3))
             # AUDIT-FIX F10 (2026-07-24): Plan-Overlap war ungeklemmt — bei
             # kurzen Tracks (Edits/Tools/Acapellas) ergab ein 64-s-Overlap
             # negative Spieldauer und rueckwaerts laufende Startzeiten. Overlap
-            # nie ueber die halbe Trackdauer.
-            overlap = max(0.0, min(overlap, track_dur * 0.5))
+            # nie ueber die halbe Trackdauer — und nie laenger als das Audio,
+            # das A nach dem Mix-Out noch hat.
+            overlap = max(0.0, min(overlap, track_dur * 0.5, track_dur - mix_out))
+            playing_duration = (mix_out - mix_in) + overlap
+            next_start = current_time + (mix_out - mix_in)
         else:
-            overlap = 0.0  # Letzter Track hat keinen Overlap
+            overlap = 0.0  # Letzter Track hat keinen Overlap, spielt bis zum Ende
+            playing_duration = track_dur - mix_in
+            next_start = current_time + playing_duration
 
-        playing_duration = track_dur - overlap
         end_time = current_time + playing_duration
 
         entries.append(
@@ -2422,9 +2464,10 @@ def _calculate_timeline_entries(
             )
         )
 
-        current_time = end_time
+        current_time = next_start
 
-    return entries, current_time
+    total = entries[-1].end_time if entries else 0.0
+    return entries, total
 
 
 def _identify_peak_track(
@@ -2489,8 +2532,10 @@ def compute_set_timeline(
     """
     Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
 
-    Jeder Track bekommt einen Start/Ende-Zeitpunkt. Overlaps werden
-    von der Gesamtdauer abgezogen. Der Peak-Track wird identifiziert.
+    Jeder Track bekommt einen Start/Ende-Zeitpunkt. Gesamtlaenge = Summe
+    der Stuecke Mix-In..Mix-Out (erster Track ab 0, letzter bis zum Ende),
+    Eintraege ueberlappen um den Overlap — siehe _calculate_timeline_entries.
+    Der Peak-Track wird identifiziert.
 
     Args:
       tracks: Sortierte Playlist
