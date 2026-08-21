@@ -244,3 +244,21 @@ def test_build_track_candidates_end_to_end_synthetisch(tmp_path):
     assert all(c["t"] >= 15.0 for c in ins) and all(c["t"] <= 105.0 for c in outs)
     assert all(0.0 <= c["confidence"] <= 1.0 for c in ins + outs)
     assert any(c["lufs_lokal"] is not None for c in ins)
+
+
+def test_build_track_candidates_kandidat_in_unanalysed_ist_nicht_covered(tmp_path):
+    """Coverage haengt nur an der Sektion: ein Kandidat in einer unanalysed-Sektion entsteht gar nicht,
+    einer in einer analysierten Sektion bekommt covered=1 in der Confidence."""
+    path = _kick_track(tmp_path, sekunden=120.0)
+    sections = [{"label": "intro", "start_time": 0.0, "end_time": 15.0, "avg_energy": 20.0},
+                {"label": "drop", "start_time": 15.0, "end_time": 60.0, "avg_energy": 80.0},
+                {"label": "unanalysed", "start_time": 60.0, "end_time": 90.0, "avg_energy": 0.0},
+                {"label": "drop", "start_time": 90.0, "end_time": 105.0, "avg_energy": 80.0},
+                {"label": "outro", "start_time": 105.0, "end_time": 120.0, "avg_energy": 20.0}]
+    ins, outs = build_track_candidates(
+        path, bpm=128.0, duration=120.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        phrase_confidence=0.0, phrase_anchor=0.0, phrase_unit=8, sections=sections,
+        phrases=[], cues=[], analyzer_in=30.0, analyzer_out=90.0, outro_covered=True,
+    )
+    assert all(not (60.0 <= c["t"] < 90.0) for c in ins + outs)
+    assert ins and all(c["confidence"] > 0.0 for c in ins)

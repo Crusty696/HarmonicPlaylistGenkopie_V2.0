@@ -494,6 +494,8 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
                            analyzer_in: float | None, analyzer_out: float | None, outro_covered: bool,
                            ) -> tuple[list[dict], list[dict]]:
     """Vollstaendige Kandidaten beider Seiten als Dict-Listen (fuer Track/Cache)."""
+    # Lazy nur aus Konsistenz mit dem analysis-Import; dj_brain importiert weder
+    # analysis noch mix_candidates (kein Zyklus).
     from .dj_brain import _get_intro_end_from_sections, _get_outro_start_from_sections
     if bpm <= 0 or duration <= 0:
         return [], []
@@ -506,14 +508,16 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
         analyzer_in=analyzer_in, analyzer_out=analyzer_out, duration=duration, grid_sec=grid_sec,
         intro_end=intro_end, outro_start=outro_start, outro_covered=outro_covered, anchor=phrase_anchor,
     )
-    covered_bis = duration if outro_covered else None
     for cand in ins + outs:
         measure_candidate_window(file_path, cand, bpm=bpm, first_downbeat=first_downbeat,
                                  downbeat_confidence=downbeat_confidence, grid_sec=grid_sec,
                                  duration=duration, sections=sections,
                                  pssi_mood=int(phrases[0]["mood"]) if phrases else None)
         sek = _section_at(sections, cand.t)
-        covered = sek is not None and sek.get("label") != "unanalysed" and (covered_bis is None or cand.t <= covered_bis)
+        # Coverage: die `unanalysed`-Sektionen SIND die Luecken aus
+        # analyze_structure_windows (Head 360 s / Tail 180 s); Out-Kandidaten
+        # ohne outro_covered entstehen in collect_candidate_times gar nicht erst.
+        covered = sek is not None and sek.get("label") != "unanalysed"
         cand.confidence = candidate_confidence(
             downbeat_confidence=downbeat_confidence, pssi_grid=bool(seite_grid),
             phrase_confidence=phrase_confidence, key_confidence_lokal=cand.key_confidence_lokal, covered=covered)

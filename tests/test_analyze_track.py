@@ -477,3 +477,27 @@ class TestAnalyzeTrackFastPathCandidates:
     assert abs(track.mix_in_point - 61.0) > 0.5 or any(
       "analyzer" in c["schema"] for c in track.mix_in_candidates
     )
+
+
+# ============================================================
+# Voll-Pfad (kein Rekordbox): Kandidaten ohne Phrasen (Spec 2026-08-21)
+# ============================================================
+
+@pytest.mark.integration
+def test_voll_pfad_ohne_rekordbox_hat_analyzer_kandidaten_ohne_phrasen(monkeypatch, tmp_path):
+    """Voll-Pfad (kein Rekordbox): keine Phrasen/Cues/Gitter, aber Kandidaten aus Analyzer/Sektionen."""
+    from unittest.mock import Mock
+    from hpg_core import analysis
+    wav = tmp_path / "voll.wav"
+    _create_click_wav(str(wav), bpm=128.0, duration=120.0)
+    monkeypatch.setattr(analysis, "get_rekordbox_importer",
+                        lambda: type("NoRekordbox", (), {"get_track_data": lambda self, _p: None})())
+    monkeypatch.setattr(analysis, "get_cached_track", lambda *a, **k: None)
+    monkeypatch.setattr(analysis, "cache_track", Mock())
+    track = analysis.analyze_track(str(wav))
+    assert track is not None
+    assert track.phrases == [] and track.cue_points == [] and track.phrase_grid == []
+    assert track.mix_in_candidates, "Mix-In-Kandidaten fehlen"
+    erlaubt = {"analyzer", "sektion", "energie_neuheit"}
+    assert all(set(c["schema"]) <= erlaubt for c in track.mix_in_candidates + track.mix_out_candidates)
+    assert all("confidence" in c and 0.0 <= c["confidence"] <= 1.0 for c in track.mix_in_candidates)

@@ -2278,6 +2278,35 @@ def analyze_track(file_path: str) -> Track | None:
             track_pr = track_sf = 0.0
             groove = GrooveFeatures()
 
+        # Mixpunkt-Kandidaten (Spec 2026-08-21), Spiegel des Rekordbox-Pfads.
+        # Ohne Rekordbox gibt es keine Phrasen/Cues: Kandidaten kommen nur aus
+        # Analyzer, Sektionen und Energie-Neuheit. Kein analysis_degraded-Guard
+        # noetig: ein Load-Fehler landet im aeusseren except (return None).
+        phrases: list[dict] = []
+        cue_points: list[dict] = []
+        phrase_grid: list[float] = []
+        kandidaten_start = time.perf_counter()
+        try:
+            mix_in_candidates, mix_out_candidates = build_track_candidates(
+                file_path, bpm=bpm, duration=duration,
+                first_downbeat=first_downbeat,
+                downbeat_confidence=downbeat_confidence,
+                phrase_confidence=phrase_confidence,
+                phrase_anchor=phrase_anchor,
+                phrase_unit=structure.phrase_unit, sections=section_dicts,
+                phrases=phrases, cues=cue_points,
+                analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+                outro_covered=outro_covered,
+            )
+        except Exception as e:
+            logger.warning(f"Kandidaten fehlgeschlagen: {e}")
+            mix_in_candidates, mix_out_candidates = [], []
+        logger.info(
+            f"Kandidaten: {len(mix_in_candidates)} in / "
+            f"{len(mix_out_candidates)} out in "
+            f"{time.perf_counter() - kandidaten_start:.2f}s"
+        )
+
         track = Track(
             groove_pattern=groove.groove_pattern,
             bass_pattern=groove.bass_pattern,
@@ -2329,6 +2358,11 @@ def analyze_track(file_path: str) -> Track | None:
             lufs_coverage_seconds=lufs_coverage,
             lufs_channels=lufs_channels,
             lufs_sample_rate=lufs_sample_rate,
+            phrases=phrases,
+            cue_points=cue_points,
+            phrase_grid=phrase_grid,
+            mix_in_candidates=mix_in_candidates,
+            mix_out_candidates=mix_out_candidates,
         )
 
         cache_track(cache_key, track)
