@@ -100,7 +100,11 @@ logger = logging.getLogger(__name__)
 # gemessen 24 von 231 Tracks, bis 56,5 s tief. Ohne Bump behalten sie ihren
 # falschen Wert, weil der Cache-Key nur an Pfad und Rekordbox-Signatur haengt
 # und es keine selektive Invalidierung gibt.
-CACHE_VERSION = 33
+# FEATURE 2026-08-21: 33 -> 34. Kandidatenfelder phrases/cue_points/
+# phrase_grid/mix_in_candidates/mix_out_candidates auf Track, Cue-Heuristik
+# entfernt. Alte Zeilen kennen die Felder nicht und lieferten leere Listen,
+# obwohl eine Neuanalyse Kandidaten haette; ein neuer Cache erzwingt sie.
+CACHE_VERSION = 34
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -155,7 +159,11 @@ def _ensure_cache_schema(conn: sqlite3.Connection) -> None:
 
 
 TRACK_FIELD_NAMES = {field.name for field in fields(Track)}
-TRACK_LIST_FIELDS = {"sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage", "groove_pattern", "bass_pattern"}
+TRACK_LIST_FIELDS = {
+    "sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage",
+    "groove_pattern", "bass_pattern",
+    "phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates",
+}
 TRACK_DICT_FIELDS = {"ai_metadata"}
 TRACK_CONFIDENCE_FIELDS = {"downbeat_confidence", "key_confidence", "genre_confidence"}
 TRACK_NUMERIC_FIELDS = {
