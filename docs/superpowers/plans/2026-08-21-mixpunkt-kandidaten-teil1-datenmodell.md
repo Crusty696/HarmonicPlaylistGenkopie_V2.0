@@ -12,7 +12,7 @@
 
 **Vorab verifizierte Fakten (2026-08-21; alle 2475 EXT-Dateien unter `D:\PIONEER\Master\share\PIONEER\USBANLZ`, Waechter-Nachmessung):**
 - `AnlzFile.parse_file(<ANLZ0000.EXT>).get_tag("PSSI").content` hat `mood`, `end_beat`, `entries[]` mit `index, beat, kind, k1, k2, k3, fill, beat_fill`.
-- `entry.beat` ist ein **1-basierter Index in die PQTZ-Beatliste** (`ANLZ0000.DAT`, `get_tag("PQTZ").get()` → `(beats, bpms, times)`); Zeit = `times[beat-1]` (0-basiert passt in 0 Faellen). Phrasenstarts liegen auf Takt-1, Ausnahme: der erste Eintrag (beat=1) liegt in 228 von 699 geprueften Dateien auf beatnum 2 (Beatgrid beginnt nicht auf der 1).
+- `entry.beat` ist ein **1-basierter Index in die PQTZ-Beatliste** (`ANLZ0000.DAT`, `get_tag("PQTZ").get()` → `(beats, bpms, times)`); Zeit = `times[beat-1]` (0-basiert passt in 0 Faellen). Phrasenstarts liegen auf Takt-1, Ausnahme: der erste Eintrag (beat=1) liegt im Vollbestand (2470 DAT) in 677 Faellen auf beatnum 2, 74× auf 3, 70× auf 4 (Beatgrid beginnt nicht auf der 1).
 - Mood-Verteilung: 2370× mood 1, 93× mood 2, 9× mood 3. Mood 1 nutzt Kinds {1,2,3,5,6}; Kind 1 ist in 2370/2370 der erste, Kind 6 in 2370/2370 der letzte Eintrag → 1 Intro, 2 Up, 3 Down, 5 Chorus, 6 Outro.
 - Mood 2/3: Kind 1 in 100/102 der erste, **Kind 10 in 100/102 der letzte** Eintrag → Zuordnung 1 Intro, 2–7 Verse 1–6, 8 Bridge, 9 Chorus, 10 Outro (Beat-Link-Schema, durch eigene Daten an Anfang/Ende gestuetzt; Verse/Bridge/Chorus dazwischen NICHT aus eigenen Daten pruefbar — so im Code kommentieren). Unbekannte Kinds (>10) werden "Unbekannt(n)" beschriftet und geloggt.
 
@@ -215,7 +215,7 @@ Reine Funktionen ueber pyrekordbox-AnlzFile-Objekte (oder Objekte mit
 derselben Oberflaeche `get_tag(key).content`). Zeiten kommen aus dem
 Beatgrid (PQTZ, ANLZ0000.DAT): `entry.beat` ist ein 1-basierter Index in
 die PQTZ-Beatliste (verifiziert 2026-08-21 an 699 von 2475 EXT-Dateien;
-0-basiert passt nie; der erste Eintrag liegt in 228/699 auf beatnum 2).
+0-basiert passt nie; der erste Eintrag liegt in 677/2470 auf beatnum 2, 74× auf 3, 70× auf 4).
 """
 from __future__ import annotations
 
@@ -1209,13 +1209,14 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
         cand.vocal_aktiv_lokal = detect_vocal_instrumental(y, sr, fc) == "vocal"
     except Exception as exc:
         logger.warning("Klangfarbe lokal: %s", exc)
+    cand.mood = {"pssi_mood": pssi_mood}   # bleibt auch bei Harmonie-Fehler erhalten
     try:
         chroma_vec = np.mean(fc.get_chroma(), axis=1)
         note, mode, strength, margin, n2, m2 = get_key_with_confidence(chroma_vec)
         cand.camelot_lokal = CAMELOT_MAP.get((note, mode), "")
         cand.key_confidence_lokal = round(key_confidence_score(strength, margin, note, mode, n2, m2), 3)
-        cand.mood = {"brightness": cand.brightness_lokal, "flatness": cand.flatness_lokal,
-                     "key_mode": mode, "pssi_mood": pssi_mood}
+        cand.mood.update({"brightness": cand.brightness_lokal, "flatness": cand.flatness_lokal,
+                          "key_mode": mode})
     except Exception as exc:
         logger.warning("Harmonie lokal: %s", exc)
     try:
@@ -1563,12 +1564,12 @@ if __name__ == "__main__":
 
 ### Task 12: Messung an echten Tracks, Doku, Waechter Tor 2, Commit
 
-- [ ] **Step 1: Cache leeren ist NICHT noetig** — Version 34 legt eine neue DB `hpg_cache_v34.db` an. Liste der 231 analysierten Tracks aus der alten DB ziehen (Spalte heisst `filepath`, Metadaten-Zeile `key='version'` ausschliessen): `sqlite3 %LOCALAPPDATA%\HPG\hpg_cache_v33.db "SELECT filepath FROM cache WHERE key <> 'version'"` → in den Scratchpad-Ordner der Session (`%TEMP%\claude\...\scratchpad\tracks231.txt`), NICHT ins Repo.
+- [ ] **Step 1: Cache leeren ist NICHT noetig** — Version 34 legt eine neue DB `hpg_cache_v34.db` an. Liste der 231 analysierten Tracks aus der alten DB ziehen (Spalte heisst `filepath`, Metadaten-Zeile `key='version'` ausschliessen): `.\venv312\Scripts\python.exe -c "import os,sqlite3;c=sqlite3.connect(os.path.expandvars(r'%LOCALAPPDATA%\HPG\hpg_cache_v33.db'));print('\n'.join(r[0] for r in c.execute(\"SELECT filepath FROM cache WHERE key <> 'version'\")))"` (sqlite3-CLI ist nicht im PATH) → in den Scratchpad-Ordner der Session (`%TEMP%\claude\...\scratchpad\tracks231.txt`), NICHT ins Repo.
 - [ ] **Step 2: Messen** `.\venv312\Scripts\python.exe tools/kandidaten_messen.py --liste <scratchpad>\tracks231.txt --json <scratchpad>\kandidaten_v34.json` (dauert: 231 Tracks × Analysezeit; laufen lassen, Zeit notieren). Pflicht-Ergebnisse ins Handoff: `intro_outro_verletzungen` (muss 0 sein), `ohne_in`/`ohne_out`, Median Kandidaten je Seite, Schemaverteilung, `mit_pssi` (erwartet nahe 231, da 2475 EXT-Dateien vorliegen), Analysezeit-Median (Vergleich: vorher ohne Kandidaten — einmal mit `HPG_CACHE_DIR` auf leeres Verzeichnis und auskommentiertem Kandidatenaufruf NICHT machen; stattdessen die Zeit je `build_track_candidates` in `analysis.py` per `logger.info` mitloggen und aus dem Log den Median ziehen).
 - [ ] **Step 3: Volle Suite** `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` — gruen inkl. Coverage-Gate 70.
 - [ ] **Step 4: Doku**: `CLAUDE.md` (CACHE_VERSION 34, neue Module in der Baumliste), `.agents/skills/hpg-mixpoint-engineering/SKILL.md` + `.claude/...` (Abschnitt "Kandidaten-Design" → "Teil 1 gebaut: Felder, Module, Heuristik entfernt"; Regel "quantize_to_grid ist die einzige erlaubte Quantisierung" ergaenzen um `quantize_to_points` fuer das unregelmaessige PSSI-Gitter, gleiche ceil/floor-Toleranz), `.agents/skills/hpg-cache-persistence/SKILL.md` (Version 34), `.agents/skills/hpg-rekordbox/SKILL.md` (`get_phrases`, PSSI), Handoff `docs/HANDOFF-<Datum>-kandidaten-teil1.md` mit den Messzahlen aus Step 2.
 - [ ] **Step 5: Waechter Tor 2** mit dem Gesamt-Diff gegen dieses Plan-Dokument; Auflagen einarbeiten.
-- [ ] **Step 6: Commit + Push** `git add -A docs CLAUDE.md .agents && git commit -m "docs: Kandidaten Teil 1 gebaut — Messung, Skills, Handoff" && git push -u origin kandidaten-teil1`. Merge auf main danach ueber superpowers:finishing-a-development-branch (Nutzer: "am Ende alles auf main mergen").
+- [ ] **Step 6: Commit + Push** `git add -A docs CLAUDE.md .agents && git commit -m "docs: Kandidaten Teil 1 gebaut — Messung, Skills, Handoff" && git push -u origin kandidaten-teil1` (`.claude/skills/` ist per .gitignore unversioniert — dort nur editieren, nicht stagen). Merge auf main danach ueber superpowers:finishing-a-development-branch (Nutzer: "am Ende alles auf main mergen").
 
 ---
 
