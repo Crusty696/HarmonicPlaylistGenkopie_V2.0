@@ -55,7 +55,7 @@ Kandidaten, Kandidaten on-the-fly, Teilmengen der Faktoren.
 
 | Gruppe | Felder | Heute vorhanden |
 |---|---|---|
-| Position | `t` (Sekunden, auf Gitter), `schema` ∈ {benannter Cue, Auto-Cue, PSSI-Phrasengrenze, Sektionsgrenze, Energie-Neuheit}, `provenance`, `confidence` (aus `downbeat_confidence`, `phrase_confidence`, `key_confidence`, Coverage) | nur Sektion + Cue-Heuristik |
+| Position | `t` (Sekunden, auf Gitter), `schema` ∈ {benannter Cue, Auto-Cue, PSSI-Phrasengrenze, Sektionsgrenze, Energie-Neuheit, analyzer (heutiger `calculate_genre_aware_mix_points`-Punkt; sechstes Schema, vom Nutzer am 2026-08-21 genehmigt, Option B)}, `provenance`, `confidence` (aus `downbeat_confidence`, `phrase_confidence`, `key_confidence`, Coverage) | nur Sektion + Cue-Heuristik |
 | Struktur | `section_label`, `phrase_label`, `neuheit` (Sprung in Rhythmusdichte/Lautheit/Timbre/Harmonie an t), `traegt_allein` (Kick + Bass nach t aktiv) | nur Label |
 | Rhythmus | `groove_pattern_lokal`, `bass_pattern_lokal` (16 Slots), `syncopation_lokal`, `percussive_ratio_lokal` | nur trackweit |
 | Bass | `sub_energy`, `bass_punch`, `bass_rms_dbfs` (absolut, ≤160 Hz), `kick_aktiv` | sub/punch je Sektion |

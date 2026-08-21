@@ -1581,7 +1581,7 @@ if __name__ == "__main__":
 | `phrase_grid` PSSI vor Analyzer | 2 (`phrase_grid_from_phrases`), 6 (`_quantize`), 8 |
 | `cue_points` mit Provenienz, Heuristik entfaellt | 5 (`normalize_cues`), 9 |
 | `mix_in/out_candidates` 3–8 | 6 (Kappung/Minimum-Log), 8 |
-| Position: t, schema (5 Spec-Schemata + `analyzer`, s. offene Frage unten), provenance, confidence | 6, 8 |
+| Position: t, schema (6 Schemata inkl. `analyzer`, Nutzer-Entscheidung B), provenance, confidence | 6, 8 |
 | Struktur: section_label, phrase_label, neuheit, traegt_allein | 6, 7 |
 | Rhythmus: groove/bass_pattern_lokal, syncopation, percussive_ratio | 7 |
 | Bass: sub_energy, bass_punch, bass_rms_dbfs, kick_aktiv | 7 |
@@ -1597,6 +1597,6 @@ if __name__ == "__main__":
 
 Placeholder-Scan: keine TBD/TODO. Typen: `MixCandidate.schema: list[str]`, `cue_points`-Dicts mit Schluesseln `t, name, typ, hot_cue, provenance` durchgaengig (Tasks 5, 6, 9); `phrases`-Dicts `start_s, end_s, label, mood, kind, fill` (Tasks 2, 6, 8).
 
-**Offene Entscheidung (Nutzer, vor Task 6):** Die Spec nennt fuenf Schemata (benannter Cue, Auto-Cue, PSSI-Phrasengrenze, Sektionsgrenze, Energie-Neuheit). Der Plan fuehrt zusaetzlich `analyzer` (der heutige `calculate_genre_aware_mix_points`-Punkt) als sechstes Schema, damit der heutige Track-Mixpunkt immer in der Kandidatenliste steht. Ohne Freigabe wird `analyzer` gestrichen (Task 6: `analyzer_in/analyzer_out` entfallen; `SCHEMA_PRIORITAET` ohne "analyzer"; Tests entsprechend).
+**Entscheidung Nutzer 2026-08-21: Option B** — `analyzer` ist das sechste Schema (Spec Abschnitt 1 entsprechend ergaenzt).
 
 **Weitere Abweichungen von der Spec, benannt (Waechter Tor 1):** Cue-Dicts tragen zusaetzlich `hot_cue`, Phrasen-Dicts `kind`/`fill` (Rohdaten, keine Wirkung); `candidate_confidence` ist gleichgewichtetes Mittel = Startwert.
