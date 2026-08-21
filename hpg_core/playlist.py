@@ -295,6 +295,20 @@ def combine_weighted(
     return roh / gewicht_summe
 
 
+def _resolve_track_genre(track: Track) -> str:
+    """Genre eines Tracks fuer das Scoring: DJ-Brain-Klassifikation vor ID3.
+
+    AUDIT-FIX F12 (2026-07-24): detected_genre-Default "Unknown" ist TRUTHY,
+    ein `or`-Fallback auf das ID3-Genre war damit toter Code. Explizit
+    aufloesen — vorher dreimal identisch lokal definiert (enhanced
+    compatibility, predict_transition_type, Context Flow).
+    """
+    detected = getattr(track, "detected_genre", "") or ""
+    if detected and detected != "Unknown":
+        return detected
+    return track.genre if (track.genre and track.genre != "Unknown") else "Unknown"
+
+
 def calculate_enhanced_compatibility(
     track1: Track,
     track2: Track,
@@ -362,14 +376,8 @@ def calculate_enhanced_compatibility(
     # der bisherige `or`-Fallback auf das ID3-Genre war damit toter Code —
     # Tracks mit sauberem ID3-Genre, aber ohne DJ-Brain-Klassifikation,
     # bekamen konstant 0.5-Kompatibilitaet. Explizit aufloesen.
-    def _resolve_genre(t: Track) -> str:
-        dg = getattr(t, "detected_genre", "") or ""
-        if dg and dg != "Unknown":
-            return dg
-        return t.genre if (t.genre and t.genre != "Unknown") else "Unknown"
-
-    genre_a = _resolve_genre(track1)
-    genre_b = _resolve_genre(track2)
+    genre_a = _resolve_track_genre(track1)
+    genre_b = _resolve_track_genre(track2)
     genre_compatibility = get_genre_compatibility(genre_a, genre_b)
 
     # Genre-Weight hoeher wenn ueberhaupt aufgeloeste Genre-Daten vorhanden
@@ -1500,14 +1508,8 @@ def predict_transition_type(
     )
 
     # Genre-Info
-    def _resolved_genre(track: Track) -> str:
-        detected = getattr(track, "detected_genre", "") or ""
-        if detected and detected != "Unknown":
-            return detected
-        return track.genre if track.genre and track.genre != "Unknown" else "Unknown"
-
-    genre_a = _resolved_genre(from_track)
-    genre_b = _resolved_genre(to_track)
+    genre_a = _resolve_track_genre(from_track)
+    genre_b = _resolve_track_genre(to_track)
 
     # --- Regel 1: Half/Double-Time Wechsel ---
     if bpm_relation in ("half", "double") and eff_diff <= bpm_tolerance:
@@ -2065,12 +2067,6 @@ def _sort_context_flow(
         decline = (progress - peak_position) / max(1e-9, 1.0 - peak_position)
         return 85.0 - 45.0 * decline
 
-    def _genre(t: Track) -> str:
-        detected = getattr(t, "detected_genre", "") or ""
-        if detected and detected != "Unknown":
-            return detected
-        return t.genre if t.genre and t.genre != "Unknown" else "Unknown"
-
     unprocessed = list(tracks)
     total = len(tracks)
     # Start-Track passend zur Richtung: Build Up/Auto = ruhigster Track,
@@ -2093,10 +2089,10 @@ def _sort_context_flow(
         trend = recent[-1] - recent[0] if len(recent) >= 2 else 0.0
 
         # Genre-Streak am Playlist-Ende
-        streak_genre = _genre(current)
+        streak_genre = _resolve_track_genre(current)
         streak = 0
         for t in reversed(final_playlist):
-            if _genre(t) == streak_genre:
+            if _resolve_track_genre(t) == streak_genre:
                 streak += 1
             else:
                 break
@@ -2129,12 +2125,12 @@ def _sort_context_flow(
                 # Genre-Matrix wirkt kontinuierlich: bei Gewicht 0 ist Genre
                 # vollstaendig neutral, bei 1 maximal +/-10 Punkte.
                 genre_compat = get_genre_compatibility(
-                    streak_genre, _genre(candidate)
+                    streak_genre, _resolve_track_genre(candidate)
                 )
                 score += genre_weight * (genre_compat - 0.5) * 20.0
                 # Fatigue bleibt ein kleiner Zusatz innerhalb desselben Reglers.
                 if streak >= 4:
-                    fatigue = 4.0 if _genre(candidate) != streak_genre else -6.0
+                    fatigue = 4.0 if _resolve_track_genre(candidate) != streak_genre else -6.0
                     score += genre_weight * fatigue
             # Repetition-Penalty: Beinahe-Klon direkt hintereinander
             if (
