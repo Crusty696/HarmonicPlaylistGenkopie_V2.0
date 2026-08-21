@@ -9,6 +9,8 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from hpg_core.models import QUANTIZE_TOLERANCE_SEC
+
 
 def zusammenfassung(tracks: list[dict]) -> dict:
     n = len(tracks)
@@ -36,8 +38,8 @@ def _verletzungen(track: dict) -> int:
     secs = track.get("sections", [])
     ie = _get_intro_end_from_sections(secs)
     os_ = _get_outro_start_from_sections(secs, float(track.get("duration", 0.0)))
-    v = sum(1 for c in track.get("mix_in_candidates", []) if c["t"] < ie - 0.05)
-    v += sum(1 for c in track.get("mix_out_candidates", []) if c["t"] > os_ + 0.05)
+    v = sum(1 for c in track.get("mix_in_candidates", []) if c["t"] < ie - QUANTIZE_TOLERANCE_SEC)
+    v += sum(1 for c in track.get("mix_out_candidates", []) if c["t"] > os_ + QUANTIZE_TOLERANCE_SEC)
     return v
 
 
@@ -65,9 +67,22 @@ def main() -> int:
     elif a.cache:
         from hpg_core import caching
         import sqlite3
-        conn = sqlite3.connect(caching.CACHE_FILE)
-        for (row,) in conn.execute("SELECT data FROM cache WHERE key <> 'version'"):
-            tracks.append(json.loads(row))
+        pfad = caching.CACHE_FILE
+        if not os.path.exists(pfad):
+            print(f"Cache-Datei nicht gefunden: {pfad}", file=sys.stderr)
+            return 1
+        # Context-Manager schliesst die Verbindung NICHT, daher explizit close().
+        lesefehler = False
+        with sqlite3.connect(pfad) as conn:
+            try:
+                for (row,) in conn.execute("SELECT data FROM cache WHERE key <> 'version'"):
+                    tracks.append(json.loads(row))
+            except sqlite3.OperationalError:
+                lesefehler = True
+        conn.close()
+        if lesefehler:
+            print(f"Cache-Datei nicht lesbar oder leer: {pfad}", file=sys.stderr)
+            return 1
     z = zusammenfassung(tracks)
     z["intro_outro_verletzungen"] = sum(_verletzungen(t) for t in tracks)
     print(json.dumps(z, indent=2, ensure_ascii=False))
