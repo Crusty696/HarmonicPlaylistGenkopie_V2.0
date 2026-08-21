@@ -80,6 +80,15 @@ class RekordboxCoverage:
         return self.without_analysis + self.ambiguous
 
 
+def _hat_tag(anlz_file, key: str) -> bool:
+    """True, wenn die ANLZ-Datei den Tag `key` liefert (pyrekordbox wirft sonst)."""
+    try:
+        anlz_file.get_tag(key)
+        return True
+    except Exception:
+        return False
+
+
 class RekordboxImporter:
     """
     Imports track analysis data from Rekordbox 6/7 database
@@ -108,6 +117,8 @@ class RekordboxImporter:
         self.basename_cache: Dict[str, Optional[RekordboxTrackData]] = {}
         # Memo fuer lazy geparste ANLZ-Downbeats (content_id -> Sekunden oder None)
         self._downbeat_cache: Dict[str, Optional[float]] = {}
+        # Memo fuer PSSI-Phrasen je content_id
+        self._phrases_cache: Dict[str, List[Dict]] = {}
 
         # Debug-/Validierungs-Schalter (2026-07-17): erzwingt die volle
         # Librosa-Analyse, auch wenn Tracks in der Rekordbox-DB stehen
@@ -419,34 +430,7 @@ class RekordboxImporter:
 
         result: Optional[float] = None
         try:
-            # AUDIT-FIX RB-01 (2026-07-24): Robuster gegen die tatsaechliche
-            # pyrekordbox-API. Vorher wurde ausschliesslich
-            # `read_anlz_file(content_id, "DAT")` + flache `.beats`/`.times`
-            # probiert — beides passt nicht zur aktuellen API, der Aufruf
-            # scheiterte still (DEBUG-Log) und der exakte Downbeat-Pfad war
-            # damit IMMER tot (nie confidence 1.0). Jetzt: mehrere API-Formen
-            # versuchen und per-Entry-Zugriff (.beat/.time) unterstuetzen.
-            anlz_files = []
-            for reader, args in (
-                (getattr(self.db, "read_anlz_files", None), (data.content_id,)),
-                (getattr(self.db, "read_anlz_file", None), (data.content_id, "DAT")),
-            ):
-                if reader is None:
-                    continue
-                try:
-                    res = reader(*args)
-                except Exception:
-                    continue
-                if res is None:
-                    continue
-                # read_anlz_files liefert dict {path: AnlzFile}, read_anlz_file ein Objekt
-                if isinstance(res, dict):
-                    anlz_files.extend(res.values())
-                else:
-                    anlz_files.append(res)
-                if anlz_files:
-                    break
-
+            anlz_files = self._read_anlz_files(data.content_id)
             result = self._extract_first_downbeat_from_anlz(anlz_files)
 
             if result is None and anlz_files:
@@ -458,6 +442,70 @@ class RekordboxImporter:
             logger.warning(f"ANLZ-Beatgrid nicht lesbar fuer {file_path}: {e}")
 
         self._downbeat_cache[data.content_id] = result
+        return result
+
+    def _read_anlz_files(self, content_id: str) -> list:
+        """Alle ANLZ-Dateien (DAT/EXT/2EX) eines Tracks, robust gegen die
+        pyrekordbox-API.
+
+        AUDIT-FIX RB-01 (2026-07-24, aus get_first_downbeat hierher
+        verschoben): Vorher wurde ausschliesslich
+        `read_anlz_file(content_id, "DAT")` + flache `.beats`/`.times`
+        probiert — beides passt nicht zur aktuellen API, der Aufruf
+        scheiterte still (DEBUG-Log) und der exakte Downbeat-Pfad war
+        damit IMMER tot (nie confidence 1.0). Jetzt: mehrere API-Formen
+        versuchen; per-Entry-Zugriff (.beat/.time) liegt beim Aufrufer.
+        """
+        anlz_files = []
+        if self.db is None:
+            return anlz_files
+        for reader, args in (
+            (getattr(self.db, "read_anlz_files", None), (content_id,)),
+            (getattr(self.db, "read_anlz_file", None), (content_id, "DAT")),
+        ):
+            if reader is None:
+                continue
+            try:
+                res = reader(*args)
+            except Exception:
+                continue
+            if res is None:
+                continue
+            # read_anlz_files liefert dict {path: AnlzFile}, read_anlz_file ein Objekt
+            if isinstance(res, dict):
+                anlz_files.extend(res.values())
+            else:
+                anlz_files.append(res)
+            if anlz_files:
+                break
+        return anlz_files
+
+    def get_phrases(self, file_path: str) -> List[Dict]:
+        """Rekordbox-Phrasen (PSSI) eines Tracks in Sekunden, memoisiert.
+
+        Leer, wenn kein Rekordbox-Eintrag, keine EXT-Datei oder kein PSSI-Tag.
+        Zeiten stammen aus dem PQTZ-Beatgrid derselben ANLZ-Gruppe.
+        """
+        from .rekordbox_phrases import phrases_from_anlz
+
+        data = self.get_track_data(file_path)
+        if not data or not data.content_id:
+            return []
+        # Memo-Treffer vor der db-Pruefung: einmal gelesene Phrasen bleiben
+        # gueltig, auch wenn die DB-Verbindung spaeter wegfaellt.
+        if data.content_id in self._phrases_cache:
+            return self._phrases_cache[data.content_id]
+        if self.db is None:
+            return []
+        result: List[Dict] = []
+        try:
+            files = self._read_anlz_files(data.content_id)
+            ext = next((f for f in files if _hat_tag(f, "PSSI")), None)
+            dat = next((f for f in files if _hat_tag(f, "PQTZ")), None)
+            result = phrases_from_anlz(ext, dat, float(data.duration or 0.0))
+        except Exception as e:
+            logger.warning(f"PSSI-Phrasen nicht lesbar fuer {file_path}: {e}")
+        self._phrases_cache[data.content_id] = result
         return result
 
     @staticmethod

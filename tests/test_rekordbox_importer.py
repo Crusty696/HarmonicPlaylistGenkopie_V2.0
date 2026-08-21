@@ -757,3 +757,48 @@ class TestSummarizeCoverage:
     cov = imp.summarize_coverage([_music(f"t{i}.mp3") for i in range(6)])
     assert cov.without_analysis == 6
     assert len(cov.examples_without_analysis) == 3
+
+
+# ─── Tests: get_phrases (PSSI) ───────────────────────────────────────────────
+
+def test_get_phrases_liest_ext_und_dat_ueber_read_anlz_files(monkeypatch):
+  from types import SimpleNamespace
+  import numpy as np
+
+  imp = RekordboxImporter.__new__(RekordboxImporter)
+  imp.track_cache = {}
+  imp.basename_cache = {}
+  imp._ambiguous_paths = set()
+  imp._downbeat_cache = {}
+  imp._phrases_cache = {}
+  data = RekordboxTrackData(bpm=128.0, duration=60.0, content_id="42")
+  imp.get_track_data = lambda path: data
+  imp.is_available = lambda: True
+
+  class _Pq:
+    def get(self):
+      t = np.arange(129) * 0.46875
+      return np.array([(i % 4) + 1 for i in range(129)]), np.full(129, 128.0), t
+
+  class _File:
+    def __init__(self, tags):
+      self._tags = tags
+
+    def get_tag(self, k):
+      if k not in self._tags:
+        raise KeyError(k)
+      return self._tags[k]
+
+  pssi = SimpleNamespace(content=SimpleNamespace(mood=1, end_beat=129, entries=[
+    SimpleNamespace(index=1, beat=1, kind=1, k1=0, k2=0, k3=0, fill=0, beat_fill=0),
+    SimpleNamespace(index=2, beat=65, kind=5, k1=1, k2=0, k3=0, fill=0, beat_fill=0),
+  ]))
+  files = {"X/ANLZ0000.DAT": _File({"PQTZ": _Pq()}), "X/ANLZ0000.EXT": _File({"PSSI": pssi})}
+  imp.db = SimpleNamespace(read_anlz_files=lambda cid: files)
+
+  phrases = imp.get_phrases("C:/irgendwo/track.mp3")
+  assert [p["label"] for p in phrases] == ["Intro", "Chorus"]
+  assert phrases[1]["start_s"] == pytest.approx(64 * 0.46875)
+  # memoisiert
+  imp.db = None
+  assert imp.get_phrases("C:/irgendwo/track.mp3") == phrases
