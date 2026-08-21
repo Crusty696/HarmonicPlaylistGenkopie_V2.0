@@ -48,7 +48,7 @@ Subagenten gelten als Hypothese, nicht als Beleg — auch seine.
 ## Projektarchitektur
 
 ```
-main.py                    # PyQt6 GUI (rund 4900 Zeilen, Stand 2026-08-14),
+main.py                    # PyQt6 GUI (5351 Zeilen, Stand 2026-08-21),
                            # QThread-Worker-Muster
 hpg_core/                  # Core analysis modules
   models.py                # Track-Dataclass, Camelot-Map, TrackSection
@@ -62,6 +62,10 @@ hpg_core/                  # Core analysis modules
   structure_analyzer.py    # Track-Struktur (Intro/Breakdown/Drop/Outro)
   dj_brain.py              # Genre-spezifische Mix-Logik, Mixpoints
   playlist.py              # Playlist-Generierung und Scoring (STRATEGIES)
+  transition_features.py   # Paarweise Uebergangs-Vergleiche (Groove/Bass/Timbre/Mood, je [0,1] oder None)
+  groove.py                # Beat-synchrone Mustererkennung fuer das Uebergangs-Scoring
+  tolerances.py            # Laedt Uebergangs-Toleranzen: Defaults, mitgeliefertes JSON, Override
+  mix_analysis.py          # Mix-Analyse: Uebergaenge in DJ-Mixen finden, Kennzahlen (reine Funktionen)
   transition_renderer.py   # Uebergangs-Preview (Crossfade, EQ, Limiter)
   rekordbox_importer.py    # Rekordbox-Datenbank Import (optional)
   ai_engine.py             # Optionales lokales LLM (nur Mood/Subgenre, kein Audio)
@@ -73,7 +77,7 @@ hpg_core/                  # Core analysis modules
   logging_config.py        # Logging-Setup
   app_metadata.py          # APP_VERSION, MIN_PYTHON (Single Source)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest (1690 Tests, gemessen 2026-08-20)
+tests/                     # pytest (1792 Tests gesammelt, gemessen 2026-08-21)
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
 docs/archive/              # Erledigte Plaene und historische Dokumente

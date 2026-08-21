@@ -104,6 +104,13 @@ rho -0.08).
 
 ## Offen (zusaetzlich zum vorigen Handoff)
 
+> Stand 2026-08-21 (spaet): Punkt 2 (Set-Timeline) ist erledigt (e946080),
+> Punkt 3 teilweise (dj_report.py, __init__-Re-Exporte, Genre-Resolver;
+> Rest bewusst belassen) und Punkt 4 teilweise (CLAUDE.md, hpg-orientation,
+> Skill-Spiegel; PLAYLIST_ALGORITHMEN_ERKLAERUNG und groove-scoring:189
+> offen) — Details und
+> Begruendungen in `HANDOFF-2026-08-21-fixes-und-hoertest-mobil.md`.
+
 1. **Melodic Techno** verliert mit den neuen Gewichten die Haelfte der
    Camelot-Treffer. Es war im Hoertest die Problemgruppe (36 Uebergaenge,
    keiner gut). Ob dort Tonart oder Rhythmus wichtiger ist, muessen die
