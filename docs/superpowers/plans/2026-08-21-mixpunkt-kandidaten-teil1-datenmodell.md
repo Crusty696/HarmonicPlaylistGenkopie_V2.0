@@ -1263,6 +1263,17 @@ Kosinus-Distanz MFCC OHNE Koeffizient 0, `harm` = Chroma-Kosinus-Distanz;
 Mittel der vier. Gemessen: Kick weg 0.597, durchgehender Kick 0.03. Tests
 unveraendert. Rauschboden `rhythmus` ≈ 0.12 bei unveraendertem Signal bekannt.
 
+**Abweichung bei der Umsetzung (Commit e1fc416, Befund an echtem 509-s-Track):**
+Die Kappung bevorzugte bei gleicher Prioritaet/Schema-Anzahl die FRUEHESTEN
+Punkte auf beiden Seiten; Out-Kandidaten landeten dadurch bei 41/56/70 s.
+Umgesetzt: dritter Sortierschluessel `t_richtung * k.t` mit In = frueh zuerst,
+Out = spaet zuerst (`test_kappung_out_seite_behaelt_spaete_punkte`). Zusaetzlich
+(Qualitaets-Reviews): `covered` = Sektion vorhanden und nicht `unanalysed`
+(die `covered_bis`-Pruefung war eine Tautologie), `_neuheit` nutzt die
+Onset-Huellkurve aus dem FeatureCache, `traegt_allein` denselben Cache fuer
+`y_nach`; analysis.py buendelt beide Pfade in `_kandidaten_berechnen` mit
+Log-Tag `[fast]`/`[voll]`, den `tools/kandidaten_messen.py` auswertet.
+
 ### Task 8: `build_track_candidates` + Confidence
 
 **Files:**
