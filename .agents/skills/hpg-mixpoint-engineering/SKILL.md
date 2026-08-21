@@ -17,9 +17,13 @@ mix_in  = quantize_to_grid(t, grid, anchor, "ceil")     # nie VOR dem Ereignis
 mix_out = quantize_to_grid(t, grid, anchor, "floor")    # nie NACH dem Ereignis
 ```
 
-`quantize_to_grid` [models.py:25] ist die **einzige** erlaubte Quantisierung.
-Keine Inline-Formeln, keine `round(x, 2)` innerhalb der Kette — gerundet wird
-erst an der Anzeige-/Exportgrenze (R9/N15).
+`quantize_to_grid` [models.py:25] ist die einzige erlaubte Quantisierung fuer
+`Track.mix_in_point`/`mix_out_point`. Fuer das unregelmaessige PSSI-Gitter
+(Phrasenlaengen variieren) kommt zusaetzlich `quantize_to_points`
+[mix_candidates.py] dazu — gleiche `ceil`/`floor`-Toleranz
+(`QUANTIZE_TOLERANCE_SEC`), aber gegen eine sortierte Punktliste statt gegen
+ein festes Raster. Keine Inline-Formeln, keine `round(x, 2)` innerhalb der
+Kette — gerundet wird erst an der Anzeige-/Exportgrenze (R9/N15).
 
 ## Zwei Anker, zwei Aufgaben — nicht verwechseln
 
@@ -51,7 +55,7 @@ das Mix-Fenster kollabiert in den Notfall-Prozent-Pfad. Deshalb nimmt
 |---|---|---|---|
 | A | `calculate_genre_aware_mix_points` | dj_brain.py:106 | Sections vorhanden |
 | B | `analyze_structure_and_mix_points` | analysis.py:1019 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
-| C | Rekordbox-Cue-Override | analysis.py:1448 | Cues matchen Wortgrenzen-Regex, dann `align_ai_mix_points` |
+| C | Rekordbox-Cue-Override | analysis.py:1448 | nur benannte Cues (`provenance == "manual"`), Wortgrenzen-Regex, dann `align_ai_mix_points` |
 
 Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1666 und
 :1928]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
@@ -129,18 +133,39 @@ Techno 16 Bars Standard-Blend, 32 Sweet Spot, Bass-Swap hart auf der
 Phrasengrenze. Psytrance: Dark 8-16, Full-On 16-32, Progressive 32-64.
 Uplifting Trance 32-64+. Nie zwei Basslines gleichzeitig. Pitch max +-3-4 %.
 
-## Kandidaten-Design (2026-08-21, genehmigt, noch nicht gebaut)
+## Kandidaten Teil 1 (gebaut 2026-08-21)
 
 Spec: `docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md`.
-Kern: pro Track `mix_in_candidates` / `mix_out_candidates` (`MixCandidate`
-mit lokalen Messwerten an der Naht: Struktur/Neuheit, Rhythmus, Bass, Harmonie,
-Klangfarbe, Energie/LUFS, Stimmung, Vocals, Provenienz/Confidence), Quellen
-Rekordbox-Cues + PSSI-Phrasen + Analyzer, Paar-Bewertung mit ALLEN Faktoren,
-BPM <= 2, beide Blendenlaengen, Hoertest als Kandidaten-Paarvergleich.
-`Track.mix_in_point/mix_out_point` = Rang 1; Invarianten 1-6 und der
-Intro/Outro-Guard gelten fuer JEDEN Kandidaten. Cue-Positionsheuristik
-("2. Cue = In, letzter = Out") entfaellt mit der Umsetzung. CACHE_VERSION 34.
-Nutzer-Auflage: exakt so, vollstaendig, keine Annahmen.
+Pro Track `mix_in_candidates` / `mix_out_candidates`: Listen von
+`MixCandidate` (`hpg_core/mix_candidates.py`) mit lokalen Messwerten im
+Fenster +-1 Phrase um `t` (Struktur/Neuheit, Rhythmus, Bass, Harmonie,
+Klangfarbe, Energie/LUFS, Stimmung/Vocals) plus `schema`, `provenance`,
+`confidence`. Beide Analysepfade rufen `build_track_candidates` ueber den
+Helfer `_kandidaten_berechnen` in `analysis.py`, **nach** den
+Track-Mixpoints; Fehler dort kippen die Analyse nie (leere Listen).
+
+**Sechs Schemata** (Nutzer-Entscheidung B), Prioritaet in
+`SCHEMA_PRIORITAET`: `benannter_cue` > `pssi_phrase` > `auto_cue` >
+`analyzer` > `sektion` > `energie_neuheit`.
+
+**Gates** (`passes_track_gates`, je Kandidat): Intro/Outro-Guard,
+`unanalysed`-Sektionen ausgeschlossen (Coverage), Quantisierung auf das
+Gitter mit `QUANTIZE_TOLERANCE_SEC` = 0.05 s Toleranz (PSSI-Gitter via
+`quantize_to_points`, sonst `quantize_to_grid`), Mindestfenster 2 Phrasen zur
+jeweils anderen Seite. Ausnahme: ein **benannter** IN/OUT-Cue
+(`CUE_IN_PATTERN`/`CUE_OUT_PATTERN`, `provenance == "manual"`) ist eine
+bewusste Nutzerentscheidung und schlaegt den Guard — nur die Trackgrenzen
+(`0 <= t <= duration`) gelten dann noch.
+
+**Kappung** auf `KANDIDATEN_MAX_JE_SEITE` (config.py, = 8): sortiert nach
+Prioritaet, dann Schema-Anzahl (mehr Quellen am selben Gitterpunkt gewinnen),
+dann Zeit — In-Seite frueh zuerst, Out-Seite spaet zuerst (der Tiebreak folgt
+der musikalischen Rolle: Out-Punkte nahe am Outro ueberleben eher).
+
+Cue-Positionsheuristik ("2. Cue = Mix-In, letzter = Mix-Out") ist entfernt.
+`Track.mix_in_point`/`mix_out_point` bleiben in Teil 1 weiterhin Analyzer +
+benannter Cue (unveraendert) — die Rang-1-Auswahl aus der Paar-Bewertung ist
+Teil 2/4. CACHE_VERSION 34.
 
 ## Common Mistakes
 

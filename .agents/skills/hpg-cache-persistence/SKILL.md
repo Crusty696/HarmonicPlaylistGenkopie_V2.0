@@ -13,12 +13,18 @@ Werte, solange die Datei unveraendert ist.
 
 ## CACHE_VERSION — wo und wann
 
-`CACHE_VERSION = 28` in **`hpg_core/caching.py`** — nicht in `config.py`.
+`CACHE_VERSION = 34` in **`hpg_core/caching.py`** — nicht in `config.py`.
 Das ist ein haeufiger Fehlgriff.
 
-Die Version steckt im **Dateinamen**: `hpg_cache_v28.db`. Ein Bump erzeugt
+Die Version steckt im **Dateinamen**: `hpg_cache_v34.db`. Ein Bump erzeugt
 also eine neue DB; zusaetzlich filtert der Read auf die Version und raeumt
 stale Rows auf.
+
+**Stand 34 (2026-08-21):** fuenf neue Listenfelder auf `Track` —
+`phrases`, `cue_points`, `phrase_grid`, `mix_in_candidates`,
+`mix_out_candidates` — alle in `TRACK_LIST_FIELDS`. Alte Rows kennen die
+Felder nicht und lieferten stillschweigend leere Listen statt der
+Kandidaten; erst eine Neuanalyse (durch den Bump erzwungen) fuellt sie.
 
 **Bump ist Pflicht, wenn sich der Analyse-Output aendert:** Mixpoint-Formel,
 Quantisierung, Sektions-Labeling, Genre-Regeln, neue/geaenderte Track-Felder,
@@ -32,9 +38,9 @@ Neue Bumps in diesem Stil ergaenzen.
 
 ```
 CACHE_FILE = HPG_CACHE_FILE                       # Env, hoechste Prioritaet
-           | HPG_CACHE_DIR/hpg_cache_v28.db       # Env
-           | %LOCALAPPDATA%\HPG\hpg_cache_v28.db  # Standard Windows
-           | ~/.hpg/hpg_cache_v28.db              # Fallback
+           | HPG_CACHE_DIR/hpg_cache_v34.db       # Env
+           | %LOCALAPPDATA%\HPG\hpg_cache_v34.db  # Standard Windows
+           | ~/.hpg/hpg_cache_v34.db              # Fallback
 LOCK_FILE  = <cache ohne .db> + ".lock"
 ```
 

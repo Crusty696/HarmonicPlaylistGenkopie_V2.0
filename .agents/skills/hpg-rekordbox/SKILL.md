@@ -51,12 +51,18 @@ Rekordbox speichert Beatgrid- und Cue-Zeiten in **Millisekunden**.
 
 ## ANLZ-Beatgrid
 
-`get_first_downbeat(file_path)` [:354] -> `_extract_first_downbeat_from_anlz`
-[:423]: sucht in den ANLZ-`.DAT`-Dateien die Tags `PQTZ`, `PQT2`, `beat_grid`,
-`beats` und darin den ersten Tick mit `beat == 1`. Zwei Tag-Formen werden
-unterstuetzt (flache Parallel-Listen `.beats`/`.times` **und** iterierbare
-Entries mit `.beat`/`.time`) — pyrekordbox liefert je nach Version
-unterschiedliche Formen; RB-01 war genau hier ein still toter Pfad.
+`get_first_downbeat(file_path)` [:354] -> `_read_anlz_files(content_id)`
+[:447] -> `_extract_first_downbeat_from_anlz`: sucht in den ANLZ-Dateien die
+Tags `PQTZ`, `PQT2`, `beat_grid`, `beats` und darin den ersten Tick mit
+`beat == 1`. Zwei Tag-Formen werden unterstuetzt (flache Parallel-Listen
+`.beats`/`.times` **und** iterierbare Entries mit `.beat`/`.time`) —
+pyrekordbox liefert je nach Version unterschiedliche Formen; RB-01 war genau
+hier ein still toter Pfad.
+
+`_read_anlz_files` ist der gemeinsame Leser fuer alle ANLZ-Dateien
+(DAT/EXT/2EX) eines Tracks — probiert `db.read_anlz_files(content_id)`, dann
+`db.read_anlz_file(content_id, "DAT")`; beide `get_first_downbeat` und
+`get_phrases` gehen darueber, damit es nur eine robuste Leseroutine gibt.
 
 Treffer -> `downbeat_confidence = 1.0`. Nur damit greift der exakte
 Beat-Alignment-Pfad im Renderer (`downbeat_reliable_* = conf >= 0.9`).
@@ -64,6 +70,22 @@ Beat-Alignment-Pfad im Renderer (`downbeat_reliable_* = conf >= 0.9`).
 **Vertrag:** der Importer liefert ausschliesslich den **Takt**-Anker
 `first_downbeat`. Der Phrasen-Anker entsteht downstream — Skill
 `hpg-mixpoint-engineering`.
+
+## PSSI-Phrasen (`get_phrases`, [:483])
+
+`get_phrases(file_path)`, memoisiert je `content_id`: holt ueber
+`_read_anlz_files` die EXT-Datei mit dem `PSSI`-Tag und die DAT-Datei mit dem
+`PQTZ`-Tag, delegiert an `rekordbox_phrases.phrases_from_anlz`. Leer, wenn
+kein Rekordbox-Eintrag, keine EXT-Datei oder kein PSSI-Tag vorliegt.
+
+`phrases_from_anlz` (`hpg_core/rekordbox_phrases.py`) liest die Phrasengrenzen
+aus PSSI und die Zeiten aus dem PQTZ-Beatgrid: `entry.beat` ist ein
+**1-basierter Index** in die PQTZ-Beatliste (verifiziert an 699 von 2475
+EXT-Dateien; 0-basiert passt nie). Zwei Label-Tabellen je nach PSSI-`mood`:
+`PHRASE_LABELS_HIGH` (mood 1: Intro/Up/Down/Chorus/Outro) und
+`PHRASE_LABELS_MIDLOW` (mood 2/3: Intro/Verse 1-6/Bridge/Chorus/Outro).
+Rohe Beatgrid-Floats, keine Rundung — dieselbe 3-ms-Falle wie beim
+Mix-In-Rundungsfehler (`hpg-mixpoint-engineering`).
 
 ## Cue-Override (liegt in analysis.py, nicht im Importer)
 
@@ -76,11 +98,13 @@ OUT: \b(MIX[- ]?OUT|OUT|OUTRO|END)\b
 
 `INTRO` markiert den Intro-START und ist bewusst **kein** Mix-In.
 `BREAKDOWN` darf kein OUT ausloesen. Erster Treffer gewinnt (deterministisch).
+Nur **benannte** Cues (`provenance == "manual"`) zaehlen.
 
-Fallback fuer unbenannte Hot-/Memory-Cues: Positionen sortieren, Cues < 2,0 s
-Abstand deduplizieren, **mindestens 3** noetig; dann `cue_in = pos[1]`,
-`cue_out = pos[-1]` bzw. `pos[-2]`, wenn der letzte Cue < 15 s vor Track-Ende
-liegt.
+Die Positionsheuristik fuer unbenannte Hot-/Memory-Cues ("2. Cue = Mix-In,
+letzter = Mix-Out") ist entfernt (Spec 2026-08-21) — unbenannte Cues sind
+jetzt Kandidaten (`mix_candidates.py`), kein Override mehr. Damit entfaellt
+auch der zugehoerige Intro-Guard `cue_in_verwerfen`; die Funktion bleibt im
+Modul, wird im Produktivpfad aber nicht mehr gerufen.
 
 Uebernommen wird nur bei `0 <= in < out <= duration`, und **immer** durch
 `align_ai_mix_points(..., anchor=phrase_anchor)` quantisiert.
@@ -113,5 +137,7 @@ analysierte-vs-unanalysierte Duplikate und mehrdeutige Basenames ab.
 - Bei Mehrdeutigkeit "den ersten Treffer" nehmen.
 - Cue-Namen per Substring matchen.
 - Cue-Override roh setzen ohne Quantisierung.
+- Die entfernte Positionsheuristik ("2. Cue = Mix-In") wiederbeleben statt
+  `mix_candidates.py` zu erweitern.
 - Neuen Importer pro Track bauen statt `get_rekordbox_importer()`.
 - Nur eine ANLZ-Tag-Form unterstuetzen.

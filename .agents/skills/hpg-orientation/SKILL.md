@@ -33,7 +33,9 @@ main.AnalysisWorker.run              [main.py:490, run :549]
         c Miss -> Fast-Path (Rekordbox-BPM/Key, librosa 360 s)
                   oder Voll-Path (librosa 600 s + 180 s Tail)
         d Downbeat -> Phrasen-Anker -> Struktur -> Mixpoints
-        e Cue-Override (Rekordbox) -> cachen
+        e Cue-Override (nur benannte Cues, Rekordbox)
+        f Mixpunkt-Kandidaten (PSSI-Phrasen, Cues, Sektionen, Analyzer)
+          -> cachen
   3 apply_resource_limits (Ressourcenfilter)
   4 analysis_done -> MainWindow.analysis_finished  [main.py:4923]
   5 playlist.generate_playlist (8 Strategien)
@@ -53,6 +55,8 @@ main.AnalysisWorker.run              [main.py:490, run :549]
 | Strategien + Scoring | `hpg_core/playlist.py` | `STRATEGIES` :2170 |
 | Genre-Tabellen (SSoT) | `hpg_core/genres.py` | `CANONICAL_GENRES` :21 |
 | Cache | `hpg_core/caching.py` | `CACHE_VERSION` :103 |
+| PSSI-Phrasen | `hpg_core/rekordbox_phrases.py` | `phrases_from_anlz` |
+| Mixpunkt-Kandidaten | `hpg_core/mix_candidates.py` | `build_track_candidates` |
 | Preview-DSP | `hpg_core/transition_renderer.py` | `render_transition_clip` :138 |
 | Rekordbox-Import | `hpg_core/rekordbox_importer.py` | `class RekordboxImporter` :83 |
 | Export | `hpg_core/exporters/` | m3u8, Rekordbox-XML |
