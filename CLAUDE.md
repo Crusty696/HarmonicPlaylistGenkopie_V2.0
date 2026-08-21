@@ -79,7 +79,7 @@ hpg_core/                  # Core analysis modules
   logging_config.py        # Logging-Setup
   app_metadata.py          # APP_VERSION, MIN_PYTHON (Single Source)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest (1792 Tests gesammelt, gemessen 2026-08-21)
+tests/                     # pytest (1832 Tests gesammelt, gemessen 2026-08-21 (pytest --collect-only))
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection,
                            # kandidaten_messen.py fuer Mixpunkt-Kandidaten)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start

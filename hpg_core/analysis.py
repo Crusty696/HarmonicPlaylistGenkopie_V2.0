@@ -1731,7 +1731,7 @@ def analyze_track(file_path: str) -> Track | None:
                     mix_out_bars = int(mix_out_point / seconds_per_bar)
                 else:
                     logger.warning(
-                        f"Rekordbox-Cues ungueltig oder Mixfenster zu kurz "
+                        f"Rekordbox-Cues ungueltig (Reihenfolge/Trackgrenzen) "
                         f"(in={candidate_in:.1f}, out={candidate_out:.1f}, "
                         f"duration={duration:.1f}) — "
                         f"behalte berechnete Mix-Punkte"

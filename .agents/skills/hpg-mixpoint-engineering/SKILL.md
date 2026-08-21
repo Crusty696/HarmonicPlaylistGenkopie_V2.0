@@ -53,12 +53,12 @@ das Mix-Fenster kollabiert in den Notfall-Prozent-Pfad. Deshalb nimmt
 
 | # | Quelle | Ort | Bedingung |
 |---|---|---|---|
-| A | `calculate_genre_aware_mix_points` | dj_brain.py:106 | Sections vorhanden |
-| B | `analyze_structure_and_mix_points` | analysis.py:1019 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
-| C | Rekordbox-Cue-Override | analysis.py:1448 | nur benannte Cues (`provenance == "manual"`), Wortgrenzen-Regex, dann `align_ai_mix_points` |
+| A | `calculate_genre_aware_mix_points` | dj_brain.py:107 | Sections vorhanden |
+| B | `analyze_structure_and_mix_points` | analysis.py:1156 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
+| C | Rekordbox-Cue-Override | analysis.py:1712 | nur benannte Cues (`provenance == "manual"`), Wortgrenzen-Regex, dann `align_ai_mix_points` |
 
-Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1666 und
-:1928]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
+Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1903 und
+:2311]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
 (per grep verifiziert).
 
 **Korrektur gegenueber aelteren Notizen:** Es gibt **keinen** vierten

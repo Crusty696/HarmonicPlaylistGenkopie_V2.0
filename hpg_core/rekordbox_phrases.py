@@ -4,7 +4,9 @@ Reine Funktionen ueber pyrekordbox-AnlzFile-Objekte (oder Objekte mit
 derselben Oberflaeche `get_tag(key).content`). Zeiten kommen aus dem
 Beatgrid (PQTZ, ANLZ0000.DAT): `entry.beat` ist ein 1-basierter Index in
 die PQTZ-Beatliste (verifiziert 2026-08-21 an 699 von 2475 EXT-Dateien;
-0-basiert passt nie; der erste Eintrag liegt in 228/699 auf beatnum 2).
+0-basiert passt nie; der erste Eintrag liegt im Vollbestand (2470 DAT) in
+677 Faellen auf beatnum 2, 74x auf 3, 70x auf 4 (Beatgrid beginnt nicht auf
+der 1); Stichprobe 699/2475 EXT fuer die 1-Basiertheit).
 """
 from __future__ import annotations
 

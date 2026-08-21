@@ -54,7 +54,7 @@ main.AnalysisWorker.run              [main.py:490, run :549]
 | Mixpoints, DJ-Empfehlungen | `hpg_core/dj_brain.py` | `calculate_genre_aware_mix_points` :107, `generate_dj_recommendation` :462, `calculate_paired_mix_points` :662 |
 | Strategien + Scoring | `hpg_core/playlist.py` | `STRATEGIES` :2170 |
 | Genre-Tabellen (SSoT) | `hpg_core/genres.py` | `CANONICAL_GENRES` :21 |
-| Cache | `hpg_core/caching.py` | `CACHE_VERSION` :103 |
+| Cache | `hpg_core/caching.py` | `CACHE_VERSION` :107 |
 | PSSI-Phrasen | `hpg_core/rekordbox_phrases.py` | `phrases_from_anlz` |
 | Mixpunkt-Kandidaten | `hpg_core/mix_candidates.py` | `build_track_candidates` |
 | Preview-DSP | `hpg_core/transition_renderer.py` | `render_transition_clip` :138 |

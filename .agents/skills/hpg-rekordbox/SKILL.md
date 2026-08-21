@@ -81,7 +81,9 @@ kein Rekordbox-Eintrag, keine EXT-Datei oder kein PSSI-Tag vorliegt.
 `phrases_from_anlz` (`hpg_core/rekordbox_phrases.py`) liest die Phrasengrenzen
 aus PSSI und die Zeiten aus dem PQTZ-Beatgrid: `entry.beat` ist ein
 **1-basierter Index** in die PQTZ-Beatliste (verifiziert an 699 von 2475
-EXT-Dateien; 0-basiert passt nie). Zwei Label-Tabellen je nach PSSI-`mood`:
+EXT-Dateien; 0-basiert passt nie; der erste Eintrag liegt im Vollbestand
+(2470 DAT) in 677 Faellen auf beatnum 2, 74x auf 3, 70x auf 4). Zwei
+Label-Tabellen je nach PSSI-`mood`:
 `PHRASE_LABELS_HIGH` (mood 1: Intro/Up/Down/Chorus/Outro) und
 `PHRASE_LABELS_MIDLOW` (mood 2/3: Intro/Verse 1-6/Bridge/Chorus/Outro).
 Rohe Beatgrid-Floats, keine Rundung — dieselbe 3-ms-Falle wie beim
@@ -89,7 +91,7 @@ Mix-In-Rundungsfehler (`hpg-mixpoint-engineering`).
 
 ## Cue-Override (liegt in analysis.py, nicht im Importer)
 
-`analysis.py:1448`. Wortgrenzen-Regex, **nicht** Substring:
+`analysis.py:1712`. Wortgrenzen-Regex, **nicht** Substring:
 
 ```
 IN : \b(MIX[- ]?IN|IN|START)\b
