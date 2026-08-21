@@ -129,6 +129,19 @@ Techno 16 Bars Standard-Blend, 32 Sweet Spot, Bass-Swap hart auf der
 Phrasengrenze. Psytrance: Dark 8-16, Full-On 16-32, Progressive 32-64.
 Uplifting Trance 32-64+. Nie zwei Basslines gleichzeitig. Pitch max +-3-4 %.
 
+## Kandidaten-Design (2026-08-21, genehmigt, noch nicht gebaut)
+
+Spec: `docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md`.
+Kern: pro Track `mix_in_candidates` / `mix_out_candidates` (`MixCandidate`
+mit lokalen Messwerten an der Naht: Struktur/Neuheit, Rhythmus, Bass, Harmonie,
+Klangfarbe, Energie/LUFS, Stimmung, Vocals, Provenienz/Confidence), Quellen
+Rekordbox-Cues + PSSI-Phrasen + Analyzer, Paar-Bewertung mit ALLEN Faktoren,
+BPM <= 2, beide Blendenlaengen, Hoertest als Kandidaten-Paarvergleich.
+`Track.mix_in_point/mix_out_point` = Rang 1; Invarianten 1-6 und der
+Intro/Outro-Guard gelten fuer JEDEN Kandidaten. Cue-Positionsheuristik
+("2. Cue = In, letzter = Out") entfaellt mit der Umsetzung. CACHE_VERSION 34.
+Nutzer-Auflage: exakt so, vollstaendig, keine Annahmen.
+
 ## Common Mistakes
 
 - `> 0` statt `>= 0.0` gegen den Sentinel pruefen.
