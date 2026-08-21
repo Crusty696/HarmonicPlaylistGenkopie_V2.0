@@ -18,11 +18,12 @@ import numpy as np
 from .config import (
     CUE_DEDUPE_SEC, ENERGIE_NEUHEIT_MIN, ENERGIE_TREND_SCHWELLE, KANDIDATEN_AUDIO_SR,
     KANDIDATEN_FENSTER_PHRASEN, KANDIDATEN_MAX_JE_SEITE, KANDIDATEN_MIN_JE_SEITE,
-    KICK_AKTIV_MIN_DBFS, KICK_AKTIV_ONBEAT_MIN,
+    KICK_AKTIV_MIN_DBFS, KICK_AKTIV_ONBEAT_MIN, METER,
 )
 from .downbeat import DOWNBEAT_RELIABLE_MIN
 from .groove import ON_BEAT_SLOTS, bass_kennwerte, extract_groove, syncopation_from_pattern
 from .models import CAMELOT_MAP, QUANTIZE_TOLERANCE_SEC, quantize_to_grid
+from .rekordbox_phrases import phrase_grid_from_phrases
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,9 @@ def _quantize(t: float, seite: str, seite_grid: list[float], grid_sec: float, an
 
 
 def _section_at(sections: list[dict], t: float) -> dict | None:
+    # Zwilling von dj_brain.section_dict_at_time (dort auf Track, hier auf rohe
+    # Sektions-Dicts vor der Track-Erzeugung); bei Aenderung der Randregel
+    # beide anpassen.
     for i, s in enumerate(sections):
         start, end = s.get("start_time", 0.0), s.get("end_time", 0.0)
         last = i == len(sections) - 1
@@ -275,7 +279,9 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             ph = _phrase_at(phrases, k.t)
             k.phrase_label = ph["label"] if ph else ""
         if len(kandidaten) > KANDIDATEN_MAX_JE_SEITE:
-            kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema)))
+            # Tiebreak explizit ueber die Zeit (frueher = zuerst), nicht ueber
+            # die Einfuegereihenfolge
+            kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema), k.t))
             kandidaten = kandidaten[:KANDIDATEN_MAX_JE_SEITE]
         kandidaten.sort(key=lambda k: k.t)
         if 0 < len(kandidaten) < KANDIDATEN_MIN_JE_SEITE:
@@ -469,3 +475,46 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
         logger.warning("Neuheit lokal: %s", exc)
     cand.lufs_lokal = _lufs_short_term(file_path, cand.t, duration)
     return cand
+
+
+def candidate_confidence(*, downbeat_confidence: float, pssi_grid: bool, phrase_confidence: float,
+                         key_confidence_lokal: float | None, covered: bool) -> float:
+    """Mittel der verfuegbaren Teilkonfidenzen (Spec: downbeat, phrase, key,
+    Coverage). Das gleichgewichtete Mittel ist ein STARTWERT, nicht gemessen."""
+    teile = [float(downbeat_confidence), 1.0 if pssi_grid else float(phrase_confidence),
+             1.0 if covered else 0.0]
+    if key_confidence_lokal is not None:
+        teile.append(float(key_confidence_lokal))
+    return round(float(np.clip(np.mean(teile), 0.0, 1.0)), 3)
+
+
+def build_track_candidates(file_path: str, *, bpm: float, duration: float, first_downbeat: float,
+                           downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
+                           phrase_unit: int, sections: list[dict], phrases: list[dict], cues: list[dict],
+                           analyzer_in: float | None, analyzer_out: float | None, outro_covered: bool,
+                           ) -> tuple[list[dict], list[dict]]:
+    """Vollstaendige Kandidaten beider Seiten als Dict-Listen (fuer Track/Cache)."""
+    from .dj_brain import _get_intro_end_from_sections, _get_outro_start_from_sections
+    if bpm <= 0 or duration <= 0:
+        return [], []
+    grid_sec = (60.0 / bpm) * METER * (phrase_unit if phrase_unit > 0 else 8)
+    seite_grid = phrase_grid_from_phrases(phrases)
+    intro_end = _get_intro_end_from_sections(sections)
+    outro_start = _get_outro_start_from_sections(sections, duration)
+    ins, outs = collect_candidate_times(
+        seite_grid=seite_grid, sections=sections, phrases=phrases, cues=cues,
+        analyzer_in=analyzer_in, analyzer_out=analyzer_out, duration=duration, grid_sec=grid_sec,
+        intro_end=intro_end, outro_start=outro_start, outro_covered=outro_covered, anchor=phrase_anchor,
+    )
+    covered_bis = duration if outro_covered else None
+    for cand in ins + outs:
+        measure_candidate_window(file_path, cand, bpm=bpm, first_downbeat=first_downbeat,
+                                 downbeat_confidence=downbeat_confidence, grid_sec=grid_sec,
+                                 duration=duration, sections=sections,
+                                 pssi_mood=int(phrases[0]["mood"]) if phrases else None)
+        sek = _section_at(sections, cand.t)
+        covered = sek is not None and sek.get("label") != "unanalysed" and (covered_bis is None or cand.t <= covered_bis)
+        cand.confidence = candidate_confidence(
+            downbeat_confidence=downbeat_confidence, pssi_grid=bool(seite_grid),
+            phrase_confidence=phrase_confidence, key_confidence_lokal=cand.key_confidence_lokal, covered=covered)
+    return [c.to_dict() for c in ins], [c.to_dict() for c in outs]

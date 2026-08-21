@@ -5,7 +5,7 @@ import soundfile as sf
 
 from hpg_core.mix_candidates import (
     MixCandidate, normalize_cues, quantize_to_points, passes_track_gates,
-    collect_candidate_times, measure_candidate_window,
+    collect_candidate_times, measure_candidate_window, build_track_candidates, candidate_confidence,
 )
 
 
@@ -142,7 +142,13 @@ def test_kappung_auf_acht_mit_prioritaet():
         intro_end=30.0, outro_start=240.0, outro_covered=True, anchor=0.0,
     )
     assert len(ins) == 8 and len(outs) == 8
-    assert any("analyzer" in c.schema for c in ins)   # hoehere Prioritaet ueberlebt die Kappung
+    # 60 s ueberlebt, weil der Punkt die meisten Schemata vereinigt (Sektion +
+    # Energie-Neuheit + Analyzer), nicht weil "analyzer" allein hoeher stuende
+    assert any("analyzer" in c.schema for c in ins)
+    # Tiebreak bei gleichem Top-Schema und gleicher Schema-Anzahl: die FRUEHEREN
+    # Zeitpunkte ueberleben (explizit ueber k.t, nicht Einfuegereihenfolge)
+    nur_auto = sorted(c.t for c in ins if c.schema == ["auto_cue"])
+    assert nur_auto and nur_auto[0] == 45.0 and nur_auto[-1] < 225.0
 
 
 def _kick_track(tmp_path, bpm=128.0, sekunden=60.0, sr=22050, kick_ab=0.0, kick_bis=None):
@@ -213,3 +219,28 @@ def test_measure_window_am_trackrand_klemmt_und_kurz_ist_kein_absturz(tmp_path):
     measure_candidate_window(path, c, bpm=128.0, first_downbeat=0.0, downbeat_confidence=1.0,
                              grid_sec=15.0, duration=20.0, sections=[])
     assert c.energy_lokal is not None
+
+
+def test_candidate_confidence_formel():
+    # Mittel aus: downbeat_confidence, Gitterqualitaet (1.0 PSSI / phrase_confidence), key_confidence_lokal, Coverage (1/0)
+    assert candidate_confidence(downbeat_confidence=1.0, pssi_grid=True, phrase_confidence=0.1,
+                                key_confidence_lokal=0.5, covered=True) == pytest.approx((1.0 + 1.0 + 0.5 + 1.0) / 4)
+    assert candidate_confidence(downbeat_confidence=0.4, pssi_grid=False, phrase_confidence=0.2,
+                                key_confidence_lokal=None, covered=False) == pytest.approx((0.4 + 0.2 + 0.0) / 3)
+
+
+def test_build_track_candidates_end_to_end_synthetisch(tmp_path):
+    path = _kick_track(tmp_path, sekunden=120.0)
+    sections = [{"label": "intro", "start_time": 0.0, "end_time": 15.0, "avg_energy": 20.0},
+                {"label": "drop", "start_time": 15.0, "end_time": 105.0, "avg_energy": 80.0},
+                {"label": "outro", "start_time": 105.0, "end_time": 120.0, "avg_energy": 20.0}]
+    ins, outs = build_track_candidates(
+        path, bpm=128.0, duration=120.0, first_downbeat=0.0, downbeat_confidence=1.0,
+        phrase_confidence=0.0, phrase_anchor=0.0, phrase_unit=8, sections=sections,
+        phrases=[], cues=[], analyzer_in=30.0, analyzer_out=90.0, outro_covered=True,
+    )
+    assert ins and outs
+    assert all(isinstance(c, dict) for c in ins + outs)           # Track-Felder sind Dicts
+    assert all(c["t"] >= 15.0 for c in ins) and all(c["t"] <= 105.0 for c in outs)
+    assert all(0.0 <= c["confidence"] <= 1.0 for c in ins + outs)
+    assert any(c["lufs_lokal"] is not None for c in ins)
