@@ -1,37 +1,33 @@
 ---
 name: hpg-stand-2026-08-22-teil1-gemerged
-description: "Stand 2026-08-22: Kandidaten Teil 1 auf main gemerged (f18815b), Teil 2 noch nicht geplant — Faktenblatt + Entwurfsnotizen liegen in docs/superpowers/plans/2026-08-22-*; Uebergabe an neuen Agenten ueber docs/HANDOFF-2026-08-22-stand-fuer-neuen-agenten.md"
+description: "Stand 2026-08-22 (spaet): Kandidaten Teil 1, 2 und 3 auf main gemerged; Teil 4 (App) geplant, Waechter Tor 1 offen; /goal-Modus (autonom, Hoerproben nur Checkliste); Uebergabe ueber docs/HANDOFF-2026-08-22-stand-fuer-neuen-agenten.md"
 metadata: 
   node_type: memory
   type: project
   originSessionId: 261b9a6b-87fd-4d13-aa8d-3e85b22fb493
-  modified: 2026-08-22T15:57:45.890Z
+  modified: 2026-08-22T20:58:36.253Z
 ---
 
-Am 2026-08-22 wurde `kandidaten-teil1` (Datenmodell, CACHE_VERSION 34,
-`mix_candidates.py`, `rekordbox_phrases.py`) per `--no-ff` auf `main`
-gemerged (`f18815b`), Suite 1786 passed, Branch + Worktree entfernt, gepusht.
-Nutzer-Anweisung danach: "erledige meine Anweisungen" = Plan Teil 1 Task 12
-(Realmessung 231 Tracks, Handoff Teil 1), dann Teil 2/3/4 der Spec komplett
-bauen; und "Uebergabe an anderen Agenten vorbereiten, gleicher Stand".
+Stand 2026-08-22 (Abend): Mixpunkt-Kandidaten **Teil 1** (Datenmodell, `f18815b`),
+**Teil 2** (Paarung/Bewertung `pair_candidates.py`, `ca15013`) und **Teil 3**
+(Hoertest-Kandidatenmodus `prepare/fit --modus kandidaten`, Server je Paar,
+`candidate_preferences.py`, `5ce9ddb`) sind auf `main` gemerged; je Teil ein
+Handoff `docs/HANDOFF-2026-08-22-kandidaten-teilN.md` mit Messzahlen und Waechter-
+Urteilen. **Teil 4 (App)** ist geplant
+(`docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`), Waechter
+Tor 1 lief beim Schreiben dieser Notiz; Umsetzung im Worktree
+`..\HPG-wt-kandidaten-teil4` (Branch `kandidaten-teil4`).
 
-**Wo der naechste Agent einsteigt:**
-- `docs/HANDOFF-2026-08-22-stand-fuer-neuen-agenten.md` (Pflichtlektuere,
-  Lesereihenfolge), Memory-Kopie `docs/agent-memory/`.
-- Teil 2 ist NICHT geplant. Vorarbeit: `docs/superpowers/plans/
-  2026-08-22-faktenblatt-kandidaten-teil2.md` (Zeilenrefs, verifiziert) und
-  `2026-08-22-entwurfsnotizen-kandidaten-teil2.md` (Entwurf, NICHT vom
-  Nutzer genehmigt: eigene `kandidaten_*_weight`-Schluessel, Gates, Formeln,
-  Startwerte). Naechster Schritt: offene Fragen daraus dem Nutzer stellen
-  bzw. Waechter Tor 1, dann Plan nach writing-plans, Worktree, TDD.
-- `.claude/` ist gitignored; Spiegel `.agents/` ist versioniert — nach Klon
-  kopieren (Anleitung im Handoff Abschnitt 4).
+Nutzer-Modus seit 2026-08-22 (`/goal`): 100 % autonom, keine Rueckfragen,
+Hoerproben ueberspringen und auf einer finalen Checkliste dokumentieren,
+Erfolgsmeldung erst, wenn alles komplett gebaut, getestet, gegengeprueft ist.
 
-**Why:** Der Nutzer wechselt Agenten/Sessions; ohne diese Ablage gingen
-Faktenblatt und Entwurf verloren und der naechste Agent wuerde erneut
-messen oder — schlimmer — annehmen.
+**Why:** Der Nutzer wechselt Sessions; ohne diesen Einstieg wuerde ein neuer
+Agent Teil 4 neu planen oder Teil-3-Entscheidungen (Identifizierbarkeit,
+Uebernahme-Gate, explizite Toleranzen gewinnen) uebersehen.
 
-**How to apply:** Vor Teil 2 die Entwurfsnotizen NICHT als genehmigt
-behandeln. Messwerte aus der Kandidaten-Messung (Abschnitt 10 der Notizen)
-ablesen, bevor Konstanten festgelegt werden. Siehe
+**How to apply:** Zuerst `docs/HANDOFF-2026-08-22-stand-fuer-neuen-agenten.md`
+lesen (Reihenfolge, Branch-Lage), dann den Handoff des letzten Teils. Plan Teil 4
+nur mit den Waechter-Auflagen aus Tor 1 umsetzen; nach jedem Teil Merge auf
+`main`, `.agents/` → `.claude/` spiegeln. Siehe
 [[hpg-kandidaten-design-vollstaendig-bauen]], [[hpg-praezision-vor-einfachheit]].

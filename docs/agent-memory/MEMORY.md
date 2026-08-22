@@ -16,4 +16,4 @@
 - [HPG Präzision vor Einfachheit](hpg-praezision-vor-einfachheit.md) — nie den einfacheren Weg empfehlen; Kandidaten: ALLES gewichtet (Groove, Rhythmus, Harmonie, Lautheit, BPM max 2); Design-Entscheidungen C/B/A+B/C/C/Weg 2
 - [Smiley am Ende](user-smiley-am-ende.md) — jede Antwort an David endet mit :-)
 - [HPG Kandidaten-Design vollständig bauen](hpg-kandidaten-design-vollstaendig-bauen.md) — Abschnitte 1–4 genehmigt 21.08., Spec 2026-08-21-mixpunkt-kandidaten-design.md; exakt so, komplett, keine Annahmen
-- [HPG Stand 2026-08-22 Teil 1 gemerged](hpg-stand-2026-08-22-teil1-gemerged.md) — Teil 2 ungeplant; Faktenblatt + Entwurfsnotizen (nicht genehmigt) in docs/superpowers/plans/2026-08-22-*; Handoff-Doku Pflichtlektuere
+- [HPG Stand 2026-08-22 Teil 1–3 gemerged](hpg-stand-2026-08-22-teil1-gemerged.md) — Teil 1/2/3 auf main, Teil 4 (App) geplant; /goal-Modus autonom, Hoerproben nur Checkliste; Handoff-Stand-Doku Pflichtlektuere

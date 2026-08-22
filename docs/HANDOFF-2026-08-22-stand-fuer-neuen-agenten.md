@@ -7,93 +7,72 @@ Sitzungsgedaechtnis (Memory) — und an exakt der Stelle weitermachen, an der
 dieser Agent aufgehoert hat (Abschnitt 3).
 
 Vorheriger Handoff: `docs/HANDOFF-2026-08-21-kandidaten-design.md`.
+Stand dieses Dokuments: Abend 2026-08-22, nach Merge von Teil 3.
+
+## 0. Arbeitsmodus (Nutzer-Anweisung 2026-08-22, `/goal`)
+
+„Dein finales Ziel ist es, die App in diesem Repository komplett fehlerfrei und
+produktionsreif fertigzustellen. Ab sofort arbeitest du zu 100% autonom. […] Du
+fragst mich nicht nach Erlaubnis fuer Zwischenschritte. […] Start-Analyse: Scanne
+als allererstes das gesamte Projektverzeichnis nach den neuesten Plaenen,
+Statusberichten oder Notizen. […] Audio-Tests: Alle Aufgaben, die eine
+menschliche Hoerprobe erfordern, ueberspringst du. Dokumentiere sie fuer mich
+auf einer finalen Checkliste und arbeite sofort am naechsten Punkt weiter.
+Melde dich erst mit einer Erfolgsmeldung zurueck, wenn alles rundherum komplett
+fertiggebaut, getestet und gegengeprueft ist." — Caveman-Modus, Subagenten und
+Skills aus `.agents/` nutzen, keine Platzhalter, alles messen.
 
 ## 1. Reihenfolge zum Einlesen (Pflicht)
 
 1. `CLAUDE.md` (Projektregeln, Waechter-Pflicht, Skills, venv312)
 2. `docs/agent-memory/MEMORY.md` + alle Dateien darin (Abschnitt 5) —
-   besonders `hpg-stand-2026-08-22-teil1-gemerged.md`
-3. `.agents/skills/hpg-orientation/SKILL.md`, dann
-   `hpg-mixpoint-engineering`, `hpg-playlist-scoring`
+   besonders `hpg-stand-2026-08-22-teil1-gemerged.md` (Einstieg)
+3. `.agents/skills/hpg-orientation/SKILL.md`, dann `hpg-mixpoint-engineering`,
+   `hpg-playlist-scoring`, `hpg-testing-verification`, `hpg-qt-gui`
 4. `docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md`
    (Abschnitte 1–4 vom Nutzer genehmigt, **exakt so umsetzen**)
-5. `docs/superpowers/plans/2026-08-21-mixpunkt-kandidaten-teil1-datenmodell.md`
-   (gebaut, gemerged — zeigt das Planformat und die Waechter-Auflagen)
-6. `docs/superpowers/plans/2026-08-22-faktenblatt-kandidaten-teil2.md`
-7. `docs/superpowers/plans/2026-08-22-entwurfsnotizen-kandidaten-teil2.md`
-8. dieses Dokument, Abschnitt 2–4
+5. Handoffs der gebauten Teile: `docs/HANDOFF-2026-08-22-kandidaten-teil1.md`,
+   `-teil2.md`, `-teil3.md` (Messzahlen, Entscheidungen, Waechter-Urteile,
+   Checkliste Hoerproben)
+6. `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md` (+
+   `2026-08-22-faktenblatt-kandidaten-teil4.md`)
+7. dieses Dokument, Abschnitt 2–4
 
 Regel aus CLAUDE.md gilt weiter: Statusdokumente sind Hypothesen, der Code
 ist die Wahrheit. Jede Zahl und Zeilenreferenz vor Gebrauch im Code
 nachpruefen.
 
-## 2. Branch-Lage (Stand 2026-08-22, nach dem Merge)
+## 2. Branch-Lage
 
 | Branch | Stand | Inhalt |
 |---|---|---|
-| `main` | `f18815b` (Merge) + Doku-Commits danach | **Teil 1 (Datenmodell) gemerged**: `hpg_core/mix_candidates.py`, `hpg_core/rekordbox_phrases.py` (PSSI-Leser), Kandidatenfelder in `models.py`, CACHE_VERSION 34, Kandidaten in beiden Analysepfaden, Cue-Positionsheuristik entfernt, `tools/kandidaten_messen.py`, Skills/CLAUDE.md aktualisiert |
-| `kandidaten-teil1` | **geloescht** (lokal + remote), Worktree entfernt | vollstaendig in `main` |
-| `feature/groove-scoring`, `audit/2026-08-14-messbasierte-fixes` | alt, in `main` enthalten | nur Historie |
+| `main` | `06d66b9` (Plan Teil 4) ueber `5ce9ddb` (Merge Teil 3), `ca15013` (Merge Teil 2), `f18815b` (Merge Teil 1) | Teil 1–3 komplett: `mix_candidates.py`, `rekordbox_phrases.py`, `pair_candidates.py`, `candidate_preferences.py`, `models.camelot_relation_score`, `kandidaten_*_weight`, Hoertest-Kandidatenmodus (`tools/rate_transitions.py`, `tools/hoertest_server.py`), Werkzeuge `tools/kandidaten_messen.py`, `tools/paar_kandidaten_messen.py` |
+| `kandidaten-teil1/2/3` | geloescht (lokal), Worktrees entfernt | vollstaendig in `main` |
+| `kandidaten-teil4` | Worktree `..\HPG-wt-kandidaten-teil4` (ohne venv — `venv312` des Hauptrepos nutzen) | Teil 4 in Arbeit (Abschnitt 3) |
 
-Merge-Verifikation am 2026-08-22: Suite auf `main` nach dem Merge
-`1786 passed, 25 warnings, 81 s, Exit-Code 0` (Coverage-Gate 70 bestanden),
-Aufruf `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q -p no:cacheprovider`.
-
-`.claude/skills` und `.claude/agents` wurden nach dem Merge aus `.agents/`
-gespiegelt (lokal; `.claude/` ist gitignored, siehe Abschnitt 4).
+Suite auf `main` nach Merge Teil 3 (HEAD `5ce9ddb`): **1836 passed, 25 warnings,
+Exit 0** (Coverage-Gate 70 bestanden).
 
 ## 3. Wo genau weitergemacht wird
 
-### 3a. Plan Teil 1, Task 12 — Rest
-
-- **Realmessung an den 231 analysierten Tracks** (`tools/kandidaten_messen.py
-  --liste <tracks231.txt> --json <out.json>`): am 2026-08-22 gestartet.
-  Ergebnis und Pflichtzahlen stehen in
-  `docs/HANDOFF-2026-08-22-kandidaten-teil1.md`, sobald vorhanden. **Fehlt
-  diese Datei, ist die Messung nicht dokumentiert → neu laufen lassen**
-  (Trackliste aus `hpg_cache_v33.db`, Spalte `filepath`, `key <> 'version'`
-  ausschliessen; sqlite3-CLI nicht im PATH, Python nutzen; Dauer > 30 min,
-  detached starten).
-- Danach ist Teil 1 komplett abgeschlossen.
-
-### 3b. Teil 2 — Paarung und Bewertung (NICHT begonnen)
-
-Stand: Vorarbeit liegt vor, Plan NICHT geschrieben, Waechter Tor 1 NICHT
-gelaufen, Nutzer hat die Entwurfsnotizen NICHT gesehen.
-
-Reihenfolge:
-1. `2026-08-22-entwurfsnotizen-kandidaten-teil2.md` Abschnitt 10: die
-   offenen Messwerte aus der Kandidaten-Messung ablesen (Einheit
-   `avg_mids_lokal`, Spannen `bass_rms_dbfs`/`lufs_lokal`, Anteil leeres
-   `camelot_lokal`).
-2. Die offenen Entscheidungen aus den Entwurfsnotizen dem Nutzer vorlegen
-   (Benannter-Cue-Ausnahme am Blenden-Guard; eigene
-   `kandidaten_*_weight`-Schluessel; Startwerte) — **eine praezise Frage je
-   Punkt**, Empfehlung = die praezisere Variante (Nutzer-Regel
-   `hpg-praezision-vor-einfachheit`).
-3. Plan nach `superpowers:writing-plans` als
-   `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil2-paarung.md`
-   im Format von Teil 1 (Task 0 = Waechter Tor 1, TDD je Task, Commit je
-   Task, letzter Task = Messung + Doku + Waechter Tor 2).
-4. Umsetzung im eigenen Branch/Worktree (`superpowers:using-git-worktrees`;
-   Worktree hat kein venv — `venv312` des Hauptrepos nutzen), Merge ueber
-   `superpowers:finishing-a-development-branch`, Nutzer-Vorgabe: am Ende
-   alles auf `main`.
-5. Danach Teil 3 (Hoertest-Modus Kandidaten) und Teil 4 (App) nach
-   demselben Muster — Spec Abschnitte 3 und 4.
-
-Nutzer-Auflagen (Memory `hpg-kandidaten-design-vollstaendig-bauen`,
-`hpg-praezision-vor-einfachheit`): alles komplett, nichts "spaeter", keine
-Annahmen, jede Zahl gemessen oder als Startwert markiert, nie den
-einfacheren Weg empfehlen, Waechter an beiden Toren.
+- **Teil 4 (App)**: Plan geschrieben (`2026-08-22-mixpunkt-kandidaten-teil4-app.md`,
+  14 Entscheidungen, Tasks 0–9). Waechter Tor 1 wurde gestartet; seine Auflagen
+  in den Plan einarbeiten, dann Tasks 1–9 im Worktree `kandidaten-teil4` (TDD,
+  Commit je Task), Messung (`tools/playlist_kandidaten_messen.py`), Waechter
+  Tor 2, Merge auf `main`, Push, `.agents/` → `.claude/` spiegeln.
+- Danach: finale Gesamtpruefung (volle Suite, `ruff`, `compileall`,
+  App-Start-Rauchtest ohne Hoerprobe), finale Checkliste der Hoerproben aus
+  den Handoffs Teil 3/4 zusammenfuehren, Erfolgsmeldung an den Nutzer.
+- Nutzer-Auflagen (Memory): alles komplett, nichts "spaeter", keine Annahmen,
+  jede Zahl gemessen oder als Startwert markiert, nie den einfacheren Weg
+  empfehlen, Waechter an beiden Toren.
 
 ## 4. Skills und Subagenten — wo sie liegen
 
 - Versioniert: `.agents/skills/hpg-*/SKILL.md` (14 Skills) und
   `.agents/agents/hpg-*.md` (10 Subagenten, darunter `hpg-waechter`).
-- `.claude/` ist per `.gitignore:69` **unversioniert** (bewusste
-  Entscheidung, Waechter Tor 1, Commit `8732d5d`). Auf einem frischen Klon
-  fuer Claude Code daher einmalig spiegeln:
+- `.claude/` ist per `.gitignore:69` **unversioniert**. Auf einem frischen Klon
+  fuer Claude Code einmalig spiegeln:
 
   ```powershell
   New-Item -ItemType Directory -Force .claude\skills, .claude\agents | Out-Null
@@ -103,44 +82,34 @@ einfacheren Weg empfehlen, Waechter an beiden Toren.
 
   Wer einen Skill aendert, aendert **beide** Kopien; die `.agents`-Kopie ist
   die einzige, die im Repo landet.
-- Der `consulting-team`-Skill unter `.agents/skills/` gehoert nicht zu HPG.
 
 ## 5. Sitzungsgedaechtnis (Memory) — `docs/agent-memory/`
 
 Kopie der Claude-Code-Memory dieses Projekts (18 Dateien inkl. Index
-`MEMORY.md`, Stand 2026-08-22 nach dem Merge). Ein neuer Claude-Code-Agent
-auf einem anderen Rechner legt sie unter
-`%USERPROFILE%\.claude\projects\<projekt-slug>\memory\` ab, dann werden sie
-automatisch geladen; jeder andere Agent liest sie als Markdown und behandelt
-sie wie eigene Notizen.
+`MEMORY.md`). Ein neuer Claude-Code-Agent auf einem anderen Rechner legt sie
+unter `%USERPROFILE%\.claude\projects\<projekt-slug>\memory\` ab; jeder andere
+Agent liest sie als Markdown und behandelt sie wie eigene Notizen.
 
-Die fuer die aktuelle Arbeit wichtigsten Eintraege:
+Wichtigste Eintraege: `hpg-stand-2026-08-22-teil1-gemerged.md` (Einstieg),
+`hpg-kandidaten-design-vollstaendig-bauen.md`, `hpg-praezision-vor-einfachheit.md`,
+`hpg-mixpunkte-individuell-cues-phrasen.md`, `hpg-waechter-und-agententeam.md`,
+`hpg-scoring-an-2026-08-21.md`, `hpg-mixpoint-rundungsfehler.md`,
+`hpg-venv312-environment.md`, `hpg-rekordbox-doppelte-pfade.md`,
+`user-smiley-am-ende.md` (jede Antwort an David endet mit `:-)`).
 
-- `hpg-stand-2026-08-22-teil1-gemerged.md` — dieser Stand, Einstiegspunkt.
-- `hpg-kandidaten-design-vollstaendig-bauen.md` — Auflage des Nutzers:
-  Spec genau so, komplett, keine Annahmen, 100 % ehrlich.
-- `hpg-praezision-vor-einfachheit.md` — nie den einfacheren Weg
-  empfehlen; alle Faktoren gewichtet (Groove, Rhythmus, Harmonie, Lautheit,
-  BPM max 2); Design-Entscheidungen C/B/A+B/C/C/Weg 2.
-- `hpg-mixpunkte-individuell-cues-phrasen.md` — keine Einheitsregel fuer
-  Mixpunkte; Kandidaten anbieten; PSSI-Phrasen unter
-  `D:\PIONEER\Master\share\PIONEER\USBANLZ\...\ANLZ0000.EXT`.
-- `hpg-waechter-und-agententeam.md` — Waechter VOR der Umsetzung.
-- `hpg-scoring-an-2026-08-21.md`, `hpg-mixpoint-rundungsfehler.md`,
-  `hpg-groove-scoring-2026-08-20.md` — Scoring-/Mixpoint-Vorgeschichte.
-- `hpg-venv312-environment.md`, `hpg-rekordbox-doppelte-pfade.md` —
-  Umgebung und Realdaten.
-- `user-smiley-am-ende.md` — jede Antwort an David endet mit `:-)`.
+## 6. Offen (gesammelt)
 
-Diese Kopie ist ein Schnappschuss. Bei Widerspruch gilt der Code.
-
-## 6. Offen (unveraendert aus dem vorigen Handoff)
-
-- App-BPM-Default 3.0 → 2.0 (Teil von Abschnitt 4 der Spec)
+- Hoerproben (Mensch): Checkliste in `docs/HANDOFF-2026-08-22-kandidaten-teil3.md`
+  (Kandidaten-Satz vorbereiten, bewerten, `fit --modus kandidaten`), spaeter Teil 4.
+- App-BPM-Default 3.0 → 2.0 (Teil 4, Plan Task 7)
 - #4 Melodic Techno: wartet auf Noten
 - `docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md` ("10 Strategien") und
   `HANDOFF-2026-08-20-groove-scoring.md:189` veraltet
 - Memory `hpg-mixpoint-rundungsfehler.md`: 57/200 Tracks mit Mix-In in einer
   Intro-Sektion (Invariante 5), vorbestehend, ungeprueft
+- Teil-1-Startwerte `KICK_AKTIV_*` markieren fast nie einen Kick (82/3664);
+  `percussive_ratio_lokal` zur Haelfte < 0.3 (Handoff Teil 1/2)
+- `HPG.spec` buendelt `hpg_core/data/*.json` nicht (Waechter-Hinweis Teil 3,
+  Release-Build pruefen: `hpg-release-build`)
 - `docs/AGENT_HANDOFF.md` beschreibt den Stand 2026-07-20 und verweist oben
   auf dieses Dokument.
