@@ -33,7 +33,7 @@ getestet und mit synthetischen Noten einmal durchlaufen. Checkliste unten.
   POST `/note` und `/bester` mit Zeitstempel (`merge_kandidaten_bewertung`);
   Kontext (Tempo/Genre/Camelot) aus Cache oder `merkmale.csv` (Mobil).
 - Tests: `tests/test_candidate_preferences.py` (3), `tests/test_rate_transitions.py`
-  (+15), `tests/test_hoertest_server.py` (+3), `tests/test_pair_candidates.py` (+1).
+  (+13), `tests/test_hoertest_server.py` (+3), `tests/test_pair_candidates.py` (+1).
 - Doku: `CLAUDE.md`, `.agents/skills/hpg-testing-verification/SKILL.md`,
   `.agents/skills/hpg-mixpoint-engineering/SKILL.md` (nach Merge nach `.claude/` spiegeln).
 

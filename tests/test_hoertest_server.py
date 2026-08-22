@@ -179,8 +179,8 @@ def test_lade_uebersicht_kommt_ohne_passende_merkmale_aus():
 
 # Kandidatenmodus (Spec 2026-08-21 Abschnitt 3, Plan Teil 3)
 from tools.hoertest_server import (
-  BEWERTUNG_KANDIDATEN_SPALTEN, ist_kandidatensatz, lade_uebersicht_kandidaten,
-  merge_kandidaten_bewertung,
+  BEWERTUNG_KANDIDATEN_SPALTEN, KANDIDAT_ANZEIGE_FELDER, ist_kandidatensatz,
+  lade_uebersicht_kandidaten, merge_kandidaten_bewertung,
 )
 
 
@@ -229,7 +229,7 @@ def test_lade_uebersicht_kandidaten_gruppiert_verdeckt_und_in_reihenfolge():
   assert p["bpm_b"] == "141.0" and p["key_b"] == "9A"        # B nicht im Cache -> aus merkmale.csv
   c = p["clips"][0]
   assert c["note"] == "3" and c["gewaehlt"] == "1" and c["crossfade_sek"] == "54.9"
-  assert set(c) == {"clip_id", "clip", "note", "gewaehlt", "crossfade_sek"}
+  assert set(c) == set(KANDIDAT_ANZEIGE_FELDER) == {"clip_id", "clip", "note", "gewaehlt", "crossfade_sek"}
   assert "score" not in c and "schema_out" not in c and "harmonic" not in c
   # ganz ohne Cache: Kontext kommt vollstaendig aus merkmale.csv
   p2 = lade_uebersicht_kandidaten(merk, bew, {}, {})[0]

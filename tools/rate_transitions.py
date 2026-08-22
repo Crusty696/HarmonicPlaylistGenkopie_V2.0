@@ -1657,8 +1657,10 @@ def main(argv=None) -> int:
     f.add_argument("--genre", action="append", choices=list(CANONICAL_GENRES),
                    help="Genre(s) fuer die Ausgabe; Standard: alle kanonischen")
     f.add_argument("--modus", choices=("einzel", "kandidaten"), default="einzel",
-                   help="einzel = Einzelnoten-Satz (heute); kandidaten = Note + Paarvergleich je Paar")
-    f.add_argument("--cache", default=None, help="Abweichende Cache-Datenbank (Genre je Track)")
+                   help="einzel = Einzelnoten-Satz (heute); kandidaten = Note + Paarvergleich je Paar "
+                        "(--genre wird dort ignoriert: die Rangfolge entsteht je Genre aus den Daten)")
+    f.add_argument("--cache", default=None,
+                   help="Abweichende Cache-Datenbank (nur --modus kandidaten: Genre je Track)")
     f.set_defaults(funktion=_fit)
 
     args = parser.parse_args(argv)

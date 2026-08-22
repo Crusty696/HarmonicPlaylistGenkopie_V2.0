@@ -170,7 +170,7 @@ def lade_uebersicht(
 
 BEWERTUNG_KANDIDATEN_SPALTEN = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
 # Felder, die /daten je Clip liefert — absichtlich ohne score, schema, Teilwerte
-# (verdeckte Bewertung; Waechter Tor 2 prueft diese Liste).
+# (verdeckte Bewertung). lade_uebersicht_kandidaten baut die Clip-Dicts daraus.
 KANDIDAT_ANZEIGE_FELDER = ("clip_id", "clip", "note", "gewaehlt", "crossfade_sek")
 
 
@@ -219,11 +219,13 @@ def lade_uebersicht_kandidaten(merkmale_zeilen, bewertung_zeilen, reihenfolge: d
                 "key_a": ia.get("key") or m.get("key_a", ""), "key_b": ib.get("key") or m.get("key_b", ""),
                 "clips": [],
             }
-        gruppen[pid]["clips"].append({
+        werte = {
             "clip_id": z.get("clip_id", ""), "clip": str(m.get("clip", "")),
             "note": str(z.get("note", "")).strip(), "gewaehlt": str(z.get("gewaehlt", "")).strip(),
             "crossfade_sek": str(m.get("crossfade_sek", "")).strip(),
-        })
+        }
+        # Verdeckung: genau die Felder aus KANDIDAT_ANZEIGE_FELDER, nichts sonst.
+        gruppen[pid]["clips"].append({k: werte[k] for k in KANDIDAT_ANZEIGE_FELDER})
     for pid, g in gruppen.items():
         folge = reihenfolge.get(pid, {}).get("clips")
         if folge:

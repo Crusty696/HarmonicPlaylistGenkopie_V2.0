@@ -108,7 +108,8 @@ Spec Abschnitt 3; Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-te
   Zeitstempel; `/daten` liefert je Clip NUR `clip_id, clip, note, gewaehlt,
   crossfade_sek` (verdeckt). Mobil: Server samt Satz kopieren, Kontext kommt
   aus `merkmale.csv`, wenn kein Cache da ist.
-- `tools/rate_transitions.py fit --modus kandidaten --dir <Satz>`: Zielgroesse 1
+- `tools/rate_transitions.py fit --modus kandidaten --dir <Satz> [--cache <db>]`
+  (`--genre` wird hier ignoriert): Zielgroesse 1
   Note (L2-Logistik), Zielgroesse 2 Paarvergleich (Bradley-Terry, Differenzen
   Sieger-Verlierer ohne Spiegelung, unstandardisiert), nur **identifizierbare**
   Merkmale (Innerhalb-Paar-Streuung >= `PAAR_STREUUNG_MIN`) werden neu
