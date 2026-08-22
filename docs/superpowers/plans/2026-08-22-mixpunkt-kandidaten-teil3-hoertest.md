@@ -689,8 +689,10 @@ def test_holdout_nach_tracks_trennt_clips_deterministisch():
     zeilen = [{"tracks": ("a", "b")}, {"tracks": ("c", "d")}, {"tracks": ("a", "d")}, {"tracks": ("e", "f")}]
     train, hold = holdout_nach_tracks(zeilen, anteil=0.5, seed=1)
     assert len(train) + len(hold) == 4
-    hold_tracks = {t for z in hold for t in z["tracks"]}
-    assert all(not (set(z["tracks"]) & hold_tracks) for z in train)
+    # dicht: jeder Holdout-Clip enthaelt mindestens einen Track, der in KEINEM
+    # Train-Clip vorkommt (Train = nur Clips, deren beide Tracks ausserhalb liegen)
+    train_tracks = {t for z in train for t in z["tracks"]}
+    assert hold and all(set(z["tracks"]) - train_tracks for z in hold)
     assert holdout_nach_tracks(zeilen, anteil=0.5, seed=1) == (train, hold)
 
 
