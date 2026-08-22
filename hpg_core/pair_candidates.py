@@ -8,6 +8,7 @@ Scoring, GUI und Export an; hier wird nichts am Track veraendert.
 """
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import asdict, dataclass, field, fields
 
@@ -132,10 +133,9 @@ def _outro_deckel(track_a: Track, out_a: MixCandidate) -> float:
     return _get_outro_start_from_sections(track_a.sections, float(track_a.duration))
 
 
-def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
-                      in_b: MixCandidate, blend_bars: int) -> list[str]:
-    """Harte Gates auf Paar-Ebene (Spec Abschnitt 2, Schritt 1). Leere Liste =
-    Kombination erlaubt; sonst die Gruende (stabil benannt, fuer Messung)."""
+def _gate_gruende_basis(track_a: Track, track_b: Track, out_a: MixCandidate,
+                        in_b: MixCandidate) -> list[str]:
+    """Blenden-unabhaengige Gate-Gruende einer Kombination (einmal je (out, in))."""
     reasons: list[str] = []
     diff, rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
     if diff > PAAR_BPM_MAX:
@@ -146,10 +146,6 @@ def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
         reasons.append("coverage")
     if not track_a.outro_covered:
         reasons.append("outro_covered")
-    spb = seconds_per_bar(track_a.bpm)
-    overlap = blend_bars * spb
-    if out_a.t + overlap > _outro_deckel(track_a, out_a) + QUANTIZE_TOLERANCE_SEC:
-        reasons.append("blende_im_outro")
     intro_end = _get_intro_end_from_sections(track_b.sections)
     if not _guard_frei(track_b, in_b, "in") and in_b.t < intro_end - QUANTIZE_TOLERANCE_SEC:
         reasons.append("in_im_intro")
@@ -159,6 +155,29 @@ def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
         reasons.append("gitter_out")
     if not _auf_gitter(track_b, in_b.t, "in"):
         reasons.append("gitter_in")
+    return reasons
+
+
+def _blenden_gate(track_a: Track, out_a: MixCandidate, blend_bars: int, deckel: float | None = None) -> bool:
+    """True, wenn die Blende ueber den Outro-Deckel (bzw. bei guard-freiem Cue
+    ueber das Trackende) hinauslaeuft."""
+    spb = seconds_per_bar(track_a.bpm)
+    if deckel is None:
+        deckel = _outro_deckel(track_a, out_a)
+    return out_a.t + blend_bars * spb > deckel + QUANTIZE_TOLERANCE_SEC
+
+
+def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
+                      in_b: MixCandidate, blend_bars: int) -> list[str]:
+    """Harte Gates auf Paar-Ebene (Spec Abschnitt 2, Schritt 1). Leere Liste =
+    Kombination erlaubt; sonst die Gruende (stabil benannt, fuer Messung).
+    Reihenfolge der Gruende: bpm, pitch, coverage, outro_covered, blende_im_outro,
+    in_im_intro, in_ausserhalb, gitter_out, gitter_in."""
+    basis = _gate_gruende_basis(track_a, track_b, out_a, in_b)
+    reasons: list[str] = [g for g in basis if g in ("bpm", "pitch", "coverage", "outro_covered")]
+    if _blenden_gate(track_a, out_a, blend_bars):
+        reasons.append("blende_im_outro")
+    reasons += [g for g in basis if g in ("in_im_intro", "in_ausserhalb", "gitter_out", "gitter_in")]
     return reasons
 
 
@@ -547,20 +566,54 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
     for c in outs + ins:
         schemata_vorhanden.update(c.schema or [])
     paare: list[PairCandidate] = []
+    # Laufzeit (gemessen 2026-08-22: ~9 ms je Paar bei 128 Kombinationen): der
+    # Score haengt nicht von der Blende ab (Docstring score_pair), die Gates nur
+    # ueber blende_im_outro — deshalb je (out, in) EINMAL Gates + Score, dann die
+    # Blendenlaengen; Gitter/Guard je Kandidat einmal. Ergebnis identisch.
+    out_ok = {id(o): _auf_gitter(track_a, o.t, "out") for o in outs}
+    in_ok = {id(i): _auf_gitter(track_b, i.t, "in") for i in ins}
+    intro_end_b = _get_intro_end_from_sections(track_b.sections)
+    in_guard_frei = {id(i): _guard_frei(track_b, i, "in") for i in ins}
+    diff, _rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
+    basis_global = (
+        diff > PAAR_BPM_MAX
+        or (track_a.bpm > 0 and diff / track_a.bpm > PAAR_PITCH_MAX)
+        or not track_a.outro_covered
+    )
+    if basis_global:
+        return []
     for o in outs:
+        if o.section_label == "unanalysed" or not out_ok[id(o)]:
+            continue
+        deckel = _outro_deckel(track_a, o)
+        bars_liste = blend_bars_options(track_a, o, rel)
+        if not bars_liste:
+            continue
         for i in ins:
-            for bars in blend_bars_options(track_a, o, rel):
-                if pair_gate_reasons(track_a, track_b, o, i, bars):
-                    continue
-                score, teil, flags = score_pair(
-                    track_a, track_b, o, i, bars, energy_direction=energy_direction,
-                    harmonic_strictness=harmonic_strictness,
-                    allow_experimental=allow_experimental, tolerances=tolerances,
-                    bass_swap_geplant=bass_swap_geplant)
+            if i.section_label == "unanalysed" or not in_ok[id(i)]:
+                continue
+            if i.t < 0.0 or i.t > float(track_b.duration):
+                continue
+            if not in_guard_frei[id(i)] and i.t < intro_end_b - QUANTIZE_TOLERANCE_SEC:
+                continue
+            bars_ok = [b for b in bars_liste if not _blenden_gate(track_a, o, b, deckel)]
+            if not bars_ok:
+                continue
+            score, teil, flags = score_pair(
+                track_a, track_b, o, i, bars_ok[0], energy_direction=energy_direction,
+                harmonic_strictness=harmonic_strictness,
+                allow_experimental=allow_experimental, tolerances=tolerances,
+                bass_swap_geplant=bass_swap_geplant)
+            for bars in bars_ok:
+                # Flache Kopien statt to_dict()/from_dict() (asdict kostete die
+                # Haelfte der Laufzeit); die Schema-Listen werden eigenstaendig,
+                # weil dedupe_and_cap sie vereinigt.
+                o_k, i_k = copy.copy(o), copy.copy(i)
+                o_k.schema, i_k.schema = list(o.schema or []), list(i.schema or [])
                 paare.append(PairCandidate(
-                    out_a=MixCandidate.from_dict(o.to_dict()), in_b=MixCandidate.from_dict(i.to_dict()),
-                    blend_bars=bars, overlap_sec=bars * spb, score=score, teilwerte=teil,
-                    flags=flags, begruendung=begruendung_aus_teilwerten(teil, flags, bars),
+                    out_a=o_k, in_b=i_k,
+                    blend_bars=bars, overlap_sec=bars * spb, score=score, teilwerte=dict(teil),
+                    flags=dict(flags), begruendung=begruendung_aus_teilwerten(teil, flags, bars),
                     bpm_relation=rel))
     if not paare:
         return []
