@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import json
 import re
 import sys
@@ -159,6 +160,76 @@ def lade_uebersicht(
             }
         )
     return liste
+
+
+# ===========================================================================
+# Kandidatenmodus (Spec 2026-08-21 Abschnitt 3): bewertung.csv traegt clip_id.
+# Der Server erkennt den Modus selbst — kein Schalter, kein Eingriff in die
+# Start-Skripte des Mobil-Ordners.
+# ===========================================================================
+
+BEWERTUNG_KANDIDATEN_SPALTEN = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+# Felder, die /daten je Clip liefert — absichtlich ohne score, schema, Teilwerte
+# (verdeckte Bewertung; Waechter Tor 2 prueft diese Liste).
+KANDIDAT_ANZEIGE_FELDER = ("clip_id", "clip", "note", "gewaehlt", "crossfade_sek")
+
+
+def ist_kandidatensatz(bewertung_zeilen: list[dict]) -> bool:
+    """Moduserkennung: ein Kandidatensatz hat die Spalte clip_id."""
+    return bool(bewertung_zeilen) and "clip_id" in bewertung_zeilen[0]
+
+
+def merge_kandidaten_bewertung(zeilen: list[dict], *, pair_id: str, clip_id: str,
+                               note=None, bester: bool = False, zeit: str = "") -> list[dict]:
+    """Traegt Note (None = loeschen) bzw. die exklusive Wahl 'bester' eines
+    Clips ein; `zeit` wird nur auf dem beruehrten Clip gesetzt."""
+    neu = []
+    for z in zeilen:
+        k = dict(z)
+        if k.get("pair_id") == pair_id:
+            if bester:
+                k["gewaehlt"] = "1" if k.get("clip_id") == clip_id else ""
+            if k.get("clip_id") == clip_id:
+                if not bester:
+                    k["note"] = "" if note in (None, "") else str(int(note))
+                k["zeit"] = zeit
+        neu.append(k)
+    return neu
+
+
+def lade_uebersicht_kandidaten(merkmale_zeilen, bewertung_zeilen, reihenfolge: dict,
+                               infos: dict | None = None) -> list[dict]:
+    """Gruppen je Paar, Clips in gespeicherter Reihenfolge, verdeckt: kein
+    score, kein Schema, keine Teilwerte — nur Tempo/Genre/Camelot/Blende.
+    Kontext kommt aus dem Cache (`infos`), sonst aus merkmale.csv (Mobil)."""
+    infos = infos or {}
+    merk = {z.get("clip_id"): z for z in merkmale_zeilen}
+    gruppen: dict[str, dict] = {}
+    for z in bewertung_zeilen:
+        pid = str(z.get("pair_id", "")).strip()
+        m = merk.get(z.get("clip_id"), {})
+        if pid not in gruppen:
+            pfad_a, pfad_b = str(m.get("track_a", "")), str(m.get("track_b", ""))
+            ia, ib = infos.get(pfad_a.lower(), {}), infos.get(pfad_b.lower(), {})
+            gruppen[pid] = {
+                "pair_id": pid, "track_a": Path(pfad_a).name, "track_b": Path(pfad_b).name,
+                "bpm_a": ia.get("bpm") or m.get("bpm_a", ""), "bpm_b": ib.get("bpm") or m.get("bpm_b", ""),
+                "genre_a": ia.get("genre") or m.get("genre_a", ""),
+                "genre_b": ib.get("genre") or m.get("genre_b", ""),
+                "key_a": ia.get("key") or m.get("key_a", ""), "key_b": ib.get("key") or m.get("key_b", ""),
+                "clips": [],
+            }
+        gruppen[pid]["clips"].append({
+            "clip_id": z.get("clip_id", ""), "clip": str(m.get("clip", "")),
+            "note": str(z.get("note", "")).strip(), "gewaehlt": str(z.get("gewaehlt", "")).strip(),
+            "crossfade_sek": str(m.get("crossfade_sek", "")).strip(),
+        })
+    for pid, g in gruppen.items():
+        folge = reihenfolge.get(pid, {}).get("clips")
+        if folge:
+            rang = {cid: i for i, cid in enumerate(folge)}
+            g["clips"].sort(key=lambda c: rang.get(c["clip_id"], len(rang)))
+    return list(gruppen.values())
 
 
 # ===========================================================================
@@ -477,11 +548,286 @@ laden();
 """
 
 
+# Seite fuer den Kandidatenmodus: EIN Paar je Ansicht, alle Clips des Paars in
+# der gespeicherten (zufaelligen) Reihenfolge, je Clip Note 1-5 und die Wahl
+# "bester". Kein Score, kein Schema, keine Teilwerte (verdeckt).
+SEITE_KANDIDATEN = """<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>HPG Hoertest — Kandidaten</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1420; color:#e6e9f0; font:15px/1.5 system-ui,sans-serif;
+         margin:0; padding:24px 16px 96px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .hinweis { color:#8b93a7; margin:0 0 16px; }
+  .kopf { position:sticky; top:0; z-index:5; max-width:820px; margin:0 auto 14px;
+          padding:10px 0; background:#0f1420; border-bottom:1px solid #232c42; }
+  .nav { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .nav button { padding:7px 12px; font-size:14px; cursor:pointer; color:#c8cede;
+                background:#161d2e; border:1px solid #2c3855; border-radius:20px; }
+  .nav button:hover { background:#27334f; }
+  .nav .stand { color:#8b93a7; font-size:13px; margin-left:auto; }
+  .fakten { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 0; }
+  .marke { background:#1d2740; border:1px solid #2c3855; border-radius:5px;
+           padding:2px 8px; font-size:12px; color:#c8cede; }
+  .titel { color:#a8b0c4; font-size:13px; margin-top:6px; overflow-wrap:anywhere; }
+  .clip { background:#161d2e; border:1px solid #232c42; border-radius:10px;
+          padding:14px 16px; margin:0 auto 14px; max-width:820px; }
+  .clip.fertig { border-color:#3b6b4a; }
+  .clip.aktiv { box-shadow:0 0 0 2px #c8a02e; }
+  .clip.bester { border-color:#c8a02e; }
+  .clipkopf { display:flex; justify-content:space-between; gap:12px;
+              align-items:baseline; margin-bottom:8px; }
+  .id { font-weight:600; }
+  .meta { color:#8b93a7; font-size:13px; }
+  .spur { position:relative; height:26px; margin:2px 0 4px; border-radius:5px;
+          background:#10182a; border:1px solid #2c3855; cursor:pointer; overflow:hidden; }
+  .mix { position:absolute; top:0; bottom:0;
+         background:linear-gradient(90deg,#c8a02e33,#c8a02e66,#c8a02e33);
+         border-left:2px solid #c8a02e; border-right:2px solid #c8a02e; }
+  .marke-a, .marke-b { position:absolute; top:0; bottom:0; display:flex;
+                       align-items:center; padding:0 7px; font-size:11px;
+                       font-weight:700; color:#8b93a7; }
+  .marke-a { left:0; justify-content:flex-end; }
+  .marke-b { right:0; }
+  .nadel { position:absolute; top:0; bottom:0; width:2px; background:#e6e9f0; display:none; }
+  .spurtext { color:#8b93a7; font-size:12px; margin-bottom:10px; }
+  audio { width:100%; margin-bottom:10px; }
+  .noten { display:flex; gap:8px; align-items:stretch; }
+  .noten button { flex:1; padding:9px 0; font-size:15px; cursor:pointer;
+                  background:#1d2740; color:#e6e9f0; border:1px solid #2c3855; border-radius:7px; }
+  .noten button:hover { background:#27334f; }
+  .noten button.aktiv { background:#c8a02e; color:#101010; font-weight:700; border-color:#c8a02e; }
+  .noten button.wahl { flex:1.6; }
+  .noten button.wahl.aktiv { background:#3b6b4a; color:#e6e9f0; border-color:#3b6b4a; }
+  .fuss { position:fixed; left:0; right:0; bottom:0; padding:10px 16px;
+          background:#0b0f19; border-top:1px solid #232c42; color:#8b93a7; }
+</style>
+</head>
+<body>
+<h1>HPG Hoertest — Kandidaten</h1>
+<p class="hinweis">Gleiches Paar, andere Mixpunkte. Jeden Clip mit <b>1</b>&ndash;<b>5</b>
+benoten <b>und</b> den besten waehlen (Taste <b>B</b>). <b>Pfeil hoch/runter</b> wechselt den Clip,
+<b>Leertaste</b> spielt, <b>Bild auf/ab</b> wechselt das Paar. Alles wird sofort gespeichert.</p>
+<div class="kopf" id="kopf"></div>
+<div id="liste"></div>
+<div class="fuss" id="fuss">lade ...</div>
+<script>
+const NACHLAUF = __NACHLAUF__;  // Sekunden Track B hinter der Blende
+let paare = [];     // Gruppen vom Server, Clips bereits in gespeicherter Reihenfolge
+let pi = 0;         // Index des angezeigten Paars
+let aktuell = 0;    // Index des aktiven Clips im Paar
+
+function paarAusUrl() {
+  const m = new URLSearchParams(location.search).get('pair');
+  const i = paare.findIndex(p => p.pair_id === m);
+  return i >= 0 ? i : 0;
+}
+
+function fertig(p) { return p.clips.every(c => c.note) && p.clips.some(c => c.gewaehlt === '1'); }
+
+function zeichneKopf() {
+  const p = paare[pi];
+  const kopf = document.getElementById('kopf');
+  const tempo = (p.bpm_a && p.bpm_b) ? p.bpm_a + ' &rarr; ' + p.bpm_b + ' BPM' : '';
+  const stil = (p.genre_a || p.genre_b)
+    ? (p.genre_a === p.genre_b ? p.genre_a : p.genre_a + ' &rarr; ' + p.genre_b) : '';
+  const tonart = (p.key_a && p.key_b) ? p.key_a + ' &rarr; ' + p.key_b : '';
+  const n_fertig = paare.filter(fertig).length;
+  kopf.innerHTML =
+    '<div class="nav">' +
+      '<button id="zurueck">&larr; Paar</button>' +
+      '<button id="weiter">Paar &rarr;</button>' +
+      '<span class="stand">Paar ' + (pi + 1) + ' von ' + paare.length +
+      '   |   ' + n_fertig + ' vollstaendig</span>' +
+    '</div>' +
+    '<div class="fakten">' +
+      '<span class="marke">' + p.pair_id + '</span>' +
+      (tempo ? '<span class="marke">' + tempo + '</span>' : '') +
+      (stil ? '<span class="marke">' + stil + '</span>' : '') +
+      (tonart ? '<span class="marke">' + tonart + '</span>' : '') +
+      '<span class="marke">' + p.clips.length + ' Kandidaten</span>' +
+    '</div>' +
+    '<div class="titel">' + p.track_a + '<br>&rarr; ' + p.track_b + '</div>';
+  document.getElementById('zurueck').onclick = () => wechsle(-1);
+  document.getElementById('weiter').onclick = () => wechsle(1);
+}
+
+function zeichne() {
+  if (!paare.length) { document.getElementById('fuss').textContent = 'keine Paare'; return; }
+  zeichneKopf();
+  const p = paare[pi];
+  const liste = document.getElementById('liste');
+  liste.innerHTML = '';
+  p.clips.forEach((c, i) => {
+    const box = document.createElement('div');
+    box.className = 'clip' + (c.note ? ' fertig' : '') + (c.gewaehlt === '1' ? ' bester' : '')
+                           + (i === aktuell ? ' aktiv' : '');
+    const dauer = c.crossfade_sek ? c.crossfade_sek + ' s Blende' : '';
+    box.innerHTML =
+      '<div class="clipkopf"><span class="id">Kandidat ' + (i + 1) + '</span>' +
+      '<span class="meta">' + dauer + '</span></div>' +
+      '<audio controls preload="metadata" src="/' + c.clip + '"></audio>' +
+      '<div class="spur" title="Klicken springt an die Stelle">' +
+        '<div class="mix"></div><div class="marke-a">A</div><div class="marke-b">B</div>' +
+        '<div class="nadel"></div></div>' +
+      '<div class="spurtext"></div>';
+    const audio = box.querySelector('audio');
+    const spur = box.querySelector('.spur');
+    audio.addEventListener('loadedmetadata', () => zeichneSpur(box, c, audio));
+    audio.addEventListener('timeupdate', () => {
+      const nadel = box.querySelector('.nadel');
+      nadel.style.left = (100 * audio.currentTime / audio.duration) + '%';
+      nadel.style.display = 'block';
+    });
+    spur.addEventListener('click', ev => {
+      if (!audio.duration) return;
+      const kasten = spur.getBoundingClientRect();
+      audio.currentTime = audio.duration * (ev.clientX - kasten.left) / kasten.width;
+    });
+    const noten = document.createElement('div');
+    noten.className = 'noten';
+    for (const n of [1,2,3,4,5]) {
+      const b = document.createElement('button');
+      b.textContent = n;
+      if (String(c.note) === String(n)) b.className = 'aktiv';
+      b.onclick = () => setzeNote(p.pair_id, c.clip_id, n);
+      noten.appendChild(b);
+    }
+    const w = document.createElement('button');
+    w.textContent = 'bester';
+    w.className = 'wahl' + (c.gewaehlt === '1' ? ' aktiv' : '');
+    w.onclick = () => setzeBester(p.pair_id, c.clip_id);
+    noten.appendChild(w);
+    box.appendChild(noten);
+    box.onclick = () => { aktuell = i; markiere(); };
+    liste.appendChild(box);
+  });
+  zaehleFuss();
+}
+
+function zaehleFuss() {
+  const p = paare[pi];
+  const noten = p.clips.filter(c => c.note).length;
+  const wahl = p.clips.some(c => c.gewaehlt === '1') ? 'bester gewaehlt' : 'bester fehlt';
+  document.getElementById('fuss').textContent =
+    'Paar ' + p.pair_id + ': ' + noten + ' von ' + p.clips.length + ' benotet, ' + wahl +
+    '   |   gesamt ' + paare.filter(fertig).length + ' von ' + paare.length + ' Paaren vollstaendig';
+}
+
+function zeichneSpur(box, c, audio) {
+  const dauer = audio.duration;
+  const blende = parseFloat(c.crossfade_sek);
+  if (!dauer || !isFinite(dauer) || !blende) return;
+  const vorlauf = Math.max(0, dauer - blende - NACHLAUF);
+  const start = 100 * vorlauf / dauer;
+  const breite = 100 * blende / dauer;
+  const mix = box.querySelector('.mix');
+  mix.style.left = start + '%';
+  mix.style.width = breite + '%';
+  box.querySelector('.marke-a').style.right = (100 - start) + '%';
+  box.querySelector('.marke-b').style.left = (start + breite) + '%';
+  box.querySelector('.spurtext').textContent =
+    'nur A bis ' + zeit(vorlauf) + '   |   Mix ' + zeit(vorlauf) + '–' + zeit(vorlauf + blende) +
+    ' (' + blende.toFixed(1) + ' s)   |   nur B ab ' + zeit(vorlauf + blende);
+}
+
+function zeit(s) {
+  const m = Math.floor(s / 60);
+  const r = Math.round(s % 60);
+  return m + ':' + String(r).padStart(2, '0');
+}
+
+function markiere() {
+  document.querySelectorAll('.clip').forEach((el, i) => el.classList.toggle('aktiv', i === aktuell));
+  const box = document.querySelectorAll('.clip')[aktuell];
+  if (box) box.scrollIntoView({block: 'nearest'});
+}
+
+function wechsle(schritt) {
+  pi = Math.max(0, Math.min(paare.length - 1, pi + schritt));
+  aktuell = 0;
+  history.replaceState(null, '', '?pair=' + paare[pi].pair_id);
+  zeichne();
+  window.scrollTo(0, 0);
+}
+
+document.addEventListener('keydown', e => {
+  const p = paare[pi];
+  if (!p) return;
+  if (e.key >= '1' && e.key <= '5' && p.clips[aktuell]) {
+    setzeNote(p.pair_id, p.clips[aktuell].clip_id, Number(e.key)); e.preventDefault();
+  } else if ((e.key === 'b' || e.key === 'B') && p.clips[aktuell]) {
+    setzeBester(p.pair_id, p.clips[aktuell].clip_id); e.preventDefault();
+  } else if (e.key === 'ArrowDown') {
+    aktuell = Math.min(p.clips.length - 1, aktuell + 1); markiere(); e.preventDefault();
+  } else if (e.key === 'ArrowUp') {
+    aktuell = Math.max(0, aktuell - 1); markiere(); e.preventDefault();
+  } else if (e.key === 'PageDown') { wechsle(1); e.preventDefault();
+  } else if (e.key === 'PageUp') { wechsle(-1); e.preventDefault();
+  } else if (e.key === ' ') {
+    const audio = document.querySelectorAll('.clip audio')[aktuell];
+    if (audio) { audio.paused ? audio.play() : audio.pause(); }
+    e.preventDefault();
+  }
+});
+
+async function sende(pfad, koerper) {
+  const antwort = await fetch(pfad, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify(koerper)});
+  if (!antwort.ok) {
+    document.getElementById('fuss').textContent = 'Speichern fehlgeschlagen: ' + antwort.status;
+    return false;
+  }
+  return true;
+}
+
+async function setzeNote(pairId, clipId, note) {
+  if (!await sende('/note', {pair_id: pairId, clip_id: clipId, note: note})) return;
+  const p = paare[pi];
+  const i = p.clips.findIndex(c => c.clip_id === clipId);
+  if (i < 0) return;
+  p.clips[i].note = String(note);
+  // Nur die Karte anfassen — ein Neuaufbau wuerde das <audio> ersetzen.
+  const box = document.querySelectorAll('.clip')[i];
+  box.classList.add('fertig');
+  box.querySelectorAll('.noten button:not(.wahl)').forEach((b, k) => b.classList.toggle('aktiv', k + 1 === note));
+  zeichneKopf(); zaehleFuss();
+}
+
+async function setzeBester(pairId, clipId) {
+  if (!await sende('/bester', {pair_id: pairId, clip_id: clipId})) return;
+  const p = paare[pi];
+  p.clips.forEach(c => { c.gewaehlt = (c.clip_id === clipId) ? '1' : ''; });
+  document.querySelectorAll('.clip').forEach((box, k) => {
+    const ist = p.clips[k].clip_id === clipId;
+    box.classList.toggle('bester', ist);
+    box.querySelector('.noten button.wahl').classList.toggle('aktiv', ist);
+  });
+  zeichneKopf(); zaehleFuss();
+}
+
+async function laden() {
+  paare = await (await fetch('/daten')).json();
+  pi = paarAusUrl();
+  zeichne();
+}
+laden();
+</script>
+</body>
+</html>
+"""
+
+
 class HoertestHandler(BaseHTTPRequestHandler):
-    """Bedient genau vier Routen. Alles andere ist 404."""
+    """Bedient die Routen /, /noten, /daten, /reihenfolge, /clips/<name> (GET) und
+    /note, /bester (POST). Alles andere ist 404."""
 
     ordner: Path = Path(".")
     track_infos: dict = {}
+    reihenfolge: dict = {}
 
     server_version = "HPG-Hoertest"
 
@@ -500,12 +846,20 @@ class HoertestHandler(BaseHTTPRequestHandler):
     def _bewertung_pfad(self) -> Path:
         return self.ordner / "bewertung.csv"
 
+    def _kandidatenmodus(self) -> bool:
+        return ist_kandidatensatz(lies_csv(self._bewertung_pfad()))
+
     # --- Routen ---------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802 - Name der Basisklasse
         pfad = self.path.split("?", 1)[0]
         if pfad in ("/", "/index.html"):
-            seite = SEITE.replace("__NACHLAUF__", repr(float(NACHLAUF_SEK)))
+            vorlage = SEITE_KANDIDATEN if self._kandidatenmodus() else SEITE
+            seite = vorlage.replace("__NACHLAUF__", repr(float(NACHLAUF_SEK)))
             self._sende(200, "text/html; charset=utf-8", seite.encode("utf-8"))
+            return
+        if pfad == "/reihenfolge":
+            koerper = json.dumps(self.reihenfolge).encode("utf-8")
+            self._sende(200, "application/json; charset=utf-8", koerper)
             return
         if pfad == "/noten":
             # Protokoll des unversionierten Vorlaeufers
@@ -521,11 +875,19 @@ class HoertestHandler(BaseHTTPRequestHandler):
             self._sende(200, "application/json; charset=utf-8", koerper)
             return
         if pfad == "/daten":
-            uebersicht = lade_uebersicht(
-                lies_csv(self.ordner / "merkmale.csv"),
-                lies_csv(self._bewertung_pfad()),
-                self.track_infos,
-            )
+            if self._kandidatenmodus():
+                uebersicht = lade_uebersicht_kandidaten(
+                    lies_csv(self.ordner / "merkmale.csv"),
+                    lies_csv(self._bewertung_pfad()),
+                    self.reihenfolge,
+                    self.track_infos,
+                )
+            else:
+                uebersicht = lade_uebersicht(
+                    lies_csv(self.ordner / "merkmale.csv"),
+                    lies_csv(self._bewertung_pfad()),
+                    self.track_infos,
+                )
             koerper = json.dumps(uebersicht, ensure_ascii=False).encode("utf-8")
             self._sende(200, "application/json; charset=utf-8", koerper)
             return
@@ -580,9 +942,13 @@ class HoertestHandler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self) -> None:  # noqa: N802 - Name der Basisklasse
+        pfad = self.path.split("?", 1)[0]
+        if self._kandidatenmodus() and pfad in ("/note", "/bester"):
+            self._post_kandidaten(pfad)
+            return
         # Pfad und Nutzlast wie beim Vorlaeufer: {"pair_id": ..., "note": 1..5},
         # note=null loescht die Note wieder.
-        if self.path.split("?", 1)[0] != "/note":
+        if pfad != "/note":
             self._sende(404, "text/plain; charset=utf-8", b"nicht gefunden")
             return
         laenge = int(self.headers.get("Content-Length") or 0)
@@ -605,6 +971,33 @@ class HoertestHandler(BaseHTTPRequestHandler):
         self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
 
 
+    def _post_kandidaten(self, pfad: str) -> None:
+        """Kandidatenmodus: /note {pair_id, clip_id, note|null}, /bester
+        {pair_id, clip_id}; beides mit Zeitstempel in bewertung.csv."""
+        laenge = int(self.headers.get("Content-Length") or 0)
+        try:
+            daten = json.loads(self.rfile.read(laenge) or b"{}")
+            pair_id = str(daten.get("pair_id", "")).strip()
+            clip_id = str(daten.get("clip_id", "")).strip()
+            if not pair_id or not clip_id:
+                raise ValueError("pair_id und clip_id noetig")
+            note = daten.get("note")
+            if pfad == "/note" and note is not None and int(note) not in NOTEN:
+                raise ValueError("Note muss 1 bis 5 sein")
+        except (ValueError, TypeError, AttributeError):
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Eingabe")
+            return
+        zeit = datetime.datetime.now().isoformat(timespec="seconds")
+        zeilen = lies_csv(self._bewertung_pfad())
+        if pfad == "/bester":
+            neu = merge_kandidaten_bewertung(zeilen, pair_id=pair_id, clip_id=clip_id, bester=True, zeit=zeit)
+        else:
+            neu = merge_kandidaten_bewertung(zeilen, pair_id=pair_id, clip_id=clip_id,
+                                            note=None if note is None else int(note), zeit=zeit)
+        schreibe_csv(self._bewertung_pfad(), BEWERTUNG_KANDIDATEN_SPALTEN, neu)
+        self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", required=True, help="Hoertest-Ordner von prepare")
@@ -618,6 +1011,12 @@ def main(argv=None) -> int:
 
     HoertestHandler.ordner = ordner
     HoertestHandler.track_infos = lade_track_infos()
+    reihenfolge_pfad = ordner / "reihenfolge.json"
+    HoertestHandler.reihenfolge = (
+        json.loads(reihenfolge_pfad.read_text(encoding="utf-8")) if reihenfolge_pfad.is_file() else {}
+    )
+    if ist_kandidatensatz(lies_csv(ordner / "bewertung.csv")):
+        print("Kandidatenmodus erkannt (Spalte clip_id): Seite je Paar, Note + bester.")
     server = ThreadingHTTPServer(("127.0.0.1", args.port), HoertestHandler)
     print(f"Hoertest laeuft: http://127.0.0.1:{args.port}   (Strg+C beendet)")
     try:
