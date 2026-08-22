@@ -20,11 +20,15 @@ def _track(name, duration=300.0, intro_end=60.0, outro_start=240.0):
     ])
 
 
-def _rec(a, b, t_out, t_in, overlap, kand_overlap=None, aktiv=1, typ="pro_eq_swap", score=70, schema_out="pssi_phrase"):
+def _rec(a, b, t_out, t_in, overlap, kand_overlap=None, aktiv=1, typ="pro_eq_swap", score=70, schema_out="pssi_phrase",
+         konsistent=True):
     k = {"t_out": t_out, "t_in": t_in, "overlap_sec": kand_overlap if kand_overlap is not None else overlap,
          "out_a": {"schema": [schema_out]}, "in_b": {"schema": ["auto_cue"]}}
-    return SimpleNamespace(from_track=a, to_track=b, kandidaten=[k] if aktiv else [], kandidat_aktiv=aktiv,
-                           transition_type=typ, compatibility_score=score,
+    # Rang-1-Attrappe davor, damit kandidat_aktiv=2 den aktiven Kandidaten adressiert
+    kand = ([{"t_out": 1.0, "t_in": 1.0, "overlap_sec": 1.0, "out_a": {"schema": ["sektion"]},
+              "in_b": {"schema": ["auto_cue"]}}] if aktiv == 2 else []) + ([k] if aktiv else [])
+    return SimpleNamespace(from_track=a, to_track=b, kandidaten=kand, kandidat_aktiv=aktiv,
+                           kandidat_konsistent=konsistent, transition_type=typ, compatibility_score=score,
                            plan=SimpleNamespace(mix_out_a=t_out, mix_in_b=t_in, overlap=overlap))
 
 
@@ -50,3 +54,11 @@ def test_zusammenfassung_cue_gate_und_ohne_kandidat():
     assert z["cue_gate_verletzungen"] == 1
     z0 = pkm.zusammenfassung([_rec(a, b, 1.0, 2.0, 3.0, aktiv=0)], [a, b], {})
     assert z0["paare_mit_kandidat"] == 0 and z0["bass_swap_anteil"] is None
+
+
+def test_zusammenfassung_nutzt_aktiven_kandidaten_und_zaehlt_neustarts():
+    a, b = _track("a"), _track("b")
+    recs = [_rec(a, b, 192.0, 82.3, 27.4, aktiv=2, schema_out="pssi_phrase", konsistent=False)]
+    z = pkm.zusammenfassung(recs, [a, b], {})
+    assert z["rang1_schemata_out"] == {"pssi_phrase": 1}      # aktiver (Rang 2), nicht die Attrappe
+    assert z["overlap_abweichungen"] == 0 and z["kette_neustarts"] == 1

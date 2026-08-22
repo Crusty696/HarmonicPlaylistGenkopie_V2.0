@@ -26,8 +26,13 @@ def zusammenfassung(recs: list, tracks: list, dauer: dict) -> dict:
     mit = [r for r in recs if int(getattr(r, "kandidat_aktiv", 0) or 0) > 0]
     schemata_out, schemata_in = Counter(), Counter()
     verletzungen = overlap_abweichungen = bass_swap = 0
+    inkonsistent = 0
     for r in mit:
-        k = r.kandidaten[0]
+        # aktiver Kandidat (Kettenwahl) — nicht zwingend Rang 1
+        rang = int(getattr(r, "kandidat_aktiv", 1) or 1)
+        k = r.kandidaten[rang - 1] if 0 < rang <= len(r.kandidaten) else r.kandidaten[0]
+        if not bool(getattr(r, "kandidat_konsistent", True)):
+            inkonsistent += 1
         schemata_out[(k.get("out_a", {}).get("schema") or [""])[0]] += 1
         schemata_in[(k.get("in_b", {}).get("schema") or [""])[0]] += 1
         if r.transition_type == "bass_swap":
@@ -57,7 +62,7 @@ def zusammenfassung(recs: list, tracks: list, dauer: dict) -> dict:
         "rang1_schemata_out": dict(schemata_out), "rang1_schemata_in": dict(schemata_in),
         "bass_swap_anteil": round(bass_swap / len(mit), 4) if mit else None,
         "intro_outro_verletzungen": verletzungen, "overlap_abweichungen": overlap_abweichungen,
-        "cue_gate_verletzungen": cue_gate,
+        "cue_gate_verletzungen": cue_gate, "kette_neustarts": inkonsistent,
         "score_median": _med([r.compatibility_score for r in recs]),
         "dauer": dict(dauer),
     }
