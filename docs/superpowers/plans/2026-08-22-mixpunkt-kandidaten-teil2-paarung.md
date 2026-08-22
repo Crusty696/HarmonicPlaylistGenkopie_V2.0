@@ -21,15 +21,15 @@
 - Einrueckung: `pair_candidates.py`, `models.py`, `playlist.py`, `config.py`, `tolerances.py`, Tests: 4 Leerzeichen; `genres.py` Tabellen 2 / Funktionen 4; `dj_brain.py` 2.
 
 **Entscheidungen an Stellen, die die Spec offen laesst (Waechter Tor 1 vorlegen):**
-1. Benannter IN/OUT-Cue (`"benannter_cue" in schema`) schlaegt auch den **Blenden**-Guard auf Paar-Ebene — Spec Abschnitt 1 (Z. 70, 78): "Guard fuer Punkt **und** Blende … Ausnahme: benannter Cue schlaegt den Guard". Dann gilt nur noch `out_a.t + overlap <= duration_a` bzw. `0 <= in_b.t`.
+1. Benannter IN/OUT-Cue schlaegt auch den **Blenden**-Guard auf Paar-Ebene — Spec Abschnitt 1 (Z. 70, 77): "Guard fuer Punkt **und** Blende … Ausnahme: benannter Cue (MIX IN / IN / START) schlaegt den Guard". **Nur** Cues mit `CUE_IN_PATTERN`/`CUE_OUT_PATTERN` und `provenance == "manual"` (wie Teil 1, `mix_candidates._rohe_zeitpunkte`); ein "Drop 2"-Cue hat Schema `benannter_cue`, aber **mit** Guard. `MixCandidate` traegt das Muster nicht, deshalb prueft `_guard_frei(track, cand, seite)` ueber `track.cue_points`: ein manueller Cue mit passendem Muster, dessen Quantisierung (`mix_candidates._quantize`, dieselbe wie in Teil 1) auf `cand.t` faellt. Dann gilt nur noch `out_a.t + overlap <= duration_a` bzw. `0 <= in_b.t <= duration_b` (Waechter Tor 1, Auflage 3).
 2. Pitch-Bedarf = `diff / bpm_a` (im Tempo-Raum von A, wie `effective_bpm_diff`).
 3. Eigene Gewichtsschluessel `kandidaten_*_weight` (zehn, Summe 1.0), damit die acht bestehenden Track-Gewichte von `calculate_enhanced_compatibility` unveraendert bleiben. Startwerte = Spec-Werte proportional um 2×0.06 gestaucht (Tabelle Task 2).
 4. Harmonie-Gewicht × `min(key_confidence_lokal_a, key_confidence_lokal_b)` (Spec: "Gewicht × key_confidence_lokal"); fehlt einer, keine Skalierung; fehlt `camelot_lokal` einer Seite → Teilwert None (Umverteilung).
 5. Halbe/doppelte Zeit: Penalty 0.85 **einmal** auf den Gesamtscore (nicht zusaetzlich in der Camelot-Tabelle), Blende `<= 16` Takte.
 6. "Bass-Swap-Punkt Pflicht, sonst Abzug": im Paar-Score immer `KICK_KONFLIKT_ABZUG` auf den Bass-Teilwert **und** Flag `bass_swap_pflicht` (Teil 4 waehlt daraus den Uebergangstyp; dort entfaellt der Abzug bei Bass-Swap/EQ-Swap — nicht Teil 2).
 7. `percussive_ratio_lokal` beide `< 0.3` → Flag `lange_blende_erlaubt` ohne Score-Effekt (Spec nennt keinen Abzug/Bonus).
-8. Blendenlaenge nach Outro-Deckel mindestens 1 Takt (Spec: "auf ganze Takte geklemmt"; keine Untergrenze genannt); ergibt der Deckel fuer beide Genre-Laengen denselben Wert → ein `PairCandidate`.
-9. Dedupe: gleiche Kombination = `|Δt_out| < grid_sec_a` **und** `|Δt_in| < grid_sec_b` **und** gleiches Hauptschema (`schema[0]`) auf beiden Seiten.
+8. Blendenlaenge nach Outro-Deckel mindestens `MIN_TRANSITION_BARS` (= 8, `config.py:14`; dieselbe Untergrenze wie `playlist._outro_overlap_limit` und `dj_brain._dynamic_transition_bars`) — darunter faellt die Kombination am Blenden-Gate (Waechter Tor 1, Auflage 4). Ergibt der Deckel fuer beide Genre-Laengen denselben Wert → ein `PairCandidate`.
+9. Dedupe: gleiche Kombination = `|Δt_out| < grid_sec_a - QUANTIZE_TOLERANCE_SEC` **und** `|Δt_in| < grid_sec_b - QUANTIZE_TOLERANCE_SEC` **und** gleiches Hauptschema (`schema[0]`) auf beiden Seiten **und gleiche `blend_bars`** (Teil 1 rundet `t` auf 3 Dezimalen; ohne Toleranz wuerden genau eine Phrase entfernte Gitterpunkte verschmelzen; ohne `blend_bars` fiele die zweite Blendenlaenge weg — Waechter Tor 1, Auflagen 1+2).
 10. Rang-Tiebreak bei gleichem Score: Schema-Prioritaet out, dann in, dann kuerzere Blende.
 11. Neue Konstanten sind Startwerte; Einheiten aus dem Code (Prozentpunkte, dB, LUFS) — Tabelle Task 1.
 
@@ -94,24 +94,29 @@ def test_paar_konstanten_vorhanden_und_plausibel():
 
 ```python
 # === Paarung und Bewertung von Kandidaten (Spec 2026-08-21, Abschnitt 2) ===
-# Harte Gates auf Paar-Ebene.
+# Harte Gates auf Paar-Ebene (Spec-Werte).
 PAAR_BPM_MAX = 2.0                 # |BPM_A - BPM_B| effektiv (Half/Double erkannt)
-PAAR_PITCH_MAX = 0.04              # Pitch-Bedarf diff / BPM_A
+# Pitch-Bedarf diff / BPM_A. Spec-Gate; unter PAAR_BPM_MAX ab 50 BPM rechnerisch
+# nie aktiv (2/50 = 4 %) — bleibt als eigenstaendiges Gate, wie die Spec es nennt.
+PAAR_PITCH_MAX = 0.04
 PAAR_HALF_DOUBLE_MAX_BARS = 16     # kurzer Cut bei Half/Double
 PAAR_MAX_KOMBINATIONEN = 6         # Zeitpunkt-Kombinationen je Paar (x 2 Blenden)
-# Teilwerte. STARTWERTE, nicht gemessen — der Hoertest (Teil 3) ersetzt sie.
+# Teilwerte. Spec-Werte: PAAR_BPM_SKALA, LUFS_DELTA_MAX_DB, PERCUSSIVE_HOCH/NIEDRIG.
+# Alle uebrigen sind STARTWERTE, nicht gemessen — der Hoertest (Teil 3) ersetzt sie.
 PAAR_BPM_SKALA = 1.0               # exp(-diff / Skala), Spec-Wert
-LUFS_DELTA_MAX_DB = 3.0            # 0 dB -> 1.0, >= 3 dB -> 0 (Spec-Wert)
-BASS_RMS_DELTA_MAX_DB = 6.0        # |delta bass_rms_dbfs| auf [0,1]
-SYNCOPATION_DELTA_MAX = 0.5        # |delta syncopation_lokal| auf [0,1]
+# Lautheit: 0 dB -> 1.0, >= 3 dB -> 0 (Spec-Wert). Dieselbe 3-dB-Toleranz wie
+# GAIN_DIFF_WARN_DB oben (Gain-Hinweis in dj_brain) — bei Aenderung beide pruefen.
+LUFS_DELTA_MAX_DB = 3.0
+BASS_RMS_DELTA_MAX_DB = 6.0        # STARTWERT: |delta bass_rms_dbfs| auf [0,1]
+SYNCOPATION_DELTA_MAX = 0.5        # STARTWERT: |delta syncopation_lokal| auf [0,1]
 PERCUSSIVE_HOCH = 0.7              # beide darueber -> Abzug (Spec-Schwelle)
 PERCUSSIVE_NIEDRIG = 0.3           # beide darunter -> lange Blende erlaubt (Spec)
-PERCUSSIVE_ABZUG = 0.10
-KICK_KONFLIKT_ABZUG = 0.15         # beide kick_aktiv -> Bass-Swap-Pflicht, Abzug
-MIDS_HIGHS_DELTA_MAX = 15.0        # Prozentpunkte (analyze_frequency_bands)
-PSSI_MOOD_ABZUG = 0.10             # PSSI-mood beidseitig vorhanden und verschieden
-ENERGIE_TREND_WIDERSPRUCH = 0.8    # energy_trend von B widerspricht der Richtung
-STRUKTUR_LABEL_BONUS = 0.10        # Outro/Down -> Chorus/Drop
+PERCUSSIVE_ABZUG = 0.10            # STARTWERT
+KICK_KONFLIKT_ABZUG = 0.15         # STARTWERT: beide kick_aktiv -> Bass-Swap-Pflicht, Abzug
+MIDS_HIGHS_DELTA_MAX = 15.0        # STARTWERT, Prozentpunkte (analyze_frequency_bands)
+PSSI_MOOD_ABZUG = 0.10             # STARTWERT: PSSI-mood beidseitig vorhanden und verschieden
+ENERGIE_TREND_WIDERSPRUCH = 0.8    # STARTWERT: energy_trend von B widerspricht der Richtung
+STRUKTUR_LABEL_BONUS = 0.10        # STARTWERT: Outro/Down -> Chorus/Drop
 ```
 
 - [ ] **Step 4: Run → PASS**
@@ -299,7 +304,7 @@ def camelot_relation_score(
     )
 ```
 
-Import in `playlist.py` ergaenzen: `from .models import camelot_relation_score` (neben den bestehenden `models`-Importen; `_get_camelot_components` bleibt importiert, falls anderswo genutzt — per Grep pruefen, sonst entfernen).
+Import in `playlist.py` ergaenzen: `from .models import camelot_relation_score` (neben den bestehenden `models`-Importen). `_get_camelot_components` bleibt in `playlist.py` importiert — `tests/test_compatibility.py:6,24-42` importiert es von dort (Waechter Tor 1, Auflage 5). **Einrueckung `tests/test_models.py`: 2 Leerzeichen** (Dateikonvention; den Testcode aus Step 1 entsprechend mit 2 Leerzeichen einruecken).
 
 - [ ] **Step 5: Run → PASS** `.\venv312\Scripts\python.exe -m pytest tests/test_models.py tests/test_compatibility.py tests/test_scoring_contract.py tests/test_playlist*.py -q --no-cov` — alle gruen, **keine** Aenderung an diesen Bestandstests.
 - [ ] **Step 6: Commit** `git add hpg_core/models.py hpg_core/playlist.py tests/test_models.py && git commit -m "refactor(models): camelot_relation_score als reine Funktion, playlist delegiert"`
@@ -387,8 +392,24 @@ def test_gate_blende_im_outro_und_benannter_cue_ausnahme():
     g = _grid()
     spaet = _out(round(8 * g, 3))          # 219.4 s, 16 Takte = 27.4 s -> 246.9 > 240
     assert "blende_im_outro" in pair_gate_reasons(a, b, spaet, _in(round(3 * g, 3)), 16)
+    # "Drop 2" ist benannter_cue, aber KEIN IN/OUT-Muster -> Guard bleibt.
     spaet.schema = ["benannter_cue"]
+    a.cue_points = [{"t": round(8 * g, 3), "name": "Drop 2", "typ": 0, "hot_cue": None, "provenance": "manual"}]
+    assert "blende_im_outro" in pair_gate_reasons(a, b, spaet, _in(round(3 * g, 3)), 16)
+    # Manueller "MIX OUT"-Cue auf demselben Gitterpunkt -> guard-frei, nur Trackende zaehlt.
+    a.cue_points = [{"t": round(8 * g, 3) - 0.4, "name": "MIX OUT", "typ": 0, "hot_cue": None, "provenance": "manual"}]
     assert "blende_im_outro" not in pair_gate_reasons(a, b, spaet, _in(round(3 * g, 3)), 16)
+    # Auto-Cue mit OUT im Namen zaehlt nicht (provenance auto).
+    a.cue_points = [{"t": round(8 * g, 3), "name": "CUE(Auto) OUT", "typ": 0, "hot_cue": None, "provenance": "auto"}]
+    assert "blende_im_outro" in pair_gate_reasons(a, b, spaet, _in(round(3 * g, 3)), 16)
+
+
+def test_blend_bars_options_unter_min_transition_bars_entfaellt():
+    a = _track()
+    g = _grid()
+    # 9 Phrasen = 246.9 s liegt nach dem Outro-Start 240 -> Deckel < 8 Takte -> keine Blende
+    c = _out(round(8 * g + 6 * (60.0 / 140.0) * 4, 3))   # 229.7 s, bis 240 bleiben 10.3 s = 6 Takte
+    assert blend_bars_options(a, c, "direct") == []
 
 
 def test_gate_in_im_intro_coverage_gitter():
@@ -450,16 +471,19 @@ from dataclasses import asdict, dataclass, field, fields
 
 from .config import (
     BASS_RMS_DELTA_MAX_DB, BPM_HALF_DOUBLE_PENALTY, ENERGIE_TREND_WIDERSPRUCH,
-    KICK_KONFLIKT_ABZUG, LUFS_DELTA_MAX_DB, MIDS_HIGHS_DELTA_MAX, PAAR_BPM_MAX,
-    PAAR_BPM_SKALA, PAAR_HALF_DOUBLE_MAX_BARS, PAAR_MAX_KOMBINATIONEN, PAAR_PITCH_MAX,
-    PERCUSSIVE_ABZUG, PERCUSSIVE_HOCH, PERCUSSIVE_NIEDRIG, PSSI_MOOD_ABZUG,
+    KICK_KONFLIKT_ABZUG, LUFS_DELTA_MAX_DB, MIDS_HIGHS_DELTA_MAX, MIN_TRANSITION_BARS,
+    PAAR_BPM_MAX, PAAR_BPM_SKALA, PAAR_HALF_DOUBLE_MAX_BARS, PAAR_MAX_KOMBINATIONEN,
+    PAAR_PITCH_MAX, PERCUSSIVE_ABZUG, PERCUSSIVE_HOCH, PERCUSSIVE_NIEDRIG, PSSI_MOOD_ABZUG,
     STRUKTUR_LABEL_BONUS, SYNCOPATION_DELTA_MAX,
 )
 from .dj_brain import (
     _get_intro_end_from_sections, _get_outro_start_from_sections,
     get_genre_compatibility, get_mix_profile,
 )
-from .mix_candidates import SCHEMA_PRIORITAET, MixCandidate, quantize_to_points
+from .mix_candidates import (
+    CUE_IN_PATTERN, CUE_OUT_PATTERN, SCHEMA_PRIORITAET, MixCandidate, _quantize,
+    quantize_to_points,
+)
 from .models import (
     QUANTIZE_TOLERANCE_SEC, Track, camelot_relation_score, effective_bpm_diff,
     quantize_to_grid, seconds_per_bar,
@@ -525,8 +549,24 @@ def _grid_sec(track: Track) -> float:
     return seconds_per_bar(track.bpm) * unit
 
 
-def _benannt(cand: MixCandidate) -> bool:
-    return "benannter_cue" in (cand.schema or [])
+def _guard_frei(track: Track, cand: MixCandidate, seite: str) -> bool:
+    """Spec-Ausnahme (Abschnitt 1): nur ein MANUELLER Cue mit IN- bzw. OUT-Muster
+    schlaegt den Guard. MixCandidate traegt das Muster nicht; deshalb wird ueber
+    track.cue_points geprueft, ob ein solcher Cue — mit derselben Quantisierung
+    wie in Teil 1 (mix_candidates._quantize) — auf cand.t faellt."""
+    if "benannter_cue" not in (cand.schema or []):
+        return False
+    muster = CUE_IN_PATTERN if seite == "in" else CUE_OUT_PATTERN
+    grid = _grid_sec(track)
+    for cue in track.cue_points or []:
+        if cue.get("provenance") != "manual":
+            continue
+        if not muster.search((cue.get("name") or "").upper()):
+            continue
+        q = _quantize(float(cue["t"]), seite, list(track.phrase_grid or []), grid, track.phrase_anchor)
+        if q is not None and abs(round(float(q), 3) - cand.t) <= QUANTIZE_TOLERANCE_SEC:
+            return True
+    return False
 
 
 def _auf_gitter(track: Track, t: float, seite: str) -> bool:
@@ -543,8 +583,8 @@ def _auf_gitter(track: Track, t: float, seite: str) -> bool:
 
 
 def _outro_deckel(track_a: Track, out_a: MixCandidate) -> float:
-    """Spaetestes Ende der Blende: Outro-Start, bei benanntem Cue das Trackende."""
-    if _benannt(out_a):
+    """Spaetestes Ende der Blende: Outro-Start; bei guard-freiem OUT-Cue das Trackende."""
+    if _guard_frei(track_a, out_a, "out"):
         return float(track_a.duration)
     return _get_outro_start_from_sections(track_a.sections, float(track_a.duration))
 
@@ -568,7 +608,7 @@ def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
     if out_a.t + overlap > _outro_deckel(track_a, out_a) + QUANTIZE_TOLERANCE_SEC:
         reasons.append("blende_im_outro")
     intro_end = _get_intro_end_from_sections(track_b.sections)
-    if not _benannt(in_b) and in_b.t < intro_end - QUANTIZE_TOLERANCE_SEC:
+    if not _guard_frei(track_b, in_b, "in") and in_b.t < intro_end - QUANTIZE_TOLERANCE_SEC:
         reasons.append("in_im_intro")
     if in_b.t < 0.0 or in_b.t > float(track_b.duration):
         reasons.append("in_ausserhalb")
@@ -581,8 +621,9 @@ def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
 
 def blend_bars_options(track_a: Track, out_a: MixCandidate, bpm_relation: str) -> list[int]:
     """Beide Genre-Blendenlaengen (transition_bars), je durch den Outro-Deckel
-    auf ganze Takte geklemmt; Half/Double hoechstens PAAR_HALF_DOUBLE_MAX_BARS.
-    Doppelte Werte nach dem Deckel werden zusammengelegt."""
+    auf ganze Takte geklemmt; Half/Double hoechstens PAAR_HALF_DOUBLE_MAX_BARS;
+    unter MIN_TRANSITION_BARS (Projekt-Untergrenze, wie playlist._outro_overlap_limit)
+    entfaellt die Laenge. Doppelte Werte nach dem Deckel werden zusammengelegt."""
     kurz, lang = get_mix_profile(_genre(track_a)).transition_bars
     spb = seconds_per_bar(track_a.bpm)
     if spb <= 0.0:
@@ -593,7 +634,7 @@ def blend_bars_options(track_a: Track, out_a: MixCandidate, bpm_relation: str) -
         b = min(bars, max_bars)
         if bpm_relation != "direct":
             b = min(b, PAAR_HALF_DOUBLE_MAX_BARS)
-        if b >= 1 and b not in out:
+        if b >= MIN_TRANSITION_BARS and b not in out:
             out.append(b)
     return out
 ```
@@ -623,7 +664,7 @@ def _voll(t, **kw):
         neuheit=0.6, traegt_allein=True,
         groove_pattern_lokal=[0.25 if s % 4 == 0 else 0.0 for s in range(16)],
         bass_pattern_lokal=[0.25 if s % 4 == 0 else 0.0 for s in range(16)],
-        syncopation_lokal=0.2, percursive_ratio_lokal=None,
+        syncopation_lokal=0.2,
         percussive_ratio_lokal=0.5, sub_energy=0.5, bass_punch=2.0,
         bass_rms_dbfs=-20.0, kick_aktiv=True, camelot_lokal="8A",
         key_confidence_lokal=0.9, timbre_fingerprint_lokal=[1.0, 0.5, 0.2],
@@ -632,7 +673,6 @@ def _voll(t, **kw):
         lufs_lokal=-10.0, mood={"pssi_mood": 1, "brightness": 50, "flatness": 0.1,
                                 "key_mode": "Minor"}, vocal_aktiv_lokal=False,
     )
-    basis.pop("percursive_ratio_lokal")
     basis.update(kw)
     c = MixCandidate(t=t)
     for k, v in basis.items():
@@ -880,14 +920,17 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     """Score einer Kombination aus allen Faktoren lokal an der Naht (Spec
     Abschnitt 2, Schritt 2). Liefert (score, teilwerte, flags). Fehlende
     Teilwerte (None) werden per combine_weighted umverteilt, nie mit 0 bewertet.
-    Half/Double: Gesamtscore x BPM_HALF_DOUBLE_PENALTY. Vocals beidseitig: -0.06."""
+    Half/Double: Gesamtscore x BPM_HALF_DOUBLE_PENALTY. Vocals beidseitig: -0.06.
+    `blend_bars` ist bewusst KEIN Score-Merkmal (Spec Abschnitt 1: Blendenlaenge
+    als Qualitaetsmerkmal widerlegt, rho -0.08); es dient nur den Gates/Flags."""
     from .playlist import VOCAL_CLASH_PENALTY, combine_weighted   # lazy, s. _genre
     richtung = getattr(energy_direction, "value", energy_direction)
     genre_a, genre_b = _genre(track_a), _genre(track_b)
     tol = tolerances if tolerances is not None else get_tolerances(genre_a)
     diff, rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
     flags = {"half_double": rel != "direct", "bass_swap_pflicht": False,
-             "lange_blende_erlaubt": False, "benannter_cue": _benannt(out_a) or _benannt(in_b)}
+             "lange_blende_erlaubt": False,
+             "benannter_cue": _guard_frei(track_a, out_a, "out") or _guard_frei(track_b, in_b, "in")}
     teil = {
         "harmonic": _teil_harmonie(out_a, in_b, harmonic_strictness=harmonic_strictness,
                                    allow_experimental=allow_experimental),
@@ -982,6 +1025,17 @@ def test_build_dedupe_fasst_nahe_gleiche_schemata_zusammen():
     assert len({(p.t_out, p.t_in) for p in res}) == 1
 
 
+def test_build_dedupe_laesst_genau_eine_phrase_abstand_getrennt():
+    g = _grid()
+    # Teil 1 rundet auf 3 Dezimalen: round(4g)-round(3g) = 27.428 < 27.42857
+    o1, o2 = _voll(round(3 * g, 3), kick_aktiv=False), _voll(round(4 * g, 3), kick_aktiv=False)
+    a = _track_mit_kandidaten("a.mp3", outs=[o1, o2])
+    b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    res = build_pair_candidates(a, b)
+    assert len({(p.t_out, p.t_in) for p in res}) == 2
+    assert {p.blend_bars for p in res} == {16, 32}
+
+
 def test_begruendung_aus_teilwerten_fester_text():
     txt = begruendung_aus_teilwerten(
         {"harmonic": 0.9, "bpm": 1.0, "groove": 0.6, "loudness": None},
@@ -1034,7 +1088,13 @@ def _hauptschema(cand: MixCandidate) -> str:
 
 
 def _gleiche_kombination(p: PairCandidate, q: PairCandidate, grid_a: float, grid_b: float) -> bool:
-    return (abs(p.t_out - q.t_out) < grid_a and abs(p.t_in - q.t_in) < grid_b
+    """Spec Schritt 4: |dt| < 1 Phrase und gleiches Schema. Toleranz abgezogen,
+    weil Teil 1 t auf 3 Dezimalen rundet — sonst verschmelzen Gitterpunkte, die
+    genau eine Phrase auseinanderliegen. Gleiche Blende, sonst fiele die zweite
+    Blendenlaenge (identischer Score) als Duplikat weg."""
+    return (p.blend_bars == q.blend_bars
+            and abs(p.t_out - q.t_out) < grid_a - QUANTIZE_TOLERANCE_SEC
+            and abs(p.t_in - q.t_in) < grid_b - QUANTIZE_TOLERANCE_SEC
             and _hauptschema(p.out_a) == _hauptschema(q.out_a)
             and _hauptschema(p.in_b) == _hauptschema(q.in_b))
 
@@ -1320,7 +1380,7 @@ Deserialisierer: `caching.dict_to_track` (`caching.py:351`, verifiziert 2026-08-
 
 - [ ] **Step 1: Messung** `.\venv312\Scripts\python.exe tools/paar_kandidaten_messen.py --cache --json <scratchpad>\paare_v34.json` (Cache v34 mit den 231 Tracks der Messung vom 2026-08-22). Pflichtzahlen: `paare`, `paare_mit_kandidaten`, `kandidaten_median`, `gate_gruende`, `rang1_schemata_out/in`, `rang1_score_median`, `blenden`.
 - [ ] **Step 2: Volle Suite** `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` — gruen inkl. Coverage-Gate 70.
-- [ ] **Step 3: Doku**: `CLAUDE.md` (Baumliste: `pair_candidates.py`, `tools/paar_kandidaten_messen.py`), `.agents/skills/hpg-mixpoint-engineering/SKILL.md` + `.claude/...` (Abschnitt "Kandidaten Teil 2 (gebaut)": Gates, Faktoren, Gewichte, Flags, was Teil 4 bleibt), `.agents/skills/hpg-playlist-scoring/SKILL.md` (+ `.claude`): `camelot_relation_score` in `models.py`, `kandidaten_*_weight`; Handoff `docs/HANDOFF-<Datum>-kandidaten-teil2.md` mit den Messzahlen und den 11 Entscheidungen.
+- [ ] **Step 3: Doku**: `CLAUDE.md` (Baumliste: `pair_candidates.py`, `tools/paar_kandidaten_messen.py`), `.agents/skills/hpg-mixpoint-engineering/SKILL.md` + `.claude/...` (Abschnitt "Kandidaten Teil 2 (gebaut)": Gates, Faktoren, Gewichte, Flags, was Teil 4 bleibt), `.agents/skills/hpg-playlist-scoring/SKILL.md` (+ `.claude`): `camelot_relation_score` in `models.py`, `kandidaten_*_weight`; Handoff `docs/HANDOFF-<Datum>-kandidaten-teil2.md` mit den Messzahlen, den 11 Entscheidungen und diesen **offenen Folgeaufgaben fuer Teil 3/4** (Waechter Tor 1, Auflage 7 — nicht vergessen): (a) GUI-Regler `main.py:1562-1565` und Hoertest-Fit `tools/rate_transitions.py:513-530` schreiben nur die alten `*_weight` — `kandidaten_*_weight` muessen in Teil 3 (Fit) und Teil 4 (Regler "Lautheit") angebunden werden; (b) `KICK_KONFLIKT_ABZUG` entfaellt in Teil 4 bei Bass-Swap/EQ-Swap (Score wird uebergangstyp-abhaengig); (c) `blend_bars` ist kein Score-Merkmal (Docstring `score_pair`). Ausserdem: Pitch-Gate ist unter dem 2-BPM-Gate rechnerisch nie aktiv (Messung zeigt `pitch: 0`) — so im Handoff benennen.
 - [ ] **Step 4: Waechter Tor 2** mit dem Gesamt-Diff gegen dieses Dokument; Auflagen einarbeiten.
 - [ ] **Step 5: Commit + Merge** `git add -A docs CLAUDE.md .agents && git commit -m "docs: Kandidaten Teil 2 gebaut — Messung, Skills, Handoff"`; Merge auf `main` ueber superpowers:finishing-a-development-branch (Option 1), Push.
 
@@ -1334,6 +1394,8 @@ Deserialisierer: `caching.dict_to_track` (`caching.py:351`, verifiziert 2026-08-
 | Pitch ≤ 4 % | 1, 4 |
 | `out_A + overlap ≤ outro_start_A`, `in_B ≥ intro_end_B` | 4 |
 | Coverage (`unanalysed`, `outro_covered`) | 4 |
+| Ausnahme benannter IN/OUT-Cue (MIX IN/IN/START, OUT) schlaegt Punkt- und Blenden-Guard (Spec Abschnitt 1 Z. 77) | 4 (`_guard_frei`) |
+| Blende mindestens `MIN_TRANSITION_BARS` (Projektkonstante) | 4 |
 | Gitter (PSSI/Phrasen, 0.05 s) | 4 |
 | Harmonie (Camelot lokal × key_confidence) | 3, 5 |
 | BPM exp(−diff/1.0) | 1, 5 |
