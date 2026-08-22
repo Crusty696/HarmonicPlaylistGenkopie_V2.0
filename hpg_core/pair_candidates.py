@@ -167,16 +167,26 @@ def _blenden_gate(track_a: Track, out_a: MixCandidate, blend_bars: int, deckel: 
     return out_a.t + blend_bars * spb > deckel + QUANTIZE_TOLERANCE_SEC
 
 
+def _blende_passt_in_b(track_b: Track, in_b: MixCandidate, blend_bars: int, spb_a: float) -> bool:
+    """Die Blende laeuft ab in_b in Track B; sie muss vor dem Trackende von B
+    enden (Renderer/Playlist-Clamp: Rest von B = duration_b - in_b). Ohne
+    dieses Gate kuerzt der Playlist-Clamp die Blende still (gemessen 2026-08-22:
+    27 von 220 Paaren)."""
+    return in_b.t + blend_bars * spb_a <= float(track_b.duration) + QUANTIZE_TOLERANCE_SEC
+
+
 def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
                       in_b: MixCandidate, blend_bars: int) -> list[str]:
     """Harte Gates auf Paar-Ebene (Spec Abschnitt 2, Schritt 1). Leere Liste =
     Kombination erlaubt; sonst die Gruende (stabil benannt, fuer Messung).
     Reihenfolge der Gruende: bpm, pitch, coverage, outro_covered, blende_im_outro,
-    in_im_intro, in_ausserhalb, gitter_out, gitter_in."""
+    blende_ueber_b_ende, in_im_intro, in_ausserhalb, gitter_out, gitter_in."""
     basis = _gate_gruende_basis(track_a, track_b, out_a, in_b)
     reasons: list[str] = [g for g in basis if g in ("bpm", "pitch", "coverage", "outro_covered")]
     if _blenden_gate(track_a, out_a, blend_bars):
         reasons.append("blende_im_outro")
+    if not _blende_passt_in_b(track_b, in_b, blend_bars, seconds_per_bar(track_a.bpm)):
+        reasons.append("blende_ueber_b_ende")
     reasons += [g for g in basis if g in ("in_im_intro", "in_ausserhalb", "gitter_out", "gitter_in")]
     return reasons
 
@@ -596,7 +606,8 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
                 continue
             if not in_guard_frei[id(i)] and i.t < intro_end_b - QUANTIZE_TOLERANCE_SEC:
                 continue
-            bars_ok = [b for b in bars_liste if not _blenden_gate(track_a, o, b, deckel)]
+            bars_ok = [b for b in bars_liste
+                       if not _blenden_gate(track_a, o, b, deckel) and _blende_passt_in_b(track_b, i, b, spb)]
             if not bars_ok:
                 continue
             score, teil, flags = score_pair(

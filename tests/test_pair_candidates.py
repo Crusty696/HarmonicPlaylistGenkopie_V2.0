@@ -410,3 +410,15 @@ def test_schema_rang_aus_praeferenzen_bricht_gleichstand(monkeypatch):
     assert "pssi_phrase" in select_pair_candidate(a, b).out_a.schema
     monkeypatch.setattr(cp, "schema_rangfolge", lambda genre: ["sektion", "pssi_phrase"])
     assert "sektion" in select_pair_candidate(a, b).out_a.schema
+
+
+def test_gate_blende_ueber_b_ende():
+    a, b = _track(), _track("b.mp3", duration=200.0)
+    g = _grid()
+    # In bei 6g = 164.6 s, Blende 32 Takte = 54.9 s -> 219.5 s > 200 s Dauer von B
+    assert "blende_ueber_b_ende" in pair_gate_reasons(a, b, _out(round(6 * g, 3)), _in(round(6 * g, 3)), 32)
+    assert "blende_ueber_b_ende" not in pair_gate_reasons(a, b, _out(round(6 * g, 3)), _in(round(3 * g, 3)), 32)
+    bk = _track_mit_kandidaten("b.mp3", ins=[_voll(round(6 * g, 3), kick_aktiv=False)])
+    bk.duration = 200.0
+    res = build_pair_candidates(_track_mit_kandidaten("a.mp3", outs=[_voll(round(6 * g, 3), kick_aktiv=False)]), bk)
+    assert res and {p.blend_bars for p in res} == {16}   # 32 Takte (54.9 s) passen ab 164.6 s nicht in 200 s
