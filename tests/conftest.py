@@ -309,3 +309,15 @@ def pytest_sessionfinish(session, exitstatus):
       f"Produktivcache hpg_cache_v{CACHE_VERSION}.db wurde waehrend der Tests veraendert"
     )
   shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _keine_kandidaten_praeferenzen(monkeypatch, tmp_path):
+  """Kandidaten-Praeferenzen (Hoertest Teil 3) aus Tests heraushalten: weder die
+  mitgelieferte noch eine Override-Datei darf das Scoring in Tests aendern."""
+  from hpg_core import candidate_preferences as cp
+  monkeypatch.setattr(cp, "_MITGELIEFERT", tmp_path / "keine_praeferenzen.json")
+  monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(tmp_path / "kein_override.json"))
+  cp.reset_cache()
+  yield
+  cp.reset_cache()
