@@ -4,7 +4,7 @@
 
 **Goal:** Der Hoertest bekommt einen Modus "Kandidaten": je Trackpaar werden alle `PairCandidate`s (Teil 2) als Clips gerendert, verdeckt je Paar auf einer Seite in zufaelliger (gespeicherter) Reihenfolge bewertet (Note 1–5 je Kandidat + Wahl "bester"), und `fit --modus kandidaten` schaetzt daraus Gewichte fuer Abschnitt 2 und eine Schema-Rangfolge je Genre nach `hpg_core/data/candidate_preferences.json` — mit Holdout nach Tracks und AUC/Trefferquote im Bericht. Spec: `docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md`, Abschnitt 3 (Z. 143–177).
 
-**Architecture:** Erweiterung von `tools/rate_transitions.py` (Unterbefehle `prepare`/`fit` bekommen `--modus {einzel,kandidaten}`, Default `einzel` = heutiges Verhalten, unveraendert) und `tools/hoertest_server.py` (erkennt den Kandidatensatz automatisch an der Spalte `clip_id` in `bewertung.csv`; Seite je Paar, Note + "bester", Zeitstempel). Neues Modul `hpg_core/candidate_preferences.py` laedt `candidate_preferences.json` (mitgeliefert + Override `%LOCALAPPDATA%\HPG\`); `pair_candidates.score_pair` nimmt daraus die `kandidaten_*_weight`, sonst die Toleranzen. Statistik bleibt scipy-only (wie heute). Der Hoertest selbst (Menschen hoeren) wird in dieser Umsetzung **nicht** durchgefuehrt — Nutzer-Anweisung 2026-08-22: Hoerproben ueberspringen, auf der finalen Checkliste dokumentieren; Werkzeuge werden mit synthetischen Daten getestet.
+**Architecture:** Erweiterung von `tools/rate_transitions.py` (Unterbefehle `prepare`/`fit` bekommen `--modus {einzel,kandidaten}`, Default `einzel` = heutiges Verhalten, unveraendert) und `tools/hoertest_server.py` (erkennt den Kandidatensatz automatisch an der Spalte `clip_id` in `bewertung.csv`; Seite je Paar, Note + "bester", Zeitstempel). Neues Modul `hpg_core/candidate_preferences.py` laedt `candidate_preferences.json` (mitgeliefert + Override `%LOCALAPPDATA%\HPG\`); `pair_candidates.score_pair` nimmt daraus die `kandidaten_*_weight`, sonst die Toleranzen. Statistik bleibt scipy-only (wie heute). Der Hoertest selbst (Menschen hoeren) wird in dieser Umsetzung **nicht** durchgefuehrt — Nutzer-Anweisung vom 2026-08-22 (`/goal`, Wortlaut): „Audio-Tests: Alle Aufgaben, die eine menschliche Hörprobe erfordern, überspringst du. Dokumentiere sie für mich auf einer finalen Checkliste und arbeite sofort am nächsten Punkt weiter." Werkzeuge werden mit synthetischen Daten getestet; die Checkliste steht in Task 5.
 
 **Tech Stack:** Python 3.12 (`.\venv312\Scripts\python.exe`), numpy, scipy (`minimize`), Stdlib-HTTP-Server, pytest (`--no-cov`). Kein neuer Dependency.
 
@@ -23,14 +23,14 @@
 2. Server erkennt den Kandidatenmodus **automatisch** an der Spalte `clip_id` in `bewertung.csv` (Spec: "neuer Modus automatisch"); kein `--modus` am Server, kein Eingriff in `Start.bat` (liegt ausserhalb des Repos) — Checkliste: neue `hoertest_server.py` in den Mobil-Ordner kopieren.
 3. Reihenfolge je Paar: `random.Random(seed_satz + int(pair_id))` mischt die `clip_id`s bei `prepare`; gespeichert in `reihenfolge.json` (`{pair_id: {"seed": int, "clips": [...]}}`) — "Seed je Paar gespeichert".
 4. `bewertung.csv` (Kandidaten) Spalten `pair_id, clip_id, note, gewaehlt, zeit` (Spec). `gewaehlt` = `"1"` fuer genau einen Clip je Paar, sonst leer; `zeit` = ISO-8601 lokal beim letzten Schreiben des Clips. POST `/note` `{pair_id, clip_id, note|null}`, POST `/bester` `{pair_id, clip_id}` (setzt `gewaehlt` exklusiv).
-5. `merkmale.csv` (Kandidaten): `pair_id, clip_id, clip, <10 Teilwerte>, score, schema_out, schema_in, blend_bars, t_out, t_in, provenance_out, provenance_in, confidence_out, confidence_in, crossfade_sek, bpm_relation, track_a, track_b`. Teilwerte `None` → leere Zelle (Fit: Zeile faellt fuer dieses Merkmal heraus, s. 8). `score` steht in der CSV, wird aber **nie** angezeigt (Server zeigt nur Tempo, Genre, Camelot, Blendenbalken).
-6. Auswahl der Paare: wie heute (`sammle_kandidaten`, `--nur-genre`, Maximin ueber `NEUE_FAKTOREN`); `--anzahl` zaehlt **Paare**. Paare ohne `PairCandidate` (Gates) oder ohne renderbaren Clip werden uebersprungen (Reserve wie heute). Clip-Render je Kandidat: `TransitionClipSpec(mix_out_sec=pc.t_out, mix_in_sec=pc.t_in, crossfade_sec=pc.overlap_sec, ...)` mit denselben Beatgrid-Feldern wie `rendere_paar`; `crossfade_reserve` prueft Rest A/B, passt es nicht, faellt nur dieser Kandidat weg.
-7. Zielgroesse 1 (Note): bestehende L2-Logistik (`fit_logistic`) ueber die zehn Teilwerte; Kontrollvariablen entfallen (alle zehn sind Gegenstand). Zielgroesse 2 (Paarvergleich): **konditionale Logistik** ueber Merkmalsdifferenzen innerhalb des Paars — je Paar mit `gewaehlt` entstehen `(Sieger − Verlierer)`-Differenzvektoren mit y=1 und die gespiegelten mit y=0; Fit ohne Achsenabschnitt mit L2 (`scipy.optimize.minimize`, gleiche `negative_log_likelihood`-Form ohne Intercept). Das ist Bradley-Terry mit linearem Nutzen.
-8. Fehlende Teilwerte: eine Zeile mit leerem Merkmal faellt fuer **alle** Modelle heraus (keine Imputation — keine Annahme); der Bericht nennt die Zahl. Aktive Merkmale = die zehn mit Streuung >= `MIN_KONTROLL_STREUUNG` (0.05, vorhanden) im Satz.
-9. Holdout nach **Tracks**: `random.Random(seed).shuffle(tracks)`, `HOLDOUT_ANTEIL = 0.30` (Startwert) der Tracks = Holdout; ein Clip gehoert zum Holdout, wenn Track A **oder** B im Holdout ist; beide Modelle werden nur auf dem Rest geschaetzt. Bericht: AUC (Rangstatistik, eigene Funktion) fuer Zielgroesse 1 auf Holdout, Trefferquote (Rang 1 des Modells == `gewaehlt`) fuer Zielgroesse 2 auf Holdout, dazu die Zufallsbasis `1/Clips je Paar`.
-10. Uebernahme nach `hpg_core/data/candidate_preferences.json` **nur** wenn (a) Datenlage-Gate (10 Ereignisse je Merkmal und Klasse, vorhanden) fuer Zielgroesse 1, (b) Holdout nicht leer mit beiden Klassen, (c) Holdout-AUC > 0.5 **und** Holdout-Trefferquote > Zufallsbasis (Startregel — Spec: "sonst Werte nicht uebernehmen"). Sonst wird `<dir>/candidate_preferences_entwurf.json` geschrieben und der Grund gedruckt.
-11. Gewichte aus Zielgroesse 2 (Paarvergleich ist die Groesse, die Tonart/BPM/Genre/Geschmack herauskuerzt): positive untere Bootstrap-Grenze je Koeffizient (Bootstrap ueber **Paare** als Cluster, `BOOTSTRAP_ZIEHUNGEN` vorhanden), proportional auf Summe 1.0; Merkmale ohne gesicherten positiven Effekt 0. Ueberlebt keines → keine Uebernahme (Grund gedruckt). Schema-Rangfolge je Genre (Genre = `loese_genre_auf(track_a)`): Anteil "gewaehlt" an "angeboten" je Hauptschema (Laplace +1/+2), absteigend; nur Genres mit >= `MIN_EREIGNISSE_JE_MERKMAL` Wahlen.
-12. `candidate_preferences.json` Format: `{"_diagnose": {...}, "<Genre>": {"kandidaten_<faktor>_weight": ..., "schema_rang": ["pssi_phrase", ...]}}`. Lader `hpg_core/candidate_preferences.py` (mitgeliefert + Override `%LOCALAPPDATA%\HPG\candidate_preferences.json`, Env `HPG_CANDIDATE_PREFERENCES_FILE`); `pair_candidates._gewichte(tol, genre)` nimmt Praeferenz-Gewichte, wenn fuer das Genre vorhanden (Summe 1.0 validiert beim Laden), sonst Toleranzen. `schema_rang` wird in Teil 4 (App) benutzt; Teil 3 liefert nur Lader + Datei.
+5. `merkmale.csv` (Kandidaten): `pair_id, clip_id, clip, <10 Teilwerte>, score, schema_out, schema_in, schemata_out, schemata_in, blend_bars, t_out, t_in, provenance_out, provenance_in, confidence_out, confidence_in, crossfade_sek, bpm_relation, bpm_a, bpm_b, genre_a, genre_b, key_a, key_b, track_a, track_b`. `schemata_*` = alle Schemata des Kandidaten (`|`-getrennt, nach Dedupe vereinigt; `schema_*` = Hauptschema); `bpm/genre/key` sind Anzeige-Kontext (kein Score/Schema) — damit der Mobil-Server ohne Cache Tempo/Genre/Camelot zeigen kann (Waechter Tor 1, Auflage 12c). Teilwerte `None` → leere Zelle (s. 8). `score` steht in der CSV, wird aber **nie** angezeigt; `/daten` liefert ausschliesslich die in Task 3 genannten Felder.
+6. Auswahl der Paare: wie heute (`sammle_kandidaten`, `--nur-genre`, Maximin ueber `NEUE_FAKTOREN`); `--anzahl` zaehlt **Paare**. Paare ohne `PairCandidate` (Gates) oder ohne renderbaren Clip werden uebersprungen (Reserve wie heute). Clip-Render je Kandidat: `TransitionClipSpec(mix_out_sec=pc.t_out, mix_in_sec=pc.t_in, crossfade_sec=pc.overlap_sec, ...)` mit denselben Beatgrid-Feldern wie `rendere_paar`; `crossfade_reserve` prueft Rest A/B; **zusaetzlich** faellt ein Kandidat mit `overlap_sec > MAX_TRANSITION_OVERLAP_SECONDS` (64 s, Renderer-Deckel `transition_renderer.py:154`) weg (ValueError), damit `crossfade_sek` in der CSV immer die wirklich gerenderte Blende ist (Auflage 6).
+7. Zielgroesse 1 (Note): bestehende L2-Logistik (`fit_logistic`) ueber die Teilwerte; Kontrollvariablen entfallen (alle zehn sind Gegenstand). Zielgroesse 2 (Paarvergleich): **Bradley-Terry mit linearem Nutzen** als paarweise Zerlegung — je Paar mit genau einer Wahl entstehen `(Sieger − Verlierer)`-Differenzvektoren fuer jeden Verlierer; Fit ohne Achsenabschnitt durch Maximierung von `Σ log σ(β·d) − L2·|β|²` (`scipy.optimize.minimize`), **ohne gespiegelte Zeilen** (die Spiegelung wuerde die Likelihood verdoppeln und L2 halbieren — Auflage 8). Koeffizienten **unstandardisiert** auf der Teilwert-Skala [0,1] — Absicht: das Gewicht soll proportional zum Nutzen je Teilwert-Einheit sein, nicht je Standardabweichung.
+8. Fehlende Teilwerte: eine Zeile mit leerem Merkmal faellt fuer beide Modelle heraus (keine Imputation — keine Annahme); der Bericht nennt die Zahl. Clips **ohne Note** bleiben fuer Zielgroesse 2 erhalten (`note=None`), nur Zielgroesse 1 filtert sie (Auflage 7). Aktive Merkmale = die zehn mit Streuung >= `MIN_KONTROLL_STREUUNG` (0.05) im Satz. **Identifizierbarkeit** (Auflage 1): ein Merkmal ist aus dem Paarvergleich nur schaetzbar, wenn es **innerhalb** der Paare streut; `bpm` und `genre` sind je Paar konstant (Differenz exakt 0), Harmonie/Energie oft kaum. Schwelle `PAAR_STREUUNG_MIN = 0.05` (Startwert) auf die Standardabweichung der Differenzen im Train. Nicht identifizierbare Merkmale behalten ihr Toleranz-Gewicht (`kandidaten_*_weight` aus `get_tolerances`); nur identifizierbare werden neu verteilt, Summe ueber alle zehn 1.0. Bericht weist je Merkmal "nicht identifizierbar" aus. So bleibt die Nutzer-Regel "ausnahmslos alles gewichtet" gewahrt.
+9. Holdout nach **Tracks**: `random.Random(seed).shuffle(tracks)`, `HOLDOUT_ANTEIL = 0.30` (Startwert) der Tracks = Holdout; ein Clip gehoert zum Holdout, wenn Track A **oder** B im Holdout ist (≈ 1 − 0.7² ≈ 51 % der Clips — Bericht und Checkliste sagen das); beide Modelle werden nur auf dem Rest geschaetzt. Standardisierung fuer Zielgroesse 1 mit den **Train**-Kennzahlen (`_kennzahlen(X)`, `_standardisiere_mit(X, mittel, streuung)`, Auflage 4). Bericht: AUC (Rangstatistik) fuer Zielgroesse 1 auf Holdout, Trefferquote (Rang 1 des Modells == `gewaehlt`) fuer Zielgroesse 2 auf Holdout, dazu die Zufallsbasis `Mittel(1/Clips je Paar)`.
+10. Uebernahme nach `hpg_core/data/candidate_preferences.json` **nur** wenn die reine Funktion `uebernahme_erlaubt(...) -> (bool, grund)` alles bejaht: (a) Datenlage-Gate Zielgroesse 1 (`datenlage_urteil`, 10 je Merkmal und Klasse, Train), (b) Datenlage-Gate Zielgroesse 2: Paare mit genau einer Wahl im Train >= `MIN_EREIGNISSE_JE_MERKMAL` × identifizierbare Merkmale (Auflage 2), (c) Holdout nicht leer mit beiden Klassen und >= 1 Paar mit Wahl, (d) Holdout-AUC > 0.5 **und** Holdout-Trefferquote > Zufallsbasis (Startregel — Spec: "sonst Werte nicht uebernehmen"), (e) mindestens ein identifizierbares Merkmal mit gesichert positivem Effekt. Sonst `<dir>/candidate_preferences_entwurf.json` + Grund.
+11. Gewichte: fuer identifizierbare Merkmale die positive untere Bootstrap-Grenze (Bootstrap ueber **Paare** als Cluster, `BOOTSTRAP_ZIEHUNGEN`), proportional auf das Restbudget `1 − Σ(Toleranz-Gewichte der nicht identifizierbaren)`; identifizierbare ohne gesichert positiven Effekt 0. Schema-Rangfolge je Genre (Genre = `loese_genre_auf(Track A)` ueber Pfad→Track-Abgleich `lower()`, Cache-Ausfall → ""): Anteil "gewaehlt" an "angeboten" ueber **alle** Schemata des Kandidaten (`schemata_out|in`, Laplace +1/+2), absteigend; nur Genres mit >= `MIN_EREIGNISSE_JE_MERKMAL` Wahlen.
+12. `candidate_preferences.json` Format: `{"_diagnose": {...}, "<Genre>": {"kandidaten_<faktor>_weight": ..., "schema_rang": [...]}}`. Lader `hpg_core/candidate_preferences.py` (mitgeliefert + Override `%LOCALAPPDATA%\HPG\candidate_preferences.json`, Env `HPG_CANDIDATE_PREFERENCES_FILE`). `pair_candidates.score_pair`: ein **explizit** uebergebenes `tolerances` gewinnt (Aufrufer will genau diese Gewichte, z. B. Werkzeuge/Tests); sonst Praeferenz vor `get_tolerances` (Auflage 5a). Tests koppeln sich per Autouse-Fixture in `tests/conftest.py` von der ausgelieferten JSON ab (Auflage 5b). `schema_rang` wird in Teil 4 benutzt.
 13. Mobil: `prepare --modus kandidaten` schreibt zusaetzlich `LIESMICH-kandidaten.txt` in den Satzordner (Kopieranleitung, Server-Start, neuer Port-Vorschlag 8767); die `Start.bat` im Mobil-Ordner liegt ausserhalb des Repos → Checkliste.
 14. Satz 1 (280 Einzelnoten) bleibt unberuehrt (Spec: "bleiben Satz 1"); `fit --modus einzel` liest ihn wie heute.
 
@@ -232,14 +232,32 @@ def reset_cache() -> None:
 In `pair_candidates.py`: Import `from . import candidate_preferences` und
 
 ```python
-def _gewichte(tol: dict, genre: str) -> dict[str, float]:
-    """Praeferenzen aus dem Hoertest (candidate_preferences.json) schlagen die
-    Toleranzen; ohne Eintrag fuer das Genre gelten die kandidaten_*_weight."""
-    pref = candidate_preferences.kandidaten_gewichte(genre)
+def _gewichte(tol: dict, genre: str, explizit: bool) -> dict[str, float]:
+    """Gewichtsquelle: ein explizit uebergebenes `tolerances` gewinnt immer;
+    sonst schlagen Praeferenzen aus dem Hoertest (candidate_preferences.json)
+    die geladenen Toleranzen; ohne Eintrag fuer das Genre gelten die
+    kandidaten_*_weight der Toleranzen."""
+    pref = None if explizit else candidate_preferences.kandidaten_gewichte(genre)
     quelle = pref if pref is not None else tol
     return {f: float(quelle.get(f"kandidaten_{f}_weight", 0.0)) for f in FAKTOREN}
 ```
-und in `score_pair`: `gew = _gewichte(tol, genre_a)`.
+und in `score_pair`: `gew = _gewichte(tol, genre_a, explizit=tolerances is not None)`.
+
+Autouse-Fixture in `tests/conftest.py` (2 Leerzeichen), damit kein Test an der ausgelieferten `candidate_preferences.json` haengt:
+
+```python
+@pytest.fixture(autouse=True)
+def _keine_kandidaten_praeferenzen(monkeypatch, tmp_path):
+  """Kandidaten-Praeferenzen (Hoertest Teil 3) aus Tests heraushalten: weder die
+  mitgelieferte noch eine Override-Datei darf das Scoring in Tests aendern."""
+  from hpg_core import candidate_preferences as cp
+  monkeypatch.setattr(cp, "_MITGELIEFERT", tmp_path / "keine_praeferenzen.json")
+  monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(tmp_path / "kein_override.json"))
+  cp.reset_cache()
+  yield
+  cp.reset_cache()
+```
+Der Test `test_override_wird_gelesen_und_validiert` schreibt seine Datei an den per Env gesetzten Pfad (`_frisch`-Fixture in `tests/test_candidate_preferences.py` setzt denselben Env-Schluessel erneut — bleibt gueltig).
 
 - [ ] **Step 4: Run → PASS** (`tests/test_candidate_preferences.py`, `tests/test_pair_candidates.py`)
 - [ ] **Step 5: Commit** `git add hpg_core/candidate_preferences.py hpg_core/data/candidate_preferences.json hpg_core/pair_candidates.py tests/test_candidate_preferences.py tests/test_pair_candidates.py && git commit -m "feat(praeferenzen): candidate_preferences-Lader, Vorrang in score_pair"`
@@ -313,10 +331,14 @@ from hpg_core.pair_candidates import FAKTOREN as KANDIDATEN_TEILWERTE, build_pai
 BEWERTUNG_KANDIDATEN_SPALTEN: tuple[str, ...] = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
 MERKMALE_KANDIDATEN_SPALTEN: tuple[str, ...] = (
     "pair_id", "clip_id", "clip", *KANDIDATEN_TEILWERTE, "score",
-    "schema_out", "schema_in", "blend_bars", "t_out", "t_in",
+    "schema_out", "schema_in", "schemata_out", "schemata_in", "blend_bars", "t_out", "t_in",
     "provenance_out", "provenance_in", "confidence_out", "confidence_in",
-    "crossfade_sek", "bpm_relation", "track_a", "track_b",
+    "crossfade_sek", "bpm_relation", "bpm_a", "bpm_b", "genre_a", "genre_b", "key_a", "key_b",
+    "track_a", "track_b",
 )
+# Innerhalb-Paar-Streuung (Std der Sieger-Verlierer-Differenzen im Train), ab der
+# ein Merkmal aus dem Paarvergleich identifizierbar ist. STARTWERT.
+PAAR_STREUUNG_MIN = 0.05
 # Holdout nach Tracks: Anteil der Tracks, deren Clips NICHT in die Schaetzung
 # gehen. STARTWERT.
 HOLDOUT_ANTEIL = 0.30
@@ -334,7 +356,8 @@ def _hauptschema(cand) -> str:
 
 def kandidaten_zeilen(pair_id: str, paare, track_a, track_b, clips: list[str]) -> tuple[list[dict], list[dict]]:
     """Zeilen fuer bewertung.csv und merkmale.csv je PairCandidate (Index n ab 1).
-    Teilwerte None -> leere Zelle (Fit: Zeile faellt fuer das Merkmal heraus)."""
+    Teilwerte None -> leere Zelle (Fit: Zeile faellt fuer das Merkmal heraus).
+    bpm/genre/key sind Anzeige-Kontext fuer den Server (kein Score, kein Schema)."""
     bewertung, merkmale = [], []
     for n, (pc, clip) in enumerate(zip(paare, clips), start=1):
         cid = clip_id_fuer(pair_id, n)
@@ -346,14 +369,24 @@ def kandidaten_zeilen(pair_id: str, paare, track_a, track_b, clips: list[str]) -
         zeile.update({
             "score": round(float(pc.score), 6),
             "schema_out": _hauptschema(pc.out_a), "schema_in": _hauptschema(pc.in_b),
+            "schemata_out": "|".join(pc.out_a.schema or []), "schemata_in": "|".join(pc.in_b.schema or []),
             "blend_bars": int(pc.blend_bars), "t_out": float(pc.t_out), "t_in": float(pc.t_in),
             "provenance_out": pc.out_a.provenance, "provenance_in": pc.in_b.provenance,
             "confidence_out": float(pc.out_a.confidence), "confidence_in": float(pc.in_b.confidence),
             "crossfade_sek": round(float(pc.overlap_sec), 2), "bpm_relation": pc.bpm_relation,
+            "bpm_a": round(float(getattr(track_a, "bpm", 0.0) or 0.0), 1),
+            "bpm_b": round(float(getattr(track_b, "bpm", 0.0) or 0.0), 1),
+            "genre_a": loese_genre_auf(track_a), "genre_b": loese_genre_auf(track_b),
+            "key_a": str(getattr(track_a, "camelotCode", "") or ""),
+            "key_b": str(getattr(track_b, "camelotCode", "") or ""),
             "track_a": track_a.filePath, "track_b": track_b.filePath,
         })
         merkmale.append(zeile)
     return bewertung, merkmale
+```
+(Test `test_kandidaten_zeilen_...` oben baut `a`/`b` deshalb als `SimpleNamespace(filePath=..., bpm=140.0, camelotCode="8A", detected_genre="Psytrance", genre="Psytrance")`; `loese_genre_auf` liest `detected_genre`/`genre` per `getattr`.)
+
+```python
 
 
 def reihenfolge_fuer_paar(pair_id: str, clip_ids: list[str], seed_satz: int = STANDARD_SEED) -> dict:
@@ -373,6 +406,10 @@ def rendere_kandidat(a: Track, b: Track, pc, pair_id: str, n: int, clips_dir: Pa
                                        float(b.duration or 0.0), float(pc.t_in))
     if min(rest_a, rest_b) < float(pc.overlap_sec):
         raise ValueError(f"Blende {pc.overlap_sec:.1f} s passt nicht (Rest A {rest_a:.1f}, B {rest_b:.1f})")
+    if float(pc.overlap_sec) > MAX_TRANSITION_OVERLAP_SECONDS:
+        # Der Renderer klemmt still auf 64 s (transition_renderer.py:154); dann
+        # stuende in merkmale.csv eine andere Blende als im Clip. Lieber weglassen.
+        raise ValueError(f"Blende {pc.overlap_sec:.1f} s ueber Renderer-Deckel {MAX_TRANSITION_OVERLAP_SECONDS:.0f} s")
     spec = TransitionClipSpec(
         track_a_path=a.filePath, track_b_path=b.filePath,
         mix_out_sec=float(pc.t_out), mix_in_sec=float(pc.t_in), crossfade_sec=float(pc.overlap_sec),
@@ -458,7 +495,7 @@ def befehl_prepare_kandidaten(args: argparse.Namespace) -> int:
     return 0
 ```
 
-CLI: `prepare` und `fit` bekommen `--modus`, `choices=("einzel", "kandidaten")`, `default="einzel"`; in `main` Weiche `befehl_prepare_kandidaten(args) if args.modus == "kandidaten" else befehl_prepare(args)` (analog `fit`, Task 4).
+CLI: `prepare` und `fit` bekommen `--modus`, `choices=("einzel", "kandidaten")`, `default="einzel"`. `main` dispatcht heute ueber `set_defaults(funktion=...)` (:1065/:1072) — deshalb Wrapper `_prepare(args)` / `_fit(args)`, die nach `args.modus` an `befehl_prepare_kandidaten`/`befehl_prepare` bzw. `befehl_fit_kandidaten`/`befehl_fit` weiterreichen, und `set_defaults(funktion=_prepare)` / `set_defaults(funktion=_fit)`. Import oben: `from hpg_core.config import MAX_TRANSITION_OVERLAP_SECONDS`.
 
 - [ ] **Step 4: Run → PASS** (`tests/test_rate_transitions.py`)
 - [ ] **Step 5: Commit** `git add tools/rate_transitions.py tests/test_rate_transitions.py && git commit -m "feat(hoertest): prepare --modus kandidaten — Clips je PairCandidate, CSVs, reihenfolge.json"`
@@ -591,7 +628,7 @@ def lade_uebersicht_kandidaten(merkmale_zeilen, bewertung_zeilen, reihenfolge: d
 
 `SEITE_KANDIDATEN` (neues HTML, gleicher Stil/CSS wie `SEITE`; JS: `/daten` liefert Paar-Gruppen; Anzeige **ein Paar je Seite** mit Kopf (pair_id, Tempo, Genre, Camelot, Fortschritt "Paar i von n"), je Clip Karte mit `<audio>`, Blendenbalken (`zeichneSpur` wie heute mit `crossfade_sek`), Notenknoepfe 1–5 (POST `/note` `{pair_id, clip_id, note}`), Knopf "bester" (POST `/bester` `{pair_id, clip_id}`, exklusiv markiert), Navigation "← Paar / Paar →" (Tasten `PageUp/PageDown`), Tasten 1–5 auf den aktiven Clip, Pfeile hoch/runter wechseln den Clip, Leertaste spielt; **keine** Score-/Schema-/Teilwert-Anzeige). Der vollstaendige HTML/JS-Text wird im Umsetzungsschritt aus `SEITE` abgeleitet (CSS kopieren; JS-Funktionen `zeichnePaar()`, `setzeNote()`, `setzeBester()`, `naechstesPaar()`); verbindlich sind die Routen und Nutzlasten oben.
 
-Handler: `do_GET` `/` liefert `SEITE_KANDIDATEN`, wenn `ist_kandidatensatz(lies_csv(bewertung))`, sonst `SEITE`; `/daten` liefert im Kandidatenmodus `lade_uebersicht_kandidaten(merkmale, bewertung, self.reihenfolge, self.track_infos)`; `/reihenfolge` liefert `reihenfolge.json`; `do_POST` `/note` nimmt im Kandidatenmodus `{pair_id, clip_id, note|null}` und schreibt `merge_kandidaten_bewertung(..., zeit=datetime.now().isoformat(timespec="seconds"))` mit `BEWERTUNG_KANDIDATEN_SPALTEN`; `/bester` analog mit `bester=True`. `main` laedt `reihenfolge.json` (fehlt sie: `{}`), Port-Default bleibt 8765.
+Handler: `do_GET` `/` liefert `SEITE_KANDIDATEN`, wenn `ist_kandidatensatz(lies_csv(bewertung))`, sonst `SEITE`; `/daten` liefert im Kandidatenmodus `lade_uebersicht_kandidaten(merkmale, bewertung, self.reihenfolge, self.track_infos)` — **keine weiteren Felder** als die oben gezeigten (Verdeckung serverseitig; Waechter Tor 2 prueft das); `/reihenfolge` liefert `reihenfolge.json`; `do_POST` `/note` nimmt im Kandidatenmodus `{pair_id, clip_id, note|null}` und schreibt `merge_kandidaten_bewertung(..., zeit=datetime.now().isoformat(timespec="seconds"))` mit `BEWERTUNG_KANDIDATEN_SPALTEN`; `/bester` analog mit `bester=True`. `main` laedt `reihenfolge.json` (fehlt sie: `{}`), Port-Default bleibt 8765. `import datetime` (heute nicht importiert) ergaenzen. Mobil ohne Cache: `lade_uebersicht_kandidaten` nimmt `bpm_a/b, genre_a/b, key_a/b` aus `merkmale.csv`, wenn `infos` fuer den Pfad nichts liefert (Spalten aus Task 2) — Test: `infos={}` und Spalten in `merk` gesetzt → Kontext erscheint trotzdem.
 
 - [ ] **Step 4: Run → PASS**
 - [ ] **Step 5: Commit** `git add tools/hoertest_server.py tests/test_hoertest_server.py && git commit -m "feat(hoertest-server): Kandidatenmodus — Seite je Paar, Note + bester, Zeitstempel, gespeicherte Reihenfolge"`
@@ -610,9 +647,13 @@ Handler: `do_GET` `/` liefert `SEITE_KANDIDATEN`, wenn `ist_kandidatensatz(lies_
 # tests/test_rate_transitions.py — anhaengen
 import numpy as np
 
+from pathlib import Path
+
 from tools.rate_transitions import (
-    auc, baue_candidate_preferences, fit_paarvergleich, holdout_nach_tracks,
-    paarvergleich_daten, schema_rangfolge, verbinde_bewertungen_kandidaten,
+    _kennzahlen, _standardisiere_mit, auc, baue_candidate_preferences, bootstrap_paarvergleich,
+    fit_paarvergleich, gewichte_aus_paarvergleich, holdout_nach_tracks, identifizierbare_merkmale,
+    nur_mit_note, paarvergleich_daten, schema_rangfolge, trefferquote_paarvergleich,
+    uebernahme_erlaubt, verbinde_bewertungen_kandidaten,
 )
 
 
@@ -631,8 +672,11 @@ def test_verbinde_bewertungen_kandidaten_liest_note_gewaehlt_und_verwirft_leere_
            {"pair_id": "001", "clip_id": "001_k2", "note": "2", "gewaehlt": "", "zeit": "t"},
            {"pair_id": "002", "clip_id": "002_k1", "note": "", "gewaehlt": "", "zeit": ""}]
     zeilen, ohne, verworfen = verbinde_bewertungen_kandidaten(merk, bew, merkmale=("harmonic", "groove"))
-    assert [z["clip_id"] for z in zeilen] == ["001_k1"] and ohne == 1 and verworfen == 1
-    assert zeilen[0]["note"] == 5 and zeilen[0]["gewaehlt"] is True and zeilen[0]["tracks"] == ("a", "b")
+    # 001_k2: leeres Merkmal -> verworfen; 002_k1: ohne Note -> bleibt (note None) fuer den Paarvergleich
+    assert [z["clip_id"] for z in zeilen] == ["001_k1", "002_k1"] and ohne == 1 and verworfen == 1
+    assert zeilen[0]["note"] == 5 and zeilen[0]["bewertung"] == 5 and zeilen[0]["gewaehlt"] is True
+    assert zeilen[0]["tracks"] == ("a", "b") and zeilen[1]["note"] is None
+    assert [z["clip_id"] for z in nur_mit_note(zeilen)] == ["001_k1"]
 
 
 def test_auc_rangstatistik():
@@ -650,26 +694,88 @@ def test_holdout_nach_tracks_trennt_clips_deterministisch():
     assert holdout_nach_tracks(zeilen, anteil=0.5, seed=1) == (train, hold)
 
 
-def test_paarvergleich_findet_bekannte_praeferenz():
-    rng = np.random.default_rng(3)
+def _synth_paare(n=60, seed=3):
+    rng = np.random.default_rng(seed)
     zeilen = []
-    for p in range(60):
-        xs = rng.uniform(0, 1, size=(3, 2))
+    for p in range(n):
+        xs = rng.uniform(0, 1, size=(3, 3))
         nutzen = 3.0 * xs[:, 0] + 0.0 * xs[:, 1]
         sieger = int(np.argmax(nutzen))
         for k in range(3):
-            zeilen.append({"pair_id": f"{p:03d}", "clip_id": f"{p:03d}_k{k+1}", "note": 3,
-                           "gewaehlt": k == sieger, "merkmale": {"harmonic": xs[k, 0], "groove": xs[k, 1]},
+            zeilen.append({"pair_id": f"{p:03d}", "clip_id": f"{p:03d}_k{k+1}", "note": 3, "bewertung": 3,
+                           "gewaehlt": k == sieger,
+                           "merkmale": {"harmonic": xs[k, 0], "groove": xs[k, 1], "bpm": 0.9},  # bpm je Paar konstant
                            "tracks": (f"a{p}", f"b{p}"), "genre": "Psytrance",
-                           "schema_out": "pssi_phrase", "schema_in": "auto_cue"})
-    X, y, gruppen = paarvergleich_daten(zeilen, ("harmonic", "groove"))
-    assert X.shape[1] == 2 and set(y) == {0.0, 1.0}
-    beta = fit_paarvergleich(X, y)
-    assert beta[0] > 1.0 and abs(beta[1]) < beta[0] / 3
+                           "schema_out": "pssi_phrase", "schema_in": "auto_cue",
+                           "schemata_out": ["pssi_phrase"], "schemata_in": ["auto_cue"]})
+    return zeilen
+
+
+def test_paarvergleich_findet_bekannte_praeferenz_und_identifizierbarkeit():
+    zeilen = _synth_paare()
+    X, gruppen = paarvergleich_daten(zeilen, ("harmonic", "groove", "bpm"))
+    assert X.shape == (120, 3) and len(gruppen) == 120            # 60 Paare x 2 Verlierer, keine Spiegelung
+    assert identifizierbare_merkmale(X, ("harmonic", "groove", "bpm")) == ["harmonic", "groove"]
+    beta = fit_paarvergleich(X)
+    assert beta[0] > 1.0 and abs(beta[1]) < beta[0] / 3 and beta[2] == pytest.approx(0.0, abs=1e-6)
+    treffer, basis = trefferquote_paarvergleich(beta, zeilen, ("harmonic", "groove", "bpm"))
+    assert treffer > 0.8 and basis == pytest.approx(1 / 3)
+
+
+def test_bootstrap_paarvergleich_zieht_ueber_paare():
+    zeilen = _synth_paare(n=20)
+    X, gruppen = paarvergleich_daten(zeilen, ("harmonic", "groove"))
+    iv = bootstrap_paarvergleich(X, gruppen, ziehungen=30, seed=1)
+    assert len(iv) == 2 and iv[0][0] > 0.0                          # harmonic gesichert positiv
+    assert bootstrap_paarvergleich(np.zeros((0, 2)), [], ziehungen=5) == [(0.0, 0.0), (0.0, 0.0)]
+
+
+def test_gewichte_aus_paarvergleich_restbudget_und_leer():
+    tol = {f"kandidaten_{f}_weight": w for f, w in zip(
+        ("harmonic", "bpm", "energy", "genre", "groove", "bass", "timbre", "mood", "loudness", "structure"),
+        (0.140, 0.106, 0.106, 0.106, 0.264, 0.070, 0.044, 0.044, 0.060, 0.060))}
+    g = gewichte_aus_paarvergleich(("harmonic", "groove"), [(0.5, 2.0), (-0.1, 0.3)], ["harmonic", "groove"], tol)
+    assert g["bpm"] == pytest.approx(0.106) and g["groove"] == 0.0       # nicht identifizierbar behaelt, ungesichert 0
+    assert g["harmonic"] == pytest.approx(1.0 - (1.0 - 0.140 - 0.264))     # Restbudget komplett auf harmonic
+    assert sum(g.values()) == pytest.approx(1.0)
+    assert gewichte_aus_paarvergleich(("harmonic",), [(-0.2, 0.1)], ["harmonic"], tol) == {}
+
+
+def test_uebernahme_erlaubt_gruende():
+    ok, _ = uebernahme_erlaubt(belastbar_note=True, n_paare_train=40, n_identifizierbar=2, auc_holdout=0.7,
+                               treffer_holdout=0.6, basis_holdout=0.33, gewichte={"harmonic": 1.0})
+    assert ok
+    assert not uebernahme_erlaubt(belastbar_note=False, n_paare_train=40, n_identifizierbar=2, auc_holdout=0.7,
+                                  treffer_holdout=0.6, basis_holdout=0.33, gewichte={"harmonic": 1.0})[0]
+    assert "zu wenige Paare" in uebernahme_erlaubt(belastbar_note=True, n_paare_train=5, n_identifizierbar=2,
+                                                   auc_holdout=0.7, treffer_holdout=0.6, basis_holdout=0.33,
+                                                   gewichte={"harmonic": 1.0})[1]
+    assert "AUC" in uebernahme_erlaubt(belastbar_note=True, n_paare_train=40, n_identifizierbar=2, auc_holdout=0.5,
+                                       treffer_holdout=0.6, basis_holdout=0.33, gewichte={"harmonic": 1.0})[1]
+    assert "Trefferquote" in uebernahme_erlaubt(belastbar_note=True, n_paare_train=40, n_identifizierbar=2,
+                                                auc_holdout=0.7, treffer_holdout=0.3, basis_holdout=0.33,
+                                                gewichte={"harmonic": 1.0})[1]
+
+
+def test_standardisiere_mit_train_kennzahlen():
+    X = np.array([[0.0, 10.0], [2.0, 10.0]])
+    m, s = _kennzahlen(X)
+    assert list(m) == [1.0, 10.0] and list(s) == [1.0, 1.0]          # Streuung 0 -> 1
+    assert _standardisiere_mit(np.array([[3.0, 12.0]]), m, s).tolist() == [[2.0, 2.0]]
+
+
+def test_rendere_kandidat_verwirft_blende_ueber_deckel(monkeypatch):
+    from tools import rate_transitions as rt
+    pc = _pc(100.0, 60.0, 48, 0.5)                                    # 48 Takte * 1.714 = 82 s > 64
+    a = SimpleNamespace(filePath="a.mp3", duration=400.0, bpm=140.0, first_downbeat=0.0, downbeat_confidence=1.0)
+    b = SimpleNamespace(filePath="b.mp3", duration=400.0, bpm=140.0, first_downbeat=0.0, downbeat_confidence=1.0)
+    monkeypatch.setattr(rt, "render_transition_clip", lambda spec, pfad: pfad)
+    with pytest.raises(ValueError):
+        rt.rendere_kandidat(a, b, pc, "001", 1, Path("."))
 
 
 def test_schema_rangfolge_und_praeferenz_json():
-    zeilen = [{"genre": "Psytrance", "gewaehlt": g, "schema_out": s, "schema_in": "auto_cue"}
+    zeilen = [{"genre": "Psytrance", "gewaehlt": g, "schemata_out": [s], "schemata_in": ["auto_cue"]}
               for s, g in [("pssi_phrase", True), ("pssi_phrase", False), ("sektion", False), ("sektion", False)] * 5]
     rang = schema_rangfolge(zeilen, min_wahlen=5)
     assert rang["Psytrance"][0] == "pssi_phrase"
@@ -692,28 +798,86 @@ def verbinde_bewertungen_kandidaten(merkmale_zeilen, bewertung_zeilen, merkmale=
     zeilen, ohne, verworfen = [], 0, 0
     for roh in merkmale_zeilen:
         cid = str(roh.get("clip_id", "")).strip()
-        b = noten.get(cid)
-        eintrag = str(b.get("note", "")).strip() if b else ""
-        if not eintrag:
-            ohne += 1
-            continue
+        b = noten.get(cid) or {}
+        eintrag = str(b.get("note", "")).strip()
         try:
-            note = int(round(float(eintrag)))
             werte = {n: float(roh[n]) for n in merkmale}
         except (KeyError, TypeError, ValueError):
-            verworfen += 1
+            verworfen += 1            # leeres/ungueltiges Merkmal: fuer BEIDE Modelle raus
             continue
-        if not BEWERTUNG_MIN <= note <= BEWERTUNG_MAX:
-            verworfen += 1
-            continue
+        note = None
+        if eintrag:
+            try:
+                note = int(round(float(eintrag)))
+            except (TypeError, ValueError):
+                verworfen += 1
+                continue
+            if not BEWERTUNG_MIN <= note <= BEWERTUNG_MAX:
+                verworfen += 1
+                continue
+        else:
+            ohne += 1                 # ohne Note: bleibt fuer den Paarvergleich erhalten
         tracks = (str(roh.get("track_a", "")), str(roh.get("track_b", "")))
         zeilen.append({
-            "pair_id": str(roh.get("pair_id", "")).strip(), "clip_id": cid, "note": note,
+            "pair_id": str(roh.get("pair_id", "")).strip(), "clip_id": cid,
+            "note": note, "bewertung": note,   # "bewertung": Schluessel fuer zu_zielgroesse
             "gewaehlt": str(b.get("gewaehlt", "")).strip() == "1", "merkmale": werte, "tracks": tracks,
             "genre": genre_von(tracks[0]) if genre_von else "",
             "schema_out": roh.get("schema_out", ""), "schema_in": roh.get("schema_in", ""),
+            "schemata_out": [s for s in str(roh.get("schemata_out", "")).split("|") if s],
+            "schemata_in": [s for s in str(roh.get("schemata_in", "")).split("|") if s],
         })
     return zeilen, ohne, verworfen
+
+
+def nur_mit_note(zeilen: list[dict]) -> list[dict]:
+    """Zielgroesse 1 (Note) sieht nur benotete Clips; Zielgroesse 2 alle."""
+    return [z for z in zeilen if z.get("note") is not None]
+
+
+def _kennzahlen(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Spaltenmittel und -streuung (Streuung 0 -> 1), Grundlage fuer
+    _standardisiere_mit — Holdout wird mit den TRAIN-Kennzahlen skaliert."""
+    X = np.asarray(X, dtype=float)
+    mittel = X.mean(axis=0)
+    streuung = X.std(axis=0)
+    streuung[streuung == 0.0] = 1.0
+    return mittel, streuung
+
+
+def _standardisiere_mit(X: np.ndarray, mittel: np.ndarray, streuung: np.ndarray) -> np.ndarray:
+    return (np.asarray(X, dtype=float) - mittel) / streuung
+
+
+def identifizierbare_merkmale(X_diff: np.ndarray, namen, schwelle: float = PAAR_STREUUNG_MIN) -> list[str]:
+    """Merkmale, die INNERHALB der Paare streuen (Std der Sieger-Verlierer-
+    Differenzen >= schwelle). bpm/genre sind je Paar konstant -> nie dabei."""
+    if X_diff.size == 0:
+        return []
+    std = np.asarray(X_diff, dtype=float).std(axis=0)
+    return [n for n, s in zip(namen, std) if s >= schwelle]
+
+
+def uebernahme_erlaubt(*, belastbar_note: bool, n_paare_train: int, n_identifizierbar: int,
+                       auc_holdout: float | None, treffer_holdout: float | None,
+                       basis_holdout: float | None, gewichte: dict) -> tuple[bool, str]:
+    """Entscheidung 10: alle Bedingungen muessen halten, sonst (False, Grund)."""
+    if not belastbar_note:
+        return False, "Datenlage Zielgroesse 1 nicht belastbar (10 je Merkmal und Klasse)"
+    if n_identifizierbar == 0:
+        return False, "kein Merkmal streut innerhalb der Paare (nicht identifizierbar)"
+    if n_paare_train < MIN_EREIGNISSE_JE_MERKMAL * n_identifizierbar:
+        return False, (f"zu wenige Paare mit Wahl im Train: {n_paare_train} < "
+                       f"{MIN_EREIGNISSE_JE_MERKMAL * n_identifizierbar}")
+    if auc_holdout is None or treffer_holdout is None or basis_holdout is None:
+        return False, "Holdout leer oder ohne beide Klassen/ohne Paar mit Wahl"
+    if not auc_holdout > 0.5:
+        return False, f"Holdout-AUC {auc_holdout:.3f} nicht besser als Zufall"
+    if not treffer_holdout > basis_holdout:
+        return False, f"Holdout-Trefferquote {treffer_holdout:.3f} nicht ueber Zufallsbasis {basis_holdout:.3f}"
+    if not any(v > 0.0 for v in gewichte.values()):
+        return False, "kein identifizierbares Merkmal mit gesichert positivem Effekt"
+    return True, "alle Bedingungen erfuellt"
 
 
 def auc(y: np.ndarray, score: np.ndarray) -> float | None:
@@ -740,11 +904,13 @@ def holdout_nach_tracks(zeilen: list[dict], anteil: float = HOLDOUT_ANTEIL, seed
     return train, holdout
 
 
-def paarvergleich_daten(zeilen: list[dict], merkmale) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    """Differenzen Sieger - Verlierer (y=1) und gespiegelt (y=0) je Paar mit
-    'gewaehlt'. Rueckgabe X, y, Paar-Ids je Zeile (fuer Cluster-Bootstrap)."""
+def paarvergleich_daten(zeilen: list[dict], merkmale) -> tuple[np.ndarray, list[str]]:
+    """Differenzen Sieger - Verlierer je Paar mit genau einer Wahl (Bradley-
+    Terry als paarweise Zerlegung: ein Vergleich je Verlierer, KEINE
+    Spiegelung — die wuerde die Likelihood verdoppeln und L2 halbieren).
+    Rueckgabe X_diff, Paar-Ids je Zeile (fuer den Cluster-Bootstrap)."""
     namen = list(merkmale)
-    X, y, gruppen = [], [], []
+    X, gruppen = [], []
     je_paar: dict[str, list[dict]] = {}
     for z in zeilen:
         je_paar.setdefault(z["pair_id"], []).append(z)
@@ -757,47 +923,48 @@ def paarvergleich_daten(zeilen: list[dict], merkmale) -> tuple[np.ndarray, np.nd
             if c is sieger[0]:
                 continue
             v = np.array([c["merkmale"][n] for n in namen], dtype=float)
-            X.append(s - v); y.append(1.0); gruppen.append(pid)
-            X.append(v - s); y.append(0.0); gruppen.append(pid)
+            X.append(s - v)
+            gruppen.append(pid)
     if not X:
-        return np.zeros((0, len(namen))), np.zeros(0), []
-    return np.vstack(X), np.array(y), gruppen
+        return np.zeros((0, len(namen))), []
+    return np.vstack(X), gruppen
 
 
-def fit_paarvergleich(X: np.ndarray, y: np.ndarray, l2: float = L2_STAERKE) -> np.ndarray:
-    """Konditionale Logistik ohne Achsenabschnitt (Bradley-Terry mit linearem
-    Nutzen): P(Sieger) = sigmoid(beta . (x_s - x_v)). Gleiche L2 wie fit_logistic."""
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float)
+def fit_paarvergleich(X_diff: np.ndarray, l2: float = L2_STAERKE) -> np.ndarray:
+    """Bradley-Terry mit linearem Nutzen, ohne Achsenabschnitt:
+    maximiert sum log sigmoid(beta . d) - l2 * |beta|^2 ueber alle
+    Sieger-Verlierer-Differenzen d. Koeffizienten bewusst UNSTANDARDISIERT
+    (Teilwert-Skala [0,1]): das Gewicht soll dem Nutzen je Teilwert-Einheit
+    entsprechen, nicht je Standardabweichung."""
+    X = np.asarray(X_diff, dtype=float)
     if X.size == 0:
         return np.zeros(X.shape[1] if X.ndim == 2 else 0)
 
     def ziel(beta):
         z = X @ beta
-        ll = np.sum(y * z - np.logaddexp(0.0, z))
-        return -ll + l2 * float(beta @ beta)
+        return float(np.sum(np.logaddexp(0.0, -z))) + l2 * float(beta @ beta)
 
     def grad(beta):
         p = 1.0 / (1.0 + np.exp(-(X @ beta)))
-        return -(X.T @ (y - p)) + 2.0 * l2 * beta
+        return -(X.T @ (1.0 - p)) + 2.0 * l2 * beta
 
     res = minimize(ziel, np.zeros(X.shape[1]), jac=grad, method="L-BFGS-B")
     return np.asarray(res.x, dtype=float)
 
 
-def bootstrap_paarvergleich(X, y, gruppen, l2=L2_STAERKE, ziehungen=BOOTSTRAP_ZIEHUNGEN,
+def bootstrap_paarvergleich(X_diff, gruppen, l2=L2_STAERKE, ziehungen=BOOTSTRAP_ZIEHUNGEN,
                             seed=STANDARD_SEED) -> list[tuple[float, float]]:
     """95-%-Bootstrap je Koeffizient, Ziehung ueber PAARE (Cluster), nicht
-    ueber Einzelzeilen."""
+    ueber Einzelzeilen: die K-1 Vergleiche eines Paars sind korreliert."""
     ids = sorted(set(gruppen))
+    if not ids:
+        return [(0.0, 0.0)] * (X_diff.shape[1] if X_diff.ndim == 2 else 0)
     index_je_id = {pid: [i for i, g in enumerate(gruppen) if g == pid] for pid in ids}
     rng = random.Random(seed)
     stapel = []
     for _ in range(int(ziehungen)):
         zug = [i for pid in rng.choices(ids, k=len(ids)) for i in index_je_id[pid]]
-        stapel.append(fit_paarvergleich(X[zug], y[zug], l2))
-    if not stapel:
-        return [(0.0, 0.0)] * X.shape[1]
+        stapel.append(fit_paarvergleich(X_diff[zug], l2))
     s = np.vstack(stapel)
     return [(float(np.percentile(s[:, j], 2.5)), float(np.percentile(s[:, j], 97.5))) for j in range(s.shape[1])]
 
@@ -824,13 +991,25 @@ def trefferquote_paarvergleich(beta: np.ndarray, zeilen: list[dict], merkmale) -
     return treffer / n, basis / n
 
 
-def gewichte_aus_paarvergleich(namen, intervalle) -> dict[str, float]:
-    """Positive untere Bootstrap-Grenze -> Gewicht, Summe 1.0; keines -> {}."""
-    roh = {n: (lo if lo > 0.0 and hi > 0.0 else 0.0) for n, (lo, hi) in zip(namen, intervalle)}
+def gewichte_aus_paarvergleich(namen, intervalle, identifizierbar, toleranz_gewichte: dict) -> dict[str, float]:
+    """Gewichte fuer alle zehn Faktoren (Schluessel = Faktorname), Summe 1.0:
+    nicht identifizierbare behalten ihr Toleranz-Gewicht (kandidaten_*_weight);
+    das Restbudget wird auf identifizierbare Merkmale nach positiver unterer
+    Bootstrap-Grenze verteilt; identifizierbare ohne gesicherten positiven
+    Effekt bekommen 0. Kein identifizierbares positiv -> {} (keine Uebernahme)."""
+    fest = {n: float(toleranz_gewichte.get(f"kandidaten_{n}_weight", 0.0))
+            for n in KANDIDATEN_TEILWERTE if n not in identifizierbar}
+    roh = {n: (lo if lo > 0.0 and hi > 0.0 else 0.0)
+           for n, (lo, hi) in zip(namen, intervalle) if n in identifizierbar}
     summe = sum(roh.values())
     if summe <= 0.0:
         return {}
-    return {n: v / summe for n, v in roh.items()}
+    rest = max(0.0, 1.0 - sum(fest.values()))
+    ergebnis = dict(fest)
+    ergebnis.update({n: rest * v / summe for n, v in roh.items()})
+    for n in KANDIDATEN_TEILWERTE:
+        ergebnis.setdefault(n, 0.0)
+    return ergebnis
 
 
 def schema_rangfolge(zeilen: list[dict], min_wahlen: int = MIN_EREIGNISSE_JE_MERKMAL) -> dict[str, list[str]]:
@@ -876,7 +1055,7 @@ def baue_candidate_preferences(gewichte: dict[str, float], rangfolge: dict[str, 
     return ergebnis
 ```
 
-`befehl_fit_kandidaten(args)`: liest CSVs, `verbinde_bewertungen_kandidaten(..., genre_von=<Genre aus Cache ueber loese_genre_auf; Cache-Ausfall -> "">)`; aktive Merkmale = Teilwerte mit Streuung >= `MIN_KONTROLL_STREUUNG`; `holdout_nach_tracks`; **Zielgroesse 1**: `zu_zielgroesse(train, aktive)` → `fit_logistic`, `datenlage_urteil`, AUC auf Holdout (`auc(y_hold, X_hold_z @ beta[1:] + beta[0])` mit derselben Standardisierung wie beim Fit — `_standardisiere` auf Train-Kennzahlen anwenden); **Zielgroesse 2**: `paarvergleich_daten(train)`, `fit_paarvergleich`, `bootstrap_paarvergleich`, `trefferquote_paarvergleich` auf Holdout; Gewichte `gewichte_aus_paarvergleich`; Rangfolge `schema_rangfolge(zeilen)`; Diagnose-Dict (Zahlen, AUC, Trefferquote, Basis, Koeffizienten, Intervalle, Holdout-Groessen, `verworfen`); Uebernahme-Gate (Entscheidung 10) → `hpg_core/data/candidate_preferences.json` schreiben und `candidate_preferences.reset_cache()`, sonst `<dir>/candidate_preferences_entwurf.json` + Grund; Bericht drucken (Tabelle Koeffizient/Intervall/Gewicht je Merkmal, AUC, Trefferquote vs. Basis, Rangfolge je Genre).
+`befehl_fit_kandidaten(args)`: liest CSVs; `genre_von` = Pfad→Genre ueber `lade_tracks_aus_cache` + `loese_genre_auf` (Abgleich `lower()`, Cache-Ausfall → ""); `verbinde_bewertungen_kandidaten(...)`; aktive Merkmale = Teilwerte mit Streuung >= `MIN_KONTROLL_STREUUNG` im Satz; `holdout_nach_tracks(zeilen)` (Bericht: Anteil Holdout-Clips, ≈ 51 % bei 30 % Tracks); **Zielgroesse 1** auf `nur_mit_note(train)`: `zu_zielgroesse(..., aktive)` (liest `"bewertung"`) → `fit_logistic`, `datenlage_urteil`; AUC auf `nur_mit_note(holdout)` mit `m, s = _kennzahlen(X_train)`, `auc(y_hold, _standardisiere_mit(X_hold, m, s) @ beta[1:] + beta[0])`; **Zielgroesse 2** auf `train` (alle Clips): `X_diff, gruppen = paarvergleich_daten(train, aktive)`, `identifizierbar = identifizierbare_merkmale(X_diff, aktive)`, Fit/Bootstrap nur ueber die identifizierbaren Spalten, `trefferquote_paarvergleich` auf Holdout (mit beta = 0 fuer nicht identifizierbare); Gewichte `gewichte_aus_paarvergleich(identifizierbar, intervalle, identifizierbar, get_tolerances(CANONICAL_GENRES[0]))`; Rangfolge `schema_rangfolge(zeilen)`; `uebernahme_erlaubt(...)` → bei True `baue_candidate_preferences` nach `hpg_core/data/candidate_preferences.json` + `candidate_preferences.reset_cache()`, sonst `<dir>/candidate_preferences_entwurf.json` + Grund; Diagnose-Dict (n Clips/Paare Train+Holdout, ohne Note, verworfen, aktive, identifizierbar/nicht, Koeffizienten, Intervalle, AUC, Trefferquote, Basis, Grund); Bericht (Tabelle je Merkmal: Koeffizient, Intervall, identifizierbar ja/nein, Gewicht; AUC; Trefferquote vs. Basis; Rangfolge je Genre; Holdout-Anteil).
 
 - [ ] **Step 4: Run → PASS**
 - [ ] **Step 5: Commit** `git add tools/rate_transitions.py tests/test_rate_transitions.py && git commit -m "feat(hoertest): fit --modus kandidaten — Note + Paarvergleich, Holdout nach Tracks, AUC/Trefferquote, candidate_preferences"`
