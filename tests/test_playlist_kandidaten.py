@@ -165,3 +165,13 @@ def test_kette_gespeicherte_wahl_gewinnt_wenn_konsistent(monkeypatch, tmp_path):
     assert recs2[0].kandidat_aktiv == 1 and recs2[0].kandidaten[0]["flags"]["gespeicherte_wahl"] is True
     cc.reset_cache()
     pl_mod.reset_pair_candidate_cache()
+
+
+def test_outro_overlap_limit_toleriert_rundungsrest():
+    """Kopfraum 24 Takte minus 1 ms (Teil-1-Rundung) darf nicht auf 23 Takte
+    fallen — die Kandidaten-Blende waere sonst still einen Takt kuerzer."""
+    a = _track("a.mp3")                      # 140 BPM, Outro ab 240 s, spb = 1.714 s
+    spb = 60.0 / 140.0 * 4
+    mix_out = 240.0 - 24 * spb + 0.001
+    assert pl._outro_overlap_limit(a, mix_out) == pytest.approx(24 * spb, abs=1e-6)
+    assert pl._outro_overlap_limit(a, 240.0 - 24 * spb - 0.5) == pytest.approx(24 * spb, abs=1e-6)

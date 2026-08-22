@@ -1400,6 +1400,12 @@ def _outro_overlap_limit(
     seconds_per_bar = (60.0 / bpm) * METER
     if seconds_per_bar <= 0:
         return None
+    # Gitter-Toleranz (Teil 1 rundet Mixpunkte auf 3 Dezimalen; Kandidaten-
+    # Blenden sind mit derselben Toleranz auf ganze Takte geklemmt): ohne sie
+    # kostete ein 1-ms-Rundungsrest einen ganzen Takt Blende (gemessen
+    # 2026-08-22: 12 von 220 Paaren). Dieselbe Fehlerklasse wie der
+    # 3-ms-Phrasenfehler in models.quantize_to_grid.
+    headroom += QUANTIZE_TOLERANCE_SEC
     if headroom < MIN_TRANSITION_BARS * seconds_per_bar:
         return None
     return (headroom // seconds_per_bar) * seconds_per_bar
