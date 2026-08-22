@@ -325,9 +325,11 @@ def _resolve_track_genre(track: Track) -> str:
 
 
 def _kandidaten_fuer_paar(track1: Track, track2: Track, energy_direction, kwargs: dict) -> list:
-    """PairCandidates des Paars in App-Reihenfolge (pair_candidates.rank_pair_candidates)
-    mit demselben Cache-Verhalten wie die Metriken: nur waehrend generate_playlist
-    gecacht. Leer, wenn eine Seite keine Kandidaten traegt."""
+    """PairCandidates des Paars in App-Reihenfolge (pair_candidates.rank_pair_candidates),
+    dauerhaft gecacht in _PAIR_CANDIDATE_CACHE (Schluessel: Track-Identitaet,
+    energy_direction, kwargs; geleert von reset_pair_candidate_cache, das Wahl,
+    Praeferenz und Toleranzen lazy aufrufen). Leer, wenn eine Seite keine
+    Kandidaten traegt."""
     if not (getattr(track1, "mix_out_candidates", None) and getattr(track2, "mix_in_candidates", None)):
         return []
     # Lazy: pair_candidates importiert playlist-Teile lazy — kein Zyklus auf Modulebene.

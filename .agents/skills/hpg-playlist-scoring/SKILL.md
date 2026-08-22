@@ -115,8 +115,11 @@ Mixpunkt-Kandidaten. `playlist._get_camelot_components` bleibt, weil
 (harmonic .140, bpm .106, energy .106, genre .106, groove .264, bass .070,
 timbre .044, mood .044, loudness .060, structure .060; Summe 1.0, von
 `_validate_genre_tables` geprueft) fuer die Paar-Bewertung der Kandidaten —
-STARTWERTE. `tolerances.write_override` und die GUI-Regler schreiben nur die
-alten Schluessel; Anbindung der neuen ist Teil 3/4.
+STARTWERTE. Seit Teil 4: `tolerances.write_override_kandidaten(gewichte)`
+schreibt die uebergebenen `kandidaten_*_weight` und skaliert die uebrigen auf
+Summe 1.0 (GUI-Regler "Lautheit (Kandidaten)"); `write_override` (Track-Regler)
+erhaelt vorhandene Kandidaten-Schluessel. Eine Hoertest-Praeferenz
+(`candidate_preferences`) fuer das Genre hat Vorrang vor den Toleranzen.
 
 ## Kandidatenpfad in der App (Teil 4, gebaut 2026-08-22)
 
@@ -133,7 +136,14 @@ Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
 - `compute_transition_recommendations`: nach DJ-Brain, vor Clamp setzt der
   aktive Kandidat `mix_out_a/mix_in_b/overlap`; `transition_type = "bass_swap"`
   bei `flags.bass_swap_pflicht`; `TransitionRecommendation.kandidaten` (alle,
-  to_dict) und `kandidat_aktiv` (Rang, 0 = keiner). **Track-Felder werden nicht
+  to_dict), `kandidat_aktiv` (Rang, 0 = keiner) und `kandidat_konsistent`.
+  **Kettenwahl** `_kette_waehlen` (DP ueber die Paare): je Track muss der
+  Mix-Out (Paar i) mindestens zwei Phrasen hinter dem Mix-In (Paar i−1) liegen
+  (Toleranz `QUANTIZE_TOLERANCE_SEC`); maximale Score-Summe, gespeicherte Wahl
+  mit `_WAHL_BONUS` = 10; ohne konsistenten Anschluss Neustart mit
+  `kandidat_konsistent = False`. Der aktive Kandidat ist daher nicht zwingend
+  Rang 1; `compatibility_score` der Karte stammt aus den Metriken (= Rang 1).
+  Messung 2026-08-22 (231 Tracks): Cue-Gate-Verletzungen 73 → 2. **Track-Felder werden nicht
   mutiert** — "Rang 1" lebt im Plan; Leser: Preview, Timeline, Tabelle Mix-In/
   Out (`mixpunkte_fuer_tabelle`), `on_ai_finished`, Export.
 - `rank_pair_candidates`/`select_pair_candidate` (pair_candidates): gespeicherte
@@ -142,8 +152,13 @@ Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
 - HPG-001: die Wahl liegt NICHT im `scoring_context`, sondern in der Datei —
   alle Konsumenten lesen sie auf demselben Weg (Abweichung vom Spec-Wortlaut,
   benannt im Handoff Teil 4). Sechster Konsument: Kandidatentabelle.
-- Laufzeit: `rank_pair_candidates` ~9 ms je Paar (231 Tracks, gemessen) —
-  deshalb Cache + BPM-Gate vor dem Kandidatenpfad.
+- Laufzeit: `build_pair_candidates` 3,3 ms Median je Paar (500 Paare, 2026-08-22,
+  nach Optimierung; vorher 8,7 ms) — deshalb Cache + BPM-Gate vor dem
+  Kandidatenpfad; Generierung Harmonic Flow 231 Tracks ~52 s (2 s ohne Kandidaten).
+- Paar-Gates seit Teil 4 zusaetzlich `blende_ueber_b_ende`; `_outro_overlap_limit`
+  rechnet mit `QUANTIZE_TOLERANCE_SEC` Spielraum vor dem Takt-Floor.
+- Messwerkzeug: `tools/playlist_kandidaten_messen.py --cache` (vergleicht den
+  aktiven Ketten-Kandidaten, Kennzahl `kette_neustarts`).
 - App-BPM-Default 2.0 (main.py: Slider, `current_bpm_tolerance`,
   `AnalysisWorker`, `PlaylistPanel`); `playlist.py`-API-Defaults bleiben 3.0.
 

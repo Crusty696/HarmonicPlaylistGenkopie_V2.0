@@ -2,7 +2,8 @@
 
 Vorheriger Stand: `docs/HANDOFF-2026-08-22-kandidaten-teil3.md`. Plan:
 `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md` (Waechter
-Tor 1: MIT AUFLAGEN, eingearbeitet; Entscheidungen 1–19; Tor 2 vor dem Merge).
+Tor 1: MIT AUFLAGEN, eingearbeitet; Entscheidungen 1–20; Tor 2: MIT AUFLAGEN,
+eingearbeitet — siehe unten).
 Spec Abschnitt 4 (`docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md`).
 
 **Nutzer-Anweisung 2026-08-22 (`/goal`):** Hoerproben werden uebersprungen und
@@ -38,10 +39,10 @@ unten auf der Checkliste gesammelt. Alles andere ist gebaut, gemessen, getestet.
 - `hpg_core/tolerances.py`: `write_override_kandidaten(gewichte)` (Summe 1.0 ueber
   die zehn `kandidaten_*_weight`, Rest proportional), `write_override` erhaelt
   vorhandene Kandidaten-Schluessel, `reset_cache` leert den Paar-Cache.
-- `hpg_core/exporters/rekordbox_xml.py`: `export(..., transitions=None)` — Mix-Out/
+- `hpg_core/exporters/rekordbox_xml_exporter.py`: `export(..., transitions=None)` — Mix-Out/
   Mix-In aus dem Plan (aktiver Kandidat), Memory-Cues `HPG K<n> OUT <schema>` /
   `HPG K<n> IN <schema>` (n je Seite 1..6 nach Dedupe gleicher Zeitpunkte, nur bei
-  `_cue_export_allowed`).
+  `_cue_export_allowed`; Dedupe-Toleranz `QUANTIZE_TOLERANCE_SEC`).
 - `main.py`: Kandidatentabelle je Uebergangs-Karte im `MixTipsPanel`
   (`KANDIDATEN_SPALTEN = Rang, Mix-Out A, Mix-In B, Blende, Schema, Score,
   Teilwerte, Begruendung`; aktive Zeile markiert; Signal `candidate_chosen`),
@@ -77,14 +78,14 @@ Gesamt-Handoff.
 | Kennzahl | mit Kandidaten | ohne Kandidaten (`--ohne-kandidaten`) |
 |---|---|---|
 | Paare / mit Kandidat | 230 / **220** | 230 / 0 |
-| Rang-1-Schema Out | pssi_phrase 204, sektion 11, analyzer 5 | — |
-| Rang-1-Schema In | pssi_phrase 203, sektion 14, analyzer 3 | — |
+| Schema Out (aktiver Kandidat) | pssi_phrase 204, sektion 11, analyzer 5 | — |
+| Schema In (aktiver Kandidat) | pssi_phrase 203, sektion 14, analyzer 3 | — |
 | `bass_swap`-Anteil | 0,9 % (2 Paare) | — |
 | Intro/Outro-Verletzungen der Plan-Punkte | **0** | — |
 | Plan-Overlap ≠ Kandidaten-Blende | **0** | — |
 | Cue-Gate-Verletzungen (Mix-In i−1 ≥ Mix-Out i) | **2** = Ketten-Neustarts 2 | — |
 | Score-Median | 79 | 83 |
-| Generierung | 51–56 s | 2 s |
+| Generierung | 51,4 s (Endlauf; Laeufe zuvor 42–56 s) | 2 s |
 | Empfehlungen | 1,1–1,5 s | — |
 
 Laufzeit je Paar (`build_pair_candidates`, 500 Zufallspaare im Gate): 8,7 ms →
@@ -99,16 +100,18 @@ diesen Track wie bisher mit Meldung aus (`_cue_export_allowed`).
 
 Overlap-Abweichungen: 27 (Plan-Clamp kuerzte Blenden, die ueber das Ende von B
 liefen) → Gate `blende_ueber_b_ende` (Entscheidung 18) → 12 aus
-`_outro_overlap_limit` (1-ms-Rundungsrest kostete einen Takt, Entscheidung 19)
-→ 0. Die zwischenzeitlich gemeldeten 18 waren ein Messfehler des Werkzeugs
-(es verglich Rang 1 statt des aktiven Ketten-Kandidaten) — behoben in `86e61ad`,
-Kennzahl `kette_neustarts` ergaenzt.
+`_outro_overlap_limit` (1-ms-Rundungsrest kostete einen Takt, Entscheidung 19;
+die 12 stammen aus einer Ad-hoc-Diagnose im Scratchpad und stehen nur im
+Commit-Text `7b5befb`, nicht in einer Ergebnisdatei — die gespeicherten Laeufe
+mit dem damaligen Werkzeug zeigen 25 bzw. 18) → 0. Die 18 waren ein Messfehler
+des Werkzeugs (es verglich Rang 1 statt des aktiven Ketten-Kandidaten) —
+behoben in `86e61ad` (Entscheidung 20), Kennzahl `kette_neustarts` ergaenzt.
 
 Score-Median 79 vs. 83: der Kandidaten-Score misst lokal am Mixpunkt (Groove,
 Bass, Lautheit, Struktur, Kick-Konflikt) und ist strenger als der trackweite
 Altpfad — Startwerte, der Hoertest ersetzt sie (Teil 3).
 
-## Die 19 Entscheidungen (Plan, Spec offen) — Kurzfassung
+## Die 20 Entscheidungen (Plan, Spec offen) — Kurzfassung
 
 1 Track-Felder `mix_in_point/mix_out_point` bleiben Analyse-Werte, `TransitionPlan`
 traegt den aktiven Kandidaten fuer alle Leser (Abweichung vom Spec-Wortlaut);
@@ -126,7 +129,8 @@ Statuszeile (Zugabe), `write_override` erhaelt Kandidaten-Schluessel; 11 Export
 13 dauerhafter Paar-Cache mit Reset-Hooks, Kandidatenpfad nur im BPM-Gate;
 14 Regressionswerkzeug; 15 sequentielle Konsistenz je Playlist; 16 Laufzeit-
 Optimierung; 17 Kettenwahl per DP; 18 Gate `blende_ueber_b_ende`;
-19 `_outro_overlap_limit` mit Gitter-Toleranz.
+19 `_outro_overlap_limit` mit Gitter-Toleranz; 20 Messwerkzeug vergleicht den
+aktiven Kandidaten (`kette_neustarts`).
 
 ## Benannte Abweichungen vom Spec-Wortlaut
 
@@ -139,7 +143,9 @@ Optimierung; 17 Kettenwahl per DP; 18 Gate `blende_ueber_b_ende`;
   (Teil-3-Verhalten geaendert, dort nachgetragen).
 - Entscheidungen 15/17: Sortierung bleibt paarweise (Spec), die Empfehlungen
   waehlen die Kette — die Plan-Punkte koennen daher von Rang 1 abweichen
-  (`kandidat_aktiv` nennt den Rang).
+  (`kandidat_aktiv` nennt den Rang). Der Karten-Score (`compatibility_score`
+  aus den Metriken) gehoert dabei zu Rang 1, nicht zum markierten
+  Ketten-Kandidaten, wenn `kandidat_aktiv > 1`.
 
 ## Hinweise
 
@@ -151,6 +157,22 @@ Optimierung; 17 Kettenwahl per DP; 18 Gate `blende_ueber_b_ende`;
   stille Kappung.
 - `candidate_preferences.json` ist `{}` (Teil 3 nicht uebernommen) — Regler
   Lautheit wirkt ueberall; `score_pair` nimmt die Toleranz-Gewichte.
+- `_PAIR_CANDIDATE_CACHE` ist dauerhaft, Schluessel = Track-Identitaet
+  (Dateipfad); Reset-Hooks gibt es fuer Wahl, Praeferenz, Toleranzen — nicht
+  fuer eine In-Session-Neuanalyse derselben Datei (aktuell kein solcher Pfad in
+  der App; kaeme einer dazu, muss er `reset_pair_candidate_cache()` rufen).
+
+## Waechter Tor 2 (MIT AUFLAGEN, eingearbeitet)
+
+1. Reorder-Pfad (`PlaylistPanel._update_table_after_reorder`) setzt die Spalten
+   Mix-In/Out nach der Neuberechnung aus dem Plan (Test
+   `test_reorder_setzt_mixpunkt_spalten_aus_neuen_empfehlungen`).
+2. Dateiname im Handoff korrigiert (`rekordbox_xml_exporter.py`).
+3. Exporter-Dedupe nutzt `QUANTIZE_TOLERANCE_SEC` statt 0.05 hart codiert.
+4. Skills (`hpg-playlist-scoring`, `hpg-mixpoint-engineering`), Docstring
+   `_kandidaten_fuer_paar` (Cache dauerhaft), Handoff (20 Entscheidungen,
+   Tabellenbeschriftung "aktiver Kandidat") berichtigt.
+5.–7. Hinweise Karten-Score, Cache-Schluessel, Herkunft der "12" oben eingetragen.
 
 ## Checkliste Hoerproben (Mensch — vom Agenten uebersprungen)
 

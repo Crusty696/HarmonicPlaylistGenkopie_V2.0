@@ -3507,6 +3507,12 @@ class PlaylistPanel(QWidget):
             bpm_tolerance=self.bpm_tolerance,
             scoring_context=self.scoring_context,
         )
+        # Spalten 10/11 haengen seit Teil 4 vom Paar ab (Plan des aktiven
+        # Kandidaten) — nach dem Umsortieren neu setzen (Waechter Tor 2 Teil 4)
+        for i, track in enumerate(self.playlist[:self.table.rowCount()]):
+            mix_in_item, mix_out_item = _mixpunkt_items(i, track, self.transition_recommendations)
+            self.table.setItem(i, 10, mix_in_item)
+            self.table.setItem(i, 11, mix_out_item)
 
 
 class MixTipsPanel(QWidget):

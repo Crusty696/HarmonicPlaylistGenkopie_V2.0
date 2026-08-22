@@ -794,3 +794,21 @@ def test_app_bpm_default_ist_zwei(qtbot, monkeypatch):
   assert window.library_panel.bpm_value_label.text() == "\u00b12"
   assert window.current_bpm_tolerance == 2.0
   assert window.playlist_panel.bpm_tolerance == 2.0
+
+
+def test_reorder_setzt_mixpunkt_spalten_aus_neuen_empfehlungen(qtbot, monkeypatch):
+  """Waechter Tor 2 Teil 4: nach Drag-Drop muessen Spalten 10/11 den Plan der
+  neuen Empfehlungen zeigen, nicht den alten Partner."""
+  rec = _rec_mit_kandidaten()
+  panel = main.PlaylistPanel()
+  qtbot.addWidget(panel)
+  monkeypatch.setattr(main, "compute_transition_recommendations", lambda *a, **k: [rec])
+  panel.set_playlist_data([rec.from_track, rec.to_track], {}, transition_recommendations=[rec], bpm_tolerance=2.0)
+  assert panel.table.item(1, 10).toolTip() == "Quelle: Kandidat Rang 1"
+  assert panel.table.item(1, 10).text().startswith("01:22") and panel.table.item(0, 11).text().startswith("02:44")
+  import dataclasses
+  rec2 = dataclasses.replace(rec, plan=dataclasses.replace(rec.plan, mix_in_b=109.7, mix_out_a=219.4))
+  monkeypatch.setattr(main, "compute_transition_recommendations", lambda *a, **k: [rec2])
+  panel._update_table_after_reorder()
+  assert panel.transition_recommendations == [rec2]
+  assert panel.table.item(1, 10).text().startswith("01:49") and panel.table.item(0, 11).text().startswith("03:39")

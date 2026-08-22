@@ -18,7 +18,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import List, Optional
 from ..downbeat import REFERENCE_BEATGRID_CONFIDENCE
-from ..models import Track
+from ..models import QUANTIZE_TOLERANCE_SEC, Track
 from .base_exporter import BaseExporter, ExportReport
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ class RekordboxXMLExporter(BaseExporter):
         gesehen: list[float] = []
         for k in getattr(rec, "kandidaten", []) or []:
             t = float(k["t_out"] if seite == "OUT" else k["t_in"])
-            if any(abs(t - g) <= 0.05 for g in gesehen):
+            if any(abs(t - g) <= QUANTIZE_TOLERANCE_SEC for g in gesehen):
                 continue
             gesehen.append(t)
             cand = k.get("out_a" if seite == "OUT" else "in_b", {}) or {}
