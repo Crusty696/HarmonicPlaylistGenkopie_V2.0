@@ -357,3 +357,56 @@ def test_score_pair_nimmt_praeferenz_gewichte_vor_toleranzen(monkeypatch):
     from hpg_core.genres import GENRE_TRANSITION_TOLERANCES
     s_expl, _, _ = score_pair(a, b, out, inn, 16, tolerances=GENRE_TRANSITION_TOLERANCES["Psytrance"])
     assert s_expl == pytest.approx(s_default)
+
+
+from hpg_core.pair_candidates import rank_pair_candidates, select_pair_candidate
+
+
+def test_bass_swap_geplant_hebt_kick_abzug_auf():
+    a, b = _track(), _track("b.mp3")
+    s_ohne, t_ohne, f = score_pair(a, b, _voll(160.0), _voll(80.0), 16)
+    s_mit, t_mit, f2 = score_pair(a, b, _voll(160.0), _voll(80.0), 16, bass_swap_geplant=True)
+    assert f["bass_swap_pflicht"] and f2["bass_swap_pflicht"]
+    assert t_mit["bass"] == pytest.approx(t_ohne["bass"] + 0.15) and s_mit > s_ohne
+
+
+def test_select_zieht_gespeicherte_wahl_nach_vorn(monkeypatch, tmp_path):
+    from hpg_core import candidate_choices as cc
+    monkeypatch.setenv("HPG_CANDIDATE_CHOICES_FILE", str(tmp_path / "c.json"))
+    cc.reset_cache()
+    g = _grid()
+    a = _track_mit_kandidaten("a.mp3", outs=[_voll(round(5 * g, 3), kick_aktiv=False),
+                                             _voll(round(6 * g, 3), kick_aktiv=False, schema=["sektion"])])
+    b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    erst = select_pair_candidate(a, b)
+    assert erst is not None and erst.rang == 1
+    alle = rank_pair_candidates(a, b)
+    letzte = alle[-1]
+    cc.merke("a.mp3", "b.mp3", t_out=letzte.t_out, t_in=letzte.t_in, blend_bars=letzte.blend_bars)
+    cc.reset_cache()
+    gewaehlt = select_pair_candidate(a, b)
+    assert (gewaehlt.t_out, gewaehlt.t_in, gewaehlt.blend_bars) == (letzte.t_out, letzte.t_in, letzte.blend_bars)
+    assert gewaehlt.rang == 1 and gewaehlt.flags.get("gespeicherte_wahl") is True
+    neu = rank_pair_candidates(a, b)
+    assert [p.rang for p in neu] == list(range(1, len(neu) + 1))
+    cc.merke("a.mp3", "b.mp3", t_out=1.0, t_in=2.0, blend_bars=8)
+    cc.reset_cache()
+    assert select_pair_candidate(a, b).flags.get("gespeicherte_wahl") is False
+    cc.reset_cache()
+
+
+def test_select_none_ohne_kandidaten():
+    a, b = _track(), _track("b.mp3")
+    assert select_pair_candidate(a, b) is None and rank_pair_candidates(a, b) == []
+
+
+def test_schema_rang_aus_praeferenzen_bricht_gleichstand(monkeypatch):
+    from hpg_core import candidate_preferences as cp
+    g = _grid()
+    o1 = _voll(round(5 * g, 3), kick_aktiv=False)                       # pssi_phrase
+    o2 = _voll(round(6 * g, 3), kick_aktiv=False, schema=["sektion"])   # gleicher Score
+    a = _track_mit_kandidaten("a.mp3", outs=[o1, o2])
+    b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    assert "pssi_phrase" in select_pair_candidate(a, b).out_a.schema
+    monkeypatch.setattr(cp, "schema_rangfolge", lambda genre: ["sektion", "pssi_phrase"])
+    assert "sektion" in select_pair_candidate(a, b).out_a.schema
