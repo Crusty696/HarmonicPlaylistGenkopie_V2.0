@@ -213,6 +213,11 @@ unveraendert.
 - Messung: `tools/paar_kandidaten_messen.py --cache | --json-tracks <json>`.
 - Gewichtsquelle in `score_pair` (Teil 3): explizites `tolerances` > Praeferenzen
   aus `hpg_core/candidate_preferences.py` (Hoertest-Fit) > `get_tolerances(genre)`.
+- Teil 4 (App): `rank_pair_candidates`/`select_pair_candidate` — gespeicherte
+  Wahl (`candidate_choices`) nach vorn, Tiebreak `schema_rang` (auch fuer das
+  Hauptschema), `bass_swap_geplant=True`; "Rang 1" lebt im `TransitionPlan`,
+  `Track.mix_in_point/mix_out_point` bleiben Analyse-Werte (Abweichung vom
+  Spec-Wortlaut, benannt).
 - Offen fuer Teil 3/4: `kandidaten_*_weight` an Fit (`rate_transitions.py`)
   und GUI-Regler anbinden; `KICK_KONFLIKT_ABZUG` bei Bass-Swap-Uebergang
   entfaellt in Teil 4; Rang-1 -> `Track.mix_*_point`, `scoring_context`.

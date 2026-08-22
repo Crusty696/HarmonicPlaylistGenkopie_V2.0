@@ -118,6 +118,35 @@ timbre .044, mood .044, loudness .060, structure .060; Summe 1.0, von
 STARTWERTE. `tolerances.write_override` und die GUI-Regler schreiben nur die
 alten Schluessel; Anbindung der neuen ist Teil 3/4.
 
+## Kandidatenpfad in der App (Teil 4, gebaut 2026-08-22)
+
+Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
+- `calculate_enhanced_compatibility`: tragen beide Tracks Kandidaten und liegt
+  das Paar im BPM-Gate, liefert `_kandidaten_fuer_paar` (Modul-Cache
+  `_PAIR_CANDIDATE_CACHE`, dauerhaft; `reset_pair_candidate_cache()` wird von
+  `candidate_choices`, `candidate_preferences.reset_cache`, `tolerances.reset_cache`
+  gerufen) die `PairCandidate`s in App-Reihenfolge; Rang 1 traegt
+  `overall_score` (= `kandidat.score` + `ai_bonus`, BPM-Hard-Gate bleibt),
+  `groove/bass/timbre/mood_match` = lokale Teilwerte, neue Felder
+  `loudness_match`, `structure_match`, `kandidat` (Dict). Ohne Kandidaten:
+  heutiger Pfad unveraendert.
+- `compute_transition_recommendations`: nach DJ-Brain, vor Clamp setzt der
+  aktive Kandidat `mix_out_a/mix_in_b/overlap`; `transition_type = "bass_swap"`
+  bei `flags.bass_swap_pflicht`; `TransitionRecommendation.kandidaten` (alle,
+  to_dict) und `kandidat_aktiv` (Rang, 0 = keiner). **Track-Felder werden nicht
+  mutiert** — "Rang 1" lebt im Plan; Leser: Preview, Timeline, Tabelle Mix-In/
+  Out (`mixpunkte_fuer_tabelle`), `on_ai_finished`, Export.
+- `rank_pair_candidates`/`select_pair_candidate` (pair_candidates): gespeicherte
+  Wahl (`candidate_choices.hole`) nach vorn, Tiebreak `schema_rang` aus dem
+  Hoertest, `bass_swap_geplant=True` (kein `KICK_KONFLIKT_ABZUG`, Flag bleibt).
+- HPG-001: die Wahl liegt NICHT im `scoring_context`, sondern in der Datei —
+  alle Konsumenten lesen sie auf demselben Weg (Abweichung vom Spec-Wortlaut,
+  benannt im Handoff Teil 4). Sechster Konsument: Kandidatentabelle.
+- Laufzeit: `rank_pair_candidates` ~9 ms je Paar (231 Tracks, gemessen) —
+  deshalb Cache + BPM-Gate vor dem Kandidatenpfad.
+- App-BPM-Default 2.0 (main.py: Slider, `current_bpm_tolerance`,
+  `AnalysisWorker`, `PlaylistPanel`); `playlist.py`-API-Defaults bleiben 3.0.
+
 ## Common Mistakes
 
 - Score-Tabelle aendern, ohne `tests/test_compatibility.py` und

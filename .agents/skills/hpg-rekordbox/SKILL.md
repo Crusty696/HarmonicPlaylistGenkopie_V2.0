@@ -143,3 +143,13 @@ analysierte-vs-unanalysierte Duplikate und mehrdeutige Basenames ab.
   `mix_candidates.py` zu erweitern.
 - Neuen Importer pro Track bauen statt `get_rekordbox_importer()`.
 - Nur eine ANLZ-Tag-Form unterstuetzen.
+
+## XML-Export mit Kandidaten (Teil 4, gebaut 2026-08-22)
+
+`RekordboxXMLExporter.export(playlist, path, name, transitions=None)`: mit
+Empfehlungen schreibt `_kandidaten_punkte` je Playlist-Position MIX OUT aus
+`transitions[i].plan.mix_out_a`, MIX IN aus `transitions[i-1].plan.mix_in_b`
+(nur bei `kandidat_aktiv > 0`), dazu Memory-Cues `HPG K<n> OUT|IN <schema>`
+(`_kandidaten_cues`: n je Seite fortlaufend 1..6 nach Dedupe gleicher
+Zeitpunkte — nicht `PairCandidate.rang`). `_cue_export_allowed(track, mix_in,
+mix_out)` prueft die effektiven Punkte; Gate `outro_covered` bleibt.

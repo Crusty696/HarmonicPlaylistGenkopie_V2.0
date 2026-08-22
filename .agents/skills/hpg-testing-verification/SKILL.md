@@ -122,7 +122,10 @@ Spec Abschnitt 3; Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-te
   `pair_candidates.score_pair` nimmt die Praeferenz-Gewichte, wenn kein
   explizites `tolerances` uebergeben wird. Tests sind per Autouse-Fixture in
   `tests/conftest.py` davon entkoppelt.
-- Hoerproben selbst (Menschen) stehen auf der Checkliste im Handoff Teil 3.
+- Seit Teil 4 scort `prepare --modus kandidaten` mit `bass_swap_geplant=True`
+  (pro_eq_swap ist ein Bass-Swap: kein `KICK_KONFLIKT_ABZUG` in der CSV).
+- Hoerproben selbst (Menschen) stehen auf der Checkliste im Handoff Teil 3/4.
+- App-Regression: `tools/playlist_kandidaten_messen.py --cache [--ohne-kandidaten]`.
 
 ## Was "fertig" heisst
 
