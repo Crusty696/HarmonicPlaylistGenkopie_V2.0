@@ -3,6 +3,7 @@ from .models import (
     key_to_camelot,
     effective_bpm_diff,
     get_camelot_components,
+    camelot_relation_score,
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
@@ -524,81 +525,14 @@ def _calculate_compatibility_inner(
     bpm_diff, bpm_relation = effective_bpm_diff(track1.bpm, track2.bpm)
     if bpm_diff > bpm_tolerance:
         return 0  # No compatibility if BPM difference is too high
-    if not track1.camelotCode or not track2.camelotCode:
-        # Half/Double-Time Penalty fuer fehlende Harmonic-Daten
-        base = 10
-        if bpm_relation != "direct":
-            base = int(base * BPM_HALF_DOUBLE_PENALTY)
-        return base
-
-    num1, letter1 = _get_camelot_components(track1.camelotCode)
-    num2, letter2 = _get_camelot_components(track2.camelotCode)
-
-    if num1 == 0 or num2 == 0:  # Invalid camelot codes
-        # AUDIT-FIX F21 (2026-07-24): Half/Double-Penalty konsistent anwenden
-        # (der strukturgleiche Zweig oben bei fehlendem Code tut es auch).
-        base = 10
-        if bpm_relation != "direct":
-            base = int(base * BPM_HALF_DOUBLE_PENALTY)
-        return base
-
-    # Half/Double-Time Penalty-Faktor
     penalty = BPM_HALF_DOUBLE_PENALTY if bpm_relation != "direct" else 1.0
-
-    # Direct matches (always allowed)
-    if num1 == num2 and letter1 == letter2:
-        return int(100 * penalty)  # Same key
-    if num1 == num2 and letter1 != letter2:
-        # H4-Fix: richtungsabhaengig — Moll->Dur (A->B) wirkt als Energy-Boost,
-        # Dur->Moll (B->A) als leichter Energy-Drop. Vorher fing diese Regel
-        # beide Richtungen mit 90 ab und der Boost/Drop-Code weiter unten war tot.
-        if letter1 == "A" and letter2 == "B":
-            return int(90 * penalty)  # Relative minor -> major (Energy Boost)
-        return int(85 * penalty)  # Relative major -> minor (Energy Drop)
-
-    # Adjacent keys (Camelot wheel)
-    next_num_cw = (num1 % 12) + 1
-    next_num_ccw = (num1 - 2 + 12) % 12 + 1
-
-    if letter1 == letter2:  # Same mode, adjacent numbers
-        if num2 == next_num_cw or num2 == next_num_ccw:
-            return int(80 * penalty)
-
-    # H5-Fix: strictness wirkt jetzt auch auf die lockeren Kategorien
-    # (experimentell/diagonal), nicht nur auf den Fallback-Score.
-    # Default 7 = neutral (Faktor 1.0), 10 = streng, 1 = locker.
-    # AUDIT-FIX F03 (2026-07-24): Obergrenze 1.0 statt 1.2 — eine experimentelle
-    # Technik darf den sicheren ±1-Nachbarn (feste 80) NIE ueberholen. Vorher
-    # wurde +4 bei strictness<=5 zu 84 und schlug den Quintschritt.
-    loose_factor = max(0.4, min(1.0, 1.0 - (strictness - 7) * 0.08))
-
-    # AUDIT-FIX F04 (2026-07-24): "+2 Energy Boost" (8A->10A, Ganztonschritt)
-    # war komplett unbekannt und fiel in den Rest-Zweig (Score wie ein echter
-    # Key-Clash). Als eigene Technik zwischen ±1 (80) und +4 (70) einordnen.
-    plus_two_num = (num1 + 2 - 1) % 12 + 1
-    if num2 == plus_two_num and letter1 == letter2:
-        return int(75 * penalty * loose_factor)
-
-    # Experimental techniques (can be disabled)
-    if allow_experimental:
-        # Plus Four Technique (e.g., 8A -> 12A)
-        plus_four_num = (num1 + 4 - 1) % 12 + 1
-        if num2 == plus_four_num and letter1 == letter2:
-            return int(70 * penalty * loose_factor)
-
-        # Plus Seven Technique (+7 Camelot-Positionen — energetischer
-        # "Mood-Shift", deutlich dissonanter als der ±1-Quintschritt)
-        plus_seven_num = (num1 + 7 - 1) % 12 + 1
-        if num2 == plus_seven_num and letter1 == letter2:
-            return int(65 * penalty * loose_factor)
-
-    # Diagonal Mixing
-    if letter1 != letter2:
-        if num2 == next_num_cw or num2 == next_num_ccw:
-            return int(60 * penalty * loose_factor)
-
-    # Return low score (affected by strictness - stricter = lower fallback)
-    return max(5, int((15 - strictness) * penalty))
+    # Camelot-Tabelle zentral in models.camelot_relation_score (2026-08-22),
+    # damit die Kandidaten-Paarbewertung (camelot_lokal) dieselbe Tabelle nutzt.
+    return camelot_relation_score(
+        track1.camelotCode, track2.camelotCode,
+        harmonic_strictness=strictness, allow_experimental=allow_experimental,
+        penalty=penalty,
+    )
 
 
 # Global thread-local-like cache containers for the current playlist generation

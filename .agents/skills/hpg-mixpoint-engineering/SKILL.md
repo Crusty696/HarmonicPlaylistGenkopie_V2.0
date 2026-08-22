@@ -167,6 +167,54 @@ Cue-Positionsheuristik ("2. Cue = Mix-In, letzter = Mix-Out") ist entfernt.
 benannter Cue (unveraendert) — die Rang-1-Auswahl aus der Paar-Bewertung ist
 Teil 2/4. CACHE_VERSION 34.
 
+## Kandidaten Teil 2 (gebaut 2026-08-22) — Paarung und Bewertung
+
+Modul `hpg_core/pair_candidates.py`, Plan
+`docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil2-paarung.md`.
+`build_pair_candidates(track_a, track_b, *, energy_direction=None,
+harmonic_strictness=7, allow_experimental=True, tolerances=None)` liefert
+sortierte `PairCandidate`s (`out_a`, `in_b`, `blend_bars`, `overlap_sec`,
+`score`, `teilwerte`, `flags`, `begruendung`, `rang`, `bpm_relation`).
+Reine Funktionen, kein Audio, **nichts wird am Track veraendert** (kein
+CACHE_VERSION-Bump); `Track.mix_in_point/mix_out_point` bleiben bis Teil 4
+unveraendert.
+
+- **Gates** (`pair_gate_reasons`, Gruende stabil benannt): `bpm` (effektiv
+  > `PAAR_BPM_MAX` 2.0), `pitch` (`diff/bpm_a` > 4 %, unter dem 2-BPM-Gate
+  rechnerisch nie aktiv), `coverage` (`unanalysed`), `outro_covered`,
+  `blende_im_outro` (`out_a.t + blend <= Outro-Start`), `in_im_intro`,
+  `in_ausserhalb`, `gitter_out/gitter_in` (PSSI-Gitter bzw. Phrasenraster,
+  `QUANTIZE_TOLERANCE_SEC`). Ausnahme: **nur** ein manueller Cue mit
+  `CUE_IN_PATTERN`/`CUE_OUT_PATTERN`, der per `mix_candidates._quantize` auf
+  `cand.t` faellt, ist guard-frei (`_guard_frei`); "Drop 2" nicht.
+- **Blenden** (`blend_bars_options`): `get_mix_profile(genre_a).transition_bars`
+  (beide), Outro-Deckel auf ganze Takte, Half/Double `<= 16`, unter
+  `MIN_TRANSITION_BARS` (8) entfaellt die Laenge.
+- **Score** (`score_pair`): zehn Teilwerte je [0,1] oder None — harmonic
+  (`models.camelot_relation_score` auf `camelot_lokal`, Gewicht x
+  min(`key_confidence_lokal`)), bpm (`exp(-diff/1.0)`), energy (Richtung +
+  `energy_trend`), genre, groove (0.6 Bass/0.4 Onset, `_spreize`, Syncopation,
+  percussive > 0.7 Abzug / < 0.3 Flag), bass (sub/punch, `bass_rms_dbfs`,
+  beide `kick_aktiv` -> Flag `bass_swap_pflicht` + Abzug), timbre (+ Mitten/
+  Hoehen-Delta), mood (+ Dur/Moll -0.15, PSSI-mood), loudness (|dLUFS| 0 -> 1,
+  >= 3 dB -> 0), structure (`neuheit`, `traegt_allein`, Label-Bonus).
+  Kombination `playlist.combine_weighted` mit `kandidaten_*_weight` (zehn,
+  Summe 1.0, `genres._TOLERANCE_DEFAULTS`, JSON-Override); Half/Double x 0.85
+  einmal auf den Gesamtscore; Vocals beidseitig -0.06. `blend_bars` ist kein
+  Score-Merkmal (Spec Abschnitt 1: widerlegt).
+- **Dedupe/Kappung** (`dedupe_and_cap`): gleiche Kombination = |dt| < Phrase -
+  Toleranz beidseitig, gleiches Hauptschema, gleiche Blende; max.
+  `PAAR_MAX_KOMBINATIONEN` 6 Zeitpunkt-Kombinationen x 2 Blenden; je
+  vorhandenem Schema mindestens eine Kombination; Vertreter verschiedener
+  Schemata auf demselben Punkt werden vereinigt.
+- **Begruendung** nur aus Teilwerten/Flags (`begruendung_aus_teilwerten`).
+- Alle neuen Zahlen ausser Spec-Werten sind STARTWERTE (`config.py`, Block
+  "Paarung und Bewertung"); der Hoertest (Teil 3) ersetzt sie.
+- Messung: `tools/paar_kandidaten_messen.py --cache | --json-tracks <json>`.
+- Offen fuer Teil 3/4: `kandidaten_*_weight` an Fit (`rate_transitions.py`)
+  und GUI-Regler anbinden; `KICK_KONFLIKT_ABZUG` bei Bass-Swap-Uebergang
+  entfaellt in Teil 4; Rang-1 -> `Track.mix_*_point`, `scoring_context`.
+
 ## Common Mistakes
 
 - `> 0` statt `>= 0.0` gegen den Sentinel pruefen.
@@ -176,3 +224,7 @@ Teil 2/4. CACHE_VERSION 34.
 - Innerhalb der Kette runden.
 - Mixpoint-Logik aendern ohne `CACHE_VERSION`-Bump -> Skill
   `hpg-cache-persistence`.
+- In `pair_candidates` `playlist` auf Modulebene importieren (Importzyklus ab
+  Teil 4) — nur lazy in Funktionen.
+- `"benannter_cue" in schema` als Guard-Ausnahme lesen — nur das IN/OUT-Muster
+  manueller Cues ist guard-frei.

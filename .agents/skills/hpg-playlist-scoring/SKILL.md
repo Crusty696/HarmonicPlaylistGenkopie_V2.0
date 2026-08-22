@@ -98,6 +98,26 @@ Vertrag Richtung Renderer und Anzeige).
 `SetTimeline` / `compute_set_timeline` [:2172] liefert die Zeitleisten-Ansicht
 (Phasen, Peak-Track, Energie-Kurve).
 
+## Camelot-Tabelle als reine Funktion (2026-08-22)
+
+`models.camelot_relation_score(code_a, code_b, *, harmonic_strictness=7,
+allow_experimental=True, penalty=1.0) -> int` traegt die Punktetabelle oben;
+`_calculate_compatibility_inner` prueft nur noch das BPM-Gate und delegiert
+(`penalty` = `BPM_HALF_DOUBLE_PENALTY` bei half/double). Dieselbe Tabelle
+bewertet in `hpg_core/pair_candidates.py` die lokalen `camelot_lokal` der
+Mixpunkt-Kandidaten. `playlist._get_camelot_components` bleibt, weil
+`tests/test_compatibility.py` es von dort importiert.
+
+## Kandidaten-Gewichte (2026-08-22)
+
+`genres._TOLERANCE_DEFAULTS` traegt neben den acht Track-Gewichten
+(`*_weight`, Summe 1.0, unveraendert) zehn `kandidaten_*_weight`
+(harmonic .140, bpm .106, energy .106, genre .106, groove .264, bass .070,
+timbre .044, mood .044, loudness .060, structure .060; Summe 1.0, von
+`_validate_genre_tables` geprueft) fuer die Paar-Bewertung der Kandidaten —
+STARTWERTE. `tolerances.write_override` und die GUI-Regler schreiben nur die
+alten Schluessel; Anbindung der neuen ist Teil 3/4.
+
 ## Common Mistakes
 
 - Score-Tabelle aendern, ohne `tests/test_compatibility.py` und
