@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from dataclasses import asdict, dataclass, field, fields
 
+from . import candidate_preferences
 from .config import (
     BASS_RMS_DELTA_MAX_DB, BPM_HALF_DOUBLE_PENALTY, ENERGIE_TREND_WIDERSPRUCH,
     KICK_KONFLIKT_ABZUG, LUFS_DELTA_MAX_DB, MIDS_HIGHS_DELTA_MAX, MIN_TRANSITION_BARS,
@@ -326,8 +327,14 @@ def _teil_struktur(out_a: MixCandidate, in_b: MixCandidate) -> float | None:
     return max(0.0, min(1.0, wert))
 
 
-def _gewichte(tol: dict) -> dict[str, float]:
-    return {f: float(tol.get(f"kandidaten_{f}_weight", 0.0)) for f in FAKTOREN}
+def _gewichte(tol: dict, genre: str, explizit: bool) -> dict[str, float]:
+    """Gewichtsquelle: ein explizit uebergebenes `tolerances` gewinnt immer;
+    sonst schlagen Praeferenzen aus dem Hoertest (candidate_preferences.json)
+    die geladenen Toleranzen; ohne Eintrag fuer das Genre gelten die
+    kandidaten_*_weight der Toleranzen."""
+    pref = None if explizit else candidate_preferences.kandidaten_gewichte(genre)
+    quelle = pref if pref is not None else tol
+    return {f: float(quelle.get(f"kandidaten_{f}_weight", 0.0)) for f in FAKTOREN}
 
 
 def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCandidate,
@@ -361,7 +368,7 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
         "loudness": _teil_lautheit(out_a, in_b),
         "structure": _teil_struktur(out_a, in_b),
     }
-    gew = _gewichte(tol)
+    gew = _gewichte(tol, genre_a, explizit=tolerances is not None)
     if teil["harmonic"] is not None and _beide(out_a.key_confidence_lokal, in_b.key_confidence_lokal):
         gew["harmonic"] *= max(0.0, min(1.0, min(out_a.key_confidence_lokal, in_b.key_confidence_lokal)))
     score = combine_weighted(teil, gew)

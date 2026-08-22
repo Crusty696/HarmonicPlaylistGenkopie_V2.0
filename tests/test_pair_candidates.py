@@ -340,3 +340,20 @@ def test_begruendung_aus_teilwerten_fester_text():
          "benannter_cue": False}, 16)
     assert "Harmonie stark" in txt and "Groove mittel" in txt and "Lautheit nicht messbar" in txt
     assert "Bass-Swap noetig" in txt and "16 Takte" in txt
+
+
+def test_score_pair_nimmt_praeferenz_gewichte_vor_toleranzen(monkeypatch):
+    from hpg_core import candidate_preferences as cp
+    a, b = _track(), _track("b.mp3")
+    out, inn = _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False, camelot_lokal="3A")
+    s_default, _, _ = score_pair(a, b, out, inn, 16)
+    nur_harmonie = {f"kandidaten_{f}_weight": (1.0 if f == "harmonic" else 0.0) for f in (
+        "harmonic", "bpm", "energy", "genre", "groove", "bass", "timbre", "mood", "loudness", "structure")}
+    monkeypatch.setattr(cp, "kandidaten_gewichte", lambda genre: nur_harmonie)
+    s_pref, _, _ = score_pair(a, b, out, inn, 16)
+    assert s_pref == pytest.approx(0.65)          # 8A -> 3A = 65/100, nur Harmonie zaehlt
+    assert s_pref != pytest.approx(s_default)
+    # explizites tolerances-Argument gewinnt vor der Praeferenz
+    from hpg_core.genres import GENRE_TRANSITION_TOLERANCES
+    s_expl, _, _ = score_pair(a, b, out, inn, 16, tolerances=GENRE_TRANSITION_TOLERANCES["Psytrance"])
+    assert s_expl == pytest.approx(s_default)

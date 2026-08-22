@@ -90,6 +90,40 @@ Erfolg.
 
 Hilfsskripte aus `tools/` muessen den Parent-Pfad zu `sys.path` haengen.
 
+## Hoertest Kandidatenmodus (Teil 3, gebaut 2026-08-22)
+
+Spec Abschnitt 3; Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil3-hoertest.md`.
+- `tools/rate_transitions.py prepare --modus kandidaten --anzahl N --out <Satz>`:
+  je Paar (Gates wie heute) alle `PairCandidate`s als Clip `<pair_id>_k<n>.wav`
+  (`rendere_kandidat`: Zeitpunkte + Blende des Kandidaten, `pro_eq_swap`, 8 s
+  Vor-/Nachlauf; Blende ueber `MAX_TRANSITION_OVERLAP_SECONDS` oder Restlaenge
+  faellt weg). Dateien: `bewertung.csv` (`pair_id, clip_id, note, gewaehlt,
+  zeit`), `merkmale.csv` (`MERKMALE_KANDIDATEN_SPALTEN`: zehn Teilwerte, score,
+  Schema/Provenienz/Confidence, Blende, bpm/genre/key-Kontext), `reihenfolge.json`
+  (Seed je Paar), `LIESMICH-kandidaten.txt`. `--modus einzel` (Default) =
+  heutiger Satz, unveraendert.
+- `tools/hoertest_server.py --dir <Satz>`: erkennt den Kandidatensatz an der
+  Spalte `clip_id` (kein Schalter); Seite je Paar, Note 1-5 + "bester" (Taste B),
+  POST `/note` `{pair_id, clip_id, note|null}`, POST `/bester` `{pair_id, clip_id}`,
+  Zeitstempel; `/daten` liefert je Clip NUR `clip_id, clip, note, gewaehlt,
+  crossfade_sek` (verdeckt). Mobil: Server samt Satz kopieren, Kontext kommt
+  aus `merkmale.csv`, wenn kein Cache da ist.
+- `tools/rate_transitions.py fit --modus kandidaten --dir <Satz> [--cache <db>]`
+  (`--genre` wird hier ignoriert): Zielgroesse 1
+  Note (L2-Logistik), Zielgroesse 2 Paarvergleich (Bradley-Terry, Differenzen
+  Sieger-Verlierer ohne Spiegelung, unstandardisiert), nur **identifizierbare**
+  Merkmale (Innerhalb-Paar-Streuung >= `PAAR_STREUUNG_MIN`) werden neu
+  gewichtet, Holdout nach Tracks (`HOLDOUT_ANTEIL` 0.30 der Tracks, ~51 % der
+  Clips), AUC/Trefferquote vs. Zufallsbasis; `uebernahme_erlaubt` entscheidet:
+  ja -> `hpg_core/data/candidate_preferences.json`, nein ->
+  `<Satz>/candidate_preferences_entwurf.json` + Grund.
+- `hpg_core/candidate_preferences.py`: Lader (mitgeliefert + Override
+  `%LOCALAPPDATA%\HPG\candidate_preferences.json` / `HPG_CANDIDATE_PREFERENCES_FILE`);
+  `pair_candidates.score_pair` nimmt die Praeferenz-Gewichte, wenn kein
+  explizites `tolerances` uebergeben wird. Tests sind per Autouse-Fixture in
+  `tests/conftest.py` davon entkoppelt.
+- Hoerproben selbst (Menschen) stehen auf der Checkliste im Handoff Teil 3.
+
 ## Was "fertig" heisst
 
 1. Volle Suite gruen, Zahl **selbst gesehen**

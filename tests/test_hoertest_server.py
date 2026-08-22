@@ -175,3 +175,62 @@ def test_lade_uebersicht_kommt_ohne_passende_merkmale_aus():
   assert zeile["pair_id"] == "007"
   assert zeile["track_a"] == ""
   assert zeile["crossfade_sek"] == ""
+
+
+# Kandidatenmodus (Spec 2026-08-21 Abschnitt 3, Plan Teil 3)
+from tools.hoertest_server import (
+  BEWERTUNG_KANDIDATEN_SPALTEN, KANDIDAT_ANZEIGE_FELDER, ist_kandidatensatz,
+  lade_uebersicht_kandidaten, merge_kandidaten_bewertung,
+)
+
+
+def test_ist_kandidatensatz_an_clip_id_spalte():
+  assert ist_kandidatensatz([{"pair_id": "001", "clip_id": "001_k1", "note": "", "gewaehlt": "", "zeit": ""}])
+  assert not ist_kandidatensatz([{"pair_id": "001", "clip": "clips/001.wav", "bewertung": ""}])
+  assert not ist_kandidatensatz([])
+  assert BEWERTUNG_KANDIDATEN_SPALTEN == ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+
+
+def test_merge_kandidaten_note_und_bester_exklusiv_mit_zeit():
+  zeilen = [
+    {"pair_id": "001", "clip_id": "001_k1", "note": "", "gewaehlt": "", "zeit": ""},
+    {"pair_id": "001", "clip_id": "001_k2", "note": "", "gewaehlt": "1", "zeit": "alt"},
+    {"pair_id": "002", "clip_id": "002_k1", "note": "", "gewaehlt": "", "zeit": ""},
+  ]
+  neu = merge_kandidaten_bewertung(zeilen, pair_id="001", clip_id="001_k1", note=4, zeit="2026-08-22T20:00:00")
+  assert neu[0]["note"] == "4" and neu[0]["zeit"] == "2026-08-22T20:00:00"
+  neu = merge_kandidaten_bewertung(neu, pair_id="001", clip_id="001_k1", bester=True, zeit="2026-08-22T20:01:00")
+  assert neu[0]["gewaehlt"] == "1" and neu[1]["gewaehlt"] == ""    # exklusiv je Paar
+  assert neu[2]["gewaehlt"] == "" and neu[1]["zeit"] == "alt"
+  neu = merge_kandidaten_bewertung(neu, pair_id="001", clip_id="001_k1", note=None, zeit="t")
+  assert neu[0]["note"] == ""
+
+
+def test_lade_uebersicht_kandidaten_gruppiert_verdeckt_und_in_reihenfolge():
+  merk = [
+    {"pair_id": "001", "clip_id": "001_k1", "clip": "clips/001_k1.wav", "score": "0.9", "schema_out": "pssi_phrase",
+     "crossfade_sek": "27.4", "track_a": "C:/x/a.mp3", "track_b": "C:/x/b.mp3", "harmonic": "0.9",
+     "bpm_a": "140.0", "bpm_b": "141.0", "genre_a": "Psytrance", "genre_b": "Psytrance", "key_a": "8A", "key_b": "9A"},
+    {"pair_id": "001", "clip_id": "001_k2", "clip": "clips/001_k2.wav", "score": "0.5", "schema_out": "sektion",
+     "crossfade_sek": "54.9", "track_a": "C:/x/a.mp3", "track_b": "C:/x/b.mp3", "harmonic": "0.9",
+     "bpm_a": "140.0", "bpm_b": "141.0", "genre_a": "Psytrance", "genre_b": "Psytrance", "key_a": "8A", "key_b": "9A"},
+  ]
+  bew = [
+    {"pair_id": "001", "clip_id": "001_k1", "note": "", "gewaehlt": "", "zeit": ""},
+    {"pair_id": "001", "clip_id": "001_k2", "note": "3", "gewaehlt": "1", "zeit": "t"},
+  ]
+  reihenfolge = {"001": {"seed": 1, "clips": ["001_k2", "001_k1"]}}
+  infos = {"c:/x/a.mp3": {"bpm": 140.0, "genre": "Psytrance", "key": "8A"}}
+  paare = lade_uebersicht_kandidaten(merk, bew, reihenfolge, infos)
+  assert [p["pair_id"] for p in paare] == ["001"]
+  p = paare[0]
+  assert [c["clip_id"] for c in p["clips"]] == ["001_k2", "001_k1"]
+  assert p["bpm_a"] == 140.0 and p["genre_a"] == "Psytrance" and p["key_a"] == "8A"
+  assert p["bpm_b"] == "141.0" and p["key_b"] == "9A"        # B nicht im Cache -> aus merkmale.csv
+  c = p["clips"][0]
+  assert c["note"] == "3" and c["gewaehlt"] == "1" and c["crossfade_sek"] == "54.9"
+  assert set(c) == set(KANDIDAT_ANZEIGE_FELDER) == {"clip_id", "clip", "note", "gewaehlt", "crossfade_sek"}
+  assert "score" not in c and "schema_out" not in c and "harmonic" not in c
+  # ganz ohne Cache: Kontext kommt vollstaendig aus merkmale.csv
+  p2 = lade_uebersicht_kandidaten(merk, bew, {}, {})[0]
+  assert p2["bpm_a"] == "140.0" and p2["genre_a"] == "Psytrance" and p2["key_a"] == "8A"

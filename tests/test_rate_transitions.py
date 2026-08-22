@@ -635,3 +635,201 @@ def test_sammle_kandidaten_bpm_grenze_inklusive(monkeypatch):
     a = _GateTrack("A.wav", 140.0)
     assert rate_transitions.sammle_kandidaten([a, _GateTrack("B.wav", 142.0)]) != []
     assert rate_transitions.sammle_kandidaten([a, _GateTrack("C.wav", 142.5)]) == []
+
+
+# ===========================================================================
+# Kandidatenmodus (Spec 2026-08-21 Abschnitt 3, Plan Teil 3)
+# ===========================================================================
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+
+from tools.rate_transitions import (
+    BEWERTUNG_KANDIDATEN_SPALTEN, MERKMALE_KANDIDATEN_SPALTEN, clip_id_fuer,
+    kandidaten_zeilen, reihenfolge_fuer_paar,
+)
+
+
+def _pc(t_out, t_in, bars, score, teil=None, schema_out=("pssi_phrase",), schema_in=("auto_cue",)):
+    from hpg_core.mix_candidates import MixCandidate
+    from hpg_core.pair_candidates import PairCandidate
+    o = MixCandidate(t=t_out, schema=list(schema_out), provenance="rekordbox_pssi", confidence=0.8)
+    i = MixCandidate(t=t_in, schema=list(schema_in), provenance="rekordbox_auto", confidence=0.7)
+    return PairCandidate(out_a=o, in_b=i, blend_bars=bars, overlap_sec=bars * 1.714, score=score,
+                         teilwerte=teil or {"harmonic": 0.9, "bpm": 1.0, "loudness": None},
+                         flags={}, begruendung="x", rang=1, bpm_relation="direct")
+
+
+def _ns_track(name, bpm=140.0, camelot="8A", genre="Psytrance"):
+    return SimpleNamespace(filePath=name, bpm=bpm, camelotCode=camelot, detected_genre=genre, genre=genre,
+                           duration=400.0, first_downbeat=0.0, downbeat_confidence=1.0)
+
+
+def test_clip_id_und_spalten():
+    assert clip_id_fuer("007", 3) == "007_k3"
+    assert BEWERTUNG_KANDIDATEN_SPALTEN == ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+    assert MERKMALE_KANDIDATEN_SPALTEN[:3] == ("pair_id", "clip_id", "clip")
+    assert "score" in MERKMALE_KANDIDATEN_SPALTEN and "t_out" in MERKMALE_KANDIDATEN_SPALTEN
+    assert "schemata_out" in MERKMALE_KANDIDATEN_SPALTEN and "bpm_a" in MERKMALE_KANDIDATEN_SPALTEN
+    assert MERKMALE_KANDIDATEN_SPALTEN[-2:] == ("track_a", "track_b")
+
+
+def test_kandidaten_zeilen_schreiben_teilwerte_und_leer_bei_none():
+    a, b = _ns_track("a.mp3"), _ns_track("b.mp3", camelot="9A")
+    bew, merk = kandidaten_zeilen("007", [_pc(160.0, 80.0, 16, 0.8)], a, b, clips=["clips/007_k1.wav"])
+    assert bew == [{"pair_id": "007", "clip_id": "007_k1", "note": "", "gewaehlt": "", "zeit": ""}]
+    m = merk[0]
+    assert m["clip"] == "clips/007_k1.wav" and m["harmonic"] == 0.9 and m["loudness"] == ""
+    assert m["schema_out"] == "pssi_phrase" and m["schemata_out"] == "pssi_phrase"
+    assert m["blend_bars"] == 16 and m["t_out"] == 160.0
+    assert m["provenance_in"] == "rekordbox_auto" and m["confidence_out"] == 0.8
+    assert m["crossfade_sek"] == pytest.approx(16 * 1.714, abs=0.01)
+    assert m["bpm_a"] == 140.0 and m["key_b"] == "9A" and m["genre_a"] == "Psytrance"
+
+
+def test_reihenfolge_fuer_paar_deterministisch_und_vollstaendig():
+    clips = ["007_k1", "007_k2", "007_k3", "007_k4"]
+    r1 = reihenfolge_fuer_paar("007", clips, seed_satz=20260820)
+    r2 = reihenfolge_fuer_paar("007", clips, seed_satz=20260820)
+    assert r1 == r2 and sorted(r1["clips"]) == clips and r1["seed"] == 20260820 + 7
+    assert reihenfolge_fuer_paar("008", clips, seed_satz=20260820)["seed"] == 20260828
+
+
+def test_rendere_kandidat_verwirft_blende_ueber_deckel(monkeypatch):
+    from tools import rate_transitions as rt
+    pc = _pc(100.0, 60.0, 48, 0.5)                                    # 48 Takte * 1.714 = 82 s > 64
+    a, b = _ns_track("a.mp3"), _ns_track("b.mp3")
+    monkeypatch.setattr(rt, "render_transition_clip", lambda spec, pfad: pfad)
+    with pytest.raises(ValueError):
+        rt.rendere_kandidat(a, b, pc, "001", 1, Path("."))
+
+
+from tools.rate_transitions import (
+    _kennzahlen, _standardisiere_mit, auc, baue_candidate_preferences, bootstrap_paarvergleich,
+    fit_paarvergleich, gewichte_aus_paarvergleich, holdout_nach_tracks, identifizierbare_merkmale,
+    nur_mit_note, paarvergleich_daten, schema_rangfolge, trefferquote_paarvergleich,
+    uebernahme_erlaubt, verbinde_bewertungen_kandidaten,
+)
+
+
+def _merk(pid, cid, ta, tb, **teil):
+    z = {"pair_id": pid, "clip_id": cid, "track_a": ta, "track_b": tb, "schema_out": "pssi_phrase",
+         "schema_in": "auto_cue", "schemata_out": "pssi_phrase|sektion", "schemata_in": "auto_cue"}
+    z.update({k: ("" if v is None else v) for k, v in teil.items()})
+    return z
+
+
+def test_verbinde_bewertungen_kandidaten_liest_note_gewaehlt_und_verwirft_leere_merkmale():
+    merk = [_merk("001", "001_k1", "a", "b", harmonic=0.9, groove=0.8),
+            _merk("001", "001_k2", "a", "b", harmonic=0.2, groove=None),
+            _merk("002", "002_k1", "a", "c", harmonic=0.5, groove=0.5)]
+    bew = [{"pair_id": "001", "clip_id": "001_k1", "note": "5", "gewaehlt": "1", "zeit": "t"},
+           {"pair_id": "001", "clip_id": "001_k2", "note": "2", "gewaehlt": "", "zeit": "t"},
+           {"pair_id": "002", "clip_id": "002_k1", "note": "", "gewaehlt": "", "zeit": ""}]
+    zeilen, ohne, verworfen = verbinde_bewertungen_kandidaten(merk, bew, merkmale=("harmonic", "groove"))
+    # 001_k2: leeres Merkmal -> verworfen; 002_k1: ohne Note -> bleibt (note None) fuer den Paarvergleich
+    assert [z["clip_id"] for z in zeilen] == ["001_k1", "002_k1"] and ohne == 1 and verworfen == 1
+    assert zeilen[0]["note"] == 5 and zeilen[0]["bewertung"] == 5 and zeilen[0]["gewaehlt"] is True
+    assert zeilen[0]["tracks"] == ("a", "b") and zeilen[1]["note"] is None
+    assert zeilen[0]["schemata_out"] == ["pssi_phrase", "sektion"]
+    assert [z["clip_id"] for z in nur_mit_note(zeilen)] == ["001_k1"]
+
+
+def test_auc_rangstatistik():
+    assert auc(np.array([1, 1, 0, 0]), np.array([0.9, 0.8, 0.2, 0.1])) == pytest.approx(1.0)
+    assert auc(np.array([1, 0]), np.array([0.5, 0.5])) == pytest.approx(0.5)
+    assert auc(np.array([1, 1]), np.array([0.5, 0.6])) is None
+
+
+def test_holdout_nach_tracks_trennt_clips_deterministisch():
+    zeilen = [{"tracks": ("a", "b")}, {"tracks": ("c", "d")}, {"tracks": ("a", "d")}, {"tracks": ("e", "f")}]
+    train, hold = holdout_nach_tracks(zeilen, anteil=0.5, seed=1)
+    assert len(train) + len(hold) == 4
+    # dicht: jeder Holdout-Clip enthaelt mindestens einen Track, der in KEINEM
+    # Train-Clip vorkommt (Train = nur Clips, deren beide Tracks ausserhalb liegen)
+    train_tracks = {t for z in train for t in z["tracks"]}
+    assert hold and all(set(z["tracks"]) - train_tracks for z in hold)
+    assert holdout_nach_tracks(zeilen, anteil=0.5, seed=1) == (train, hold)
+
+
+def _synth_paare(n=60, seed=3):
+    rng = np.random.default_rng(seed)
+    zeilen = []
+    for p in range(n):
+        xs = rng.uniform(0, 1, size=(3, 3))
+        nutzen = 3.0 * xs[:, 0] + 0.0 * xs[:, 1]
+        sieger = int(np.argmax(nutzen))
+        for k in range(3):
+            zeilen.append({"pair_id": f"{p:03d}", "clip_id": f"{p:03d}_k{k+1}", "note": 3, "bewertung": 3,
+                           "gewaehlt": k == sieger,
+                           "merkmale": {"harmonic": xs[k, 0], "groove": xs[k, 1], "bpm": 0.9},  # bpm je Paar konstant
+                           "tracks": (f"a{p}", f"b{p}"), "genre": "Psytrance",
+                           "schema_out": "pssi_phrase", "schema_in": "auto_cue",
+                           "schemata_out": ["pssi_phrase"], "schemata_in": ["auto_cue"]})
+    return zeilen
+
+
+def test_paarvergleich_findet_bekannte_praeferenz_und_identifizierbarkeit():
+    zeilen = _synth_paare()
+    X, gruppen = paarvergleich_daten(zeilen, ("harmonic", "groove", "bpm"))
+    assert X.shape == (120, 3) and len(gruppen) == 120            # 60 Paare x 2 Verlierer, keine Spiegelung
+    assert identifizierbare_merkmale(X, ("harmonic", "groove", "bpm")) == ["harmonic", "groove"]
+    beta = fit_paarvergleich(X)
+    assert beta[0] > 1.0 and abs(beta[1]) < beta[0] / 3 and beta[2] == pytest.approx(0.0, abs=1e-6)
+    treffer, basis = trefferquote_paarvergleich(beta, zeilen, ("harmonic", "groove", "bpm"))
+    assert treffer > 0.8 and basis == pytest.approx(1 / 3)
+
+
+def test_bootstrap_paarvergleich_zieht_ueber_paare():
+    zeilen = _synth_paare(n=20)
+    X, gruppen = paarvergleich_daten(zeilen, ("harmonic", "groove"))
+    iv = bootstrap_paarvergleich(X, gruppen, ziehungen=30, seed=1)
+    assert len(iv) == 2 and iv[0][0] > 0.0                          # harmonic gesichert positiv
+    assert bootstrap_paarvergleich(np.zeros((0, 2)), [], ziehungen=5) == [(0.0, 0.0), (0.0, 0.0)]
+
+
+def test_gewichte_aus_paarvergleich_restbudget_und_leer():
+    tol = {f"kandidaten_{f}_weight": w for f, w in zip(
+        ("harmonic", "bpm", "energy", "genre", "groove", "bass", "timbre", "mood", "loudness", "structure"),
+        (0.140, 0.106, 0.106, 0.106, 0.264, 0.070, 0.044, 0.044, 0.060, 0.060))}
+    g = gewichte_aus_paarvergleich(("harmonic", "groove"), [(0.5, 2.0), (-0.1, 0.3)], ["harmonic", "groove"], tol)
+    assert g["bpm"] == pytest.approx(0.106) and g["groove"] == 0.0       # nicht identifizierbar behaelt, ungesichert 0
+    assert g["harmonic"] == pytest.approx(1.0 - (1.0 - 0.140 - 0.264))     # Restbudget komplett auf harmonic
+    assert sum(g.values()) == pytest.approx(1.0)
+    assert gewichte_aus_paarvergleich(("harmonic",), [(-0.2, 0.1)], ["harmonic"], tol) == {}
+
+
+def test_uebernahme_erlaubt_gruende():
+    ok, _ = uebernahme_erlaubt(belastbar_note=True, n_paare_train=40, n_identifizierbar=2, auc_holdout=0.7,
+                               treffer_holdout=0.6, basis_holdout=0.33, gewichte={"harmonic": 1.0})
+    assert ok
+    assert not uebernahme_erlaubt(belastbar_note=False, n_paare_train=40, n_identifizierbar=2, auc_holdout=0.7,
+                                  treffer_holdout=0.6, basis_holdout=0.33, gewichte={"harmonic": 1.0})[0]
+    assert "zu wenige Paare" in uebernahme_erlaubt(belastbar_note=True, n_paare_train=5, n_identifizierbar=2,
+                                                   auc_holdout=0.7, treffer_holdout=0.6, basis_holdout=0.33,
+                                                   gewichte={"harmonic": 1.0})[1]
+    assert "AUC" in uebernahme_erlaubt(belastbar_note=True, n_paare_train=40, n_identifizierbar=2, auc_holdout=0.5,
+                                       treffer_holdout=0.6, basis_holdout=0.33, gewichte={"harmonic": 1.0})[1]
+    assert "Trefferquote" in uebernahme_erlaubt(belastbar_note=True, n_paare_train=40, n_identifizierbar=2,
+                                                auc_holdout=0.7, treffer_holdout=0.3, basis_holdout=0.33,
+                                                gewichte={"harmonic": 1.0})[1]
+
+
+def test_standardisiere_mit_train_kennzahlen():
+    X = np.array([[0.0, 10.0], [2.0, 10.0]])
+    m, s = _kennzahlen(X)
+    assert list(m) == [1.0, 10.0] and list(s) == [1.0, 1.0]          # Streuung 0 -> 1
+    assert _standardisiere_mit(np.array([[3.0, 12.0]]), m, s).tolist() == [[2.0, 2.0]]
+
+
+def test_schema_rangfolge_und_praeferenz_json():
+    zeilen = [{"genre": "Psytrance", "gewaehlt": g, "schemata_out": [s], "schemata_in": ["auto_cue"]}
+              for s, g in [("pssi_phrase", True), ("pssi_phrase", False), ("sektion", False), ("sektion", False)] * 5]
+    rang = schema_rangfolge(zeilen, min_wahlen=5)
+    assert rang["Psytrance"][0] == "pssi_phrase"
+    prefs = baue_candidate_preferences({"harmonic": 0.7, "groove": 0.3}, rang, {"quelle": "test"})
+    assert prefs["Psytrance"]["kandidaten_harmonic_weight"] == pytest.approx(0.7)
+    assert sum(v for k, v in prefs["Psytrance"].items() if k.endswith("_weight")) == pytest.approx(1.0)
+    assert prefs["Psytrance"]["schema_rang"][0] == "pssi_phrase" and "_diagnose" in prefs

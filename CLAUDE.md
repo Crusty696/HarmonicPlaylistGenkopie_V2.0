@@ -64,10 +64,12 @@ hpg_core/                  # Core analysis modules
   rekordbox_phrases.py     # PSSI-Phrasen aus ANLZ lesen (reine Funktionen)
   mix_candidates.py        # Mixpunkt-Kandidaten je Track: Gates, Kappung, lokale Messung
   pair_candidates.py       # Paarung/Bewertung der Kandidaten: Paar-Gates, Score, Blenden, Rang (Teil 2)
+  candidate_preferences.py # Lader fuer data/candidate_preferences.json (Hoertest-Fit, Teil 3)
   playlist.py              # Playlist-Generierung und Scoring (STRATEGIES)
   transition_features.py   # Paarweise Uebergangs-Vergleiche (Groove/Bass/Timbre/Mood, je [0,1] oder None)
   groove.py                # Beat-synchrone Mustererkennung fuer das Uebergangs-Scoring
   tolerances.py            # Laedt Uebergangs-Toleranzen: Defaults, mitgeliefertes JSON, Override
+  data/                    # transition_tolerances.json, candidate_preferences.json (beide {} ausgeliefert)
   mix_analysis.py          # Mix-Analyse: Uebergaenge in DJ-Mixen finden, Kennzahlen (reine Funktionen)
   transition_renderer.py   # Uebergangs-Preview (Crossfade, EQ, Limiter)
   rekordbox_importer.py    # Rekordbox-Datenbank Import (optional)
