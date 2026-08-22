@@ -49,6 +49,7 @@ from hpg_core.downbeat import (
 )
 from hpg_core.genres import CANONICAL_GENRES, GENRE_TRANSITION_TOLERANCES
 from hpg_core.models import Track, effective_bpm_diff
+from hpg_core.tolerances import get_tolerances
 from hpg_core.pair_candidates import FAKTOREN as KANDIDATEN_TEILWERTE, build_pair_candidates
 from hpg_core.playlist import (
     calculate_enhanced_compatibility,
@@ -1219,6 +1220,407 @@ def befehl_fit(args: argparse.Namespace) -> int:
 # CLI
 # ===========================================================================
 
+# ===========================================================================
+# Kandidatenmodus: fit --modus kandidaten — reine Logik
+# ===========================================================================
+
+def verbinde_bewertungen_kandidaten(merkmale_zeilen, bewertung_zeilen, merkmale=KANDIDATEN_TEILWERTE,
+                                    genre_von=None) -> tuple[list[dict], int, int]:
+    """Join ueber clip_id. Rueckgabe (Zeilen, ohne Note, verworfen). Verworfen =
+    ungueltige Note oder ein leeres Merkmal (keine Imputation). Clips ohne Note
+    bleiben (note None) — der Paarvergleich braucht alle Clips eines Paars."""
+    noten = {str(z.get("clip_id", "")).strip(): z for z in bewertung_zeilen}
+    zeilen, ohne, verworfen = [], 0, 0
+    for roh in merkmale_zeilen:
+        cid = str(roh.get("clip_id", "")).strip()
+        b = noten.get(cid) or {}
+        eintrag = str(b.get("note", "")).strip()
+        try:
+            werte = {n: float(roh[n]) for n in merkmale}
+        except (KeyError, TypeError, ValueError):
+            verworfen += 1            # leeres/ungueltiges Merkmal: fuer BEIDE Modelle raus
+            continue
+        note = None
+        if eintrag:
+            try:
+                note = int(round(float(eintrag)))
+            except (TypeError, ValueError):
+                verworfen += 1
+                continue
+            if not BEWERTUNG_MIN <= note <= BEWERTUNG_MAX:
+                verworfen += 1
+                continue
+        else:
+            ohne += 1                 # ohne Note: bleibt fuer den Paarvergleich erhalten
+        tracks = (str(roh.get("track_a", "")), str(roh.get("track_b", "")))
+        zeilen.append({
+            "pair_id": str(roh.get("pair_id", "")).strip(), "clip_id": cid,
+            "note": note, "bewertung": note,   # "bewertung": Schluessel fuer zu_zielgroesse
+            "gewaehlt": str(b.get("gewaehlt", "")).strip() == "1", "merkmale": werte, "tracks": tracks,
+            "genre": genre_von(tracks[0]) if genre_von else "",
+            "schema_out": roh.get("schema_out", ""), "schema_in": roh.get("schema_in", ""),
+            "schemata_out": [s for s in str(roh.get("schemata_out", "")).split("|") if s],
+            "schemata_in": [s for s in str(roh.get("schemata_in", "")).split("|") if s],
+        })
+    return zeilen, ohne, verworfen
+
+
+def nur_mit_note(zeilen: list[dict]) -> list[dict]:
+    """Zielgroesse 1 (Note) sieht nur benotete Clips; Zielgroesse 2 alle."""
+    return [z for z in zeilen if z.get("note") is not None]
+
+
+def _kennzahlen(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Spaltenmittel und -streuung (Streuung 0 -> 1), Grundlage fuer
+    _standardisiere_mit — Holdout wird mit den TRAIN-Kennzahlen skaliert."""
+    X = np.asarray(X, dtype=float)
+    mittel = X.mean(axis=0)
+    streuung = X.std(axis=0)
+    streuung[streuung == 0.0] = 1.0
+    return mittel, streuung
+
+
+def _standardisiere_mit(X: np.ndarray, mittel: np.ndarray, streuung: np.ndarray) -> np.ndarray:
+    return (np.asarray(X, dtype=float) - mittel) / streuung
+
+
+def auc(y: np.ndarray, score: np.ndarray) -> float | None:
+    """Flaeche unter der ROC-Kurve als Rangstatistik (Mann-Whitney); None,
+    wenn eine Klasse fehlt."""
+    y = np.asarray(y, dtype=float)
+    score = np.asarray(score, dtype=float)
+    pos, neg = score[y == 1.0], score[y == 0.0]
+    if len(pos) == 0 or len(neg) == 0:
+        return None
+    groesser = (pos[:, None] > neg[None, :]).sum()
+    gleich = (pos[:, None] == neg[None, :]).sum()
+    return float((groesser + 0.5 * gleich) / (len(pos) * len(neg)))
+
+
+def holdout_nach_tracks(zeilen: list[dict], anteil: float = HOLDOUT_ANTEIL, seed: int = STANDARD_SEED):
+    """Teilt nach TRACKS: ein Clip ist Holdout, wenn Track A oder B im
+    Holdout-Trackanteil liegt. Deterministisch ueber seed."""
+    tracks = sorted({t for z in zeilen for t in z["tracks"]})
+    random.Random(seed).shuffle(tracks)
+    n_hold = int(round(len(tracks) * anteil))
+    hold = set(tracks[:n_hold])
+    train = [z for z in zeilen if not (set(z["tracks"]) & hold)]
+    holdout = [z for z in zeilen if set(z["tracks"]) & hold]
+    return train, holdout
+
+
+def paarvergleich_daten(zeilen: list[dict], merkmale) -> tuple[np.ndarray, list[str]]:
+    """Differenzen Sieger - Verlierer je Paar mit genau einer Wahl (Bradley-
+    Terry als paarweise Zerlegung: ein Vergleich je Verlierer, KEINE
+    Spiegelung — die wuerde die Likelihood verdoppeln und L2 halbieren).
+    Rueckgabe X_diff, Paar-Ids je Zeile (fuer den Cluster-Bootstrap)."""
+    namen = list(merkmale)
+    X, gruppen = [], []
+    je_paar: dict[str, list[dict]] = {}
+    for z in zeilen:
+        je_paar.setdefault(z["pair_id"], []).append(z)
+    for pid, clips in je_paar.items():
+        sieger = [c for c in clips if c["gewaehlt"]]
+        if len(sieger) != 1 or len(clips) < 2:
+            continue
+        s = np.array([sieger[0]["merkmale"][n] for n in namen], dtype=float)
+        for c in clips:
+            if c is sieger[0]:
+                continue
+            v = np.array([c["merkmale"][n] for n in namen], dtype=float)
+            X.append(s - v)
+            gruppen.append(pid)
+    if not X:
+        return np.zeros((0, len(namen))), []
+    return np.vstack(X), gruppen
+
+
+def identifizierbare_merkmale(X_diff: np.ndarray, namen, schwelle: float = PAAR_STREUUNG_MIN) -> list[str]:
+    """Merkmale, die INNERHALB der Paare streuen (Std der Sieger-Verlierer-
+    Differenzen >= schwelle). bpm/genre sind je Paar konstant -> nie dabei."""
+    X_diff = np.asarray(X_diff, dtype=float)
+    if X_diff.size == 0:
+        return []
+    std = X_diff.std(axis=0)
+    return [n for n, s in zip(namen, std) if s >= schwelle]
+
+
+def fit_paarvergleich(X_diff: np.ndarray, l2: float = L2_STAERKE) -> np.ndarray:
+    """Bradley-Terry mit linearem Nutzen, ohne Achsenabschnitt:
+    maximiert sum log sigmoid(beta . d) - l2 * |beta|^2 ueber alle
+    Sieger-Verlierer-Differenzen d. Koeffizienten bewusst UNSTANDARDISIERT
+    (Teilwert-Skala [0,1]): das Gewicht soll dem Nutzen je Teilwert-Einheit
+    entsprechen, nicht je Standardabweichung."""
+    X = np.asarray(X_diff, dtype=float)
+    if X.size == 0:
+        return np.zeros(X.shape[1] if X.ndim == 2 else 0)
+
+    def ziel(beta):
+        z = X @ beta
+        return float(np.sum(np.logaddexp(0.0, -z))) + l2 * float(beta @ beta)
+
+    def grad(beta):
+        p = 1.0 / (1.0 + np.exp(-(X @ beta)))
+        return -(X.T @ (1.0 - p)) + 2.0 * l2 * beta
+
+    res = minimize(ziel, np.zeros(X.shape[1]), jac=grad, method="L-BFGS-B")
+    return np.asarray(res.x, dtype=float)
+
+
+def bootstrap_paarvergleich(X_diff, gruppen, l2=L2_STAERKE, ziehungen=BOOTSTRAP_ZIEHUNGEN,
+                            seed=STANDARD_SEED) -> list[tuple[float, float]]:
+    """95-%-Bootstrap je Koeffizient, Ziehung ueber PAARE (Cluster), nicht
+    ueber Einzelzeilen: die K-1 Vergleiche eines Paars sind korreliert."""
+    X_diff = np.asarray(X_diff, dtype=float)
+    ids = sorted(set(gruppen))
+    if not ids:
+        return [(0.0, 0.0)] * (X_diff.shape[1] if X_diff.ndim == 2 else 0)
+    index_je_id = {pid: [i for i, g in enumerate(gruppen) if g == pid] for pid in ids}
+    rng = random.Random(seed)
+    stapel = []
+    for _ in range(int(ziehungen)):
+        zug = [i for pid in rng.choices(ids, k=len(ids)) for i in index_je_id[pid]]
+        stapel.append(fit_paarvergleich(X_diff[zug], l2))
+    s = np.vstack(stapel)
+    return [(float(np.percentile(s[:, j], 2.5)), float(np.percentile(s[:, j], 97.5))) for j in range(s.shape[1])]
+
+
+def trefferquote_paarvergleich(beta: np.ndarray, zeilen: list[dict], merkmale) -> tuple[float | None, float | None]:
+    """Anteil Paare, deren gewaehlter Clip den hoechsten Modell-Nutzen hat;
+    zweiter Wert = Zufallsbasis (Mittel von 1/Clips je Paar)."""
+    namen = list(merkmale)
+    je_paar: dict[str, list[dict]] = {}
+    for z in zeilen:
+        je_paar.setdefault(z["pair_id"], []).append(z)
+    treffer, basis, n = 0, 0.0, 0
+    for clips in je_paar.values():
+        sieger = [c for c in clips if c["gewaehlt"]]
+        if len(sieger) != 1 or len(clips) < 2:
+            continue
+        nutzen = [float(np.array([c["merkmale"][m] for m in namen]) @ beta) for c in clips]
+        if clips[int(np.argmax(nutzen))] is sieger[0]:
+            treffer += 1
+        basis += 1.0 / len(clips)
+        n += 1
+    if n == 0:
+        return None, None
+    return treffer / n, basis / n
+
+
+def gewichte_aus_paarvergleich(namen, intervalle, identifizierbar, toleranz_gewichte: dict) -> dict[str, float]:
+    """Gewichte fuer alle zehn Faktoren (Schluessel = Faktorname), Summe 1.0:
+    nicht identifizierbare behalten ihr Toleranz-Gewicht (kandidaten_*_weight);
+    das Restbudget wird auf identifizierbare Merkmale nach positiver unterer
+    Bootstrap-Grenze verteilt; identifizierbare ohne gesicherten positiven
+    Effekt bekommen 0. Kein identifizierbares positiv -> {} (keine Uebernahme)."""
+    fest = {n: float(toleranz_gewichte.get(f"kandidaten_{n}_weight", 0.0))
+            for n in KANDIDATEN_TEILWERTE if n not in identifizierbar}
+    roh = {n: (lo if lo > 0.0 and hi > 0.0 else 0.0)
+           for n, (lo, hi) in zip(namen, intervalle) if n in identifizierbar}
+    summe = sum(roh.values())
+    if summe <= 0.0:
+        return {}
+    rest = max(0.0, 1.0 - sum(fest.values()))
+    ergebnis = dict(fest)
+    ergebnis.update({n: rest * v / summe for n, v in roh.items()})
+    for n in KANDIDATEN_TEILWERTE:
+        ergebnis.setdefault(n, 0.0)
+    return ergebnis
+
+
+def schema_rangfolge(zeilen: list[dict], min_wahlen: int = MIN_EREIGNISSE_JE_MERKMAL) -> dict[str, list[str]]:
+    """Je Genre: Schemata (alle Schemata des Kandidaten, Out- und In-Seite
+    gemeinsam) nach Anteil 'gewaehlt' an 'angeboten' (Laplace +1/+2),
+    absteigend; nur Genres mit mindestens min_wahlen Wahlen."""
+    from hpg_core.mix_candidates import SCHEMA_PRIORITAET
+    angebot: dict[str, dict[str, int]] = {}
+    wahl: dict[str, dict[str, int]] = {}
+    wahlen_je_genre: dict[str, int] = {}
+    for z in zeilen:
+        g = z.get("genre") or ""
+        schemata = list(z.get("schemata_out") or []) + list(z.get("schemata_in") or [])
+        for s in schemata:
+            if not s:
+                continue
+            angebot.setdefault(g, {}).setdefault(s, 0)
+            angebot[g][s] += 1
+            if z.get("gewaehlt"):
+                wahl.setdefault(g, {}).setdefault(s, 0)
+                wahl[g][s] += 1
+        if z.get("gewaehlt"):
+            wahlen_je_genre[g] = wahlen_je_genre.get(g, 0) + 1
+    ergebnis = {}
+    for g, schemata in angebot.items():
+        if wahlen_je_genre.get(g, 0) < min_wahlen:
+            continue
+        quote = {s: (wahl.get(g, {}).get(s, 0) + 1) / (n + 2) for s, n in schemata.items()}
+        ergebnis[g] = sorted(quote, key=lambda s: (-quote[s], SCHEMA_PRIORITAET.index(s) if s in SCHEMA_PRIORITAET else 99))
+    return ergebnis
+
+
+def baue_candidate_preferences(gewichte: dict[str, float], rangfolge: dict[str, list[str]], diagnose: dict) -> dict:
+    """JSON fuer hpg_core/data/candidate_preferences.json: fehlende Faktoren 0,
+    Summe exakt 1.0 (Rundungsrest auf den groessten), schema_rang je Genre."""
+    block = {f"kandidaten_{f}_weight": round(float(gewichte.get(f, 0.0)), 6) for f in KANDIDATEN_TEILWERTE}
+    differenz = 1.0 - sum(block.values())
+    groesster = max(block, key=block.get)
+    block[groesster] = round(block[groesster] + differenz, 9)
+    ergebnis: dict = {"_diagnose": dict(diagnose)}
+    for genre in CANONICAL_GENRES:
+        ergebnis[genre] = dict(block)
+        ergebnis[genre]["schema_rang"] = list(rangfolge.get(genre, []))
+    return ergebnis
+
+
+def uebernahme_erlaubt(*, belastbar_note: bool, n_paare_train: int, n_identifizierbar: int,
+                       auc_holdout: float | None, treffer_holdout: float | None,
+                       basis_holdout: float | None, gewichte: dict) -> tuple[bool, str]:
+    """Entscheidung 10 (Plan Teil 3): alle Bedingungen muessen halten, sonst (False, Grund)."""
+    if not belastbar_note:
+        return False, "Datenlage Zielgroesse 1 nicht belastbar (10 je Merkmal und Klasse)"
+    if n_identifizierbar == 0:
+        return False, "kein Merkmal streut innerhalb der Paare (nicht identifizierbar)"
+    if n_paare_train < MIN_EREIGNISSE_JE_MERKMAL * n_identifizierbar:
+        return False, (f"zu wenige Paare mit Wahl im Train: {n_paare_train} < "
+                       f"{MIN_EREIGNISSE_JE_MERKMAL * n_identifizierbar}")
+    if auc_holdout is None or treffer_holdout is None or basis_holdout is None:
+        return False, "Holdout leer oder ohne beide Klassen/ohne Paar mit Wahl"
+    if not auc_holdout > 0.5:
+        return False, f"Holdout-AUC {auc_holdout:.3f} nicht besser als Zufall"
+    if not treffer_holdout > basis_holdout:
+        return False, f"Holdout-Trefferquote {treffer_holdout:.3f} nicht ueber Zufallsbasis {basis_holdout:.3f}"
+    if not any(v > 0.0 for v in gewichte.values()):
+        return False, "kein identifizierbares Merkmal mit gesichert positivem Effekt"
+    return True, "alle Bedingungen erfuellt"
+
+
+def _genre_von_pfad(tracks) -> dict[str, str]:
+    """Pfad (lower) -> Genre ueber loese_genre_auf, fuer verbinde_bewertungen_kandidaten."""
+    return {str(t.filePath).lower(): loese_genre_auf(t) for t in tracks}
+
+
+def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
+    ordner = Path(args.dir)
+    merkmale_roh = lies_csv(ordner / "merkmale.csv")
+    bewertung_roh = lies_csv(ordner / "bewertung.csv")
+    try:
+        genres_je_pfad = _genre_von_pfad(lade_tracks_aus_cache(getattr(args, "cache", None)))
+    except Exception as exc:  # noqa: BLE001 - Genre ist Beiwerk fuer die Rangfolge
+        print(f"Hinweis: Genre je Track nicht verfuegbar ({exc}); Rangfolge je Genre entfaellt.")
+        genres_je_pfad = {}
+    zeilen, ohne, verworfen = verbinde_bewertungen_kandidaten(
+        merkmale_roh, bewertung_roh, genre_von=lambda pfad: genres_je_pfad.get(str(pfad).lower(), ""))
+    print(f"Clips mit Merkmalen: {len(zeilen)}   davon ohne Note: {ohne}   verworfen: {verworfen}")
+    if len(zeilen) < 2:
+        print("Zu wenige Clips fuer eine Schaetzung.")
+        return 1
+    aktive = [n for n in KANDIDATEN_TEILWERTE
+              if float(np.std([z["merkmale"][n] for z in zeilen])) >= MIN_KONTROLL_STREUUNG]
+    if not aktive:
+        print("Kein Teilwert streut im Satz — keine Schaetzung moeglich.")
+        return 1
+    train, holdout = holdout_nach_tracks(zeilen, HOLDOUT_ANTEIL, args.seed)
+    print(f"Holdout nach Tracks ({HOLDOUT_ANTEIL:.0%} der Tracks): {len(holdout)} von {len(zeilen)} Clips "
+          f"({len(holdout) / len(zeilen):.0%}) — Schaetzung nur auf {len(train)} Clips")
+
+    # --- Zielgroesse 1: Note (gut >= GUT_AB) ----------------------------------
+    train_n, hold_n = nur_mit_note(train), nur_mit_note(holdout)
+    auc_holdout = None
+    belastbar = False
+    urteil = "Zielgroesse 1: keine benoteten Clips im Train."
+    koeff_note: dict[str, float] = {}
+    if len(train_n) >= 2:
+        X1, y1 = zu_zielgroesse(train_n, aktive)
+        n_gut, n_schlecht = int(y1.sum()), int(len(y1) - y1.sum())
+        if n_gut and n_schlecht:
+            belastbar, urteil = datenlage_urteil(n_gut, n_schlecht, len(aktive))
+            beta1 = fit_logistic(X1, y1, L2_STAERKE)
+            koeff_note = {n: float(beta1[1 + i]) for i, n in enumerate(aktive)}
+            if hold_n:
+                Xh, yh = zu_zielgroesse(hold_n, aktive)
+                m, s_ = _kennzahlen(X1)
+                auc_holdout = auc(yh, _standardisiere_mit(Xh, m, s_) @ beta1[1:] + beta1[0])
+        else:
+            urteil = "Zielgroesse 1: alle Noten in einer Klasse — keine Schaetzung."
+
+    # --- Zielgroesse 2: Paarvergleich (Bradley-Terry) -------------------------
+    X_diff, gruppen = paarvergleich_daten(train, aktive)
+    identifizierbar = identifizierbare_merkmale(X_diff, aktive)
+    n_paare_train = len(set(gruppen))
+    beta2_voll = np.zeros(len(aktive))
+    intervalle_id: list[tuple[float, float]] = []
+    if identifizierbar and X_diff.size:
+        spalten = [aktive.index(n) for n in identifizierbar]
+        X_id = X_diff[:, spalten]
+        beta_id = fit_paarvergleich(X_id, L2_STAERKE)
+        intervalle_id = bootstrap_paarvergleich(X_id, gruppen, L2_STAERKE, BOOTSTRAP_ZIEHUNGEN, args.seed)
+        for j, n in enumerate(identifizierbar):
+            beta2_voll[aktive.index(n)] = beta_id[j]
+    treffer_holdout, basis_holdout = trefferquote_paarvergleich(beta2_voll, holdout, aktive)
+    toleranzen = get_tolerances(CANONICAL_GENRES[0])
+    gewichte = gewichte_aus_paarvergleich(identifizierbar, intervalle_id, identifizierbar, toleranzen)
+    rangfolge = schema_rangfolge(zeilen)
+    ok, grund = uebernahme_erlaubt(
+        belastbar_note=belastbar, n_paare_train=n_paare_train, n_identifizierbar=len(identifizierbar),
+        auc_holdout=auc_holdout, treffer_holdout=treffer_holdout, basis_holdout=basis_holdout,
+        gewichte=gewichte)
+
+    diagnose = {
+        "quelle": "tools/rate_transitions.py fit --modus kandidaten",
+        "clips": len(zeilen), "ohne_note": ohne, "verworfen": verworfen,
+        "train_clips": len(train), "holdout_clips": len(holdout), "holdout_anteil_tracks": HOLDOUT_ANTEIL,
+        "paare_mit_wahl_train": n_paare_train,
+        "aktive_merkmale": aktive, "identifizierbar": identifizierbar,
+        "nicht_identifizierbar": [n for n in aktive if n not in identifizierbar],
+        "koeffizienten_note": {k: round(v, 4) for k, v in koeff_note.items()},
+        "koeffizienten_paarvergleich": {n: round(float(beta2_voll[aktive.index(n)]), 4) for n in identifizierbar},
+        "intervalle_paarvergleich": {n: [round(lo, 4), round(hi, 4)]
+                                     for n, (lo, hi) in zip(identifizierbar, intervalle_id)},
+        "auc_holdout": None if auc_holdout is None else round(auc_holdout, 4),
+        "trefferquote_holdout": None if treffer_holdout is None else round(treffer_holdout, 4),
+        "zufallsbasis_holdout": None if basis_holdout is None else round(basis_holdout, 4),
+        "belastbar_note": belastbar, "uebernommen": ok, "grund": grund,
+        "l2_staerke": L2_STAERKE, "bootstrap_ziehungen": BOOTSTRAP_ZIEHUNGEN, "seed": args.seed,
+    }
+    ergebnis = baue_candidate_preferences(gewichte, rangfolge, diagnose) if gewichte else {"_diagnose": diagnose}
+    if ok:
+        from hpg_core import candidate_preferences as cp
+        ziel = cp._MITGELIEFERT
+        ziel.write_text(json.dumps(ergebnis, indent=2, ensure_ascii=False), encoding="utf-8")
+        cp.reset_cache()
+    else:
+        ziel = ordner / "candidate_preferences_entwurf.json"
+        ziel.write_text(json.dumps(ergebnis, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print()
+    print(urteil)
+    print(f"Paarvergleich: {n_paare_train} Paare mit Wahl im Train; identifizierbar: "
+          f"{', '.join(identifizierbar) or '-'}; nicht identifizierbar (behalten Toleranz-Gewicht): "
+          f"{', '.join(n for n in aktive if n not in identifizierbar) or '-'}")
+    print(f"{'Merkmal':10s} {'BT-Koeff.':>10s} {'95-%-Bereich':>22s} {'Gewicht':>9s}")
+    for n in aktive:
+        if n in identifizierbar:
+            lo, hi = intervalle_id[identifizierbar.index(n)]
+            print(f"{n:10s} {beta2_voll[aktive.index(n)]:10.4f} [{lo:8.4f}, {hi:8.4f}] "
+                  f"{gewichte.get(n, 0.0):9.4f}")
+        else:
+            print(f"{n:10s} {'n. ident.':>10s} {'':>22s} {gewichte.get(n, toleranzen.get(f'kandidaten_{n}_weight', 0.0)):9.4f}")
+    print(f"Holdout: AUC (Note) = {auc_holdout if auc_holdout is None else round(auc_holdout, 3)}, "
+          f"Trefferquote (bester) = {treffer_holdout if treffer_holdout is None else round(treffer_holdout, 3)} "
+          f"vs. Zufall {basis_holdout if basis_holdout is None else round(basis_holdout, 3)}")
+    for g, r in rangfolge.items():
+        print(f"Schema-Rangfolge {g}: {' > '.join(r)}")
+    print(("UEBERNOMMEN nach " if ok else "NICHT uebernommen (") + str(ziel) + ("" if ok else f"): {grund}"))
+    return 0
+
+
+def _fit(args: argparse.Namespace) -> int:
+    """Weiche nach --modus (set_defaults kann nur eine Funktion tragen)."""
+    if getattr(args, "modus", "einzel") == "kandidaten":
+        return befehl_fit_kandidaten(args)
+    return befehl_fit(args)
+
+
 def _prepare(args: argparse.Namespace) -> int:
     """Weiche nach --modus (set_defaults kann nur eine Funktion tragen)."""
     if getattr(args, "modus", "einzel") == "kandidaten":
@@ -1254,7 +1656,10 @@ def main(argv=None) -> int:
     f.add_argument("--seed", type=int, default=STANDARD_SEED)
     f.add_argument("--genre", action="append", choices=list(CANONICAL_GENRES),
                    help="Genre(s) fuer die Ausgabe; Standard: alle kanonischen")
-    f.set_defaults(funktion=befehl_fit)
+    f.add_argument("--modus", choices=("einzel", "kandidaten"), default="einzel",
+                   help="einzel = Einzelnoten-Satz (heute); kandidaten = Note + Paarvergleich je Paar")
+    f.add_argument("--cache", default=None, help="Abweichende Cache-Datenbank (Genre je Track)")
+    f.set_defaults(funktion=_fit)
 
     args = parser.parse_args(argv)
     return int(args.funktion(args))
