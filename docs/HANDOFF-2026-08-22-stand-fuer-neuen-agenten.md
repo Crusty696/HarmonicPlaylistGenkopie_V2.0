@@ -46,23 +46,26 @@ nachpruefen.
 
 | Branch | Stand | Inhalt |
 |---|---|---|
-| `main` | `06d66b9` (Plan Teil 4) ueber `5ce9ddb` (Merge Teil 3), `ca15013` (Merge Teil 2), `f18815b` (Merge Teil 1) | Teil 1–3 komplett: `mix_candidates.py`, `rekordbox_phrases.py`, `pair_candidates.py`, `candidate_preferences.py`, `models.camelot_relation_score`, `kandidaten_*_weight`, Hoertest-Kandidatenmodus (`tools/rate_transitions.py`, `tools/hoertest_server.py`), Werkzeuge `tools/kandidaten_messen.py`, `tools/paar_kandidaten_messen.py` |
-| `kandidaten-teil1/2/3` | geloescht (lokal), Worktrees entfernt | vollstaendig in `main` |
-| `kandidaten-teil4` | Worktree `..\HPG-wt-kandidaten-teil4` (ohne venv — `venv312` des Hauptrepos nutzen) | Teil 4 in Arbeit (Abschnitt 3) |
+| `main` | `2d1684b` (Merge Teil 4) ueber `5ce9ddb` (Merge Teil 3), `ca15013` (Merge Teil 2), `f18815b` (Merge Teil 1) | Teil 1–4 komplett: Teil 4 = App-Anbindung (`candidate_choices.py`, Kandidatenpfad in `playlist.py` mit Kettenwahl, GUI-Kandidatentabelle, Regler Lautheit, BPM 2.0, Export `HPG K<n>`, `tools/playlist_kandidaten_messen.py`); Teil 1–3: `mix_candidates.py`, `rekordbox_phrases.py`, `pair_candidates.py`, `candidate_preferences.py`, `models.camelot_relation_score`, `kandidaten_*_weight`, Hoertest-Kandidatenmodus (`tools/rate_transitions.py`, `tools/hoertest_server.py`), Werkzeuge `tools/kandidaten_messen.py`, `tools/paar_kandidaten_messen.py` |
+| `kandidaten-teil1/2/3/4` | geloescht (lokal), Worktrees entfernt | vollstaendig in `main` |
 
-Suite auf `main` nach Merge Teil 3 (HEAD `5ce9ddb`): **1836 passed, 25 warnings,
-Exit 0** (Coverage-Gate 70 bestanden).
+Suite auf `main` nach Merge Teil 4 (HEAD `2d1684b`): **1871 passed, 25 warnings, Exit 0, 85 s** (Coverage-Gate
+70 bestanden); `compileall` und Import-Rauchtest (`main`, `hpg_core.playlist`,
+Exporter) sauber; `ruff` zeigt nur vorbestehende Stil-Treffer in `main.py` (E402).
 
 ## 3. Wo genau weitergemacht wird
 
-- **Teil 4 (App)**: Plan geschrieben (`2026-08-22-mixpunkt-kandidaten-teil4-app.md`,
-  14 Entscheidungen, Tasks 0–9). Waechter Tor 1 wurde gestartet; seine Auflagen
-  in den Plan einarbeiten, dann Tasks 1–9 im Worktree `kandidaten-teil4` (TDD,
-  Commit je Task), Messung (`tools/playlist_kandidaten_messen.py`), Waechter
-  Tor 2, Merge auf `main`, Push, `.agents/` → `.claude/` spiegeln.
-- Danach: finale Gesamtpruefung (volle Suite, `ruff`, `compileall`,
-  App-Start-Rauchtest ohne Hoerprobe), finale Checkliste der Hoerproben aus
-  den Handoffs Teil 3/4 zusammenfuehren, Erfolgsmeldung an den Nutzer.
+- **Teil 4 (App) ist gebaut, gemessen, vom Waechter an beiden Toren geprueft
+  (Tor 2: MIT AUFLAGEN, eingearbeitet) und gemerged** — Handoff
+  `docs/HANDOFF-2026-08-22-kandidaten-teil4.md` (20 Entscheidungen, Messung:
+  220/230 Paare mit Kandidat, Intro/Outro-Verletzungen 0, Overlap-Abweichungen 0,
+  Cue-Gate 2 = Ketten-Neustarts, Score-Median 79 vs. 83, Generierung 51 s vs. 2 s).
+- Die Spec 2026-08-21 (Abschnitte 1–4) ist damit vollstaendig umgesetzt. Was
+  bleibt, sind ausschliesslich Hoerproben (Mensch) — Checkliste unten in
+  Abschnitt 6 bzw. in den Handoffs Teil 3/4 — und die Uebernahme der
+  Hoertest-Gewichte (`fit --modus kandidaten`), die den Startwerten folgt.
+- Naechste Arbeit ohne Hoerprobe: keine offen. Wer weiterbaut, beginnt mit
+  Abschnitt 6 und den Handoffs.
 - Nutzer-Auflagen (Memory): alles komplett, nichts "spaeter", keine Annahmen,
   jede Zahl gemessen oder als Startwert markiert, nie den einfacheren Weg
   empfehlen, Waechter an beiden Toren.
@@ -99,9 +102,12 @@ Wichtigste Eintraege: `hpg-stand-2026-08-22-teil1-gemerged.md` (Einstieg),
 
 ## 6. Offen (gesammelt)
 
-- Hoerproben (Mensch): Checkliste in `docs/HANDOFF-2026-08-22-kandidaten-teil3.md`
-  (Kandidaten-Satz vorbereiten, bewerten, `fit --modus kandidaten`), spaeter Teil 4.
-- App-BPM-Default 3.0 → 2.0 (Teil 4, Plan Task 7)
+- Hoerproben (Mensch): Checklisten in `docs/HANDOFF-2026-08-22-kandidaten-teil3.md`
+  (Kandidaten-Satz vorbereiten, bewerten, `fit --modus kandidaten`) und
+  `docs/HANDOFF-2026-08-22-kandidaten-teil4.md` (App-Preview der Kandidaten,
+  Wahl-Klick, Ketten-Neustarts, Regler, Rekordbox-Import der `HPG K`-Cues).
+- Generierung mit Kandidaten ~52 s fuer 231 Tracks (2 s ohne) — gemessen, keine
+  Kappung; bei groesseren Sammlungen waechst es mit den Paaren im 2-BPM-Gate.
 - #4 Melodic Techno: wartet auf Noten
 - `docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md` ("10 Strategien") und
   `HANDOFF-2026-08-20-groove-scoring.md:189` veraltet

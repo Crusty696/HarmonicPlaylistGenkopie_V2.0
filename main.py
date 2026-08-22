@@ -4977,12 +4977,7 @@ class MainWindow(QMainWindow):
         bpm_tolerance = settings["bpm_tolerance"]
         advanced_params = settings["advanced_params"]
         
-        from hpg_core.playlist import (
-            generate_playlist,
-            calculate_playlist_quality,
-            compute_adjacent_transition_metrics,
-            compute_transition_recommendations,
-        )
+        from hpg_core.playlist import generate_playlist
         
         # Wir speichern das aktuelle Profil
         self.current_playlist_mode = mode

@@ -8,7 +8,13 @@ Score-Median. Mit --ohne-kandidaten wird der Kandidatenpfad abgeschaltet
   python tools/playlist_kandidaten_messen.py --cache [--strategie "Harmonic Flow"] [--bpm 2.0]
                                              [--json out.json] [--ohne-kandidaten]
 """
-import argparse, json, os, sqlite3, statistics, sys, time
+import argparse
+import json
+import os
+import sqlite3
+import statistics
+import sys
+import time
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

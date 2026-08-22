@@ -1772,11 +1772,15 @@ def _kette_waehlen(kandidaten_je_paar: list, playlist: List[Track]) -> list:
     neustart: list = []   # Paar i beginnt die Kette neu (kein konsistenter Anschluss moeglich)
     for i, kands in enumerate(kandidaten_je_paar):
         if not kands:
-            best.append([]); prev.append([]); neustart.append(True)
+            best.append([])
+            prev.append([])
+            neustart.append(True)
             continue
         werte = [float(k.score) + (_WAHL_BONUS if k.flags.get("gespeicherte_wahl") else 0.0) for k in kands]
         if i == 0 or not kandidaten_je_paar[i - 1] or not best[i - 1]:
-            best.append(list(werte)); prev.append([-1] * len(kands)); neustart.append(True)
+            best.append(list(werte))
+            prev.append([-1] * len(kands))
+            neustart.append(True)
             continue
         track = playlist[i]                       # Track i ist "upcoming" von Paar i-1 und "current" von Paar i
         grid = seconds_per_bar(track.bpm) * int(getattr(track, "phrase_unit", 8) or 8)
@@ -1791,13 +1795,18 @@ def _kette_waehlen(kandidaten_je_paar: list, playlist: List[Track]) -> list:
                     wert = best[i - 1][jp] + werte[j]
                     if wert > bester_wert:
                         bester_wert, bester_prev = wert, jp
-            b_i.append(bester_wert); p_i.append(bester_prev)
+            b_i.append(bester_wert)
+            p_i.append(bester_prev)
         if all(v == NEG for v in b_i):
             # kein konsistenter Anschluss: Kette neu beginnen, Flag an Paar i
-            best.append(list(werte)); prev.append([-1] * len(kands)); neustart.append(True)
+            best.append(list(werte))
+            prev.append([-1] * len(kands))
+            neustart.append(True)
             ergebnis[i] = (None, False)
         else:
-            best.append(b_i); prev.append(p_i); neustart.append(False)
+            best.append(b_i)
+            prev.append(p_i)
+            neustart.append(False)
     # Rueckverfolgung segmentweise (jedes Segment endet vor dem naechsten Neustart)
     i = n - 1
     while i >= 0:
