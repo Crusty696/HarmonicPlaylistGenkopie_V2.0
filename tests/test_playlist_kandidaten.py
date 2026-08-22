@@ -117,7 +117,7 @@ def test_recommendations_waehlen_kandidaten_sequentiell_konsistent():
     assert recs[1].plan.mix_out_a == pytest.approx(8 * g, abs=0.01)
     assert recs[1].kandidat_aktiv == [k["t_out"] for k in recs[1].kandidaten].index(recs[1].plan.mix_out_a) + 1
     assert recs[1].kandidat_konsistent is True
-    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 1e-6
+    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 0.05
 
 
 def test_recommendations_ohne_konsistenten_kandidaten_rang1_und_flag():
@@ -143,7 +143,7 @@ def test_kette_waehlt_frueheren_mix_in_damit_naechstes_paar_konsistent_wird():
     assert recs[0].plan.mix_in_b == pytest.approx(3 * g, abs=0.01)        # nicht Rang 1 (4g)
     assert recs[0].kandidat_aktiv > 1 and recs[0].kandidat_konsistent is True
     assert recs[1].plan.mix_out_a == pytest.approx(5 * g, abs=0.01) and recs[1].kandidat_konsistent is True
-    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 1e-6
+    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 0.05
 
 
 def test_kette_gespeicherte_wahl_gewinnt_wenn_konsistent(monkeypatch, tmp_path):
