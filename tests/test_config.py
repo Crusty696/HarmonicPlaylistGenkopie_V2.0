@@ -109,13 +109,13 @@ class TestKandidatenKonstanten:
     assert config.PAAR_BPM_SKALA == 1.0
     assert config.PAAR_MAX_KOMBINATIONEN == 6
     assert config.LUFS_DELTA_MAX_DB == 3.0
-    assert config.BASS_RMS_DELTA_MAX_DB == 6.0
-    assert config.SYNCOPATION_DELTA_MAX == 0.5
+    assert config.BASS_RMS_DELTA_MAX_DB == 7.0
+    assert config.SYNCOPATION_DELTA_MAX == 0.3
     assert config.PERCUSSIVE_HOCH == 0.7
     assert config.PERCUSSIVE_NIEDRIG == 0.3
     assert config.PERCUSSIVE_ABZUG == 0.10
     assert config.KICK_KONFLIKT_ABZUG == 0.15
-    assert config.MIDS_HIGHS_DELTA_MAX == 15.0
+    assert config.MIDS_HIGHS_DELTA_MAX == 5.0
     assert config.PSSI_MOOD_ABZUG == 0.10
     assert config.ENERGIE_TREND_WIDERSPRUCH == 0.8
     assert config.STRUKTUR_LABEL_BONUS == 0.10
