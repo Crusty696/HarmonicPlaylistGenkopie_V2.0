@@ -518,6 +518,21 @@ _TOLERANCE_DEFAULTS = {
   # transition_features.py — beide muessen zusammen gepflegt werden.
   "bass_delta_max": 0.50,
   "brightness_delta_max": 60.0,
+  # Paar-Kandidaten (Spec 2026-08-21 Abschnitt 2): eigene Schluessel, damit die
+  # acht Track-Gewichte oben unveraendert bleiben. STARTWERTE = Spec-Werte
+  # (0.16/0.12/0.12/0.12/0.30/0.08/0.05/0.05) proportional um die zwei neuen
+  # Gewichte Lautheit/Struktur (je 0.06) gestaucht, Summe exakt 1.0. Nicht
+  # gemessen — der Hoertest (Teil 3) ersetzt sie.
+  "kandidaten_harmonic_weight": 0.140,
+  "kandidaten_bpm_weight": 0.106,
+  "kandidaten_energy_weight": 0.106,
+  "kandidaten_genre_weight": 0.106,
+  "kandidaten_groove_weight": 0.264,
+  "kandidaten_bass_weight": 0.070,
+  "kandidaten_timbre_weight": 0.044,
+  "kandidaten_mood_weight": 0.044,
+  "kandidaten_loudness_weight": 0.060,
+  "kandidaten_structure_weight": 0.060,
 }
 
 GENRE_TRANSITION_TOLERANCES: dict[str, dict] = {
@@ -591,6 +606,17 @@ def _validate_genre_tables() -> None:
         )
         if abs(summe - 1.0) > 1e-6:
             problems.append(f"Gewichte von {genre} summieren auf {summe}, nicht 1.0")
+        summe_k = sum(
+            werte[k] for k in (
+                "kandidaten_harmonic_weight", "kandidaten_bpm_weight",
+                "kandidaten_energy_weight", "kandidaten_genre_weight",
+                "kandidaten_groove_weight", "kandidaten_bass_weight",
+                "kandidaten_timbre_weight", "kandidaten_mood_weight",
+                "kandidaten_loudness_weight", "kandidaten_structure_weight",
+            )
+        )
+        if abs(summe_k - 1.0) > 1e-6:
+            problems.append(f"Kandidaten-Gewichte von {genre} summieren auf {summe_k}, nicht 1.0")
 
     if problems:
         raise ValueError("Genre-Tabellen inkonsistent:\n" + "\n".join(problems))
