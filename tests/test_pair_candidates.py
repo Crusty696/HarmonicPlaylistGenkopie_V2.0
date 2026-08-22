@@ -160,3 +160,109 @@ def test_paircandidate_roundtrip():
     assert d["out_a"]["t"] == 10.0 and d["t_out"] == 10.0 and d["t_in"] == 20.0
     back = PairCandidate.from_dict(d)
     assert back.out_a.t == 10.0 and back.in_b.t == 20.0 and back.blend_bars == 16
+
+from hpg_core.pair_candidates import score_pair
+
+
+def _voll(t, **kw):
+    """Kandidat mit allen lokalen Messwerten gesetzt."""
+    basis = dict(
+        schema=["pssi_phrase"], section_label="main", phrase_label="Chorus",
+        neuheit=0.6, traegt_allein=True,
+        groove_pattern_lokal=[0.25 if s % 4 == 0 else 0.0 for s in range(16)],
+        bass_pattern_lokal=[0.25 if s % 4 == 0 else 0.0 for s in range(16)],
+        syncopation_lokal=0.2,
+        percussive_ratio_lokal=0.5, sub_energy=0.5, bass_punch=2.0,
+        bass_rms_dbfs=-20.0, kick_aktiv=True, camelot_lokal="8A",
+        key_confidence_lokal=0.9, timbre_fingerprint_lokal=[1.0, 0.5, 0.2],
+        brightness_lokal=50, flatness_lokal=0.1, avg_mids_lokal=40.0,
+        avg_highs_lokal=20.0, energy_lokal=70, energy_trend="rising",
+        lufs_lokal=-10.0, mood={"pssi_mood": 1, "brightness": 50, "flatness": 0.1,
+                                "key_mode": "Minor"}, vocal_aktiv_lokal=False,
+    )
+    basis.update(kw)
+    c = MixCandidate(t=t)
+    for k, v in basis.items():
+        setattr(c, k, v)
+    return c
+
+
+def test_score_identische_kandidaten_nahe_eins_und_alle_teilwerte():
+    a, b = _track(), _track("b.mp3")
+    out, inn = _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False)
+    score, teil, flags = score_pair(a, b, out, inn, blend_bars=16, energy_direction="maintain")
+    assert set(teil) == {"harmonic", "bpm", "energy", "genre", "groove", "bass",
+                         "timbre", "mood", "loudness", "structure"}
+    assert all(v is not None for v in teil.values())
+    assert teil["bpm"] == pytest.approx(1.0)
+    assert teil["loudness"] == pytest.approx(1.0)
+    assert teil["harmonic"] == pytest.approx(1.0)
+    assert score > 0.9
+    assert flags["bass_swap_pflicht"] is False and flags["half_double"] is False
+
+
+def test_score_kick_konflikt_flag_und_abzug():
+    a, b = _track(), _track("b.mp3")
+    s_ohne, t_ohne, _ = score_pair(a, b, _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False), 16)
+    s_mit, t_mit, flags = score_pair(a, b, _voll(160.0), _voll(80.0), 16)
+    assert flags["bass_swap_pflicht"] is True
+    assert t_mit["bass"] == pytest.approx(t_ohne["bass"] - 0.15)
+    assert s_mit < s_ohne
+
+
+def test_score_lautheit_linear_bis_3db():
+    a, b = _track(), _track("b.mp3")
+    _, t1, _ = score_pair(a, b, _voll(160.0), _voll(80.0, lufs_lokal=-11.5), 16)
+    _, t3, _ = score_pair(a, b, _voll(160.0), _voll(80.0, lufs_lokal=-14.0), 16)
+    assert t1["loudness"] == pytest.approx(0.5)
+    assert t3["loudness"] == pytest.approx(0.0)
+
+
+def test_score_fehlende_werte_werden_umverteilt_nicht_null():
+    a, b = _track(), _track("b.mp3")
+    leer_out = MixCandidate(t=160.0, schema=["sektion"], section_label="main")
+    leer_in = MixCandidate(t=80.0, schema=["sektion"], section_label="main")
+    score, teil, _ = score_pair(a, b, leer_out, leer_in, 16)
+    assert teil["harmonic"] is None and teil["loudness"] is None and teil["groove"] is None
+    assert teil["bpm"] == pytest.approx(1.0) and teil["genre"] == pytest.approx(1.0)
+    assert score == pytest.approx(1.0)      # nur bpm+genre verfuegbar, beide 1.0
+
+
+def test_score_half_double_penalty_und_vocals():
+    a, b = _track(bpm=140.0), _track("b.mp3", bpm=70.0)
+    s_hd, _, flags = score_pair(a, b, _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False), 16)
+    a2, b2 = _track(), _track("b.mp3")
+    s_direct, _, _ = score_pair(a2, b2, _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False), 16)
+    assert flags["half_double"] is True
+    assert s_hd == pytest.approx(s_direct * 0.85)
+    s_voc, _, _ = score_pair(a2, b2, _voll(160.0, kick_aktiv=False, vocal_aktiv_lokal=True),
+                             _voll(80.0, kick_aktiv=False, vocal_aktiv_lokal=True), 16)
+    assert s_voc == pytest.approx(s_direct - 0.06)
+
+
+def test_score_harmonie_gewicht_skaliert_mit_key_confidence():
+    a, b = _track(), _track("b.mp3")
+    # 8A -> 3A = 65/100; mit hoher Confidence drueckt das den Score staerker als mit niedriger
+    s_hoch, _, _ = score_pair(a, b, _voll(160.0, kick_aktiv=False),
+                              _voll(80.0, kick_aktiv=False, camelot_lokal="3A"), 16)
+    s_tief, _, _ = score_pair(a, b, _voll(160.0, kick_aktiv=False, key_confidence_lokal=0.1),
+                              _voll(80.0, kick_aktiv=False, camelot_lokal="3A"), 16)
+    assert s_tief > s_hoch
+
+
+def test_score_energie_richtung_und_trend():
+    a, b = _track(), _track("b.mp3")
+    _, t_up, _ = score_pair(a, b, _voll(160.0, energy_lokal=40), _voll(80.0, energy_lokal=90, energy_trend="rising"), 16, energy_direction="up")
+    _, t_w, _ = score_pair(a, b, _voll(160.0, energy_lokal=40), _voll(80.0, energy_lokal=90, energy_trend="falling"), 16, energy_direction="up")
+    assert t_up["energy"] == pytest.approx(1.0)
+    assert t_w["energy"] == pytest.approx(0.8)
+
+
+def test_score_struktur_und_mood():
+    a, b = _track(), _track("b.mp3")
+    _, t1, _ = score_pair(a, b, _voll(160.0, section_label="outro", phrase_label="Outro"),
+                          _voll(80.0, neuheit=1.0, traegt_allein=True, phrase_label="Chorus"), 16)
+    assert t1["structure"] == pytest.approx(1.0)
+    _, t2, _ = score_pair(a, b, _voll(160.0), _voll(80.0, mood={"pssi_mood": 2, "brightness": 50,
+                                                                "flatness": 0.1, "key_mode": "Major"}), 16)
+    assert t2["mood"] == pytest.approx(1.0 - 0.15 - 0.10)

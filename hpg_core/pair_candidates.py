@@ -179,3 +179,194 @@ def blend_bars_options(track_a: Track, out_a: MixCandidate, bpm_relation: str) -
         if b >= MIN_TRANSITION_BARS and b not in out:
             out.append(b)
     return out
+
+
+def _beide(a, b) -> bool:
+    return a is not None and b is not None
+
+
+def _teil_harmonie(out_a: MixCandidate, in_b: MixCandidate, *, harmonic_strictness: int,
+                   allow_experimental: bool) -> float | None:
+    if not out_a.camelot_lokal or not in_b.camelot_lokal:
+        return None
+    return camelot_relation_score(
+        out_a.camelot_lokal, in_b.camelot_lokal, harmonic_strictness=harmonic_strictness,
+        allow_experimental=allow_experimental, penalty=1.0) / 100.0
+
+
+def _teil_bpm(diff: float) -> float:
+    return math.exp(-diff / PAAR_BPM_SKALA)
+
+
+def _teil_energie(out_a: MixCandidate, in_b: MixCandidate, richtung: str | None) -> float | None:
+    if not _beide(out_a.energy_lokal, in_b.energy_lokal):
+        return None
+    diff = float(in_b.energy_lokal) - float(out_a.energy_lokal)
+    # Formeln wie playlist.calculate_enhanced_compatibility (Energie-Block).
+    if richtung == "up":
+        wert = min(1.0, max(0.0, diff) / 50.0)
+    elif richtung == "down":
+        wert = min(1.0, max(0.0, -diff) / 50.0)
+    elif richtung == "maintain":
+        wert = max(0.0, 1.0 - abs(diff) / 50.0)
+    else:
+        wert = max(0.0, 1.0 - abs(diff) / 100.0)
+    trend = in_b.energy_trend or ""
+    if (richtung == "up" and trend == "falling") or (richtung == "down" and trend == "rising"):
+        wert *= ENERGIE_TREND_WIDERSPRUCH
+    return wert
+
+
+def _teil_groove(out_a: MixCandidate, in_b: MixCandidate, tol: dict, flags: dict) -> float | None:
+    bass_sim = cosine_similarity(out_a.bass_pattern_lokal, in_b.bass_pattern_lokal)
+    onset_sim = cosine_similarity(out_a.groove_pattern_lokal, in_b.groove_pattern_lokal)
+    if bass_sim is None and onset_sim is None:
+        return None
+    if bass_sim is None:
+        roh = onset_sim
+    elif onset_sim is None:
+        roh = bass_sim
+    else:
+        roh = BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
+    wert = _spreize(roh, tol.get("groove_sim_floor", DEFAULT_GROOVE_SIM_FLOOR))
+    if _beide(out_a.syncopation_lokal, in_b.syncopation_lokal):
+        wert *= _normiert(in_b.syncopation_lokal - out_a.syncopation_lokal, SYNCOPATION_DELTA_MAX)
+    pa, pb = out_a.percussive_ratio_lokal, in_b.percussive_ratio_lokal
+    if _beide(pa, pb):
+        if pa > PERCUSSIVE_HOCH and pb > PERCUSSIVE_HOCH:
+            wert -= PERCUSSIVE_ABZUG
+        flags["lange_blende_erlaubt"] = bool(pa < PERCUSSIVE_NIEDRIG and pb < PERCUSSIVE_NIEDRIG)
+    return max(0.0, min(1.0, wert))
+
+
+def _teil_bass(out_a: MixCandidate, in_b: MixCandidate, tol: dict, flags: dict) -> float | None:
+    sub = (_normiert(in_b.sub_energy - out_a.sub_energy, tol.get("bass_delta_max", DEFAULT_SUB_DELTA_MAX))
+           if _beide(out_a.sub_energy, in_b.sub_energy) else None)
+    punch = (_normiert(in_b.bass_punch - out_a.bass_punch, DEFAULT_PUNCH_DELTA_MAX)
+             if _beide(out_a.bass_punch, in_b.bass_punch) else None)
+    if sub is None and punch is None:
+        return None
+    if sub is None:
+        wert = punch
+    elif punch is None:
+        wert = sub
+    else:
+        wert = 0.6 * sub + 0.4 * punch
+    if _beide(out_a.bass_rms_dbfs, in_b.bass_rms_dbfs):
+        wert *= _normiert(in_b.bass_rms_dbfs - out_a.bass_rms_dbfs, BASS_RMS_DELTA_MAX_DB)
+    konflikt = bool(out_a.kick_aktiv and in_b.kick_aktiv)
+    flags["bass_swap_pflicht"] = konflikt
+    if konflikt:
+        wert -= KICK_KONFLIKT_ABZUG
+    return max(0.0, min(1.0, wert))
+
+
+def _teil_timbre(out_a: MixCandidate, in_b: MixCandidate) -> float | None:
+    wert = cosine_similarity(out_a.timbre_fingerprint_lokal, in_b.timbre_fingerprint_lokal)
+    if wert is None:
+        return None
+    deltas = []
+    if _beide(out_a.avg_mids_lokal, in_b.avg_mids_lokal):
+        deltas.append(abs(in_b.avg_mids_lokal - out_a.avg_mids_lokal))
+    if _beide(out_a.avg_highs_lokal, in_b.avg_highs_lokal):
+        deltas.append(abs(in_b.avg_highs_lokal - out_a.avg_highs_lokal))
+    if deltas:
+        wert *= _normiert(sum(deltas) / len(deltas), MIDS_HIGHS_DELTA_MAX)
+    return max(0.0, min(1.0, wert))
+
+
+def _teil_mood(out_a: MixCandidate, in_b: MixCandidate, tol: dict) -> float | None:
+    ma, mb = out_a.mood or {}, in_b.mood or {}
+    ha = ma.get("brightness", out_a.brightness_lokal)
+    hb = mb.get("brightness", in_b.brightness_lokal)
+    fa = ma.get("flatness", out_a.flatness_lokal)
+    fb = mb.get("flatness", in_b.flatness_lokal)
+    hell = (_normiert(float(hb) - float(ha), tol.get("brightness_delta_max", DEFAULT_BRIGHTNESS_DELTA_MAX))
+            if _beide(ha, hb) else None)
+    flach = _normiert(float(fb) - float(fa), DEFAULT_FLATNESS_DELTA_MAX) if _beide(fa, fb) else None
+    if hell is None and flach is None:
+        return None
+    if hell is None:
+        wert = flach
+    elif flach is None:
+        wert = hell
+    else:
+        wert = 0.7 * hell + 0.3 * flach
+    if ma.get("key_mode") and mb.get("key_mode") and ma["key_mode"] != mb["key_mode"]:
+        wert -= MODE_SWITCH_PENALTY
+    if (ma.get("pssi_mood") is not None and mb.get("pssi_mood") is not None
+            and ma["pssi_mood"] != mb["pssi_mood"]):
+        wert -= PSSI_MOOD_ABZUG
+    return max(0.0, min(1.0, wert))
+
+
+def _teil_lautheit(out_a: MixCandidate, in_b: MixCandidate) -> float | None:
+    if not _beide(out_a.lufs_lokal, in_b.lufs_lokal):
+        return None
+    return _normiert(in_b.lufs_lokal - out_a.lufs_lokal, LUFS_DELTA_MAX_DB)
+
+
+_OUT_LABELS = {"outro", "breakdown", "Outro", "Down"}
+_IN_LABELS = {"drop", "Chorus"}
+
+
+def _teil_struktur(out_a: MixCandidate, in_b: MixCandidate) -> float | None:
+    teile = []
+    if in_b.neuheit is not None:
+        teile.append(float(in_b.neuheit))
+    if in_b.traegt_allein is not None:
+        teile.append(1.0 if in_b.traegt_allein else 0.0)
+    if not teile:
+        return None
+    wert = sum(teile) / len(teile)
+    aus_out = out_a.section_label in _OUT_LABELS or out_a.phrase_label in _OUT_LABELS
+    in_in = in_b.section_label in _IN_LABELS or in_b.phrase_label in _IN_LABELS
+    if aus_out and in_in:
+        wert += STRUKTUR_LABEL_BONUS
+    return max(0.0, min(1.0, wert))
+
+
+def _gewichte(tol: dict) -> dict[str, float]:
+    return {f: float(tol.get(f"kandidaten_{f}_weight", 0.0)) for f in FAKTOREN}
+
+
+def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCandidate,
+               blend_bars: int, *, energy_direction=None, harmonic_strictness: int = 7,
+               allow_experimental: bool = True,
+               tolerances: dict | None = None) -> tuple[float, dict, dict]:
+    """Score einer Kombination aus allen Faktoren lokal an der Naht (Spec
+    Abschnitt 2, Schritt 2). Liefert (score, teilwerte, flags). Fehlende
+    Teilwerte (None) werden per combine_weighted umverteilt, nie mit 0 bewertet.
+    Half/Double: Gesamtscore x BPM_HALF_DOUBLE_PENALTY. Vocals beidseitig: -0.06.
+    `blend_bars` ist bewusst KEIN Score-Merkmal (Spec Abschnitt 1: Blendenlaenge
+    als Qualitaetsmerkmal widerlegt, rho -0.08); es dient nur den Gates/Flags."""
+    from .playlist import VOCAL_CLASH_PENALTY, combine_weighted   # lazy, s. _genre
+    richtung = getattr(energy_direction, "value", energy_direction)
+    genre_a, genre_b = _genre(track_a), _genre(track_b)
+    tol = tolerances if tolerances is not None else get_tolerances(genre_a)
+    diff, rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
+    flags = {"half_double": rel != "direct", "bass_swap_pflicht": False,
+             "lange_blende_erlaubt": False,
+             "benannter_cue": _guard_frei(track_a, out_a, "out") or _guard_frei(track_b, in_b, "in")}
+    teil = {
+        "harmonic": _teil_harmonie(out_a, in_b, harmonic_strictness=harmonic_strictness,
+                                   allow_experimental=allow_experimental),
+        "bpm": _teil_bpm(diff),
+        "energy": _teil_energie(out_a, in_b, richtung),
+        "genre": get_genre_compatibility(genre_a, genre_b),
+        "groove": _teil_groove(out_a, in_b, tol, flags),
+        "bass": _teil_bass(out_a, in_b, tol, flags),
+        "timbre": _teil_timbre(out_a, in_b),
+        "mood": _teil_mood(out_a, in_b, tol),
+        "loudness": _teil_lautheit(out_a, in_b),
+        "structure": _teil_struktur(out_a, in_b),
+    }
+    gew = _gewichte(tol)
+    if teil["harmonic"] is not None and _beide(out_a.key_confidence_lokal, in_b.key_confidence_lokal):
+        gew["harmonic"] *= max(0.0, min(1.0, min(out_a.key_confidence_lokal, in_b.key_confidence_lokal)))
+    score = combine_weighted(teil, gew)
+    if flags["half_double"]:
+        score *= BPM_HALF_DOUBLE_PENALTY
+    if out_a.vocal_aktiv_lokal and in_b.vocal_aktiv_lokal:
+        score -= VOCAL_CLASH_PENALTY
+    return max(0.0, min(1.0, score)), teil, flags
