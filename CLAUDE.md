@@ -63,6 +63,7 @@ hpg_core/                  # Core analysis modules
   dj_brain.py              # Genre-spezifische Mix-Logik, Mixpoints
   rekordbox_phrases.py     # PSSI-Phrasen aus ANLZ lesen (reine Funktionen)
   mix_candidates.py        # Mixpunkt-Kandidaten je Track: Gates, Kappung, lokale Messung
+  pair_candidates.py       # Paarung/Bewertung der Kandidaten: Paar-Gates, Score, Blenden, Rang (Teil 2)
   playlist.py              # Playlist-Generierung und Scoring (STRATEGIES)
   transition_features.py   # Paarweise Uebergangs-Vergleiche (Groove/Bass/Timbre/Mood, je [0,1] oder None)
   groove.py                # Beat-synchrone Mustererkennung fuer das Uebergangs-Scoring
@@ -81,7 +82,7 @@ hpg_core/                  # Core analysis modules
   exporters/               # m3u8, Rekordbox XML Export
 tests/                     # pytest (1832 Tests gesammelt, gemessen 2026-08-21 (pytest --collect-only))
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection,
-                           # kandidaten_messen.py fuer Mixpunkt-Kandidaten)
+                           # kandidaten_messen.py / paar_kandidaten_messen.py fuer Mixpunkt-Kandidaten)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
 docs/archive/              # Erledigte Plaene und historische Dokumente
 ```
@@ -141,3 +142,6 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
 5. Mixpunkt-Kandidaten (PSSI-Phrasen, Cues, Sektionen, Analyzer) entstehen in
    `analyze_track` nach den Mixpunkten; Cue-Positionsheuristik entfernt
    (Spec 2026-08-21).
+6. Paar-Kandidaten (`pair_candidates.build_pair_candidates`) entstehen erst
+   beim Paaren zweier Tracks (kein Cache, reine Funktionen); Anbindung an
+   Scoring/GUI/Export ist Teil 4 der Spec.
