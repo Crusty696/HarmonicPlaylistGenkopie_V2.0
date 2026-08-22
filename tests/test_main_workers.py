@@ -697,3 +697,92 @@ def test_coverage_failure_never_breaks_a_finished_run(monkeypatch, tmp_path):
   )
 
   assert emitted == []
+
+
+
+# --- Kandidaten in der GUI (Teil 4): reine Helfer ohne Widgets ----------------
+
+def test_kandidat_teilwerte_kurzform():
+  from main import kandidat_teilwerte_kurz
+  txt = kandidat_teilwerte_kurz({"harmonic": 0.75, "bpm": 1.0, "energy": 0.98, "genre": 1.0, "groove": 0.83,
+                                 "bass": 0.6, "timbre": 0.72, "mood": 0.99, "loudness": None, "structure": 0.07})
+  assert txt == "H .75 T 1.0 E .98 G 1.0 Gr .83 B .60 K .72 S .99 L - St .07"
+  assert kandidat_teilwerte_kurz({}) == "H - T - E - G - Gr - B - K - S - L - St -"
+
+
+def test_mixpunkt_quelle_aus_empfehlungen():
+  from types import SimpleNamespace
+  from main import mixpunkte_fuer_tabelle
+  recs = [SimpleNamespace(plan=SimpleNamespace(mix_out_a=192.0, mix_in_b=82.3), kandidat_aktiv=1)]
+  t0 = SimpleNamespace(mix_in_point=60.0, mix_out_point=200.0)
+  t1 = SimpleNamespace(mix_in_point=50.0, mix_out_point=210.0)
+  assert mixpunkte_fuer_tabelle(0, t0, recs) == (60.0, "Analyse", 192.0, "Kandidat Rang 1")
+  assert mixpunkte_fuer_tabelle(1, t1, recs) == (82.3, "Kandidat Rang 1", 210.0, "Analyse")
+  assert mixpunkte_fuer_tabelle(1, t1, []) == (50.0, "Analyse", 210.0, "Analyse")
+  # kandidat_aktiv 0 -> Track-Werte
+  recs0 = [SimpleNamespace(plan=SimpleNamespace(mix_out_a=1.0, mix_in_b=2.0), kandidat_aktiv=0)]
+  assert mixpunkte_fuer_tabelle(0, t0, recs0) == (60.0, "Analyse", 200.0, "Analyse")
+
+
+
+# --- Kandidatentabelle im MixTipsPanel + Wahl im MainWindow (Teil 4, qtbot) ---
+
+def _rec_mit_kandidaten(index=0):
+  from hpg_core.playlist import TransitionPlan, TransitionRecommendation
+  a = Track(filePath="C:/a.wav", fileName="a.wav", bpm=140.0)
+  b = Track(filePath="C:/b.wav", fileName="b.wav", bpm=140.0)
+  kand = [
+    {"rang": 1, "t_out": 164.6, "t_in": 82.3, "blend_bars": 16, "overlap_sec": 27.4, "score": 0.71,
+     "teilwerte": {"harmonic": 0.75, "bpm": 1.0}, "flags": {"bass_swap_pflicht": False},
+     "begruendung": "Harmonie stark; Blende 16 Takte", "out_a": {"schema": ["pssi_phrase"]},
+     "in_b": {"schema": ["auto_cue"]}},
+    {"rang": 2, "t_out": 164.6, "t_in": 82.3, "blend_bars": 32, "overlap_sec": 54.9, "score": 0.71,
+     "teilwerte": {"harmonic": 0.75, "bpm": 1.0}, "flags": {"bass_swap_pflicht": False},
+     "begruendung": "Harmonie stark; Blende 32 Takte", "out_a": {"schema": ["pssi_phrase"]},
+     "in_b": {"schema": ["auto_cue"]}},
+  ]
+  plan = TransitionPlan(mix_out_a=164.6, mix_in_b=82.3, fade_out_start=164.6, fade_out_end=192.0,
+                        overlap=27.4, transition_type="pro_eq_swap")
+  return TransitionRecommendation(
+    index=index, from_track=a, to_track=b, fade_out_start=164.6, fade_out_end=192.0,
+    fade_in_start=82.3, mix_entry=82.3, overlap=27.4, bpm_delta=0.0, energy_delta=0,
+    compatibility_score=71, risk_level="low", notes="", transition_type="pro_eq_swap",
+    dj_rec=None, plan=plan, kandidaten=kand, kandidat_aktiv=1)
+
+
+def test_mix_tips_panel_zeigt_kandidatentabelle_und_sendet_wahl(qtbot):
+  panel = main.MixTipsPanel()
+  qtbot.addWidget(panel)
+  panel.set_recommendations([_rec_mit_kandidaten()])
+  assert 0 in panel._kandidaten_tabellen
+  tabelle = panel._kandidaten_tabellen[0]
+  assert tabelle.rowCount() == 2 and tabelle.columnCount() == len(panel.KANDIDATEN_SPALTEN)
+  assert [tabelle.item(0, c).text() for c in range(3)] == ["1", "164.6 s", "82.3 s"]
+  assert tabelle.item(0, 7).text().startswith("Harmonie stark")      # Begruendung sichtbar
+  assert [r.row() for r in tabelle.selectionModel().selectedRows()] == [0]   # aktive Zeile
+  empfangen = []
+  panel.candidate_chosen.connect(lambda i, r: empfangen.append((i, r)))
+  tabelle.selectRow(1)
+  assert empfangen == [(0, 2)]
+
+
+def test_on_candidate_chosen_merkt_wahl_und_rechnet_neu(qtbot, monkeypatch, tmp_path):
+  from hpg_core import candidate_choices as cc
+  monkeypatch.setenv("HPG_CANDIDATE_CHOICES_FILE", str(tmp_path / "choices.json"))
+  cc.reset_cache()
+  window = _window(qtbot, monkeypatch)
+  rec = _rec_mit_kandidaten()
+  window.playlist = [rec.from_track, rec.to_track]
+  window.playlist_panel.playlist = window.playlist
+  window.playlist_panel.transition_recommendations = [rec]
+  aufrufe = {"berechne": 0, "verteile": 0, "verworfen": []}
+  monkeypatch.setattr(window, "_berechne_uebergaenge",
+                      lambda bpm, ctx: aufrufe.__setitem__("berechne", aufrufe["berechne"] + 1) or (None, {}, [rec]))
+  monkeypatch.setattr(window, "_verteile_uebergaenge",
+                      lambda plan, bpm, ctx: aufrufe.__setitem__("verteile", aufrufe["verteile"] + 1))
+  monkeypatch.setattr(window.mix_tips_panel, "verwerfe_preview", lambda i: aufrufe["verworfen"].append(i))
+  window._on_candidate_chosen(0, 2)
+  w = cc.hole("C:/a.wav", "C:/b.wav")
+  assert w and w["blend_bars"] == 32 and w["t_out"] == 164.6
+  assert aufrufe == {"berechne": 1, "verteile": 1, "verworfen": [0]}
+  cc.reset_cache()
