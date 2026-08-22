@@ -126,6 +126,10 @@ Spec Abschnitt 3; Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-te
   (pro_eq_swap ist ein Bass-Swap: kein `KICK_KONFLIKT_ABZUG` in der CSV).
 - Hoerproben selbst (Menschen) stehen auf der Checkliste im Handoff Teil 3/4.
 - App-Regression: `tools/playlist_kandidaten_messen.py --cache [--ohne-kandidaten]`.
+- Objektive E2E-Pruefung der Kandidaten in der App (Preview = Plan, Wahl
+  persistiert/folgt, Ketten-Neustarts, Regler-Wirkung, XML MIX IN/OUT = Plan,
+  HPG-K-Cues) auf echten Cache-Daten: `tools/e2e_kandidaten_app.py --out <Ordner>`
+  (schreibt Wahl/Regler nur in Dateien unter --out). Ersetzt nicht das Hoeren.
 
 ## Was "fertig" heisst
 

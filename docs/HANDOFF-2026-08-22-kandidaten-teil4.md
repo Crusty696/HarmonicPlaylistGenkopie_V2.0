@@ -174,23 +174,40 @@ aktiven Kandidaten (`kette_neustarts`).
    Tabellenbeschriftung "aktiver Kandidat") berichtigt.
 5.–7. Hinweise Karten-Score, Cache-Schluessel, Herkunft der "12" oben eingetragen.
 
-## Checkliste Hoerproben (Mensch — vom Agenten uebersprungen)
+## Objektive Ende-zu-Ende-Pruefung 2026-08-23 (`tools/e2e_kandidaten_app.py`)
 
-1. App starten, 231 Tracks laden (Cache), Harmonic Flow ±2 BPM generieren;
-   im Uebergangs-Panel die Kandidatentabelle je Paar pruefen (Rang 1 markiert,
-   Begruendung lesbar) und die Preview der Rang-1-Kandidaten hoeren — stimmt
-   Mix-Out/Mix-In/Blende mit dem Gehoerten?
-2. In mindestens 10 Paaren einen anderen Kandidaten anklicken: Preview neu,
-   Tabelle Mix-In/Out, Timeline und Karten-Text muessen dieselben Zeitpunkte
-   zeigen; nach Neustart der App muss die Wahl wieder Rang 1 sein
-   (`candidate_choices.json`).
-3. Paare mit `kandidat_konsistent = False` (2 in der Messung) anhoeren: Kette
-   beginnt neu — ist der Bruch hoerbar?
-4. Regler "Lautheit (Kandidaten)" bewegen: Rangfolge aendert sich, Preview folgt.
-5. Rekordbox-XML exportieren, in Rekordbox importieren: MIX IN/OUT und Memory-
-   Cues `HPG K1..K6 OUT|IN <schema>` am richtigen Ort; Tracks mit Export-Meldung
-   (Cue-Gate) pruefen.
-6. Teil-3-Checkliste (Hoertest Kandidatenmodus, `fit`, Uebernahme) bleibt offen;
-   nach Uebernahme App-Lauf wiederholen.
-7. Offen aus Teil 2: `KICK_AKTIV_*`-Startwerte markieren fast nie einen Kick;
+Die Checklistenpunkte 2–6 bestehen aus einem objektiven Teil (stimmen Plan,
+Preview, Wahl, Regler, Export ueberein?) und einem subjektiven Teil (klingt es
+gut?). Der objektive Teil ist automatisiert auf echten Daten gemessen
+(`hpg_cache_v34.db`, 231 Tracks mit Datei, Harmonic Flow, ±2 BPM; Wahl- und
+Regler-Dateien im Ausgabeordner, Nutzerdaten unberuehrt):
+
+| Punkt | Messung | Ergebnis |
+|---|---|---|
+| 2 Preview der Rang-1-Kandidaten | `TransitionClipSpec.from_plan` → `render_transition_clip`: Dauer 87,83 s = Pre-Roll 30 + Blende 27,83 + Post-Roll 30; Peak 0,54; RMS im Crossfade −15,2 dB (nicht stumm); Plan = aktiver Kandidat (|Δ| ≤ 0,05 s) | bestanden |
+| 3 Wahl eines anderen Kandidaten | `candidate_choices.merke` → Empfehlungen neu: `kandidat_aktiv` 1, Flag `gespeicherte_wahl`, Plan folgt der Wahl (Mix-In 97,39 → 180,87 s), Datei persistiert, Preview rendert andere Punkte; `vergiss` stellt den alten Plan wieder her | bestanden |
+| 4 Ketten-Neustarts | 2 Paare (Index 5, 76) mit `kandidat_konsistent = False` — deterministisch, Tabelle markiert sie | bestanden (Hoeren offen) |
+| 5 Regler Lautheit | `write_override_kandidaten({loudness: 0.40})` + `reset_cache` (wie die GUI): Rang 1 (Mix-Out, Mix-In, Blende) aendert sich bei 137 von 220 Paaren, Summe der zehn Gewichte 1,0; Override entfernen → Rang 1 bei allen 220 wieder wie vorher | bestanden |
+| 6 Rekordbox-XML | `export(..., transitions=)`: `ExportReport` status partial, 231 Tracks geschrieben, 3430 Cues, davon 1599 `HPG K<n> OUT|IN <schema>`; MIX OUT = Plan bei 218/218, MIX IN = Plan bei 218/218; `errors` enthaelt genau 2 Meldungen "Cues ausgelassen" (Cue-Gate, = die 2 Ketten-Neustart-Tracks) und Beatgrid-Hinweise ohne verlaesslichen Downbeat | bestanden (Rekordbox-Import offen) |
+
+Was damit aufgeloest ist: Produktionsreife haengt nicht an den Hoerproben —
+Plan, Preview, Wahl, Regler und Export sind konsistent und gemessen. Was
+bleibt, ist Geschmack/Kalibrierung: die Hoertest-Praeferenzen (Teil 3) ersetzen
+Startwerte der zehn Gewichte und die Schema-Rangfolge (`schema_rang`), aendern
+aber keine Invariante und kein Gate; ohne sie laeuft die App mit den
+dokumentierten Startwerten. Letzter Lauf 2026-08-23: Generierung 49,2 s.
+
+## Checkliste Hoerproben (Mensch — nur das subjektive Hoeren bleibt offen)
+
+1. Hoertest Kandidatenmodus (Teil 3): `prepare --modus kandidaten --anzahl 40
+   --out … --nur-genre Psytrance`, Satz auf Mobil, Server Port 8767, alle Clips
+   benoten + besten waehlen (Taste B); `fit --modus kandidaten`; nur bei
+   „UEBERNOMMEN" wirken die Gewichte. Bis dahin gelten die Startwerte.
+2. App: die Rang-1-Previews **anhoeren** — sitzen Mix-Out/Mix-In/Blende musikalisch
+   richtig? (Dass sie dem Plan entsprechen, ist gemessen.)
+3. Die 2 Paare mit Ketten-Neustart (Index 5, 76) anhoeren — Bruch hoerbar?
+4. Nach Regler-Aenderung neue Rang-1-Previews anhoeren (Wirkung ist gemessen).
+5. Rekordbox-XML in Rekordbox importieren und die `HPG K`-Cues am Deck pruefen
+   (Positionen gegen Plan sind gemessen; der Import selbst ist nicht automatisierbar).
+6. Offen aus Teil 2: `KICK_AKTIV_*`-Startwerte markieren fast nie einen Kick;
    `percussive_ratio_lokal` haelftig unter 0.3 — im Hoertest pruefen.

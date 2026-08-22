@@ -104,8 +104,12 @@ Wichtigste Eintraege: `hpg-stand-2026-08-22-teil1-gemerged.md` (Einstieg),
 
 - Hoerproben (Mensch): Checklisten in `docs/HANDOFF-2026-08-22-kandidaten-teil3.md`
   (Kandidaten-Satz vorbereiten, bewerten, `fit --modus kandidaten`) und
-  `docs/HANDOFF-2026-08-22-kandidaten-teil4.md` (App-Preview der Kandidaten,
-  Wahl-Klick, Ketten-Neustarts, Regler, Rekordbox-Import der `HPG K`-Cues).
+  `docs/HANDOFF-2026-08-22-kandidaten-teil4.md`. **Der objektive Teil der
+  App-Checkliste ist seit 2026-08-23 automatisiert gemessen**
+  (`tools/e2e_kandidaten_app.py --out <Ordner>`: Preview = Plan, Wahl
+  persistiert/folgt/zurueck, Ketten-Neustarts 2, Regler aendert 137/220 Rang 1,
+  XML MIX OUT 218/218 und MIX IN 218/218 = Plan, 2 Cue-Gate-Meldungen, 1599 HPG-K-Cues) — offen ist nur das
+  subjektive Hoeren und der Rekordbox-Import am Geraet.
 - Generierung mit Kandidaten ~52 s fuer 231 Tracks (2 s ohne) — gemessen, keine
   Kappung; bei groesseren Sammlungen waechst es mit den Paaren im 2-BPM-Gate.
 - #4 Melodic Techno: wartet auf Noten

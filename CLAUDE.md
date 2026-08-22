@@ -86,6 +86,7 @@ hpg_core/                  # Core analysis modules
 tests/                     # pytest (1917 Tests gesammelt, gemessen 2026-08-22 (pytest --collect-only))
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection,
                            # kandidaten_messen.py / paar_kandidaten_messen.py / playlist_kandidaten_messen.py
+                           # e2e_kandidaten_app.py: objektive E2E-Pruefung der Kandidaten in der App
                            # fuer Mixpunkt-Kandidaten)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
 docs/archive/              # Erledigte Plaene und historische Dokumente
