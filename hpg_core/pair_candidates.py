@@ -370,3 +370,171 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     if out_a.vocal_aktiv_lokal and in_b.vocal_aktiv_lokal:
         score -= VOCAL_CLASH_PENALTY
     return max(0.0, min(1.0, score)), teil, flags
+
+
+_FAKTOR_NAMEN = {
+    "harmonic": "Harmonie", "bpm": "Tempo", "energy": "Energie", "genre": "Genre",
+    "groove": "Groove", "bass": "Bass", "timbre": "Klangfarbe", "mood": "Stimmung",
+    "loudness": "Lautheit", "structure": "Struktur",
+}
+
+
+def _stufe(wert: float | None) -> str:
+    if wert is None:
+        return "nicht messbar"
+    if wert >= 0.8:
+        return "stark"
+    if wert >= 0.5:
+        return "mittel"
+    return "schwach"
+
+
+def begruendung_aus_teilwerten(teilwerte: dict, flags: dict, blend_bars: int) -> str:
+    """Begruendung ausschliesslich aus Teilwerten und Flags (kein freier Text)."""
+    teile = [f"{_FAKTOR_NAMEN.get(k, k)} {_stufe(teilwerte.get(k))}" for k in FAKTOREN if k in teilwerte]
+    if flags.get("bass_swap_pflicht"):
+        teile.append("Bass-Swap noetig")
+    if flags.get("half_double"):
+        teile.append(f"Half/Double, Cut <= {PAAR_HALF_DOUBLE_MAX_BARS} Takte")
+    if flags.get("lange_blende_erlaubt"):
+        teile.append("lange Blende erlaubt")
+    if flags.get("benannter_cue"):
+        teile.append("benannter Cue")
+    teile.append(f"Blende {blend_bars} Takte")
+    return "; ".join(teile)
+
+
+def _hauptschema(cand: MixCandidate) -> str:
+    schemata = [s for s in (cand.schema or []) if s in SCHEMA_RANG]
+    return min(schemata, key=SCHEMA_RANG.get) if schemata else ""
+
+
+def _gleiche_kombination(p: PairCandidate, q: PairCandidate, grid_a: float, grid_b: float) -> bool:
+    """Spec Schritt 4: |dt| < 1 Phrase und gleiches Schema. Toleranz abgezogen,
+    weil Teil 1 t auf 3 Dezimalen rundet — sonst verschmelzen Gitterpunkte, die
+    genau eine Phrase auseinanderliegen. Gleiche Blende, sonst fiele die zweite
+    Blendenlaenge (identischer Score) als Duplikat weg."""
+    return (p.blend_bars == q.blend_bars
+            and abs(p.t_out - q.t_out) < grid_a - QUANTIZE_TOLERANCE_SEC
+            and abs(p.t_in - q.t_in) < grid_b - QUANTIZE_TOLERANCE_SEC
+            and _hauptschema(p.out_a) == _hauptschema(q.out_a)
+            and _hauptschema(p.in_b) == _hauptschema(q.in_b))
+
+
+def _sortschluessel(p: PairCandidate):
+    return (-p.score, SCHEMA_RANG.get(_hauptschema(p.out_a), len(SCHEMA_RANG)),
+            SCHEMA_RANG.get(_hauptschema(p.in_b), len(SCHEMA_RANG)), p.blend_bars)
+
+
+def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
+                   schemata_vorhanden: set[str]) -> list[PairCandidate]:
+    """Schritt 4: nahe Kombinationen gleichen Schemas zusammenlegen (bester Score
+    bleibt, Schemata vereinigt), Kappung auf PAAR_MAX_KOMBINATIONEN Zeitpunkt-
+    Kombinationen (je bis zu 2 Blenden), mindestens eine Kombination je
+    vorhandenem Schema."""
+    paare = sorted(paare, key=_sortschluessel)
+    # Dedupe ueber Kombinationen (ohne Blende): Vertreter = bester Score.
+    vertreter: list[PairCandidate] = []
+    zuordnung: dict[int, PairCandidate] = {}
+    for p in paare:
+        ziel = next((v for v in vertreter if _gleiche_kombination(p, v, grid_a, grid_b)), None)
+        if ziel is None:
+            vertreter.append(p)
+            zuordnung[id(p)] = p
+        else:
+            for s in p.out_a.schema:
+                if s not in ziel.out_a.schema:
+                    ziel.out_a.schema.append(s)
+            for s in p.in_b.schema:
+                if s not in ziel.in_b.schema:
+                    ziel.in_b.schema.append(s)
+            zuordnung[id(p)] = ziel
+    kombis: list[tuple[float, float]] = []
+    for v in vertreter:
+        key = (v.t_out, v.t_in)
+        if key not in kombis:
+            kombis.append(key)
+    gewaehlt = kombis[:PAAR_MAX_KOMBINATIONEN]
+
+    def schemata_in(auswahl):
+        s = set()
+        for p in vertreter:
+            if (p.t_out, p.t_in) in auswahl:
+                s.update(p.out_a.schema)
+                s.update(p.in_b.schema)
+        return s
+
+    # Schema-Garantie: fehlt ein vorhandenes Schema, ersetzt die beste Kombination
+    # mit diesem Schema die schlechteste gewaehlte, deren Schemata anderweitig
+    # vertreten bleiben.
+    for schema in SCHEMA_PRIORITAET:
+        if schema not in schemata_vorhanden or schema in schemata_in(gewaehlt):
+            continue
+        ersatz = next(((p.t_out, p.t_in) for p in vertreter
+                       if schema in p.out_a.schema or schema in p.in_b.schema), None)
+        if ersatz is None or ersatz in gewaehlt:
+            continue
+        if len(gewaehlt) < PAAR_MAX_KOMBINATIONEN:
+            gewaehlt.append(ersatz)
+            continue
+        for k in reversed(gewaehlt):
+            rest = [x for x in gewaehlt if x != k]
+            verloren = schemata_in(gewaehlt) - schemata_in(rest + [ersatz])
+            if not verloren:
+                gewaehlt = rest + [ersatz]
+                break
+    # Dedupe-Opfer (zuordnung != p) sind raus. Je (Kombination, Blende) bleibt
+    # der beste Vertreter; liegen zwei Vertreter verschiedener Hauptschemata auf
+    # demselben Punkt, werden ihre Schemata vereinigt (kein Kandidat geht verloren).
+    ergebnis = [p for p in paare if zuordnung[id(p)] is p and (p.t_out, p.t_in) in gewaehlt]
+    je_punkt: dict[tuple[float, float, int], PairCandidate] = {}
+    for p in sorted(ergebnis, key=_sortschluessel):
+        k = (p.t_out, p.t_in, p.blend_bars)
+        if k in je_punkt:
+            ziel = je_punkt[k]
+            for s in p.out_a.schema:
+                if s not in ziel.out_a.schema:
+                    ziel.out_a.schema.append(s)
+            for s in p.in_b.schema:
+                if s not in ziel.in_b.schema:
+                    ziel.in_b.schema.append(s)
+            continue
+        je_punkt[k] = p
+    return list(je_punkt.values())
+
+
+def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=None,
+                          harmonic_strictness: int = 7, allow_experimental: bool = True,
+                          tolerances: dict | None = None) -> list[PairCandidate]:
+    """Schritte 1–5 der Spec: Gates, Score, Blendenlaengen, Dedupe/Kappung,
+    Rang + Begruendung. Liefert [] wenn keine Kombination die Gates besteht."""
+    outs = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_a.mix_out_candidates or [])]
+    ins = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_b.mix_in_candidates or [])]
+    if not outs or not ins:
+        return []
+    _, rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
+    spb = seconds_per_bar(track_a.bpm)
+    schemata_vorhanden: set[str] = set()
+    for c in outs + ins:
+        schemata_vorhanden.update(c.schema or [])
+    paare: list[PairCandidate] = []
+    for o in outs:
+        for i in ins:
+            for bars in blend_bars_options(track_a, o, rel):
+                if pair_gate_reasons(track_a, track_b, o, i, bars):
+                    continue
+                score, teil, flags = score_pair(
+                    track_a, track_b, o, i, bars, energy_direction=energy_direction,
+                    harmonic_strictness=harmonic_strictness,
+                    allow_experimental=allow_experimental, tolerances=tolerances)
+                paare.append(PairCandidate(
+                    out_a=MixCandidate.from_dict(o.to_dict()), in_b=MixCandidate.from_dict(i.to_dict()),
+                    blend_bars=bars, overlap_sec=bars * spb, score=score, teilwerte=teil,
+                    flags=flags, begruendung=begruendung_aus_teilwerten(teil, flags, bars),
+                    bpm_relation=rel))
+    if not paare:
+        return []
+    final = dedupe_and_cap(paare, _grid_sec(track_a), _grid_sec(track_b), schemata_vorhanden)
+    for rang, p in enumerate(final, start=1):
+        p.rang = rang
+    return final

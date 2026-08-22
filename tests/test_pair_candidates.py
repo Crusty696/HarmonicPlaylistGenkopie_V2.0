@@ -266,3 +266,77 @@ def test_score_struktur_und_mood():
     _, t2, _ = score_pair(a, b, _voll(160.0), _voll(80.0, mood={"pssi_mood": 2, "brightness": 50,
                                                                 "flatness": 0.1, "key_mode": "Major"}), 16)
     assert t2["mood"] == pytest.approx(1.0 - 0.15 - 0.10)
+
+from hpg_core.pair_candidates import begruendung_aus_teilwerten, build_pair_candidates
+
+
+def _track_mit_kandidaten(name, bpm=140.0, outs=(), ins=()):
+    t = _track(name, bpm=bpm)
+    t.mix_out_candidates = [c.to_dict() for c in outs]
+    t.mix_in_candidates = [c.to_dict() for c in ins]
+    return t
+
+
+def test_build_liefert_sortierte_raenge_und_zwei_blenden():
+    g = _grid()
+    a = _track_mit_kandidaten("a.mp3", outs=[_voll(round(5 * g, 3), kick_aktiv=False),
+                                             _voll(round(6 * g, 3), kick_aktiv=False, schema=["sektion"])])
+    b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    res = build_pair_candidates(a, b)
+    assert len(res) == 4                      # 2 Kombinationen x 2 Blenden
+    assert [p.rang for p in res] == [1, 2, 3, 4]
+    assert all(res[i].score >= res[i + 1].score for i in range(len(res) - 1))
+    assert {p.blend_bars for p in res} == {16, 32}
+    assert all(p.begruendung for p in res)
+    assert all(p.overlap_sec == pytest.approx(p.blend_bars * (60.0 / 140.0) * 4) for p in res)
+
+
+def test_build_gates_leer_bei_bpm():
+    a = _track_mit_kandidaten("a.mp3", bpm=140.0, outs=[_voll(round(5 * _grid(), 3))])
+    b = _track_mit_kandidaten("b.mp3", bpm=143.0, ins=[_voll(round(3 * _grid(143.0), 3))])
+    assert build_pair_candidates(a, b) == []
+
+
+def test_build_dedupe_und_kappung_mit_schema_garantie():
+    g = _grid()
+    outs = [_voll(round(k * g, 3), kick_aktiv=False) for k in (3, 4, 5, 6, 7)]       # 5 pssi
+    outs.append(_voll(round(7 * g, 3), kick_aktiv=False, schema=["sektion"], neuheit=0.0, traegt_allein=False))
+    ins = [_voll(round(k * g, 3), kick_aktiv=False) for k in (3, 4)]
+    a = _track_mit_kandidaten("a.mp3", outs=outs)
+    b = _track_mit_kandidaten("b.mp3", ins=ins)
+    res = build_pair_candidates(a, b)
+    kombis = {(p.t_out, p.t_in) for p in res}
+    assert len(kombis) <= 6
+    assert any("sektion" in p.out_a.schema for p in res)      # Schema-Garantie
+    assert len(res) <= 12
+
+
+def test_build_dedupe_fasst_nahe_gleiche_schemata_zusammen():
+    g = _grid()
+    o1 = _voll(round(5 * g, 3), kick_aktiv=False)
+    o2 = _voll(round(5 * g + 2.0, 3), kick_aktiv=False)   # < 1 Phrase, gleiches Hauptschema
+    a = _track_mit_kandidaten("a.mp3", outs=[o1, o2])
+    a.phrase_grid = [0.0, round(5 * g, 3), round(5 * g + 2.0, 3), round(8 * g, 3)]
+    b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    res = build_pair_candidates(a, b)
+    assert len({(p.t_out, p.t_in) for p in res}) == 1
+
+
+def test_build_dedupe_laesst_genau_eine_phrase_abstand_getrennt():
+    g = _grid()
+    # Teil 1 rundet auf 3 Dezimalen: round(4g)-round(3g) = 27.428 < 27.42857
+    o1, o2 = _voll(round(3 * g, 3), kick_aktiv=False), _voll(round(4 * g, 3), kick_aktiv=False)
+    a = _track_mit_kandidaten("a.mp3", outs=[o1, o2])
+    b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    res = build_pair_candidates(a, b)
+    assert len({(p.t_out, p.t_in) for p in res}) == 2
+    assert {p.blend_bars for p in res} == {16, 32}
+
+
+def test_begruendung_aus_teilwerten_fester_text():
+    txt = begruendung_aus_teilwerten(
+        {"harmonic": 0.9, "bpm": 1.0, "groove": 0.6, "loudness": None},
+        {"bass_swap_pflicht": True, "half_double": False, "lange_blende_erlaubt": False,
+         "benannter_cue": False}, 16)
+    assert "Harmonie stark" in txt and "Groove mittel" in txt and "Lautheit nicht messbar" in txt
+    assert "Bass-Swap noetig" in txt and "16 Takte" in txt
