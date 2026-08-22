@@ -786,3 +786,11 @@ def test_on_candidate_chosen_merkt_wahl_und_rechnet_neu(qtbot, monkeypatch, tmp_
   assert w and w["blend_bars"] == 32 and w["t_out"] == 164.6
   assert aufrufe == {"berechne": 1, "verteile": 1, "verworfen": [0]}
   cc.reset_cache()
+
+
+def test_app_bpm_default_ist_zwei(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  assert window.library_panel.bpm_tolerance_slider.value() == 2
+  assert window.library_panel.bpm_value_label.text() == "\u00b12"
+  assert window.current_bpm_tolerance == 2.0
+  assert window.playlist_panel.bpm_tolerance == 2.0

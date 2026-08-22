@@ -570,7 +570,7 @@ class AnalysisWorker(QThread):
         self,
         folder_path,
         mode="Harmonic Flow",
-        bpm_tolerance=3.0,
+        bpm_tolerance=2.0,
         advanced_params=None,
     ):
         super().__init__()
@@ -1628,6 +1628,9 @@ class AdvancedParametersWidget(QWidget):
             ("bass_weight", "Bassdruck", 8),
             ("timbre_weight", "Klangfarbe", 5),
             ("mood_weight", "Stimmung", 5),
+            # Kandidaten-Gewicht (Spec 2026-08-21 Abschnitt 4: "Faktoren-Regler um
+            # Lautheit erweitern"); eigener Schluesselkreis kandidaten_*_weight.
+            ("kandidaten_loudness_weight", "Lautheit (Kandidaten)", 6),
         ):
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(0, 100)
@@ -1680,21 +1683,41 @@ class AdvancedParametersWidget(QWidget):
         Kompatibilitaets-Caches in playlist.py sind ausserhalb von
         generate_playlist None und brauchen kein Zutun.
         """
-        from hpg_core.tolerances import reset_cache, write_override
+        from hpg_core.tolerances import reset_cache, write_override, write_override_kandidaten
 
         gewichte = {
             schluessel: slider.value() / 100.0
             for schluessel, slider in self.transition_weight_sliders.items()
         }
+        # Zwei Schluesselkreise in einer Datei: Track-Gewichte (*_weight) und
+        # Kandidaten-Gewichte (kandidaten_*_weight) — getrennt normiert.
+        track_gewichte = {k: v for k, v in gewichte.items() if not k.startswith("kandidaten_")}
+        kandidaten_gewichte = {k: v for k, v in gewichte.items() if k.startswith("kandidaten_")}
         try:
-            write_override(gewichte)
+            write_override(track_gewichte)
+            if kandidaten_gewichte:
+                write_override_kandidaten(kandidaten_gewichte)
         except ValueError as exc:
             self.transition_weight_status.setText(f"Gewichte ungueltig: {exc}")
             return
         reset_cache()
         self.transition_weight_status.setText(
-            "Gespeichert — wirkt ab der naechsten Generierung."
+            "Gespeichert — wirkt ab der naechsten Generierung." + self._praeferenz_hinweis()
         )
+
+    @staticmethod
+    def _praeferenz_hinweis() -> str:
+        """Hoertest-Praeferenzen (candidate_preferences.json) schlagen den
+        Kandidaten-Regler je Genre — das soll der Nutzer sehen."""
+        try:
+            from hpg_core.candidate_preferences import load_candidate_preferences
+            genres = sorted(g for g, e in load_candidate_preferences().items() if e.get("gewichte"))
+        except Exception:  # noqa: BLE001 - Hinweis ist Beiwerk
+            return ""
+        if not genres:
+            return ""
+        return (" Hoertest-Praeferenz aktiv fuer: " + ", ".join(genres)
+                + " — der Lautheit-Regler wirkt dort nicht.")
 
     def _on_transition_weights_reset(self) -> None:
         """Verwirft die eigenen Regler-Werte; danach gilt wieder der Stand
@@ -2771,12 +2794,15 @@ class LibraryPanel(QWidget):
         bpm_row = QHBoxLayout()
         self.bpm_tolerance_slider = QSlider(Qt.Orientation.Horizontal)
         self.bpm_tolerance_slider.setRange(1, 15)
-        self.bpm_tolerance_slider.setValue(3)
+        # Spec 2026-08-21 Abschnitt 4: App-Default 2.0 (Gate des Hoertests und
+        # der Paar-Kandidaten, PAAR_BPM_MAX); der Slider bleibt einstellbar.
+        self.bpm_tolerance_slider.setValue(2)
         self.bpm_tolerance_slider.setToolTip(
             "Maximale BPM-Differenz zwischen aufeinanderfolgenden Tracks.\n"
-            "±3 BPM empfohlen. Half/Double-Time wird automatisch erkannt."
+            "±2 BPM (Gate des Hoertests und der Mix-Kandidaten). "
+            "Half/Double-Time wird automatisch erkannt."
         )
-        self.bpm_value_label = QLabel("±3")
+        self.bpm_value_label = QLabel("±2")
         self.bpm_value_label.setFixedWidth(30)
         self.bpm_value_label.setStyleSheet(
             f"QLabel {{ color: {COLORS['accent_primary']}; font-weight: bold; }}"
@@ -2995,7 +3021,7 @@ class PlaylistPanel(QWidget):
         self.playlist = []
         self.quality_metrics = {}
         self.transition_recommendations = []
-        self.bpm_tolerance = 3.0
+        self.bpm_tolerance = 2.0
         self.scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.init_ui()
 
@@ -3143,7 +3169,7 @@ class PlaylistPanel(QWidget):
         playlist,
         quality_metrics,
         transition_recommendations=None,
-        bpm_tolerance=3.0,
+        bpm_tolerance=2.0,
         scoring_context=None,
     ):
         """Playlist-Daten setzen und Tabelle fuellen."""
@@ -4463,7 +4489,7 @@ class MainWindow(QMainWindow):
         self.analyzed_raw_tracks = []
         self.quality_metrics = {}
         self.current_playlist_mode = "Harmonic Flow"
-        self.current_bpm_tolerance = 3.0
+        self.current_bpm_tolerance = 2.0
         self.current_scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.worker = None
         self.ai_worker = None
