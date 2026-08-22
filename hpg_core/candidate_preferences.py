@@ -93,3 +93,13 @@ def schema_rangfolge(genre: str) -> list[str]:
 def reset_cache() -> None:
     global _cache
     _cache = None
+    _leere_paar_cache()
+
+
+def _leere_paar_cache() -> None:
+    """Kandidatenlisten der Playlist-Ebene verwerfen (lazy, kein Importzyklus)."""
+    try:
+        from .playlist import reset_pair_candidate_cache
+    except Exception:  # noqa: BLE001 - beim Import von playlist selbst noch nicht verfuegbar
+        return
+    reset_pair_candidate_cache()

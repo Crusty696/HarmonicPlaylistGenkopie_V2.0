@@ -996,7 +996,9 @@ def befehl_prepare_kandidaten(args: argparse.Namespace) -> int:
             break
         k = kandidaten[index]
         a, b = k["track_a"], k["track_b"]
-        pcs = build_pair_candidates(a, b)
+        # pro_eq_swap rendert einen Bass-Swap: der Kick-Konflikt ist im Clip
+        # geloest, also ohne KICK_KONFLIKT_ABZUG bewerten (Teil 4, Entscheidung 4).
+        pcs = build_pair_candidates(a, b, bass_swap_geplant=True)
         if not pcs:
             uebersprungen += 1
             continue

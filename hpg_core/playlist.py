@@ -4,6 +4,8 @@ from .models import (
     effective_bpm_diff,
     get_camelot_components,
     camelot_relation_score,
+    seconds_per_bar,
+    QUANTIZE_TOLERANCE_SEC,
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
@@ -41,7 +43,7 @@ import logging
 import heapq
 import math
 from typing import List, Tuple, Dict, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -119,6 +121,11 @@ class TransitionMetrics:
     bass_continuity: Optional[float] = None
     timbre_match: Optional[float] = None
     mood_match: Optional[float] = None
+    # Kandidatenpfad (Spec 2026-08-21 Abschnitt 4): lokale Teilwerte des besten
+    # PairCandidate; None, wenn das Paar ohne Kandidaten bewertet wurde.
+    loudness_match: Optional[float] = None
+    structure_match: Optional[float] = None
+    kandidat: Optional[dict] = None   # PairCandidate.to_dict() von Rang 1
 
 
 @dataclass
@@ -141,6 +148,13 @@ class TransitionRecommendation:
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
     dj_rec: Optional["DJRecommendation"] = None  # Paar-spezifische DJ-Brain-Empfehlung
     plan: Optional["TransitionPlan"] = None
+    # Alle PairCandidates des Paars (to_dict) in App-Reihenfolge und der Rang des
+    # aktiven Kandidaten (0 = keiner; dann tragen Plan/Track die Zeitpunkte).
+    kandidaten: List[dict] = field(default_factory=list)
+    kandidat_aktiv: int = 0
+    # False, wenn kein Kandidat hinter dem Mix-In des vorigen Paars lag und
+    # deshalb Rang 1 genommen wurde (Invariante 1 je Track dann verletzt).
+    kandidat_konsistent: bool = True
 
 
 @dataclass(frozen=True)
@@ -310,6 +324,31 @@ def _resolve_track_genre(track: Track) -> str:
     return track.genre if (track.genre and track.genre != "Unknown") else "Unknown"
 
 
+def _kandidaten_fuer_paar(track1: Track, track2: Track, energy_direction, kwargs: dict) -> list:
+    """PairCandidates des Paars in App-Reihenfolge (pair_candidates.rank_pair_candidates),
+    dauerhaft gecacht in _PAIR_CANDIDATE_CACHE (Schluessel: Track-Identitaet,
+    energy_direction, kwargs; geleert von reset_pair_candidate_cache, das Wahl,
+    Praeferenz und Toleranzen lazy aufrufen). Leer, wenn eine Seite keine
+    Kandidaten traegt."""
+    if not (getattr(track1, "mix_out_candidates", None) and getattr(track2, "mix_in_candidates", None)):
+        return []
+    # Lazy: pair_candidates importiert playlist-Teile lazy — kein Zyklus auf Modulebene.
+    from .pair_candidates import rank_pair_candidates
+    key = (
+        _track_cache_key(track1), _track_cache_key(track2), repr(getattr(energy_direction, "value", energy_direction)),
+        repr(sorted((k, repr(v)) for k, v in kwargs.items())),
+    )
+    if key in _PAIR_CANDIDATE_CACHE:
+        return _PAIR_CANDIDATE_CACHE[key]
+    paare = rank_pair_candidates(
+        track1, track2, energy_direction=energy_direction,
+        harmonic_strictness=kwargs.get("harmonic_strictness", 7),
+        allow_experimental=kwargs.get("allow_experimental", True),
+    )
+    _PAIR_CANDIDATE_CACHE[key] = paare
+    return paare
+
+
 def calculate_enhanced_compatibility(
     track1: Track,
     track2: Track,
@@ -393,8 +432,26 @@ def calculate_enhanced_compatibility(
 
     # Overall weighted score
     groove_val = bass_val = timbre_val = mood_val = None
+    loudness_val = structure_val = None
+    kandidat = None
+    # Kandidaten nur innerhalb des BPM-Gates rechnen: darueber ist der Score
+    # ohnehin 0 (Hard-Gate unten) — spart bei grossen Sammlungen das Gros der
+    # Paare (~9 ms je rank_pair_candidates).
+    if TRANSITION_FEATURES_ENABLED and bpm_diff <= bpm_tolerance:
+        paare = _kandidaten_fuer_paar(track1, track2, energy_direction, kwargs)
+        if paare:
+            kandidat = paare[0]
 
-    if TRANSITION_FEATURES_ENABLED:
+    if kandidat is not None:
+        # Spec 2026-08-21 Abschnitt 4: der beste PairCandidate traegt den
+        # Paar-Score — alle Faktoren lokal an der Naht (Teil 2); Half/Double-
+        # Penalty und Vocal-Clash stecken bereits im Kandidaten-Score.
+        tw = kandidat.teilwerte
+        groove_val, bass_val = tw.get("groove"), tw.get("bass")
+        timbre_val, mood_val = tw.get("timbre"), tw.get("mood")
+        loudness_val, structure_val = tw.get("loudness"), tw.get("structure")
+        overall_score = float(kandidat.score)
+    elif TRANSITION_FEATURES_ENABLED:
         # genre_a (abgehender Track) setzt den Kontext des Uebergangs.
         tol = get_tolerances(genre_a)
         # Nicht aufgeloestes Genre: Gewicht halbieren. Der Altpfad tat das
@@ -464,7 +521,8 @@ def calculate_enhanced_compatibility(
     # nur wenn BEIDE Tracks als "vocal" erkannt sind (Heuristik ist auf
     # 22kHz-Mono unsicher, "unknown" wird nie bestraft).
     if (
-        getattr(track1, "vocal_instrumental", "unknown") == "vocal"
+        kandidat is None
+        and getattr(track1, "vocal_instrumental", "unknown") == "vocal"
         and getattr(track2, "vocal_instrumental", "unknown") == "vocal"
     ):
         overall_score = max(0.0, overall_score - VOCAL_CLASH_PENALTY)
@@ -486,6 +544,9 @@ def calculate_enhanced_compatibility(
         bass_continuity=bass_val,
         timbre_match=timbre_val,
         mood_match=mood_val,
+        loudness_match=loudness_val,
+        structure_match=structure_val,
+        kandidat=kandidat.to_dict() if kandidat is not None else None,
     )
     if _ENHANCED_COMPAT_CACHE is not None:
         _ENHANCED_COMPAT_CACHE[cache_key] = metrics
@@ -543,6 +604,18 @@ def _calculate_compatibility_inner(
 # erweiterte Zielfunktion und _ENHANCED_COMPAT_CACHE.
 _ENHANCED_COMPAT_CACHE = None
 _COMPAT_CACHE = None
+# Kandidatenlisten je Paar. Anders als die beiden Caches oben DAUERHAFT aktiv:
+# rank_pair_candidates kostet ~9 ms je Paar (gemessen 2026-08-22, 231 Tracks),
+# und Sortierung, Metriken, Empfehlungen, Tabelle und Preview brauchen dieselbe
+# Liste. Geleert ueber reset_pair_candidate_cache() — aufgerufen, wenn sich
+# Wahl (candidate_choices), Praeferenzen (candidate_preferences) oder Gewichte
+# (tolerances) aendern.
+_PAIR_CANDIDATE_CACHE: dict = {}
+
+
+def reset_pair_candidate_cache() -> None:
+    """Leert den Kandidaten-Cache (Wahl/Praeferenz/Gewichte geaendert)."""
+    _PAIR_CANDIDATE_CACHE.clear()
 
 
 def calculate_compatibility(
@@ -1329,6 +1402,12 @@ def _outro_overlap_limit(
     seconds_per_bar = (60.0 / bpm) * METER
     if seconds_per_bar <= 0:
         return None
+    # Gitter-Toleranz (Teil 1 rundet Mixpunkte auf 3 Dezimalen; Kandidaten-
+    # Blenden sind mit derselben Toleranz auf ganze Takte geklemmt): ohne sie
+    # kostete ein 1-ms-Rundungsrest einen ganzen Takt Blende (gemessen
+    # 2026-08-22: 12 von 220 Paaren). Dieselbe Fehlerklasse wie der
+    # 3-ms-Phrasenfehler in models.quantize_to_grid.
+    headroom += QUANTIZE_TOLERANCE_SEC
     if headroom < MIN_TRANSITION_BARS * seconds_per_bar:
         return None
     return (headroom // seconds_per_bar) * seconds_per_bar
@@ -1671,6 +1750,74 @@ def compute_adjacent_transition_metrics(
     ]
 
 
+# Bonus im Kettenziel fuer einen vom Nutzer gewaehlten Kandidaten: die Wahl
+# soll gegen jeden Score-Unterschied gewinnen, solange die Kette konsistent
+# bleibt (Scores liegen in [0, 1]).
+_WAHL_BONUS = 10.0
+
+
+def _kette_waehlen(kandidaten_je_paar: list, playlist: List[Track]) -> list:
+    """Waehlt je Paar EINEN Kandidaten so, dass die Kette je Track konsistent
+    ist (Invariante 1/3: Mix-Out von Track i mindestens zwei Phrasen hinter
+    seinem Mix-In aus dem vorigen Paar) und die Summe der Scores (+ Bonus fuer
+    gespeicherte Wahl) maximal wird — dynamische Programmierung ueber die Paare.
+    Gibt es fuer ein Paar keinen konsistenten Anschluss, beginnt die Kette dort
+    neu (Rang 1, konsistent=False). Liefert [(kandidat|None, konsistent)]."""
+    n = len(kandidaten_je_paar)
+    ergebnis: list = [(None, True)] * n
+    NEG = float("-inf")
+    # best[i][j] = bester Kettenwert bis Paar i mit Kandidat j; vorgaenger fuer Rueckverfolgung
+    best: list = []
+    prev: list = []
+    neustart: list = []   # Paar i beginnt die Kette neu (kein konsistenter Anschluss moeglich)
+    for i, kands in enumerate(kandidaten_je_paar):
+        if not kands:
+            best.append([]); prev.append([]); neustart.append(True)
+            continue
+        werte = [float(k.score) + (_WAHL_BONUS if k.flags.get("gespeicherte_wahl") else 0.0) for k in kands]
+        if i == 0 or not kandidaten_je_paar[i - 1] or not best[i - 1]:
+            best.append(list(werte)); prev.append([-1] * len(kands)); neustart.append(True)
+            continue
+        track = playlist[i]                       # Track i ist "upcoming" von Paar i-1 und "current" von Paar i
+        grid = seconds_per_bar(track.bpm) * int(getattr(track, "phrase_unit", 8) or 8)
+        b_i, p_i = [], []
+        for j, k in enumerate(kands):
+            bester_wert, bester_prev = NEG, -1
+            for jp, kp in enumerate(kandidaten_je_paar[i - 1]):
+                if best[i - 1][jp] == NEG:
+                    continue
+                # Toleranz wie die Gitter-Quantisierung: Teil 1 rundet t auf 3 Dezimalen.
+                if float(k.t_out) >= float(kp.t_in) + 2.0 * grid - QUANTIZE_TOLERANCE_SEC:
+                    wert = best[i - 1][jp] + werte[j]
+                    if wert > bester_wert:
+                        bester_wert, bester_prev = wert, jp
+            b_i.append(bester_wert); p_i.append(bester_prev)
+        if all(v == NEG for v in b_i):
+            # kein konsistenter Anschluss: Kette neu beginnen, Flag an Paar i
+            best.append(list(werte)); prev.append([-1] * len(kands)); neustart.append(True)
+            ergebnis[i] = (None, False)
+        else:
+            best.append(b_i); prev.append(p_i); neustart.append(False)
+    # Rueckverfolgung segmentweise (jedes Segment endet vor dem naechsten Neustart)
+    i = n - 1
+    while i >= 0:
+        if not kandidaten_je_paar[i]:
+            ergebnis[i] = (None, True)
+            i -= 1
+            continue
+        # Segmentende: bester Zustand an Paar i
+        j = max(range(len(best[i])), key=lambda jj: best[i][jj])
+        while i >= 0 and kandidaten_je_paar[i]:
+            konsistent = not (neustart[i] and ergebnis[i] == (None, False))
+            ergebnis[i] = (kandidaten_je_paar[i][j], konsistent)
+            if neustart[i]:
+                i -= 1
+                break
+            j = prev[i][j]
+            i -= 1
+    return ergebnis
+
+
 def compute_transition_recommendations(
     playlist: List[Track],
     bpm_tolerance: float = 3.0,
@@ -1704,6 +1851,17 @@ def compute_transition_recommendations(
     configured_overlap = max(4.0, min(64.0, configured_overlap))
 
     recommendations: List[TransitionRecommendation] = []
+    # Kandidatenpfad (Spec 2026-08-21 Abschnitt 4): erst je Paar die Kandidaten
+    # holen (Cache), dann ueber die ganze Playlist konsistent waehlen — Mix-Out
+    # von Track i muss hinter seinem Mix-In aus dem vorigen Paar liegen
+    # (Invariante 1/3 je Track); Einzelpaar-Rang-1 wuerde das in ~1/3 der
+    # Paare verletzen (gemessen 2026-08-22, 231 Tracks).
+    kandidaten_je_paar = [
+        _kandidaten_fuer_paar(playlist[i], playlist[i + 1], None, ctx)
+        if getattr(metrics_by_pair[i], "kandidat", None) is not None else []
+        for i in range(len(playlist) - 1)
+    ]
+    kette = _kette_waehlen(kandidaten_je_paar, playlist)
 
     for index in range(len(playlist) - 1):
         current = playlist[index]
@@ -1784,6 +1942,27 @@ def compute_transition_recommendations(
                 # Objekte ohne transition_bars.
                 overlap = dj_overlap
 
+        # Kandidaten (Spec 2026-08-21 Abschnitt 4): der aktive PairCandidate
+        # (Rang 1 bzw. gespeicherte Wahl) traegt Mix-Out, Mix-In und Blende;
+        # Track-Felder bleiben Analyse-Werte, alle Leser nehmen den Plan.
+        kandidaten = kandidaten_je_paar[index]
+        kandidat_aktiv = 0
+        kandidat_konsistent = True
+        if kandidaten:
+            aktiv, kandidat_konsistent = kette[index]
+            if aktiv is None:
+                aktiv = kandidaten[0]
+            kandidat_aktiv = int(aktiv.rang)
+            current_mix_out = float(aktiv.t_out)
+            next_mix_in = float(aktiv.t_in)
+            fade_in_start = next_mix_in
+            overlap = float(aktiv.overlap_sec)
+            if dj_rec is not None:
+                # Sentinel-Felder mitziehen, damit Leser ohne Plan dieselben
+                # Zeitpunkte sehen (resolve_transition_mix_points, Karten-Text).
+                dj_rec.adjusted_mix_out_a = current_mix_out
+                dj_rec.adjusted_mix_in_b = next_mix_in
+
         has_dynamic_bar_source = dj_rec is not None and hasattr(
             dj_rec, "transition_bars"
         )
@@ -1832,9 +2011,14 @@ def compute_transition_recommendations(
 
         notes = "; ".join(notes_parts)
 
-        transition_type = predict_transition_type(
-            current, upcoming, bpm_tolerance, **ctx
-        )
+        if kandidaten and aktiv.flags.get("bass_swap_pflicht"):
+            # Beide Kicks aktiv an der Naht: der Bass-Swap ist Pflicht (Teil 2,
+            # Entscheidung 6); der Kandidaten-Score traegt dafuer keinen Abzug.
+            transition_type = "bass_swap"
+        else:
+            transition_type = predict_transition_type(
+                current, upcoming, bpm_tolerance, **ctx
+            )
         tempo_ratio = (
             float(upcoming.bpm / current.bpm)
             if current.bpm > 0 and upcoming.bpm > 0
@@ -1876,6 +2060,9 @@ def compute_transition_recommendations(
                 transition_type=transition_type,
                 dj_rec=dj_rec,
                 plan=plan,
+                kandidaten=[k.to_dict() for k in kandidaten],
+                kandidat_aktiv=kandidat_aktiv,
+                kandidat_konsistent=kandidat_konsistent,
             )
         )
 

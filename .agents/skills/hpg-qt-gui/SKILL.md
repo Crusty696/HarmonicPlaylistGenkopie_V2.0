@@ -112,3 +112,24 @@ Hex-Farben in `main.py` hartkodieren.
 - Source-Guard vergessen -> Statuszeile flackert zwischen Laeufen.
 - Grosse WAV-Datei im GUI-Thread lesen -> sichtbarer Freeze; in den Worker.
 - Neue Spalte nur an einer Stelle eintragen.
+
+## Kandidaten in der GUI (Teil 4, gebaut 2026-08-22)
+
+- `MixTipsPanel`: je Karte `QTableWidget` "Kandidaten" (Spalten Rang, Mix-Out A,
+  Mix-In B, Blende, Schema, Score, Teilwerte, Begruendung; `KANDIDATEN_SPALTEN`),
+  aktive Zeile = `rec.kandidat_aktiv`; Auswahl sendet
+  `candidate_chosen(card_index, rang)` (Guard `_tabelle_fuellt`);
+  `verwerfe_preview(index)` loescht den gerenderten Clip eines Paars.
+- `MainWindow._berechne_uebergaenge(bpm, ctx)` (Metriken, Quality, Empfehlungen;
+  lokaler Import aus `hpg_core.playlist`, Tests patchen dort) und
+  `_verteile_uebergaenge(plan, bpm, ctx)` (Panels, Toolbar); `analysis_finished`
+  ruft beide, `_on_playlist_reordered` ist unveraendert.
+  `_on_candidate_chosen(index, rang)`: `candidate_choices.merke` → Preview
+  verwerfen → neu berechnen → verteilen; Status in `status_bar`.
+- Tabelle Mix-In/Mix-Out: `mixpunkte_fuer_tabelle(index, track, recs)` (Modul-
+  Helfer) in `_populate_table` und `on_ai_finished`; Tooltip nennt die Quelle.
+- Regler: `kandidaten_loudness_weight` ("Lautheit (Kandidaten)") schreibt ueber
+  `tolerances.write_override_kandidaten`; Statuszeile nennt Genres mit aktiver
+  Hoertest-Praeferenz (dort wirkt der Regler nicht).
+- BPM-Slider Default 2, Label "±2"; `current_bpm_tolerance = 2.0`.
+- Export: `_export_rekordbox_xml` uebergibt `transitions=...transition_recommendations`.

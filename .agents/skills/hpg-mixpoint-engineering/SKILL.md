@@ -213,9 +213,19 @@ unveraendert.
 - Messung: `tools/paar_kandidaten_messen.py --cache | --json-tracks <json>`.
 - Gewichtsquelle in `score_pair` (Teil 3): explizites `tolerances` > Praeferenzen
   aus `hpg_core/candidate_preferences.py` (Hoertest-Fit) > `get_tolerances(genre)`.
-- Offen fuer Teil 3/4: `kandidaten_*_weight` an Fit (`rate_transitions.py`)
-  und GUI-Regler anbinden; `KICK_KONFLIKT_ABZUG` bei Bass-Swap-Uebergang
-  entfaellt in Teil 4; Rang-1 -> `Track.mix_*_point`, `scoring_context`.
+- Teil 4 (App): `rank_pair_candidates`/`select_pair_candidate` — gespeicherte
+  Wahl (`candidate_choices`) nach vorn, Tiebreak `schema_rang` (auch fuer das
+  Hauptschema), `bass_swap_geplant=True`; "Rang 1" lebt im `TransitionPlan`,
+  `Track.mix_in_point/mix_out_point` bleiben Analyse-Werte (Abweichung vom
+  Spec-Wortlaut, benannt).
+- Teil 4 (App, Fortsetzung): Kettenwahl `playlist._kette_waehlen` (DP, Mix-Out
+  von Paar i mindestens zwei Phrasen hinter dem Mix-In von Paar i−1 desselben
+  Tracks, `kandidat_konsistent`); neues Paar-Gate `blende_ueber_b_ende`;
+  `_outro_overlap_limit` mit `QUANTIZE_TOLERANCE_SEC` vor dem Floor;
+  `KICK_KONFLIKT_ABZUG` entfaellt bei `bass_swap_geplant=True`; Regler
+  "Lautheit (Kandidaten)" via `tolerances.write_override_kandidaten`. Die Wahl
+  liegt in `candidate_choices.json`, NICHT im `scoring_context` (Entscheidung 7).
+  Teile 1–4 sind gebaut; offen sind nur Hoerproben (Handoff Teil 4).
 
 ## Common Mistakes
 

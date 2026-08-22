@@ -469,3 +469,79 @@ class TestRekordboxCuePunkte:
           RekordboxXMLExporter().export([make_track()], str(out))
 
     assert out.read_text(encoding="utf-8") == "<existing/>"
+
+
+
+# ─── Kandidaten (Teil 4): Rang-1-Mixpunkte + HPG K<n> Memory-Cues ─────────────
+
+class _MarkRb:
+  """Fake rb_track, das Num mitschreibt (FakeRbTrack oben verwirft Num)."""
+
+  def __init__(self):
+    self.marks = []
+
+  def add_mark(self, Name="", Type="cue", Start=0.0, End=None, Num=-1):
+    self.marks.append((Name, round(float(Start), 1), Num))
+
+
+def _rec(plan_out, plan_in, kandidaten, aktiv=1):
+  from types import SimpleNamespace
+  return SimpleNamespace(plan=SimpleNamespace(mix_out_a=plan_out, mix_in_b=plan_in, overlap=27.4),
+                         kandidaten=kandidaten, kandidat_aktiv=aktiv)
+
+
+def _kand(rang, t_out, t_in, schema_out, schema_in):
+  return {"rang": rang, "t_out": t_out, "t_in": t_in, "blend_bars": 16,
+          "out_a": {"schema": [schema_out]}, "in_b": {"schema": [schema_in]}}
+
+
+class TestKandidatenCues:
+  def test_rang1_und_hpg_k_cues_fortlaufend_nach_dedupe(self, tmp_path):
+    a = make_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, mix_in_point=60.0,
+                   mix_out_point=200.0, outro_covered=True)
+    b = make_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, mix_in_point=50.0,
+                   mix_out_point=210.0, outro_covered=True)
+    kand = [_kand(1, 192.0, 82.3, "pssi_phrase", "auto_cue"),
+            _kand(2, 192.0, 82.3, "pssi_phrase", "auto_cue"),     # zweite Blende, gleiche Zeit
+            _kand(3, 164.6, 82.3, "sektion", "auto_cue"),
+            _kand(4, 137.1, 109.7, "analyzer", "pssi_phrase")]
+    rec = _rec(192.0, 82.3, kand)
+    with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True, create=True):
+      exp = RekordboxXMLExporter()
+    punkte = exp._kandidaten_punkte([a, b], [rec])
+    assert punkte[0]["mix_out"] == 192.0 and punkte[1]["mix_in"] == 82.3
+    rb = _MarkRb()
+    n, err = exp._add_cue_points(None, rb, a, mix_out=punkte[0]["mix_out"], extra=punkte[0]["extra"])
+    assert not err
+    assert ("MIX OUT", 192.0, 1) in rb.marks and ("MIX OUT", 192.0, -1) in rb.marks
+    assert ("HPG K1 OUT pssi_phrase", 192.0, -1) in rb.marks
+    assert ("HPG K2 OUT sektion", 164.6, -1) in rb.marks
+    assert ("HPG K3 OUT analyzer", 137.1, -1) in rb.marks
+    assert not any(m[0].startswith("HPG K4") for m in rb.marks)           # Dedupe gleicher Zeit
+    rb2 = _MarkRb()
+    exp._add_cue_points(None, rb2, b, mix_in=punkte[1]["mix_in"], extra=punkte[1]["extra"])
+    assert ("MIX IN", 82.3, 0) in rb2.marks and ("HPG K1 IN auto_cue", 82.3, -1) in rb2.marks
+    assert ("HPG K2 IN pssi_phrase", 109.7, -1) in rb2.marks
+    assert sum(1 for m in rb2.marks if m[0].startswith("HPG K") and m[1] == 82.3) == 1
+
+  def test_hoechstens_sechs_k_cues_je_seite(self):
+    kand = [_kand(i + 1, 100.0 + 10 * i, 50.0, "pssi_phrase", "auto_cue") for i in range(9)]
+    cues = RekordboxXMLExporter._kandidaten_cues_out(_rec(100.0, 50.0, kand))
+    assert [c[0] for c in cues] == [f"HPG K{i} OUT pssi_phrase" for i in range(1, 7)]
+
+  def test_ohne_outro_covered_keine_cues(self, tmp_path):
+    a = make_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, mix_in_point=60.0,
+                   mix_out_point=200.0, outro_covered=False)
+    with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True, create=True):
+      exp = RekordboxXMLExporter()
+    rb = _MarkRb()
+    n, err = exp._add_cue_points(None, rb, a, mix_out=192.0, extra=[("HPG K1 OUT x", 192.0)])
+    assert n == 0 and rb.marks == [] and err
+
+  def test_kandidat_aktiv_null_laesst_track_werte(self, tmp_path):
+    a = make_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, outro_covered=True)
+    b = make_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, outro_covered=True)
+    with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True, create=True):
+      exp = RekordboxXMLExporter()
+    assert exp._kandidaten_punkte([a, b], [_rec(1.0, 2.0, [], aktiv=0)]) == {}
+    assert exp._kandidaten_punkte([a, b], None) == {}

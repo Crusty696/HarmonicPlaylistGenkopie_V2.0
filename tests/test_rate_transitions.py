@@ -833,3 +833,20 @@ def test_schema_rangfolge_und_praeferenz_json():
     assert prefs["Psytrance"]["kandidaten_harmonic_weight"] == pytest.approx(0.7)
     assert sum(v for k, v in prefs["Psytrance"].items() if k.endswith("_weight")) == pytest.approx(1.0)
     assert prefs["Psytrance"]["schema_rang"][0] == "pssi_phrase" and "_diagnose" in prefs
+
+
+def test_prepare_kandidaten_ruft_build_mit_bass_swap_geplant(monkeypatch, tmp_path):
+    from tools import rate_transitions as rt
+    aufrufe = {}
+
+    def fake_build(a, b, **kw):
+        aufrufe.update(kw)
+        return []
+
+    monkeypatch.setattr(rt, "build_pair_candidates", fake_build)
+    monkeypatch.setattr(rt, "lade_tracks_aus_cache", lambda c: [])
+    monkeypatch.setattr(rt, "sammle_kandidaten", lambda t, tol: [
+        {"track_a": _ns_track("a"), "track_b": _ns_track("b"), "merkmale": {n: 0.5 for n in rt.NEUE_FAKTOREN}}])
+    args = SimpleNamespace(out=tmp_path, cache=None, bpm_toleranz=2.0, nur_genre=None, anzahl=1, seed=1)
+    rt.befehl_prepare_kandidaten(args)
+    assert aufrufe.get("bass_swap_geplant") is True

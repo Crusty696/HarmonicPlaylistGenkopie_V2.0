@@ -178,3 +178,26 @@ def test_passung_tooltip_ohne_metrics_ist_leer(qtbot):
   qtbot.addWidget(panel)
 
   assert panel._passung_tooltip(None) == ""
+
+
+
+def test_lautheit_regler_schreibt_kandidaten_gewicht(qtbot, monkeypatch, tmp_path):
+  override_pfad = tmp_path / "transition_tolerances.json"
+  monkeypatch.setenv("HPG_TOLERANCES_FILE", str(override_pfad))
+  reset_cache()
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  sliders = widget.transition_weight_sliders
+  assert "kandidaten_loudness_weight" in sliders
+  assert sliders["kandidaten_loudness_weight"].value() == 6      # Startwert 0.060 * 100
+
+  sliders["kandidaten_loudness_weight"].setValue(20)
+
+  from hpg_core.tolerances import KANDIDATEN_GEWICHT_SCHLUESSEL, get_tolerances
+  reset_cache()
+  w = get_tolerances(CANONICAL_GENRES[0])
+  assert w["kandidaten_loudness_weight"] == pytest.approx(0.20)
+  assert sum(w[k] for k in KANDIDATEN_GEWICHT_SCHLUESSEL) == pytest.approx(1.0)
+  assert w["groove_weight"] == pytest.approx(0.30)                # Track-Gewichte unberuehrt
+  daten = json.loads(override_pfad.read_text(encoding="utf-8"))
+  assert daten[CANONICAL_GENRES[0]]["kandidaten_loudness_weight"] == pytest.approx(0.20)

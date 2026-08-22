@@ -63,6 +63,7 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QPlainTextEdit,
     QHeaderView,
+    QAbstractItemView,
     QFrame,
     QScrollArea,
     QStyledItemDelegate,
@@ -99,7 +100,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from hpg_core.transition_renderer import TransitionClipSpec, _render_clip_subprocess_wrapper
 from hpg_core.downbeat import DOWNBEAT_RELIABLE_MIN, REFERENCE_BEATGRID_CONFIDENCE
 from hpg_core.parallel_analyzer import ParallelAnalyzer
-from hpg_core.models import get_camelot_components
+from hpg_core.models import get_camelot_components, seconds_to_bars
 from hpg_core.playlist import (
     STRATEGIES,
     calculate_playlist_quality,
@@ -136,6 +137,7 @@ from hpg_core.resource_limits import sanitize_playlist as apply_resource_limits
 # refresh_ai_providers() referenzierte es als Global -> NameError beim Aktivieren
 # der KI-Checkbox (Button blieb dauerhaft deaktiviert). Import jetzt auf Modulebene.
 from hpg_core import config as hpg_config
+from hpg_core import candidate_choices
 
 # H1-Fix (Audit 2026-07-17): Modul-Logger — TransitionRenderWorker.run
 # referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
@@ -211,6 +213,69 @@ def format_mix_point_display(seconds: float, bars: int) -> str:
     if seconds < 0:
         return "--:-- (- bars)"
     return f"{int(seconds // 60):02d}:{int(seconds % 60):02d} ({bars} bars)"
+
+
+# Kuerzel der zehn Teilwerte eines PairCandidate (Reihenfolge wie
+# hpg_core.pair_candidates.FAKTOREN) fuer die Kandidatentabelle.
+_TEILWERT_KUERZEL = (
+    ("harmonic", "H"), ("bpm", "T"), ("energy", "E"), ("genre", "G"), ("groove", "Gr"),
+    ("bass", "B"), ("timbre", "K"), ("mood", "S"), ("loudness", "L"), ("structure", "St"),
+)
+
+
+def kandidat_teilwerte_kurz(teilwerte: dict) -> str:
+    """Teilwerte als Kurzform "H .75 T 1.0 ... L - St .07" (None -> "-")."""
+    teile = []
+    for name, kuerzel in _TEILWERT_KUERZEL:
+        wert = teilwerte.get(name) if teilwerte else None
+        if wert is None:
+            text = "-"
+        elif float(wert) >= 1.0:
+            text = "1.0"
+        else:
+            text = f"{float(wert):.2f}"[1:]   # ".75"
+        teile.append(f"{kuerzel} {text}")
+    return " ".join(teile)
+
+
+def mixpunkte_fuer_tabelle(index: int, track, recs) -> tuple:
+    """Mix-In/Mix-Out fuer die Tabellenzeile `index`: aus der Empfehlung des
+    Paars (Rang-1-Kandidat, Plan) wenn vorhanden, sonst Track-Wert (Analyse).
+    Rueckgabe (mix_in, quelle_in, mix_out, quelle_out)."""
+    mix_in = float(getattr(track, "mix_in_point", -1.0))
+    mix_out = float(getattr(track, "mix_out_point", -1.0))
+    quelle_in = quelle_out = "Analyse"
+    recs = list(recs or [])
+    if 0 < index <= len(recs):
+        rec = recs[index - 1]
+        plan = getattr(rec, "plan", None)
+        rang = int(getattr(rec, "kandidat_aktiv", 0) or 0)
+        if plan is not None and rang > 0:
+            mix_in, quelle_in = float(plan.mix_in_b), f"Kandidat Rang {rang}"
+    if index < len(recs):
+        rec = recs[index]
+        plan = getattr(rec, "plan", None)
+        rang = int(getattr(rec, "kandidat_aktiv", 0) or 0)
+        if plan is not None and rang > 0:
+            mix_out, quelle_out = float(plan.mix_out_a), f"Kandidat Rang {rang}"
+    return mix_in, quelle_in, mix_out, quelle_out
+
+
+def _mixpunkt_items(index: int, track, recs) -> tuple:
+    """Zwei QTableWidgetItems (Mix-In, Mix-Out) mit Quelle als Tooltip."""
+    mix_in, q_in, mix_out, q_out = mixpunkte_fuer_tabelle(index, track, recs)
+    bpm = float(getattr(track, "bpm", 0.0) or 0.0)
+
+    def bars(sek, fallback):
+        if sek < 0:
+            return fallback
+        return seconds_to_bars(sek, bpm) if bpm > 0 else fallback
+
+    in_item = QTableWidgetItem(format_mix_point_display(mix_in, bars(mix_in, getattr(track, "mix_in_bars", 0))))
+    out_item = QTableWidgetItem(format_mix_point_display(mix_out, bars(mix_out, getattr(track, "mix_out_bars", 0))))
+    in_item.setToolTip(f"Quelle: {q_in}")
+    out_item.setToolTip(f"Quelle: {q_out}")
+    return in_item, out_item
 
 
 
@@ -505,7 +570,7 @@ class AnalysisWorker(QThread):
         self,
         folder_path,
         mode="Harmonic Flow",
-        bpm_tolerance=3.0,
+        bpm_tolerance=2.0,
         advanced_params=None,
     ):
         super().__init__()
@@ -1563,6 +1628,9 @@ class AdvancedParametersWidget(QWidget):
             ("bass_weight", "Bassdruck", 8),
             ("timbre_weight", "Klangfarbe", 5),
             ("mood_weight", "Stimmung", 5),
+            # Kandidaten-Gewicht (Spec 2026-08-21 Abschnitt 4: "Faktoren-Regler um
+            # Lautheit erweitern"); eigener Schluesselkreis kandidaten_*_weight.
+            ("kandidaten_loudness_weight", "Lautheit (Kandidaten)", 6),
         ):
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(0, 100)
@@ -1615,21 +1683,41 @@ class AdvancedParametersWidget(QWidget):
         Kompatibilitaets-Caches in playlist.py sind ausserhalb von
         generate_playlist None und brauchen kein Zutun.
         """
-        from hpg_core.tolerances import reset_cache, write_override
+        from hpg_core.tolerances import reset_cache, write_override, write_override_kandidaten
 
         gewichte = {
             schluessel: slider.value() / 100.0
             for schluessel, slider in self.transition_weight_sliders.items()
         }
+        # Zwei Schluesselkreise in einer Datei: Track-Gewichte (*_weight) und
+        # Kandidaten-Gewichte (kandidaten_*_weight) — getrennt normiert.
+        track_gewichte = {k: v for k, v in gewichte.items() if not k.startswith("kandidaten_")}
+        kandidaten_gewichte = {k: v for k, v in gewichte.items() if k.startswith("kandidaten_")}
         try:
-            write_override(gewichte)
+            write_override(track_gewichte)
+            if kandidaten_gewichte:
+                write_override_kandidaten(kandidaten_gewichte)
         except ValueError as exc:
             self.transition_weight_status.setText(f"Gewichte ungueltig: {exc}")
             return
         reset_cache()
         self.transition_weight_status.setText(
-            "Gespeichert — wirkt ab der naechsten Generierung."
+            "Gespeichert — wirkt ab der naechsten Generierung." + self._praeferenz_hinweis()
         )
+
+    @staticmethod
+    def _praeferenz_hinweis() -> str:
+        """Hoertest-Praeferenzen (candidate_preferences.json) schlagen den
+        Kandidaten-Regler je Genre — das soll der Nutzer sehen."""
+        try:
+            from hpg_core.candidate_preferences import load_candidate_preferences
+            genres = sorted(g for g, e in load_candidate_preferences().items() if e.get("gewichte"))
+        except Exception:  # noqa: BLE001 - Hinweis ist Beiwerk
+            return ""
+        if not genres:
+            return ""
+        return (" Hoertest-Praeferenz aktiv fuer: " + ", ".join(genres)
+                + " — der Lautheit-Regler wirkt dort nicht.")
 
     def _on_transition_weights_reset(self) -> None:
         """Verwirft die eigenen Regler-Werte; danach gilt wieder der Stand
@@ -2706,12 +2794,15 @@ class LibraryPanel(QWidget):
         bpm_row = QHBoxLayout()
         self.bpm_tolerance_slider = QSlider(Qt.Orientation.Horizontal)
         self.bpm_tolerance_slider.setRange(1, 15)
-        self.bpm_tolerance_slider.setValue(3)
+        # Spec 2026-08-21 Abschnitt 4: App-Default 2.0 (Gate des Hoertests und
+        # der Paar-Kandidaten, PAAR_BPM_MAX); der Slider bleibt einstellbar.
+        self.bpm_tolerance_slider.setValue(2)
         self.bpm_tolerance_slider.setToolTip(
             "Maximale BPM-Differenz zwischen aufeinanderfolgenden Tracks.\n"
-            "±3 BPM empfohlen. Half/Double-Time wird automatisch erkannt."
+            "±2 BPM (Gate des Hoertests und der Mix-Kandidaten). "
+            "Half/Double-Time wird automatisch erkannt."
         )
-        self.bpm_value_label = QLabel("±3")
+        self.bpm_value_label = QLabel("±2")
         self.bpm_value_label.setFixedWidth(30)
         self.bpm_value_label.setStyleSheet(
             f"QLabel {{ color: {COLORS['accent_primary']}; font-weight: bold; }}"
@@ -2930,7 +3021,7 @@ class PlaylistPanel(QWidget):
         self.playlist = []
         self.quality_metrics = {}
         self.transition_recommendations = []
-        self.bpm_tolerance = 3.0
+        self.bpm_tolerance = 2.0
         self.scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.init_ui()
 
@@ -3078,7 +3169,7 @@ class PlaylistPanel(QWidget):
         playlist,
         quality_metrics,
         transition_recommendations=None,
-        bpm_tolerance=3.0,
+        bpm_tolerance=2.0,
         scoring_context=None,
     ):
         """Playlist-Daten setzen und Tabelle fuellen."""
@@ -3271,13 +3362,8 @@ class PlaylistPanel(QWidget):
             )
             self.table.setItem(i, 9, conf_item)
 
-            # Mix In / Mix Out
-            mix_in_item = QTableWidgetItem(
-                format_mix_point_display(track.mix_in_point, track.mix_in_bars)
-            )
-            mix_out_item = QTableWidgetItem(
-                format_mix_point_display(track.mix_out_point, track.mix_out_bars)
-            )
+            # Mix In / Mix Out — Rang-1-Kandidat des Paars (Plan), sonst Analyse
+            mix_in_item, mix_out_item = _mixpunkt_items(i, track, self.transition_recommendations)
             self.table.setItem(i, 10, mix_in_item)
             self.table.setItem(i, 11, mix_out_item)
 
@@ -3421,12 +3507,20 @@ class PlaylistPanel(QWidget):
             bpm_tolerance=self.bpm_tolerance,
             scoring_context=self.scoring_context,
         )
+        # Spalten 10/11 haengen seit Teil 4 vom Paar ab (Plan des aktiven
+        # Kandidaten) — nach dem Umsortieren neu setzen (Waechter Tor 2 Teil 4)
+        for i, track in enumerate(self.playlist[:self.table.rowCount()]):
+            mix_in_item, mix_out_item = _mixpunkt_items(i, track, self.transition_recommendations)
+            self.table.setItem(i, 10, mix_in_item)
+            self.table.setItem(i, 11, mix_out_item)
 
 
 class MixTipsPanel(QWidget):
     """Mix-Empfehlungen als Scroll-Cards."""
 
     preview_state_changed = pyqtSignal(bool)
+    # Nutzer hat in der Kandidatentabelle einen Kandidaten gewaehlt: (Karten-Index, Rang)
+    candidate_chosen = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3444,6 +3538,9 @@ class MixTipsPanel(QWidget):
         self._active_preview_index = None
         # Aktiver Render-Worker (kann None sein)
         self._render_worker: TransitionRenderWorker | None = None
+        # Kandidatentabellen je Karte; Guard gegen Signal-Echo beim Fuellen
+        self._kandidaten_tabellen: dict[int, QTableWidget] = {}
+        self._tabelle_fuellt = False
         self.init_ui()
 
     def init_ui(self):
@@ -3482,6 +3579,7 @@ class MixTipsPanel(QWidget):
         self._clear_layout(self.container_layout)
         # Karten-Layout-Referenzen zuruecksetzen (neue Karten werden gleich angelegt)
         self._card_layouts = {}
+        self._kandidaten_tabellen = {}
 
         if not self.transition_recommendations:
             empty_label = QLabel("No transition tips available yet.")
@@ -3588,6 +3686,16 @@ class MixTipsPanel(QWidget):
             timing.setStyleSheet(f"QLabel {{ color: {COLORS['text_secondary']}; }}")
             card_layout.addWidget(timing)
 
+            # Kandidatentabelle (Spec 2026-08-21 Abschnitt 4): alle PairCandidates
+            # des Paars; Klick = Kandidat aktiv -> Preview, Timeline, Export folgen.
+            kandidaten = list(getattr(rec, "kandidaten", []) or [])
+            if kandidaten:
+                tabelle = self._baue_kandidaten_tabelle(
+                    card_index, kandidaten, int(getattr(rec, "kandidat_aktiv", 0) or 0)
+                )
+                self._kandidaten_tabellen[card_index] = tabelle
+                card_layout.addWidget(tabelle)
+
             # Notes in drei Kategorien aufsplitten
             notes_text = rec.notes or ""
             notes_parts = [p.strip() for p in notes_text.split(";") if p.strip()]
@@ -3683,6 +3791,97 @@ class MixTipsPanel(QWidget):
             self.container_layout.addWidget(card)
 
         self.container_layout.addStretch()
+
+    # ------------------------------------------------------------------
+    # Kandidatentabelle (Teil 4)
+    # ------------------------------------------------------------------
+
+    KANDIDATEN_SPALTEN = ("Rang", "Mix-Out A", "Mix-In B", "Blende", "Schema", "Score",
+                          "Teilwerte", "Begruendung")
+
+    def _baue_kandidaten_tabelle(self, card_index: int, kandidaten: list, aktiv: int) -> QTableWidget:
+        tabelle = QTableWidget(len(kandidaten), len(self.KANDIDATEN_SPALTEN))
+        tabelle.setHorizontalHeaderLabels(list(self.KANDIDATEN_SPALTEN))
+        tabelle.verticalHeader().setVisible(False)
+        tabelle.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        tabelle.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        tabelle.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        tabelle.setToolTip("Kandidaten fuer diesen Uebergang — Klick macht einen Kandidaten aktiv "
+                           "(Preview, Timeline und Export folgen; die Wahl wird gemerkt).")
+        tabelle.setStyleSheet(
+            f"QTableWidget {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "
+            f"font-family: {FONT_FAMILY}; font-size: 11px; border: 0px; }}"
+            f"QHeaderView::section {{ background-color: {COLORS['bg_input']}; "
+            f"color: {COLORS['text_secondary']}; border: 0px; padding: 2px 4px; }}"
+        )
+        self._tabelle_fuellt = True
+        try:
+            for zeile, k in enumerate(kandidaten):
+                schema_out = (k.get("out_a", {}).get("schema") or [""])[0]
+                schema_in = (k.get("in_b", {}).get("schema") or [""])[0]
+                werte = (
+                    str(k.get("rang", zeile + 1)),
+                    f"{float(k.get('t_out', 0.0)):.1f} s",
+                    f"{float(k.get('t_in', 0.0)):.1f} s",
+                    f"{int(k.get('blend_bars', 0))} Takte",
+                    f"{schema_out} \u2192 {schema_in}",
+                    f"{float(k.get('score', 0.0)):.2f}",
+                    kandidat_teilwerte_kurz(k.get("teilwerte") or {}),
+                    str(k.get("begruendung", "")),
+                )
+                for spalte, text in enumerate(werte):
+                    item = QTableWidgetItem(text)
+                    item.setData(Qt.ItemDataRole.UserRole, int(k.get("rang", zeile + 1)))
+                    item.setToolTip(str(k.get("begruendung", "")))
+                    tabelle.setItem(zeile, spalte, item)
+                if int(k.get("rang", zeile + 1)) == aktiv:
+                    tabelle.selectRow(zeile)
+        finally:
+            self._tabelle_fuellt = False
+        tabelle.resizeColumnsToContents()
+        tabelle.horizontalHeader().setStretchLastSection(True)
+        zeilen_hoehe = tabelle.verticalHeader().defaultSectionSize()
+        sichtbar = min(6, len(kandidaten))
+        tabelle.setFixedHeight(tabelle.horizontalHeader().height() + zeilen_hoehe * sichtbar + 6)
+        tabelle.itemSelectionChanged.connect(
+            lambda requested=card_index, t=tabelle: self._on_kandidat_gewaehlt(requested, t)
+        )
+        return tabelle
+
+    def _on_kandidat_gewaehlt(self, card_index: int, tabelle: QTableWidget) -> None:
+        if self._tabelle_fuellt:
+            return
+        zeilen = tabelle.selectionModel().selectedRows() if tabelle.selectionModel() else []
+        if not zeilen:
+            return
+        item = tabelle.item(zeilen[0].row(), 0)
+        if item is None:
+            return
+        rang = item.data(Qt.ItemDataRole.UserRole)
+        try:
+            rang = int(rang)
+        except (TypeError, ValueError):
+            return
+        self.candidate_chosen.emit(card_index, rang)
+
+    def verwerfe_preview(self, index: int) -> None:
+        """Gerenderte Vorschau eines Paars verwerfen (der Plan hat sich geaendert)."""
+        path = self._preview_cache.pop(index, None)
+        if path:
+            self._remove_preview_path(path)
+        widget = self._preview_widgets.get(index)
+        if widget is not None:
+            try:
+                widget.clear_error()
+            except RuntimeError:
+                pass
+        button = self._preview_buttons.get(index)
+        if button:
+            try:
+                button.setEnabled(True)
+                button.setText("Vorschau bei Bedarf rendern")
+            except RuntimeError:
+                pass
 
     # ------------------------------------------------------------------
     # Transition-Preview-Integration
@@ -4296,7 +4495,7 @@ class MainWindow(QMainWindow):
         self.analyzed_raw_tracks = []
         self.quality_metrics = {}
         self.current_playlist_mode = "Harmonic Flow"
-        self.current_bpm_tolerance = 3.0
+        self.current_bpm_tolerance = 2.0
         self.current_scoring_context = {}  # HPG-001: aktiver Scoring-Vertrag
         self.worker = None
         self.ai_worker = None
@@ -4469,6 +4668,7 @@ class MainWindow(QMainWindow):
         self.mix_tips_panel.preview_state_changed.connect(
             self._on_preview_state_changed
         )
+        self.mix_tips_panel.candidate_chosen.connect(self._on_candidate_chosen)
 
     def _on_nav_changed(self, index):
         self.content_stack.setCurrentIndex(index)
@@ -4720,12 +4920,10 @@ class MainWindow(QMainWindow):
             ai_item = self.playlist_panel._make_ai_insights_item(found_track)
             self.playlist_panel.table.setItem(found_row, 15, ai_item)
             
-            # 2. Update Mix In / Mix Out columns (col 10 & 11)
-            mix_in_item = QTableWidgetItem(
-                format_mix_point_display(found_track.mix_in_point, found_track.mix_in_bars)
-            )
-            mix_out_item = QTableWidgetItem(
-                format_mix_point_display(found_track.mix_out_point, found_track.mix_out_bars)
+            # 2. Update Mix In / Mix Out columns (col 10 & 11) — Rang-1-Kandidat
+            #    des Paars (Plan) vor dem Analysewert, wie in _populate_table
+            mix_in_item, mix_out_item = _mixpunkt_items(
+                found_row, found_track, self.playlist_panel.transition_recommendations
             )
             self.playlist_panel.table.setItem(found_row, 10, mix_in_item)
             self.playlist_panel.table.setItem(found_row, 11, mix_out_item)
@@ -4817,46 +5015,16 @@ class MainWindow(QMainWindow):
         # 2. Metriken und Transition-Empfehlungen berechnen — mit demselben
         # Scoring-Kontext wie die Generierung (HPG-001)
         scoring_context = self.current_scoring_context
-        transition_metrics = compute_adjacent_transition_metrics(
-            self.playlist, bpm_tolerance, scoring_context
-        )
-        self.quality_metrics = calculate_playlist_quality(
-            self.playlist,
-            bpm_tolerance,
-            scoring_context,
-            transition_metrics=transition_metrics,
-        )
-        transition_plan = compute_transition_recommendations(
-            self.playlist,
-            bpm_tolerance,
-            scoring_context=scoring_context,
-            transition_metrics=transition_metrics,
-        )
-        self.playlist_panel.quality_metrics = self.quality_metrics
-        self.playlist_panel.transition_recommendations = transition_plan
+        _, _, transition_plan = self._berechne_uebergaenge(bpm_tolerance, scoring_context)
         self.library_panel.progress_widget.set_step_status(3, "completed")
         self.library_panel.progress_widget.set_progress(100)
         self.status_bar.set_progress(100)
 
         # 3. Daten an alle Panels verteilen
-        self.playlist_panel.set_playlist_data(
-            self.playlist,
-            self.quality_metrics,
-            transition_recommendations=transition_plan,
-            bpm_tolerance=bpm_tolerance,
-            scoring_context=scoring_context,
-        )
-        self.mix_tips_panel.set_recommendations(transition_plan)
-        # Transition-Audio-Previews rendern (Hintergrund-Worker)
-        self.mix_tips_panel.setup_transition_previews(transition_plan)
-        self.timeline_panel.set_timeline(self.playlist, transition_plan)
-        self.analytics_panel.set_analytics(
-            self.quality_metrics, self.playlist, self.current_bpm_tolerance
-        )
+        self._verteile_uebergaenge(transition_plan, bpm_tolerance, scoring_context)
 
         # 4. Toolbar & Status aktualisieren
         overall = self.quality_metrics.get("overall_score", 0)
-        self.toolbar.set_quality(overall)
         self.toolbar.set_export_enabled(True)
         self.toolbar.set_info(f"{len(self.playlist)} tracks | {mode}")
         self.status_bar.set_status(
@@ -5005,6 +5173,77 @@ class MainWindow(QMainWindow):
         self.ai_worker.start()
 
 
+    def _berechne_uebergaenge(self, bpm_tolerance, scoring_context):
+        """Metriken, Quality und Empfehlungen fuer self.playlist — EIN Scoring-
+        Kontext (HPG-001). Liefert (transition_metrics, quality_metrics, plan)."""
+        # Lokaler Import wie in analysis_finished: Tests patchen hpg_core.playlist.*
+        from hpg_core.playlist import (
+            calculate_playlist_quality,
+            compute_adjacent_transition_metrics,
+            compute_transition_recommendations,
+        )
+
+        transition_metrics = compute_adjacent_transition_metrics(
+            self.playlist, bpm_tolerance, scoring_context
+        )
+        self.quality_metrics = calculate_playlist_quality(
+            self.playlist,
+            bpm_tolerance,
+            scoring_context,
+            transition_metrics=transition_metrics,
+        )
+        transition_plan = compute_transition_recommendations(
+            self.playlist,
+            bpm_tolerance,
+            scoring_context=scoring_context,
+            transition_metrics=transition_metrics,
+        )
+        self.playlist_panel.quality_metrics = self.quality_metrics
+        self.playlist_panel.transition_recommendations = transition_plan
+        return transition_metrics, self.quality_metrics, transition_plan
+
+    def _verteile_uebergaenge(self, transition_plan, bpm_tolerance, scoring_context):
+        """Empfehlungen an Tabelle, Mix-Tips, Previews, Timeline, Analytics, Toolbar."""
+        self.playlist_panel.set_playlist_data(
+            self.playlist,
+            self.quality_metrics,
+            transition_recommendations=transition_plan,
+            bpm_tolerance=bpm_tolerance,
+            scoring_context=scoring_context,
+        )
+        self.mix_tips_panel.set_recommendations(transition_plan)
+        # Transition-Audio-Previews rendern (Hintergrund-Worker)
+        self.mix_tips_panel.setup_transition_previews(transition_plan)
+        self.timeline_panel.set_timeline(self.playlist, transition_plan)
+        self.analytics_panel.set_analytics(
+            self.quality_metrics, self.playlist, self.current_bpm_tolerance
+        )
+        overall = self.quality_metrics.get("overall_score", 0)
+        self.toolbar.set_quality(overall)
+
+    def _on_candidate_chosen(self, index: int, rang: int) -> None:
+        """Klick in der Kandidatentabelle: Wahl je Paar merken, Uebergaenge neu
+        berechnen und verteilen (Preview, Timeline, Export folgen)."""
+        recs = list(self.playlist_panel.transition_recommendations or [])
+        if index < 0 or index >= len(recs):
+            return
+        rec = recs[index]
+        kandidat = next((k for k in (getattr(rec, "kandidaten", []) or []) if int(k.get("rang", 0)) == int(rang)), None)
+        if kandidat is None:
+            return
+        candidate_choices.merke(
+            rec.from_track.filePath, rec.to_track.filePath,
+            t_out=float(kandidat["t_out"]), t_in=float(kandidat["t_in"]),
+            blend_bars=int(kandidat["blend_bars"]),
+        )
+        self.mix_tips_panel.verwerfe_preview(index)
+        _, _, plan = self._berechne_uebergaenge(self.current_bpm_tolerance, self.current_scoring_context)
+        self._verteile_uebergaenge(plan, self.current_bpm_tolerance, self.current_scoring_context)
+        self.status_bar.set_status(
+            f"Kandidat Rang {rang} fuer Uebergang {index + 1}\u2192{index + 2} gewaehlt — "
+            "Preview, Timeline und Export folgen."
+        )
+
     def _on_playlist_reordered(self):
         """Nach Drag-Drop: Quality und andere Panels aktualisieren."""
         self.playlist = self.playlist_panel.playlist
@@ -5095,7 +5334,10 @@ class MainWindow(QMainWindow):
         try:
             exporter = RekordboxXMLExporter()
             playlist_name = f"HPG - {self.current_playlist_mode}"
-            report = exporter.export(self.playlist, file_path, playlist_name)
+            report = exporter.export(
+                self.playlist, file_path, playlist_name,
+                transitions=self.playlist_panel.transition_recommendations,
+            )
 
             message = (
                 f"Location: {file_path}\nTracks: {report.tracks_written}\n"

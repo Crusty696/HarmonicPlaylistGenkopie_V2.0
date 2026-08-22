@@ -114,3 +114,11 @@ Rang-1 → `Track.mix_in_point/mix_out_point`, `calculate_enhanced_compatibility
 Faktoren-Regler "Lautheit" (die zehn `kandidaten_*_weight` nicht in
 `write_override`-Summe), App-BPM-Default 2.0, Export K1..K6, `KICK_KONFLIKT_ABZUG`
 bei Bass-/EQ-Swap entfaellt.
+
+## Nachtrag (Teil 4, 2026-08-22)
+
+`prepare --modus kandidaten` ruft `build_pair_candidates(a, b, bass_swap_geplant=True)`:
+der Hoertest rendert `pro_eq_swap` (Bass-Swap), der Kick-Konflikt ist im Clip
+geloest, `KICK_KONFLIKT_ABZUG` entfaellt deshalb in den CSV-Teilwerten (Flag
+`bass_swap_pflicht` bleibt). Saetze, die VOR diesem Nachtrag erzeugt wurden,
+gibt es nicht (nur der synthetische Probelauf) — nichts zu bereinigen.
