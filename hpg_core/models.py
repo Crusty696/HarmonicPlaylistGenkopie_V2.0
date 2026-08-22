@@ -287,6 +287,13 @@ class Track:
     lufs_coverage_seconds: float = 0.0
     lufs_channels: int = 0
     lufs_sample_rate: int = 0
+    # Mixpunkt-Kandidaten (Spec 2026-08-21 Abschnitt 1). Alles Listen von
+    # Dicts/Floats, damit der Cache sie ohne Sonderfall serialisiert.
+    phrases: list = field(default_factory=list)             # Rekordbox-PSSI-Phrasen
+    cue_points: list = field(default_factory=list)          # Cues mit Provenienz
+    phrase_grid: list = field(default_factory=list)         # Gitterpunkte (Sekunden)
+    mix_in_candidates: list = field(default_factory=list)   # MixCandidate.to_dict()
+    mix_out_candidates: list = field(default_factory=list)
 
 def key_to_camelot(track: Track):
     """Assigns a Camelot code to a track based on its key."""

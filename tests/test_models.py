@@ -302,3 +302,9 @@ def test_tracks_compare_and_hash_by_stable_file_identity():
   assert hash(first) == hash(restored)
   assert first != other
   assert len({first, restored, other}) == 2
+
+
+def test_track_hat_kandidaten_felder_mit_leeren_defaults():
+  t = Track(filePath="C:/x.mp3", fileName="x.mp3")
+  assert t.phrases == [] and t.cue_points == [] and t.phrase_grid == []
+  assert t.mix_in_candidates == [] and t.mix_out_candidates == []

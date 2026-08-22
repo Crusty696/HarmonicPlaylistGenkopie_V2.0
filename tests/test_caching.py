@@ -548,3 +548,26 @@ class TestCacheConcurrency:
       conn.close()
 
     assert record_count == (len(jobs),)
+
+
+def test_cache_version_34_und_kandidatenfelder_sind_listenfelder():
+  from hpg_core import caching
+  assert caching.CACHE_VERSION == 34
+  for name in ("phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates"):
+    assert name in caching.TRACK_LIST_FIELDS
+
+
+def test_kandidaten_ueberleben_roundtrip_und_nichtliste_wird_abgewiesen():
+  from hpg_core.caching import CacheValidationError, validate_track_dict
+  t = Track(filePath="C:/x.mp3", fileName="x.mp3", duration=300.0)
+  t.phrases = [{"start_s": 0.0, "end_s": 15.0, "label": "Intro", "mood": 1, "kind": 1, "fill": 0}]
+  t.cue_points = [{"t": 30.0, "name": "", "typ": 0, "provenance": "leer"}]
+  t.phrase_grid = [0.0, 15.0]
+  t.mix_in_candidates = [{"t": 15.0, "schema": ["pssi_phrase"], "provenance": "rekordbox_pssi", "confidence": 1.0}]
+  back = dict_to_track(track_to_dict(t))
+  assert back.phrases == t.phrases and back.mix_in_candidates == t.mix_in_candidates
+  assert back.phrase_grid == [0.0, 15.0]
+  d = track_to_dict(t)
+  d["mix_out_candidates"] = "kaputt"
+  with pytest.raises(CacheValidationError):
+    validate_track_dict(d)

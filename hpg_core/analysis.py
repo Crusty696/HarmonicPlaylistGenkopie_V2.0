@@ -3,6 +3,7 @@ from __future__ import annotations  # Python 3.9 compatibility for | type hints
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 
 import librosa
@@ -27,7 +28,6 @@ from .config import (
     SECURITY_MAX_TRACK_DURATION,
 )
 from .dj_brain import (
-    _get_intro_end_from_sections,
     align_ai_mix_points,
     calculate_genre_aware_mix_points,
 )
@@ -43,6 +43,12 @@ from .groove import (
     bass_kennwerte,
     extract_groove,
 )
+from .mix_candidates import (
+    CUE_IN_PATTERN,
+    CUE_OUT_PATTERN,
+    build_track_candidates,
+    normalize_cues,
+)
 from .models import (
     CAMELOT_MAP,
     QUANTIZE_TOLERANCE_SEC,
@@ -50,6 +56,7 @@ from .models import (
     get_camelot_components,
 )
 from .rekordbox_importer import get_rekordbox_importer
+from .rekordbox_phrases import phrase_grid_from_phrases
 from .structure_analyzer import (
     GENRE_PHRASE_UNITS,
     TrackSection,
@@ -1313,6 +1320,34 @@ def _offset_section(
     )
 
 
+def _kandidaten_berechnen(
+    file_path: str, *, pfad: str, bpm: float, duration: float, first_downbeat: float,
+    downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
+    phrase_unit: int, sections: list, phrases: list, cues: list,
+    analyzer_in: float, analyzer_out: float, outro_covered: bool,
+) -> tuple[list, list]:
+    """Mix-Kandidaten beider Seiten berechnen; Fehler kippen die Analyse nie.
+    `pfad` ("fast"/"voll") erscheint im Log, damit tools/kandidaten_messen.py die
+    Laufzeit je Analysepfad trennen kann."""
+    t0 = time.perf_counter()
+    try:
+        mix_in, mix_out = build_track_candidates(
+            file_path, bpm=bpm, duration=duration, first_downbeat=first_downbeat,
+            downbeat_confidence=downbeat_confidence, phrase_confidence=phrase_confidence,
+            phrase_anchor=phrase_anchor, phrase_unit=phrase_unit, sections=sections,
+            phrases=phrases, cues=cues, analyzer_in=analyzer_in, analyzer_out=analyzer_out,
+            outro_covered=outro_covered,
+        )
+    except Exception as e:
+        logger.warning(f"Kandidaten [{pfad}] fehlgeschlagen: {e}")
+        return [], []
+    logger.info(
+        f"Kandidaten [{pfad}]: {len(mix_in)} in / {len(mix_out)} out "
+        f"in {time.perf_counter() - t0:.2f}s"
+    )
+    return mix_in, mix_out
+
+
 def analyze_structure_windows(
     file_path: str,
     head_audio: np.ndarray,
@@ -1574,6 +1609,13 @@ def analyze_track(file_path: str) -> Track | None:
             # Downbeat-Anker (2026-07-17): zuerst der exakte Rekordbox-Beatgrid
             # (ANLZ/PQTZ, Konfidenz 1.0), sonst eigene Schaetzung (Phase-Voting)
             anlz_downbeat = rekordbox_importer.get_first_downbeat(file_path)
+            # Rekordbox-Phrasen (PSSI) und Cues mit Provenienz — Rohmaterial
+            # fuer die Mixpunkt-Kandidaten (Spec 2026-08-21)
+            phrases = (
+                rekordbox_importer.get_phrases(file_path)
+                if hasattr(rekordbox_importer, "get_phrases") else []
+            )
+            cue_points = normalize_cues(rekordbox_data.cue_points)
             if anlz_downbeat is not None:
                 first_downbeat, downbeat_confidence = anlz_downbeat, 1.0
                 logger.info(f"Downbeat aus Rekordbox-Beatgrid: {first_downbeat:.3f}s")
@@ -1652,113 +1694,29 @@ def analyze_track(file_path: str) -> Track | None:
             # H1-Fix: Cues validieren + phrase-quantisieren statt roh uebernehmen.
             # Wortgrenzen-Match statt Substring ("BREAKDOWN" darf kein OUT ausloesen),
             # erster Treffer gewinnt (deterministisch statt letzter-gewinnt).
-            if rekordbox_data.cue_points:
+            #
+            # Heuristik entfernt 2026-08-21, Spec Abschnitt 1 — unbenannte
+            # Cues sind jetzt Kandidaten (mix_candidates), kein Override.
+            # Damit entfaellt auch der Intro-Guard `cue_in_verwerfen` (er galt
+            # nur fuer die Heuristik; die Funktion bleibt im Modul, wird hier
+            # aber nicht mehr gerufen). Nur BENANNTE Cues ("MIX IN", "OUT", ...)
+            # ueberschreiben als bewusste Nutzerentscheidung die Mixpunkte.
+            if cue_points:
                 cue_in, cue_out = None, None
-                benannter_in = False   # unterscheidet benannten Cue von Heuristik
                 # "OUTRO" ist ein gaengiger Mix-Out-Cue-Name; "INTRO" markiert
                 # dagegen den Intro-START und ist KEIN Mix-In-Punkt
-                in_pattern = re.compile(r"\b(MIX[- ]?IN|IN|START)\b")
-                out_pattern = re.compile(r"\b(MIX[- ]?OUT|OUT|OUTRO|END)\b")
-                for cue in rekordbox_data.cue_points:
-                    if not cue["name"] or cue["position"] is None:
+                for c in cue_points:
+                    if c["provenance"] != "manual":
                         continue
-                    name_upper = cue["name"].upper()
-                    if cue_in is None and in_pattern.search(name_upper):
-                        cue_in = float(cue["position"])
-                        benannter_in = True
-                    elif cue_out is None and out_pattern.search(name_upper):
-                        cue_out = float(cue["position"])
-
-                # Fallback heuristic for unlabelled cues (e.g. standard hot/memory cues)
-                if cue_in is None and cue_out is None:
-                    valid_positions = []
-                    for cue in rekordbox_data.cue_points:
-                        if cue["position"] is not None and float(cue["position"]) >= 0:
-                            valid_positions.append(float(cue["position"]))
-                    
-                    valid_positions.sort()
-                    
-                    # Deduplicate cues closer than 2.0 seconds (e.g. duplicate hot/memory markers)
-                    dedup_positions = []
-                    for pos in valid_positions:
-                        if not dedup_positions:
-                            dedup_positions.append(pos)
-                        else:
-                            if pos - dedup_positions[-1] >= 2.0:
-                                dedup_positions.append(pos)
-                                
-                    # Audit-Fix 2026-07-21: mind. 3 Cues noetig. Bei genau 2 waren
-                    # cue_in (=pos[1]) und cue_out (=pos[-1]) IDENTISCH -> die
-                    # Heuristik loggte "angewendet", scheiterte dann still an
-                    # in < out und verwarf das Ergebnis wieder.
-                    if len(dedup_positions) >= 3:
-                        cue_in = dedup_positions[1]
-
-                        last_cue = dedup_positions[-1]
-                        # AUDIT-FIX N12 (2026-07-24): `len(dedup_positions) >= 3`
-                        # ist durch das umschliessende if bereits garantiert.
-                        if duration - last_cue < 15.0:
-                            cue_out = dedup_positions[-2]
-                        else:
-                            cue_out = last_cue
-                        
-                        logger.info(
-                            f"Heuristik fuer unbenannte Rekordbox-Cues angewendet: "
-                            f"in={cue_in:.1f}s, out={cue_out:.1f}s aus {len(dedup_positions)} Cues"
-                        )
-
-                # Invariante 5 (Mix-In nie im Intro) gilt auch hier. Sie war
-                # bisher nur in calculate_genre_aware_mix_points gesichert; der
-                # Cue-Block umging sie vollstaendig. Gemessen an 231 Tracks:
-                # 24 hatten dadurch einen Mix-In im fuehrenden Intro, bis zu
-                # 56,5 s tief, Median 29,0 s. Alle 24 stammten aus dem
-                # HEURISTIK-Zweig unten (dedup_positions[1]), kein einziger aus
-                # einem benannten Cue — geprueft gegen die Rekordbox-Cues.
-                #
-                # Der Guard gilt deshalb NUR fuer die Heuristik. Ein benannter
-                # Cue ("MIX IN", "IN", "START") ist eine bewusste Entscheidung
-                # des Nutzers und bleibt unangetastet; er kennt seinen Track
-                # besser als die Sektionsanalyse.
-                intro_ende = _get_intro_end_from_sections(section_dicts)
-                guard_hat_zugeschlagen = cue_in_verwerfen(
-                    cue_in, benannter_in, intro_ende
-                )
-                if guard_hat_zugeschlagen:
-                    logger.info(
-                        f"Cue-Heuristik verworfen: in={cue_in:.1f}s liegt im "
-                        f"Intro (endet {intro_ende:.1f}s) — behalte den "
-                        f"berechneten Mix-In {mix_in_point:.1f}s"
-                    )
-                    cue_in = None
+                    name_upper = c["name"].upper()
+                    if cue_in is None and CUE_IN_PATTERN.search(name_upper):
+                        cue_in = float(c["t"])
+                    elif cue_out is None and CUE_OUT_PATTERN.search(name_upper):
+                        cue_out = float(c["t"])
 
                 candidate_in = cue_in if cue_in is not None else mix_in_point
                 candidate_out = cue_out if cue_out is not None else mix_out_point
-                # Mindestfenster NUR im Guard-Fall: verwirft der Guard den
-                # Mix-In, entsteht die Mischung aus berechnetem In und
-                # Cue-Out, die ein Fenster von wenigen Sekunden ergeben kann.
-                # align_ai_mix_points prueft nur in < out; die
-                # Zwei-Phrasen-Regel garantiert sonst allein
-                # calculate_genre_aware_mix_points (dj_brain, `min_window`).
-                #
-                # Ohne die Einschraenkung auf den Guard-Fall wuerde die
-                # Bedingung auch BENANNTE Cue-Paare verwerfen und damit genau
-                # die Ausnahme aushebeln, die zehn Zeilen weiter oben und im
-                # Guard-Spec-Nachtrag zugesichert ist. Gemessen am Bestand
-                # trifft sie derzeit 0 von 210 Tracks mit verwertbarem
-                # Cue-Paar — sie ist eine Absicherung, kein Eingriff.
-                #
-                # Geprueft wird VOR der Quantisierung. align_ai_mix_points
-                # kann das Fenster danach noch verkleinern (ceil auf den
-                # Mix-In, floor auf den Mix-Out, im Kollapsfall Ausweichen
-                # aufs Bar-Gitter); eine Garantie nach der Quantisierung ist
-                # das hier also nicht.
-                min_fenster = (
-                    (60.0 / rekordbox_data.bpm) * METER * structure.phrase_unit * 2
-                    if guard_hat_zugeschlagen else 0.0
-                )
-                if 0 <= candidate_in < candidate_out <= duration and (
-                    candidate_out - candidate_in >= min_fenster
-                ):
+                if 0 <= candidate_in < candidate_out <= duration:
                     # Gleiche Quantisierungs-Pipeline wie der AI-Override
                     mix_in_point, mix_out_point = align_ai_mix_points(
                         candidate_in,
@@ -1773,9 +1731,9 @@ def analyze_track(file_path: str) -> Track | None:
                     mix_out_bars = int(mix_out_point / seconds_per_bar)
                 else:
                     logger.warning(
-                        f"Rekordbox-Cues ungueltig oder Mixfenster zu kurz "
+                        f"Rekordbox-Cues ungueltig (Reihenfolge/Trackgrenzen) "
                         f"(in={candidate_in:.1f}, out={candidate_out:.1f}, "
-                        f"noetig {min_fenster:.1f}s, duration={duration:.1f}) — "
+                        f"duration={duration:.1f}) — "
                         f"behalte berechnete Mix-Punkte"
                     )
 
@@ -1828,6 +1786,10 @@ def analyze_track(file_path: str) -> Track | None:
             structure = TrackStructure()
             analysis_coverage = []
             outro_covered = False
+            phrases = []
+            cue_points = []
+            phrase_grid = []
+            mix_in_candidates, mix_out_candidates = [], []
 
         # Extract key note and mode from Camelot code (for backward compatibility)
         key_note = ""
@@ -1920,6 +1882,23 @@ def analyze_track(file_path: str) -> Track | None:
             track_pr = track_sf = 0.0
             groove = GrooveFeatures()
 
+        # Mixpunkt-Kandidaten (Spec 2026-08-21). Guard: im degradierten Zweig
+        # sind die Listen bereits leer gesetzt und duerfen nicht ueberschrieben
+        # werden (section_dicts/structure waeren dort Platzhalter).
+        if not analysis_degraded:
+            mix_in_candidates, mix_out_candidates = _kandidaten_berechnen(
+                file_path, pfad="fast", bpm=rekordbox_data.bpm, duration=duration,
+                first_downbeat=first_downbeat,
+                downbeat_confidence=downbeat_confidence,
+                phrase_confidence=phrase_confidence,
+                phrase_anchor=phrase_anchor,
+                phrase_unit=structure.phrase_unit, sections=section_dicts,
+                phrases=phrases, cues=cue_points,
+                analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+                outro_covered=outro_covered,
+            )
+            phrase_grid = phrase_grid_from_phrases(phrases)
+
         # Create Track object with Rekordbox data
         track = Track(
             avg_bass=avg_b,
@@ -1972,6 +1951,11 @@ def analyze_track(file_path: str) -> Track | None:
             lufs_coverage_seconds=lufs_coverage,
             lufs_channels=lufs_channels,
             lufs_sample_rate=lufs_sample_rate,
+            phrases=phrases,
+            cue_points=cue_points,
+            phrase_grid=phrase_grid,
+            mix_in_candidates=mix_in_candidates,
+            mix_out_candidates=mix_out_candidates,
         )
 
         # AUDIT-FIX A-02 (2026-07-24): Degradierte Analysen NICHT persistieren —
@@ -2305,6 +2289,25 @@ def analyze_track(file_path: str) -> Track | None:
             track_pr = track_sf = 0.0
             groove = GrooveFeatures()
 
+        # Mixpunkt-Kandidaten (Spec 2026-08-21), Spiegel des Rekordbox-Pfads.
+        # Ohne Rekordbox gibt es keine Phrasen/Cues: Kandidaten kommen nur aus
+        # Analyzer, Sektionen und Energie-Neuheit. Kein analysis_degraded-Guard
+        # noetig: ein Load-Fehler landet im aeusseren except (return None).
+        phrases: list[dict] = []
+        cue_points: list[dict] = []
+        phrase_grid: list[float] = []
+        mix_in_candidates, mix_out_candidates = _kandidaten_berechnen(
+            file_path, pfad="voll", bpm=bpm, duration=duration,
+            first_downbeat=first_downbeat,
+            downbeat_confidence=downbeat_confidence,
+            phrase_confidence=phrase_confidence,
+            phrase_anchor=phrase_anchor,
+            phrase_unit=structure.phrase_unit, sections=section_dicts,
+            phrases=phrases, cues=cue_points,
+            analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+            outro_covered=outro_covered,
+        )
+
         track = Track(
             groove_pattern=groove.groove_pattern,
             bass_pattern=groove.bass_pattern,
@@ -2356,6 +2359,11 @@ def analyze_track(file_path: str) -> Track | None:
             lufs_coverage_seconds=lufs_coverage,
             lufs_channels=lufs_channels,
             lufs_sample_rate=lufs_sample_rate,
+            phrases=phrases,
+            cue_points=cue_points,
+            phrase_grid=phrase_grid,
+            mix_in_candidates=mix_in_candidates,
+            mix_out_candidates=mix_out_candidates,
         )
 
         cache_track(cache_key, track)
