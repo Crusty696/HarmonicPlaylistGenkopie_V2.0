@@ -94,15 +94,16 @@ PAAR_PITCH_MAX = 0.04
 PAAR_HALF_DOUBLE_MAX_BARS = 16     # kurzer Cut bei Half/Double
 PAAR_MAX_KOMBINATIONEN = 6         # Zeitpunkt-Kombinationen je Paar (x 2 Blenden)
 # Teilwerte. Spec-Werte: PAAR_BPM_SKALA, LUFS_DELTA_MAX_DB, PERCUSSIVE_HOCH/NIEDRIG.
-# BASS_RMS/SYNCOPATION/MIDS_HIGHS sind an den 231 Tracks gemessene p90-Spannen
-# (Normierung, keine Gewichte). Alle uebrigen sind STARTWERTE, nicht gemessen —
+# BASS_RMS/SYNCOPATION/MIDS_HIGHS sind gemessene p90-Spannen (Normierung, keine
+# Gewichte): 231 Tracks, 3664 Kandidaten, Stichprobe 20 000 zufaellige
+# Out/In-Paare innerhalb 2 BPM (docs/HANDOFF-2026-08-22-kandidaten-teil1.md). Alle uebrigen sind STARTWERTE, nicht gemessen —
 # der Hoertest (Teil 3) ersetzt sie.
 PAAR_BPM_SKALA = 1.0               # exp(-diff / Skala), Spec-Wert
 # Lautheit: 0 dB -> 1.0, >= 3 dB -> 0 (Spec-Wert). Dieselbe 3-dB-Toleranz wie
 # GAIN_DIFF_WARN_DB oben (Gain-Hinweis in dj_brain) — bei Aenderung beide pruefen.
 LUFS_DELTA_MAX_DB = 3.0
-# |delta bass_rms_dbfs| auf [0,1]. Gemessen 2026-08-22 an 231 Tracks / 3664
-# Kandidaten: paarweise Differenz (BPM <= 2) Median 1.9 dB, p90 7.2 dB -> p90.
+# |delta bass_rms_dbfs| auf [0,1]. Gemessen 2026-08-22 (Stichprobe s. o.):
+# Differenz Median 1.9 dB, p90 7.2 dB -> p90.
 BASS_RMS_DELTA_MAX_DB = 7.0
 # |delta syncopation_lokal| auf [0,1]. Gemessen 2026-08-22: paarweise Differenz
 # Median 0.09, p90 0.28 -> p90.
@@ -113,7 +114,7 @@ PERCUSSIVE_ABZUG = 0.10            # STARTWERT
 KICK_KONFLIKT_ABZUG = 0.15         # STARTWERT: beide kick_aktiv -> Bass-Swap-Pflicht, Abzug
 # Mittel aus |delta avg_mids_lokal| und |delta avg_highs_lokal| in Prozentpunkten
 # (analyze_frequency_bands). Gemessen 2026-08-22: Mids-Differenz Median 2.3 /
-# p90 8.1, Hoehen Median 0.8 / p90 2.0 -> Mittel p90 ~ 5.
+# p90 8.1, Hoehen Median 0.8 / p90 2.0 -> Mittel der beiden p90 = 5.05 -> 5.
 MIDS_HIGHS_DELTA_MAX = 5.0
 PSSI_MOOD_ABZUG = 0.10             # STARTWERT: PSSI-mood beidseitig vorhanden und verschieden
 ENERGIE_TREND_WIDERSPRUCH = 0.8    # STARTWERT: energy_trend von B widerspricht der Richtung

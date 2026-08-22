@@ -24,7 +24,7 @@ Spec: `docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md` Abschnit
   `.agents/skills/hpg-playlist-scoring/SKILL.md` (nach Merge nach `.claude/` spiegeln).
 
 Suite im Worktree (HEAD `d5bb8d0`): **1816 passed, 25 warnings, 77 s, Exit 0**
-(Coverage-Gate 70 bestanden).
+(1862 gesammelt, 46 per Marker deselektiert wie auf `main`; Coverage-Gate 70 bestanden).
 
 ## Die elf Entscheidungen (Spec offen, im Plan festgehalten)
 
@@ -63,8 +63,8 @@ Tracks der Teil-1-Messung, alle Permutationen innerhalb `PAAR_BPM_MAX`:
 | Blendenlaengen (alle Kandidaten) | 32: 59 960, 16: 54 394, 64: 15 285, 8: 8 964; dazwischen Deckelwerte (Outro-Deckel auf ganze Takte) |
 | Laufzeit | ~2 000 Paare / 18 s |
 
-Gemessene Normierungen (Teil-1-Messung, 3 664 Kandidaten, paarweise Differenzen
-innerhalb 2 BPM, p90): `BASS_RMS_DELTA_MAX_DB = 7.0`, `SYNCOPATION_DELTA_MAX = 0.3`,
+Gemessene Normierungen (Teil-1-Messung, 3 664 Kandidaten, Stichprobe 20 000
+zufaellige Out/In-Paare innerhalb 2 BPM, p90; MIDS_HIGHS = Mittel der beiden p90): `BASS_RMS_DELTA_MAX_DB = 7.0`, `SYNCOPATION_DELTA_MAX = 0.3`,
 `MIDS_HIGHS_DELTA_MAX = 5.0` (Details `docs/HANDOFF-2026-08-22-kandidaten-teil1.md`).
 
 Befund: Rang 1 ist fast immer eine PSSI-Phrasengrenze — bei gleichem Score
@@ -74,7 +74,7 @@ streuen innerhalb eines Paars wenig. Das ist genau das, was der Hoertest
 
 ## Offen fuer Teil 3/4 (Waechter Tor 1, Auflage 7 — nicht vergessen)
 
-- (a) GUI-Regler `main.py:1562-1567` und Hoertest-Fit `tools/rate_transitions.py`
+- (a) GUI-Regler `main.py:1561-1566` und Hoertest-Fit `tools/rate_transitions.py`
   schreiben nur die alten `*_weight` — `kandidaten_*_weight` muessen in Teil 3
   (Fit → `candidate_preferences.json`) und Teil 4 (Regler "Lautheit") angebunden
   werden; `tolerances.write_override` summiert alle uebergebenen Schluessel gegen
