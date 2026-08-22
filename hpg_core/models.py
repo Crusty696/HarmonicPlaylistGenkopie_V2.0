@@ -120,6 +120,50 @@ def get_camelot_components(camelot_code: str) -> tuple[int, str]:
     return 0, ""
 
 
+def camelot_relation_score(
+    code_a: str, code_b: str, *, harmonic_strictness: int = 7,
+    allow_experimental: bool = True, penalty: float = 1.0,
+) -> int:
+    """Camelot-Punktetabelle fuer zwei Codes (Reihenfolge der Zweige bindend).
+
+    Herausgeloest aus playlist._calculate_compatibility_inner (2026-08-22),
+    damit die Paar-Bewertung der Kandidaten (camelot_lokal) dieselbe Tabelle
+    nutzt. `penalty` ist der Half/Double-Faktor des Aufrufers (1.0 = direct).
+    Fehlende/ungueltige Codes -> 10 * penalty.
+    """
+    if not code_a or not code_b:
+        return int(10 * penalty)
+    num1, letter1 = get_camelot_components(code_a)
+    num2, letter2 = get_camelot_components(code_b)
+    if num1 == 0 or num2 == 0:
+        return int(10 * penalty)
+    if num1 == num2 and letter1 == letter2:
+        return int(100 * penalty)
+    if num1 == num2 and letter1 != letter2:
+        if letter1 == "A" and letter2 == "B":
+            return int(90 * penalty)
+        return int(85 * penalty)
+    next_num_cw = (num1 % 12) + 1
+    next_num_ccw = (num1 - 2 + 12) % 12 + 1
+    if letter1 == letter2 and (num2 == next_num_cw or num2 == next_num_ccw):
+        return int(80 * penalty)
+    # Obergrenze 1.0 (AUDIT-FIX F03): lockere Techniken ueberholen nie den +-1.
+    loose_factor = max(0.4, min(1.0, 1.0 - (harmonic_strictness - 7) * 0.08))
+    plus_two_num = (num1 + 2 - 1) % 12 + 1
+    if num2 == plus_two_num and letter1 == letter2:
+        return int(75 * penalty * loose_factor)
+    if allow_experimental:
+        plus_four_num = (num1 + 4 - 1) % 12 + 1
+        if num2 == plus_four_num and letter1 == letter2:
+            return int(70 * penalty * loose_factor)
+        plus_seven_num = (num1 + 7 - 1) % 12 + 1
+        if num2 == plus_seven_num and letter1 == letter2:
+            return int(65 * penalty * loose_factor)
+    if letter1 != letter2 and (num2 == next_num_cw or num2 == next_num_ccw):
+        return int(60 * penalty * loose_factor)
+    return max(5, int((15 - harmonic_strictness) * penalty))
+
+
 def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     """Effektive BPM-Differenz mit Half/Double-Time-Erkennung.
 

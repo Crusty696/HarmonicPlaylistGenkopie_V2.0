@@ -308,3 +308,22 @@ def test_track_hat_kandidaten_felder_mit_leeren_defaults():
   t = Track(filePath="C:/x.mp3", fileName="x.mp3")
   assert t.phrases == [] and t.cue_points == [] and t.phrase_grid == []
   assert t.mix_in_candidates == [] and t.mix_out_candidates == []
+
+
+def test_camelot_relation_score_tabelle():
+  from hpg_core.models import camelot_relation_score as s
+  assert s("8A", "8A") == 100
+  assert s("8A", "8B") == 90      # Moll -> Dur
+  assert s("8B", "8A") == 85      # Dur -> Moll
+  assert s("8A", "9A") == 80
+  assert s("8A", "7A") == 80
+  assert s("8A", "10A") == 75     # +2, strictness 7 -> loose_factor 1.0
+  assert s("8A", "12A") == 70     # +4 experimentell
+  assert s("8A", "3A") == 65      # +7 experimentell
+  assert s("8A", "12A", allow_experimental=False) == max(5, 15 - 7)
+  assert s("8A", "9B") == 60      # diagonal
+  assert s("8A", "2A") == 8       # Rest: (15 - 7) * 1.0
+  assert s("8A", "8A", penalty=0.85) == 85
+  assert s("", "8A") == 10
+  assert s("XX", "8A", penalty=0.85) == 8
+  assert s("8A", "10A", harmonic_strictness=10) == int(75 * 0.76)
