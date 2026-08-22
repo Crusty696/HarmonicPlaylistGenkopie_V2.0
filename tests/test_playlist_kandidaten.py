@@ -127,3 +127,41 @@ def test_recommendations_ohne_konsistenten_kandidaten_rang1_und_flag():
     c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
     recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
     assert recs[1].kandidat_aktiv == 1 and recs[1].kandidat_konsistent is False
+
+
+
+def test_kette_waehlt_frueheren_mix_in_damit_naechstes_paar_konsistent_wird():
+    """Greedy wuerde in Paar 1 den Rang-1-Mix-In (4g, pssi) nehmen und Paar 2
+    dann inkonsistent lassen (einziger Mix-Out von b bei 5g < 4g + 2g). Die
+    Kettenwahl nimmt in Paar 1 den frueheren Mix-In (3g) — beide Paare konsistent."""
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(4 * g, 3)), _voll(round(3 * g, 3), schema=["sektion"])],
+               outs=[_voll(round(5 * g, 3))])
+    c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
+    assert recs[0].plan.mix_in_b == pytest.approx(3 * g, abs=0.01)        # nicht Rang 1 (4g)
+    assert recs[0].kandidat_aktiv > 1 and recs[0].kandidat_konsistent is True
+    assert recs[1].plan.mix_out_a == pytest.approx(5 * g, abs=0.01) and recs[1].kandidat_konsistent is True
+    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 1e-6
+
+
+def test_kette_gespeicherte_wahl_gewinnt_wenn_konsistent(monkeypatch, tmp_path):
+    from hpg_core import candidate_choices as cc
+    from hpg_core import playlist as pl_mod
+    monkeypatch.setenv("HPG_CANDIDATE_CHOICES_FILE", str(tmp_path / "c.json"))
+    cc.reset_cache()
+    pl_mod.reset_pair_candidate_cache()
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3)), _voll(round(6 * g, 3), schema=["sektion"])])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)
+    assert recs[0].plan.mix_out_a == pytest.approx(5 * g, abs=0.01)
+    letzte = recs[0].kandidaten[-1]
+    cc.merke("a.mp3", "b.mp3", t_out=letzte["t_out"], t_in=letzte["t_in"], blend_bars=letzte["blend_bars"])
+    recs2 = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)
+    assert recs2[0].plan.mix_out_a == pytest.approx(letzte["t_out"], abs=0.01)
+    assert recs2[0].plan.overlap == pytest.approx(min(letzte["overlap_sec"], 64.0))
+    assert recs2[0].kandidat_aktiv == 1 and recs2[0].kandidaten[0]["flags"]["gespeicherte_wahl"] is True
+    cc.reset_cache()
+    pl_mod.reset_pair_candidate_cache()

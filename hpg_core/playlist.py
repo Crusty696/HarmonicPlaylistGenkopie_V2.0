@@ -5,6 +5,7 @@ from .models import (
     get_camelot_components,
     camelot_relation_score,
     seconds_per_bar,
+    QUANTIZE_TOLERANCE_SEC,
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
@@ -1741,23 +1742,72 @@ def compute_adjacent_transition_metrics(
     ]
 
 
-def _konsistenter_kandidat(kandidaten: list, vorheriger_mix_in: Optional[float],
-                           track: Track):
-    """Playlist-Ebene (Invariante 1/3 je Track): der Kandidat fuer das Paar
-    (i, i+1) muss hinter dem schon festgelegten Mix-In von Track i (Paar i-1,
-    i) liegen — mindestens zwei Phrasen. Liefert (kandidat, konsistent); ohne
-    passenden Kandidaten faellt die Wahl auf Rang 1 und konsistent=False
-    (der Plan bleibt dann ein Einzelpaar-Optimum, die Tabelle zeigt es)."""
-    if not kandidaten:
-        return None, True
-    if vorheriger_mix_in is None:
-        return kandidaten[0], True
-    grid = seconds_per_bar(track.bpm) * int(getattr(track, "phrase_unit", 8) or 8)
-    untergrenze = float(vorheriger_mix_in) + 2.0 * grid
-    for k in kandidaten:
-        if float(k.t_out) >= untergrenze - 1e-6:
-            return k, True
-    return kandidaten[0], False
+# Bonus im Kettenziel fuer einen vom Nutzer gewaehlten Kandidaten: die Wahl
+# soll gegen jeden Score-Unterschied gewinnen, solange die Kette konsistent
+# bleibt (Scores liegen in [0, 1]).
+_WAHL_BONUS = 10.0
+
+
+def _kette_waehlen(kandidaten_je_paar: list, playlist: List[Track]) -> list:
+    """Waehlt je Paar EINEN Kandidaten so, dass die Kette je Track konsistent
+    ist (Invariante 1/3: Mix-Out von Track i mindestens zwei Phrasen hinter
+    seinem Mix-In aus dem vorigen Paar) und die Summe der Scores (+ Bonus fuer
+    gespeicherte Wahl) maximal wird — dynamische Programmierung ueber die Paare.
+    Gibt es fuer ein Paar keinen konsistenten Anschluss, beginnt die Kette dort
+    neu (Rang 1, konsistent=False). Liefert [(kandidat|None, konsistent)]."""
+    n = len(kandidaten_je_paar)
+    ergebnis: list = [(None, True)] * n
+    NEG = float("-inf")
+    # best[i][j] = bester Kettenwert bis Paar i mit Kandidat j; vorgaenger fuer Rueckverfolgung
+    best: list = []
+    prev: list = []
+    neustart: list = []   # Paar i beginnt die Kette neu (kein konsistenter Anschluss moeglich)
+    for i, kands in enumerate(kandidaten_je_paar):
+        if not kands:
+            best.append([]); prev.append([]); neustart.append(True)
+            continue
+        werte = [float(k.score) + (_WAHL_BONUS if k.flags.get("gespeicherte_wahl") else 0.0) for k in kands]
+        if i == 0 or not kandidaten_je_paar[i - 1] or not best[i - 1]:
+            best.append(list(werte)); prev.append([-1] * len(kands)); neustart.append(True)
+            continue
+        track = playlist[i]                       # Track i ist "upcoming" von Paar i-1 und "current" von Paar i
+        grid = seconds_per_bar(track.bpm) * int(getattr(track, "phrase_unit", 8) or 8)
+        b_i, p_i = [], []
+        for j, k in enumerate(kands):
+            bester_wert, bester_prev = NEG, -1
+            for jp, kp in enumerate(kandidaten_je_paar[i - 1]):
+                if best[i - 1][jp] == NEG:
+                    continue
+                # Toleranz wie die Gitter-Quantisierung: Teil 1 rundet t auf 3 Dezimalen.
+                if float(k.t_out) >= float(kp.t_in) + 2.0 * grid - QUANTIZE_TOLERANCE_SEC:
+                    wert = best[i - 1][jp] + werte[j]
+                    if wert > bester_wert:
+                        bester_wert, bester_prev = wert, jp
+            b_i.append(bester_wert); p_i.append(bester_prev)
+        if all(v == NEG for v in b_i):
+            # kein konsistenter Anschluss: Kette neu beginnen, Flag an Paar i
+            best.append(list(werte)); prev.append([-1] * len(kands)); neustart.append(True)
+            ergebnis[i] = (None, False)
+        else:
+            best.append(b_i); prev.append(p_i); neustart.append(False)
+    # Rueckverfolgung segmentweise (jedes Segment endet vor dem naechsten Neustart)
+    i = n - 1
+    while i >= 0:
+        if not kandidaten_je_paar[i]:
+            ergebnis[i] = (None, True)
+            i -= 1
+            continue
+        # Segmentende: bester Zustand an Paar i
+        j = max(range(len(best[i])), key=lambda jj: best[i][jj])
+        while i >= 0 and kandidaten_je_paar[i]:
+            konsistent = not (neustart[i] and ergebnis[i] == (None, False))
+            ergebnis[i] = (kandidaten_je_paar[i][j], konsistent)
+            if neustart[i]:
+                i -= 1
+                break
+            j = prev[i][j]
+            i -= 1
+    return ergebnis
 
 
 def compute_transition_recommendations(
@@ -1793,9 +1843,17 @@ def compute_transition_recommendations(
     configured_overlap = max(4.0, min(64.0, configured_overlap))
 
     recommendations: List[TransitionRecommendation] = []
-    # Mix-In des aktuellen Tracks aus dem vorigen Paar (Kandidatenpfad), damit
-    # Mix-Out des naechsten Paars dahinter liegt (Invariante 1/3 je Track).
-    vorheriger_mix_in: Optional[float] = None
+    # Kandidatenpfad (Spec 2026-08-21 Abschnitt 4): erst je Paar die Kandidaten
+    # holen (Cache), dann ueber die ganze Playlist konsistent waehlen — Mix-Out
+    # von Track i muss hinter seinem Mix-In aus dem vorigen Paar liegen
+    # (Invariante 1/3 je Track); Einzelpaar-Rang-1 wuerde das in ~1/3 der
+    # Paare verletzen (gemessen 2026-08-22, 231 Tracks).
+    kandidaten_je_paar = [
+        _kandidaten_fuer_paar(playlist[i], playlist[i + 1], None, ctx)
+        if getattr(metrics_by_pair[i], "kandidat", None) is not None else []
+        for i in range(len(playlist) - 1)
+    ]
+    kette = _kette_waehlen(kandidaten_je_paar, playlist)
 
     for index in range(len(playlist) - 1):
         current = playlist[index]
@@ -1879,19 +1937,16 @@ def compute_transition_recommendations(
         # Kandidaten (Spec 2026-08-21 Abschnitt 4): der aktive PairCandidate
         # (Rang 1 bzw. gespeicherte Wahl) traegt Mix-Out, Mix-In und Blende;
         # Track-Felder bleiben Analyse-Werte, alle Leser nehmen den Plan.
-        kandidaten = (
-            _kandidaten_fuer_paar(current, upcoming, None, ctx)
-            if getattr(metrics, "kandidat", None) is not None else []
-        )
+        kandidaten = kandidaten_je_paar[index]
         kandidat_aktiv = 0
         kandidat_konsistent = True
-        naechster_mix_in: Optional[float] = None
         if kandidaten:
-            aktiv, kandidat_konsistent = _konsistenter_kandidat(kandidaten, vorheriger_mix_in, current)
+            aktiv, kandidat_konsistent = kette[index]
+            if aktiv is None:
+                aktiv = kandidaten[0]
             kandidat_aktiv = int(aktiv.rang)
             current_mix_out = float(aktiv.t_out)
             next_mix_in = float(aktiv.t_in)
-            naechster_mix_in = next_mix_in
             fade_in_start = next_mix_in
             overlap = float(aktiv.overlap_sec)
             if dj_rec is not None:
@@ -2002,7 +2057,6 @@ def compute_transition_recommendations(
                 kandidat_konsistent=kandidat_konsistent,
             )
         )
-        vorheriger_mix_in = naechster_mix_in
 
     return recommendations
 
