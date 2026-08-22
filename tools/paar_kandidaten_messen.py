@@ -3,6 +3,9 @@ alle Paare innerhalb des BPM-Gates (PAAR_BPM_MAX) und berichtet je Paar die
 Zahl der PairCandidates, Gate-Ausfaelle je Grund, Rang-1-Schemata und Scores.
 Aufruf:
   python tools/paar_kandidaten_messen.py --cache [--json out.json] [--max-paare N]
+  python tools/paar_kandidaten_messen.py --json-tracks kandidaten_v34.json [--json out.json]
+(--json-tracks liest die Track-Dicts aus der Ausgabe von tools/kandidaten_messen.py,
+ weil analyze_track dort direkt laeuft und nichts in den Cache schreibt.)
 """
 import argparse, itertools, json, os, sqlite3, statistics, sys
 from collections import Counter
@@ -49,6 +52,13 @@ def _lade_tracks() -> list:
     return tracks
 
 
+def _lade_tracks_json(pfad: str) -> list:
+    from hpg_core import caching
+    with open(pfad, encoding="utf-8") as fh:
+        daten = json.load(fh)
+    return [caching.dict_to_track(d) for d in daten.get("tracks", [])]
+
+
 def _hauptschema(cand) -> str:
     from hpg_core.mix_candidates import SCHEMA_PRIORITAET
     s = [x for x in cand.schema if x in SCHEMA_PRIORITAET]
@@ -86,13 +96,14 @@ def messe(tracks: list, max_paare: int | None = None) -> list[dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache", action="store_true", help="Tracks aus dem Cache lesen (Pflicht)")
+    ap.add_argument("--cache", action="store_true", help="Tracks aus dem Cache lesen")
+    ap.add_argument("--json-tracks", help="Track-Dicts aus kandidaten_messen.py --json lesen")
     ap.add_argument("--json", help="Ergebnis als JSON schreiben")
     ap.add_argument("--max-paare", type=int, default=None)
     a = ap.parse_args()
-    if not a.cache:
-        ap.error("--cache angeben")
-    tracks = _lade_tracks()
+    if not a.cache and not a.json_tracks:
+        ap.error("--cache oder --json-tracks angeben")
+    tracks = _lade_tracks_json(a.json_tracks) if a.json_tracks else _lade_tracks()
     if not tracks:
         return 1
     ergebnisse = messe(tracks, a.max_paare)
