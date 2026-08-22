@@ -635,3 +635,72 @@ def test_sammle_kandidaten_bpm_grenze_inklusive(monkeypatch):
     a = _GateTrack("A.wav", 140.0)
     assert rate_transitions.sammle_kandidaten([a, _GateTrack("B.wav", 142.0)]) != []
     assert rate_transitions.sammle_kandidaten([a, _GateTrack("C.wav", 142.5)]) == []
+
+
+# ===========================================================================
+# Kandidatenmodus (Spec 2026-08-21 Abschnitt 3, Plan Teil 3)
+# ===========================================================================
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+
+from tools.rate_transitions import (
+    BEWERTUNG_KANDIDATEN_SPALTEN, MERKMALE_KANDIDATEN_SPALTEN, clip_id_fuer,
+    kandidaten_zeilen, reihenfolge_fuer_paar,
+)
+
+
+def _pc(t_out, t_in, bars, score, teil=None, schema_out=("pssi_phrase",), schema_in=("auto_cue",)):
+    from hpg_core.mix_candidates import MixCandidate
+    from hpg_core.pair_candidates import PairCandidate
+    o = MixCandidate(t=t_out, schema=list(schema_out), provenance="rekordbox_pssi", confidence=0.8)
+    i = MixCandidate(t=t_in, schema=list(schema_in), provenance="rekordbox_auto", confidence=0.7)
+    return PairCandidate(out_a=o, in_b=i, blend_bars=bars, overlap_sec=bars * 1.714, score=score,
+                         teilwerte=teil or {"harmonic": 0.9, "bpm": 1.0, "loudness": None},
+                         flags={}, begruendung="x", rang=1, bpm_relation="direct")
+
+
+def _ns_track(name, bpm=140.0, camelot="8A", genre="Psytrance"):
+    return SimpleNamespace(filePath=name, bpm=bpm, camelotCode=camelot, detected_genre=genre, genre=genre,
+                           duration=400.0, first_downbeat=0.0, downbeat_confidence=1.0)
+
+
+def test_clip_id_und_spalten():
+    assert clip_id_fuer("007", 3) == "007_k3"
+    assert BEWERTUNG_KANDIDATEN_SPALTEN == ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+    assert MERKMALE_KANDIDATEN_SPALTEN[:3] == ("pair_id", "clip_id", "clip")
+    assert "score" in MERKMALE_KANDIDATEN_SPALTEN and "t_out" in MERKMALE_KANDIDATEN_SPALTEN
+    assert "schemata_out" in MERKMALE_KANDIDATEN_SPALTEN and "bpm_a" in MERKMALE_KANDIDATEN_SPALTEN
+    assert MERKMALE_KANDIDATEN_SPALTEN[-2:] == ("track_a", "track_b")
+
+
+def test_kandidaten_zeilen_schreiben_teilwerte_und_leer_bei_none():
+    a, b = _ns_track("a.mp3"), _ns_track("b.mp3", camelot="9A")
+    bew, merk = kandidaten_zeilen("007", [_pc(160.0, 80.0, 16, 0.8)], a, b, clips=["clips/007_k1.wav"])
+    assert bew == [{"pair_id": "007", "clip_id": "007_k1", "note": "", "gewaehlt": "", "zeit": ""}]
+    m = merk[0]
+    assert m["clip"] == "clips/007_k1.wav" and m["harmonic"] == 0.9 and m["loudness"] == ""
+    assert m["schema_out"] == "pssi_phrase" and m["schemata_out"] == "pssi_phrase"
+    assert m["blend_bars"] == 16 and m["t_out"] == 160.0
+    assert m["provenance_in"] == "rekordbox_auto" and m["confidence_out"] == 0.8
+    assert m["crossfade_sek"] == pytest.approx(16 * 1.714, abs=0.01)
+    assert m["bpm_a"] == 140.0 and m["key_b"] == "9A" and m["genre_a"] == "Psytrance"
+
+
+def test_reihenfolge_fuer_paar_deterministisch_und_vollstaendig():
+    clips = ["007_k1", "007_k2", "007_k3", "007_k4"]
+    r1 = reihenfolge_fuer_paar("007", clips, seed_satz=20260820)
+    r2 = reihenfolge_fuer_paar("007", clips, seed_satz=20260820)
+    assert r1 == r2 and sorted(r1["clips"]) == clips and r1["seed"] == 20260820 + 7
+    assert reihenfolge_fuer_paar("008", clips, seed_satz=20260820)["seed"] == 20260828
+
+
+def test_rendere_kandidat_verwirft_blende_ueber_deckel(monkeypatch):
+    from tools import rate_transitions as rt
+    pc = _pc(100.0, 60.0, 48, 0.5)                                    # 48 Takte * 1.714 = 82 s > 64
+    a, b = _ns_track("a.mp3"), _ns_track("b.mp3")
+    monkeypatch.setattr(rt, "render_transition_clip", lambda spec, pfad: pfad)
+    with pytest.raises(ValueError):
+        rt.rendere_kandidat(a, b, pc, "001", 1, Path("."))

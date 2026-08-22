@@ -41,6 +41,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from hpg_core.caching import CACHE_FILE, dict_to_track
+from hpg_core.config import MAX_TRANSITION_OVERLAP_SECONDS
 from hpg_core.dj_brain import calculate_paired_mix_points
 from hpg_core.downbeat import (
     DOWNBEAT_RELIABLE_MIN,
@@ -48,6 +49,7 @@ from hpg_core.downbeat import (
 )
 from hpg_core.genres import CANONICAL_GENRES, GENRE_TRANSITION_TOLERANCES
 from hpg_core.models import Track, effective_bpm_diff
+from hpg_core.pair_candidates import FAKTOREN as KANDIDATEN_TEILWERTE, build_pair_candidates
 from hpg_core.playlist import (
     calculate_enhanced_compatibility,
     compute_transition_recommendations,
@@ -71,6 +73,27 @@ KLASSISCHE_FAKTOREN: tuple[str, ...] = ("harmonic", "bpm", "energy", "genre")
 ALLE_FAKTOREN: tuple[str, ...] = NEUE_FAKTOREN + KLASSISCHE_FAKTOREN
 # Protokollspalten in merkmale.csv — der Fit liest sie NICHT (kein Merkmal).
 ZUSATZ_SPALTEN: tuple[str, ...] = ("overall_score", "lufs_delta")
+
+# --- Kandidatenmodus (Spec 2026-08-21 Abschnitt 3) -------------------------
+# bewertung.csv je Clip eines Paars: Note 1-5 und exklusive Wahl "bester".
+BEWERTUNG_KANDIDATEN_SPALTEN: tuple[str, ...] = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+# merkmale.csv je Clip: die zehn Teilwerte aus pair_candidates.score_pair, der
+# Score (nie angezeigt), Schema/Provenienz/Confidence je Seite, Blende und
+# Anzeige-Kontext (bpm/genre/key — kein Score, kein Schema).
+MERKMALE_KANDIDATEN_SPALTEN: tuple[str, ...] = (
+    "pair_id", "clip_id", "clip", *KANDIDATEN_TEILWERTE, "score",
+    "schema_out", "schema_in", "schemata_out", "schemata_in", "blend_bars", "t_out", "t_in",
+    "provenance_out", "provenance_in", "confidence_out", "confidence_in",
+    "crossfade_sek", "bpm_relation", "bpm_a", "bpm_b", "genre_a", "genre_b", "key_a", "key_b",
+    "track_a", "track_b",
+)
+# Holdout nach Tracks: Anteil der Tracks, deren Clips NICHT in die Schaetzung
+# gehen (ein Clip ist Holdout, wenn Track A ODER B dazugehoert — bei 30 % Tracks
+# sind das rund 51 % der Clips). STARTWERT.
+HOLDOUT_ANTEIL = 0.30
+# Innerhalb-Paar-Streuung (Std der Sieger-Verlierer-Differenzen im Train), ab der
+# ein Merkmal aus dem Paarvergleich identifizierbar ist. STARTWERT.
+PAAR_STREUUNG_MIN = 0.05
 
 # --- Auswahl / Rendern ----------------------------------------------------
 # Harte Nutzer-Grenze (2026-08-21): hoechstens 2 BPM Unterschied zwischen
@@ -855,6 +878,157 @@ def schreibe_csv(pfad: Path, spalten, zeilen) -> None:
 
 
 # ===========================================================================
+# Kandidatenmodus (Spec 2026-08-21 Abschnitt 3): prepare --modus kandidaten
+# ===========================================================================
+
+def clip_id_fuer(pair_id: str, n: int) -> str:
+    return f"{pair_id}_k{n}"
+
+
+def _hauptschema(cand) -> str:
+    from hpg_core.mix_candidates import SCHEMA_PRIORITAET
+    s = [x for x in (cand.schema or []) if x in SCHEMA_PRIORITAET]
+    return min(s, key=SCHEMA_PRIORITAET.index) if s else ""
+
+
+def kandidaten_zeilen(pair_id: str, paare, track_a, track_b, clips: list[str]) -> tuple[list[dict], list[dict]]:
+    """Zeilen fuer bewertung.csv und merkmale.csv je PairCandidate (Index n ab 1).
+    Teilwerte None -> leere Zelle (Fit: Zeile faellt fuer das Merkmal heraus).
+    bpm/genre/key sind Anzeige-Kontext fuer den Server (kein Score, kein Schema)."""
+    bewertung, merkmale = [], []
+    for n, (pc, clip) in enumerate(zip(paare, clips), start=1):
+        cid = clip_id_fuer(pair_id, n)
+        bewertung.append({"pair_id": pair_id, "clip_id": cid, "note": "", "gewaehlt": "", "zeit": ""})
+        zeile = {"pair_id": pair_id, "clip_id": cid, "clip": clip}
+        for name in KANDIDATEN_TEILWERTE:
+            wert = pc.teilwerte.get(name)
+            zeile[name] = "" if wert is None else round(float(wert), 6)
+        zeile.update({
+            "score": round(float(pc.score), 6),
+            "schema_out": _hauptschema(pc.out_a), "schema_in": _hauptschema(pc.in_b),
+            "schemata_out": "|".join(pc.out_a.schema or []), "schemata_in": "|".join(pc.in_b.schema or []),
+            "blend_bars": int(pc.blend_bars), "t_out": float(pc.t_out), "t_in": float(pc.t_in),
+            "provenance_out": pc.out_a.provenance, "provenance_in": pc.in_b.provenance,
+            "confidence_out": float(pc.out_a.confidence), "confidence_in": float(pc.in_b.confidence),
+            "crossfade_sek": round(float(pc.overlap_sec), 2), "bpm_relation": pc.bpm_relation,
+            "bpm_a": round(float(getattr(track_a, "bpm", 0.0) or 0.0), 1),
+            "bpm_b": round(float(getattr(track_b, "bpm", 0.0) or 0.0), 1),
+            "genre_a": loese_genre_auf(track_a), "genre_b": loese_genre_auf(track_b),
+            "key_a": str(getattr(track_a, "camelotCode", "") or ""),
+            "key_b": str(getattr(track_b, "camelotCode", "") or ""),
+            "track_a": track_a.filePath, "track_b": track_b.filePath,
+        })
+        merkmale.append(zeile)
+    return bewertung, merkmale
+
+
+def reihenfolge_fuer_paar(pair_id: str, clip_ids: list[str], seed_satz: int = STANDARD_SEED) -> dict:
+    """Zufaellige, reproduzierbare Anzeige-Reihenfolge je Paar; der Seed wird
+    mitgespeichert (reihenfolge.json)."""
+    seed = int(seed_satz) + int("".join(ch for ch in pair_id if ch.isdigit()) or 0)
+    clips = list(clip_ids)
+    random.Random(seed).shuffle(clips)
+    return {"seed": seed, "clips": clips}
+
+
+def rendere_kandidat(a, b, pc, pair_id: str, n: int, clips_dir: Path) -> str:
+    """Rendert einen PairCandidate-Clip (Zeitpunkte und Blende des Kandidaten,
+    sonst identisch zu rendere_paar). Wirft ValueError, wenn die Blende nicht
+    in die Restlaengen passt oder ueber dem Renderer-Deckel liegt."""
+    rest_a, rest_b = crossfade_reserve(float(pc.t_out), float(getattr(a, "duration", 0.0) or 0.0),
+                                       float(getattr(b, "duration", 0.0) or 0.0), float(pc.t_in))
+    if min(rest_a, rest_b) < float(pc.overlap_sec):
+        raise ValueError(f"Blende {pc.overlap_sec:.1f} s passt nicht (Rest A {rest_a:.1f}, B {rest_b:.1f})")
+    if float(pc.overlap_sec) > MAX_TRANSITION_OVERLAP_SECONDS:
+        # Der Renderer klemmt still auf 64 s (transition_renderer.py:154); dann
+        # stuende in merkmale.csv eine andere Blende als im Clip. Lieber weglassen.
+        raise ValueError(f"Blende {pc.overlap_sec:.1f} s ueber Renderer-Deckel {MAX_TRANSITION_OVERLAP_SECONDS:.0f} s")
+    spec = TransitionClipSpec(
+        track_a_path=a.filePath, track_b_path=b.filePath,
+        mix_out_sec=float(pc.t_out), mix_in_sec=float(pc.t_in), crossfade_sec=float(pc.overlap_sec),
+        transition_type=HOERTEST_TRANSITION_TYPE, pre_roll_sec=PRE_ROLL_SEK, post_roll_sec=POST_ROLL_SEK,
+        bpm_a=float(getattr(a, "bpm", 0.0) or 120.0), bpm_b=float(getattr(b, "bpm", 0.0) or 120.0),
+        first_downbeat_a=float(getattr(a, "first_downbeat", 0.0) or 0.0),
+        first_downbeat_b=float(getattr(b, "first_downbeat", 0.0) or 0.0),
+        downbeat_reliable_a=getattr(a, "downbeat_confidence", 0.0) >= DOWNBEAT_RELIABLE_MIN,
+        downbeat_reliable_b=getattr(b, "downbeat_confidence", 0.0) >= DOWNBEAT_RELIABLE_MIN,
+        bar_phase_reliable_a=getattr(a, "downbeat_confidence", 0.0) == REFERENCE_BEATGRID_CONFIDENCE,
+        bar_phase_reliable_b=getattr(b, "downbeat_confidence", 0.0) == REFERENCE_BEATGRID_CONFIDENCE,
+    )
+    ziel = clips_dir / f"{clip_id_fuer(pair_id, n)}.wav"
+    render_transition_clip(spec, str(ziel))
+    return f"clips/{clip_id_fuer(pair_id, n)}.wav"
+
+
+LIESMICH_KANDIDATEN = """HPG Hoertest — Kandidatenmodus
+Je Paar liegen mehrere Clips (<pair_id>_k<n>.wav): gleicher Uebergang, andere
+Mixpunkte/Blende. Seite je Paar: jeden Clip mit 1-5 benoten UND den besten
+waehlen. Alles wird sofort in bewertung.csv geschrieben (pair_id, clip_id,
+note, gewaehlt, zeit). Anzeige bewusst ohne Score/Schema.
+
+Start am PC:   python tools/hoertest_server.py --dir <dieser Ordner> --port 8767
+Mobil: diesen Ordner samt hoertest_server.py (Repo tools/) in den Mobil-Ordner
+kopieren; der Server erkennt den Kandidatenmodus selbst (Spalte clip_id).
+Auswertung:    python tools/rate_transitions.py fit --modus kandidaten --dir <Ordner>
+"""
+
+
+def befehl_prepare_kandidaten(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    clips_dir = out / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+    tracks = lade_tracks_aus_cache(args.cache)
+    print(f"Analysierte Tracks im Cache: {len(tracks)}")
+    kandidaten = sammle_kandidaten(tracks, args.bpm_toleranz)
+    if getattr(args, "nur_genre", None):
+        kandidaten = filtere_nach_genre(kandidaten, args.nur_genre)
+    print(f"Paare nach Gates: {len(kandidaten)}")
+    if not kandidaten:
+        print("Keine Paare — nichts zu rendern.")
+        return 1
+    vektoren = [[k["merkmale"][n] for n in NEUE_FAKTOREN] for k in kandidaten]
+    reserve = maximin_auswahl(vektoren, args.anzahl * RESERVE_FAKTOR, seed=args.seed)
+    bewertung_zeilen, merkmal_zeilen, reihenfolge = [], [], {}
+    paare_fertig, uebersprungen = 0, 0
+    for index in reserve:
+        if paare_fertig >= args.anzahl:
+            break
+        k = kandidaten[index]
+        a, b = k["track_a"], k["track_b"]
+        pcs = build_pair_candidates(a, b)
+        if not pcs:
+            uebersprungen += 1
+            continue
+        pair_id = f"{paare_fertig + 1:03d}"
+        print(f"[{paare_fertig + 1}/{args.anzahl}] Paar {pair_id}: {len(pcs)} Kandidaten ...", flush=True)
+        gerendert, clips = [], []
+        for n, pc in enumerate(pcs, start=1):
+            try:
+                clips.append(rendere_kandidat(a, b, pc, pair_id, n, clips_dir))
+                gerendert.append(pc)
+            except Exception as exc:  # noqa: BLE001 — ein defekter Clip darf den Lauf nicht abbrechen
+                logger.warning("Kandidat %s_k%d uebersprungen: %s", pair_id, n, exc)
+        if not gerendert:
+            uebersprungen += 1
+            continue
+        bew, merk = kandidaten_zeilen(pair_id, gerendert, a, b, clips)
+        bewertung_zeilen += bew
+        merkmal_zeilen += merk
+        reihenfolge[pair_id] = reihenfolge_fuer_paar(pair_id, [z["clip_id"] for z in bew], args.seed)
+        paare_fertig += 1
+    if not merkmal_zeilen:
+        print("Kein einziger Kandidaten-Clip konnte gerendert werden.")
+        return 1
+    schreibe_csv(out / "bewertung.csv", BEWERTUNG_KANDIDATEN_SPALTEN, bewertung_zeilen)
+    schreibe_csv(out / "merkmale.csv", MERKMALE_KANDIDATEN_SPALTEN, merkmal_zeilen)
+    (out / "reihenfolge.json").write_text(json.dumps(reihenfolge, indent=2), encoding="utf-8")
+    (out / "LIESMICH-kandidaten.txt").write_text(LIESMICH_KANDIDATEN, encoding="utf-8")
+    print(f"Paare: {paare_fertig}   Clips: {len(merkmal_zeilen)}   uebersprungen: {uebersprungen}")
+    print(f"Jetzt bewerten: python tools/hoertest_server.py --dir {out} --port 8767")
+    return 0
+
+
+# ===========================================================================
 # Unterbefehl: prepare
 # ===========================================================================
 
@@ -1045,6 +1219,13 @@ def befehl_fit(args: argparse.Namespace) -> int:
 # CLI
 # ===========================================================================
 
+def _prepare(args: argparse.Namespace) -> int:
+    """Weiche nach --modus (set_defaults kann nur eine Funktion tragen)."""
+    if getattr(args, "modus", "einzel") == "kandidaten":
+        return befehl_prepare_kandidaten(args)
+    return befehl_prepare(args)
+
+
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1063,7 +1244,10 @@ def main(argv=None) -> int:
     p.add_argument("--nur-genre", dest="nur_genre", default=None,
                    choices=list(CANONICAL_GENRES),
                    help="Nur Paare, bei denen beide Tracks dieses Genre tragen")
-    p.set_defaults(funktion=befehl_prepare)
+    p.add_argument("--modus", choices=("einzel", "kandidaten"), default="einzel",
+                   help="einzel = ein Clip je Paar (heutiger Satz); kandidaten = alle "
+                        "PairCandidates je Paar (Spec 2026-08-21 Abschnitt 3)")
+    p.set_defaults(funktion=_prepare)
 
     f = unter.add_parser("fit", help="Gewichte aus den Bewertungen schaetzen")
     f.add_argument("--dir", required=True, type=Path)
