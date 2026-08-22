@@ -43,6 +43,15 @@ def test_pyinstaller_embeds_windows_version_resource():
   assert "version='version_info.txt'" in (ROOT / "HPG.spec").read_text(encoding="utf-8")
 
 
+def test_pyinstaller_bundles_hpg_core_data_json():
+  """tolerances.py / candidate_preferences.py lesen Path(__file__).parent / 'data';
+  der gefrorene Build muss hpg_core/data/*.json mitbringen."""
+  spec = (ROOT / "HPG.spec").read_text(encoding="utf-8")
+  assert "os.path.join(SPECPATH, 'hpg_core', 'data')" in spec and "f.endswith('.json')" in spec
+  vorhanden = sorted(p.name for p in (ROOT / "hpg_core" / "data").glob("*.json"))
+  assert vorhanden == ["candidate_preferences.json", "transition_tolerances.json"]
+
+
 def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
   build = (ROOT / "build.bat").read_text(encoding="utf-8")

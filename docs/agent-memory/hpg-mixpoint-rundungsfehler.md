@@ -29,7 +29,13 @@ von 200 beginnt sie erst im Median 47 s **nach** dem Mix-Out. Die Abkuerzung
 Wer die Sektion an einem Mixpunkt braucht, nimmt `section_dict_at_time`
 (`dj_brain.py`) und raet nicht ueber Labels.
 
-**Offen und ungeprueft:** bei **57 von 200 Tracks liegt der Mix-In in einer
-Intro-Sektion** — entgegen Invariante 5. Vorbestehend.
+**Geklaert 2026-08-23** (Messung `hpg_cache_v34.db`, 231 Tracks): kein
+`mix_in_point` liegt vor `_get_intro_end_from_sections` (0 von 231, Toleranz
+0.05 s); die frueher gezaehlten "Mix-In in einer Intro-Sektion" (jetzt 54)
+sitzen alle hoechstens 0.005 s vor dem Intro-Ende — `section_dict_at_time` ordnet
+`start <= t < end` zu, ein Rundungsrest unter dem Intro-Ende traegt das Label
+"intro". Invariante 5 ist eingehalten; auch 0 von 1829 Mix-In-Kandidaten
+liegen vor dem Intro-Ende. Der alte Befund "57 von 200" stammt aus einer anderen
+Stichprobe/einem aelteren Cache und ist nicht reproduziert. Kein Codeaenderungsbedarf.
 
 Siehe auch [[hpg-groove-scoring-2026-08-20]].

@@ -187,3 +187,8 @@ des Laufenden zurueckgestellt.
   Gewichte braeuchte es grob 25-30 unabhaengige Mixe je Genre.
   `hpg_core/data/transition_tolerances.json` steht weiter auf `{}`,
   `TRANSITION_FEATURES_ENABLED` weiter auf `False`.
+  **Nachtrag 2026-08-23:** seit 2026-08-21 steht `TRANSITION_FEATURES_ENABLED`
+  in `hpg_core/config.py` auf `True` (Startwerte, Groove 0.30 verteilt — Memory
+  `hpg-scoring-an-2026-08-21`); die Mixpunkt-Kandidaten (Teil 1–4, Handoff
+  `docs/HANDOFF-2026-08-22-kandidaten-teil4.md`) bewerten seither lokal am
+  Mixpunkt. `transition_tolerances.json` bleibt `{}`.

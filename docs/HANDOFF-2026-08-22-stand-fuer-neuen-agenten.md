@@ -109,13 +109,19 @@ Wichtigste Eintraege: `hpg-stand-2026-08-22-teil1-gemerged.md` (Einstieg),
 - Generierung mit Kandidaten ~52 s fuer 231 Tracks (2 s ohne) — gemessen, keine
   Kappung; bei groesseren Sammlungen waechst es mit den Paaren im 2-BPM-Gate.
 - #4 Melodic Techno: wartet auf Noten
-- `docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md` ("10 Strategien") und
-  `HANDOFF-2026-08-20-groove-scoring.md:189` veraltet
-- Memory `hpg-mixpoint-rundungsfehler.md`: 57/200 Tracks mit Mix-In in einer
-  Intro-Sektion (Invariante 5), vorbestehend, ungeprueft
+- Erledigt 2026-08-23: `docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md` auf 8
+  Strategien berichtigt; `HANDOFF-2026-08-20-groove-scoring.md` Nachtrag
+  (`TRANSITION_FEATURES_ENABLED=True` seit 21.08.).
+- Erledigt 2026-08-23: Invariante 5 gemessen (231 Tracks): 0 Mix-Ins vor dem
+  Intro-Ende, die "Intro-Sektion"-Faelle sind Rand-Rundung am Intro-Ende
+  (Memory `hpg-mixpoint-rundungsfehler.md`).
 - Teil-1-Startwerte `KICK_AKTIV_*` markieren fast nie einen Kick (82/3664);
   `percussive_ratio_lokal` zur Haelfte < 0.3 (Handoff Teil 1/2)
-- `HPG.spec` buendelt `hpg_core/data/*.json` nicht (Waechter-Hinweis Teil 3,
-  Release-Build pruefen: `hpg-release-build`)
+- Erledigt 2026-08-23: `HPG.spec` buendelt `hpg_core/data/*.json` ueber `SPECPATH`
+  (Test `test_pyinstaller_bundles_hpg_core_data_json`); Frozen-Build mit
+  PyInstaller 6.21 aus fremdem cwd (`--distpath/--workpath` im Scratchpad)
+  gelaufen, Exit 0, beide JSON in `PKG-00.toc`/`Analysis-00.toc` mit
+  SPECPATH-Pfaden. Waechter Tor 1 MIT AUFLAGEN (eingearbeitet), Tor 2
+  DURCHGEWUNKEN. Suite danach 1872 passed.
 - `docs/AGENT_HANDOFF.md` beschreibt den Stand 2026-07-20 und verweist oben
   auf dieses Dokument.

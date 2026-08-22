@@ -37,6 +37,11 @@ hidden_imports += collect_submodules('pedalboard')
 # Daten- und DLL-Dateien für Librosa und Rekordbox sammeln
 datas = collect_data_files('librosa')
 datas += collect_data_files('pyrekordbox')
+# Mitgelieferte JSON-Daten (transition_tolerances.json, candidate_preferences.json):
+# tolerances.py / candidate_preferences.py lesen Path(__file__).parent / 'data'
+_hpg_data_dir = os.path.join(SPECPATH, 'hpg_core', 'data')   # SPECPATH: Spec-Verzeichnis, nicht cwd
+datas += [(os.path.join(_hpg_data_dir, f), os.path.join('hpg_core', 'data'))
+          for f in sorted(os.listdir(_hpg_data_dir)) if f.endswith('.json')]
 
 # Icon Pfad festlegen
 icon_file = 'icon.ico'
