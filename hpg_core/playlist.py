@@ -4,6 +4,7 @@ from .models import (
     effective_bpm_diff,
     get_camelot_components,
     camelot_relation_score,
+    seconds_per_bar,
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
@@ -150,6 +151,9 @@ class TransitionRecommendation:
     # aktiven Kandidaten (0 = keiner; dann tragen Plan/Track die Zeitpunkte).
     kandidaten: List[dict] = field(default_factory=list)
     kandidat_aktiv: int = 0
+    # False, wenn kein Kandidat hinter dem Mix-In des vorigen Paars lag und
+    # deshalb Rang 1 genommen wurde (Invariante 1 je Track dann verletzt).
+    kandidat_konsistent: bool = True
 
 
 @dataclass(frozen=True)
@@ -1737,6 +1741,25 @@ def compute_adjacent_transition_metrics(
     ]
 
 
+def _konsistenter_kandidat(kandidaten: list, vorheriger_mix_in: Optional[float],
+                           track: Track):
+    """Playlist-Ebene (Invariante 1/3 je Track): der Kandidat fuer das Paar
+    (i, i+1) muss hinter dem schon festgelegten Mix-In von Track i (Paar i-1,
+    i) liegen — mindestens zwei Phrasen. Liefert (kandidat, konsistent); ohne
+    passenden Kandidaten faellt die Wahl auf Rang 1 und konsistent=False
+    (der Plan bleibt dann ein Einzelpaar-Optimum, die Tabelle zeigt es)."""
+    if not kandidaten:
+        return None, True
+    if vorheriger_mix_in is None:
+        return kandidaten[0], True
+    grid = seconds_per_bar(track.bpm) * int(getattr(track, "phrase_unit", 8) or 8)
+    untergrenze = float(vorheriger_mix_in) + 2.0 * grid
+    for k in kandidaten:
+        if float(k.t_out) >= untergrenze - 1e-6:
+            return k, True
+    return kandidaten[0], False
+
+
 def compute_transition_recommendations(
     playlist: List[Track],
     bpm_tolerance: float = 3.0,
@@ -1770,6 +1793,9 @@ def compute_transition_recommendations(
     configured_overlap = max(4.0, min(64.0, configured_overlap))
 
     recommendations: List[TransitionRecommendation] = []
+    # Mix-In des aktuellen Tracks aus dem vorigen Paar (Kandidatenpfad), damit
+    # Mix-Out des naechsten Paars dahinter liegt (Invariante 1/3 je Track).
+    vorheriger_mix_in: Optional[float] = None
 
     for index in range(len(playlist) - 1):
         current = playlist[index]
@@ -1858,11 +1884,14 @@ def compute_transition_recommendations(
             if getattr(metrics, "kandidat", None) is not None else []
         )
         kandidat_aktiv = 0
+        kandidat_konsistent = True
+        naechster_mix_in: Optional[float] = None
         if kandidaten:
-            aktiv = kandidaten[0]
+            aktiv, kandidat_konsistent = _konsistenter_kandidat(kandidaten, vorheriger_mix_in, current)
             kandidat_aktiv = int(aktiv.rang)
             current_mix_out = float(aktiv.t_out)
             next_mix_in = float(aktiv.t_in)
+            naechster_mix_in = next_mix_in
             fade_in_start = next_mix_in
             overlap = float(aktiv.overlap_sec)
             if dj_rec is not None:
@@ -1919,7 +1948,7 @@ def compute_transition_recommendations(
 
         notes = "; ".join(notes_parts)
 
-        if kandidaten and kandidaten[0].flags.get("bass_swap_pflicht"):
+        if kandidaten and aktiv.flags.get("bass_swap_pflicht"):
             # Beide Kicks aktiv an der Naht: der Bass-Swap ist Pflicht (Teil 2,
             # Entscheidung 6); der Kandidaten-Score traegt dafuer keinen Abzug.
             transition_type = "bass_swap"
@@ -1970,8 +1999,10 @@ def compute_transition_recommendations(
                 plan=plan,
                 kandidaten=[k.to_dict() for k in kandidaten],
                 kandidat_aktiv=kandidat_aktiv,
+                kandidat_konsistent=kandidat_konsistent,
             )
         )
+        vorheriger_mix_in = naechster_mix_in
 
     return recommendations
 

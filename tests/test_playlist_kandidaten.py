@@ -96,3 +96,34 @@ def test_bass_swap_pflicht_waehlt_bass_swap():
     r = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)[0]
     assert r.kandidaten[0]["flags"]["bass_swap_pflicht"] is True
     assert r.transition_type == "bass_swap" and r.plan.transition_type == "bass_swap"
+
+
+
+def test_recommendations_waehlen_kandidaten_sequentiell_konsistent():
+    """Playlist a -> b -> c: der Mix-Out von b (Paar 2) muss hinter dem Mix-In
+    von b (Paar 1) liegen (mindestens 2 Phrasen), sonst wuerde b rueckwaerts
+    gespielt. Rang 1 von Paar 2 laege davor -> Rang 2 wird aktiv."""
+    g = (60.0 / 140.0) * 4 * 16                       # 27.43 s
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    # b: Mix-In aus Paar 1 bei 4g (spaet), Mix-Out-Kandidaten bei 5g (zu frueh: < 4g + 2g) und 8g (ok)
+    b = _track("b.mp3", ins=[_voll(round(4 * g, 3))],
+               outs=[_voll(round(5 * g, 3), schema=["pssi_phrase"]),
+                     _voll(round(8 * g, 3), schema=["sektion"])])
+    c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
+    assert recs[0].plan.mix_in_b == pytest.approx(4 * g, abs=0.01)
+    # Paar 2: Rang 1 ist 5g (Schema-Prioritaet pssi_phrase), aber 5g < 4g + 2g -> 8g aktiv
+    assert recs[1].kandidaten[0]["t_out"] == pytest.approx(5 * g, abs=0.01)
+    assert recs[1].plan.mix_out_a == pytest.approx(8 * g, abs=0.01)
+    assert recs[1].kandidat_aktiv == [k["t_out"] for k in recs[1].kandidaten].index(recs[1].plan.mix_out_a) + 1
+    assert recs[1].kandidat_konsistent is True
+    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 1e-6
+
+
+def test_recommendations_ohne_konsistenten_kandidaten_rang1_und_flag():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(6 * g, 3))], outs=[_voll(round(5 * g, 3))])   # Out vor In, kein anderer
+    c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
+    assert recs[1].kandidat_aktiv == 1 and recs[1].kandidat_konsistent is False
