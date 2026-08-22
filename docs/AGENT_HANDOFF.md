@@ -1,5 +1,9 @@
 # Agent Handoff – aktueller Hauptstand
 
+> **Neuester Stand (2026-08-22):** `docs/HANDOFF-2026-08-22-stand-fuer-neuen-agenten.md`
+> — Branch-Lage, offene Punkte, Skills/Subagenten, Memory-Kopie in `docs/agent-memory/`.
+> Das folgende Dokument beschreibt den Stand vom 2026-07-20.
+
 Stand: 2026-07-20
 Autoritativer Branch: `main`
 
