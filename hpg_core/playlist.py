@@ -41,7 +41,7 @@ import logging
 import heapq
 import math
 from typing import List, Tuple, Dict, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -119,6 +119,11 @@ class TransitionMetrics:
     bass_continuity: Optional[float] = None
     timbre_match: Optional[float] = None
     mood_match: Optional[float] = None
+    # Kandidatenpfad (Spec 2026-08-21 Abschnitt 4): lokale Teilwerte des besten
+    # PairCandidate; None, wenn das Paar ohne Kandidaten bewertet wurde.
+    loudness_match: Optional[float] = None
+    structure_match: Optional[float] = None
+    kandidat: Optional[dict] = None   # PairCandidate.to_dict() von Rang 1
 
 
 @dataclass
@@ -141,6 +146,10 @@ class TransitionRecommendation:
     transition_type: str = "blend"  # Vorhergesagter Transition-Typ
     dj_rec: Optional["DJRecommendation"] = None  # Paar-spezifische DJ-Brain-Empfehlung
     plan: Optional["TransitionPlan"] = None
+    # Alle PairCandidates des Paars (to_dict) in App-Reihenfolge und der Rang des
+    # aktiven Kandidaten (0 = keiner; dann tragen Plan/Track die Zeitpunkte).
+    kandidaten: List[dict] = field(default_factory=list)
+    kandidat_aktiv: int = 0
 
 
 @dataclass(frozen=True)
@@ -310,6 +319,29 @@ def _resolve_track_genre(track: Track) -> str:
     return track.genre if (track.genre and track.genre != "Unknown") else "Unknown"
 
 
+def _kandidaten_fuer_paar(track1: Track, track2: Track, energy_direction, kwargs: dict) -> list:
+    """PairCandidates des Paars in App-Reihenfolge (pair_candidates.rank_pair_candidates)
+    mit demselben Cache-Verhalten wie die Metriken: nur waehrend generate_playlist
+    gecacht. Leer, wenn eine Seite keine Kandidaten traegt."""
+    if not (getattr(track1, "mix_out_candidates", None) and getattr(track2, "mix_in_candidates", None)):
+        return []
+    # Lazy: pair_candidates importiert playlist-Teile lazy — kein Zyklus auf Modulebene.
+    from .pair_candidates import rank_pair_candidates
+    key = (
+        _track_cache_key(track1), _track_cache_key(track2), repr(getattr(energy_direction, "value", energy_direction)),
+        repr(sorted((k, repr(v)) for k, v in kwargs.items())),
+    )
+    if key in _PAIR_CANDIDATE_CACHE:
+        return _PAIR_CANDIDATE_CACHE[key]
+    paare = rank_pair_candidates(
+        track1, track2, energy_direction=energy_direction,
+        harmonic_strictness=kwargs.get("harmonic_strictness", 7),
+        allow_experimental=kwargs.get("allow_experimental", True),
+    )
+    _PAIR_CANDIDATE_CACHE[key] = paare
+    return paare
+
+
 def calculate_enhanced_compatibility(
     track1: Track,
     track2: Track,
@@ -393,8 +425,26 @@ def calculate_enhanced_compatibility(
 
     # Overall weighted score
     groove_val = bass_val = timbre_val = mood_val = None
+    loudness_val = structure_val = None
+    kandidat = None
+    # Kandidaten nur innerhalb des BPM-Gates rechnen: darueber ist der Score
+    # ohnehin 0 (Hard-Gate unten) — spart bei grossen Sammlungen das Gros der
+    # Paare (~9 ms je rank_pair_candidates).
+    if TRANSITION_FEATURES_ENABLED and bpm_diff <= bpm_tolerance:
+        paare = _kandidaten_fuer_paar(track1, track2, energy_direction, kwargs)
+        if paare:
+            kandidat = paare[0]
 
-    if TRANSITION_FEATURES_ENABLED:
+    if kandidat is not None:
+        # Spec 2026-08-21 Abschnitt 4: der beste PairCandidate traegt den
+        # Paar-Score — alle Faktoren lokal an der Naht (Teil 2); Half/Double-
+        # Penalty und Vocal-Clash stecken bereits im Kandidaten-Score.
+        tw = kandidat.teilwerte
+        groove_val, bass_val = tw.get("groove"), tw.get("bass")
+        timbre_val, mood_val = tw.get("timbre"), tw.get("mood")
+        loudness_val, structure_val = tw.get("loudness"), tw.get("structure")
+        overall_score = float(kandidat.score)
+    elif TRANSITION_FEATURES_ENABLED:
         # genre_a (abgehender Track) setzt den Kontext des Uebergangs.
         tol = get_tolerances(genre_a)
         # Nicht aufgeloestes Genre: Gewicht halbieren. Der Altpfad tat das
@@ -464,7 +514,8 @@ def calculate_enhanced_compatibility(
     # nur wenn BEIDE Tracks als "vocal" erkannt sind (Heuristik ist auf
     # 22kHz-Mono unsicher, "unknown" wird nie bestraft).
     if (
-        getattr(track1, "vocal_instrumental", "unknown") == "vocal"
+        kandidat is None
+        and getattr(track1, "vocal_instrumental", "unknown") == "vocal"
         and getattr(track2, "vocal_instrumental", "unknown") == "vocal"
     ):
         overall_score = max(0.0, overall_score - VOCAL_CLASH_PENALTY)
@@ -486,6 +537,9 @@ def calculate_enhanced_compatibility(
         bass_continuity=bass_val,
         timbre_match=timbre_val,
         mood_match=mood_val,
+        loudness_match=loudness_val,
+        structure_match=structure_val,
+        kandidat=kandidat.to_dict() if kandidat is not None else None,
     )
     if _ENHANCED_COMPAT_CACHE is not None:
         _ENHANCED_COMPAT_CACHE[cache_key] = metrics
@@ -543,6 +597,18 @@ def _calculate_compatibility_inner(
 # erweiterte Zielfunktion und _ENHANCED_COMPAT_CACHE.
 _ENHANCED_COMPAT_CACHE = None
 _COMPAT_CACHE = None
+# Kandidatenlisten je Paar. Anders als die beiden Caches oben DAUERHAFT aktiv:
+# rank_pair_candidates kostet ~9 ms je Paar (gemessen 2026-08-22, 231 Tracks),
+# und Sortierung, Metriken, Empfehlungen, Tabelle und Preview brauchen dieselbe
+# Liste. Geleert ueber reset_pair_candidate_cache() — aufgerufen, wenn sich
+# Wahl (candidate_choices), Praeferenzen (candidate_preferences) oder Gewichte
+# (tolerances) aendern.
+_PAIR_CANDIDATE_CACHE: dict = {}
+
+
+def reset_pair_candidate_cache() -> None:
+    """Leert den Kandidaten-Cache (Wahl/Praeferenz/Gewichte geaendert)."""
+    _PAIR_CANDIDATE_CACHE.clear()
 
 
 def calculate_compatibility(
@@ -1784,6 +1850,27 @@ def compute_transition_recommendations(
                 # Objekte ohne transition_bars.
                 overlap = dj_overlap
 
+        # Kandidaten (Spec 2026-08-21 Abschnitt 4): der aktive PairCandidate
+        # (Rang 1 bzw. gespeicherte Wahl) traegt Mix-Out, Mix-In und Blende;
+        # Track-Felder bleiben Analyse-Werte, alle Leser nehmen den Plan.
+        kandidaten = (
+            _kandidaten_fuer_paar(current, upcoming, None, ctx)
+            if getattr(metrics, "kandidat", None) is not None else []
+        )
+        kandidat_aktiv = 0
+        if kandidaten:
+            aktiv = kandidaten[0]
+            kandidat_aktiv = int(aktiv.rang)
+            current_mix_out = float(aktiv.t_out)
+            next_mix_in = float(aktiv.t_in)
+            fade_in_start = next_mix_in
+            overlap = float(aktiv.overlap_sec)
+            if dj_rec is not None:
+                # Sentinel-Felder mitziehen, damit Leser ohne Plan dieselben
+                # Zeitpunkte sehen (resolve_transition_mix_points, Karten-Text).
+                dj_rec.adjusted_mix_out_a = current_mix_out
+                dj_rec.adjusted_mix_in_b = next_mix_in
+
         has_dynamic_bar_source = dj_rec is not None and hasattr(
             dj_rec, "transition_bars"
         )
@@ -1832,9 +1919,14 @@ def compute_transition_recommendations(
 
         notes = "; ".join(notes_parts)
 
-        transition_type = predict_transition_type(
-            current, upcoming, bpm_tolerance, **ctx
-        )
+        if kandidaten and kandidaten[0].flags.get("bass_swap_pflicht"):
+            # Beide Kicks aktiv an der Naht: der Bass-Swap ist Pflicht (Teil 2,
+            # Entscheidung 6); der Kandidaten-Score traegt dafuer keinen Abzug.
+            transition_type = "bass_swap"
+        else:
+            transition_type = predict_transition_type(
+                current, upcoming, bpm_tolerance, **ctx
+            )
         tempo_ratio = (
             float(upcoming.bpm / current.bpm)
             if current.bpm > 0 and upcoming.bpm > 0
@@ -1876,6 +1968,8 @@ def compute_transition_recommendations(
                 transition_type=transition_type,
                 dj_rec=dj_rec,
                 plan=plan,
+                kandidaten=[k.to_dict() for k in kandidaten],
+                kandidat_aktiv=kandidat_aktiv,
             )
         )
 
