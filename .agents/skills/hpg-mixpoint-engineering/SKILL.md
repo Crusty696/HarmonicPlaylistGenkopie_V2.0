@@ -211,6 +211,8 @@ unveraendert.
 - Alle neuen Zahlen ausser Spec-Werten sind STARTWERTE (`config.py`, Block
   "Paarung und Bewertung"); der Hoertest (Teil 3) ersetzt sie.
 - Messung: `tools/paar_kandidaten_messen.py --cache | --json-tracks <json>`.
+- Gewichtsquelle in `score_pair` (Teil 3): explizites `tolerances` > Praeferenzen
+  aus `hpg_core/candidate_preferences.py` (Hoertest-Fit) > `get_tolerances(genre)`.
 - Offen fuer Teil 3/4: `kandidaten_*_weight` an Fit (`rate_transitions.py`)
   und GUI-Regler anbinden; `KICK_KONFLIKT_ABZUG` bei Bass-Swap-Uebergang
   entfaellt in Teil 4; Rang-1 -> `Track.mix_*_point`, `scoring_context`.
