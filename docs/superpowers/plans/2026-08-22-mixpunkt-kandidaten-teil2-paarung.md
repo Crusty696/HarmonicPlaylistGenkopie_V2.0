@@ -396,8 +396,8 @@ def test_gate_blende_im_outro_und_benannter_cue_ausnahme():
     spaet.schema = ["benannter_cue"]
     a.cue_points = [{"t": round(8 * g, 3), "name": "Drop 2", "typ": 0, "hot_cue": None, "provenance": "manual"}]
     assert "blende_im_outro" in pair_gate_reasons(a, b, spaet, _in(round(3 * g, 3)), 16)
-    # Manueller "MIX OUT"-Cue auf demselben Gitterpunkt -> guard-frei, nur Trackende zaehlt.
-    a.cue_points = [{"t": round(8 * g, 3) - 0.4, "name": "MIX OUT", "typ": 0, "hot_cue": None, "provenance": "manual"}]
+    # Manueller "MIX OUT"-Cue, der (floor, Teil-1-Quantisierung) auf denselben Gitterpunkt faellt -> guard-frei.
+    a.cue_points = [{"t": round(8 * g, 3) + 0.4, "name": "MIX OUT", "typ": 0, "hot_cue": None, "provenance": "manual"}]
     assert "blende_im_outro" not in pair_gate_reasons(a, b, spaet, _in(round(3 * g, 3)), 16)
     # Auto-Cue mit OUT im Namen zaehlt nicht (provenance auto).
     a.cue_points = [{"t": round(8 * g, 3), "name": "CUE(Auto) OUT", "typ": 0, "hot_cue": None, "provenance": "auto"}]
@@ -1161,18 +1161,24 @@ def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
             if not verloren:
                 gewaehlt = rest + [ersatz]
                 break
-    # Dedupe-Opfer (zuordnung != p) sind raus; je (Kombination, Blende) bleibt
-    # der beste Vertreter.
+    # Dedupe-Opfer (zuordnung != p) sind raus. Je (Kombination, Blende) bleibt
+    # der beste Vertreter; liegen zwei Vertreter verschiedener Hauptschemata auf
+    # demselben Punkt, werden ihre Schemata vereinigt (kein Kandidat geht verloren).
     ergebnis = [p for p in paare if zuordnung[id(p)] is p and (p.t_out, p.t_in) in gewaehlt]
-    gesehen: set[tuple[float, float, int]] = set()
-    final: list[PairCandidate] = []
+    je_punkt: dict[tuple[float, float, int], PairCandidate] = {}
     for p in sorted(ergebnis, key=_sortschluessel):
         k = (p.t_out, p.t_in, p.blend_bars)
-        if k in gesehen:
+        if k in je_punkt:
+            ziel = je_punkt[k]
+            for s in p.out_a.schema:
+                if s not in ziel.out_a.schema:
+                    ziel.out_a.schema.append(s)
+            for s in p.in_b.schema:
+                if s not in ziel.in_b.schema:
+                    ziel.in_b.schema.append(s)
             continue
-        gesehen.add(k)
-        final.append(p)
-    return final
+        je_punkt[k] = p
+    return list(je_punkt.values())
 
 
 def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=None,
@@ -1378,7 +1384,7 @@ Deserialisierer: `caching.dict_to_track` (`caching.py:351`, verifiziert 2026-08-
 
 ### Task 8: Messung, Doku, Waechter Tor 2, Merge
 
-- [ ] **Step 1: Messung** `.\venv312\Scripts\python.exe tools/paar_kandidaten_messen.py --cache --json <scratchpad>\paare_v34.json` (Cache v34 mit den 231 Tracks der Messung vom 2026-08-22). Pflichtzahlen: `paare`, `paare_mit_kandidaten`, `kandidaten_median`, `gate_gruende`, `rang1_schemata_out/in`, `rang1_score_median`, `blenden`.
+- [ ] **Step 1: Messung** `.\venv312\Scripts\python.exe tools/paar_kandidaten_messen.py --json-tracks <scratchpad>\kandidaten_v34.json --json <scratchpad>\paare_v34.json` — die 231 Tracks der Messung vom 2026-08-22 liegen als Track-Dicts in der `kandidaten_messen.py --json`-Ausgabe (`analyze_track` dort schreibt NICHT in den Cache; deshalb hat das Werkzeug neben `--cache` die Option `--json-tracks`, Umsetzung 2026-08-22). Pflichtzahlen: `paare`, `paare_mit_kandidaten`, `kandidaten_median`, `gate_gruende`, `rang1_schemata_out/in`, `rang1_score_median`, `blenden`.
 - [ ] **Step 2: Volle Suite** `.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` — gruen inkl. Coverage-Gate 70.
 - [ ] **Step 3: Doku**: `CLAUDE.md` (Baumliste: `pair_candidates.py`, `tools/paar_kandidaten_messen.py`), `.agents/skills/hpg-mixpoint-engineering/SKILL.md` + `.claude/...` (Abschnitt "Kandidaten Teil 2 (gebaut)": Gates, Faktoren, Gewichte, Flags, was Teil 4 bleibt), `.agents/skills/hpg-playlist-scoring/SKILL.md` (+ `.claude`): `camelot_relation_score` in `models.py`, `kandidaten_*_weight`; Handoff `docs/HANDOFF-<Datum>-kandidaten-teil2.md` mit den Messzahlen, den 11 Entscheidungen und diesen **offenen Folgeaufgaben fuer Teil 3/4** (Waechter Tor 1, Auflage 7 — nicht vergessen): (a) GUI-Regler `main.py:1562-1565` und Hoertest-Fit `tools/rate_transitions.py:513-530` schreiben nur die alten `*_weight` — `kandidaten_*_weight` muessen in Teil 3 (Fit) und Teil 4 (Regler "Lautheit") angebunden werden; (b) `KICK_KONFLIKT_ABZUG` entfaellt in Teil 4 bei Bass-Swap/EQ-Swap (Score wird uebergangstyp-abhaengig); (c) `blend_bars` ist kein Score-Merkmal (Docstring `score_pair`). Ausserdem: Pitch-Gate ist unter dem 2-BPM-Gate rechnerisch nie aktiv (Messung zeigt `pitch: 0`) — so im Handoff benennen.
 - [ ] **Step 4: Waechter Tor 2** mit dem Gesamt-Diff gegen dieses Dokument; Auflagen einarbeiten.
