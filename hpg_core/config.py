@@ -85,6 +85,31 @@ ENERGIE_TREND_SCHWELLE = 10
 # zwischen den Nachbarsektionen mindestens so gross ist (0-100-Skala).
 ENERGIE_NEUHEIT_MIN = 20
 
+# === Paarung und Bewertung von Kandidaten (Spec 2026-08-21, Abschnitt 2) ===
+# Harte Gates auf Paar-Ebene (Spec-Werte).
+PAAR_BPM_MAX = 2.0                 # |BPM_A - BPM_B| effektiv (Half/Double erkannt)
+# Pitch-Bedarf diff / BPM_A. Spec-Gate; unter PAAR_BPM_MAX ab 50 BPM rechnerisch
+# nie aktiv (2/50 = 4 %) — bleibt als eigenstaendiges Gate, wie die Spec es nennt.
+PAAR_PITCH_MAX = 0.04
+PAAR_HALF_DOUBLE_MAX_BARS = 16     # kurzer Cut bei Half/Double
+PAAR_MAX_KOMBINATIONEN = 6         # Zeitpunkt-Kombinationen je Paar (x 2 Blenden)
+# Teilwerte. Spec-Werte: PAAR_BPM_SKALA, LUFS_DELTA_MAX_DB, PERCUSSIVE_HOCH/NIEDRIG.
+# Alle uebrigen sind STARTWERTE, nicht gemessen — der Hoertest (Teil 3) ersetzt sie.
+PAAR_BPM_SKALA = 1.0               # exp(-diff / Skala), Spec-Wert
+# Lautheit: 0 dB -> 1.0, >= 3 dB -> 0 (Spec-Wert). Dieselbe 3-dB-Toleranz wie
+# GAIN_DIFF_WARN_DB oben (Gain-Hinweis in dj_brain) — bei Aenderung beide pruefen.
+LUFS_DELTA_MAX_DB = 3.0
+BASS_RMS_DELTA_MAX_DB = 6.0        # STARTWERT: |delta bass_rms_dbfs| auf [0,1]
+SYNCOPATION_DELTA_MAX = 0.5        # STARTWERT: |delta syncopation_lokal| auf [0,1]
+PERCUSSIVE_HOCH = 0.7              # beide darueber -> Abzug (Spec-Schwelle)
+PERCUSSIVE_NIEDRIG = 0.3           # beide darunter -> lange Blende erlaubt (Spec)
+PERCUSSIVE_ABZUG = 0.10            # STARTWERT
+KICK_KONFLIKT_ABZUG = 0.15         # STARTWERT: beide kick_aktiv -> Bass-Swap-Pflicht, Abzug
+MIDS_HIGHS_DELTA_MAX = 15.0        # STARTWERT, Prozentpunkte (analyze_frequency_bands)
+PSSI_MOOD_ABZUG = 0.10             # STARTWERT: PSSI-mood beidseitig vorhanden und verschieden
+ENERGIE_TREND_WIDERSPRUCH = 0.8    # STARTWERT: energy_trend von B widerspricht der Richtung
+STRUKTUR_LABEL_BONUS = 0.10        # STARTWERT: Outro/Down -> Chorus/Drop
+
 # === DJ Brain Configuration ===
 # DJ_BRAIN_ENABLED entfernt (Konsolidierung 2026-07-17): der RMS-Fallback
 # delegiert jetzt selbst an calculate_genre_aware_mix_points — es gibt nur

@@ -100,3 +100,23 @@ class TestKandidatenKonstanten:
     assert config.ENERGIE_TREND_SCHWELLE == 10
     assert config.ENERGIE_NEUHEIT_MIN == 20
     assert config.KANDIDATEN_AUDIO_SR == 22050
+
+  def test_paar_konstanten_vorhanden_und_plausibel(self):
+    from hpg_core import config
+    assert config.PAAR_BPM_MAX == 2.0
+    assert config.PAAR_PITCH_MAX == 0.04
+    assert config.PAAR_HALF_DOUBLE_MAX_BARS == 16
+    assert config.PAAR_BPM_SKALA == 1.0
+    assert config.PAAR_MAX_KOMBINATIONEN == 6
+    assert config.LUFS_DELTA_MAX_DB == 3.0
+    assert config.BASS_RMS_DELTA_MAX_DB == 6.0
+    assert config.SYNCOPATION_DELTA_MAX == 0.5
+    assert config.PERCUSSIVE_HOCH == 0.7
+    assert config.PERCUSSIVE_NIEDRIG == 0.3
+    assert config.PERCUSSIVE_ABZUG == 0.10
+    assert config.KICK_KONFLIKT_ABZUG == 0.15
+    assert config.MIDS_HIGHS_DELTA_MAX == 15.0
+    assert config.PSSI_MOOD_ABZUG == 0.10
+    assert config.ENERGIE_TREND_WIDERSPRUCH == 0.8
+    assert config.STRUKTUR_LABEL_BONUS == 0.10
+    assert 0.0 < config.PERCUSSIVE_NIEDRIG < config.PERCUSSIVE_HOCH < 1.0
