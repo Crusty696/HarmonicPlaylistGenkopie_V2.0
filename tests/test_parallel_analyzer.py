@@ -7,7 +7,7 @@ import pytest
 import tempfile
 import numpy as np
 import multiprocessing as mp
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 from hpg_core.parallel_analyzer import (
   ParallelAnalyzer,
   get_optimal_worker_count,
@@ -220,6 +220,245 @@ def test_terminate_executor_stops_running_processes():
   process.terminate.assert_called_once_with()
 
 
+def test_terminate_executor_isolates_each_child_and_shutdown_error():
+  """Ein defektes Child oder shutdown darf weitere Children nicht blockieren."""
+  first = MagicMock()
+  first.is_alive.side_effect = RuntimeError("status failed")
+  first.terminate.side_effect = RuntimeError("terminate failed")
+  second = MagicMock()
+  second.is_alive.return_value = True
+  executor = MagicMock()
+  executor._processes = {1: first, 2: second}
+  executor.shutdown.side_effect = RuntimeError("shutdown failed")
+
+  _terminate_executor_processes(executor)
+
+  first.terminate.assert_called_once_with()
+  second.terminate.assert_called_once_with()
+  executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
+
+def test_keyboard_interrupt_from_normal_shutdown_survives_cleanup_errors(monkeypatch):
+  """shutdown(wait=True)-Interrupt bleibt trotz fehlerhaftem Cleanup original."""
+  from hpg_core import parallel_analyzer
+
+  original = KeyboardInterrupt("stop now")
+  process = MagicMock()
+  process.is_alive.return_value = True
+  created = []
+
+  class ShutdownInterruptExecutor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      self._processes = {1: process}
+      self.shutdown_calls = []
+      created.append(self)
+
+    def submit(self, func, path):
+      return _FakeFuture()
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      self.shutdown_calls.append((wait, cancel_futures))
+      if wait:
+        raise original
+      raise RuntimeError("cleanup shutdown failed")
+
+  monkeypatch.setattr(
+    parallel_analyzer, "ProcessPoolExecutor", ShutdownInterruptExecutor
+  )
+  monkeypatch.setattr(
+    parallel_analyzer,
+    "wait",
+    lambda futures, timeout=None, return_when=None: (set(futures), set()),
+  )
+
+  with pytest.raises(KeyboardInterrupt) as caught:
+    ParallelAnalyzer(max_workers=1).analyze_files(["shutdown-interrupt.wav"])
+
+  assert caught.value is original
+  process.terminate.assert_called_once_with()
+  assert created[0].shutdown_calls == [(True, False), (False, True)]
+
+
+def test_recovery_shutdown_interrupt_survives_best_effort_cleanup(monkeypatch):
+  """Auch Recovery-Cleanup propagiert seine originale BaseException."""
+  from concurrent.futures.process import BrokenProcessPool
+  from hpg_core import parallel_analyzer
+
+  original = KeyboardInterrupt("recovery shutdown interrupted")
+  recovery_process = MagicMock()
+  recovery_process.is_alive.return_value = True
+  created = []
+
+  class BrokenFuture:
+    def result(self, timeout=None):
+      raise BrokenProcessPool("main pool broken")
+
+  class NoneFuture:
+    def result(self, timeout=None):
+      return None
+
+  class RecoveryInterruptExecutor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      self.is_recovery = bool(created)
+      self._processes = {1: recovery_process} if self.is_recovery else {}
+      self.shutdown_calls = []
+      created.append(self)
+
+    def submit(self, func, path):
+      return NoneFuture() if self.is_recovery else BrokenFuture()
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      self.shutdown_calls.append((wait, cancel_futures))
+      if self.is_recovery:
+        if len(self.shutdown_calls) == 1:
+          raise original
+        raise RuntimeError("recovery cleanup failed")
+
+  monkeypatch.setattr(
+    parallel_analyzer, "ProcessPoolExecutor", RecoveryInterruptExecutor
+  )
+  monkeypatch.setattr(
+    parallel_analyzer,
+    "wait",
+    lambda futures, timeout=None, return_when=None: (set(futures), set()),
+  )
+
+  with pytest.raises(KeyboardInterrupt) as caught:
+    ParallelAnalyzer(max_workers=2).analyze_files(
+      [f"recovery-{index}.wav" for index in range(4)]
+    )
+
+  assert caught.value is original
+  recovery_process.terminate.assert_called_once_with()
+  assert created[1].shutdown_calls == [(False, True), (False, True)]
+
+
+def test_keyboard_interrupt_terminates_pool_without_wait_true(monkeypatch):
+  """BaseException beendet Child-Prozesse sofort und bleibt sichtbar."""
+  from hpg_core import parallel_analyzer
+
+  process = MagicMock()
+  process.is_alive.return_value = True
+  created = []
+
+  class InterruptExecutor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      self._processes = {1: process}
+      self.shutdown_calls = []
+      created.append(self)
+
+    def submit(self, func, path):
+      return _FakeFuture()
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      self.shutdown_calls.append((wait, cancel_futures))
+
+  monkeypatch.setattr(parallel_analyzer, "ProcessPoolExecutor", InterruptExecutor)
+  monkeypatch.setattr(
+    parallel_analyzer,
+    "wait",
+    Mock(side_effect=KeyboardInterrupt()),
+  )
+
+  with pytest.raises(KeyboardInterrupt):
+    ParallelAnalyzer(max_workers=1).analyze_files(["interrupt.wav"])
+
+  process.terminate.assert_called_once_with()
+  assert created[0].shutdown_calls == [(False, True)]
+
+
+@pytest.mark.parametrize("invalid_mode", ["rekordbox_degraded", "full", "unknown", ""])
+def test_nichtkanonisches_ergebnis_wird_im_hauptpool_abgewiesen(
+  monkeypatch, invalid_mode
+):
+  """Defense-in-depth: nur kanonische Worker-Ergebnisse verlassen den Analyzer."""
+  from hpg_core import parallel_analyzer
+
+  degraded = Mock(spec=Track)
+  degraded.analysis_mode = invalid_mode
+  progress = []
+
+  class DegradedFuture:
+    def result(self, timeout=None):
+      return degraded
+
+  class DegradedExecutor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      self._processes = {}
+
+    def submit(self, func, path):
+      return DegradedFuture()
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      return None
+
+  monkeypatch.setattr(parallel_analyzer, "ProcessPoolExecutor", DegradedExecutor)
+  monkeypatch.setattr(
+    parallel_analyzer,
+    "wait",
+    lambda futures, timeout=None, return_when=None: (set(futures), set()),
+  )
+
+  result = ParallelAnalyzer(max_workers=1).analyze_files(
+    ["degraded.wav"],
+    progress_callback=lambda current, total, status: progress.append(status),
+  )
+
+  assert result == []
+  assert progress[-1] == "[FAILED] degraded.wav"
+
+
+@pytest.mark.parametrize("valid_mode", ["rekordbox_fast_tail", "librosa_full_or_tail"])
+def test_kanonisches_ergebnis_wird_als_erfolg_akzeptiert(valid_mode):
+  from hpg_core.parallel_analyzer import _is_successful_analysis_result
+
+  track = Mock(spec=Track)
+  track.analysis_mode = valid_mode
+
+  assert _is_successful_analysis_result(track)
+
+
+def test_nichtkanonisches_ergebnis_wird_auch_im_recovery_abgewiesen(monkeypatch):
+  from concurrent.futures.process import BrokenProcessPool
+  from hpg_core import parallel_analyzer
+
+  invalid = Mock(spec=Track)
+  invalid.analysis_mode = "full"
+  created = []
+
+  class BrokenFuture:
+    def result(self, timeout=None):
+      raise BrokenProcessPool("main pool broken")
+
+  class InvalidFuture:
+    def result(self, timeout=None):
+      return invalid
+
+  class Executor:
+    def __init__(self, max_workers, initializer=None, **kwargs):
+      self.is_recovery = bool(created)
+      self._processes = {}
+      created.append(self)
+
+    def submit(self, func, path):
+      return InvalidFuture() if self.is_recovery else BrokenFuture()
+
+    def shutdown(self, wait=True, cancel_futures=False):
+      return None
+
+  monkeypatch.setattr(parallel_analyzer, "ProcessPoolExecutor", Executor)
+  monkeypatch.setattr(
+    parallel_analyzer,
+    "wait",
+    lambda futures, timeout=None, return_when=None: (set(futures), set()),
+  )
+
+  result = ParallelAnalyzer(max_workers=2).analyze_files(["recovery-invalid.wav"])
+
+  assert result == []
+  assert len(created) == 2
+
+
 # ============================================================
 # AUDIT-FIX N-04: Haenger-Deadline + Recovery-Executor-Reuse
 # ============================================================
@@ -414,6 +653,54 @@ class TestRecoveryExecutorReuse:
       )
 
     assert created == [2, 1]
+
+  def test_recovery_crash_cleanup_error_does_not_stop_next_track(self, monkeypatch):
+    """Defekter Recovery-Pool wird non-throwing entsorgt und neu aufgebaut."""
+    from hpg_core import parallel_analyzer
+
+    recovery_process = MagicMock()
+    recovery_process.is_alive.return_value = True
+    created = []
+
+    class CrashFuture:
+      def result(self, timeout=None):
+        raise BrokenProcessPool("worker crashed")
+
+    class NoneFuture:
+      def result(self, timeout=None):
+        return None
+
+    class CleanupFailingExecutor:
+      def __init__(self, max_workers, initializer=None, **kwargs):
+        self.index = len(created)
+        self._processes = {1: recovery_process} if self.index == 1 else {}
+        created.append(self)
+
+      def submit(self, func, path):
+        if self.index in (0, 1):
+          return CrashFuture()
+        return NoneFuture()
+
+      def shutdown(self, wait=True, cancel_futures=False):
+        if self.index == 1:
+          raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(
+      parallel_analyzer, "ProcessPoolExecutor", CleanupFailingExecutor
+    )
+    monkeypatch.setattr(
+      parallel_analyzer,
+      "wait",
+      lambda futures, timeout=None, return_when=None: (set(futures), set()),
+    )
+
+    result = ParallelAnalyzer(max_workers=2).analyze_files(
+      [f"recovery-{index}.wav" for index in range(4)]
+    )
+
+    assert result == []
+    assert len(created) == 3
+    recovery_process.terminate.assert_called_once_with()
 
 
 # ============================================================

@@ -1,0 +1,97 @@
+{
+  "Psytrance": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Tech House": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Progressive": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Melodic Techno": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Techno": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Deep House": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Trance": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Drum & Bass": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "Minimal": {
+    "groove_weight": 0.2,
+    "bass_weight": 0.08,
+    "timbre_weight": 0.05,
+    "mood_weight": 0.05,
+    "harmonic_weight": 0.19076923076923077,
+    "bpm_weight": 0.14307692307692307,
+    "energy_weight": 0.14307692307692307,
+    "genre_weight": 0.14307692307692307
+  },
+  "plugin": {
+    "tief": {
+      "bleibt": true
+    }
+  }
+}

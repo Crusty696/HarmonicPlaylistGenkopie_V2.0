@@ -103,7 +103,8 @@ class RekordboxXMLExporter(BaseExporter):
             playlist_name: Name of the playlist
             transitions: optional TransitionRecommendations (len(playlist)-1),
                 Spec 2026-08-21 Abschnitt 4: MIX OUT von Track i = Plan von
-                Paar i, MIX IN von Track i = Plan von Paar i-1 (Rang-1-Kandidat),
+                Paar i, MIX IN von Track i = Plan von Paar i-1
+                (aktiver TransitionPlan),
                 dazu Memory-Cues "HPG K<n> OUT/IN <schema>" aller Kandidaten
 
         Raises:
@@ -119,13 +120,13 @@ class RekordboxXMLExporter(BaseExporter):
         tracks_written = 0
         cues_written = 0
         beatgrids_written = 0
-        # Audit-Fix 2026-07-21: Duplikate (gleiche Location) VOR dem Loop entfernen.
-        # RekordboxXml.add_track wirft XmlDuplicateError bei doppelter Location —
-        # vorher riss ein einziges Duplikat ueber die Vollstaendigkeitspruefung den
-        # GESAMTEN Export (IOError, nichts geschrieben), obwohl n-1 Tracks gueltig waren.
-        unique_tracks = []
-        seen_locations = set()
-        # Kandidaten-Zeitpunkte je Playlist-Position (Spec Abschnitt 4); die
+        # Collection-Eintraege sind je Location eindeutig, Playlist-Eintraege
+        # dagegen Occurrences. A -> B -> A braucht deshalb zwei Collection-
+        # Tracks, aber drei Playlist-Referenzen (1, 2, 1).
+        unique_by_location = {}
+        points_by_location = {}
+        occurrence_locations = []
+        # TransitionPlan-Zeitpunkte je Playlist-Position (Spec Abschnitt 4); die
         # Zuordnung folgt der Playlist-Reihenfolge, nicht der Dedupe-Liste.
         punkte_je_track = self._kandidaten_punkte(playlist, transitions)
         for pos, track in enumerate(playlist):
@@ -136,11 +137,23 @@ class RekordboxXMLExporter(BaseExporter):
                 )
                 continue
             loc = os.path.normcase(os.path.abspath(track.filePath))
-            if loc in seen_locations:
-                errors.append(f"Track uebersprungen (Duplikat): {track.filePath}")
-                continue
-            seen_locations.add(loc)
-            unique_tracks.append((track, punkte_je_track.get(pos, {})))
+            occurrence_locations.append(loc)
+            unique_by_location.setdefault(loc, track)
+            points_by_location.setdefault(loc, []).append(
+                punkte_je_track.get(pos, {})
+            )
+
+        unique_tracks = []
+        for loc, track in unique_by_location.items():
+            punkte, conflicts = self._merge_occurrence_points(
+                points_by_location[loc]
+            )
+            for side in conflicts:
+                errors.append(
+                    f"{track.filePath}: mehrere Occurrences haben "
+                    f"widerspruechliche {side}-Punkte; generischer Cue ausgelassen"
+                )
+            unique_tracks.append((loc, track, punkte))
 
         try:
             # Create new Rekordbox XML
@@ -148,18 +161,20 @@ class RekordboxXMLExporter(BaseExporter):
 
             # Add tracks to collection — nur erfolgreich geschriebene IDs merken,
             # damit die Playlist-Referenzen nie auf fehlende TrackIDs zeigen.
-            written_ids = []
-            for idx, (track, punkte) in enumerate(unique_tracks, start=1):
+            id_by_location = {}
+            for idx, (loc, track, punkte) in enumerate(unique_tracks, start=1):
                 try:
                     cue_count, beatgrid_count, track_errors = (
                         self._add_track_to_collection(
                             xml, track, idx,
                             mix_in=punkte.get("mix_in"), mix_out=punkte.get("mix_out"),
                             extra=punkte.get("extra", ()),
+                            suppress_mix_in=punkte.get("suppress_mix_in", False),
+                            suppress_mix_out=punkte.get("suppress_mix_out", False),
                         )
                     )
                     tracks_written += 1
-                    written_ids.append(str(idx))
+                    id_by_location[loc] = str(idx)
                     cues_written += cue_count
                     beatgrids_written += beatgrid_count
                     errors.extend(track_errors)
@@ -170,8 +185,10 @@ class RekordboxXMLExporter(BaseExporter):
             # Ordner und Playlist muessen explizit angelegt werden
             folder = xml.add_playlist_folder("HPG Playlists")
             pl = folder.add_playlist(playlist_name)
-            for track_id in written_ids:
-                pl.add_track(track_id)
+            for loc in occurrence_locations:
+                track_id = id_by_location.get(loc)
+                if track_id is not None:
+                    pl.add_track(track_id)
 
             output_dir = os.path.dirname(os.path.abspath(output_path))
             os.makedirs(output_dir, exist_ok=True)
@@ -222,6 +239,7 @@ class RekordboxXMLExporter(BaseExporter):
     def _add_track_to_collection(
         self, xml: "RekordboxXml", track: Track, track_id: int,
         mix_in: Optional[float] = None, mix_out: Optional[float] = None, extra=(),
+        suppress_mix_in: bool = False, suppress_mix_out: bool = False,
     ) -> tuple[int, int, list[str]]:
         """
         Add a single track to the Rekordbox XML collection
@@ -241,54 +259,74 @@ class RekordboxXMLExporter(BaseExporter):
         # Add track to collection
         rb_track = xml.add_track(location_path)
 
-        # Basic metadata
-        rb_track["TrackID"] = str(track_id)
-        rb_track["Name"] = track.title or os.path.basename(track.filePath)
-        rb_track["Artist"] = track.artist or "Unknown Artist"
-        detected_genre = (track.detected_genre or "").strip()
-        raw_genre = (track.genre or "").strip()
-        rb_track["Genre"] = (
-            detected_genre
-            if detected_genre and detected_genre.casefold() != "unknown"
-            else raw_genre
-        )
+        try:
+            # Basic metadata
+            rb_track["TrackID"] = str(track_id)
+            rb_track["Name"] = track.title or os.path.basename(track.filePath)
+            rb_track["Artist"] = track.artist or "Unknown Artist"
+            detected_genre = (track.detected_genre or "").strip()
+            raw_genre = (track.genre or "").strip()
+            rb_track["Genre"] = (
+                detected_genre
+                if detected_genre and detected_genre.casefold() != "unknown"
+                else raw_genre
+            )
 
-        # Duration
-        if track.duration:
-            rb_track["TotalTime"] = str(int(track.duration))
+            # Duration
+            if track.duration:
+                rb_track["TotalTime"] = str(int(track.duration))
 
-        # BPM
-        if track.bpm:
-            rb_track["AverageBpm"] = f"{track.bpm:.2f}"
+            # BPM
+            if track.bpm:
+                rb_track["AverageBpm"] = f"{track.bpm:.2f}"
 
-        # Key (convert from Camelot to Rekordbox notation)
-        if track.camelotCode:
-            rb_key = self._convert_camelot_to_rekordbox_key(track.camelotCode)
-            if rb_key:
-                rb_track["Tonality"] = rb_key
+            # Key (convert from Camelot to Rekordbox notation)
+            if track.camelotCode:
+                rb_key = self._convert_camelot_to_rekordbox_key(track.camelotCode)
+                if rb_key:
+                    rb_track["Tonality"] = rb_key
 
-        # Add Beat Grid (TEMPO element)
-        beatgrid_count, beatgrid_errors = self._add_beat_grid(rb_track, track)
+            # Add Beat Grid (TEMPO element)
+            beatgrid_count, beatgrid_errors = self._add_beat_grid(rb_track, track)
 
-        # Add Cue Points (Mix In/Out markers + Sektions-Cues)
-        cue_count, cue_errors = self._add_cue_points(
-            xml, rb_track, track, mix_in=mix_in, mix_out=mix_out, extra=extra
-        )
-        return cue_count, beatgrid_count, beatgrid_errors + cue_errors
+            # Add Cue Points (Mix In/Out markers + Sektions-Cues)
+            cue_count, cue_errors = self._add_cue_points(
+                xml, rb_track, track, mix_in=mix_in, mix_out=mix_out, extra=extra,
+                suppress_mix_in=suppress_mix_in,
+                suppress_mix_out=suppress_mix_out,
+            )
+            return cue_count, beatgrid_count, beatgrid_errors + cue_errors
+        except Exception:
+            try:
+                xml.remove_track(rb_track)
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Track-Export fehlgeschlagen und Collection-Rollback "
+                    f"scheiterte: {rollback_error}"
+                ) from rollback_error
+            raise
 
     @staticmethod
     def _kandidaten_punkte(playlist: List[Track], transitions) -> dict:
-        """Je Playlist-Position: Rang-1-Mixpunkte aus den Empfehlungen (Plan)
+        """Je Playlist-Position: Mixpunkte aus dem aktiven TransitionPlan
         und Memory-Cues aller Kandidaten — MIX OUT/K..OUT aus dem Paar (i, i+1),
         MIX IN/K..IN aus dem Paar (i-1, i). Ohne Empfehlungen: leer (Track-Werte)."""
         punkte: dict = {}
         if not transitions:
             return punkte
-        for i, rec in enumerate(transitions):
+        for position, rec in enumerate(transitions):
+            try:
+                i = int(getattr(rec, "index", position))
+            except (TypeError, ValueError):
+                continue
+            if i < 0:
+                continue
             if i + 1 >= len(playlist):
-                break
+                continue
             plan = getattr(rec, "plan", None)
-            if plan is None or int(getattr(rec, "kandidat_aktiv", 0) or 0) <= 0:
+            if plan is None:
+                punkte.setdefault(i, {})["suppress_mix_out"] = True
+                punkte.setdefault(i + 1, {})["suppress_mix_in"] = True
                 continue
             punkte.setdefault(i, {})["mix_out"] = float(plan.mix_out_a)
             punkte.setdefault(i + 1, {})["mix_in"] = float(plan.mix_in_b)
@@ -297,6 +335,40 @@ class RekordboxXMLExporter(BaseExporter):
             punkte[i]["extra"] += RekordboxXMLExporter._kandidaten_cues_out(rec)
             punkte[i + 1]["extra"] += RekordboxXMLExporter._kandidaten_cues_in(rec)
         return punkte
+
+    @staticmethod
+    def _merge_occurrence_points(items: list[dict]) -> tuple[dict, list[str]]:
+        """Aggregiert Collection-Cues ohne Occurrence-Konflikte zu verstecken."""
+        merged: dict = {"extra": []}
+        conflicts: list[str] = []
+        for side in ("mix_in", "mix_out"):
+            suppress_key = f"suppress_{side}"
+            values = [float(item[side]) for item in items if side in item]
+            if any(bool(item.get(suppress_key)) for item in items):
+                merged[suppress_key] = True
+                if values:
+                    conflicts.append(side.upper().replace("_", " "))
+                continue
+            if not values:
+                continue
+            first = values[0]
+            if any(abs(value - first) > QUANTIZE_TOLERANCE_SEC for value in values[1:]):
+                merged[suppress_key] = True
+                conflicts.append(side.upper().replace("_", " "))
+            else:
+                merged[side] = first
+
+        for item in items:
+            for name, start in item.get("extra", ()) or ():
+                start = float(start)
+                if any(
+                    str(name) == existing_name
+                    and abs(start - existing_start) <= QUANTIZE_TOLERANCE_SEC
+                    for existing_name, existing_start in merged["extra"]
+                ):
+                    continue
+                merged["extra"].append((str(name), start))
+        return merged, conflicts
 
     @staticmethod
     def _kandidaten_cues(rec, seite: str) -> list:
@@ -348,6 +420,8 @@ class RekordboxXMLExporter(BaseExporter):
             first_downbeat = float(getattr(track, "first_downbeat", 0.0) or 0.0)
             if (
                 hasattr(rb_track, "add_tempo")
+                and getattr(track, "beatgrid_source", "unknown") == "rekordbox"
+                and getattr(track, "beatgrid_status", "unknown") == "verified"
                 and getattr(track, "downbeat_confidence", 0.0)
                 == REFERENCE_BEATGRID_CONFIDENCE
                 and math.isfinite(first_downbeat)
@@ -370,6 +444,7 @@ class RekordboxXMLExporter(BaseExporter):
     def _add_cue_points(
         self, xml: "RekordboxXml", rb_track: dict, track: Track,
         mix_in: Optional[float] = None, mix_out: Optional[float] = None, extra=(),
+        suppress_mix_in: bool = False, suppress_mix_out: bool = False,
     ) -> tuple[int, list[str]]:
         """
         Add Cue Points to track (POSITION_MARKs).
@@ -377,24 +452,35 @@ class RekordboxXMLExporter(BaseExporter):
         Mix In/Out werden doppelt geschrieben: als Hot Cue A/B (Num=0/1, direkt
         anspringbar) UND als Memory Cue (Num=-1, sichtbar in der Waveform).
         Erkannte Drop-/Breakdown-Sektionen werden als Memory Cues exportiert.
-        mix_in/mix_out (Rang-1-Kandidat des Paars, Teil 4) ersetzen die
+        mix_in/mix_out (aktiver TransitionPlan des Paars) ersetzen die
         Track-Werte; `extra` = weitere Memory-Cues (name, start) — "HPG K<n>".
         """
-        eff_in = float(mix_in) if mix_in is not None else float(getattr(track, "mix_in_point", -1.0))
-        eff_out = float(mix_out) if mix_out is not None else float(getattr(track, "mix_out_point", -1.0))
-        if not self._cue_export_allowed(track, eff_in, eff_out):
+        eff_in = None if suppress_mix_in else (
+            float(mix_in) if mix_in is not None
+            else float(getattr(track, "mix_in_point", -1.0))
+        )
+        eff_out = None if suppress_mix_out else (
+            float(mix_out) if mix_out is not None
+            else float(getattr(track, "mix_out_point", -1.0))
+        )
+        if not self._cue_export_allowed(
+            track, eff_in, eff_out,
+            allow_partial=suppress_mix_in or suppress_mix_out,
+        ):
             return 0, [
                 f"{track.filePath}: Cues ausgelassen (Coverage/Schema/Provenienz unzureichend)"
             ]
+        marks = getattr(rb_track, "marks", None)
+        initial_mark_count = len(marks) if isinstance(marks, list) else None
         count = 0
         try:
             # pyrekordbox-API: Hot Cue = Num>=0, Memory Cue = Num=-1
-            if eff_in >= 0:
+            if eff_in is not None and eff_in >= 0:
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=eff_in, Num=0)
                 rb_track.add_mark(Name="MIX IN", Type="cue", Start=eff_in, Num=-1)
                 count += 2
 
-            if eff_out >= 0:
+            if eff_out is not None and eff_out >= 0:
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=eff_out, Num=1)
                 rb_track.add_mark(Name="MIX OUT", Type="cue", Start=eff_out, Num=-1)
                 count += 2
@@ -415,24 +501,78 @@ class RekordboxXMLExporter(BaseExporter):
                     count += 1
             return count, []
         except Exception as e:
+            try:
+                self._rollback_cue_points(rb_track, initial_mark_count)
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Cue-Schreiben fehlgeschlagen und Cue-Rollback scheiterte: "
+                    f"{rollback_error}"
+                ) from rollback_error
             logger.warning(f"Cue Points konnten nicht zur XML hinzugefuegt werden: {e}")
-            return count, [f"{track.filePath}: Cuefehler: {e}"]
+            return 0, [f"{track.filePath}: Cuefehler: {e}"]
+
+    @staticmethod
+    def _rollback_cue_points(rb_track, initial_mark_count: Optional[int]) -> None:
+        """Entfernt alle Marks eines fehlgeschlagenen Cue-Schreibversuchs."""
+        marks = getattr(rb_track, "marks", None)
+        if initial_mark_count is None or not isinstance(marks, list):
+            raise RuntimeError("Export-Backend stellt keine Cue-Liste bereit")
+        new_marks = list(marks[initial_mark_count:])
+        remove_mark = getattr(type(rb_track), "remove_mark", None)
+        if callable(remove_mark):
+            for mark in reversed(new_marks):
+                remove_mark(rb_track, mark)
+            del marks[initial_mark_count:]
+            return
+
+        parent = getattr(rb_track, "_element", None)
+        if parent is None or not hasattr(parent, "remove"):
+            if new_marks:
+                raise RuntimeError("Export-Backend kann Cues nicht entfernen")
+            return
+        for mark in reversed(new_marks):
+            element = getattr(mark, "_element", None)
+            if element is None:
+                raise RuntimeError("Cue-Element fehlt beim Rollback")
+            parent.remove(element)
+        del marks[initial_mark_count:]
 
     @staticmethod
     def _cue_export_allowed(track: Track, mix_in: Optional[float] = None,
-                            mix_out: Optional[float] = None) -> bool:
+                            mix_out: Optional[float] = None,
+                            *, allow_partial: bool = False) -> bool:
         """Cues brauchen echte End-Coverage und gueltige endliche Grenzen —
         geprueft auf den effektiven Punkten (Kandidat oder Track)."""
         import math
 
         if not getattr(track, "outro_covered", False) or track.duration <= 0:
             return False
-        mix_in = float(mix_in if mix_in is not None else getattr(track, "mix_in_point", -1.0))
-        mix_out = float(mix_out if mix_out is not None else getattr(track, "mix_out_point", -1.0))
-        if not (math.isfinite(mix_in) and math.isfinite(mix_out)):
-            return False
-        if not 0.0 <= mix_in < mix_out <= float(track.duration):
-            return False
+        if allow_partial:
+            values = [
+                float(value) for value in (mix_in, mix_out) if value is not None
+            ]
+            if any(
+                not math.isfinite(value)
+                or not 0.0 <= value <= float(track.duration)
+                for value in values
+            ):
+                return False
+            if mix_in is not None and mix_out is not None:
+                if not float(mix_in) < float(mix_out):
+                    return False
+        else:
+            mix_in = float(
+                mix_in if mix_in is not None
+                else getattr(track, "mix_in_point", -1.0)
+            )
+            mix_out = float(
+                mix_out if mix_out is not None
+                else getattr(track, "mix_out_point", -1.0)
+            )
+            if not (math.isfinite(mix_in) and math.isfinite(mix_out)):
+                return False
+            if not 0.0 <= mix_in < mix_out <= float(track.duration):
+                return False
         metadata = getattr(track, "ai_metadata", {})
         provenance = metadata.get("_provenance", {}) if isinstance(metadata, dict) else {}
         if metadata and not isinstance(provenance, dict):

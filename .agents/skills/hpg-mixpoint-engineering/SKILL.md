@@ -17,7 +17,7 @@ mix_in  = quantize_to_grid(t, grid, anchor, "ceil")     # nie VOR dem Ereignis
 mix_out = quantize_to_grid(t, grid, anchor, "floor")    # nie NACH dem Ereignis
 ```
 
-`quantize_to_grid` [models.py:25] ist die einzige erlaubte Quantisierung fuer
+`quantize_to_grid` [models.py:50] ist die einzige erlaubte Quantisierung fuer
 `Track.mix_in_point`/`mix_out_point`. Fuer das unregelmaessige PSSI-Gitter
 (Phrasenlaengen variieren) kommt zusaetzlich `quantize_to_points`
 [mix_candidates.py] dazu — gleiche `ceil`/`floor`-Toleranz
@@ -32,13 +32,13 @@ Kette — gerundet wird erst an der Anzeige-/Exportgrenze (R9/N15).
 | Takt-Anker | `Track.first_downbeat` | wo die "1" liegt; Untergrenze `min_mix_in` |
 | Phrasen-Anker | `Track.phrase_anchor` | das **Gitter** (`anchor`-Parameter) |
 
-`phrase_anchor` [models.py:149] liefert `first_phrase` nur, wenn **alle drei**
+`phrase_anchor` [models.py:226] liefert `first_phrase` nur, wenn **alle drei**
 Gates halten:
 
 ```python
 first_phrase >= 0.0                          # -1.0 = nicht geschaetzt
 and downbeat_confidence > 0.0                # kein erfundenes Raster
-and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # config.py:29, = 0.25
+and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # config.py:34, = 0.25
 ```
 
 sonst `first_downbeat`.
@@ -53,41 +53,41 @@ das Mix-Fenster kollabiert in den Notfall-Prozent-Pfad. Deshalb nimmt
 
 | # | Quelle | Ort | Bedingung |
 |---|---|---|---|
-| A | `calculate_genre_aware_mix_points` | dj_brain.py:107 | Sections vorhanden |
-| B | `analyze_structure_and_mix_points` | analysis.py:1156 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
-| C | Rekordbox-Cue-Override | analysis.py:1712 | nur benannte Cues (`provenance == "manual"`), Wortgrenzen-Regex, dann `align_ai_mix_points` |
+| A | `calculate_genre_aware_mix_points` | dj_brain.py:109 | Sections vorhanden |
+| B | `analyze_structure_and_mix_points` | analysis.py:1197 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
+| C | Rekordbox-Cue-Vorschlag | analysis.py | gerichteter manueller Cue; nach `align_ai_mix_points` nur Uebernahme, wenn das finale Paar den harten Vertrag ohne Sonderrechte erfuellt |
 
-Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1903 und
-:2311]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
+Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1947 und
+:2364]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
 (per grep verifiziert).
 
 **Korrektur gegenueber aelteren Notizen:** Es gibt **keinen** vierten
 LLM-Schreibpfad mehr. Der AI-Auto-Apply-Block wurde entfernt; `ai_engine`
-liefert Mixpoints nur mit `"mixpoints_advisory": True` [ai_engine.py:123] und
-verwirft sie ganz, wenn `outro_covered` falsch ist [ai_engine.py:108].
+liefert Mixpoints nur mit `"mixpoints_advisory": True` [ai_engine.py:132] und
+verwirft sie ganz, wenn `outro_covered` falsch ist [ai_engine.py:118].
 "Letzter Schreibzugriff gewinnt" gilt nicht mehr.
 
 ## Paar-Ebene (ueberschreibt den Track NICHT)
 
-`calculate_paired_mix_points(track_a, track_b)` [dj_brain.py:627]
+`calculate_paired_mix_points(track_a, track_b)` [dj_brain.py:702]
 - Overlap = `min(Intro-Dauer B, Outro-Dauer A)`
 - loest das Problem, dass ein per-Track-Mix-In den Partner nicht kennt
 - quantisiert **immer** am Ende (B1) mit `anchor_a`/`anchor_b` aus
   `phrase_anchor`
 - `duration <= 0` -> Track-Werte unveraendert lassen (N4)
 
-`generate_dj_recommendation` [dj_brain.py:433] fuellt
+`generate_dj_recommendation` [dj_brain.py:500] fuellt
 `DJRecommendation.adjusted_mix_out_a` / `adjusted_mix_in_b` /
 `overlap_seconds`, Sentinel `-1.0`.
 
 Aufloesung zur Renderzeit: `resolve_transition_mix_points(transition)`
-[main.py:174] — Prioritaet `plan` > `dj.adjusted_*` (nur bei `>= 0.0`) >
+[main.py:177] — Prioritaet `plan` > `dj.adjusted_*` (nur bei `>= 0.0`) >
 `track.mix_*_point` > Fallback 16.0 s. **Diese Funktion ist die einzige
 erlaubte Aufloesung**; sie ersetzt drei frueher kopierte Varianten.
 
 ## Sentinel-Regel
 
-`MIX_POINT_UNSET = -1.0` [config.py:21]. `0.0` ist ein **gueltiger** Mixpoint
+`MIX_POINT_UNSET = -1.0` [config.py:26]. `0.0` ist ein **gueltiger** Mixpoint
 (Track-Anfang).
 
 ```python
@@ -95,7 +95,7 @@ if mix_out >= 0.0:   # richtig
 if mix_out > 0:      # FALSCH — verwirft den Mixpoint bei t=0
 ```
 
-Anzeige: `format_mix_point_display` [main.py:208] zeigt `--:-- (- bars)` bei
+Anzeige: `format_mix_point_display` [main.py:211] zeigt `--:-- (- bars)` bei
 negativem Wert.
 
 ## Invarianten (bei jeder Aenderung pruefen)
@@ -103,15 +103,16 @@ negativem Wert.
 1. `0 <= mix_in < mix_out <= duration`
 2. beide auf `anchor + k*grid`
 3. `mix_out - mix_in >= 2 * grid` (`min_window`, 2 Phrasen)
-4. `max_mix_out = min(outro_start, duration - grid)` — Mix-Out **auf** der
-   Outro-Grenze ist DJ-Standard, nicht davor
-5. Mixpoints nie innerhalb Intro/Outro (Spec:
+4. Mix-In strikt `> intro_end + QUANTIZE_TOLERANCE_SEC`, Mix-Out strikt
+   `< outro_start - QUANTIZE_TOLERANCE_SEC`; Grenze und Sicherheitsband sind
+   ausgeschlossen
+5. Mixpoints nie innerhalb Intro/Outro, auch nicht bei manuellen Cues (Spec:
    `docs/superpowers/specs/2026-03-11-mix-point-intro-outro-guard-design.md`)
 6. Einheiten: Sekunden intern, Bars nur zur Anzeige
    (`mix_in_bars`/`mix_out_bars`), Samples nur im Renderer
 
-Test-Helfer: `assert_mix_points_valid` [tests/conftest.py:216],
-`assert_phrase_aligned` [tests/conftest.py:245].
+Test-Helfer: `assert_mix_points_valid` [tests/conftest.py:218],
+`assert_phrase_aligned` [tests/conftest.py:247].
 
 ## phrase_unit
 
@@ -152,10 +153,9 @@ Track-Mixpoints; Fehler dort kippen die Analyse nie (leere Listen).
 `unanalysed`-Sektionen ausgeschlossen (Coverage), Quantisierung auf das
 Gitter mit `QUANTIZE_TOLERANCE_SEC` = 0.05 s Toleranz (PSSI-Gitter via
 `quantize_to_points`, sonst `quantize_to_grid`), Mindestfenster 2 Phrasen zur
-jeweils anderen Seite. Ausnahme: ein **benannter** IN/OUT-Cue
-(`CUE_IN_PATTERN`/`CUE_OUT_PATTERN`, `provenance == "manual"`) ist eine
-bewusste Nutzerentscheidung und schlaegt den Guard — nur die Trackgrenzen
-(`0 <= t <= duration`) gelten dann noch.
+jeweils anderen Seite. Gerichtete manuelle Cues bleiben der IN-/OUT-Seite
+zugeordnet; das Richtungsflag ist nur Herkunftsinformation. Nach der
+Quantisierung durchlaufen alle Quellen dieselben Gates, ohne Cue-Ausnahme.
 
 **Kappung** auf `KANDIDATEN_MAX_JE_SEITE` (config.py, = 8): sortiert nach
 Prioritaet, dann Schema-Anzahl (mehr Quellen am selben Gitterpunkt gewinnen),
@@ -164,8 +164,9 @@ der musikalischen Rolle: Out-Punkte nahe am Outro ueberleben eher).
 
 Cue-Positionsheuristik ("2. Cue = Mix-In, letzter = Mix-Out") ist entfernt.
 `Track.mix_in_point`/`mix_out_point` bleiben in Teil 1 weiterhin Analyzer +
-benannter Cue (unveraendert) — die Rang-1-Auswahl aus der Paar-Bewertung ist
-Teil 2/4. CACHE_VERSION 34.
+benannter Cue nach demselben harten Vertrag — die Rang-1-Auswahl aus der Paar-Bewertung ist
+Teil 2/4. Dieser historische Teil-1-Bump fuehrte zu CACHE_VERSION 34;
+aktuell ist CACHE_VERSION 42.
 
 ## Kandidaten Teil 2 (gebaut 2026-08-22) — Paarung und Bewertung
 
@@ -184,9 +185,9 @@ unveraendert.
   rechnerisch nie aktiv), `coverage` (`unanalysed`), `outro_covered`,
   `blende_im_outro` (`out_a.t + blend <= Outro-Start`), `in_im_intro`,
   `in_ausserhalb`, `gitter_out/gitter_in` (PSSI-Gitter bzw. Phrasenraster,
-  `QUANTIZE_TOLERANCE_SEC`). Ausnahme: **nur** ein manueller Cue mit
-  `CUE_IN_PATTERN`/`CUE_OUT_PATTERN`, der per `mix_candidates._quantize` auf
-  `cand.t` faellt, ist guard-frei (`_guard_frei`); "Drop 2" nicht.
+  `QUANTIZE_TOLERANCE_SEC`). `out_im_outro`, `in_im_intro` und
+  `blende_im_outro` gelten auch fuer gerichtete manuelle Cues;
+  `_ist_benannter_cue` setzt ausschliesslich ein Herkunfts-/Begruendungsflag.
 - **Blenden** (`blend_bars_options`): `get_mix_profile(genre_a).transition_bars`
   (beide), Outro-Deckel auf ganze Takte, Half/Double `<= 16`, unter
   `MIN_TRANSITION_BARS` (8) entfaellt die Laenge.
@@ -200,7 +201,13 @@ unveraendert.
   >= 3 dB -> 0), structure (`neuheit`, `traegt_allein`, Label-Bonus).
   Kombination `playlist.combine_weighted` mit `kandidaten_*_weight` (zehn,
   Summe 1.0, `genres._TOLERANCE_DEFAULTS`, JSON-Override); Half/Double x 0.85
-  einmal auf den Gesamtscore; Vocals beidseitig -0.06. `blend_bars` ist kein
+  einmal auf den Gesamtscore; Vocals beidseitig -0.06. `combine_weighted` kann
+  intern fehlende Werte renormieren, aber `rank_pair_candidates` akzeptiert
+  nur Kandidaten mit allen zehn endlichen lokalen Teilwerten. Renormierung
+  kann also keinen unvollstaendig gemessenen `TransitionPlan` retten.
+  KI-Metadaten beeinflussen weder `PairCandidate.score` noch
+  `TransitionMetrics.overall_score`; `ai_bonus` bleibt immer 0.0.
+  `blend_bars` ist kein
   Score-Merkmal (Spec Abschnitt 1: widerlegt).
 - **Dedupe/Kappung** (`dedupe_and_cap`): gleiche Kombination = |dt| < Phrase -
   Toleranz beidseitig, gleiches Hauptschema, gleiche Blende; max.
@@ -222,10 +229,18 @@ unveraendert.
   von Paar i mindestens zwei Phrasen hinter dem Mix-In von Paar i−1 desselben
   Tracks, `kandidat_konsistent`); neues Paar-Gate `blende_ueber_b_ende`;
   `_outro_overlap_limit` mit `QUANTIZE_TOLERANCE_SEC` vor dem Floor;
-  `KICK_KONFLIKT_ABZUG` entfaellt bei `bass_swap_geplant=True`; Regler
-  "Lautheit (Kandidaten)" via `tolerances.write_override_kandidaten`. Die Wahl
+  `KICK_KONFLIKT_ABZUG` entfaellt bei `bass_swap_geplant=True`; alle fuenf
+  sichtbaren Regler (Groove, Bassdruck, Klangfarbe, Stimmung, Lautheit) sind
+  `kandidaten_*_weight` und beeinflussen nur Mixpoint-Kandidaten. Die anderen
+  fuenf Kandidatengewichte stammen aus Hoertestpraeferenzen oder den
+  Toleranzvorgaben. Die Wahl
   liegt in `candidate_choices.json`, NICHT im `scoring_context` (Entscheidung 7).
   Teile 1–4 sind gebaut; offen sind nur Hoerproben (Handoff Teil 4).
+
+Der App-Regler `bpm_tolerance` (1–2 BPM) ist das aeussere Gate fuer den
+`TransitionPlan`; `PAAR_BPM_MAX = 2.0` bleibt die absolute Obergrenze. Eine
+Nachbarkante ausserhalb des eingestellten Gates bleibt sichtbar als
+`UNGEPLANT` mit Score 0 und darf nicht gerendert werden.
 
 ## Common Mistakes
 
@@ -238,5 +253,5 @@ unveraendert.
   `hpg-cache-persistence`.
 - In `pair_candidates` `playlist` auf Modulebene importieren (Importzyklus ab
   Teil 4) — nur lazy in Funktionen.
-- `"benannter_cue" in schema` als Guard-Ausnahme lesen — nur das IN/OUT-Muster
-  manueller Cues ist guard-frei.
+- `"benannter_cue" in schema` oder ein passendes IN/OUT-Muster als
+  Guard-Ausnahme lesen — es gibt keine Cue-Sonderrechte.

@@ -1,0 +1,21 @@
+{
+  "_diagnose": {
+    "fit_kandidaten": {
+      "quelle": "tools/rate_transitions.py fit --modus kandidaten",
+      "clips": 1,
+      "genre_reine_clips": 1,
+      "ohne_note": 0,
+      "verworfen": 0,
+      "ausgeschlossen": {},
+      "l2_staerke": 1.0,
+      "bootstrap_ziehungen": 500,
+      "seed": 1,
+      "genres": {
+        "Psytrance": {
+          "uebernommen": false,
+          "grund": "Gate"
+        }
+      }
+    }
+  }
+}

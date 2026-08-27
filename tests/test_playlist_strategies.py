@@ -4,8 +4,10 @@ Prueft ob jede Strategie korrekt sortiert und keine Tracks verliert.
 """
 import pytest
 from hpg_core.playlist import (
-  generate_playlist, STRATEGIES, STRATEGY_ALIASES, _sort_harmonic_flow,
-  _sort_energy_wave, ENERGY_WAVE_FENSTER,
+  calculate_enhanced_compatibility, generate_playlist, STRATEGIES,
+  STRATEGY_ALIASES, _sort_context_flow, _sort_genre_flow,
+  _sort_harmonic_flow, _sort_peak_time,
+  _sort_energy_wave, _remove_track, ENERGY_WAVE_FENSTER,
 )
 from hpg_core.models import effective_bpm_diff
 from tests.fixtures.track_factories import (
@@ -162,6 +164,216 @@ class TestPeakTime:
     assert len(result) > 0
 
 
+def _small_track(title, *, bpm=128.0, energy=50, camelot="8A", genre="Techno"):
+  return make_track(
+    filePath=f"/test/small-{title}.mp3",
+    fileName=f"small-{title}.mp3",
+    title=title,
+    bpm=bpm,
+    energy=energy,
+    camelotCode=camelot,
+    genre=genre,
+    detected_genre=genre,
+  )
+
+
+class TestSmallPoolStrategyContracts:
+  def test_context_flow_empty_pool_bleibt_gueltig(self):
+    assert _sort_context_flow([], 2.0, energy_direction="Cool Down") == []
+
+  @pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+      ({"harmonic_strictness": 10, "allow_experimental": False}, ["B", "A"]),
+      ({"harmonic_strictness": 3, "allow_experimental": True}, ["A", "B"]),
+    ],
+  )
+  def test_harmonic_flow_two_tracks_uses_full_objective_for_both_inputs(
+    self, monkeypatch, params, expected
+  ):
+    a, b = _small_track("A"), _small_track("B")
+
+    def objective(left, right, _tolerance, **kwargs):
+      strict = kwargs["harmonic_strictness"] == 10
+      experimental = kwargs["allow_experimental"] is True
+      preferred = (left.title, right.title) == (
+        ("B", "A") if strict and not experimental else ("A", "B")
+      )
+      return 90 if preferred else 10
+
+    monkeypatch.setattr("hpg_core.playlist.calculate_transition_objective", objective)
+    for pool in ([a, b], [b, a]):
+      result = _sort_harmonic_flow(pool, 2.0, **params)
+      assert [track.title for track in result] == expected
+
+  @pytest.mark.parametrize(
+    ("direction", "expected"),
+    [
+      ("Build Up", ["Low", "High"]),
+      ("Cool Down", ["High", "Low"]),
+      ("down", ["High", "Low"]),
+    ],
+  )
+  def test_context_flow_two_tracks_honors_energy_direction_for_both_inputs(
+    self, direction, expected
+  ):
+    low = _small_track("Low", energy=20)
+    high = _small_track("High", energy=90)
+    for pool in ([low, high], [high, low]):
+      result = _sort_context_flow(pool, 2.0, energy_direction=direction)
+      assert [track.title for track in result] == expected
+
+  def test_context_flow_two_tracks_honors_maintain_and_harmonic_params(
+    self, monkeypatch
+  ):
+    a, b = _small_track("A"), _small_track("B")
+
+    def compatibility(left, right, _tolerance, **kwargs):
+      preferred = (left.title, right.title) == (
+        ("B", "A")
+        if kwargs["harmonic_strictness"] == 10
+        and kwargs["allow_experimental"] is False
+        else ("A", "B")
+      )
+      return 90 if preferred else 10
+
+    monkeypatch.setattr("hpg_core.playlist.calculate_compatibility", compatibility)
+    for pool in ([a, b], [b, a]):
+      strict = _sort_context_flow(
+        pool, 2.0, energy_direction="Maintain",
+        harmonic_strictness=10, allow_experimental=False,
+      )
+      loose = _sort_context_flow(
+        pool, 2.0, energy_direction="Maintain",
+        harmonic_strictness=3, allow_experimental=True,
+      )
+      assert [track.title for track in strict] == ["B", "A"]
+      assert [track.title for track in loose] == ["A", "B"]
+
+  def test_context_flow_two_tracks_honors_genre_weight(self, monkeypatch):
+    a = _small_track("A", genre="Techno")
+    b = _small_track("B", genre="Trance")
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_compatibility",
+      lambda left, right, *_args, **_kwargs:
+        90 if (left.title, right.title) == ("A", "B") else 80,
+    )
+    monkeypatch.setattr(
+      "hpg_core.playlist.get_genre_compatibility",
+      lambda left, right:
+        1.0 if (left, right) == ("Trance", "Techno") else 0.0,
+    )
+
+    no_genre = _sort_context_flow(
+      [b, a], 2.0, energy_direction="Maintain",
+      genre_mixing=True, genre_weight=0.0,
+    )
+    genre_first = _sort_context_flow(
+      [a, b], 2.0, energy_direction="Maintain",
+      genre_mixing=True, genre_weight=1.0,
+    )
+
+    assert [track.title for track in no_genre] == ["A", "B"]
+    assert [track.title for track in genre_first] == ["B", "A"]
+
+  def test_peak_time_three_tracks_honors_peak_position_for_both_inputs(
+    self, monkeypatch
+  ):
+    tracks = [
+      _small_track("Low", energy=10),
+      _small_track("Mid", energy=50),
+      _small_track("High", energy=90),
+    ]
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_transition_objective",
+      lambda *_args, **_kwargs: 100,
+    )
+
+    for pool in (tracks, list(reversed(tracks))):
+      early = _sort_peak_time(pool, 2.0, peak_position=40)
+      late = _sort_peak_time(pool, 2.0, peak_position=80)
+      assert [track.title for track in early].index("High") < [
+        track.title for track in late
+      ].index("High")
+
+  def test_peak_time_three_tracks_honors_bpm_gate(self, monkeypatch):
+    tracks = [
+      _small_track("100", bpm=100.0),
+      _small_track("101", bpm=101.0),
+      _small_track("102", bpm=102.0),
+    ]
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_transition_objective",
+      lambda left, right, tolerance, **_kwargs:
+        50 if abs(left.bpm - right.bpm) <= tolerance else 0,
+    )
+
+    for pool in (tracks, list(reversed(tracks))):
+      result = _sort_peak_time(pool, 1.1, peak_position=70)
+      assert all(
+        abs(left.bpm - right.bpm) <= 1.1
+        for left, right in zip(result, result[1:])
+      )
+
+  def test_peak_time_harmonic_params_break_equal_curve_ties(self, monkeypatch):
+    a, b = _small_track("A"), _small_track("B")
+
+    def objective(left, right, _tolerance, **kwargs):
+      preferred = (left.title, right.title) == (
+        ("B", "A")
+        if kwargs["harmonic_strictness"] == 10
+        and kwargs["allow_experimental"] is False
+        else ("A", "B")
+      )
+      return 90 if preferred else 10
+
+    monkeypatch.setattr("hpg_core.playlist.calculate_transition_objective", objective)
+    for pool in ([a, b], [b, a]):
+      strict = _sort_peak_time(
+        pool, 2.0, peak_position=70,
+        harmonic_strictness=10, allow_experimental=False,
+      )
+      loose = _sort_peak_time(
+        pool, 2.0, peak_position=70,
+        harmonic_strictness=3, allow_experimental=True,
+      )
+      assert [track.title for track in strict] == ["B", "A"]
+      assert [track.title for track in loose] == ["A", "B"]
+
+  def test_genre_flow_two_tracks_honors_mixing_weight_and_harmony(self, monkeypatch):
+    a = _small_track("A", genre="Techno")
+    b = _small_track("B", genre="Trance")
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_compatibility",
+      lambda left, right, *_args, **kwargs:
+        (90 if (left.title, right.title) == ("A", "B") else 80)
+        if kwargs.get("harmonic_strictness", 7) >= 7
+        else (70 if (left.title, right.title) == ("B", "A") else 60),
+    )
+    monkeypatch.setattr(
+      "hpg_core.playlist.get_genre_compatibility",
+      lambda left, right:
+        1.0 if (left, right) == ("Trance", "Techno") else 0.0,
+    )
+
+    for pool in ([a, b], [b, a]):
+      harmonic = _sort_genre_flow(
+        pool, 2.0, genre_mixing=False,
+        harmonic_strictness=10, allow_experimental=False,
+      )
+      transition_first = _sort_genre_flow(
+        pool, 2.0, genre_mixing=True, genre_weight=0.0,
+        harmonic_strictness=10, allow_experimental=False,
+      )
+      genre_first = _sort_genre_flow(
+        pool, 2.0, genre_mixing=True, genre_weight=1.0,
+        harmonic_strictness=10, allow_experimental=False,
+      )
+      assert [track.title for track in harmonic] == ["A", "B"]
+      assert [track.title for track in transition_first] == ["A", "B"]
+      assert [track.title for track in genre_first] == ["B", "A"]
+
+
 class TestEdgeCases:
   """Edge Cases fuer alle Strategien."""
 
@@ -176,7 +388,7 @@ class TestEdgeCases:
     """Ein Track = ein Track zurueck."""
     tracks = [make_house_track()]
     result = generate_playlist(tracks, strategy, bpm_tolerance=3.0)
-    assert len(result) <= 1
+    assert result == tracks
 
   @pytest.mark.parametrize("strategy", list(STRATEGIES.keys()))
   def test_two_tracks(self, strategy):
@@ -188,13 +400,13 @@ class TestEdgeCases:
     result = generate_playlist(tracks, strategy, bpm_tolerance=3.0)
     assert len(result) > 0
 
-  def test_unknown_strategy_uses_default(self, mixed_set):
-    """Unbekannte Strategie = Harmonic Flow (Fallback)."""
-    result = generate_playlist(mixed_set[:], "NonExistent", bpm_tolerance=6.0)
-    assert len(result) > 0
+  def test_unknown_strategy_is_rejected(self, mixed_set):
+    """Unbekannte Strategien duerfen nicht still anders ausgefuehrt werden."""
+    with pytest.raises(ValueError, match="Playlist-Strategie"):
+      generate_playlist(mixed_set[:], "NonExistent", bpm_tolerance=6.0)
 
   def test_tracks_without_camelot_code(self):
-    """Tracks ohne Camelot-Code bleiben per neutralem Fallback erhalten."""
+    """Fehlende lokale Kandidaten duerfen analysierte Tracks nicht entfernen."""
     tracks = [
       make_track(camelotCode="", bpm=128.0),
       make_track(camelotCode="8A", bpm=128.0),
@@ -229,6 +441,54 @@ class TestEdgeCases:
 
     assert generate_playlist(tracks, "Harmonic Flow", bpm_tolerance=3.0) == []
 
+  @pytest.mark.parametrize("strategy", sorted(STRATEGIES))
+  @pytest.mark.parametrize(
+    "status", ["unknown", "mismatch", "unverifiable", "unsupported"]
+  )
+  def test_beatgrid_status_entfernt_tracks_nicht_aus_strategien(
+    self, strategy, status, monkeypatch
+  ):
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_transition_objective",
+      lambda *args, **kwargs: 100,
+    )
+    invalid = make_track(camelotCode="8A", bpm=128.0, title="invalid")
+    invalid.analysis_mode = "full"
+    invalid.beatgrid_source = "rekordbox"
+    invalid.beatgrid_status = status
+    valid = make_track(camelotCode="8A", bpm=128.0, title="valid")
+    valid.analysis_mode = "full"
+    valid.beatgrid_source = "audio"
+    valid.beatgrid_status = "verified"
+
+    result = generate_playlist([invalid, valid], strategy, bpm_tolerance=3.0)
+
+    assert {track.title for track in result} == {"invalid", "valid"}
+
+  def test_beatgrid_status_nullt_scoring_nicht(self, monkeypatch):
+    first = make_track(camelotCode="8A", bpm=128.0, title="first")
+    second = make_track(camelotCode="8A", bpm=128.0, title="second")
+    for track in (first, second):
+      track.analysis_mode = "full"
+      track.beatgrid_source = "audio"
+      track.beatgrid_status = "verified"
+    second.beatgrid_status = "mismatch"
+
+    monkeypatch.setattr(
+      "hpg_core.playlist._kandidaten_fuer_paar",
+      lambda *args, **kwargs: [type("K", (), {
+        "score": 0.8,
+        "teilwerte": {name: 0.8 for name in (
+          "harmonic", "bpm", "energy", "genre", "groove", "bass",
+          "timbre", "mood", "loudness", "structure",
+        )},
+        "to_dict": lambda self: {},
+      })()],
+    )
+    metrics = calculate_enhanced_compatibility(first, second, bpm_tolerance=3.0)
+
+    assert metrics.overall_score > 0.0
+
   def test_harmonic_flow_fallback_prefers_half_time(self, monkeypatch):
     """Fallback wählt Half-Time (effektive BPM-Differenz) statt roher Distanz.
 
@@ -255,11 +515,11 @@ class TestEdgeCases:
     assert abs(idx_120 - idx_60) == 1, f"Reihenfolge: {bpms}"
 
 
-def test_strategy_config_filters_and_clamps_visible_parameters():
+def test_strategy_config_filtert_gueltige_sichtbare_parameter():
   from hpg_core.playlist import StrategyConfig
 
   config = StrategyConfig.from_mapping(
-    {"peak_position": 999, "genre_weight": -2, "overlap": 500}
+    {"peak_position": 80, "genre_weight": 0.0, "overlap": 64.0}
   )
 
   assert config.peak_position == 80
@@ -268,6 +528,21 @@ def test_strategy_config_filters_and_clamps_visible_parameters():
   assert set(config.effective_kwargs("Peak-Time")) == {
     "peak_position", "harmonic_strictness", "allow_experimental"
   }
+
+
+@pytest.mark.parametrize(
+  "params",
+  [
+    {"peak_position": 999},
+    {"genre_weight": -2},
+    {"overlap": 500},
+  ],
+)
+def test_strategy_config_verwirft_statt_zu_clampen(params):
+  from hpg_core.playlist import StrategyConfig
+
+  with pytest.raises(ValueError, match="advanced_params"):
+    StrategyConfig.from_mapping(params)
 
 
 class TestDuplicateTrackReferences:
@@ -279,6 +554,36 @@ class TestDuplicateTrackReferences:
   filterte der Generator alle Kandidaten heraus und ``max()`` lief auf einer
   leeren Sequenz -> ValueError mitten in der Generierung.
   """
+
+  @pytest.fixture(autouse=True)
+  def _lokale_kanten(self, monkeypatch):
+    monkeypatch.setattr(
+      "hpg_core.playlist.calculate_transition_objective",
+      lambda *args, **kwargs: 100,
+    )
+
+  def test_remove_track_entfernt_nur_exakt_die_zielinstanz(self):
+    first = make_track(filePath="C:/music/same.wav", title="First")
+    target = make_track(filePath="C:/music/same.wav", title="Target")
+    assert first == target
+    assert first.track_id == target.track_id
+    items = [first, target]
+
+    _remove_track(items, target)
+
+    assert len(items) == 1
+    assert items[0] is first
+
+  def test_remove_track_verwirft_keine_pfadgleiche_ersatzinstanz(self):
+    existing = make_track(filePath="C:/music/same.wav", title="Existing")
+    missing = make_track(filePath="C:/music/same.wav", title="Missing")
+    items = [existing]
+
+    with pytest.raises(ValueError, match="nicht in der Arbeitsliste"):
+      _remove_track(items, missing)
+
+    assert len(items) == 1
+    assert items[0] is existing
 
   @pytest.mark.parametrize("strategy", sorted(STRATEGIES))
   def test_same_instance_three_times(self, strategy):
@@ -301,7 +606,7 @@ class TestDuplicateTrackReferences:
     """Groesseres Set mit mehreren doppelten Instanzen."""
     base = make_dj_set()
     tracks = list(base) + list(base[:3])
-    result = generate_playlist(tracks, strategy, bpm_tolerance=3.0)
+    result = generate_playlist(tracks, strategy, bpm_tolerance=100.0)
     assert len(result) == len(tracks)
 
 

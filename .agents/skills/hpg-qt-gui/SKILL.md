@@ -7,22 +7,22 @@ description: Use when working on the HPG PyQt6 GUI in main.py — QThread-Worker
 
 ## Architektur
 
-`main.py` (4944 Zeilen) enthaelt **alles**: Worker, Widgets, Panels,
+`main.py` (5811 Zeilen, gemessen 2026-08-26) enthaelt **alles**: Worker, Widgets, Panels,
 MainWindow. Es gibt kein `ui/`-Paket (alte Doku behauptet das).
 
 Fuenf Panels in einem `QStackedWidget`, umgeschaltet von `SidebarWidget`
-[:1812]: LIBRARY(0) PLAYLIST(1) MIX TIPS(2) TIMELINE(3) QUALITY(4).
+[:2182]: LIBRARY(0) PLAYLIST(1) MIX TIPS(2) TIMELINE(3) QUALITY(4).
 Shortcuts: `Ctrl+G` generieren, `Ctrl+E` exportieren, `Ctrl+1..5` Panel
-[`_setup_shortcuts` :4036].
+[`_setup_shortcuts` :4678].
 
 ## Die eine Thread-Regel
 
 **Business-Logik im QThread, UI-Update ausschliesslich per `pyqtSignal`.**
 Kein Widget-Zugriff aus `run()`, kein manuelles Marshalling.
 
-Worker in main.py: `AnalysisWorker` [:457], `AIAnalysisWorker` [:216],
+Worker in main.py: `AnalysisWorker` [:568], `AIAnalysisWorker` [:295],
 `AIDetectWorker`, `AITestWorker`, `AIPullWorker`, `DependencyCheckWorker`,
-`TransitionRenderWorker` [:632], Peak-Worker fuer die Wellenform.
+`TransitionRenderWorker` [:771], Peak-Worker fuer die Wellenform.
 
 ## Worker-Muster (vier Pflichtteile)
 
@@ -40,14 +40,14 @@ class MyWorker(QThread):
 ```
 
 1. **Eigener Ergebnis-Name.** `AnalysisWorker` heisst das Signal
-   `analysis_done` [:468]. `finished` ist von `QThread` belegt; ueberschreibt
+   `analysis_done` [:579]. `finished` ist von `QThread` belegt; ueberschreibt
    man es, meldet nichts mehr das echte Thread-Ende und `deleteLater()` trifft
    einen noch laufenden Thread ("QThread: Destroyed while thread is still
    running").
 2. **Cleanup an `QThread.finished` haengen**, nicht ans Ergebnis-Signal:
    `worker.finished.connect(lambda w=worker: self._cleanup(w))`, dort
    `worker.wait(2000)` + `worker.deleteLater()` + Referenz auf `None`
-   [`_cleanup_analysis_worker` :4202].
+   [`_cleanup_analysis_worker` :4888].
 3. **Source-Guard in jedem Slot.** Jeder Callback nimmt `source_worker=None`
    und kehrt sofort zurueck, wenn `source_worker is not self.worker`. Ohne das
    ueberschreibt ein verwaister Alt-Worker die Statuszeile des neuen Laufs.
@@ -56,36 +56,36 @@ class MyWorker(QThread):
 
 ## RunState — die einzige Wahrheit
 
-`RunState` [:144]: IDLE · AUDIO · AI · PLAYLIST · PREVIEW · CANCELLING ·
-SUCCESS · PARTIAL · ERROR · CANCELLED. `ACTIVE_RUN_STATES` [:160] = AUDIO,
+`RunState` [:147]: IDLE · AUDIO · AI · PLAYLIST · PREVIEW · CANCELLING ·
+SUCCESS · PARTIAL · ERROR · CANCELLED. `ACTIVE_RUN_STATES` [:162] = AUDIO,
 AI, PLAYLIST, PREVIEW, CANCELLING.
 
-- `_set_run_state` [:4100] koppelt die Reorder-Sperre an den Zustand (nur
+- `_set_run_state` [:4747] koppelt die Reorder-Sperre an den Zustand (nur
   waehrend `AI` gesperrt)
-- `_run_is_active` [:4110] prueft Zustand **und** alle mutierenden Worker
+- `_run_is_active` [:4757] prueft Zustand **und** alle mutierenden Worker
   inklusive `mix_tips_panel._render_worker` — `RunState.PREVIEW` wird nie
   gesetzt, ohne den Worker-Check galte ein laufender Preview-Render als
   inaktiv
-- `_finish_run` [:4125] stellt in **jedem** terminalen Pfad dieselbe UI her
+- `_finish_run` [:4792] stellt in **jedem** terminalen Pfad dieselbe UI her
 
 Neue Terminalpfade immer ueber `_finish_run` fuehren.
 
 ## Fortschritt
 
 Audio-Analyse = 0-80 %, KI = 80-95 %, Rest Playlist/Preview. Mapping ueber
-`map_phase_progress(percent, start, end)` [:168]. Die Slots pruefen den
+`map_phase_progress(percent, start, end)` [:171]. Die Slots pruefen den
 `run_state`, bevor sie den Balken anfassen. Updates sind auf 100 ms gedrosselt.
 
 ## Peak-Worker / Wellenform
 
-`_PEAK_WORKERS` ist ein Modul-Set; `stop_peaks(wait_ms)` [:811] macht
+`_PEAK_WORKERS` ist ein Modul-Set; `stop_peaks(wait_ms)` [:978] macht
 `requestInterruption()` + `wait()` und faengt `RuntimeError` (C++-Objekt schon
 weg). Aufgerufen aus `_cleanup_existing_previews` und `closeEvent`. Ein
 laufender QThread darf **nie** per GC/`deleteLater` sterben.
 
 ## Panels und Tabelle
 
-`PlaylistPanel` [:2642] hat **16 Spalten** (0-15): # · Track Name · Artist ·
+`PlaylistPanel` [:3036] hat **16 Spalten** (0-15): # · Track Name · Artist ·
 Duration · BPM · Key · Camelot · Energy · Genre · Genre % · Mix In · Mix Out ·
 Bass % · Texture · Passung(14) · AI Insights(15). Spalte 7 nutzt
 `EnergyBarDelegate`, Spalte 14 `TransitionScoreDelegate`. Wer eine Spalte einfuegt, muss
@@ -102,7 +102,7 @@ Hex-Farben in `main.py` hartkodieren.
 
 `get_error_reporter().log_error(...)` in Worker-Exception-Pfaden; Sink ist
 `logs/error_report.json`, Rotation 200 Eintraege. Ein globaler `excepthook`
-[:4831] faengt den Rest.
+[:5774] faengt den Rest.
 
 ## Common Mistakes
 

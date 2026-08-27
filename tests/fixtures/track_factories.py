@@ -2,7 +2,28 @@
 Track-Factory fuer schnelle Test-Erstellung.
 Erzeugt vorkonfigurierte Track-Objekte mit DJ-realistischen Werten.
 """
+import math
+
 from hpg_core.models import Track, CAMELOT_MAP
+from hpg_core.mix_candidates import MixCandidate
+
+
+def _lokaler_kandidat(t: float, camelot: str, energy: int) -> MixCandidate:
+  muster = [0.8 if index % 4 == 0 else 0.0 for index in range(16)]
+  return MixCandidate(
+    t=t, schema=["pssi_phrase"], section_label="main", phrase_label="Chorus",
+    neuheit=0.7, traegt_allein=True, groove_pattern_lokal=muster,
+    bass_pattern_lokal=muster, syncopation_lokal=0.2,
+    percussive_ratio_lokal=0.5, sub_energy=0.5, bass_punch=2.0,
+    bass_rms_dbfs=-20.0, kick_aktiv=False, camelot_lokal=camelot,
+    key_confidence_lokal=0.9, timbre_fingerprint_lokal=[1.0, 0.5, 0.2],
+    brightness_lokal=50, flatness_lokal=0.1, avg_mids_lokal=40.0,
+    avg_highs_lokal=20.0, energy_lokal=energy, energy_trend="stable",
+    lufs_lokal=-10.0,
+    mood={"pssi_mood": 1, "brightness": 50, "flatness": 0.1,
+          "key_mode": "Minor"},
+    vocal_aktiv_lokal=False,
+  )
 
 
 def make_track(**overrides) -> Track:
@@ -18,7 +39,8 @@ def make_track(**overrides) -> Track:
     "fileName": "Test Artist - Test Track.mp3",
     "artist": "Test Artist",
     "title": "Test Track",
-    "genre": "House",
+    "genre": "Tech House",
+    "detected_genre": "Tech House",
     "duration": 300.0,  # 5 Minuten - Standard DJ-Track
     "bpm": 128.0,
     "keyNote": "A",
@@ -32,13 +54,43 @@ def make_track(**overrides) -> Track:
     "mix_out_bars": 144,
   }
   defaults.update(overrides)
-  return Track(**defaults)
+  track = Track(**defaults)
+  if (
+    "mix_in_candidates" not in overrides and "mix_out_candidates" not in overrides
+    and math.isfinite(float(track.bpm or 0.0))
+    and float(track.bpm or 0.0) > 0.0
+  ):
+    grid = (60.0 / float(track.bpm)) * 4 * int(track.phrase_unit or 8)
+    if "sections" not in overrides:
+      track.sections = [
+        {"label": "intro", "start_time": 0.0, "end_time": 2 * grid, "avg_energy": 30},
+        {"label": "main", "start_time": 2 * grid, "end_time": 14 * grid, "avg_energy": track.energy},
+        {"label": "outro", "start_time": 14 * grid, "end_time": track.duration, "avg_energy": 30},
+      ]
+    if "outro_covered" not in overrides:
+      track.outro_covered = True
+    if "analysis_coverage" not in overrides:
+      track.analysis_coverage = [{"start": 0.0, "end": track.duration}]
+    track.first_downbeat = 0.0
+    track.downbeat_confidence = 1.0
+    intro_end = max(
+      (float(section.get("end_time", 0.0)) for section in track.sections
+       if str(section.get("label", "")).lower() == "intro"),
+      default=0.0,
+    )
+    in_multiple = max(4, int(intro_end // grid) + 1)
+    track.mix_in_candidates = [
+      _lokaler_kandidat(in_multiple * grid, track.camelotCode, track.energy)
+    ]
+    track.mix_out_candidates = [_lokaler_kandidat(10 * grid, track.camelotCode, track.energy)]
+  return track
 
 
 def make_house_track(**overrides) -> Track:
   """House Track: 124-128 BPM, hohe Energie."""
   defaults = {
     "genre": "House",
+    "detected_genre": "Tech House",
     "bpm": 126.0,
     "energy": 75,
     "bass_intensity": 70,
@@ -51,6 +103,7 @@ def make_techno_track(**overrides) -> Track:
   """Techno Track: 130-140 BPM, sehr hohe Energie."""
   defaults = {
     "genre": "Techno",
+    "detected_genre": "Techno",
     "bpm": 135.0,
     "energy": 85,
     "bass_intensity": 80,
@@ -63,6 +116,7 @@ def make_dnb_track(**overrides) -> Track:
   """Drum & Bass Track: 170-180 BPM."""
   defaults = {
     "genre": "Drum & Bass",
+    "detected_genre": "Drum & Bass",
     "bpm": 174.0,
     "energy": 80,
     "bass_intensity": 85,

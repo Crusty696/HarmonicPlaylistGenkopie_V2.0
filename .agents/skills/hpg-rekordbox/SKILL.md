@@ -15,7 +15,7 @@ laeuft alles ueber librosa weiter.
 **Export** (`hpg_core/exporters/rekordbox_xml_exporter.py`): schreibt
 Collection + Playlist mit BPM, Key, TEMPO-Beatgrid und POSITION_MARK-Cues.
 
-`get_rekordbox_importer()` [:577] ist ein Singleton — nicht pro Track neu
+`get_rekordbox_importer()` [:755] ist ein Singleton — nicht pro Track neu
 instanziieren, der Cache-Aufbau scannt die ganze DB.
 
 ## Fast-Path
@@ -29,12 +29,12 @@ nicht kaputtmachen.
 
 Die reale lokale `master.db` hatte 2665 Content-Zeilen mit 77 doppelten
 normalisierten Pfaden und 60 mehrdeutigen Basenames. Der Importer loest das
-so [`_build_track_cache` :143]:
+so [`_build_track_cache` :184]:
 
 | Fall | Verhalten |
 |---|---|
-| gleicher Pfad, **widerspruechliche** Felder (`_track_data_conflicts` :274) | Pfad landet in `_ambiguous_paths`, `get_track_data` liefert `None` |
-| gleicher Pfad, ein Record klar besser analysiert (`_track_data_quality` :266) | besserer Record gewinnt (z. B. gegen BPM `0`) |
+| gleicher Pfad, **widerspruechliche** Felder (`_track_data_conflicts` :315) | Pfad landet in `_ambiguous_paths`, `get_track_data` liefert `None` |
+| gleicher Pfad, ein Record klar besser analysiert (`_track_data_quality` :307) | besserer Record gewinnt (z. B. gegen BPM `0`) |
 | gleicher Basename, mehrere Dateien | `basename_cache`-Eintrag wird `None` -> Fallback verworfen |
 
 `get_statistics()` und `get_available_count()` zaehlen nur eindeutige Pfade.
@@ -43,16 +43,19 @@ als gar keine — sie fliessen still in BPM, Key und Mixpoints.
 
 ## Zeit-Einheiten — der teuerste Fehler
 
-Rekordbox speichert Beatgrid- und Cue-Zeiten in **Millisekunden**.
-`_milliseconds_to_seconds` [:473] ist die einzige Konvertierung
-(`/1000.0`, gerundet auf 4 Stellen, negative und nicht-endliche Werte ->
-`None`). Eine frueher benutzte Heuristik "Wert > 100 also Millisekunden" hat
-`120` als 120 Sekunden interpretiert.
+pyrekordbox liefert flache `PQTZAnlzTag.times` bereits in **Sekunden**; diese
+Werte werden direkt als `float` uebernommen. Nur rohe Entry-Zeiten (`.time`)
+und Cue-Werte (`InMsec`) sind Millisekunden und laufen durch
+`_milliseconds_to_seconds` [:603] (`/1000.0`, gerundet auf 4 Stellen,
+negative und nicht-endliche Werte -> `None`). Einheiten duerfen nicht aus der
+Zahlengroesse geraten werden; die jeweilige pyrekordbox-Feldsemantik ist
+verbindlich.
 
 ## ANLZ-Beatgrid
 
-`get_first_downbeat(file_path)` [:354] -> `_read_anlz_files(content_id)`
-[:447] -> `_extract_first_downbeat_from_anlz`: sucht in den ANLZ-Dateien die
+`get_first_downbeat(file_path)` [:412] -> `get_beatgrid(file_path)` [:446] ->
+`_read_anlz_files(content_id)` [:465] -> `_extract_beatgrid_from_anlz` [:548]:
+sucht in den ANLZ-Dateien die
 Tags `PQTZ`, `PQT2`, `beat_grid`, `beats` und darin den ersten Tick mit
 `beat == 1`. Zwei Tag-Formen werden unterstuetzt (flache Parallel-Listen
 `.beats`/`.times` **und** iterierbare Entries mit `.beat`/`.time`) —
@@ -71,12 +74,22 @@ Beat-Alignment-Pfad im Renderer (`downbeat_reliable_* = conf >= 0.9`).
 `first_downbeat`. Der Phrasen-Anker entsteht downstream — Skill
 `hpg-mixpoint-engineering`.
 
-## PSSI-Phrasen (`get_phrases`, [:483])
+## PSSI-Phrasen (`get_phrases`, [:508])
 
-`get_phrases(file_path)`, memoisiert je `content_id`: holt ueber
-`_read_anlz_files` die EXT-Datei mit dem `PSSI`-Tag und die DAT-Datei mit dem
-`PQTZ`-Tag, delegiert an `rekordbox_phrases.phrases_from_anlz`. Leer, wenn
-kein Rekordbox-Eintrag, keine EXT-Datei oder kein PSSI-Tag vorliegt.
+`get_phrases(file_path, *, duration=None)`, memoisiert je
+`(content_id, effective_duration)`: Als effektive Dauer gilt zuerst die
+explizite endliche positive Dateidauer, danach die endliche positive
+Rekordbox-Dauer, sonst `0.0`. Die Funktion holt ueber `_read_anlz_files` die
+EXT-Datei mit dem `PSSI`-Tag und die DAT-Datei mit dem `PQTZ`-Tag und delegiert
+an `rekordbox_phrases.phrases_from_anlz`. Leer, wenn kein Rekordbox-Eintrag,
+keine EXT-Datei oder kein PSSI-Tag vorliegt.
+
+`get_track_signature` ruft `get_phrases(file_path)` bewusst parameterlos auf;
+die mit Rekordbox-Dauer beziehungsweise `0.0` abgeleiteten Phrasen bleiben
+Teil der Rekordbox-Signatur. Fast-Path und BPM-loser Vollpfad uebergeben dagegen
+jeweils die echte `file_duration`, damit Analyse-Phrasenenden am Audiosignal
+enden. Die getrennten Memo-Keys verhindern, dass beide Verwendungen einander
+vergiften.
 
 `phrases_from_anlz` (`hpg_core/rekordbox_phrases.py`) liest die Phrasengrenzen
 aus PSSI und die Zeiten aus dem PQTZ-Beatgrid: `entry.beat` ist ein
@@ -91,7 +104,7 @@ Mix-In-Rundungsfehler (`hpg-mixpoint-engineering`).
 
 ## Cue-Override (liegt in analysis.py, nicht im Importer)
 
-`analysis.py:1712`. Wortgrenzen-Regex, **nicht** Substring:
+`analysis.py:1746`. Wortgrenzen-Regex, **nicht** Substring:
 
 ```
 IN : \b(MIX[- ]?IN|IN|START)\b
@@ -113,29 +126,30 @@ Uebernommen wird nur bei `0 <= in < out <= duration`, und **immer** durch
 
 ## Cache-Invalidierung
 
-`get_track_signature(file_path)` [:521] geht in den Cache-Key ein. Rekordbox-
+`get_track_signature(file_path)` [:651] geht in den Cache-Key ein. Rekordbox-
 Metadaten aendern sich ohne Aenderung der Audiodatei — ohne Signatur liefert
 der Cache still alte BPM/Key/Cues. Siehe `hpg-cache-persistence`.
 
 ## Export
 
-`export()` [:106] legt die Playlist ueber
+`export()` [:90] legt die Playlist ueber
 `add_playlist_folder("HPG Playlists").add_playlist(...)` an — `get_playlist()`
-wirft auf frischem XML immer `ValueError`. `_add_beat_grid` [:268] schreibt
-`TEMPO` mit `Inizio=first_downbeat`. `_add_cue_points` [:300] schreibt
-POSITION_MARKs, aber nur wenn `_cue_export_allowed` [:342] haelt
+wirft auf frischem XML immer `ValueError`. `_add_beat_grid` [:334] schreibt
+`TEMPO` mit `Inizio=first_downbeat`. `_add_cue_points` [:376] schreibt
+POSITION_MARKs, aber nur wenn `_cue_export_allowed` [:428] haelt
 (`outro_covered` und `duration > 0`).
 
 ## Verifikation
 
-`tests/test_rekordbox_importer.py` (62 Tests) deckt Pfadkonflikte,
+`tests/test_rekordbox_importer.py` (83 Tests, gesammelt 2026-08-25) deckt Pfadkonflikte,
 analysierte-vs-unanalysierte Duplikate und mehrdeutige Basenames ab.
 `tests/test_rekordbox_xml_exporter.py` den Export. Fuer echte DB-Laeufe:
 `benchmark_rekordbox.py`.
 
 ## Common Mistakes
 
-- Zeitwerte ohne `_milliseconds_to_seconds` uebernehmen.
+- Flache `PQTZAnlzTag.times` erneut durch 1000 teilen oder rohe Entry-/Cue-
+  Millisekunden ohne `_milliseconds_to_seconds` uebernehmen.
 - Bei Mehrdeutigkeit "den ersten Treffer" nehmen.
 - Cue-Namen per Substring matchen.
 - Cue-Override roh setzen ohne Quantisierung.

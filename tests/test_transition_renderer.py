@@ -9,6 +9,8 @@ import os
 import sys
 import types
 from concurrent.futures import ProcessPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -16,8 +18,11 @@ import soundfile as sf
 from scipy.signal import sosfiltfilt
 
 from hpg_core.transition_renderer import (
+    BeatSyncError,
     EqCrossfadeConfig,
     FILTER_RAMP_SECONDS,
+    KICK_SYNC_MAX_ERROR_SECONDS,
+    SUPPORTED_TRANSITION_TYPES,
     TransitionClipSpec,
     _align_beat_phase,
     _apply_compressor,
@@ -27,10 +32,14 @@ from hpg_core.transition_renderer import (
     _ensure_len,
     _load_segment,
     _make_sos,
+    _relative_kick_lag,
+    _kick_lags_across_overlap,
     _rms_normalize,
     _render_clip_subprocess_wrapper,
+    _synchronize_and_verify_kicks,
     make_temp_output_path,
     render_transition_clip,
+    validate_transition_clip_spec,
 )
 
 
@@ -68,6 +77,385 @@ def _make_stereo_signal(frames: int, sr: int = 44100,
     t = np.linspace(0, frames / sr, frames, endpoint=False, dtype=np.float32)
     wave = (np.sin(2 * np.pi * freq * t) * 0.5).astype(np.float32)
     return np.stack([wave, wave], axis=1)
+
+
+def _strict_spec(**overrides) -> TransitionClipSpec:
+    values = dict(
+        track_a_path="a.wav",
+        track_b_path="b.wav",
+        mix_out_sec=2.0,
+        mix_in_sec=1.0,
+        crossfade_sec=2.0,
+        pre_roll_sec=1.0,
+        post_roll_sec=1.0,
+        target_sr=1000,
+        bpm_a=120.0,
+        bpm_b=120.0,
+        beatgrid_status_a="verified",
+        beatgrid_status_b="verified",
+        analysis_mode_a="full",
+        analysis_mode_b="full",
+        strict_beat_sync=True,
+        normalize_rms=False,
+    )
+    values.update(overrides)
+    return TransitionClipSpec(**values)
+
+
+def _spec_from_track_status(*, source, status, confidence):
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+    )
+    track = SimpleNamespace(
+        filePath="track.wav",
+        bpm=128.0,
+        first_downbeat=0.25,
+        downbeat_confidence=confidence,
+        beatgrid_source=source,
+        beatgrid_status=status,
+        analysis_mode="librosa_full_or_tail",
+        lufs=0.0,
+    )
+    return TransitionClipSpec.from_plan(plan, track, track)
+
+
+@pytest.mark.parametrize(
+    "crossfade_sec", [0.0, -1.0, 64.000001, float("nan"), float("inf"), True]
+)
+def test_rendervertrag_verwirft_ungueltigen_overlap(crossfade_sec):
+    with pytest.raises(ValueError, match="crossfade_sec"):
+        validate_transition_clip_spec(
+            _strict_spec(crossfade_sec=crossfade_sec)
+        )
+
+
+@pytest.mark.parametrize("feld", ["mix_out_sec", "mix_in_sec"])
+@pytest.mark.parametrize("wert", [-1.0, float("nan"), float("inf"), True])
+def test_rendervertrag_verwirft_ungueltige_mixzeiten_vor_audiozugriff(
+    feld, wert
+):
+    with pytest.raises(ValueError, match=feld):
+        validate_transition_clip_spec(_strict_spec(**{feld: wert}))
+
+
+def test_rendervertrag_akzeptiert_64_sekunden_unveraendert():
+    spec = _strict_spec(crossfade_sec=64.0)
+
+    validate_transition_clip_spec(spec)
+
+    assert spec.crossfade_sec == 64.0
+
+
+@pytest.mark.parametrize("target_sr", [0, -1, 44100.0, True])
+def test_rendervertrag_verwirft_ungueltige_samplerate(target_sr):
+    with pytest.raises(ValueError, match="target_sr"):
+        validate_transition_clip_spec(_strict_spec(target_sr=target_sr))
+
+
+def test_rendervertrag_akzeptiert_alle_oeffentlichen_transition_types():
+    for transition_type in SUPPORTED_TRANSITION_TYPES:
+        validate_transition_clip_spec(
+            _strict_spec(transition_type=transition_type)
+        )
+
+
+def test_from_plan_uebernimmt_tempovertrag_und_erzwingt_strikten_sync():
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+        tempo_ratio=1.05,
+    )
+    track_a = SimpleNamespace(filePath="a.wav", bpm=120.0)
+    track_b = SimpleNamespace(filePath="b.wav", bpm=126.0)
+
+    spec = TransitionClipSpec.from_plan(plan, track_a, track_b)
+
+    assert spec.tempo_ratio == pytest.approx(1.05)
+    assert spec.strict_beat_sync is True
+
+
+def test_from_plan_verwirft_tempovertrag_der_den_bpm_widerspricht():
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+        tempo_ratio=1.10,
+    )
+    track_a = SimpleNamespace(filePath="a.wav", bpm=120.0)
+    track_b = SimpleNamespace(filePath="b.wav", bpm=126.0)
+
+    with pytest.raises(ValueError, match="tempo_ratio widerspricht"):
+        TransitionClipSpec.from_plan(plan, track_a, track_b)
+
+
+@pytest.mark.parametrize("tempo_ratio", [None, float("nan"), float("inf"), True])
+def test_from_plan_verwirft_ungueltigen_tempovertrag(tempo_ratio):
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+        tempo_ratio=tempo_ratio,
+    )
+    track_a = SimpleNamespace(filePath="a.wav", bpm=120.0)
+    track_b = SimpleNamespace(filePath="b.wav", bpm=120.0)
+
+    with pytest.raises(ValueError, match="tempo_ratio"):
+        TransitionClipSpec.from_plan(plan, track_a, track_b)
+
+
+def test_rendervertrag_verwirft_unbekannten_transition_type():
+    with pytest.raises(ValueError, match="transition_type"):
+        validate_transition_clip_spec(
+            _strict_spec(transition_type="smooth_blend_typo")
+        )
+
+
+@pytest.mark.parametrize("status", ["mismatch", "unverifiable", "unsupported"])
+def test_referenz_confidence_ohne_verifiziertes_rb_grid_vertraut_keiner_phase(status):
+    spec = _spec_from_track_status(
+        source="rekordbox", status=status, confidence=1.0
+    )
+
+    assert spec.downbeat_reliable_a is False
+    assert spec.downbeat_reliable_b is False
+    assert spec.bar_phase_reliable_a is False
+    assert spec.bar_phase_reliable_b is False
+
+
+def test_verifiziertes_rekordbox_grid_erlaubt_taktphase():
+    spec = _spec_from_track_status(
+        source="rekordbox", status="verified", confidence=1.0
+    )
+
+    assert spec.downbeat_reliable_a is True
+    assert spec.bar_phase_reliable_a is True
+
+
+def test_gemessener_audio_downbeat_bleibt_bei_diagnose_mismatch_nutzbar():
+    spec = _spec_from_track_status(
+        source="audio", status="mismatch", confidence=0.8
+    )
+
+    assert spec.downbeat_reliable_a is True
+    assert spec.downbeat_reliable_b is True
+    assert spec.bar_phase_reliable_a is False
+    assert spec.bar_phase_reliable_b is False
+
+
+class TestStrictKickSynchronitaet:
+    """Der App-Pfad muss relative Kicklage korrigieren oder hart ablehnen."""
+
+    def test_relative_kicklage_wird_auf_unter_sechs_ms_korrigiert(self):
+        sr, bpm, duration = 2000, 120.0, 12.0
+        frames = int(sr * duration)
+        mono = np.zeros(frames, dtype=np.float32)
+        burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+        burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+        for start in range(0, frames, int(0.5 * sr)):
+            stop = min(frames, start + len(burst))
+            mono[start:stop] += burst[:stop - start]
+        ref = np.stack([mono, mono], axis=1)
+        delay_frames = int(round(0.020 * sr))
+        delayed = np.concatenate([
+            np.zeros((delay_frames, 2), dtype=np.float32),
+            ref[:-delay_frames],
+        ])
+
+        corrected = _synchronize_and_verify_kicks(
+            ref, delayed, sr=sr, bpm=bpm, cf_frames=frames
+        )
+        residual = _relative_kick_lag(ref, corrected, sr, bpm)
+        regional = _kick_lags_across_overlap(ref, corrected, sr, bpm, frames)
+
+        assert residual is not None
+        assert abs(residual[0]) <= KICK_SYNC_MAX_ERROR_SECONDS
+        assert all(
+            value is not None and abs(value) <= KICK_SYNC_MAX_ERROR_SECONDS
+            for value in regional
+        )
+        assert len(corrected) == len(delayed)
+
+    def test_drift_nach_korrektur_wird_abgelehnt(self, monkeypatch):
+        measurements = iter([
+            [0.020, 0.020, 0.020],
+            [0.001, 0.009, -0.011],
+        ])
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._kick_lags_across_overlap",
+            lambda *_args, **_kwargs: next(measurements),
+        )
+
+        with pytest.raises(BeatSyncError, match="driften"):
+            _synchronize_and_verify_kicks(
+                np.zeros((200, 2), dtype=np.float32),
+                np.zeros((200, 2), dtype=np.float32),
+                sr=1000,
+                bpm=120.0,
+                cf_frames=150,
+            )
+
+    def test_stille_unmessbare_fenster_werden_im_strict_pfad_abgelehnt(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._kick_lags_across_overlap",
+            lambda *_args, **_kwargs: [],
+        )
+
+        with pytest.raises(BeatSyncError, match="Anfang, Mitte und Ende"):
+            _synchronize_and_verify_kicks(
+                np.zeros((200, 2), dtype=np.float32),
+                np.zeros((200, 2), dtype=np.float32),
+                sr=1000,
+                bpm=120.0,
+                cf_frames=150,
+            )
+
+    def test_vier_sekunden_blende_bleibt_bei_60_bpm_messbar(self):
+        sr, bpm, duration = 2000, 60.0, 4.0
+        frames = int(sr * duration)
+        mono = np.zeros(frames, dtype=np.float32)
+        burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+        burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+        for start in range(0, frames, sr):
+            stop = min(frames, start + len(burst))
+            mono[start:stop] += burst[:stop - start]
+        stereo = np.stack([mono, mono], axis=1)
+
+        regional = _kick_lags_across_overlap(
+            stereo, stereo, sr=sr, bpm=bpm, cf_frames=frames
+        )
+
+        assert all(value is not None and abs(value) <= 1.0 / sr for value in regional)
+
+    def test_nur_im_letzten_drittel_versetzte_kicks_werden_real_erkannt(self):
+        sr, bpm, duration = 2000, 120.0, 12.0
+        frames = int(sr * duration)
+        mono = np.zeros(frames, dtype=np.float32)
+        burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+        burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+        for start in range(0, frames, int(0.5 * sr)):
+            stop = min(frames, start + len(burst))
+            mono[start:stop] += burst[:stop - start]
+        ref = np.stack([mono, mono], axis=1)
+        drifted = ref.copy()
+        region_start = int(8.0 * sr)
+        delay_frames = int(round(0.020 * sr))
+        drifted[region_start:] = 0.0
+        drifted[region_start + delay_frames:] = ref[region_start:-delay_frames]
+
+        regional = _kick_lags_across_overlap(ref, drifted, sr, bpm, frames)
+
+        assert regional[0] is not None and abs(regional[0]) <= 1.0 / sr
+        assert regional[1] is not None and abs(regional[1]) <= 1.0 / sr
+        assert regional[2] is not None and regional[2] >= 0.015
+        with pytest.raises(BeatSyncError, match="driften"):
+            _synchronize_and_verify_kicks(ref, drifted, sr, bpm, frames)
+
+    def test_reale_kicks_laufen_auch_mit_beatgrid_diagnose_durch_strikten_pfad(
+        self, monkeypatch, tmp_path
+    ):
+        sr, bpm = 44100, 60.0
+
+        def kick_segment(duration_sec):
+            frames = int(round(duration_sec * sr))
+            mono = np.zeros(frames, dtype=np.float32)
+            burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+            burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+            for start in range(0, frames, sr):
+                stop = min(frames, start + len(burst))
+                mono[start:stop] += burst[:stop - start]
+            return np.stack([mono, mono], axis=1)
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._load_segment",
+            lambda _path, _start, duration, _sr: kick_segment(duration),
+        )
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._align_beat_phase",
+            lambda _a, b, _bpm, _sr, **kwargs: b[kwargs["lead_frames"]:],
+        )
+        output = tmp_path / "strict_4s_60bpm.wav"
+        spec = _strict_spec(
+            mix_out_sec=2.0,
+            mix_in_sec=1.0,
+            crossfade_sec=4.0,
+            target_sr=sr,
+            bpm_a=bpm,
+            bpm_b=bpm,
+            beatgrid_status_a="mismatch",
+            beatgrid_status_b="unverifiable",
+        )
+
+        result = render_transition_clip(spec, str(output))
+
+        assert result == str(output)
+        assert output.exists()
+
+
+class TestStrictRenderFehlerpfade:
+    @staticmethod
+    def _mock_audio(monkeypatch):
+        segment = np.zeros((8000, 2), dtype=np.float32)
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._load_segment",
+            lambda *_args, **_kwargs: segment.copy(),
+        )
+
+    def test_stretch_clamp_lehnt_ab_ohne_datei_zu_schreiben(self, monkeypatch):
+        self._mock_audio(monkeypatch)
+        writer = Mock()
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", writer)
+
+        with pytest.raises(BeatSyncError, match="ausserhalb des Stretch-Bereichs"):
+            render_transition_clip(_strict_spec(bpm_b=150.0), "unused.wav")
+
+        writer.assert_not_called()
+
+    def test_time_stretch_fehler_lehnt_ab_ohne_datei_zu_schreiben(self, monkeypatch):
+        self._mock_audio(monkeypatch)
+        writer = Mock()
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", writer)
+
+        def fail_stretch(*_args, **_kwargs):
+            raise RuntimeError("stretch kaputt")
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer.librosa.effects.time_stretch", fail_stretch
+        )
+
+        with pytest.raises(BeatSyncError, match="Time-Stretching fehlgeschlagen"):
+            render_transition_clip(_strict_spec(bpm_b=125.0), "unused.wav")
+
+        writer.assert_not_called()
+
+    def test_alignmentfehler_lehnt_ab_ohne_datei_zu_schreiben(self, monkeypatch):
+        self._mock_audio(monkeypatch)
+        writer = Mock()
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", writer)
+
+        def fail_alignment(*_args, **_kwargs):
+            raise RuntimeError("alignment kaputt")
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._align_beat_phase", fail_alignment
+        )
+
+        with pytest.raises(BeatSyncError, match="Alignment fehlgeschlagen"):
+            render_transition_clip(_strict_spec(), "unused.wav")
+
+        writer.assert_not_called()
 
 
 @pytest.fixture(scope="module")
@@ -734,29 +1122,25 @@ class TestRenderTransitionClip:
         assert np.sqrt(np.mean(data.astype(np.float64) ** 2)) > 0.01, \
             "Clip ist nahezu still — Crossfade griff ins Null-Padding statt echtes Audio"
 
-    def test_crossfade_sec_wird_auf_64s_begrenzt(self, tmp_path):
-        """crossfade_sec > 64 soll auf 64 reduziert werden (Trance blendet 32-64 Bars)."""
+    def test_crossfade_ueber_64s_wird_vor_dem_rendern_abgelehnt(self, tmp_path):
+        """Eine zu lange Blende darf nicht still auf 64 Sekunden schrumpfen."""
         path_a = str(tmp_path / "a.wav")
         path_b = str(tmp_path / "b.wav")
-        out_path = str(tmp_path / "capped.wav")
-
-        _write_test_wav(path_a, duration_sec=120.0)
-        _write_test_wav(path_b, duration_sec=120.0)
+        out_path = str(tmp_path / "rejected.wav")
 
         spec = TransitionClipSpec(
             track_a_path    = path_a,
             track_b_path    = path_b,
             mix_out_sec     = 60.0,
             mix_in_sec      = 10.0,
-            crossfade_sec   = 99.0,  # Wird auf 64s begrenzt
+            crossfade_sec   = 99.0,
             transition_type = "smooth_blend",
             pre_roll_sec    = 10.0,
             post_roll_sec   = 10.0,
         )
-        render_transition_clip(spec, out_path)
-        info = sf.info(out_path)
-        # Erwartete Dauer: 10 + 64 + 10 = 84s (nicht 10 + 99 + 10)
-        assert abs(info.duration - 84.0) < 0.5
+        with pytest.raises(ValueError, match="hoechstens 64 Sekunden"):
+            render_transition_clip(spec, out_path)
+        assert not os.path.exists(out_path)
 
     def test_gibt_output_pfad_zurueck(self, tmp_path):
         path_a = str(tmp_path / "a.wav")

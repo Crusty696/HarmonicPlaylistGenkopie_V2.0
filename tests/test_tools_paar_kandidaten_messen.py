@@ -28,10 +28,15 @@ def test_zusammenfassung_zaehlt_paare_gates_und_raenge():
 def test_lade_tracks_json_liest_kandidaten_messen_ausgabe(tmp_path):
     import json
     from hpg_core.caching import track_to_dict
+    from hpg_core.mix_candidates import MixCandidate
     from hpg_core.models import Track
     t = Track(filePath="x.mp3", fileName="x.mp3")
     t.bpm = 140.0
-    t.mix_in_candidates = [{"t": 30.0, "schema": ["sektion"]}]
+    t.mix_in_candidates = [
+        MixCandidate(
+            t=30.0, schema=["sektion"], provenance="test_fixture"
+        ).to_dict()
+    ]
     pfad = tmp_path / "k.json"
     pfad.write_text(json.dumps({"zusammenfassung": {}, "tracks": [track_to_dict(t)]}), encoding="utf-8")
     tracks = pkm._lade_tracks_json(str(pfad))

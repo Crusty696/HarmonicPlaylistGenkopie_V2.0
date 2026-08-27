@@ -1,0 +1,36 @@
+{
+  "_diagnose": {
+    "fremd": {
+      "bleibt": true
+    },
+    "fit_kandidaten": {
+      "genres": {
+        "Psytrance": {
+          "uebernommen": true
+        }
+      }
+    }
+  },
+  "Psytrance": {
+    "schema_rang": [
+      "analyzer"
+    ],
+    "notiz": "behalten",
+    "kandidaten_harmonic_weight": 0.1,
+    "kandidaten_bpm_weight": 0.1,
+    "kandidaten_energy_weight": 0.1,
+    "kandidaten_genre_weight": 0.1,
+    "kandidaten_groove_weight": 0.1,
+    "kandidaten_bass_weight": 0.1,
+    "kandidaten_timbre_weight": 0.1,
+    "kandidaten_mood_weight": 0.1,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_structure_weight": 0.1
+  },
+  "Techno": {
+    "fremdes_feld": 7
+  },
+  "plugin_metadaten": {
+    "version": 3
+  }
+}

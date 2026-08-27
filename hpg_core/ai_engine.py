@@ -34,23 +34,45 @@ AI_JSON_SCHEMA = {
 }
 
 
+def validate_ai_metadata(metadata, *, duration: float | None = None) -> bool:
+    """Prueft denselben strikten Ergebnis- und Provenienzvertrag beim Reuse."""
+    if not isinstance(metadata, dict) or set(metadata) != AI_RESULT_KEYS | {"_provenance"}:
+        return False
+    provenance = metadata.get("_provenance")
+    if not isinstance(provenance, dict) or not (
+        isinstance(provenance.get("provider"), str) and provenance["provider"].strip()
+        and isinstance(provenance.get("model"), str) and provenance["model"].strip()
+        and provenance.get("prompt_version") == AI_PROMPT_VERSION
+        and provenance.get("schema_version") == AI_SCHEMA_VERSION
+        and provenance.get("mixpoints_advisory") is True
+    ):
+        return False
+    data = {key: metadata[key] for key in AI_RESULT_KEYS}
+    if not isinstance(data["sub_genre"], str) or not data["sub_genre"].strip() or len(data["sub_genre"].strip()) > 100:
+        return False
+    moods = data["moods"]
+    if not isinstance(moods, list) or not 2 <= len(moods) <= 3 or any(not isinstance(m, str) or not m.strip() or len(m.strip()) > 40 for m in moods):
+        return False
+    if not isinstance(data["description"], str) or not data["description"].strip() or len(data["description"].strip()) > 1000:
+        return False
+    values = (data["mix_in_time"], data["mix_out_time"])
+    if values == (None, None):
+        return True
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) for value in values):
+        return False
+    if not float(values[0]) < float(values[1]) or float(values[0]) < 0.0:
+        return False
+    return duration is None or float(values[1]) <= float(duration)
+
+
 def has_valid_provenance(metadata) -> bool:
     """Prueft, ob KI-Metadaten eine gueltige, aktuelle Provenienz tragen.
 
-    HPG-002-Fix: Nur Daten, die durch validate_ai_analysis gelaufen sind
-    (aktuelle Prompt-/Schema-Version), duerfen Scoring beeinflussen.
+    Nur Daten aus dem aktuellen Prompt-/Schema-Vertrag duerfen als aktuelle
+    KI-Beschreibung angezeigt oder wiederverwendet werden. Das lokale
+    Paar-Scoring haengt nicht von KI-Metadaten ab.
     """
-    if not isinstance(metadata, dict) or not metadata:
-        return False
-    provenance = metadata.get("_provenance")
-    if not isinstance(provenance, dict):
-        return False
-    return (
-        bool(provenance.get("provider"))
-        and bool(provenance.get("model"))
-        and provenance.get("prompt_version") == AI_PROMPT_VERSION
-        and provenance.get("schema_version") == AI_SCHEMA_VERSION
-    )
+    return validate_ai_metadata(metadata)
 
 
 def ai_metadata_matches(track: Track, provider: str, model: str) -> bool:
@@ -58,9 +80,9 @@ def ai_metadata_matches(track: Track, provider: str, model: str) -> bool:
     metadata = getattr(track, "ai_metadata", {})
     if not isinstance(metadata, dict):
         return False
-    provenance = metadata.get("_provenance")
-    if not isinstance(provenance, dict):
+    if not validate_ai_metadata(metadata, duration=getattr(track, "duration", None)):
         return False
+    provenance = metadata["_provenance"]
     return (
         provenance.get("provider") == provider
         and provenance.get("model") == model
@@ -110,14 +132,14 @@ def validate_ai_analysis(
     if not 0.0 <= mix_in < mix_out <= float(track.duration):
         raise ValueError("KI-Mixpoints verletzen die Track-Grenzen")
     # Ohne analysiertes Track-Ende ist der KI-Mix-Out nicht belastbar. Bis
-    # 2026-08-21 warf das das GESAMTE Ergebnis weg — auch sub_genre und
-    # moods, die in playlist.py (KI-Bonus) tatsaechlich wirken. Die Mixpunkte
-    # selbst liest kein Produktivpfad (sie sind "advisory", siehe
+    # 2026-08-21 warf das das GESAMTE Ergebnis weg — auch die weiterhin
+    # nutzbare Subgenre-/Mood-Beschreibung. Die KI-Mixpunkte selbst liest kein
+    # Produktivpfad (sie sind "advisory", siehe
     # docs/DATA_AND_VALIDATION_CONTRACT.md). Deshalb: nur die Mixpunkte
     # verwerfen, den Rest durchlassen.
     mixpunkte_gueltig = bool(getattr(track, "outro_covered", False))
 
-    return {
+    result = {
         "sub_genre": data["sub_genre"].strip(),
         "moods": [mood.strip() for mood in moods],
         "description": data["description"].strip(),
@@ -132,6 +154,9 @@ def validate_ai_analysis(
             "mixpoints_advisory": True,
         },
     }
+    if not validate_ai_metadata(result, duration=float(track.duration)):
+        raise ValueError("KI-Ergebnis verletzt den persistierbaren Vertrag")
+    return result
 
 def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
                       url: str = None) -> dict:

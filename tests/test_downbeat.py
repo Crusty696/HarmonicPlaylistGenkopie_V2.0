@@ -9,6 +9,8 @@ import pytest
 
 from hpg_core.config import PHRASE_CONFIDENCE_MIN
 from hpg_core.downbeat import (
+  BEATGRID_MAX_PHASE_ERROR_SECONDS,
+  BEATGRID_MIN_WINDOWS,
   DOWNBEAT_RELIABLE_MIN,
   REFERENCE_BEATGRID_CONFIDENCE,
   SELF_ESTIMATE_CONFIDENCE_MAX,
@@ -20,12 +22,115 @@ from hpg_core.downbeat import (
   _vote_margin_confidence,
   estimate_first_downbeat,
   estimate_first_phrase,
+  validate_beatgrid_windows,
 )
 from hpg_core.models import quantize_to_grid
 from hpg_core.dj_brain import calculate_genre_aware_mix_points, align_ai_mix_points
 
 
 SR = 22050
+
+
+class TestBeatgridMehrfensterValidierung:
+  """Das externe Grid muss nicht nur am Trackanfang zum Kickraster passen."""
+
+  def test_korrektes_grid_wird_an_anfang_mitte_ende_verifiziert(self, monkeypatch):
+    phases = iter([(0.374, 0.8), (0.332, 0.7), (0.215, 0.9)])
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(phases),
+    )
+    windows = [(0.13, np.ones(100)), (30.17, np.ones(100)), (60.29, np.ones(100))]
+
+    result = validate_beatgrid_windows(
+      windows, SR, 120.0, grid_times=[0.0, 0.5, 1.0, 1.5]
+    )
+
+    assert result.status == "verified"
+    assert result.windows_checked == BEATGRID_MIN_WINDOWS
+    assert result.max_phase_error_ms == pytest.approx(5.0)
+
+  def test_drift_nur_am_trackende_wird_als_mismatch_erkannt(self, monkeypatch):
+    phases = iter([(0.372, 0.8), (0.334, 0.8), (0.290, 0.8)])
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(phases),
+    )
+    windows = [(0.13, np.ones(100)), (30.17, np.ones(100)), (60.29, np.ones(100))]
+
+    result = validate_beatgrid_windows(
+      windows, SR, 120.0, grid_times=[0.0, 0.5, 1.0, 1.5]
+    )
+
+    assert result.status == "mismatch"
+    assert result.windows_checked == BEATGRID_MIN_WINDOWS
+    assert result.max_phase_error_ms == pytest.approx(80.0)
+
+  def test_stille_fenster_bleiben_unverifiable_mit_sentinel(self, monkeypatch):
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: (None, 0.0),
+    )
+
+    result = validate_beatgrid_windows(
+      [(0.0, np.zeros(100)), (30.0, np.zeros(100)), (60.0, np.zeros(100))],
+      SR,
+      120.0,
+      anchor=0.0,
+    )
+
+    assert result.status == "unverifiable"
+    assert result.windows_checked == 0
+    assert result.max_phase_error_ms == -1.0
+
+  def test_variables_rekordbox_grid_wird_als_unsupported_gesperrt(self, monkeypatch):
+    calls = []
+
+    def fold(*_args, **_kwargs):
+      calls.append(True)
+      return 0.0, 1.0
+
+    monkeypatch.setattr("hpg_core.downbeat._beat_phase_from_fold", fold)
+
+    result = validate_beatgrid_windows(
+      [(0.0, np.ones(100)), (30.0, np.ones(100)), (60.0, np.ones(100))],
+      SR,
+      120.0,
+      grid_times=[0.0, 0.5, 1.0, 1.6],
+    )
+
+    assert result.status == "unsupported"
+    assert result.windows_checked == 0
+    assert result.max_phase_error_ms == -1.0
+    assert calls == []
+
+  @pytest.mark.parametrize(
+    ("error_seconds", "expected"),
+    [
+      (BEATGRID_MAX_PHASE_ERROR_SECONDS, "verified"),
+      (BEATGRID_MAX_PHASE_ERROR_SECONDS + 1.0 / SR, "mismatch"),
+    ],
+  )
+  def test_exakte_syncgrenze_ist_fuer_analyse_und_render_bindend(
+    self, monkeypatch, error_seconds, expected
+  ):
+    offsets = (0.13, 30.17, 60.29)
+    phases = iter([
+      ((-offset) % 0.5) + error_seconds for offset in offsets
+    ])
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: (next(phases), 1.0),
+    )
+
+    result = validate_beatgrid_windows(
+      [(offset, np.ones(100)) for offset in offsets],
+      SR,
+      120.0,
+      grid_times=[0.0, 0.5, 1.0, 1.5],
+    )
+
+    assert result.status == expected
 
 
 def _make_four_on_floor(bpm: float, duration: float, downbeat_offset: float) -> np.ndarray:
@@ -526,10 +631,13 @@ class TestKalibrierteSchwelle:
       transition_type = "smooth_blend"
       target_sr = 44100
 
-    def spec_for(conf_a, conf_b):
+    def spec_for(conf_a, conf_b, *, reference=False):
       a, b = _T(), _T()
       a.downbeat_confidence = conf_a
       b.downbeat_confidence = conf_b
+      if reference:
+        a.beatgrid_source = b.beatgrid_source = "rekordbox"
+        a.beatgrid_status = b.beatgrid_status = "verified"
       return tr.TransitionClipSpec.from_plan(_Plan(), a, b)
 
     below = spec_for(DOWNBEAT_RELIABLE_MIN - 0.01, 1.0)
@@ -538,7 +646,10 @@ class TestKalibrierteSchwelle:
     assert at.downbeat_reliable_a and at.downbeat_reliable_b
     # Eigenschaetzung erlaubt Beat-, aber nie Takt-Alignment
     assert not at.bar_phase_reliable_a and not at.bar_phase_reliable_b
-    ref = spec_for(1.0, 1.0)
+    # Confidence 1.0 allein reicht nicht; sie muss nachweislich zum
+    # verifizierten Rekordbox-Referenzgrid gehoeren.
+    assert not spec_for(1.0, 1.0).bar_phase_reliable_a
+    ref = spec_for(1.0, 1.0, reference=True)
     assert ref.bar_phase_reliable_a and ref.bar_phase_reliable_b
 
   def test_beatgrid_export_verlangt_das_referenz_beatgrid(self):

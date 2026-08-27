@@ -11,6 +11,7 @@ der 1); Stichprobe 699/2475 EXT fuer die 1-Basiertheit).
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,36 @@ def _tag_content(anlz, key: str):
 
 def _beat_time(times, beat: int) -> float | None:
     """Zeit des 1-basierten Beat-Index, an den Rand geklemmt."""
-    n = len(times)
+    if isinstance(beat, bool):
+        return None
+    try:
+        n = len(times)
+        beat_number = int(beat)
+    except (TypeError, ValueError, OverflowError):
+        return None
     if n == 0:
         return None
-    idx = min(max(int(beat) - 1, 0), n - 1)
-    return float(times[idx])
+    idx = min(max(beat_number - 1, 0), n - 1)
+    try:
+        value = float(times[idx])
+    except (TypeError, ValueError, OverflowError, IndexError):
+        return None
+    if not math.isfinite(value) or value < 0.0:
+        return None
+    return value
+
+
+def _phrase_start_time(times, beat: int) -> float | None:
+    """Liest einen PSSI-Start nur bei gueltigem, nicht geklemmtem Beatindex."""
+    if isinstance(beat, bool):
+        return None
+    try:
+        beat_number = int(beat)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 1 <= beat_number <= len(times):
+        return None
+    return _beat_time(times, beat_number)
 
 
 def phrases_from_anlz(ext_anlz, dat_anlz, duration: float) -> list[dict]:
@@ -59,6 +85,15 @@ def phrases_from_anlz(ext_anlz, dat_anlz, duration: float) -> list[dict]:
     sortiert, Ende = Start der naechsten Phrase, letzte endet am
     `end_beat` (geklemmt auf `duration`). Leer, wenn ein Tag fehlt.
     """
+    if isinstance(duration, bool):
+        return []
+    try:
+        duration_value = float(duration)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not math.isfinite(duration_value) or duration_value <= 0.0:
+        return []
+
     pssi = _tag_content(ext_anlz, "PSSI")
     pqtz = _tag_content(dat_anlz, "PQTZ")
     if pssi is None or pqtz is None:
@@ -68,30 +103,51 @@ def phrases_from_anlz(ext_anlz, dat_anlz, duration: float) -> list[dict]:
     except Exception as exc:
         logger.warning("PQTZ nicht lesbar: %s", exc)
         return []
-    content = pssi.content
-    mood = int(getattr(content, "mood", 0))
-    entries = list(getattr(content, "entries", []) or [])
+    try:
+        content = pssi.content
+        mood = int(getattr(content, "mood", 0))
+        entries = list(getattr(content, "entries", []) or [])
+    except (TypeError, ValueError, OverflowError, AttributeError) as exc:
+        logger.warning("PSSI-Kopf nicht lesbar: %s", exc)
+        return []
     if not entries or len(times) == 0:
         return []
     starts: list[tuple[float, int, int]] = []
     for e in entries:
-        t = _beat_time(times, int(e.beat))
-        if t is None:
+        try:
+            beat = int(e.beat)
+            kind = int(e.kind)
+            fill = int(getattr(e, "fill", 0))
+        except (TypeError, ValueError, OverflowError, AttributeError) as exc:
+            logger.warning("Defekter PSSI-Eintrag verworfen: %s", exc)
             continue
-        starts.append((t, int(e.kind), int(getattr(e, "fill", 0))))
+        t = _phrase_start_time(times, beat)
+        if t is None or t > duration_value:
+            continue
+        starts.append((t, kind, fill))
     starts.sort(key=lambda s: s[0])
-    end_time = _beat_time(times, int(getattr(content, "end_beat", 0)))
+    unique_starts: list[tuple[float, int, int]] = []
+    for item in starts:
+        if not unique_starts or item[0] - unique_starts[-1][0] > 1e-6:
+            unique_starts.append(item)
+    starts = unique_starts
+    if not starts:
+        return []
+
+    end_time = _phrase_start_time(times, getattr(content, "end_beat", 0))
     if end_time is None or end_time <= starts[-1][0]:
-        end_time = float(duration)
-    end_time = min(float(end_time), float(duration)) if duration > 0 else float(end_time)
+        end_time = duration_value
+    end_time = min(end_time, duration_value)
     phrases: list[dict] = []
     for i, (t, kind, fill) in enumerate(starts):
         nxt = starts[i + 1][0] if i + 1 < len(starts) else end_time
+        if nxt <= t:
+            continue
         # Rohe Beatgrid-Floats, keine Rundung: 3 ms haben schon einmal einen
         # Mix-In um eine ganze Phrase verschoben (Speicher hpg-mixpoint-rundungsfehler).
         phrases.append({
             "start_s": t,
-            "end_s": max(nxt, t),
+            "end_s": nxt,
             "label": phrase_label(mood, kind),
             "mood": mood,
             "kind": kind,
@@ -107,9 +163,14 @@ def phrase_grid_from_phrases(phrases: list[dict]) -> list[float]:
     """Gitterpunkte: alle Phrasenstarts plus das Ende der letzten Phrase."""
     if not phrases:
         return []
-    pts = [float(p["start_s"]) for p in phrases] + [float(phrases[-1]["end_s"])]
+    try:
+        pts = [float(p["start_s"]) for p in phrases] + [float(phrases[-1]["end_s"])]
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return []
     out: list[float] = []
     for p in pts:
+        if not math.isfinite(p) or p < 0.0:
+            continue
         if not out or p - out[-1] > 1e-6:
             out.append(p)
     return out

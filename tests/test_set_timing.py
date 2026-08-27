@@ -8,7 +8,7 @@ from hpg_core.playlist import (
   get_set_timing_summary,
   SetTimeline,
   SetTimelineEntry,
-  _resolve_mix_points,
+  TransitionPlan,
 )
 from hpg_core.models import Track
 
@@ -37,6 +37,17 @@ def _make_track(
     mix_out_point=mix_out_point,
     mix_in_point=mix_in_point,
     detected_genre=genre,
+  )
+
+
+def _plan(mix_out: float, mix_in: float, overlap: float) -> TransitionPlan:
+  return TransitionPlan(
+    mix_out_a=mix_out,
+    mix_in_b=mix_in,
+    fade_out_start=mix_out,
+    fade_out_end=mix_out + overlap,
+    overlap=overlap,
+    transition_type="blend",
   )
 
 
@@ -79,12 +90,14 @@ class TestComputeSetTimeline:
     assert tl.entries[0].energy_phase == "peak"
 
   def test_two_tracks_overlap_calculation(self):
-    """Zwei Tracks: erster hat Overlap, zweiter nicht."""
+    """Ohne Plan entsteht keine erfundene Blende."""
     t1 = _make_track(title="T1", duration=300.0)
     t2 = _make_track(title="T2", duration=300.0)
     tl = compute_set_timeline([t1, t2])
-    assert tl.entries[0].overlap_with_next > 0
+    assert tl.entries[0].overlap_with_next == 0.0
+    assert tl.entries[0].transition_planned is False
     assert tl.entries[1].overlap_with_next == 0.0
+    assert tl.entries[1].transition_planned is None
 
   def test_timeline_continuity(self):
     """Start von Entry[i+1] == Ende von Entry[i] minus Overlap.
@@ -131,17 +144,17 @@ class TestComputeSetTimeline:
     tl = compute_set_timeline([t])
     assert isinstance(tl.entries[0], SetTimelineEntry)
 
-  def test_minimum_duration_enforced(self):
-    """Tracks mit 0s Duration bekommen mindestens 30s."""
+  def test_zero_duration_is_rejected(self):
+    """Tracks mit 0s Duration sind kein gueltiger Timeline-Vertrag."""
     t = _make_track(title="ZeroDur", duration=0.0)
-    tl = compute_set_timeline([t])
-    assert tl.entries[0].playing_duration >= 30.0
+    with pytest.raises(ValueError, match="Dauer muss endlich und positiv"):
+      compute_set_timeline([t])
 
-  def test_negative_duration_clamped(self):
-    """Negative Duration wird auf mindestens 30s gesetzt."""
+  def test_negative_duration_is_rejected(self):
+    """Negative Duration wird nicht still geklemmt."""
     t = _make_track(title="Neg", duration=-10.0)
-    tl = compute_set_timeline([t])
-    assert tl.entries[0].playing_duration >= 30.0
+    with pytest.raises(ValueError, match="Dauer muss endlich und positiv"):
+      compute_set_timeline([t])
 
   def test_custom_target_minutes(self):
     tracks = [_make_track(duration=180.0) for _ in range(3)]
@@ -285,122 +298,98 @@ class TestEnergyPhases:
 # === Overlap-Berechnung Tests ===
 
 class TestOverlapCalculation:
-  """Tests fuer die Overlap-Berechnung."""
+  """Tests fuer den planbasierten Timeline-Vertrag."""
 
   def test_last_track_no_overlap(self):
     tracks = [_make_track(duration=200.0) for _ in range(3)]
     tl = compute_set_timeline(tracks)
     assert tl.entries[-1].overlap_with_next == 0.0
+    assert tl.entries[-1].transition_planned is None
 
-  def test_overlap_positive(self):
-    """Overlap sollte immer positiv sein."""
+  def test_planlose_kanten_haben_keine_erfundene_blende(self):
     tracks = [_make_track(duration=200.0) for _ in range(4)]
-    tl = compute_set_timeline(tracks)
+    tl = compute_set_timeline(tracks, default_overlap=64.0)
     for entry in tl.entries[:-1]:
-      assert entry.overlap_with_next > 0
+      assert entry.overlap_with_next == 0.0
+      assert entry.transition_planned is False
+    assert [entry.start_time for entry in tl.entries] == [0.0, 200.0, 400.0, 600.0]
+    assert tl.entries[-1].end_time == 800.0
 
-  def test_overlap_bounded_by_track_duration(self):
-    """Overlap darf nicht groesser als 30% der Track-Dauer sein."""
-    tracks = [_make_track(duration=120.0) for _ in range(3)]
-    tl = compute_set_timeline(tracks)
-    for entry in tl.entries[:-1]:
-      track_dur = max(entry.track.duration, 30.0)
-      assert entry.overlap_with_next <= track_dur * 0.3 + 0.1  # +0.1 Toleranz
-
-  def test_overlap_at_least_4_seconds(self):
-    """Minimum 4 Sekunden Overlap."""
-    tracks = [_make_track(duration=300.0) for _ in range(3)]
-    tl = compute_set_timeline(tracks)
-    for entry in tl.entries[:-1]:
-      assert entry.overlap_with_next >= 4.0
-
-  def test_mix_out_point_used(self):
-    """Wenn mix_out_point gesetzt, beeinflusst es den Overlap."""
+  def test_track_mixpoints_sind_ohne_plan_keine_timeline_blende(self):
     t1 = _make_track(title="MixOut", duration=300.0, mix_out_point=250.0)
-    t2 = _make_track(title="Next", duration=300.0)
+    t2 = _make_track(title="Next", duration=300.0, mix_in_point=50.0)
     tl = compute_set_timeline([t1, t2])
-    # mix_out bei 250s, duration 300s -> Overlap-Bereich ca. 50s
-    # Wird aber auf max(default_overlap, 30% dur) begrenzt
-    assert tl.entries[0].overlap_with_next > 0
+    assert tl.entries[0].end_time == 300.0
+    assert tl.entries[1].start_time == 300.0
+    assert tl.entries[0].transition_planned is False
 
-  def test_playing_duration_ist_mix_out_minus_mix_in_plus_overlap(self):
-    """playing_duration = (mix_out - mix_in) + overlap — nicht mehr
-    track_duration - overlap.
-
-    Grund: seit 1ebaa96 startet B an mix_in_b, wenn A mix_out_a erreicht; A
-    ist danach noch overlap Sekunden hoerbar. Ein Track traegt also nur sein
-    Stueck zwischen Mix-In und Mix-Out zur Set-Laenge bei. Ohne gesetzte
-    Mixpunkte gelten die Fallbacks aus _resolve_mix_points (dieselben wie in
-    den Empfehlungen), der erste Track beginnt immer bei 0, der letzte spielt
-    bis zum Ende."""
-    tracks = [_make_track(duration=240.0) for _ in range(3)]
-    tl = compute_set_timeline(tracks, default_overlap=16.0)
-    n = len(tl.entries)
-    for i, entry in enumerate(tl.entries):
-      mix_in, mix_out = _resolve_mix_points(entry.track, 16.0)
-      if i == 0:
-        mix_in = 0.0
-      if i < n - 1:
-        expected = (mix_out - mix_in) + entry.overlap_with_next
-      else:
-        expected = max(entry.track.duration, 30.0) - mix_in
-      assert entry.playing_duration == pytest.approx(expected, abs=0.1)
-      assert entry.playing_duration == pytest.approx(
-        entry.end_time - entry.start_time, abs=0.01
-      )
-
-  def test_gesamtlaenge_mit_gesetzten_mixpunkten(self):
-    """Gesamt = out_0 + Summe_{i=1..n-2}(out_i - in_i) + (dur_last - in_last);
-    in_0 ist immer 0 (erster Track von vorn), unabhaengig von mix_in_point."""
-    specs = [(420.0, 60.0, 330.0), (450.0, 45.0, 390.0), (400.0, 30.0, 350.0), (480.0, 50.0, 420.0)]
+  def test_sparse_plan_none_plan_behaelt_exakte_indices(self):
     tracks = [
-      _make_track(title=f"T{i}", duration=d, mix_in_point=mi, mix_out_point=mo)
-      for i, (d, mi, mo) in enumerate(specs)
+      _make_track(title="T0", duration=100.0),
+      _make_track(title="T1", duration=200.0),
+      _make_track(title="T2", duration=300.0),
+      _make_track(title="T3", duration=400.0),
     ]
-    tl = compute_set_timeline(tracks, default_overlap=16.0)
-    expected = specs[0][2]
-    for d, mi, mo in specs[1:-1]:
-      expected += mo - mi
-    expected += specs[-1][0] - specs[-1][1]
-    assert tl.entries[-1].end_time == pytest.approx(expected, abs=0.01)
-    assert tl.total_duration_minutes == pytest.approx(expected / 60.0, abs=0.01)
-    # Overlap-Logik: Eintraege ueberlappen um overlap, Spielzeit enthaelt ihn
-    for i in range(len(tl.entries) - 1):
-      e, nxt = tl.entries[i], tl.entries[i + 1]
-      assert e.end_time - nxt.start_time == pytest.approx(e.overlap_with_next, abs=0.01)
-      d, mi, mo = specs[i]
-      if i == 0:
-        mi = 0.0
-      assert e.playing_duration == pytest.approx((mo - mi) + e.overlap_with_next, abs=0.01)
-      # A hat nach dem Mix-Out nur dur - mix_out Sekunden Audio
-      assert e.overlap_with_next <= d - mo + 0.01
+    plans = [_plan(70.0, 20.0, 20.0), None, _plan(250.0, 30.0, 40.0)]
+    tl = compute_set_timeline(tracks, transition_plans=plans)
 
-  def test_regression_zehn_tracks_nicht_21_minuten_zu_lang(self):
-    """10 Tracks je 450 s, Mix-In 60, Mix-Out 360: das alte Modell zeigte
-    10*450 - 9*overlap an (bei 30 s Overlap 4230 s = 70,5 min); real sind es
-    360 + 8*(360-60) + (450-60) = 3150 s = 52,5 min."""
-    tracks = [
-      _make_track(title=f"T{i}", duration=450.0, mix_in_point=60.0, mix_out_point=360.0)
-      for i in range(10)
-    ]
-    tl = compute_set_timeline(tracks, default_overlap=30.0)
-    assert tl.entries[-1].end_time == pytest.approx(3150.0, abs=0.5)
-    assert tl.total_duration_minutes == pytest.approx(52.5, abs=0.02)
+    assert [entry.start_time for entry in tl.entries] == [0.0, 70.0, 250.0, 500.0]
+    assert [entry.end_time for entry in tl.entries] == [90.0, 250.0, 540.0, 870.0]
+    assert [entry.playing_duration for entry in tl.entries] == [90.0, 180.0, 290.0, 370.0]
+    assert [entry.overlap_with_next for entry in tl.entries] == [20.0, 0.0, 40.0, 0.0]
+    assert [entry.transition_planned for entry in tl.entries] == [True, False, True, None]
 
-  def test_mix_in_jenseits_der_dauer_wird_geklemmt(self):
-    """Ein kaputter mix_in_point (>= Dauer) darf keine negativen Spielzeiten
-    oder rueckwaerts laufenden Startzeiten erzeugen."""
-    tracks = [
-      _make_track(title="T0", duration=300.0, mix_in_point=0.0, mix_out_point=250.0),
-      _make_track(title="T1", duration=300.0, mix_in_point=500.0, mix_out_point=260.0),
-      _make_track(title="T2", duration=300.0, mix_in_point=700.0, mix_out_point=-1.0),
-    ]
-    tl = compute_set_timeline(tracks)
-    for e in tl.entries:
-      assert e.end_time >= e.start_time
-      assert e.playing_duration >= 0.0
-    for i in range(len(tl.entries) - 1):
-      assert tl.entries[i + 1].start_time >= tl.entries[i].start_time
+  def test_gueltiger_overlap_ueber_halber_trackdauer_bleibt_exakt(self):
+    tracks = [_make_track(duration=100.0), _make_track(duration=100.0)]
+    tl = compute_set_timeline(
+      tracks, transition_plans=[_plan(30.1234, 10.5678, 60.0)]
+    )
+    assert tl.entries[0].overlap_with_next == 60.0
+    assert tl.entries[0].end_time == 90.1234
+    assert tl.entries[1].start_time == 30.1234
+    assert tl.entries[1].playing_duration == 89.4322
+
+  @pytest.mark.parametrize(
+    "plan, message",
+    [
+      (_plan(float("nan"), 10.0, 5.0), "nicht-endliche"),
+      (_plan(20.0, 10.0, 0.0), "Overlap muss positiv"),
+      (_plan(-1.0, 10.0, 5.0), "Track A"),
+      (_plan(96.0, 10.0, 5.0), "Track A"),
+      (_plan(20.0, -1.0, 5.0), "Track B"),
+      (_plan(20.0, 96.0, 5.0), "Track B"),
+    ],
+  )
+  def test_ungueltige_plaene_werden_nicht_geklemmt(self, plan, message):
+    tracks = [_make_track(duration=100.0), _make_track(duration=100.0)]
+    with pytest.raises(ValueError, match=message):
+      compute_set_timeline(tracks, transition_plans=[plan])
+
+  @pytest.mark.parametrize("duration", [0.0, -1.0, float("nan"), float("inf")])
+  def test_nichtpositive_oder_nichtendliche_dauer_bricht_ab(self, duration):
+    with pytest.raises(ValueError, match="Dauer muss endlich und positiv"):
+      compute_set_timeline([_make_track(duration=duration)])
+
+  def test_mittlerer_track_verlangt_mix_in_vor_mix_out(self):
+    tracks = [_make_track(duration=100.0) for _ in range(3)]
+    plans = [_plan(70.0, 60.0, 10.0), _plan(60.0, 10.0, 10.0)]
+    with pytest.raises(ValueError, match="eingehender Mix-In muss vor"):
+      compute_set_timeline(tracks, transition_plans=plans)
+
+  def test_kurze_positive_dauer_bleibt_exakt(self):
+    tl = compute_set_timeline([_make_track(duration=0.123456)])
+    assert tl.entries[0].playing_duration == 0.123456
+    assert tl.entries[0].end_time == 0.123456
+    assert tl.total_duration_minutes == 0.123456 / 60.0
+
+  def test_summary_behaelt_rohe_praezision(self):
+    tracks = [_make_track(duration=1.111), _make_track(duration=2.222)]
+    tl = compute_set_timeline(tracks, target_minutes=0.012345)
+    summary = get_set_timing_summary(tl)
+    assert tl.total_duration_minutes == 3.333 / 60.0
+    assert tl.overflow_minutes == tl.total_duration_minutes - 0.012345
+    assert summary["overflow_seconds"] == tl.overflow_minutes * 60.0
+    assert summary["avg_track_duration"] == (1.111 + 2.222) / 2.0
 
 
 # === get_set_timing_summary Tests ===
@@ -540,14 +529,24 @@ class TestSetTimingEdgeCases:
     durations = [e.playing_duration for e in tl.entries]
     assert durations[0] < durations[2]
 
-  def test_default_overlap_parameter(self):
-    """custom default_overlap wird respektiert."""
+  def test_default_overlap_bleibt_legacy_parameter_ohne_timing_wirkung(self):
+    """Ohne Plan bleibt der oeffentliche Legacy-Parameter bewusst inert."""
     tracks = [_make_track(duration=300.0) for _ in range(3)]
     tl1 = compute_set_timeline(tracks, default_overlap=8.0)
     tl2 = compute_set_timeline(tracks, default_overlap=32.0)
-    # Verschiedene default_overlaps koennen unterschiedliche Ergebnisse geben
-    assert tl1.total_duration_minutes > 0
-    assert tl2.total_duration_minutes > 0
+    timing1 = [
+      (e.start_time, e.end_time, e.playing_duration, e.overlap_with_next)
+      for e in tl1.entries
+    ]
+    timing2 = [
+      (e.start_time, e.end_time, e.playing_duration, e.overlap_with_next)
+      for e in tl2.entries
+    ]
+    assert timing1 == timing2 == [
+      (0.0, 300.0, 300.0, 0.0),
+      (300.0, 600.0, 300.0, 0.0),
+      (600.0, 900.0, 300.0, 0.0),
+    ]
 
   def test_large_set_50_tracks(self):
     """50 Tracks — Performance und Korrektheit."""

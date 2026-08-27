@@ -75,6 +75,102 @@ def test_structure_windows_degrades_when_tail_decode_fails(monkeypatch):
   assert outro_covered is False
 
 
+def test_structure_windows_rounding_never_exceeds_raw_duration(monkeypatch):
+  """Eine auf Centisekunden gerundete Grenze bleibt cache-validierbar."""
+  from hpg_core import analysis
+
+  sr = 100
+  raw_duration = 367.0668480725624
+  head_audio = np.zeros(10 * sr, dtype=np.float32)
+  tail_audio = np.zeros(180 * sr, dtype=np.float32)
+
+  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0):
+    local_duration = len(audio) / sample_rate
+    return TrackStructure(
+      sections=[TrackSection("main", 0.0, local_duration, 0, 1, 50.0)],
+      total_bars=1,
+      phrase_unit=8,
+    )
+
+  monkeypatch.setattr(analysis, "analyze_structure", fake_structure)
+  monkeypatch.setattr(
+    analysis.librosa,
+    "load",
+    lambda *args, **kwargs: (tail_audio, sr),
+  )
+
+  structure, coverage, _ = analyze_structure_windows(
+    "fractional.aif", head_audio, sr, 140.0, "Psytrance", raw_duration
+  )
+
+  assert coverage[-1]["end"] == raw_duration
+  assert all(window["end"] <= raw_duration for window in coverage)
+  assert all(section.end_time <= raw_duration for section in structure.sections)
+
+
+def test_complete_head_fractional_duration_is_cache_valid(monkeypatch):
+  from hpg_core import analysis
+  from hpg_core.caching import track_to_dict, validate_track_dict
+  from hpg_core.models import Track
+
+  sr = 100
+  raw_duration = 367.0668480725624
+  head_audio = np.zeros(368 * sr, dtype=np.float32)
+
+  monkeypatch.setattr(
+    analysis,
+    "analyze_structure",
+    lambda *args, **kwargs: TrackStructure(
+      sections=[TrackSection("main", 0.0, raw_duration, 0, 1, 50.0)],
+      total_bars=1,
+      phrase_unit=8,
+    ),
+  )
+
+  structure, coverage, _ = analyze_structure_windows(
+    "fractional.aif", head_audio, sr, 140.0, "Psytrance", raw_duration
+  )
+  track = Track(
+    filePath="C:/fractional.aif",
+    fileName="fractional.aif",
+    duration=raw_duration,
+    sections=[section.to_dict() for section in structure.sections],
+    analysis_coverage=coverage,
+  )
+
+  validated = validate_track_dict(track_to_dict(track))
+  assert validated["analysis_coverage"] == [{"start": 0.0, "end": raw_duration}]
+
+
+def test_fractional_tail_decode_error_remains_within_duration(monkeypatch):
+  from hpg_core import analysis
+
+  sr = 100
+  raw_duration = 600.006
+  head_audio = np.zeros(360 * sr, dtype=np.float32)
+  monkeypatch.setattr(
+    analysis,
+    "analyze_structure",
+    lambda *args, **kwargs: TrackStructure(
+      sections=[TrackSection("outro", 0.0, 360.0, 0, 1, 50.0)],
+      total_bars=1,
+      phrase_unit=8,
+    ),
+  )
+  monkeypatch.setattr(
+    analysis.librosa,
+    "load",
+    lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("tail kaputt")),
+  )
+
+  structure, coverage, _ = analyze_structure_windows(
+    "fractional.aif", head_audio, sr, 140.0, "Psytrance", raw_duration
+  )
+
+  assert coverage[0]["end"] <= raw_duration
+  assert structure.sections[-1].end_time == raw_duration
+
+
 def test_file_lufs_uses_complete_native_stereo(tmp_path):
   import soundfile as sf
 

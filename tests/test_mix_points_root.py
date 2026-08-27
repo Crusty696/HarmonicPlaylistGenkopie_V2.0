@@ -17,7 +17,7 @@ import pytest
 # Root analysis.py hat relative Imports (.models, .config) - nutze hpg_core
 from hpg_core.analysis import analyze_structure_and_mix_points as analyze_root
 
-from hpg_core.config import METER, BARS_PER_PHRASE
+from hpg_core.config import BARS_PER_PHRASE, METER, MIX_POINT_UNSET
 from tests.fixtures.audio_generators import (
   generate_track_with_structure,
   generate_silence,
@@ -157,14 +157,13 @@ class TestRootEdgeCases:
     assert mi >= 0
 
   def test_very_short(self):
-    """Kurzer Track (20s) - kein Crash."""
+    """Kurzer Track ohne gueltiges Phrasenfenster wird sauber abgelehnt."""
     bpm = 128.0
     duration = 20.0
     y = generate_track_with_structure(bpm, duration, DEFAULT_SR)
     mi, mo, _, _ = analyze_root(y, DEFAULT_SR, duration, 70, bpm)
-    assert mo > mi
-    assert mi >= 0
-    assert mo <= duration
+    assert mi == MIX_POINT_UNSET
+    assert mo == MIX_POINT_UNSET
 
 
 class TestRootVsHpgCoreDifferences:

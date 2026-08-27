@@ -48,15 +48,14 @@ Subagenten gelten als Hypothese, nicht als Beleg — auch seine.
 ## Projektarchitektur
 
 ```
-main.py                    # PyQt6 GUI (5351 Zeilen, Stand 2026-08-21),
-                           # QThread-Worker-Muster
+main.py                    # PyQt6 GUI, QThread-Worker-Muster
 hpg_core/                  # Core analysis modules
   models.py                # Track-Dataclass, Camelot-Map, TrackSection
   analysis.py              # Audio-Analyse (librosa): BPM, Key, Energy, Sections
   downbeat.py              # Downbeat- und Phrasen-Anker
   config.py                # Alle konfigurierbaren Konstanten
   genres.py                # Single Source of Truth: 9 kanonische Genres + Drift-Validierung
-  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 34
+  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 40
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Breakdown/Drop/Outro)
@@ -83,7 +82,8 @@ hpg_core/                  # Core analysis modules
   logging_config.py        # Logging-Setup
   app_metadata.py          # APP_VERSION, MIN_PYTHON (Single Source)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest (1917 Tests gesammelt, gemessen 2026-08-22 (pytest --collect-only))
+tests/                     # pytest (2035 bestanden, 25 Warnungen, 81,65 % Coverage;
+                           # gemessen 2026-08-25 im Abschlusslauf)
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection,
                            # kandidaten_messen.py / paar_kandidaten_messen.py / playlist_kandidaten_messen.py
                            # e2e_kandidaten_app.py: objektive E2E-Pruefung der Kandidaten in der App
@@ -134,7 +134,7 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
 
 - `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`, `*.coverage` —
   Cache-/System-Dateien. Der Laufzeit-Cache liegt ausserhalb des Repos unter
-  `%LOCALAPPDATA%\HPG\hpg_cache_v34.db` (ueberschreibbar mit `HPG_CACHE_DIR`
+  `%LOCALAPPDATA%\HPG\hpg_cache_v40.db` (ueberschreibbar mit `HPG_CACHE_DIR`
   bzw. `HPG_CACHE_FILE`).
 
 ## Analyse-Pipeline

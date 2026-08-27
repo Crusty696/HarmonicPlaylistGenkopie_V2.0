@@ -14,28 +14,32 @@ sind. Wer sie als offene Punkte behandelt, auditiert die Vergangenheit.
 Vor jedem Audit: `git log --oneline -10`, `git status --short`, dann die
 Behauptung im Code pruefen.
 
-## Verifizierter Ist-Stand (2026-08-14, selbst gemessen)
+## Letzter Volltest-Snapshot (2026-08-25, selbst gemessen)
 
 | Fakt | Wert |
 |---|---|
 | Version | 3.7.2 |
-| Testsuite | **1492 passed** (`-m ""`), rund 1303 im Standardlauf |
-| Coverage | **75,92 %**, Gate 70 % erfuellt |
-| `CACHE_VERSION` | **28**, `hpg_cache_v28.db` |
-| Strategien | **8** (`STRATEGIES`, playlist.py:1864) |
-| `main.py` | **4944 Zeilen** |
+| Testsuite | **2035 passed**, 25 Warnungen (Abschlusslauf) |
+| Coverage | **81,65 %**, Gate 70 % erfuellt |
+| `CACHE_VERSION` | **37**, `hpg_cache_v37.db` |
+| Strategien | **8** (`STRATEGIES`) |
+| `main.py` | **5811 Zeilen** |
 | Kanonische Genres | **9** |
 | Python | 3.12.10 in `venv312` |
 | Worker-Cap | 4 (`PARALLEL_AUTO_MAX_WORKERS`) |
 
+Der Cachewert in dieser Tabelle ist ein historischer Bestandteil des
+Volltest-Snapshots vom 2026-08-25. Der aktuelle Code steht seit 2026-08-26 auf
+`CACHE_VERSION = 40` und verwendet `hpg_cache_v40.db`.
+
 ## Belegte Doku-Widersprueche
 
-| Behauptung | Fundort | Realitaet |
+| Fruehere Behauptung | Ehemaliger Fundort | Status 2026-08-25 |
 |---|---|---|
-| ~~"main.py ~1600 Zeilen"~~ | `CLAUDE.md`, `AGENTS.md` | **2026-08-14 korrigiert** |
-| 10-11 Strategien, alte Namen | `docs/QUICK_START.txt` | 8, `STRATEGY_ALIASES` haelt Altnamen gueltig |
-| `ui/main_window.py`, `GUI/`-Ordner | `docs/QUICK_START.txt` | existiert nicht, alles in `main.py` |
-| veraltete Testzahlen | AGENT_HANDOFF, alte Fixlogs | real 1395 (2026-08-14) |
+| `main.py` mit 1600/4944/5351/5752 Zeilen | Statusdokus/Skills | korrigiert; volatile Zeilenzahl wird nicht mehr festgeschrieben |
+| 10-11 Strategien, alte Namen | `docs/QUICK_START.txt` | korrigiert; 8, Aliase bleiben gueltig |
+| `ui/main_window.py`, `GUI/`-Ordner | `docs/QUICK_START.txt` | korrigiert; alles in `main.py` |
+| veraltete Testzahlen | alte Handoffs/Fixlogs | historische Snapshots; letzter Volltest 2035 |
 | "Build blockiert", `security.py`-Duplikat | alte Audit-Berichte | erledigt, Datei existiert nicht mehr |
 
 `AUDIT_SKILL-TEAM_2026-07-24.md`, `FULLSTACK_AUDIT_HPG_2026-07-20.md` und die
@@ -59,12 +63,15 @@ Nach Auswertung beider Voll-Audits, in dieser Reihenfolge:
 6. **Skript meldet Erfolg ohne Wirkung** — Batch-Wrapper. Skill
    `hpg-release-build`.
 
-## Aktuell offene, belegte Punkte
+## Worktree-Hinweis
 
-**Uncommittete Arbeitskopie** (Stand 2026-08-14): `main.py`, `hpg_core/theme.py`,
+**Historischer Snapshot 2026-08-14:** `main.py`, `hpg_core/theme.py`,
 `tests/test_run_lifecycle.py`, `tests/test_theme.py`, `Start.bat`,
 `build_installer.bat`, `requirements.txt`. Die Doku behauptet einen sauberen
 Abschlusszustand — das stimmt nicht. Suite ist mit diesen Aenderungen gruen.
+
+**Aktuell 2026-08-25:** Der gemessene Stand ist eine uncommittete
+Arbeitskopie. Vor Freigabe oder Commit deshalb `git status --short` neu lesen.
 
 **Erledigt 2026-08-14:** die verwaisten `theme.RISK_*`-Konstanten wurden
 entfernt, ebenso `caching._quarantine_cache_row`, `caching._is_confirmed_corrupt`,

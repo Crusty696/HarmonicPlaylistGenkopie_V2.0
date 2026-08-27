@@ -1,0 +1,16 @@
+HPG Hoertest — Kandidatenmodus
+Je Paar liegen hoechstens fuenf Clips (<pair_id>_k<n>.wav): gleicher Uebergang, andere
+Mixpunkte/Blende. Seite je Paar: jeden Clip mit 1-5 benoten UND den besten
+waehlen. Alles wird sofort in bewertung.csv geschrieben (pair_id, clip_id,
+note, gewaehlt, zeit). Anzeige bewusst ohne Score/Schema.
+
+Start am PC:   python tools/hoertest_server.py --dir <dieser Ordner> --port 8767
+Mobil: diesen Ordner samt hoertest_server.py (Repo tools/) in den Mobil-Ordner
+kopieren; der Server erkennt den Kandidatenmodus selbst (Spalte clip_id).
+Auswertung:    python tools/rate_transitions.py fit --modus kandidaten --dir <Ordner>
+Der Satz speichert --bpm-toleranz und --energy-direction je Clip. Der strenge
+Audit spielt exakt mit diesen Regeln nach; "auto" bedeutet keine feste Richtung.
+Das Manifest friert auch --harmonic-strictness und --allow-experimental ein.
+MIN_HARMONIC_SCORE ist ein zusaetzliches hartes Gate nur fuer diesen Kandidaten-
+Hoertest, keine Behauptung vollstaendiger Produktionsparitaet. APP_VERSION und
+Algorithmus-/Build-Digest sichern den lokal verwendeten Python-Code ab.

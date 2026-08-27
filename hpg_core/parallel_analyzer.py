@@ -13,18 +13,50 @@ from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from typing import List, Callable, Optional
 from .models import Track
 from .analysis import analyze_track
+from .caching import VALID_ANALYSIS_MODES
 from . import config
 
 logger = logging.getLogger(__name__)
 
 
 def _terminate_executor_processes(executor: ProcessPoolExecutor) -> None:
-    """Beendet laufende Child-Prozesse, bevor ein Context-Manager wartet."""
-    processes = tuple((getattr(executor, "_processes", None) or {}).values())
-    executor.shutdown(wait=False, cancel_futures=True)
+    """Best-effort-Cleanup, das niemals die urspruengliche Exception maskiert."""
+    def log_cleanup_error(message: str, error: BaseException) -> None:
+        try:
+            logger.warning(message, error)
+        except BaseException:
+            pass
+
+    try:
+        processes = tuple((getattr(executor, "_processes", None) or {}).values())
+    except BaseException as error:
+        log_cleanup_error("Child-Prozessliste nicht lesbar: %s", error)
+        processes = ()
+
     for process in processes:
-        if process.is_alive():
-            process.terminate()
+        should_terminate = True
+        try:
+            should_terminate = process.is_alive()
+        except BaseException as error:
+            log_cleanup_error("Child-Status nicht lesbar; Terminate wird versucht: %s", error)
+        if should_terminate:
+            try:
+                process.terminate()
+            except BaseException as error:
+                log_cleanup_error("Child-Prozess konnte nicht terminiert werden: %s", error)
+
+    try:
+        executor.shutdown(wait=False, cancel_futures=True)
+    except BaseException as error:
+        log_cleanup_error("Executor-Cleanup ohne Wait fehlgeschlagen: %s", error)
+
+
+def _is_successful_analysis_result(track: Track | None) -> bool:
+    """Akzeptiert nur belastbare Track-Ergebnisse, keine Decode-Platzhalter."""
+    return (
+        track is not None
+        and getattr(track, "analysis_mode", None) in VALID_ANALYSIS_MODES
+    )
 
 
 def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
@@ -188,9 +220,18 @@ class ParallelAnalyzer:
                 # Use ProcessPoolExecutor for true parallel processing (bypasses GIL)
                 # AUDIT-FIX P-01: initializer waermt die Rekordbox-Singleton
                 # einmal pro Worker-Prozess statt bei jedem ersten Task.
-                with ProcessPoolExecutor(
+                executor = ProcessPoolExecutor(
                     max_workers=worker_count, initializer=_worker_init
-                ) as executor:
+                )
+                executor_stopped = False
+
+                def terminate_executor() -> None:
+                    nonlocal executor_stopped
+                    if not executor_stopped:
+                        _terminate_executor_processes(executor)
+                        executor_stopped = True
+
+                try:
                     # M10-Fix + AUDIT-FIX N-04 (2026-07-26): Haenger-Deadline
                     # haengt jetzt an worker_count statt an der Batch-Groesse.
                     # Vorher wuchs die Gesamt-Deadline proportional zur
@@ -258,7 +299,7 @@ class ParallelAnalyzer:
                                             f"[TIMEOUT] {os.path.basename(file_paths[idx])}",
                                         )
                                 pool_broken = True
-                                _terminate_executor_processes(executor)
+                                terminate_executor()
                                 break
 
                             done_futures, _ = wait(
@@ -267,7 +308,7 @@ class ParallelAnalyzer:
                                 return_when=FIRST_COMPLETED,
                             )
                             if cancel_callback and cancel_callback():
-                                _terminate_executor_processes(executor)
+                                terminate_executor()
                                 raise InterruptedError("Analysis cancelled by user")
                             if not done_futures:
                                 # Kurze Polling-Intervalle halten den Cancel
@@ -290,10 +331,12 @@ class ParallelAnalyzer:
                                     track = future.result(timeout=config.PARALLEL_ANALYSIS_TIMEOUT)
                                     batch_results[idx] = track
                                     finished_count += 1
-                                    if track:
+                                    if _is_successful_analysis_result(track):
                                         completed_count += 1
                                         status_msg = f"Analyzed: {os.path.basename(file_path)}"
                                     else:
+                                        track = None
+                                        batch_results[idx] = None
                                         status_msg = f"[FAILED] {os.path.basename(file_path)}"
                                 except TimeoutError:
                                     logger.warning(f"Timeout bei Analyse von {os.path.basename(file_path)}")
@@ -318,7 +361,7 @@ class ParallelAnalyzer:
                                     try:
                                         progress_callback(finished_count, total_files, status_msg)
                                     except InterruptedError:
-                                        _terminate_executor_processes(executor)
+                                        terminate_executor()
                                         raise
                             if not pool_broken:
                                 submit_available()
@@ -335,11 +378,24 @@ class ParallelAnalyzer:
                                 fut.cancel()
                                 batch_results[idx] = None
                                 finished_count += 1
-                        _terminate_executor_processes(executor)
+                        terminate_executor()
 
                     if pool_broken:
                         # Abort execution of pending tasks in this broken pool
-                        _terminate_executor_processes(executor)
+                        terminate_executor()
+
+                except BaseException:
+                    # KeyboardInterrupt/SystemExit duerfen nie zuerst durch
+                    # ProcessPoolExecutor.__exit__ -> shutdown(wait=True) laufen.
+                    terminate_executor()
+                    raise
+                else:
+                    if not executor_stopped:
+                        try:
+                            executor.shutdown(wait=True)
+                        except BaseException:
+                            terminate_executor()
+                            raise
 
             except InterruptedError:
                 # H7-Fix: sauberer User-Abbruch — nach oben durchreichen,
@@ -405,10 +461,11 @@ class ParallelAnalyzer:
                                     break
                                 if time.monotonic() >= deadline:
                                     raise TimeoutError()
-                            if track:
+                            if _is_successful_analysis_result(track):
                                 completed_count += 1
                                 status_msg = f"Analyzed (Safe Mode): {os.path.basename(file_path)}"
                             else:
+                                track = None
                                 status_msg = f"[FAILED] {os.path.basename(file_path)}"
                         except (BrokenProcessPool, RuntimeError) as e:
                             # Ein einzelner Worker-Crash beweist keine Dateikorruption:
@@ -419,7 +476,7 @@ class ParallelAnalyzer:
                             track = None
                             # Pool ist beschaedigt — fuer die naechste Datei neu anlegen
                             if recovery_executor is not None:
-                                recovery_executor.shutdown(wait=False, cancel_futures=True)
+                                _terminate_executor_processes(recovery_executor)
                                 recovery_executor = None
                         except TimeoutError:
                             logger.warning(f"Timeout im Safe-Modus bei {os.path.basename(file_path)}")
@@ -443,17 +500,33 @@ class ParallelAnalyzer:
                         finished_count += 1
                         if progress_callback and status_msg:
                             progress_callback(finished_count, total_files, status_msg)
+                except BaseException:
+                    if recovery_executor is not None:
+                        _terminate_executor_processes(recovery_executor)
+                        recovery_executor = None
+                    raise
                 finally:
                     # Cleanup garantiert — auch bei InterruptedError aus dem Callback
                     if recovery_executor is not None:
-                        recovery_executor.shutdown(wait=False, cancel_futures=True)
+                        executor_to_shutdown = recovery_executor
+                        recovery_executor = None
+                        try:
+                            executor_to_shutdown.shutdown(
+                                wait=False, cancel_futures=True
+                            )
+                        except BaseException:
+                            _terminate_executor_processes(executor_to_shutdown)
+                            raise
 
             # Apply batch results to master list
             for idx, track in batch_results.items():
                 analyzed_tracks[idx] = track
 
         # Filter out None values (failed analyses)
-        successful_tracks = [track for track in analyzed_tracks if track is not None]
+        successful_tracks = [
+            track for track in analyzed_tracks
+            if _is_successful_analysis_result(track)
+        ]
 
         logger.info(f"Analyse fertig: {len(successful_tracks)}/{total_files} erfolgreich")
 

@@ -1,5 +1,36 @@
 # AGENTS.md
 
+## OpenClaw-Hochpraezisionsmodus
+
+Dieser Ordner ist der Workspace des OpenClaw-Agenten `hpg`. Arbeite nur an
+dem vom Auftrag betroffenen Teil des Repositories. `Claude-Autopilot-v5/`,
+`Claude-Autopilot-v6/` und `Claude-Autopilot-v6.zip` sind bestehende,
+ungetrackte Benutzerartefakte: nie aendern, verschieben, stagen oder in einen
+Commit aufnehmen.
+
+Vor jeder nichttrivialen Aenderung zuerst `hpg-orientation` und danach den
+passenden HPG-Skill laden. Die Fachrollen liegen unter `.agents/agents/`:
+
+- Audio/Analyse: `hpg-analyse`; Mixpunkte/Paarung: `hpg-mixpoints`;
+  Scoring/Strategien: `hpg-scoring`; Cache: `hpg-cache`.
+- PyQt6 und `main.py`: `hpg-gui`; Rekordbox: `hpg-rekordbox`; Rendering:
+  `hpg-render`; Tests: `hpg-tests`; Messung/Statistik: `hpg-statistik`.
+- Vor der Umsetzung und vor jedem Commit muss ein unabhaengiger,
+  schreibgeschuetzter Pruefdurchgang nach `.agents/agents/hpg-waechter.md`
+  erfolgen. Sein Urteil ist DURCHGEWUNKEN, MIT AUFLAGEN oder
+  ZURUECKGEWIESEN.
+
+Parallelisiere nur voneinander unabhaengige Recherche-, Review- oder
+Testvorbereitung. Starte nie zwei volle pytest-Laeufe gleichzeitig: `pytest`
+nutzt bereits `-n auto`. Fuer Abschlussbelege immer
+`venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` verwenden;
+`--no-cov` ist nur fuer den lokalen Entwicklungszyklus erlaubt.
+
+Bei Analyse-, Mixpoint-, Cache-, Genre- oder GUI-Aenderungen die in den
+Fach-Skills definierten Invarianten explizit pruefen. Kein Abschluss ohne
+Testbeleg, keine unbelegte Erfolgsmeldung, keine Aenderung von Cache-,
+Datenbank-, Lock- oder Coverage-Dateien.
+
 This file provides guidance to Codex when working with code in this repository.
 
 # HPG - Harmonic Playlist Generator (v3.7.2)
@@ -23,15 +54,14 @@ Behauptung aus einem Markdown vor Gebrauch im Code nachpruefen.
 ## Projektarchitektur
 
 ```
-main.py                    # PyQt6 GUI (rund 4900 Zeilen, Stand 2026-08-14),
-                           # QThread-Worker-Muster
+main.py                    # PyQt6 GUI, QThread-Worker-Muster
 hpg_core/                  # Core analysis modules
   models.py                # Track-Dataclass, Camelot-Map, TrackSection
   analysis.py              # Audio-Analyse (librosa): BPM, Key, Energy, Sections
   downbeat.py              # Downbeat- und Phrasen-Anker
   config.py                # Alle konfigurierbaren Konstanten
   genres.py                # Single Source of Truth: 9 kanonische Genres + Drift-Validierung
-  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 28
+  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 40
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Breakdown/Drop/Outro)
@@ -48,7 +78,7 @@ hpg_core/                  # Core analysis modules
   logging_config.py        # Logging-Setup
   app_metadata.py          # APP_VERSION, MIN_PYTHON (Single Source)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest (1389 Tests, gemessen 2026-08-14)
+tests/                     # pytest (2035 bestanden, gemessen 2026-08-25)
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
 docs/archive/              # Erledigte Plaene und historische Dokumente
@@ -96,7 +126,7 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
 
 - `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`, `*.coverage` —
   Cache-/System-Dateien. Der Laufzeit-Cache liegt ausserhalb des Repos unter
-  `%LOCALAPPDATA%\HPG\hpg_cache_v28.db` (ueberschreibbar mit `HPG_CACHE_DIR`
+  `%LOCALAPPDATA%\HPG\hpg_cache_v40.db` (ueberschreibbar mit `HPG_CACHE_DIR`
   bzw. `HPG_CACHE_FILE`).
 
 ## Analyse-Pipeline

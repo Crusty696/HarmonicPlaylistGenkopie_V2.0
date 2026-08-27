@@ -1,7 +1,9 @@
 """Tests: Kandidaten im Playlist-Scoring und in den Empfehlungen (Spec Abschnitt 4)."""
 import pytest
+from copy import deepcopy
 
 from hpg_core import playlist as pl
+from hpg_core.genres import CANONICAL_GENRES
 from hpg_core.mix_candidates import MixCandidate
 from hpg_core.models import Track
 
@@ -39,8 +41,14 @@ def _track(name, bpm=140.0, camelot="8A", outs=(), ins=()):
     t.phrase_unit = 16
     t.first_downbeat = 0.0
     t.downbeat_confidence = 1.0
+    t.beatgrid_source = "rekordbox"
+    t.beatgrid_status = "verified"
+    t.beatgrid_windows_checked = 3
+    t.beatgrid_max_phase_error_ms = 0.0
+    t.analysis_mode = "test_fixture"
     t.sections = _sections()
     t.outro_covered = True
+    t.analysis_coverage = [{"start": 0.0, "end": t.duration}]
     t.camelotCode = camelot
     t.keyNote = "A"
     t.keyMode = "Minor"
@@ -60,7 +68,18 @@ def test_enhanced_compatibility_nutzt_kandidat_wenn_vorhanden():
     assert m.kandidat is not None and m.kandidat["rang"] == 1
     assert m.loudness_match == pytest.approx(1.0) and m.structure_match is not None
     assert m.groove_match == pytest.approx(m.kandidat["teilwerte"]["groove"])
-    assert m.overall_score == pytest.approx(min(1.0, m.kandidat["score"] + m.ai_bonus))
+    assert m.overall_score != pytest.approx(m.kandidat["score"])
+    assert m.ai_bonus == 0.0
+
+
+def test_transition_metrics_akzeptiert_keinen_score_bonus():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    kandidat = pl._kandidaten_fuer_paar(a, b, 2.0, None, {})[0]
+
+    with pytest.raises(TypeError):
+        pl.transition_metrics_from_candidate(kandidat, ai_bonus=0.14)
 
 
 def test_enhanced_compatibility_ohne_kandidaten_wie_bisher():
@@ -76,6 +95,125 @@ def test_bpm_hard_gate_bleibt_auch_mit_kandidat():
     assert pl.calculate_enhanced_compatibility(a, b, 2.0).overall_score == 0.0
 
 
+def test_run_scoring_context_friert_genreprofile_und_unknown_ohne_praeferenz_ein(
+    monkeypatch,
+):
+    from hpg_core import candidate_preferences as cp
+    from hpg_core import tolerances as tol
+
+    basis = {
+        genre: {
+            "marker": genre,
+            **{
+                f"kandidaten_{faktor}_weight": 0.1
+                for faktor in (
+                    "harmonic", "bpm", "energy", "genre", "groove", "bass",
+                    "timbre", "mood", "loudness", "structure",
+                )
+            },
+        }
+        for genre in (*CANONICAL_GENRES, "Unknown")
+    }
+    pref = {
+        key: (1.0 if key == "kandidaten_harmonic_weight" else 0.0)
+        for key in cp.GEWICHT_SCHLUESSEL
+    }
+    monkeypatch.setattr(tol, "get_tolerances", lambda genre: basis[genre])
+    monkeypatch.setattr(
+        cp, "kandidaten_gewichte", lambda genre: pref if genre == "Psytrance" else None
+    )
+    monkeypatch.setattr(
+        cp, "schema_rangfolge", lambda genre: ["sektion", genre]
+    )
+
+    context = pl.resolve_run_scoring_context(
+        "Harmonic Flow", {"harmonic_strictness": 9}
+    )
+    profile = context["candidate_tolerances_by_genre"]
+    schema = context["candidate_schema_ranks_by_genre"]
+    assert set(profile) == {*CANONICAL_GENRES, "Unknown"}
+    assert profile["Psytrance"]["kandidaten_harmonic_weight"] == 1.0
+    assert profile["Psytrance"]["marker"] == "Psytrance"
+    assert profile["Unknown"]["kandidaten_harmonic_weight"] == 0.1
+    assert schema["Psytrance"] == ["sektion", "Psytrance"]
+    assert schema["Unknown"] == []
+
+    basis["Psytrance"]["marker"] = "live-geaendert"
+    pref["kandidaten_harmonic_weight"] = 0.0
+    assert profile["Psytrance"]["marker"] == "Psytrance"
+    assert profile["Psytrance"]["kandidaten_harmonic_weight"] == 1.0
+
+
+def test_kandidatenprofil_kommt_vom_quellgenre_und_ist_cachebestandteil(monkeypatch):
+    from hpg_core import pair_candidates as pc
+
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    a.detected_genre = "Techno"
+    aufrufe = []
+
+    def rank(*args, **kwargs):
+        aufrufe.append(kwargs)
+        return []
+
+    monkeypatch.setattr(pc, "rank_pair_candidates", rank)
+    pl.reset_pair_candidate_cache()
+    context = {
+        "candidate_tolerances_by_genre": {
+            "Techno": {"marker": 1}, "Unknown": {"marker": 0}
+        },
+        "candidate_schema_ranks_by_genre": {
+            "Techno": ["sektion"], "Unknown": []
+        },
+    }
+    pl._kandidaten_fuer_paar(a, b, 2.0, None, context)
+    pl._kandidaten_fuer_paar(a, b, 2.0, None, deepcopy(context))
+    assert len(aufrufe) == 1
+    assert aufrufe[0]["tolerances"] == {"marker": 1}
+    assert aufrufe[0]["schema_rang"] == ["sektion"]
+
+    context["candidate_tolerances_by_genre"]["Techno"]["marker"] = 2
+    pl._kandidaten_fuer_paar(a, b, 2.0, None, context)
+    assert len(aufrufe) == 2
+    assert aufrufe[1]["tolerances"] == {"marker": 2}
+
+
+def test_generate_playlist_nutzt_expliziten_kontext_und_advanced_sortierwerte(
+    monkeypatch,
+):
+    tracks = [_track("a.mp3"), _track("b.mp3")]
+    context = {"harmonic_strictness": 9}
+    gesehen = {}
+
+    def sorter(items, bpm_tolerance, **kwargs):
+        gesehen["sort"] = kwargs
+        return items
+
+    def quality(items, bpm_tolerance, scoring_context, transition_metrics=None):
+        gesehen["quality"] = scoring_context
+        assert transition_metrics is not None
+        return {
+            "overall_score": 1.0, "harmonic_flow": 1.0,
+            "energy_consistency": 1.0, "bpm_smoothness": 1.0,
+        }
+
+    monkeypatch.setitem(pl.STRATEGIES, "Peak-Time", sorter)
+    monkeypatch.setattr(pl, "calculate_playlist_quality", quality)
+    pl.generate_playlist(
+        tracks, "Peak-Time", 2.0,
+        advanced_params={"peak_position": 55, "harmonic_strictness": 1},
+        scoring_context=context,
+    )
+    assert gesehen["sort"]["peak_position"] == 55
+    assert gesehen["sort"]["harmonic_strictness"] == 9
+    profiles = gesehen["sort"]["candidate_tolerances_by_genre"]
+    assert "Psytrance" in profiles
+    assert gesehen["quality"]["harmonic_strictness"] == 9
+    assert gesehen["quality"]["candidate_tolerances_by_genre"] == profiles
+    assert gesehen["quality"]["candidate_schema_ranks_by_genre"]["Unknown"] == []
+
+
 def test_recommendations_tragen_kandidaten_und_plan_aus_rang_1():
     g = (60.0 / 140.0) * 4 * 16
     a = _track("a.mp3", outs=[_voll(round(5 * g, 3)), _voll(round(6 * g, 3), schema=["sektion"])])
@@ -85,7 +223,7 @@ def test_recommendations_tragen_kandidaten_und_plan_aus_rang_1():
     assert r.kandidaten and r.kandidat_aktiv == 1
     k1 = r.kandidaten[0]
     assert r.plan.mix_out_a == pytest.approx(k1["t_out"]) and r.plan.mix_in_b == pytest.approx(k1["t_in"])
-    assert r.plan.overlap == pytest.approx(min(k1["overlap_sec"], 64.0))
+    assert r.plan.overlap == pytest.approx(k1["overlap_sec"])
     assert r.fade_out_end == pytest.approx(min(r.plan.mix_out_a + r.plan.overlap, 300.0))
 
 
@@ -161,7 +299,7 @@ def test_kette_gespeicherte_wahl_gewinnt_wenn_konsistent(monkeypatch, tmp_path):
     cc.merke("a.mp3", "b.mp3", t_out=letzte["t_out"], t_in=letzte["t_in"], blend_bars=letzte["blend_bars"])
     recs2 = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)
     assert recs2[0].plan.mix_out_a == pytest.approx(letzte["t_out"], abs=0.01)
-    assert recs2[0].plan.overlap == pytest.approx(min(letzte["overlap_sec"], 64.0))
+    assert recs2[0].plan.overlap == pytest.approx(letzte["overlap_sec"])
     assert recs2[0].kandidat_aktiv == 1 and recs2[0].kandidaten[0]["flags"]["gespeicherte_wahl"] is True
     cc.reset_cache()
     pl_mod.reset_pair_candidate_cache()

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from .models import (
     Track,
     key_to_camelot,
@@ -9,6 +11,7 @@ from .models import (
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
+    _get_intro_end_from_sections,
     _get_outro_start_from_sections,
     get_genre_compatibility,
     generate_dj_recommendation,
@@ -25,23 +28,27 @@ from .config import (
     DEFAULT_BPM,
     MAX_TRANSITION_OVERLAP_SECONDS,
     MIN_TRANSITION_BARS,
-    TRANSITION_FEATURES_ENABLED,
+    PAAR_BPM_MAX,
 )
 from .genres import CANONICAL_GENRES
-from .tolerances import get_tolerances
-
-# Fuer den Genre-Aufloesungs-Check in calculate_enhanced_compatibility:
-# derselbe casefold wie in dj_brain.get_genre_compatibility.
-_CANONICAL_CASEFOLD = frozenset(g.casefold() for g in CANONICAL_GENRES)
 from .transition_features import (
     bass_continuity,
     groove_match,
     mood_match,
     timbre_match,
 )
+
+_CANONICAL_CASEFOLD = frozenset(genre.casefold() for genre in CANONICAL_GENRES)
 import logging
 import heapq
 import math
+import unicodedata
+import uuid
+import weakref
+from numbers import Real
+from itertools import permutations
+from copy import deepcopy
+from collections.abc import Mapping
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -54,6 +61,76 @@ SMOOTHING_ENERGY_DISRUPTION_MAX = 20  # max. Energiesprung fuer harmonischen Swa
 SMOOTHING_MAX_ITERATIONS = 3          # Passes im harmonic-smoothing-Loop
 LOOKAHEAD_FUTURE_WEIGHT = 0.7         # Gewicht des Lookahead-Zukunftsterms
 VOCAL_CLASH_PENALTY = 0.06            # Abzug wenn BEIDE Tracks vocal sind (D2-light)
+
+
+def _freeze_immutable(value):
+    """Kanonische, tief unveraenderliche Result-Repräsentation."""
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Result-Wert muss endlich sein")
+        return value
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, Enum):
+        return _freeze_immutable(value.value)
+    if isinstance(value, Mapping):
+        return tuple(
+            (
+                unicodedata.normalize("NFC", str(key)),
+                _freeze_immutable(item),
+            )
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_immutable(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        frozen = [_freeze_immutable(item) for item in value]
+        return tuple(sorted(frozen, key=repr))
+    raise ValueError(f"Result-Werttyp nicht unterstuetzt: {type(value).__name__}")
+
+
+def _thaw_immutable(value):
+    """Defensive Legacy-Kopie einer eingefrorenen Result-Struktur."""
+    if isinstance(value, dict):
+        return {key: _thaw_immutable(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        if all(
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
+            for item in value
+        ):
+            return {key: _thaw_immutable(item) for key, item in value}
+        return [_thaw_immutable(item) for item in value]
+    return value
+
+
+def _freeze_choice_snapshot(value: Mapping) -> tuple:
+    """Friert Kandidatenwahlen ein, ohne ihre Tupel-Schluessel zu verlieren."""
+    if not isinstance(value, Mapping):
+        raise ValueError("candidate_choice_snapshot muss ein Mapping sein")
+    return tuple(
+        sorted(
+            (
+                (_freeze_immutable(key), _freeze_immutable(item))
+                for key, item in value.items()
+            ),
+            key=lambda pair: repr(pair[0]),
+        )
+    )
+
+
+def _thaw_choice_key(value):
+    if isinstance(value, tuple):
+        return tuple(_thaw_choice_key(item) for item in value)
+    return value
+
+
+def _thaw_choice_snapshot(value: tuple) -> dict:
+    return {
+        _thaw_choice_key(key): _thaw_immutable(item)
+        for key, item in value
+    }
 
 
 @dataclass(frozen=True)
@@ -70,23 +147,73 @@ class StrategyConfig:
     overlap: float = 16.0
 
     @classmethod
-    def from_mapping(cls, values: Optional[Dict]) -> "StrategyConfig":
-        source = values or {}
+    def from_mapping(cls, values: Optional[Mapping]) -> "StrategyConfig":
+        if values is None:
+            source = {}
+        elif not isinstance(values, Mapping):
+            raise ValueError("advanced_params muss ein Mapping oder None sein")
+        else:
+            source = dict(values)
+        allowed = {
+            "energy_direction", "peak_position", "harmonic_strictness",
+            "allow_experimental", "genre_mixing", "genre_weight",
+            "target_energy", "overlap",
+        }
+        unknown = sorted(set(source) - allowed, key=repr)
+        if unknown:
+            raise ValueError(
+                "advanced_params enthaelt unbekannte Schluessel: "
+                + ", ".join(repr(key) for key in unknown)
+            )
+
+        energy_direction = source.get("energy_direction", "Auto")
+        if type(energy_direction) is not str or energy_direction not in SCORING_ENERGY_DIRECTIONS:
+            raise ValueError("advanced_params.energy_direction ist nicht unterstuetzt")
+
+        peak_position = source.get("peak_position", 70)
+        if type(peak_position) is not int or not 40 <= peak_position <= 80:
+            raise ValueError("advanced_params.peak_position muss eine Ganzzahl 40..80 sein")
+
+        harmonic_strictness = source.get("harmonic_strictness", 7)
+        if type(harmonic_strictness) is not int or not 1 <= harmonic_strictness <= 10:
+            raise ValueError(
+                "advanced_params.harmonic_strictness muss eine Ganzzahl 1..10 sein"
+            )
+
+        allow_experimental = source.get("allow_experimental", True)
+        if type(allow_experimental) is not bool:
+            raise ValueError("advanced_params.allow_experimental muss Boolean sein")
+        genre_mixing = source.get("genre_mixing", True)
+        if type(genre_mixing) is not bool:
+            raise ValueError("advanced_params.genre_mixing muss Boolean sein")
+
+        def finite_real(name, default, minimum, maximum, *, allow_none=False):
+            value = source.get(name, default)
+            if allow_none and value is None:
+                return None
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not math.isfinite(float(value))
+                or not minimum <= float(value) <= maximum
+            ):
+                raise ValueError(
+                    f"advanced_params.{name} muss eine endliche Zahl "
+                    f"zwischen {minimum:g} und {maximum:g} sein"
+                )
+            return float(value)
+
         return cls(
-            energy_direction=str(source.get("energy_direction", "Auto")),
-            peak_position=max(40, min(80, int(source.get("peak_position", 70)))),
-            harmonic_strictness=max(
-                1, min(10, int(source.get("harmonic_strictness", 7)))
+            energy_direction=energy_direction,
+            peak_position=peak_position,
+            harmonic_strictness=harmonic_strictness,
+            allow_experimental=allow_experimental,
+            genre_mixing=genre_mixing,
+            genre_weight=finite_real("genre_weight", 0.3, 0.0, 1.0),
+            target_energy=finite_real(
+                "target_energy", None, 0.0, 100.0, allow_none=True
             ),
-            allow_experimental=bool(source.get("allow_experimental", True)),
-            genre_mixing=bool(source.get("genre_mixing", True)),
-            genre_weight=max(0.0, min(1.0, float(source.get("genre_weight", 0.3)))),
-            target_energy=(
-                None
-                if source.get("target_energy") is None
-                else max(0.0, min(100.0, float(source["target_energy"])))
-            ),
-            overlap=max(4.0, min(64.0, float(source.get("overlap", 16.0)))),
+            overlap=finite_real("overlap", 16.0, 4.0, 64.0),
         )
 
     def effective_kwargs(self, strategy: str) -> Dict:
@@ -114,9 +241,8 @@ class TransitionMetrics:
     genre_compatibility: float
     overall_score: float
     ai_bonus: float = 0.0
-    # Vier neue Transition-Faktoren (nur befuellt bei TRANSITION_FEATURES_ENABLED).
-    # None = nicht bestimmbar (Umverteilung): der Faktor faellt samt Gewicht aus
-    # der gewichteten Summe, statt als 0 still zu bestrafen.
+    # Lokale Faktoren des konkreten Mixfenster-Paars. None bedeutet, dass kein
+    # vollstaendig bewertbarer lokaler Uebergang vorhanden ist.
     groove_match: Optional[float] = None
     bass_continuity: Optional[float] = None
     timbre_match: Optional[float] = None
@@ -125,6 +251,8 @@ class TransitionMetrics:
     # PairCandidate; None, wenn das Paar ohne Kandidaten bewertet wurde.
     loudness_match: Optional[float] = None
     structure_match: Optional[float] = None
+    energy_delta: Optional[float] = None
+    lufs_delta: Optional[float] = None
     kandidat: Optional[dict] = None   # PairCandidate.to_dict() von Rang 1
 
 
@@ -177,6 +305,136 @@ class TransitionPlan:
         return int(round(self.overlap * self.target_sr))
 
 
+@dataclass(frozen=True, slots=True)
+class TrackOccurrence:
+    run_id: str
+    ordinal: int
+    track: Track
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_id, str) or not self.run_id:
+            raise ValueError("run_id muss eine nichtleere Zeichenkette sein")
+        if (
+            isinstance(self.ordinal, bool)
+            or not isinstance(self.ordinal, int)
+            or self.ordinal < 0
+        ):
+            raise ValueError("ordinal muss eine nichtnegative ganze Zahl sein")
+        if not isinstance(self.track, Track):
+            raise ValueError("track muss ein Track sein")
+
+    @property
+    def occurrence_id(self) -> tuple[str, int]:
+        return (self.run_id, self.ordinal)
+
+
+@dataclass(frozen=True, slots=True)
+class ImmutableMetricsSnapshot:
+    harmonic_score: int
+    bpm_smoothness: float
+    energy_flow: float
+    genre_compatibility: float
+    overall_score: float
+    ai_bonus: float = 0.0
+    groove_match: Optional[float] = None
+    bass_continuity: Optional[float] = None
+    timbre_match: Optional[float] = None
+    mood_match: Optional[float] = None
+    loudness_match: Optional[float] = None
+    structure_match: Optional[float] = None
+    energy_delta: Optional[float] = None
+    lufs_delta: Optional[float] = None
+    kandidat: Optional["CandidateSnapshot"] = None
+
+
+@dataclass(frozen=True, slots=True)
+class ImmutableRecommendationSnapshot:
+    index: int
+    from_occurrence_id: tuple[str, int]
+    to_occurrence_id: tuple[str, int]
+    fade_out_start: float
+    fade_out_end: float
+    fade_in_start: float
+    mix_entry: float
+    overlap: float
+    bpm_delta: float
+    energy_delta: int
+    compatibility_score: int
+    risk_level: str
+    notes: str
+    transition_type: str
+    plan: Optional[TransitionPlan]
+    candidates: tuple["CandidateSnapshot", ...]
+    active_candidate_key: Optional[tuple]
+    candidate_consistent: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BoundaryResult:
+    index: int
+    from_occurrence_id: tuple[str, int]
+    to_occurrence_id: tuple[str, int]
+    snapshots: tuple["CandidateSnapshot", ...]
+    selected: Optional["CandidateSnapshot"]
+    metrics: ImmutableMetricsSnapshot
+    recommendation: ImmutableRecommendationSnapshot
+    consistent: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GraphStats:
+    input_tracks: int
+    valid_tracks: int
+    invalid_bpm_excluded: int
+    boundaries_total: int
+    boundaries_with_candidates: int
+    boundaries_without_candidates: int
+    candidate_snapshots: int
+    saved_present: int
+
+
+@dataclass(frozen=True, slots=True)
+class PathStats:
+    boundaries_total: int
+    with_candidates: int
+    planned: int
+    unplanned: int
+    saved_present: int
+    saved_honored: int
+    link_checks: int
+    consistent_links: int
+    segments: int
+    segment_restarts: int
+    states_retained: int
+    total_score: float
+
+
+@dataclass(frozen=True, slots=True)
+class PlaylistGenerationResult:
+    run_id: str
+    mode: str
+    tracks: tuple[Track, ...]
+    occurrences: tuple[TrackOccurrence, ...]
+    boundaries: tuple[BoundaryResult, ...]
+    metrics: tuple[ImmutableMetricsSnapshot, ...]
+    recommendations: tuple[ImmutableRecommendationSnapshot, ...]
+    quality: tuple[tuple[str, float], ...]
+    scoring_context: tuple[tuple[str, object], ...]
+    candidate_choice_snapshot: tuple
+    graph_stats: GraphStats
+    path_stats: PathStats
+    bpm_tolerance: float
+
+    def quality_dict(self) -> dict[str, float]:
+        return dict(self.quality)
+
+    def scoring_context_dict(self) -> dict:
+        return _thaw_immutable(dict(self.scoring_context))
+
+    def candidate_choice_snapshot_dict(self) -> dict:
+        return _thaw_choice_snapshot(self.candidate_choice_snapshot)
+
+
 @dataclass
 class TransitionDescriptionParams:
     """Parameters for building a transition description."""
@@ -199,17 +457,36 @@ class EnergyDirection(Enum):
     MAINTAIN = "maintain"
 
 
-def _track_cache_key(track: Track) -> str | int:
-    """Liefert eine stabile Identitaet fuer Scoring-Caches und Entnahmen."""
-    track_id = getattr(track, "track_id", None)
-    return track_id if track_id else id(track)
+def _normalize_energy_direction(value) -> Optional[EnergyDirection]:
+    """Normalisiert GUI-Presets und API-Werte auf den einen Scoring-Vertrag."""
+    if isinstance(value, EnergyDirection):
+        return value
+    if not isinstance(value, str):
+        return None
+    return {
+        "build up": EnergyDirection.UP,
+        "up": EnergyDirection.UP,
+        "cool down": EnergyDirection.DOWN,
+        "down": EnergyDirection.DOWN,
+        "maintain": EnergyDirection.MAINTAIN,
+    }.get(value.strip().casefold())
+
+
+def _track_cache_key(track: Track) -> int:
+    """Trennt Track-Instanzen in den kurzlebigen Scoring-Caches.
+
+    ``track_id`` ist absichtlich pfadbasiert und kann deshalb mehrere
+    Occurrences oder verschieden analysierte Instanzen derselben Datei
+    bezeichnen. Die Caches leben nur waehrend einer Generierung; dort ist die
+    Objektidentitaet stabil und verhindert falsche Treffer zwischen Instanzen.
+    """
+    return id(track)
 
 
 def _remove_track(items: list[Track], target: Track) -> None:
     """Entfernt einen Track ohne den teuren Deep-Vergleich der Track-Dataclass."""
-    target_key = _track_cache_key(target)
     for index, candidate in enumerate(items):
-        if candidate is target or _track_cache_key(candidate) == target_key:
+        if candidate is target:
             del items[index]
             return
     raise ValueError("Track nicht in der Arbeitsliste gefunden")
@@ -222,12 +499,9 @@ def _enhanced_cache_key(
     energy_direction: Optional[EnergyDirection],
     kwargs: Dict,
 ) -> tuple:
-    direction = (
-        energy_direction.value
-        if isinstance(energy_direction, EnergyDirection)
-        else str(energy_direction)
-    )
-    options = tuple(sorted((key, repr(value)) for key, value in kwargs.items()))
+    normalized_direction = _normalize_energy_direction(energy_direction)
+    direction = normalized_direction.value if normalized_direction is not None else None
+    options = _stable_fingerprint(kwargs)
     return (
         _track_cache_key(track1),
         _track_cache_key(track2),
@@ -237,17 +511,35 @@ def _enhanced_cache_key(
     )
 
 
-def calculate_ai_compatibility_bonus(track1: Track, track2: Track) -> float:
-    """Liefert den einzigen KI-Bonus als normierten Wert von 0 bis 0.14.
+def _stable_fingerprint(value):
+    """Hashbarer, reihenfolgeunabhaengiger Fingerprint fuer Run-Kontexte."""
+    if isinstance(value, Mapping):
+        return tuple(
+            (str(key), _stable_fingerprint(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_stable_fingerprint(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_stable_fingerprint(item) for item in value), key=repr))
+    if isinstance(value, Enum):
+        return (type(value).__name__, value.value)
+    try:
+        hash(value)
+    except TypeError:
+        return repr(value)
+    return value
 
-    HPG-002-Fix: Bonus nur bei gueltiger, aktueller Provenienz beider Tracks —
-    beliebige oder veraltete ai_metadata ergeben deterministisch 0.0.
+
+def calculate_ai_compatibility_bonus(track1: Track, track2: Track) -> float:
+    """Berechnet den stillgelegten Legacy-KI-Abgleich von 0 bis 0.14.
+
+    Die Funktion bleibt vorerst fuer API-/Datenkompatibilitaet erhalten. Kein
+    produktiver Scorepfad konsumiert ihren Rueckgabewert; die lokale Wertung
+    stammt ausschliesslich aus ``PairCandidate.score``.
     """
     # Lazy-Import: ai_engine zieht requests, das Core-Scoring soll ohne laufen.
-    # MED-Fix: defensiv importieren — ein Fehler in ai_engine (fehlendes
-    # requests, kaputter Import) darf nicht die gesamte Scoring-Kette (und damit
-    # alle Sortier-Strategien) abbrechen; dann verhaelt es sich wie dokumentiert
-    # (kein KI-Bonus -> 0.0).
+    # Defensiver Lazy-Import fuer bestehende externe Aufrufer.
     try:
         from .ai_engine import has_valid_provenance
     except Exception:
@@ -324,7 +616,13 @@ def _resolve_track_genre(track: Track) -> str:
     return track.genre if (track.genre and track.genre != "Unknown") else "Unknown"
 
 
-def _kandidaten_fuer_paar(track1: Track, track2: Track, energy_direction, kwargs: dict) -> list:
+def _kandidaten_fuer_paar(
+    track1: Track,
+    track2: Track,
+    bpm_tolerance: float,
+    energy_direction,
+    kwargs: dict,
+) -> list:
     """PairCandidates des Paars in App-Reihenfolge (pair_candidates.rank_pair_candidates),
     dauerhaft gecacht in _PAIR_CANDIDATE_CACHE (Schluessel: Track-Identitaet,
     energy_direction, kwargs; geleert von reset_pair_candidate_cache, das Wahl,
@@ -332,20 +630,72 @@ def _kandidaten_fuer_paar(track1: Track, track2: Track, energy_direction, kwargs
     Kandidaten traegt."""
     if not (getattr(track1, "mix_out_candidates", None) and getattr(track2, "mix_in_candidates", None)):
         return []
+    try:
+        tolerance = float(bpm_tolerance)
+    except (TypeError, ValueError):
+        return []
+    bpm_diff, _ = effective_bpm_diff(track1.bpm, track2.bpm)
+    if not math.isfinite(tolerance) or tolerance < 0.0 or bpm_diff > tolerance:
+        return []
+    direction = _normalize_energy_direction(energy_direction)
+    genre = _resolve_track_genre(track1)
+    toleranzprofile = kwargs.get("candidate_tolerances_by_genre")
+    if isinstance(toleranzprofile, Mapping):
+        tolerances = toleranzprofile.get(
+            genre, toleranzprofile.get("Unknown", {})
+        )
+    else:
+        tolerances = None
+    schema_profile = kwargs.get("candidate_schema_ranks_by_genre")
+    if isinstance(schema_profile, Mapping):
+        schema_rang = schema_profile.get(
+            genre, schema_profile.get("Unknown", [])
+        )
+    else:
+        schema_rang = None
+    choice_snapshot = kwargs.get("candidate_choice_snapshot")
+    if isinstance(choice_snapshot, Mapping):
+        from . import candidate_choices
+
+        wahl = choice_snapshot.get(
+            candidate_choices.schluessel(track1.filePath, track2.filePath), {}
+        )
+    else:
+        wahl = None
     # Lazy: pair_candidates importiert playlist-Teile lazy — kein Zyklus auf Modulebene.
     from .pair_candidates import rank_pair_candidates
     key = (
-        _track_cache_key(track1), _track_cache_key(track2), repr(getattr(energy_direction, "value", energy_direction)),
-        repr(sorted((k, repr(v)) for k, v in kwargs.items())),
+        id(track1), id(track2), _track_cache_key(track1), _track_cache_key(track2),
+        tolerance, direction.value if direction is not None else None,
+        _stable_fingerprint({
+            k: v for k, v in kwargs.items()
+            if k not in {
+                "energy_direction",
+                "candidate_tolerances_by_genre",
+                "candidate_schema_ranks_by_genre",
+                "candidate_choice_snapshot",
+            }
+        }),
+        _stable_fingerprint(tolerances),
+        _stable_fingerprint(schema_rang),
+        _stable_fingerprint(wahl),
     )
-    if key in _PAIR_CANDIDATE_CACHE:
-        return _PAIR_CANDIDATE_CACHE[key]
+    cached = _PAIR_CANDIDATE_CACHE.get(key)
+    if cached is not None:
+        cached_track1, cached_track2, paare = cached
+        if cached_track1() is track1 and cached_track2() is track2:
+            return paare
     paare = rank_pair_candidates(
-        track1, track2, energy_direction=energy_direction,
+        track1, track2, bpm_tolerance=tolerance, energy_direction=direction,
         harmonic_strictness=kwargs.get("harmonic_strictness", 7),
         allow_experimental=kwargs.get("allow_experimental", True),
+        tolerances=tolerances,
+        wahl=wahl,
+        schema_rang=schema_rang,
     )
-    _PAIR_CANDIDATE_CACHE[key] = paare
+    # Weakrefs pruefen bei einer spaeteren id()-Wiederverwendung die Identitaet,
+    # ohne alte Analyse-Trackobjekte dauerhaft im Speicher zu halten.
+    _PAIR_CANDIDATE_CACHE[key] = (weakref.ref(track1), weakref.ref(track2), paare)
     return paare
 
 
@@ -356,8 +706,9 @@ def calculate_enhanced_compatibility(
     energy_direction: Optional[EnergyDirection] = None,
     **kwargs,
 ) -> TransitionMetrics:
-    """Enhanced compatibility calculation with multiple factors."""
+    """Bewertet nur individuelle lokale Mixfenster beider Tracks."""
 
+    energy_direction = _normalize_energy_direction(energy_direction)
     cache_key = _enhanced_cache_key(
         track1, track2, bpm_tolerance, energy_direction, kwargs
     )
@@ -366,191 +717,204 @@ def calculate_enhanced_compatibility(
         if cached is not None:
             return cached
 
-    # AUDIT-FIX F06 (2026-07-24): energy_direction kommt aus den Strategien als
-    # STRING ("Build Up"/"Cool Down"/"Maintain") ueber **kwargs an den
-    # Enum-Parameter — vorher band der String dort still an und ALLE
-    # Enum-Vergleiche schlugen fehl (energy_flow degradierte stumm zum
-    # else-Zweig). Jetzt: String defensiv auf den Enum mappen.
-    if isinstance(energy_direction, str):
-        energy_direction = {
-            "Build Up": EnergyDirection.UP,
-            "up": EnergyDirection.UP,
-            "Cool Down": EnergyDirection.DOWN,
-            "down": EnergyDirection.DOWN,
-            "Maintain": EnergyDirection.MAINTAIN,
-            "maintain": EnergyDirection.MAINTAIN,
-        }.get(energy_direction, None)
-
-    # Basic harmonic compatibility
-    # M2-Fix: kwargs (harmonic_strictness, allow_experimental) durchreichen —
-    # vorher fielen die UI-Parameter im Enhanced-Pfad auf Defaults zurueck
-    harmonic_score = _calculate_compatibility_inner(
-        track1, track2, bpm_tolerance, **kwargs
-    )
-
-    # BPM smoothness (exponential decay, mit Half/Double-Erkennung)
     bpm_diff, _ = effective_bpm_diff(track1.bpm, track2.bpm)
-    if bpm_diff > bpm_tolerance:
-        bpm_smoothness = 0.0
-    else:
-        # Audit-Fix 2026-07-21: bpm_tolerance==0 ergab exp(-0/0) -> ZeroDivisionError.
-        # calculate_playlist_quality gated bereits <=0; der Enhanced-Pfad jetzt auch.
-        denom = max(bpm_tolerance / 2, 1e-9)
-        bpm_smoothness = math.exp(-bpm_diff / denom)
-
-    # Energy flow analysis
-    energy_diff = track2.energy - track1.energy
-    # M12-Fix: alle Zweige liefern [0,1] — vorher lief UP/DOWN bis 2.0 und
-    # MAINTAIN unter 0, was die Gewichtung im overall_score verzerrte
-    if energy_direction == EnergyDirection.UP:
-        energy_flow = min(1.0, max(0.0, energy_diff) / 50.0)
-    elif energy_direction == EnergyDirection.DOWN:
-        energy_flow = min(1.0, max(0.0, -energy_diff) / 50.0)
-    elif energy_direction == EnergyDirection.MAINTAIN:
-        energy_flow = max(0.0, 1.0 - abs(energy_diff) / 50.0)
-    else:
-        energy_flow = max(0.0, 1.0 - abs(energy_diff) / 100.0)  # Gentle energy preference
-
-    # Genre compatibility - DJ Brain Matrix wenn detected_genre vorhanden
-    # AUDIT-FIX F12 (2026-07-24): detected_genre-Default "Unknown" ist TRUTHY,
-    # der bisherige `or`-Fallback auf das ID3-Genre war damit toter Code —
-    # Tracks mit sauberem ID3-Genre, aber ohne DJ-Brain-Klassifikation,
-    # bekamen konstant 0.5-Kompatibilitaet. Explizit aufloesen.
-    genre_a = _resolve_track_genre(track1)
-    genre_b = _resolve_track_genre(track2)
-    genre_compatibility = get_genre_compatibility(genre_a, genre_b)
-
-    # Genre-Weight hoeher wenn ueberhaupt aufgeloeste Genre-Daten vorhanden
-    # (gleiche Quelle wie der Score — vorher zwei divergierende Kriterien).
-    has_dj_brain_genres = genre_a != "Unknown" and genre_b != "Unknown"
-    genre_weight = (
-        GENRE_WEIGHT_WITH_DJ_BRAIN
-        if has_dj_brain_genres
-        else GENRE_WEIGHT_WITHOUT_DJ_BRAIN
-    )
-    remaining = 1.0 - genre_weight
-
-    # Overall weighted score
-    groove_val = bass_val = timbre_val = mood_val = None
-    loudness_val = structure_val = None
     kandidat = None
-    # Kandidaten nur innerhalb des BPM-Gates rechnen: darueber ist der Score
-    # ohnehin 0 (Hard-Gate unten) — spart bei grossen Sammlungen das Gros der
-    # Paare (~9 ms je rank_pair_candidates).
-    if TRANSITION_FEATURES_ENABLED and bpm_diff <= bpm_tolerance:
-        paare = _kandidaten_fuer_paar(track1, track2, energy_direction, kwargs)
+    if bpm_diff <= bpm_tolerance:
+        paare = _kandidaten_fuer_paar(
+            track1, track2, bpm_tolerance, energy_direction, kwargs
+        )
         if paare:
             kandidat = paare[0]
-
-    if kandidat is not None:
-        # Spec 2026-08-21 Abschnitt 4: der beste PairCandidate traegt den
-        # Paar-Score — alle Faktoren lokal an der Naht (Teil 2); Half/Double-
-        # Penalty und Vocal-Clash stecken bereits im Kandidaten-Score.
-        tw = kandidat.teilwerte
-        groove_val, bass_val = tw.get("groove"), tw.get("bass")
-        timbre_val, mood_val = tw.get("timbre"), tw.get("mood")
-        loudness_val, structure_val = tw.get("loudness"), tw.get("structure")
-        overall_score = float(kandidat.score)
-    elif TRANSITION_FEATURES_ENABLED:
-        # genre_a (abgehender Track) setzt den Kontext des Uebergangs.
-        tol = get_tolerances(genre_a)
-        # Nicht aufgeloestes Genre: Gewicht halbieren. Der Altpfad tat das
-        # fuer "Unknown" ueber GENRE_WEIGHT_WITHOUT_DJ_BRAIN (0.1 statt 0.2);
-        # hier gilt es zusaetzlich fuer nicht-kanonische Tags wie "House",
-        # denen get_genre_compatibility denselben 0.5-Fallback gibt — auf
-        # vollem Gewicht verloeren zwei identische Tracks damit Punkte, die
-        # sie nicht verdienen (test_two_identical_tracks, gemessen:
-        # Altpfad 0.90, neuer Pfad ohne Halbierung 0.88, mit 0.93).
-        # combine_weighted renormiert auf die verbleibende Gewichtssumme.
-        # Vergleich casefold, weil get_genre_compatibility (dj_brain.py)
-        # Genres ebenfalls casefold aufloest — sonst bekaeme ein ID3-Tag
-        # "psytrance" den echten Matrix-Score bei halbiertem Gewicht.
-        genres_aufgeloest = (
-            has_dj_brain_genres
-            and genre_a.casefold() in _CANONICAL_CASEFOLD
-            and genre_b.casefold() in _CANONICAL_CASEFOLD
-        )
-        genre_tol_weight = (
-            tol["genre_weight"]
-            if genres_aufgeloest
-            else tol["genre_weight"] * (
-                GENRE_WEIGHT_WITHOUT_DJ_BRAIN / GENRE_WEIGHT_WITH_DJ_BRAIN
-            )
-        )
-        groove_val = groove_match(track1, track2, genre_a)
-        bass_val = bass_continuity(track1, track2, genre_a)
-        timbre_val = timbre_match(track1, track2, genre_a)
-        mood_val = mood_match(track1, track2, genre_a)
-        overall_score = combine_weighted(
-            {
-                "harmonic": harmonic_score / 100.0,
-                "bpm": bpm_smoothness,
-                "energy": energy_flow,
-                "genre": genre_compatibility,
-                "groove": groove_val,
-                "bass": bass_val,
-                "timbre": timbre_val,
-                "mood": mood_val,
-            },
-            {
-                "harmonic": tol["harmonic_weight"],
-                "bpm": tol["bpm_weight"],
-                "energy": tol["energy_weight"],
-                "genre": genre_tol_weight,
-                "groove": tol["groove_weight"],
-                "bass": tol["bass_weight"],
-                "timbre": tol["timbre_weight"],
-                "mood": tol["mood_weight"],
-            },
-        )
-    else:
-        # Unveraenderter Altpfad — Referenz fuer den Regressionstest.
-        overall_score = (
-            (remaining * 0.44) * (harmonic_score / 100.0)
-            + (remaining * 0.28) * bpm_smoothness
-            + (remaining * 0.28) * energy_flow
-            + genre_weight * genre_compatibility
-        )
-
-    ai_bonus = calculate_ai_compatibility_bonus(track1, track2)
-    overall_score = min(1.0, overall_score + ai_bonus)
-
-    # AUDIT-FIX D2-light (2026-07-26): Vocal-Clash-Penalty. Zwei Lead-Vocals
-    # uebereinander sind einer der haeufigsten Mixfehler; das Feld
-    # vocal_instrumental hatte bisher KEINEN Scoring-Consumer. Konservativ:
-    # nur wenn BEIDE Tracks als "vocal" erkannt sind (Heuristik ist auf
-    # 22kHz-Mono unsicher, "unknown" wird nie bestraft).
-    if (
-        kandidat is None
-        and getattr(track1, "vocal_instrumental", "unknown") == "vocal"
-        and getattr(track2, "vocal_instrumental", "unknown") == "vocal"
-    ):
-        overall_score = max(0.0, overall_score - VOCAL_CLASH_PENALTY)
-
-    # BPM-Hard-Gate (Audit 2026-07-17): ein am Pitchfader unmixbarer Sprung
-    # darf nicht ueber Genre/Energie auf ~40% "gerettet" werden — die 0-100-
-    # Strategien gaten hart, Enhanced muss dieselbe Grundentscheidung treffen
-    if bpm_diff > bpm_tolerance:
-        overall_score = 0.0
-
-    metrics = TransitionMetrics(
-        harmonic_score=harmonic_score,
-        bpm_smoothness=bpm_smoothness,
-        energy_flow=energy_flow,
-        genre_compatibility=genre_compatibility,
-        overall_score=overall_score,
-        ai_bonus=ai_bonus,
-        groove_match=groove_val,
-        bass_continuity=bass_val,
-        timbre_match=timbre_val,
-        mood_match=mood_val,
-        loudness_match=loudness_val,
-        structure_match=structure_val,
-        kandidat=kandidat.to_dict() if kandidat is not None else None,
+    metrics = _calculate_track_edge_metrics(
+        track1, track2, bpm_tolerance, energy_direction, kwargs, kandidat
     )
     if _ENHANCED_COMPAT_CACHE is not None:
         _ENHANCED_COMPAT_CACHE[cache_key] = metrics
     return metrics
+
+
+def _candidate_delta(kandidat, feld: str) -> Optional[float]:
+    """Signierte lokale B-minus-A-Differenz, robust fuer alte API-Shims."""
+    try:
+        out_wert = getattr(kandidat.out_a, feld)
+        in_wert = getattr(kandidat.in_b, feld)
+        if out_wert is None or in_wert is None:
+            return None
+        return float(in_wert) - float(out_wert)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def transition_metrics_from_candidate(kandidat) -> TransitionMetrics:
+    """Erzeugt alle sichtbaren Werte ausschliesslich aus dem lokalen Paar-Score."""
+    if kandidat is None:
+        return TransitionMetrics(0, 0.0, 0.0, 0.0, 0.0)
+    tw = kandidat.teilwerte
+    return TransitionMetrics(
+        harmonic_score=int(round(float(tw["harmonic"]) * 100)),
+        bpm_smoothness=float(tw["bpm"]),
+        energy_flow=float(tw["energy"]),
+        genre_compatibility=float(tw["genre"]),
+        overall_score=float(kandidat.score),
+        ai_bonus=0.0,
+        groove_match=float(tw["groove"]),
+        bass_continuity=float(tw["bass"]),
+        timbre_match=float(tw["timbre"]),
+        mood_match=float(tw["mood"]),
+        loudness_match=float(tw["loudness"]),
+        structure_match=float(tw["structure"]),
+        energy_delta=_candidate_delta(kandidat, "energy_lokal"),
+        lufs_delta=_candidate_delta(kandidat, "lufs_lokal"),
+        kandidat=kandidat.to_dict(),
+    )
+
+
+_TRACK_EDGE_FACTORS = (
+    "harmonic", "bpm", "energy", "genre", "groove", "bass", "timbre", "mood",
+)
+
+
+def _track_edge_weights(profile: Mapping, path: str) -> dict[str, float]:
+    """Liest genau den vollstaendigen Acht-Faktoren-Kreis eines Run-Snapshots."""
+    if not isinstance(profile, Mapping):
+        raise ValueError(f"{path} muss ein Mapping sein")
+    weights: dict[str, float] = {}
+    for factor in _TRACK_EDGE_FACTORS:
+        key = f"{factor}_weight"
+        value = profile.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, Real)
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+        ):
+            raise ValueError(f"{path}[{key!r}] muss ein endliches Gewicht >= 0 sein")
+        weights[factor] = float(value)
+    total = sum(weights.values())
+    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError(f"{path} Track-Gewichte summieren auf {total}, erwartet ist 1.0")
+    return weights
+
+
+def _track_tolerance_profile(track: Track, kwargs: Mapping) -> tuple[str, Mapping]:
+    """Nimmt den pro Run eingefrorenen Gewichtskreis des Quellgenres."""
+    genre = _resolve_track_genre(track)
+    profiles = kwargs.get("track_tolerances_by_genre")
+    if isinstance(profiles, Mapping):
+        profile = profiles.get(genre, profiles.get("Unknown"))
+        if profile is None:
+            raise ValueError(f"track_tolerances_by_genre fehlt Profil fuer {genre!r}")
+        return genre, profile
+    # Direkte API-Aufrufe bleiben moeglich; Generation/Rebuild liefern immer
+    # den eingefrorenen Snapshot und lesen diese Fallback-Quelle daher nicht.
+    from .tolerances import get_tolerances
+    return genre, get_tolerances(genre)
+
+
+def _calculate_track_edge_metrics(
+    track1: Track,
+    track2: Track,
+    bpm_tolerance: float,
+    energy_direction: Optional[EnergyDirection],
+    kwargs: Mapping,
+    kandidat=None,
+) -> TransitionMetrics:
+    """Acht-Faktoren-Score der Trackkante, unabhaengig von Mixpunkt-Ranking."""
+    energy_direction = _normalize_energy_direction(energy_direction)
+    harmonic_score = _calculate_compatibility_inner(
+        track1, track2, bpm_tolerance, **kwargs
+    )
+    bpm_diff, _ = effective_bpm_diff(track1.bpm, track2.bpm)
+    bpm_smoothness = (
+        math.exp(-bpm_diff / max(float(bpm_tolerance) / 2.0, 1e-9))
+        if bpm_diff <= bpm_tolerance else 0.0
+    )
+    candidate_delta_energy = _candidate_delta(kandidat, "energy_lokal")
+    if candidate_delta_energy is not None:
+        energy_delta = candidate_delta_energy
+    else:
+        energy_delta = float(track2.energy) - float(track1.energy)
+    if energy_direction == EnergyDirection.UP:
+        energy_flow = min(1.0, max(0.0, energy_delta) / 50.0)
+    elif energy_direction == EnergyDirection.DOWN:
+        energy_flow = min(1.0, max(0.0, -energy_delta) / 50.0)
+    elif energy_direction == EnergyDirection.MAINTAIN:
+        energy_flow = max(0.0, 1.0 - abs(energy_delta) / 50.0)
+    else:
+        energy_flow = max(0.0, 1.0 - abs(energy_delta) / 100.0)
+
+    genre_a, profile = _track_tolerance_profile(track1, kwargs)
+    genre_b = _resolve_track_genre(track2)
+    weights = _track_edge_weights(
+        profile, f"track_tolerances_by_genre[{genre_a!r}]"
+    )
+    resolved_genres = (
+        genre_a.casefold() in _CANONICAL_CASEFOLD
+        and genre_b.casefold() in _CANONICAL_CASEFOLD
+    )
+    if not resolved_genres:
+        weights = dict(weights)
+        weights["genre"] *= GENRE_WEIGHT_WITHOUT_DJ_BRAIN / GENRE_WEIGHT_WITH_DJ_BRAIN
+    components = {
+        "harmonic": harmonic_score / 100.0,
+        "bpm": bpm_smoothness,
+        "energy": energy_flow,
+        "genre": get_genre_compatibility(genre_a, genre_b),
+        "groove": groove_match(track1, track2, genre_a),
+        "bass": bass_continuity(track1, track2, genre_a),
+        "timbre": timbre_match(track1, track2, genre_a),
+        "mood": mood_match(track1, track2, genre_a),
+    }
+    overall_score = combine_weighted(components, weights)
+    if bpm_diff > bpm_tolerance:
+        overall_score = 0.0
+
+    candidate_values = kandidat.teilwerte if kandidat is not None else {}
+    def display_value(name: str, track_value):
+        if kandidat is None or candidate_values.get(name) is None:
+            return track_value
+        return float(candidate_values[name])
+
+    return TransitionMetrics(
+        harmonic_score=harmonic_score,
+        bpm_smoothness=bpm_smoothness,
+        energy_flow=energy_flow,
+        genre_compatibility=(
+            float(candidate_values["genre"])
+            if kandidat is not None and candidate_values.get("genre") is not None
+            else 0.0
+        ),
+        overall_score=overall_score,
+        ai_bonus=0.0,
+        groove_match=display_value("groove", components["groove"]),
+        bass_continuity=display_value("bass", components["bass"]),
+        timbre_match=display_value("timbre", components["timbre"]),
+        mood_match=display_value("mood", components["mood"]),
+        loudness_match=(
+            float(candidate_values["loudness"])
+            if kandidat is not None else None
+        ),
+        structure_match=(
+            float(candidate_values["structure"])
+            if kandidat is not None else None
+        ),
+        energy_delta=energy_delta,
+        lufs_delta=_candidate_delta(kandidat, "lufs_lokal"),
+        kandidat=kandidat.to_dict() if kandidat is not None else None,
+    )
+
+
+def calculate_track_edge_score(
+    track1: Track,
+    track2: Track,
+    bpm_tolerance: float,
+    energy_direction: Optional[EnergyDirection] = None,
+    **kwargs,
+) -> TransitionMetrics:
+    """Bewertet eine Trackkante ohne Kandidatenrang oder Mixpunktwahl."""
+    return _calculate_track_edge_metrics(
+        track1, track2, bpm_tolerance, energy_direction, kwargs
+    )
 
 
 def calculate_transition_objective(
@@ -624,12 +988,8 @@ def calculate_compatibility(
     """Wrapper around _calculate_compatibility_inner that uses a global dictionary cache
     if one is currently set up by generate_playlist or benchmark.
 
-    AUDIT-FIX F05 (2026-07-24): Der KI-Bonus wird hier NICHT mehr addiert.
-    Vorher blies er die 0-100-Harmonik-Skala auf (bis +14), waehrend
-    calculate_enhanced_compatibility den Bonus separat aufs Overall addiert —
-    doppelte Zaehlung. predict_transition_type entschied dadurch ueber einen
-    verfaelschten Score, und calculate_playlist_quality verbuchte KI-Stimmung
-    als Harmonik. Dieser Wrapper liefert jetzt reine harmonische Kompatibilitaet.
+    KI-Metadaten fliessen weder hier noch in die lokale PairCandidate-Wertung
+    ein. Dieser Wrapper liefert reine harmonische Kompatibilitaet.
     """
     if _COMPAT_CACHE is not None:
         cache_key = (
@@ -649,12 +1009,58 @@ def calculate_compatibility(
     return _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
 
 
+def _small_pool_order(tracks: list[Track], score_key) -> list[Track]:
+    """Wertet kleine Pools vollstaendig und eingabereihenfolgefest aus."""
+    if len(tracks) <= 1:
+        return list(tracks)
+
+    def stable_key(order) -> tuple:
+        return tuple(
+            (
+                str(getattr(track, "filePath", "") or ""),
+                str(getattr(track, "fileName", "") or ""),
+                str(getattr(track, "title", "") or ""),
+                float(getattr(track, "bpm", 0.0) or 0.0),
+                float(getattr(track, "energy", 0.0) or 0.0),
+                str(getattr(track, "camelotCode", "") or ""),
+            )
+            for track in order
+        )
+
+    best_order = None
+    best_score = None
+    best_stable_key = None
+    for order in permutations(tracks):
+        score = tuple(score_key(order))
+        order_stable_key = stable_key(order)
+        if (
+            best_order is None
+            or score > best_score
+            or score == best_score and order_stable_key < best_stable_key
+        ):
+            best_order = order
+            best_score = score
+            best_stable_key = order_stable_key
+    return list(best_order)
+
+
+def _transition_path_score(order, bpm_tolerance: float, kwargs: dict) -> tuple:
+    scores = [
+        calculate_transition_objective(a, b, bpm_tolerance, **kwargs)
+        for a, b in zip(order, order[1:])
+    ]
+    return sum(score > 0 for score in scores), sum(scores)
+
+
 def _sort_harmonic_flow(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
     if len(tracks) <= 2:
-        return sorted(tracks, key=lambda t: t.bpm)
+        return _small_pool_order(
+            tracks,
+            lambda order: _transition_path_score(order, bpm_tolerance, kwargs),
+        )
 
     # Create a local cache specifically to avoid repeated function calls during lookahead
     # and pass it to _find_best_starting_track as well.
@@ -818,7 +1224,7 @@ def _sort_directional_bpm(
     reverse: bool,
     **kwargs,
 ) -> list[Track]:
-    """Sortiert BPM-richtungsgebunden und nutzt Harmonik nur bei Gleichstand."""
+    """Sortiert nach BPM und nutzt bei Gleichstand das volle Uebergangsziel."""
     if len(tracks) <= 1:
         return list(tracks)
 
@@ -1029,27 +1435,32 @@ def _sort_peak_time(
     if not tracks:
         return []
 
-    if len(tracks) <= 3:
-        return sorted(tracks, key=lambda t: t.bpm + t.energy)
-
-    # Get peak position from advanced params (default: 70%)
     peak_position = kwargs.get("peak_position", 70) / 100.0
+    if len(tracks) <= 3:
+        combined_by_track = {
+            id(track): combined
+            for track, combined, _norm_bpm, _norm_energy
+            in _prepare_track_metrics(tracks)
+        }
+        peak_curve = _peak_time_curve(len(tracks), peak_position)
+
+        def small_score(order) -> tuple:
+            valid, transition_score = _transition_path_score(
+                order, bpm_tolerance, kwargs
+            )
+            curve_fit = -sum(
+                abs(combined_by_track[id(track)] - peak_curve[index])
+                for index, track in enumerate(order)
+            )
+            return valid, curve_fit, transition_score
+
+        return _small_pool_order(tracks, small_score)
 
     scored_tracks = _prepare_track_metrics(tracks)
     count = len(scored_tracks)
 
     # Create a double-peak curve for longer sets
-    peak_curve = []
-    for idx in range(count):
-        # Create asymmetric curve: slow build, sharp peak, controlled decline
-        if idx < count * peak_position:  # Build phase (user-defined)
-            curve_val = (idx / (count * peak_position)) ** 1.5  # Exponential build
-        else:  # Decline phase
-            decline_progress = (idx - count * peak_position) / (
-                count * (1 - peak_position)
-            )
-            curve_val = 1.0 - (decline_progress**0.7)  # Controlled decline
-        peak_curve.append(curve_val)
+    peak_curve = _peak_time_curve(count, peak_position)
 
     # Sort tracks by curve position preference
     waveform_positions = sorted(range(count), key=lambda idx: peak_curve[idx])
@@ -1073,6 +1484,20 @@ def _sort_peak_time(
     # Apply harmonic smoothing pass
     result = [track for track in ordered_tracks if track is not None]
     return _apply_harmonic_smoothing(result, bpm_tolerance, **kwargs)
+
+
+def _peak_time_curve(count: int, peak_position: float) -> list[float]:
+    """Eine gemeinsame Peak-Kurve fuer normale und exhaustive kleine Pools."""
+    curve = []
+    for idx in range(count):
+        if idx < count * peak_position:
+            curve.append((idx / (count * peak_position)) ** 1.5)
+        else:
+            decline_progress = (idx - count * peak_position) / (
+                count * (1 - peak_position)
+            )
+            curve.append(1.0 - decline_progress**0.7)
+    return curve
 
 
 def _apply_harmonic_smoothing(
@@ -1144,16 +1569,41 @@ def _sort_genre_flow(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Arrange tracks to create smooth genre transitions while maintaining energy."""
-    if len(tracks) <= 2:
-        return sorted(tracks, key=lambda t: t.bpm)
-
     # Get genre parameters
     genre_mixing_enabled = kwargs.get("genre_mixing", True)
     genre_weight = kwargs.get("genre_weight", 0.3)  # 0.0-1.0
 
-    # If genre mixing disabled, use harmonic flow instead
-    if not genre_mixing_enabled:
-        return _sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
+    if len(tracks) <= 2:
+        # For 2 oder weniger Tracks wird die Richtung per Vergleich der
+        # paarweisen Verträglichkeit eindeutig aufgelöst. ``_sort_harmonic_flow``
+        # ist für kleine Pools zu passiv und würde bei [B, A] die Reihenfolge
+        # nicht stabil in Richtung des erwarteten Contracts ändern.
+        def small_score(order) -> tuple:
+            harmonic_scores = [
+                calculate_compatibility(a, b, bpm_tolerance, **kwargs)
+                for a, b in zip(order, order[1:])
+            ]
+            if not genre_mixing_enabled:
+                blended_scores = [
+                    harmonic / 100.0 for harmonic in harmonic_scores
+                ]
+            else:
+                blended_scores = [
+                    (1.0 - genre_weight) * harmonic / 100.0
+                    + genre_weight * get_genre_compatibility(
+                        _resolve_track_genre(a), _resolve_track_genre(b)
+                    )
+                    for (a, b), harmonic in zip(
+                        zip(order, order[1:]), harmonic_scores
+                    )
+                ]
+            return (
+                sum(score > 0 for score in harmonic_scores),
+                sum(blended_scores),
+                sum(harmonic_scores),
+            )
+
+        return _small_pool_order(tracks, small_score)
 
     # Group tracks by genre (bevorzuge eine echte Klassifikation, sonst ID3)
     genre_groups = {}
@@ -1340,7 +1790,7 @@ def _clamp_transition_overlap(
 
     AUDIT-FIX 2026-08-14: Die B-Seite begrenzte vorher auf
     ``intro_end_B - mix_in_b``. dj_brain garantiert per Design
-    ``mix_in_b >= intro_end_B`` (siehe tests/test_dj_brain.py), dieser Term
+    ``mix_in_b > intro_end_B`` (siehe tests/test_dj_brain.py), dieser Term
     war also immer <= 0 — gemessen an 52 echten Tracks wurden 50 von 51
     Uebergaengen auf overlap=0.0 geklemmt (Mittel 0.67 s statt 37 s), der
     Renderer bekam faktisch ueberall harte Schnitte und der overlap-Parameter
@@ -1492,6 +1942,7 @@ def predict_transition_type(
     from_track: Track,
     to_track: Track,
     bpm_tolerance: float = 3.0,
+    kandidat=None,
     **kwargs,
 ) -> str:
     """
@@ -1511,13 +1962,20 @@ def predict_transition_type(
       Einer der oben genannten Transition-Typen als String.
     """
     eff_diff, bpm_relation = effective_bpm_diff(from_track.bpm, to_track.bpm)
-    energy_delta = to_track.energy - from_track.energy
+    lokales_energy_delta = _candidate_delta(kandidat, "energy_lokal")
+    energy_delta = (
+        lokales_energy_delta
+        if lokales_energy_delta is not None
+        else to_track.energy - from_track.energy
+    )
     abs_energy_delta = abs(energy_delta)
 
     # Harmonic Compatibility pruefen — mit gewaehltem Scoring-Kontext (HPG-001):
     # der vorhergesagte Typ muss zum angezeigten Score passen, nicht zu Defaults.
-    harmonic_score = calculate_compatibility(
-        from_track, to_track, bpm_tolerance, **kwargs
+    harmonic_score = (
+        int(round(float(kandidat.teilwerte["harmonic"]) * 100))
+        if kandidat is not None
+        else calculate_compatibility(from_track, to_track, bpm_tolerance, **kwargs)
     )
 
     # Genre-Info
@@ -1587,6 +2045,25 @@ def predict_transition_type(
 
     # --- Fallback: Inkompatibel ---
     return "cold_cut"
+
+
+def transition_type_for_candidate(
+    from_track: Track,
+    to_track: Track,
+    kandidat,
+    bpm_tolerance: float = 3.0,
+    scoring_context: Optional[Dict] = None,
+) -> str:
+    """Eine gemeinsame Typentscheidung fuer App und produktionsnahen Hoertest."""
+    if kandidat is not None and kandidat.flags.get("bass_swap_pflicht"):
+        return "bass_swap"
+    return predict_transition_type(
+        from_track,
+        to_track,
+        bpm_tolerance,
+        kandidat=kandidat,
+        **dict(scoring_context or {}),
+    )
 
 
 def _build_transition_description(
@@ -1728,6 +2205,8 @@ def _process_dj_brain_recommendations(
             if dj_rec.transition_bars > 0 and current.bpm > 0:
                 seconds_per_bar = (60.0 / current.bpm) * METER
                 overlap = seconds_per_bar * dj_rec.transition_bars
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning(f"DJ-Brain Transition-Verarbeitung fehlgeschlagen: {e}")
             # Fallback auf Standard-Notes
@@ -1740,96 +2219,68 @@ def compute_adjacent_transition_metrics(
     bpm_tolerance: float = 3.0,
     scoring_context: Optional[Dict] = None,
 ) -> List[TransitionMetrics]:
-    """Berechnet den gemeinsamen Enhanced-Score einmal pro Nachbarpaar."""
+    """Berechnet alle sichtbaren Werte aus der wirklich aktiven lokalen Kette."""
     ctx = dict(scoring_context or {})
-    return [
-        calculate_enhanced_compatibility(
-            playlist[index], playlist[index + 1], bpm_tolerance, **ctx
+    if len(playlist) < 2:
+        return []
+    energy_direction = ctx.get("energy_direction")
+    kandidaten_je_paar = [
+        _kandidaten_fuer_paar(
+            playlist[index], playlist[index + 1], bpm_tolerance,
+            energy_direction, ctx
         )
-        for index in range(max(0, len(playlist) - 1))
+        for index in range(len(playlist) - 1)
+    ]
+    aktive_kette = _kette_waehlen(kandidaten_je_paar, playlist)
+    return [
+        _calculate_track_edge_metrics(
+            playlist[index],
+            playlist[index + 1],
+            bpm_tolerance,
+            energy_direction,
+            ctx,
+            kandidat,
+        )
+        for index, (kandidat, _konsistent) in enumerate(aktive_kette)
     ]
 
 
-# Bonus im Kettenziel fuer einen vom Nutzer gewaehlten Kandidaten: die Wahl
-# soll gegen jeden Score-Unterschied gewinnen, solange die Kette konsistent
-# bleibt (Scores liegen in [0, 1]).
-_WAHL_BONUS = 10.0
-
-
 def _kette_waehlen(kandidaten_je_paar: list, playlist: List[Track]) -> list:
-    """Waehlt je Paar EINEN Kandidaten so, dass die Kette je Track konsistent
-    ist (Invariante 1/3: Mix-Out von Track i mindestens zwei Phrasen hinter
-    seinem Mix-In aus dem vorigen Paar) und die Summe der Scores (+ Bonus fuer
-    gespeicherte Wahl) maximal wird — dynamische Programmierung ueber die Paare.
-    Gibt es fuer ein Paar keinen konsistenten Anschluss, beginnt die Kette dort
-    neu (Rang 1, konsistent=False). Liefert [(kandidat|None, konsistent)]."""
-    n = len(kandidaten_je_paar)
-    ergebnis: list = [(None, True)] * n
-    NEG = float("-inf")
-    # best[i][j] = bester Kettenwert bis Paar i mit Kandidat j; vorgaenger fuer Rueckverfolgung
-    best: list = []
-    prev: list = []
-    neustart: list = []   # Paar i beginnt die Kette neu (kein konsistenter Anschluss moeglich)
-    for i, kands in enumerate(kandidaten_je_paar):
-        if not kands:
-            best.append([])
-            prev.append([])
-            neustart.append(True)
+    """Legacy-Sicht auf denselben V6-DP, ohne numerischen Wahl-Bonus."""
+    from .pair_candidates import CandidateSnapshot
+
+    run_id = "legacy-chain"
+    occurrences = tuple(
+        TrackOccurrence(run_id=run_id, ordinal=index, track=track)
+        for index, track in enumerate(playlist)
+    )
+    snapshots_by_boundary = tuple(
+        tuple(
+            CandidateSnapshot.from_pair_candidate(candidate, original_ordinal=ordinal)
+            for ordinal, candidate in enumerate(candidates[:12])
+        )
+        for candidates in kandidaten_je_paar
+    )
+    selected, consistencies, _checks, _passed, _states = _select_snapshot_path(
+        snapshots_by_boundary, occurrences
+    )
+    result = []
+    for index, snapshot in enumerate(selected):
+        if snapshot is None:
+            result.append((None, False))
             continue
-        werte = [float(k.score) + (_WAHL_BONUS if k.flags.get("gespeicherte_wahl") else 0.0) for k in kands]
-        if i == 0 or not kandidaten_je_paar[i - 1] or not best[i - 1]:
-            best.append(list(werte))
-            prev.append([-1] * len(kands))
-            neustart.append(True)
-            continue
-        track = playlist[i]                       # Track i ist "upcoming" von Paar i-1 und "current" von Paar i
-        grid = seconds_per_bar(track.bpm) * int(getattr(track, "phrase_unit", 8) or 8)
-        b_i, p_i = [], []
-        for j, k in enumerate(kands):
-            bester_wert, bester_prev = NEG, -1
-            for jp, kp in enumerate(kandidaten_je_paar[i - 1]):
-                if best[i - 1][jp] == NEG:
-                    continue
-                # Toleranz wie die Gitter-Quantisierung: Teil 1 rundet t auf 3 Dezimalen.
-                if float(k.t_out) >= float(kp.t_in) + 2.0 * grid - QUANTIZE_TOLERANCE_SEC:
-                    wert = best[i - 1][jp] + werte[j]
-                    if wert > bester_wert:
-                        bester_wert, bester_prev = wert, jp
-            b_i.append(bester_wert)
-            p_i.append(bester_prev)
-        if all(v == NEG for v in b_i):
-            # kein konsistenter Anschluss: Kette neu beginnen, Flag an Paar i
-            best.append(list(werte))
-            prev.append([-1] * len(kands))
-            neustart.append(True)
-            ergebnis[i] = (None, False)
-        else:
-            best.append(b_i)
-            prev.append(p_i)
-            neustart.append(False)
-    # Rueckverfolgung segmentweise (jedes Segment endet vor dem naechsten Neustart)
-    i = n - 1
-    while i >= 0:
-        if not kandidaten_je_paar[i]:
-            ergebnis[i] = (None, True)
-            i -= 1
-            continue
-        # Segmentende: bester Zustand an Paar i
-        j = max(range(len(best[i])), key=lambda jj: best[i][jj])
-        while i >= 0 and kandidaten_je_paar[i]:
-            konsistent = not (neustart[i] and ergebnis[i] == (None, False))
-            ergebnis[i] = (kandidaten_je_paar[i][j], konsistent)
-            if neustart[i]:
-                i -= 1
-                break
-            j = prev[i][j]
-            i -= 1
-    return ergebnis
+        mutable = next(
+            candidate
+            for ordinal, candidate in enumerate(kandidaten_je_paar[index][:12])
+            if ordinal == snapshot.original_ordinal
+        )
+        result.append((mutable, consistencies[index]))
+    return result
 
 
 def compute_transition_recommendations(
     playlist: List[Track],
-    bpm_tolerance: float = 3.0,
+    bpm_tolerance: float = PAAR_BPM_MAX,
     default_overlap: float = 12.0,
     scoring_context: Optional[Dict] = None,
     transition_metrics: Optional[List[TransitionMetrics]] = None,
@@ -1866,7 +2317,10 @@ def compute_transition_recommendations(
     # (Invariante 1/3 je Track); Einzelpaar-Rang-1 wuerde das in ~1/3 der
     # Paare verletzen (gemessen 2026-08-22, 231 Tracks).
     kandidaten_je_paar = [
-        _kandidaten_fuer_paar(playlist[i], playlist[i + 1], None, ctx)
+        _kandidaten_fuer_paar(
+            playlist[i], playlist[i + 1], bpm_tolerance,
+            ctx.get("energy_direction"), ctx
+        )
         if getattr(metrics_by_pair[i], "kandidat", None) is not None else []
         for i in range(len(playlist) - 1)
     ]
@@ -1875,6 +2329,15 @@ def compute_transition_recommendations(
     for index in range(len(playlist) - 1):
         current = playlist[index]
         upcoming = playlist[index + 1]
+        metrics = metrics_by_pair[index]
+        kandidaten = kandidaten_je_paar[index]
+        if (metrics.overall_score <= 0.0 or metrics.kandidat is None
+                or not kandidaten):
+            logger.warning(
+                "Uebergang %s ohne vollstaendig qualifizierten lokalen Kandidaten verworfen",
+                index,
+            )
+            continue
 
         effective_overlap = configured_overlap
         if current.duration > 0 and upcoming.duration > 0:
@@ -1911,10 +2374,9 @@ def compute_transition_recommendations(
         fade_in_start = next_mix_in
         overlap = transition_duration
 
-        metrics = metrics_by_pair[index]
         compatibility_score = int(round(metrics.overall_score * 100))
 
-        energy_delta = upcoming.energy - current.energy
+        energy_delta = int(round(float(metrics.energy_delta or 0.0)))
         eff_bpm_diff, _ = effective_bpm_diff(current.bpm, upcoming.bpm)
         # Vorzeichen-behaftetes Delta fuer Anzeige (positiv = schneller)
         bpm_delta = upcoming.bpm - current.bpm
@@ -1929,9 +2391,16 @@ def compute_transition_recommendations(
         notes_parts = []
 
         # DJ Brain Empfehlungen wenn Genre-Daten vorhanden
-        dj_rec, dj_notes_parts, dj_overlap = (
-            _process_dj_brain_recommendations(current, upcoming)
-        )
+        try:
+            dj_rec, dj_notes_parts, dj_overlap = (
+                _process_dj_brain_recommendations(current, upcoming)
+            )
+        except ValueError as error:
+            logger.warning(
+                "Uebergang %s ohne gueltige Strukturpunkte verworfen: %s",
+                index, error,
+            )
+            continue
         notes_parts.extend(dj_notes_parts)
         if dj_rec is not None:
             if dj_rec.adjusted_mix_out_a >= 0.0:
@@ -1954,13 +2423,17 @@ def compute_transition_recommendations(
         # Kandidaten (Spec 2026-08-21 Abschnitt 4): der aktive PairCandidate
         # (Rang 1 bzw. gespeicherte Wahl) traegt Mix-Out, Mix-In und Blende;
         # Track-Felder bleiben Analyse-Werte, alle Leser nehmen den Plan.
-        kandidaten = kandidaten_je_paar[index]
         kandidat_aktiv = 0
         kandidat_konsistent = True
         if kandidaten:
             aktiv, kandidat_konsistent = kette[index]
             if aktiv is None:
                 aktiv = kandidaten[0]
+            compatibility_score = int(round(metrics.overall_score * 100))
+            energy_delta = int(round(float(metrics.energy_delta or 0.0)))
+            risk_level = _categorise_risk_level(
+                compatibility_score, risk_bpm_delta, bpm_tolerance, energy_delta
+            )
             kandidat_aktiv = int(aktiv.rang)
             current_mix_out = float(aktiv.t_out)
             next_mix_in = float(aktiv.t_in)
@@ -1975,7 +2448,8 @@ def compute_transition_recommendations(
         has_dynamic_bar_source = dj_rec is not None and hasattr(
             dj_rec, "transition_bars"
         )
-        overlap = _clamp_transition_overlap(
+        requested_overlap = float(overlap)
+        validated_overlap = _clamp_transition_overlap(
             overlap,
             current,
             upcoming,
@@ -1986,6 +2460,18 @@ def compute_transition_recommendations(
             # reinen 64-s-Sicherheitsdeckel.
             limit_to_windows=dj_rec is None or has_dynamic_bar_source,
         )
+        if kandidaten and not math.isclose(
+            validated_overlap, requested_overlap, rel_tol=0.0, abs_tol=1e-9
+        ):
+            logger.error(
+                "Uebergang %s verworfen: Kandidaten-Overlap %.9f s waere "
+                "defensiv auf %.9f s veraendert worden",
+                index,
+                requested_overlap,
+                validated_overlap,
+            )
+            continue
+        overlap = validated_overlap
         fade_out_start = current_mix_out
 
         if dj_rec is not None:
@@ -2000,7 +2486,15 @@ def compute_transition_recommendations(
             )
 
         # Empfehlung, Timeline und Renderer muessen dieselbe Dauer verwenden.
-        overlap = min(float(overlap), MAX_TRANSITION_OVERLAP_SECONDS)
+        if (
+            not math.isfinite(float(overlap))
+            or not 0.0 < float(overlap) <= MAX_TRANSITION_OVERLAP_SECONDS
+        ):
+            logger.error(
+                "Uebergang %s verworfen: ungueltiger Overlap %r", index, overlap
+            )
+            continue
+        overlap = float(overlap)
         fade_out_start = current_mix_out
 
         # Aussagekraeftige DJ-Beschreibung immer anhaengen
@@ -2020,14 +2514,13 @@ def compute_transition_recommendations(
 
         notes = "; ".join(notes_parts)
 
-        if kandidaten and aktiv.flags.get("bass_swap_pflicht"):
-            # Beide Kicks aktiv an der Naht: der Bass-Swap ist Pflicht (Teil 2,
-            # Entscheidung 6); der Kandidaten-Score traegt dafuer keinen Abzug.
-            transition_type = "bass_swap"
-        else:
-            transition_type = predict_transition_type(
-                current, upcoming, bpm_tolerance, **ctx
-            )
+        transition_type = transition_type_for_candidate(
+            current,
+            upcoming,
+            aktiv,
+            bpm_tolerance=bpm_tolerance,
+            scoring_context=ctx,
+        )
         tempo_ratio = (
             float(upcoming.bpm / current.bpm)
             if current.bpm > 0 and upcoming.bpm > 0
@@ -2105,33 +2598,27 @@ def calculate_playlist_quality(
     )
     if len(metrics_by_pair) != len(tracks) - 1:
         raise ValueError("transition_metrics muss genau ein Element pro Nachbarpaar enthalten")
-    energy_diffs = []
-    bpm_diffs = []
-
-    for i in range(len(tracks) - 1):
-        current, next_track = tracks[i], tracks[i + 1]
-
-        # Energy differences
-        energy_diffs.append(abs(current.energy - next_track.energy))
-
-        # BPM differences (mit Half/Double-Erkennung)
-        eff_diff, _ = effective_bpm_diff(current.bpm, next_track.bpm)
-        bpm_diffs.append(eff_diff)
-
-    # Calculate metrics
+    # Alle Qualitaetswerte stammen aus den individuellen lokalen Messungen
+    # genau der aktiven Mix-Out-/Mix-In-Kandidaten. Ganztrackwerte sind hier
+    # weder Ersatz noch Bonus.
     avg_harmonic = sum(m.harmonic_score for m in metrics_by_pair) / len(metrics_by_pair) / 100.0
-    avg_energy_diff = sum(energy_diffs) / len(energy_diffs)
-    avg_bpm_diff = sum(bpm_diffs) / len(bpm_diffs)
+    avg_energy = sum(m.energy_flow for m in metrics_by_pair) / len(metrics_by_pair)
+    avg_bpm = sum(m.bpm_smoothness for m in metrics_by_pair) / len(metrics_by_pair)
+    energy_deltas = [
+        abs(float(m.energy_delta))
+        for m in metrics_by_pair
+        if m.energy_delta is not None and math.isfinite(float(m.energy_delta))
+    ]
+    bpm_deltas = [
+        effective_bpm_diff(tracks[index].bpm, tracks[index + 1].bpm)[0]
+        for index in range(len(tracks) - 1)
+    ]
+    bpm_deltas = [float(delta) for delta in bpm_deltas if math.isfinite(float(delta))]
 
     # Normalize scores (0-1, higher is better)
     harmonic_flow = avg_harmonic
-    energy_consistency = max(
-        0, 1 - avg_energy_diff / 50.0
-    )  # 50 is max reasonable energy diff
-    if bpm_tolerance <= 0:
-        bpm_smoothness = 1.0 if avg_bpm_diff == 0 else 0.0
-    else:
-        bpm_smoothness = max(0.0, 1 - avg_bpm_diff / bpm_tolerance)
+    energy_consistency = avg_energy
+    bpm_smoothness = avg_bpm
 
     # Der Overall-Wert ist der Mittelwert der gerundeten 0-100-Werte, die
     # compute_transition_recommendations anzeigt. Damit sind UI-Qualitaet und
@@ -2146,9 +2633,35 @@ def calculate_playlist_quality(
         "bpm_smoothness": bpm_smoothness,
         "avg_harmonic_score": avg_harmonic * 100,
         "avg_transition_score": overall_score * 100,
-        "avg_energy_jump": avg_energy_diff,
-        "avg_bpm_jump": avg_bpm_diff,
+        "avg_energy_jump": (
+            sum(energy_deltas) / len(energy_deltas) if energy_deltas else 0.0
+        ),
+        "avg_bpm_jump": sum(bpm_deltas) / len(bpm_deltas) if bpm_deltas else 0.0,
     }
+
+
+def _context_target_energy(
+    position: int,
+    total: int,
+    *,
+    energy_direction: str,
+    peak_position: float,
+    pool_average: float,
+    configured_target: Optional[float],
+) -> float:
+    if configured_target is not None:
+        return configured_target
+    progress = position / max(1, total - 1)
+    if energy_direction == "Build Up":
+        return 30.0 + 55.0 * progress
+    if energy_direction == "Cool Down":
+        return 85.0 - 55.0 * progress
+    if energy_direction == "Maintain":
+        return pool_average
+    if progress <= peak_position:
+        return 30.0 + 55.0 * (progress / peak_position)
+    decline = (progress - peak_position) / max(1e-9, 1.0 - peak_position)
+    return 85.0 - 45.0 * decline
 
 
 def _sort_context_flow(
@@ -2168,10 +2681,16 @@ def _sort_context_flow(
     frueheren "Emotional Journey"-Strategie — "Build Up"/"Cool Down"/"Maintain"
     formen die Zielenergie-Kurve, "Auto" = klassische Set-Dramaturgie.
     """
-    if len(tracks) <= 2:
-        return sorted(tracks, key=lambda t: t.energy)
+    if not tracks:
+        return []
 
-    energy_dir = str(kwargs.get("energy_direction", "Auto"))
+    raw_energy_dir = str(kwargs.get("energy_direction", "Auto"))
+    energy_dir = {
+        "auto": "Auto",
+        "up": "Build Up",
+        "down": "Cool Down",
+        "maintain": "Maintain",
+    }.get(raw_energy_dir, raw_energy_dir)
     peak_position = max(0.4, min(0.8, float(kwargs.get("peak_position", 70)) / 100.0))
     genre_mixing = bool(kwargs.get("genre_mixing", True))
     genre_weight = max(0.0, min(1.0, float(kwargs.get("genre_weight", 0.3))))
@@ -2181,21 +2700,48 @@ def _sort_context_flow(
         configured_target = max(0.0, min(100.0, float(configured_target)))
 
     def _target_energy(position: int, total: int) -> float:
-        if configured_target is not None:
-            return configured_target
-        progress = position / max(1, total - 1)
-        if energy_dir == "Build Up":
-            return 30.0 + 55.0 * progress
-        if energy_dir == "Cool Down":
-            return 85.0 - 55.0 * progress
-        if energy_dir == "Maintain":
-            return pool_avg_energy
-        # Auto-Dramaturgie mit dem sichtbaren Peak-Regler: 30 -> 85 am
-        # gewaehlten Peak -> 40 am Set-Ende.
-        if progress <= peak_position:
-            return 30.0 + 55.0 * (progress / peak_position)
-        decline = (progress - peak_position) / max(1e-9, 1.0 - peak_position)
-        return 85.0 - 45.0 * decline
+        return _context_target_energy(
+            position,
+            total,
+            energy_direction=energy_dir,
+            peak_position=peak_position,
+            pool_average=pool_avg_energy,
+            configured_target=configured_target,
+        )
+
+    if len(tracks) <= 2:
+        def small_score(order) -> tuple:
+            total_score = 0.0
+            valid_edges = 0
+            for position, track in enumerate(order):
+                target = _target_energy(position, len(order))
+                total_score += 10.0 - min(30.0, abs(track.energy - target)) / 3.0
+                if position == 0:
+                    continue
+                previous = order[position - 1]
+                base = calculate_compatibility(
+                    previous, track, bpm_tolerance, **kwargs
+                )
+                if base == 0:
+                    continue
+                valid_edges += 1
+                total_score += float(base)
+                if genre_mixing and genre_weight > 0.0:
+                    genre_compat = get_genre_compatibility(
+                        _resolve_track_genre(previous), _resolve_track_genre(track)
+                    )
+                    total_score += genre_weight * (genre_compat - 0.5) * 20.0
+                if (
+                    abs(track.bpm - previous.bpm) < 0.5
+                    and track.camelotCode == previous.camelotCode
+                    and abs(track.energy - previous.energy) < 5
+                ):
+                    total_score -= 12.0
+                if abs(track.energy - previous.energy) > 35:
+                    total_score -= 15.0
+            return valid_edges, total_score
+
+        return _small_pool_order(tracks, small_score)
 
     unprocessed = list(tracks)
     total = len(tracks)
@@ -2312,7 +2858,13 @@ STRATEGIES = {
 # (calculate_enhanced_compatibility -> _calculate_compatibility_inner). Der
 # Scoring-Kontext, der durch Reorder/Preview/Quality/Recommendations gereicht
 # wird, besteht genau aus dieser Teilmenge.
-SCORING_PARAMETERS = {"harmonic_strictness", "allow_experimental"}
+SCORING_PARAMETERS = {
+    "energy_direction", "harmonic_strictness", "allow_experimental"
+}
+SCORING_ENERGY_DIRECTIONS = frozenset({
+    "Auto", "Build Up", "Cool Down", "Maintain",
+    "auto", "up", "down", "maintain",
+})
 
 SUPPORTED_STRATEGY_PARAMETERS = {
     "Harmonic Flow": {"harmonic_strictness", "allow_experimental"},
@@ -2365,12 +2917,843 @@ def resolve_scoring_context(
     }
 
 
-def generate_playlist(
+def resolve_run_scoring_context(
+    mode: str, advanced_params: Optional[Dict] = None
+) -> Dict:
+    """Friert Scoring, Kandidaten-Toleranzen und Schema-Raenge je Lauf ein."""
+    from . import candidate_preferences
+    from .candidate_preferences import GEWICHT_SCHLUESSEL
+    from .genres import CANONICAL_GENRES
+    from .tolerances import get_tolerances
+
+    context = deepcopy(resolve_scoring_context(mode, advanced_params))
+    toleranzprofile: dict[str, dict] = {}
+    track_toleranzprofile: dict[str, dict] = {}
+    schema_profile: dict[str, list[str]] = {}
+    for genre in CANONICAL_GENRES:
+        profil = deepcopy(get_tolerances(genre))
+        track_toleranzprofile[genre] = deepcopy(profil)
+        praferenz = candidate_preferences.kandidaten_gewichte(genre)
+        if praferenz is not None:
+            for key in GEWICHT_SCHLUESSEL:
+                profil[key] = float(praferenz[key])
+        toleranzprofile[genre] = profil
+        schema_profile[genre] = deepcopy(
+            candidate_preferences.schema_rangfolge(genre)
+        )
+
+    # Unknown darf nie still die Hoertestpraeferenz des ersten kanonischen
+    # Genres erben. Nur dessen allgemeine Toleranzbasis wird kopiert.
+    toleranzprofile["Unknown"] = deepcopy(get_tolerances("Unknown"))
+    track_toleranzprofile["Unknown"] = deepcopy(toleranzprofile["Unknown"])
+    schema_profile["Unknown"] = []
+    context["track_tolerances_by_genre"] = track_toleranzprofile
+    context["candidate_tolerances_by_genre"] = toleranzprofile
+    context["candidate_schema_ranks_by_genre"] = schema_profile
+    return context
+
+
+def _validate_candidate_profile_genre(genre, path: str) -> str:
+    """Akzeptiert nur kanonische Genres und den expliziten Unknown-Fallback."""
+    from .genres import CANONICAL_GENRES
+
+    allowed_genres = frozenset(CANONICAL_GENRES) | {"Unknown"}
+    if type(genre) is not str or genre not in allowed_genres:
+        raise ValueError(f"{path} enthaelt unbekanntes Genre {genre!r}")
+    return genre
+
+
+def _validate_candidate_tolerance_profile(profile, path: str) -> dict:
+    """Validiert ein partielles Profil nach seiner realen Konsumsemantik."""
+    from .tolerances import (
+        ERLAUBTE_TOLERANZ_SCHLUESSEL,
+        KANDIDATEN_GEWICHT_SCHLUESSEL,
+        TRACK_GEWICHT_SCHLUESSEL,
+    )
+
+    if not isinstance(profile, Mapping):
+        raise ValueError(f"{path} muss ein Mapping sein")
+    profile = deepcopy(dict(profile))
+    unknown_keys = sorted(
+        set(profile) - ERLAUBTE_TOLERANZ_SCHLUESSEL, key=repr
+    )
+    if unknown_keys:
+        raise ValueError(
+            f"{path} enthaelt unbekannte Profil-Schluessel: "
+            + ", ".join(repr(key) for key in unknown_keys)
+        )
+
+    weight_keys = frozenset(
+        TRACK_GEWICHT_SCHLUESSEL + KANDIDATEN_GEWICHT_SCHLUESSEL
+    )
+    normalized = {}
+    for key, value in profile.items():
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            if key in weight_keys:
+                raise ValueError(
+                    f"{path}[{key!r}] ist kein endliches Gewicht zwischen 0 und 1"
+                )
+            raise ValueError(f"{path}[{key!r}] muss eine endliche Zahl sein")
+        number = float(value)
+        if key in weight_keys and not 0.0 <= number <= 1.0:
+            raise ValueError(
+                f"{path}[{key!r}] ist kein endliches Gewicht zwischen 0 und 1"
+            )
+        if key == "groove_sim_floor" and not 0.0 <= number <= 1.0:
+            raise ValueError(f"{path}[{key!r}] muss zwischen 0 und 1 liegen")
+        if key in {"bass_delta_max", "brightness_delta_max"} and number <= 0.0:
+            raise ValueError(f"{path}[{key!r}] muss groesser als 0 sein")
+        normalized[key] = number
+    return normalized
+
+
+def _complete_run_scoring_context(
+    mode: str,
+    advanced_params: Optional[Dict],
+    scoring_context: Optional[Dict],
+) -> Dict:
+    """Ergaenzt alte/partielle Kontexte um den vollstaendigen Laufvertrag."""
+    context = resolve_run_scoring_context(mode, advanced_params)
+    if scoring_context is None:
+        return context
+    if not isinstance(scoring_context, Mapping):
+        raise ValueError("scoring_context muss ein Mapping sein")
+
+    supplied = deepcopy(dict(scoring_context))
+    tolerance_key = "candidate_tolerances_by_genre"
+    track_tolerance_key = "track_tolerances_by_genre"
+    schema_key = "candidate_schema_ranks_by_genre"
+    allowed_keys = SCORING_PARAMETERS | {
+        "target_energy", "overlap", tolerance_key, track_tolerance_key, schema_key,
+    }
+    unknown_keys = sorted(set(supplied) - allowed_keys, key=repr)
+    if unknown_keys:
+        raise ValueError(
+            "scoring_context enthaelt unbekannte Schluessel: "
+            + ", ".join(repr(key) for key in unknown_keys)
+        )
+
+    if "energy_direction" in supplied:
+        energy_direction = supplied["energy_direction"]
+        if type(energy_direction) is not str:
+            raise ValueError("scoring_context.energy_direction muss eine Zeichenkette sein")
+        if energy_direction not in SCORING_ENERGY_DIRECTIONS:
+            raise ValueError("scoring_context.energy_direction ist nicht unterstuetzt")
+    if "harmonic_strictness" in supplied:
+        strictness = supplied["harmonic_strictness"]
+        if type(strictness) is not int or not 1 <= strictness <= 10:
+            raise ValueError(
+                "scoring_context.harmonic_strictness muss eine ganze Zahl von 1 bis 10 sein"
+            )
+    if "allow_experimental" in supplied and type(supplied["allow_experimental"]) is not bool:
+        raise ValueError("scoring_context.allow_experimental muss boolesch sein")
+    for key, minimum, maximum in (
+        ("target_energy", 0.0, 100.0),
+        ("overlap", 4.0, 64.0),
+    ):
+        if key not in supplied or (
+            key == "target_energy" and supplied[key] is None
+        ):
+            continue
+        value = supplied[key]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not minimum <= float(value) <= maximum
+        ):
+            raise ValueError(
+                f"scoring_context.{key} muss eine endliche Zahl von "
+                f"{minimum:g} bis {maximum:g} sein"
+            )
+        supplied[key] = float(value)
+
+    tolerances_were_supplied = tolerance_key in supplied
+    track_tolerances_were_supplied = track_tolerance_key in supplied
+    schemas_were_supplied = schema_key in supplied
+    supplied_tolerances = supplied.pop(tolerance_key, None)
+    supplied_track_tolerances = supplied.pop(track_tolerance_key, None)
+    supplied_schemas = supplied.pop(schema_key, None)
+    context.update(supplied)
+
+    if track_tolerances_were_supplied:
+        if not isinstance(supplied_track_tolerances, Mapping):
+            raise ValueError(f"{track_tolerance_key} muss ein Mapping sein")
+        merged_track = deepcopy(context[track_tolerance_key])
+        for genre, profile in supplied_track_tolerances.items():
+            genre = _validate_candidate_profile_genre(genre, track_tolerance_key)
+            normalized = _validate_candidate_tolerance_profile(
+                profile, f"{track_tolerance_key}[{genre!r}]"
+            )
+            base_profile = deepcopy(merged_track[genre])
+            base_profile.update(normalized)
+            _track_edge_weights(
+                base_profile, f"{track_tolerance_key}[{genre!r}]"
+            )
+            merged_track[genre] = base_profile
+        context[track_tolerance_key] = merged_track
+
+    if tolerances_were_supplied:
+        from .candidate_preferences import GEWICHT_SCHLUESSEL
+
+        if not isinstance(supplied_tolerances, Mapping):
+            raise ValueError(f"{tolerance_key} muss ein Mapping sein")
+        merged = deepcopy(context[tolerance_key])
+        for genre, profile in supplied_tolerances.items():
+            genre = _validate_candidate_profile_genre(genre, tolerance_key)
+            profile = _validate_candidate_tolerance_profile(
+                profile, f"{tolerance_key}[{genre!r}]"
+            )
+            supplied_weights = {
+                key: profile[key] for key in GEWICHT_SCHLUESSEL if key in profile
+            }
+
+            base_profile = deepcopy(merged.get(str(genre), {}))
+            if supplied_weights:
+                supplied_sum = sum(float(value) for value in supplied_weights.values())
+                remaining_keys = [
+                    key for key in GEWICHT_SCHLUESSEL if key not in supplied_weights
+                ]
+                if supplied_sum > 1.0 + 1e-12:
+                    raise ValueError(
+                        f"{tolerance_key}[{genre!r}] angegebene Gewichte "
+                        f"summieren auf {supplied_sum}, maximal erlaubt ist 1.0"
+                    )
+                if not remaining_keys and not math.isclose(
+                    supplied_sum, 1.0, rel_tol=0.0, abs_tol=1e-12
+                ):
+                    raise ValueError(
+                        f"{tolerance_key}[{genre!r}] vollstaendige Gewichte "
+                        f"summieren auf {supplied_sum}, erwartet ist 1.0"
+                    )
+                if remaining_keys:
+                    remaining_sum = sum(
+                        float(base_profile[key]) for key in remaining_keys
+                    )
+                    rest = max(0.0, 1.0 - supplied_sum)
+                    if remaining_sum <= 0.0 and rest > 1e-12:
+                        raise ValueError(
+                            f"{tolerance_key}[{genre!r}] hat keine positive "
+                            "Basis fuer die nicht angegebenen Gewichte"
+                        )
+                    for key in remaining_keys:
+                        base_profile[key] = (
+                            float(base_profile[key]) / remaining_sum * rest
+                            if remaining_sum > 0.0
+                            else 0.0
+                        )
+                for key, value in supplied_weights.items():
+                    base_profile[key] = float(value)
+            base_profile.update({
+                key: value for key, value in profile.items()
+                if key not in supplied_weights
+            })
+            merged[str(genre)] = base_profile
+        context[tolerance_key] = merged
+
+    if schemas_were_supplied:
+        from .mix_candidates import SCHEMA_PRIORITAET
+
+        if not isinstance(supplied_schemas, Mapping):
+            raise ValueError(f"{schema_key} muss ein Mapping sein")
+        merged = deepcopy(context[schema_key])
+        for genre, ranks in supplied_schemas.items():
+            genre = _validate_candidate_profile_genre(genre, schema_key)
+            if (
+                not isinstance(ranks, (list, tuple))
+                or any(
+                    not isinstance(rank, str) or rank not in SCHEMA_PRIORITAET
+                    for rank in ranks
+                )
+                or len(set(ranks)) != len(ranks)
+            ):
+                raise ValueError(
+                    f"{schema_key}[{genre!r}] muss eine eindeutige Liste "
+                    "bekannter Schemata sein"
+                )
+            merged[str(genre)] = list(ranks)
+        context[schema_key] = merged
+    return context
+
+
+@dataclass(frozen=True, slots=True)
+class _PathState:
+    selections: tuple[Optional["CandidateSnapshot"], ...]
+    consistencies: tuple[bool, ...]
+    planned: int
+    saved_honored: int
+    score: float
+    path_consistent_links: int
+    state_key_sequence: tuple
+
+
+def _path_order(state: _PathState) -> tuple:
+    return (
+        -state.planned,
+        -state.saved_honored,
+        -state.score,
+        -state.path_consistent_links,
+        state.state_key_sequence,
+    )
+
+
+def _snapshot_flag(snapshot: "CandidateSnapshot", name: str, default=False):
+    return dict(snapshot.flags).get(name, default)
+
+
+def _candidate_link_consistent(
+    previous: "CandidateSnapshot", current: "CandidateSnapshot", middle: Track
+) -> bool:
+    grid = seconds_per_bar(middle.bpm) * int(
+        getattr(middle, "phrase_unit", 8) or 8
+    )
+    return (
+        current.t_out
+        >= previous.t_in + 2.0 * grid - QUANTIZE_TOLERANCE_SEC
+    )
+
+
+def _select_snapshot_path(
+    candidates_by_boundary: tuple[tuple["CandidateSnapshot", ...], ...],
+    occurrences: tuple[TrackOccurrence, ...],
+) -> tuple[tuple[Optional["CandidateSnapshot"], ...], tuple[bool, ...], int, int, int]:
+    """Begrenzter DP: hoechstens 12 Kandidaten plus UNGEPLANT je Kante."""
+    if not candidates_by_boundary:
+        return (), (), 0, 0, 0
+    previous_states: dict[Optional[tuple], _PathState] = {}
+    states_retained = 0
+    link_checks = 0
+
+    for index, snapshots in enumerate(candidates_by_boundary):
+        options: tuple[Optional["CandidateSnapshot"], ...] = (*snapshots[:12], None)
+        current_states: dict[Optional[tuple], _PathState] = {}
+        predecessors = tuple(previous_states.values()) or (
+            _PathState((), (), 0, 0, 0.0, 0, ()),
+        )
+        for option in options:
+            best: Optional[_PathState] = None
+            for predecessor in predecessors:
+                previous = predecessor.selections[-1] if predecessor.selections else None
+                if option is None:
+                    consistent = False
+                    link_ok = False
+                elif previous is None:
+                    consistent = True
+                    link_ok = False
+                else:
+                    link_checks += 1
+                    link_ok = _candidate_link_consistent(
+                        previous, option, occurrences[index].track
+                    )
+                    consistent = link_ok
+                planned = predecessor.planned + (option is not None)
+                honored = predecessor.saved_honored + int(
+                    option is not None
+                    and bool(_snapshot_flag(option, "gespeicherte_wahl"))
+                )
+                score = predecessor.score + (option.score if option is not None else 0.0)
+                path_links = predecessor.path_consistent_links + int(link_ok)
+                state_key = (0, option.key) if option is not None else (1, ())
+                candidate = _PathState(
+                    selections=(*predecessor.selections, option),
+                    consistencies=(*predecessor.consistencies, consistent),
+                    planned=planned,
+                    saved_honored=honored,
+                    score=score,
+                    path_consistent_links=path_links,
+                    state_key_sequence=(*predecessor.state_key_sequence, state_key),
+                )
+                if best is None or _path_order(candidate) < _path_order(best):
+                    best = candidate
+            assert best is not None
+            current_states[option.key if option is not None else None] = best
+        states_retained += len(current_states)
+        previous_states = current_states
+
+    winner = min(previous_states.values(), key=_path_order)
+    return (
+        winner.selections,
+        winner.consistencies,
+        link_checks,
+        winner.path_consistent_links,
+        states_retained,
+    )
+
+
+def _immutable_metrics_from_candidate(kandidat) -> ImmutableMetricsSnapshot:
+    legacy = transition_metrics_from_candidate(kandidat)
+    from .pair_candidates import CandidateSnapshot
+
+    snapshot = CandidateSnapshot.from_pair_candidate(
+        kandidat, original_ordinal=max(0, int(kandidat.rang) - 1)
+    )
+    return ImmutableMetricsSnapshot(
+        harmonic_score=legacy.harmonic_score,
+        bpm_smoothness=legacy.bpm_smoothness,
+        energy_flow=legacy.energy_flow,
+        genre_compatibility=legacy.genre_compatibility,
+        overall_score=legacy.overall_score,
+        ai_bonus=0.0,
+        groove_match=legacy.groove_match,
+        bass_continuity=legacy.bass_continuity,
+        timbre_match=legacy.timbre_match,
+        mood_match=legacy.mood_match,
+        loudness_match=legacy.loudness_match,
+        structure_match=legacy.structure_match,
+        energy_delta=legacy.energy_delta,
+        lufs_delta=legacy.lufs_delta,
+        kandidat=snapshot,
+    )
+
+
+def _immutable_metrics_for_snapshot(
+    track1: Track,
+    track2: Track,
+    bpm_tolerance: float,
+    context: Mapping,
+    snapshot: Optional["CandidateSnapshot"],
+    mutable_by_key: Mapping,
+) -> ImmutableMetricsSnapshot:
+    mutable = mutable_by_key[snapshot.key] if snapshot is not None else None
+    metrics = _calculate_track_edge_metrics(
+        track1,
+        track2,
+        bpm_tolerance,
+        context.get("energy_direction"),
+        context,
+        mutable,
+    )
+    return ImmutableMetricsSnapshot(
+        harmonic_score=metrics.harmonic_score,
+        bpm_smoothness=metrics.bpm_smoothness,
+        energy_flow=metrics.energy_flow,
+        genre_compatibility=metrics.genre_compatibility,
+        overall_score=metrics.overall_score,
+        ai_bonus=0.0,
+        groove_match=metrics.groove_match,
+        bass_continuity=metrics.bass_continuity,
+        timbre_match=metrics.timbre_match,
+        mood_match=metrics.mood_match,
+        loudness_match=metrics.loudness_match,
+        structure_match=metrics.structure_match,
+        energy_delta=metrics.energy_delta,
+        lufs_delta=metrics.lufs_delta,
+        kandidat=snapshot,
+    )
+
+
+def legacy_transition_metrics(
+    result: PlaylistGenerationResult,
+) -> list[TransitionMetrics]:
+    """Neue mutable Legacy-Objekte; Result-Snapshots bleiben unangetastet."""
+    return [
+        TransitionMetrics(
+            harmonic_score=item.harmonic_score,
+            bpm_smoothness=item.bpm_smoothness,
+            energy_flow=item.energy_flow,
+            genre_compatibility=item.genre_compatibility,
+            overall_score=item.overall_score,
+            ai_bonus=item.ai_bonus,
+            groove_match=item.groove_match,
+            bass_continuity=item.bass_continuity,
+            timbre_match=item.timbre_match,
+            mood_match=item.mood_match,
+            loudness_match=item.loudness_match,
+            structure_match=item.structure_match,
+            energy_delta=item.energy_delta,
+            lufs_delta=item.lufs_delta,
+            kandidat=item.kandidat.to_dict() if item.kandidat is not None else None,
+        )
+        for item in result.metrics
+    ]
+
+
+def legacy_transition_recommendations(
+    result: PlaylistGenerationResult,
+) -> list[TransitionRecommendation]:
+    """Defensive GUI-/Exporter-Sicht ohne mutable Referenz im Result."""
+    occurrence_by_id = {
+        occurrence.occurrence_id: occurrence for occurrence in result.occurrences
+    }
+    legacy: list[TransitionRecommendation] = []
+    for item in result.recommendations:
+        active_rank = 0
+        if item.active_candidate_key is not None:
+            active = next(
+                (
+                    candidate
+                    for candidate in item.candidates
+                    if candidate.key == item.active_candidate_key
+                ),
+                None,
+            )
+            active_rank = active.rang if active is not None else 0
+        legacy.append(
+            TransitionRecommendation(
+                index=item.index,
+                from_track=occurrence_by_id[item.from_occurrence_id].track,
+                to_track=occurrence_by_id[item.to_occurrence_id].track,
+                fade_out_start=item.fade_out_start,
+                fade_out_end=item.fade_out_end,
+                fade_in_start=item.fade_in_start,
+                mix_entry=item.mix_entry,
+                overlap=item.overlap,
+                bpm_delta=item.bpm_delta,
+                energy_delta=item.energy_delta,
+                compatibility_score=item.compatibility_score,
+                risk_level=item.risk_level,
+                notes=item.notes,
+                transition_type=item.transition_type,
+                dj_rec=None,
+                plan=item.plan,
+                kandidaten=[candidate.to_dict() for candidate in item.candidates],
+                kandidat_aktiv=active_rank,
+                kandidat_konsistent=item.candidate_consistent,
+            )
+        )
+    return legacy
+
+
+def _rank_fixed_boundaries(
+    occurrences: tuple[TrackOccurrence, ...],
+    bpm_tolerance: float,
+    context: dict,
+    choice_snapshot: Mapping,
+) -> tuple[
+    tuple[tuple["CandidateSnapshot", ...], ...],
+    tuple[dict[tuple, object], ...],
+    int,
+]:
+    from . import candidate_choices
+    from .pair_candidates import CandidateSnapshot, rank_pair_candidates
+
+    all_snapshots: list[tuple[CandidateSnapshot, ...]] = []
+    mutable_maps: list[dict[tuple, object]] = []
+    saved_present = 0
+    for index in range(max(0, len(occurrences) - 1)):
+        track_a = occurrences[index].track
+        track_b = occurrences[index + 1].track
+        choice_key = candidate_choices.schluessel(track_a.filePath, track_b.filePath)
+        persisted = choice_snapshot.get(choice_key, {})
+        if choice_key in choice_snapshot:
+            saved_present += 1
+        genre = _resolve_track_genre(track_a)
+        tolerance_profiles = context.get("candidate_tolerances_by_genre", {})
+        schema_profiles = context.get("candidate_schema_ranks_by_genre", {})
+        tolerances = tolerance_profiles.get(
+            genre, tolerance_profiles.get("Unknown", {})
+        ) if isinstance(tolerance_profiles, Mapping) else None
+        schema_rank = schema_profiles.get(
+            genre, schema_profiles.get("Unknown", [])
+        ) if isinstance(schema_profiles, Mapping) else None
+        mutable = rank_pair_candidates(
+            track_a,
+            track_b,
+            bpm_tolerance=bpm_tolerance,
+            energy_direction=_normalize_energy_direction(
+                context.get("energy_direction")
+            ),
+            harmonic_strictness=context.get("harmonic_strictness", 7),
+            allow_experimental=context.get("allow_experimental", True),
+            tolerances=tolerances,
+            wahl=persisted,
+            schema_rang=schema_rank,
+        )[:12]
+        snapshots = tuple(
+            CandidateSnapshot.from_pair_candidate(candidate, original_ordinal=ordinal)
+            for ordinal, candidate in enumerate(mutable)
+        )
+        all_snapshots.append(snapshots)
+        mutable_maps.append(
+            {snapshot.key: candidate for snapshot, candidate in zip(snapshots, mutable)}
+        )
+    return tuple(all_snapshots), tuple(mutable_maps), saved_present
+
+
+def _recommendation_snapshot(
+    index: int,
+    occurrences: tuple[TrackOccurrence, ...],
+    candidates: tuple["CandidateSnapshot", ...],
+    selected: Optional["CandidateSnapshot"],
+    metrics: ImmutableMetricsSnapshot,
+    consistent: bool,
+    mutable_by_key: Mapping,
+    bpm_tolerance: float,
+    context: dict,
+) -> ImmutableRecommendationSnapshot:
+    current = occurrences[index]
+    upcoming = occurrences[index + 1]
+    bpm_delta = float(upcoming.track.bpm) - float(current.track.bpm)
+    if selected is None:
+        return ImmutableRecommendationSnapshot(
+            index=index,
+            from_occurrence_id=current.occurrence_id,
+            to_occurrence_id=upcoming.occurrence_id,
+            fade_out_start=0.0,
+            fade_out_end=0.0,
+            fade_in_start=0.0,
+            mix_entry=0.0,
+            overlap=0.0,
+            bpm_delta=bpm_delta,
+            energy_delta=0,
+            compatibility_score=0,
+            risk_level="unplanned",
+            notes="UNGEPLANT — kein ausführbarer TransitionPlan",
+            transition_type="unplanned",
+            plan=None,
+            candidates=candidates,
+            active_candidate_key=None,
+            candidate_consistent=False,
+        )
+
+    candidate = mutable_by_key[selected.key]
+    overlap = selected.overlap_sec
+    fade_out_end = selected.t_out + overlap
+    if current.track.duration > 0:
+        fade_out_end = min(fade_out_end, float(current.track.duration))
+    transition_type = transition_type_for_candidate(
+        current.track,
+        upcoming.track,
+        candidate,
+        bpm_tolerance=bpm_tolerance,
+        scoring_context=context,
+    )
+    tempo_ratio = (
+        float(upcoming.track.bpm / current.track.bpm)
+        if current.track.bpm > 0 and upcoming.track.bpm > 0
+        else 1.0
+    )
+    plan = TransitionPlan(
+        mix_out_a=selected.t_out,
+        mix_in_b=selected.t_in,
+        fade_out_start=selected.t_out,
+        fade_out_end=fade_out_end,
+        overlap=overlap,
+        transition_type=transition_type,
+        eq_mode=transition_type,
+        tempo_ratio=tempo_ratio,
+    )
+    score = int(round(metrics.overall_score * 100))
+    energy_delta = int(round(float(metrics.energy_delta or 0.0)))
+    effective_delta, _ = effective_bpm_diff(current.track.bpm, upcoming.track.bpm)
+    risk = _categorise_risk_level(
+        score, effective_delta, bpm_tolerance, energy_delta
+    )
+    dj_rec = None
+    dj_notes: list[str] = []
+    try:
+        dj_rec, dj_notes, _dj_overlap = _process_dj_brain_recommendations(
+            current.track, upcoming.track
+        )
+        if dj_rec is not None:
+            dj_rec.adjusted_mix_out_a = selected.t_out
+            dj_rec.adjusted_mix_in_b = selected.t_in
+            dj_rec.overlap_seconds = overlap
+            dj_notes = _handoff_pair_point_risks(
+                dj_rec,
+                current.track,
+                upcoming.track,
+                selected.t_out,
+                selected.t_in,
+                dj_notes,
+            )
+    except Exception as exc:  # DJ-Hinweise duerfen den gueltigen Kandidatenplan nicht kippen
+        logger.warning(
+            "DJ-Hinweise fuer Result-Kante %s nicht verfuegbar: %s", index, exc
+        )
+        dj_rec = None
+        dj_notes = []
+    description = _build_transition_description(
+        TransitionDescriptionParams(
+            compatibility_score=score,
+            bpm_delta=bpm_delta,
+            bpm_tolerance=bpm_tolerance,
+            energy_delta=energy_delta,
+            metrics=legacy_transition_metrics_for_snapshot(metrics),
+            from_track=current.track,
+            to_track=upcoming.track,
+            has_dj_brain=(dj_rec is not None),
+        )
+    )
+    notes = "; ".join(
+        part for part in (selected.begruendung, *dj_notes, description) if part
+    )
+    return ImmutableRecommendationSnapshot(
+        index=index,
+        from_occurrence_id=current.occurrence_id,
+        to_occurrence_id=upcoming.occurrence_id,
+        fade_out_start=selected.t_out,
+        fade_out_end=fade_out_end,
+        fade_in_start=selected.t_in,
+        mix_entry=selected.t_in,
+        overlap=overlap,
+        bpm_delta=bpm_delta,
+        energy_delta=energy_delta,
+        compatibility_score=score,
+        risk_level=risk,
+        notes=notes,
+        transition_type=transition_type,
+        plan=plan,
+        candidates=candidates,
+        active_candidate_key=selected.key,
+        candidate_consistent=consistent,
+    )
+
+
+def legacy_transition_metrics_for_snapshot(
+    item: ImmutableMetricsSnapshot,
+) -> TransitionMetrics:
+    return TransitionMetrics(
+        harmonic_score=item.harmonic_score,
+        bpm_smoothness=item.bpm_smoothness,
+        energy_flow=item.energy_flow,
+        genre_compatibility=item.genre_compatibility,
+        overall_score=item.overall_score,
+        ai_bonus=item.ai_bonus,
+        groove_match=item.groove_match,
+        bass_continuity=item.bass_continuity,
+        timbre_match=item.timbre_match,
+        mood_match=item.mood_match,
+        loudness_match=item.loudness_match,
+        structure_match=item.structure_match,
+        energy_delta=item.energy_delta,
+        lufs_delta=item.lufs_delta,
+        kandidat=item.kandidat.to_dict() if item.kandidat is not None else None,
+    )
+
+
+def _build_generation_result(
+    *,
+    run_id: str,
+    mode: str,
+    occurrences: tuple[TrackOccurrence, ...],
+    input_tracks: int,
+    invalid_bpm_excluded: int,
+    bpm_tolerance: float,
+    context: dict,
+    choice_snapshot: Mapping,
+) -> PlaylistGenerationResult:
+    snapshots_by_boundary, mutable_maps, saved_present = _rank_fixed_boundaries(
+        occurrences, bpm_tolerance, context, choice_snapshot
+    )
+    selected, consistencies, link_checks, passed_links, states_retained = (
+        _select_snapshot_path(snapshots_by_boundary, occurrences)
+    )
+    boundaries: list[BoundaryResult] = []
+    metrics: list[ImmutableMetricsSnapshot] = []
+    recommendations: list[ImmutableRecommendationSnapshot] = []
+    for index, candidates in enumerate(snapshots_by_boundary):
+        chosen = selected[index]
+        consistent = consistencies[index]
+        metric = _immutable_metrics_for_snapshot(
+            occurrences[index].track,
+            occurrences[index + 1].track,
+            bpm_tolerance,
+            context,
+            chosen,
+            mutable_maps[index],
+        )
+        recommendation = _recommendation_snapshot(
+            index,
+            occurrences,
+            candidates,
+            chosen,
+            metric,
+            consistent,
+            mutable_maps[index],
+            bpm_tolerance,
+            context,
+        )
+        boundary = BoundaryResult(
+            index=index,
+            from_occurrence_id=occurrences[index].occurrence_id,
+            to_occurrence_id=occurrences[index + 1].occurrence_id,
+            snapshots=candidates,
+            selected=chosen,
+            metrics=metric,
+            recommendation=recommendation,
+            consistent=consistent,
+        )
+        boundaries.append(boundary)
+        metrics.append(metric)
+        recommendations.append(recommendation)
+
+    legacy_metrics = [legacy_transition_metrics_for_snapshot(item) for item in metrics]
+    quality = calculate_playlist_quality(
+        [occurrence.track for occurrence in occurrences],
+        bpm_tolerance,
+        context,
+        transition_metrics=legacy_metrics,
+    )
+    planned = sum(item is not None for item in selected)
+    total = len(snapshots_by_boundary)
+    segments = 0
+    in_segment = False
+    for item in selected:
+        if item is not None and not in_segment:
+            segments += 1
+            in_segment = True
+        elif item is None:
+            in_segment = False
+    saved_honored = sum(
+        item is not None and bool(_snapshot_flag(item, "gespeicherte_wahl"))
+        for item in selected
+    )
+    with_candidates = sum(bool(items) for items in snapshots_by_boundary)
+    graph_stats = GraphStats(
+        input_tracks=input_tracks,
+        valid_tracks=len(occurrences),
+        invalid_bpm_excluded=invalid_bpm_excluded,
+        boundaries_total=total,
+        boundaries_with_candidates=with_candidates,
+        boundaries_without_candidates=total - with_candidates,
+        candidate_snapshots=sum(len(items) for items in snapshots_by_boundary),
+        saved_present=saved_present,
+    )
+    path_stats = PathStats(
+        boundaries_total=total,
+        with_candidates=with_candidates,
+        planned=planned,
+        unplanned=total - planned,
+        saved_present=saved_present,
+        saved_honored=saved_honored,
+        link_checks=link_checks,
+        consistent_links=passed_links,
+        segments=segments,
+        segment_restarts=max(segments - 1, 0),
+        states_retained=states_retained,
+        total_score=sum(item.score for item in selected if item is not None),
+    )
+    return PlaylistGenerationResult(
+        run_id=run_id,
+        mode=mode,
+        tracks=tuple(occurrence.track for occurrence in occurrences),
+        occurrences=occurrences,
+        boundaries=tuple(boundaries),
+        metrics=tuple(metrics),
+        recommendations=tuple(recommendations),
+        quality=tuple((str(key), float(value)) for key, value in sorted(quality.items())),
+        scoring_context=_freeze_immutable(context),
+        candidate_choice_snapshot=_freeze_choice_snapshot(choice_snapshot),
+        graph_stats=graph_stats,
+        path_stats=path_stats,
+        bpm_tolerance=float(bpm_tolerance),
+    )
+
+
+def generate_playlist_result(
     tracks: list[Track],
     mode: str,
-    bpm_tolerance: float = 3.0,
+    bpm_tolerance: float = PAAR_BPM_MAX,
     advanced_params: Optional[Dict] = None,
-) -> list[Track]:
+    scoring_context: Optional[Dict] = None,
+    *,
+    candidate_choice_snapshot: Optional[Mapping] = None,
+) -> PlaylistGenerationResult:
     """
     Generates a playlist based on the selected mode and parameters.
 
@@ -2385,11 +3768,45 @@ def generate_playlist(
             - allow_experimental: bool (allow +4/+7 techniques)
             - genre_mixing: bool (enable genre-based sorting)
             - genre_weight: 0.0-1.0 (weight for genre similarity)
+        scoring_context: Expliziter, bereits eingefrorener Scoring-Vertrag.
+        candidate_choice_snapshot: Optional eingefrorene Kandidatenwahlen vom
+            Run-Start. Ohne Wert wird der bisherige Live-Snapshot verwendet.
     """
-    if not tracks:
-        return []
+    from . import candidate_choices
 
-    strategy_config = StrategyConfig.from_mapping(advanced_params)
+    if (
+        isinstance(bpm_tolerance, bool)
+        or not isinstance(bpm_tolerance, Real)
+        or not math.isfinite(float(bpm_tolerance))
+        or float(bpm_tolerance) < 0.0
+    ):
+        raise ValueError("bpm_tolerance muss endlich und nichtnegativ sein")
+    bpm_tolerance = float(bpm_tolerance)
+    if not isinstance(mode, str) or not mode.strip():
+        raise ValueError("mode muss eine bekannte Playlist-Strategie sein")
+    mode = STRATEGY_ALIASES.get(mode, mode)
+    if mode not in STRATEGIES:
+        raise ValueError(f"Unbekannte Playlist-Strategie: {mode!r}")
+    if advanced_params is None:
+        advanced_snapshot = None
+    elif isinstance(advanced_params, Mapping):
+        advanced_snapshot = deepcopy(dict(advanced_params))
+    else:
+        advanced_snapshot = advanced_params
+    strategy_config = StrategyConfig.from_mapping(advanced_snapshot)
+    if candidate_choice_snapshot is None:
+        snapshot_source = candidate_choices.snapshot()
+    elif not isinstance(candidate_choice_snapshot, Mapping):
+        raise ValueError("candidate_choice_snapshot muss ein Mapping sein")
+    else:
+        snapshot_source = candidate_choice_snapshot
+    frozen_choice_snapshot = _freeze_choice_snapshot(snapshot_source)
+    choice_snapshot = _thaw_choice_snapshot(frozen_choice_snapshot)
+    run_id = str(uuid.uuid4())
+    input_tracks = len(tracks)
+    run_context = _complete_run_scoring_context(
+        mode, advanced_snapshot, scoring_context
+    )
 
     # Ensure all tracks have a camelot code before sorting
     for track in tracks:
@@ -2398,8 +3815,9 @@ def generate_playlist(
     # Nur unbrauchbare BPM-Werte ausschliessen. Fehlende Keys bleiben erhalten
     # und nutzen den dokumentierten neutralen Harmonic-Fallback.
     valid_tracks: list[Track] = []
+    valid_ordinals: list[int] = []
     unresolved_keys = []
-    for candidate in tracks:
+    for ordinal, candidate in enumerate(tracks):
         bpm_value = getattr(candidate, "bpm", None)
         try:
             bpm_numeric = float(bpm_value)
@@ -2413,6 +3831,7 @@ def generate_playlist(
 
         candidate.bpm = bpm_numeric
         valid_tracks.append(candidate)
+        valid_ordinals.append(ordinal)
         if not getattr(candidate, "camelotCode", ""):
             unresolved_keys.append(candidate.filePath)
 
@@ -2423,12 +3842,19 @@ def generate_playlist(
         )
 
     if not valid_tracks:
-        return []
+        return _build_generation_result(
+            run_id=run_id,
+            mode=mode,
+            occurrences=(),
+            input_tracks=input_tracks,
+            invalid_bpm_excluded=input_tracks,
+            bpm_tolerance=bpm_tolerance,
+            context=run_context,
+            choice_snapshot=choice_snapshot,
+        )
 
-    # Alte Strategie-Namen (vor dem 11->8-Merge) aufloesen
-    mode = STRATEGY_ALIASES.get(mode, mode)
     # Get the sorting function from the strategy map
-    sorter = STRATEGIES.get(mode, _sort_harmonic_flow)  # Default to harmonic flow
+    sorter = STRATEGIES[mode]
 
     # Initialize thread-local-like cache container
     global _COMPAT_CACHE, _ENHANCED_COMPAT_CACHE
@@ -2440,18 +3866,47 @@ def generate_playlist(
     try:
         # Call the selected sorting strategy with advanced params
         effective_config = strategy_config.effective_kwargs(mode)
+        sorter_params = deepcopy(effective_config)
+        sorter_params.update(run_context)
+        sorter_params["candidate_choice_snapshot"] = choice_snapshot
         logger.info("Effektive Strategieparameter %s: %s", mode, effective_config)
-        result = sorter(valid_tracks, bpm_tolerance=bpm_tolerance, **effective_config)
+        sorted_tracks = sorter(
+            valid_tracks, bpm_tolerance=bpm_tolerance, **sorter_params
+        )
     finally:
         # Restore old cache containers (usually None)
         _COMPAT_CACHE = old_cache
         _ENHANCED_COMPAT_CACHE = old_enhanced_cache
 
-    # Log quality metrics for analysis — mit demselben Scoring-Kontext (HPG-001)
-    scoring_context = {
-        k: v for k, v in effective_config.items() if k in SCORING_PARAMETERS
-    }
-    quality = calculate_playlist_quality(result, bpm_tolerance, scoring_context)
+    pools: dict[int, list[int]] = {}
+    for ordinal, track in zip(valid_ordinals, valid_tracks):
+        pools.setdefault(id(track), []).append(ordinal)
+    occurrences: list[TrackOccurrence] = []
+    for track in sorted_tracks:
+        ordinals = pools.get(id(track), [])
+        if not ordinals:
+            raise RuntimeError(
+                "Strategie-Ergebnis ist keine exakte Occurrence-Permutation"
+            )
+        occurrences.append(
+            TrackOccurrence(run_id=run_id, ordinal=ordinals.pop(0), track=track)
+        )
+    if len(occurrences) != len(valid_tracks) or any(pools.values()):
+        raise RuntimeError(
+            "Strategie-Ergebnis hat Tracks verloren oder hinzugefuegt"
+        )
+
+    generation_result = _build_generation_result(
+        run_id=run_id,
+        mode=mode,
+        occurrences=tuple(occurrences),
+        input_tracks=input_tracks,
+        invalid_bpm_excluded=input_tracks - len(valid_tracks),
+        bpm_tolerance=bpm_tolerance,
+        context=run_context,
+        choice_snapshot=choice_snapshot,
+    )
+    quality = generation_result.quality_dict()
     logger.info(
         f"Playlist-Qualitaet ({mode}): "
         f"Score={quality['overall_score']:.2f}, "
@@ -2460,7 +3915,71 @@ def generate_playlist(
         f"BPM={quality['bpm_smoothness']:.2f}"
     )
 
-    return result
+    return generation_result
+
+
+def generate_playlist(
+    tracks: list[Track],
+    mode: str,
+    bpm_tolerance: float = PAAR_BPM_MAX,
+    advanced_params: Optional[Dict] = None,
+    scoring_context: Optional[Dict] = None,
+    *,
+    candidate_choice_snapshot: Optional[Mapping] = None,
+) -> list[Track]:
+    """Kompatibler Listen-Wrapper um den einen GenerationResult-Lauf."""
+    return list(
+        generate_playlist_result(
+            tracks,
+            mode,
+            bpm_tolerance,
+            advanced_params,
+            scoring_context,
+            candidate_choice_snapshot=candidate_choice_snapshot,
+        ).tracks
+    )
+
+
+def rebuild_result_for_order(
+    previous_result: PlaylistGenerationResult,
+    ordered_occurrence_ids,
+    choice_snapshot: Optional[Mapping] = None,
+) -> PlaylistGenerationResult:
+    """Baut nur Kanten neu; Trackstrategie und Occurrence-IDs bleiben unangetastet."""
+    requested = tuple(tuple(item) for item in ordered_occurrence_ids)
+    existing = tuple(
+        occurrence.occurrence_id for occurrence in previous_result.occurrences
+    )
+    if len(set(requested)) != len(requested):
+        raise ValueError("Occurrence-ID-Permutation darf keine Duplikate enthalten")
+    if len(requested) != len(existing) or set(requested) != set(existing):
+        raise ValueError(
+            "ordered_occurrence_ids muss eine exakte Occurrence-ID-Permutation sein"
+        )
+    by_id = {
+        occurrence.occurrence_id: occurrence
+        for occurrence in previous_result.occurrences
+    }
+    selected_choices = (
+        previous_result.candidate_choice_snapshot_dict()
+        if choice_snapshot is None
+        else choice_snapshot
+    )
+    if not isinstance(selected_choices, Mapping):
+        raise ValueError("choice_snapshot muss ein Mapping sein")
+    selected_choices = _thaw_choice_snapshot(
+        _freeze_choice_snapshot(selected_choices)
+    )
+    return _build_generation_result(
+        run_id=previous_result.run_id,
+        mode=previous_result.mode,
+        occurrences=tuple(by_id[item] for item in requested),
+        input_tracks=previous_result.graph_stats.input_tracks,
+        invalid_bpm_excluded=previous_result.graph_stats.invalid_bpm_excluded,
+        bpm_tolerance=previous_result.bpm_tolerance,
+        context=previous_result.scoring_context_dict(),
+        choice_snapshot=selected_choices,
+    )
 
 
 def benchmark_algorithms(
@@ -2497,96 +4016,122 @@ class SetTimelineEntry:
 
     track: Track
     start_time: float  # Start in Sekunden
-    end_time: float  # Ende in Sekunden (nach Overlap-Abzug)
+    end_time: float  # Ende der hoerbaren Trackstrecke in Set-Sekunden
     playing_duration: float  # Effektive Spieldauer in Sekunden
     overlap_with_next: float  # Overlap in Sekunden zum naechsten Track
     is_peak: bool  # Ist dieser Track am Peak-Punkt?
     energy_phase: str  # "intro", "warmup", "build", "peak", "sustain", "cooldown"
+    transition_planned: Optional[bool] = None  # True/False; letzter Track None
+
+
+def _timeline_track_duration(track: Track, index: int) -> float:
+    """Liefert eine echte, positive Trackdauer oder bricht sichtbar ab."""
+    try:
+        duration = float(track.duration)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Track {index + 1}: ungueltige Dauer") from exc
+    if not math.isfinite(duration) or duration <= 0.0:
+        raise ValueError(f"Track {index + 1}: Dauer muss endlich und positiv sein")
+    return duration
+
+
+def _validated_timeline_plan(
+    plan: TransitionPlan,
+    edge_index: int,
+    duration_a: float,
+    duration_b: float,
+) -> tuple[float, float, float]:
+    """Validiert den unveraendert zu uebernehmenden Plan einer Kante."""
+    edge = f"Kante {edge_index + 1}->{edge_index + 2}"
+    try:
+        mix_out = float(plan.mix_out_a)
+        mix_in = float(plan.mix_in_b)
+        overlap = float(plan.overlap)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"{edge}: unvollstaendiger TransitionPlan") from exc
+
+    if not all(math.isfinite(value) for value in (mix_out, mix_in, overlap)):
+        raise ValueError(f"{edge}: TransitionPlan enthaelt nicht-endliche Werte")
+    if overlap <= 0.0:
+        raise ValueError(f"{edge}: Overlap muss positiv sein")
+    if not (0.0 <= mix_out and mix_out + overlap <= duration_a):
+        raise ValueError(f"{edge}: Mix-Out oder Overlap liegt ausserhalb von Track A")
+    if not (0.0 <= mix_in and mix_in + overlap <= duration_b):
+        raise ValueError(f"{edge}: Mix-In oder Overlap liegt ausserhalb von Track B")
+    return mix_out, mix_in, overlap
 
 
 def _calculate_timeline_entries(
     tracks: list[Track], default_overlap: float,
     transition_plans: Optional[list[TransitionPlan]] = None,
 ) -> tuple[list[SetTimelineEntry], float]:
-    """Berechnet Start- und Endzeiten fuer jeden Track.
+    """Berechnet die Timeline ausschliesslich aus gueltigen Plaenen.
 
-    Zeitmodell (Konvention seit dem Blenden-Fix 1ebaa96): Track B startet
-    seine Wiedergabe an mix_in_b in dem Moment, in dem Track A mix_out_a
-    erreicht; die Blende dauert overlap Sekunden, A ist also bis
-    mix_out_a + overlap hoerbar. Ein Track traegt damit nur das Stueck
-    zwischen Mix-In und Mix-Out zur Set-Laenge bei, nicht seine ganze Dauer.
-    Vorher galt playing_duration = dauer - overlap (Overlap am Track-ENDE
-    abgezogen) — das zeigte ein 10er-Set um rund 20 Minuten zu lang an.
-
-    Sonderfaelle: der erste Track beginnt bei Position 0 (der DJ spielt ihn
-    von vorn), der letzte spielt bis zu seinem Ende. Ohne Plan gelten die
-    Fallbacks aus _resolve_mix_points — dieselben wie in den Empfehlungen,
-    damit Timeline und Empfehlung nicht verschiedene Mixpunkte zeigen.
+    Eine planlose Kante spielt den aktuellen Track bis zum echten Ende und
+    hat keinen erfundenen Overlap. Planwerte bleiben exakt; ungueltige Plaene
+    werden nicht geklemmt oder durch Analysewerte ersetzt.
     """
+    del default_overlap  # Oeffentlicher Legacy-Parameter; kein Timing-Fallback.
     entries: list[SetTimelineEntry] = []
     current_time = 0.0
     n = len(tracks)
+    durations = [
+        _timeline_track_duration(track, i) for i, track in enumerate(tracks)
+    ]
+    plans: list[Optional[tuple[float, float, float]]] = [None] * max(0, n - 1)
+
+    for edge_index in range(n - 1):
+        plan = (
+            transition_plans[edge_index]
+            if transition_plans is not None and edge_index < len(transition_plans)
+            else None
+        )
+        if plan is not None:
+            plans[edge_index] = _validated_timeline_plan(
+                plan, edge_index, durations[edge_index], durations[edge_index + 1]
+            )
+
+    for index in range(1, n - 1):
+        incoming = plans[index - 1]
+        outgoing = plans[index]
+        if incoming is not None and outgoing is not None:
+            incoming_mix_in = incoming[1]
+            outgoing_mix_out = outgoing[0]
+            if not incoming_mix_in < outgoing_mix_out:
+                raise ValueError(
+                    f"Track {index + 1}: eingehender Mix-In muss vor "
+                    "ausgehendem Mix-Out liegen"
+                )
 
     for i, track in enumerate(tracks):
-        track_dur = max(track.duration, 30.0)  # Minimum 30s pro Track
-        plan_in = transition_plans[i - 1] if (
-            transition_plans and 0 < i <= len(transition_plans)
-        ) else None
-        plan_out = transition_plans[i] if (
-            transition_plans and i < len(transition_plans)
-        ) else None
-        fallback_in, fallback_out = _resolve_mix_points(track, default_overlap)
+        track_dur = durations[i]
+        plan_in = plans[i - 1] if i > 0 else None
+        plan_out = plans[i] if i < n - 1 else None
+        mix_in = plan_in[1] if plan_in is not None else 0.0
+        mix_out = plan_out[0] if plan_out is not None else track_dur
 
-        # Mix-In: erster Track von vorn, sonst aus dem Plan des Vorgaengers
-        if i == 0:
-            mix_in = 0.0
-        elif plan_in is not None:
-            mix_in = float(plan_in.mix_in_b)
-        else:
-            mix_in = fallback_in
-        mix_in = min(max(mix_in, 0.0), track_dur)
-
-        # Mix-Out: aus dem eigenen Plan, sonst Fallback; nie vor dem Mix-In
         if plan_out is not None:
-            mix_out = float(plan_out.mix_out_a)
+            overlap = plan_out[2]
+            playing_duration = mix_out - mix_in + overlap
+            transition_planned: Optional[bool] = True
         else:
-            mix_out = fallback_out
-        if not (mix_in < mix_out <= track_dur):
-            mix_out = fallback_out
-        if not (mix_in < mix_out <= track_dur):
-            mix_out = track_dur
-
-        # Overlap zum naechsten Track
-        if i < n - 1:
-            if plan_out is not None:
-                overlap = float(plan_out.overlap)
-            else:
-                overlap = track_dur - mix_out
-                overlap = max(4.0, min(overlap, default_overlap, track_dur * 0.3))
-            # AUDIT-FIX F10 (2026-07-24): Plan-Overlap war ungeklemmt — bei
-            # kurzen Tracks (Edits/Tools/Acapellas) ergab ein 64-s-Overlap
-            # negative Spieldauer und rueckwaerts laufende Startzeiten. Overlap
-            # nie ueber die halbe Trackdauer — und nie laenger als das Audio,
-            # das A nach dem Mix-Out noch hat.
-            overlap = max(0.0, min(overlap, track_dur * 0.5, track_dur - mix_out))
-            playing_duration = (mix_out - mix_in) + overlap
-            next_start = current_time + (mix_out - mix_in)
-        else:
-            overlap = 0.0  # Letzter Track hat keinen Overlap, spielt bis zum Ende
+            overlap = 0.0
             playing_duration = track_dur - mix_in
-            next_start = current_time + playing_duration
+            transition_planned = False if i < n - 1 else None
 
         end_time = current_time + playing_duration
+        next_start = current_time + mix_out - mix_in
 
         entries.append(
             SetTimelineEntry(
                 track=track,
-                start_time=round(current_time, 2),
-                end_time=round(end_time, 2),
-                playing_duration=round(playing_duration, 2),
-                overlap_with_next=round(overlap, 2),
+                start_time=current_time,
+                end_time=end_time,
+                playing_duration=playing_duration,
+                overlap_with_next=overlap,
                 is_peak=False,  # Wird spaeter gesetzt
                 energy_phase="build",  # Wird spaeter gesetzt
+                transition_planned=transition_planned,
             )
         )
 
@@ -2660,14 +4205,15 @@ def compute_set_timeline(
 
     Jeder Track bekommt einen Start/Ende-Zeitpunkt. Gesamtlaenge = Summe
     der Stuecke Mix-In..Mix-Out (erster Track ab 0, letzter bis zum Ende),
-    Eintraege ueberlappen um den Overlap — siehe _calculate_timeline_entries.
+    Geplante Eintraege ueberlappen um den Plan-Overlap; ungeplante Kanten
+    spielen ohne erfundene Blende bis zum Trackende.
     Der Peak-Track wird identifiziert.
 
     Args:
       tracks: Sortierte Playlist
       target_minutes: Gewuenschte Set-Laenge in Minuten
       peak_position_pct: Peak-Position als Anteil (0.0-1.0, default 0.65)
-      default_overlap: Standard-Overlap in Sekunden wenn keine Mix-Points
+      default_overlap: Oeffentlicher Legacy-Parameter; ohne Plan keine Blende
 
     Returns:
       SetTimeline mit allen Eintraegen
@@ -2693,11 +4239,11 @@ def compute_set_timeline(
     peak_minutes = entries[best_peak_idx].start_time / 60.0 if entries else 0.0
 
     return SetTimeline(
-        total_duration_minutes=round(total_minutes, 2),
+        total_duration_minutes=total_minutes,
         target_duration_minutes=target_minutes,
-        peak_position_minutes=round(peak_minutes, 2),
+        peak_position_minutes=peak_minutes,
         entries=entries,
-        overflow_minutes=round(total_minutes - target_minutes, 2),
+        overflow_minutes=total_minutes - target_minutes,
     )
 
 
@@ -2757,5 +4303,5 @@ def get_set_timing_summary(timeline: SetTimeline) -> dict:
         "peak_time": peak_time,
         "phase_breakdown": phases,
         "track_count": len(timeline.entries),
-        "avg_track_duration": round(avg_dur, 1),
+        "avg_track_duration": avg_dur,
     }

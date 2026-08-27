@@ -20,11 +20,13 @@ sie auf. Alte Doku nennt 10-11 Strategien — das ist ueberholt.
 | Funktion | Skala | Rolle |
 |---|---|---|
 | `calculate_compatibility` [:501] | 0-100 | **reine Harmonik** |
-| `calculate_enhanced_compatibility` [:256] | `TransitionMetrics` | Harmonik + BPM-Smoothness + Energy-Flow + Genre + KI-Bonus |
+| `calculate_enhanced_compatibility` [:256] | `TransitionMetrics` | ausschliesslich ein voll qualifizierter lokaler `PairCandidate` |
 
-Der KI-Bonus wird **nur** im Enhanced-Pfad addiert (F05). Wer ihn zusaetzlich
-in `calculate_compatibility` addiert, zaehlt doppelt und verfaelscht
-`predict_transition_type` und die Qualitaetsanzeige.
+Aktuelle oder gecachte KI-Mood-/Subgenre-Metadaten sind nur erklaerende
+Metadaten. Sie beeinflussen weder Ordering, Objective, Quality,
+TransitionRecommendation noch den lokalen `PairCandidate.score`.
+`TransitionMetrics.overall_score` entspricht dem lokalen Kandidatenscore und
+`TransitionMetrics.ai_bonus` bleibt immer `0.0`.
 
 ## Camelot-Punktetabelle (`_calculate_compatibility_inner` [:399])
 
@@ -108,7 +110,7 @@ bewertet in `hpg_core/pair_candidates.py` die lokalen `camelot_lokal` der
 Mixpunkt-Kandidaten. `playlist._get_camelot_components` bleibt, weil
 `tests/test_compatibility.py` es von dort importiert.
 
-## Kandidaten-Gewichte (2026-08-22)
+## Kandidaten-Gewichte (2026-08-22, GUI-Stand 2026-08-26)
 
 `genres._TOLERANCE_DEFAULTS` traegt neben den acht Track-Gewichten
 (`*_weight`, Summe 1.0, unveraendert) zehn `kandidaten_*_weight`
@@ -117,9 +119,16 @@ timbre .044, mood .044, loudness .060, structure .060; Summe 1.0, von
 `_validate_genre_tables` geprueft) fuer die Paar-Bewertung der Kandidaten —
 STARTWERTE. Seit Teil 4: `tolerances.write_override_kandidaten(gewichte)`
 schreibt die uebergebenen `kandidaten_*_weight` und skaliert die uebrigen auf
-Summe 1.0 (GUI-Regler "Lautheit (Kandidaten)"); `write_override` (Track-Regler)
-erhaelt vorhandene Kandidaten-Schluessel. Eine Hoertest-Praeferenz
+Summe 1.0. Alle fuenf sichtbaren Regler — Groove, Bassdruck, Klangfarbe,
+Stimmung und Lautheit — sind `kandidaten_*_weight` und beeinflussen nur
+Mixpoint-Kandidaten. Die anderen fuenf Kandidatengewichte stammen aus
+Hoertestpraeferenzen oder Toleranzvorgaben. Eine Hoertest-Praeferenz
 (`candidate_preferences`) fuer das Genre hat Vorrang vor den Toleranzen.
+
+`score_pair` darf intern mit `combine_weighted` fehlende Werte renormieren.
+Das macht einen Kandidaten aber nicht ausfuehrbar: `rank_pair_candidates`
+verwirft ihn, sobald einer der zehn lokalen Faktoren fehlt, nicht endlich ist
+oder ausserhalb [0, 1] liegt.
 
 ## Kandidatenpfad in der App (Teil 4, gebaut 2026-08-22)
 
@@ -129,7 +138,7 @@ Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
   `_PAIR_CANDIDATE_CACHE`, dauerhaft; `reset_pair_candidate_cache()` wird von
   `candidate_choices`, `candidate_preferences.reset_cache`, `tolerances.reset_cache`
   gerufen) die `PairCandidate`s in App-Reihenfolge; Rang 1 traegt
-  `overall_score` (= `kandidat.score` + `ai_bonus`, BPM-Hard-Gate bleibt),
+  `overall_score` (= lokaler `kandidat.score`) und `ai_bonus = 0.0`,
   `groove/bass/timbre/mood_match` = lokale Teilwerte, neue Felder
   `loudness_match`, `structure_match`, `kandidat` (Dict). Ohne Kandidaten:
   heutiger Pfad unveraendert.
@@ -160,13 +169,17 @@ Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
 - Messwerkzeug: `tools/playlist_kandidaten_messen.py --cache` (vergleicht den
   aktiven Ketten-Kandidaten, Kennzahl `kette_neustarts`).
 - App-BPM-Default 2.0 (main.py: Slider, `current_bpm_tolerance`,
-  `AnalysisWorker`, `PlaylistPanel`); `playlist.py`-API-Defaults bleiben 3.0.
+  `AnalysisWorker`, `PlaylistPanel`), GUI-Bereich 1–2. Der Wert ist das Gate
+  fuer einen `TransitionPlan`; eine Nachbarkante ausserhalb des Gates bleibt
+  als `UNGEPLANT` mit Score 0 sichtbar und wird nicht gerendert.
+  `playlist.py`-API-Defaults bleiben 3.0.
 
 ## Common Mistakes
 
 - Score-Tabelle aendern, ohne `tests/test_compatibility.py` und
   `tests/test_scoring_contract.py` vorher zu lesen.
-- KI-Bonus doppelt zaehlen.
+- KI-Metadaten in Ordering, Objective, Quality, Recommendation oder einen
+  lokalen Score einrechnen.
 - `scoring_context` in einem der fuenf Konsumenten vergessen.
 - Neue Strategie ohne Eintrag in `STRATEGIES` **und** ohne Pruefung, welche
   Advanced-Parameter sie wirklich konsumiert (die UI graut nicht-genutzte

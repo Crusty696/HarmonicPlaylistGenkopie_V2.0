@@ -56,6 +56,22 @@ class TestRecommendationBasics:
     recs = compute_transition_recommendations(_make_pair())
     assert len(recs) == 1
 
+  def test_tech_house_kandidat_behaelt_pro_eq_swap(self):
+    recs = compute_transition_recommendations(
+      _make_pair(code1="8A", code2="8A"), bpm_tolerance=3.0
+    )
+
+    assert len(recs) == 1
+    assert recs[0].kandidat_aktiv > 0
+    assert recs[0].transition_type == "pro_eq_swap"
+
+  @pytest.mark.parametrize("status", ["unknown", "mismatch", "unverifiable", "unsupported"])
+  def test_beatgrid_status_verhindert_keine_empfehlung(self, status):
+    tracks = _make_pair()
+    tracks[1].beatgrid_status = status
+
+    assert len(compute_transition_recommendations(tracks)) == 1
+
   def test_n_tracks_n_minus_1_recs(self):
     """N Tracks = N-1 Empfehlungen."""
     tracks = [
@@ -65,6 +81,49 @@ class TestRecommendationBasics:
     ]
     recs = compute_transition_recommendations(tracks)
     assert len(recs) == 5
+
+  def test_unmoegliche_strikte_strukturpunkte_erzeugen_keinen_plan(self):
+    current = make_track(
+      bpm=128.0, duration=180.0, detected_genre="Tech House",
+      mix_in_point=10.0, mix_out_point=120.0,
+      sections=[
+        {"label": "main", "start_time": 0.0, "end_time": 150.0},
+        {"label": "outro", "start_time": 150.0, "end_time": 180.0},
+      ],
+    )
+    upcoming = make_track(
+      bpm=128.0, duration=65.0, detected_genre="Tech House",
+      mix_in_point=64.0, mix_out_point=64.5,
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 64.0},
+        {"label": "main", "start_time": 64.0, "end_time": 65.0},
+      ],
+    )
+
+    assert compute_transition_recommendations([current, upcoming]) == []
+
+  def test_unmoegliches_erstes_paar_behaelt_gueltiges_zweites_paar(self):
+    tracks = _make_pair() + [_make_pair()[1]]
+    tracks[0].mix_out_candidates = []
+
+    recs = compute_transition_recommendations(tracks)
+
+    assert len(recs) == 1
+    assert recs[0].index == 1
+    assert recs[0].from_track is tracks[1]
+    assert recs[0].to_track is tracks[2]
+
+  def test_stale_metrics_mit_inzwischen_leerer_kandidatenliste_crashen_nicht(self):
+    from hpg_core.playlist import compute_adjacent_transition_metrics
+
+    tracks = _make_pair()
+    metrics = compute_adjacent_transition_metrics(tracks, 3.0, {})
+    assert metrics[0].kandidat is not None
+    tracks[0].mix_out_candidates = []
+
+    assert compute_transition_recommendations(
+      tracks, transition_metrics=metrics
+    ) == []
 
 
 class TestRecommendationFields:
@@ -124,7 +183,8 @@ class TestRecommendationFields:
     rec = compute_transition_recommendations(pair)[0]
     spec = TransitionClipSpec.from_plan(rec.plan, rec.from_track, rec.to_track)
 
-    assert rec.overlap == rec.plan.overlap == spec.crossfade_sec == 64.0
+    assert rec.overlap == rec.plan.overlap == spec.crossfade_sec
+    assert rec.overlap == pytest.approx(rec.kandidaten[0]["blend_bars"] * 60.0 / 128.0 * 4.0)
 
   def test_index_is_zero_based(self):
     """Index ist 0-basiert."""
@@ -179,11 +239,9 @@ class TestTimingValues:
 
     rec = compute_transition_recommendations([current, upcoming], bpm_tolerance=3.0)[0]
 
-    assert rec.dj_rec is not None
-    # Der interne Timing-Vertrag bleibt ungerundet; gerundet wird erst in
-    # Anzeige-/Exportpfaden.
-    assert rec.fade_out_start == rec.dj_rec.adjusted_mix_out_a
-    assert rec.mix_entry == rec.dj_rec.adjusted_mix_in_b
+    assert rec.kandidat_aktiv > 0
+    assert rec.fade_out_start == rec.plan.mix_out_a
+    assert rec.mix_entry == rec.plan.mix_in_b
 
 
 class TestCompatibilityScore:
@@ -201,6 +259,20 @@ class TestCompatibilityScore:
     """Score ist Integer (0-100)."""
     recs = compute_transition_recommendations(_make_pair())
     assert isinstance(recs[0].compatibility_score, int)
+
+
+def test_empfehlung_zeigt_lokales_statt_ganztrack_energie_delta():
+  from hpg_core.playlist import reset_pair_candidate_cache
+
+  a = make_track(energy=10, filePath="lokal-a.mp3", title="Lokal A")
+  b = make_track(energy=90, filePath="lokal-b.mp3", title="Lokal B")
+  a.mix_out_candidates[0].energy_lokal = 64
+  b.mix_in_candidates[0].energy_lokal = 69
+  reset_pair_candidate_cache()
+
+  recs = compute_transition_recommendations([a, b], bpm_tolerance=6.0)
+  assert len(recs) == 1
+  assert recs[0].energy_delta == 5
 
 
 class TestRiskLevel:
@@ -248,7 +320,7 @@ class TestOverlapWindowClamp:
 
   Audit 2026-08-14: die B-Seite von _clamp_transition_overlap begrenzte auf
   ``intro_end_B - mix_in_b``. dj_brain garantiert per Design
-  ``mix_in_b >= intro_end_B`` (tests/test_dj_brain.py), der Term war also
+  ``mix_in_b > intro_end_B`` (tests/test_dj_brain.py), der Term war also
   immer <= 0. An 52 echten Tracks wurden dadurch 50 von 51 Uebergaengen auf
   overlap=0.0 geklemmt — der Renderer bekam ueberall harte Schnitte.
   Die bisherigen Overlap-Tests liefen ueber _make_pair() OHNE sections und
@@ -256,22 +328,22 @@ class TestOverlapWindowClamp:
   """
 
   def _pair_with_sections(self, intro_end=60.0, duration=420.0):
-    """Track-Paar im realen Layout: Mix-In liegt am Intro-Ende."""
+    """Track-Paar im realen Layout: Punkte liegen strikt vor den Grenzen."""
     return [
       make_track(
         camelotCode="8A", bpm=138.0, duration=duration, energy=70,
-        mix_in_point=intro_end, mix_out_point=duration - 60.0,
+        mix_in_point=intro_end + 1.0, mix_out_point=duration - 61.0,
         sections=_sections(intro_end=intro_end, duration=duration),
       ),
       make_track(
         camelotCode="8A", bpm=138.0, duration=duration, energy=72,
-        mix_in_point=intro_end, mix_out_point=duration - 60.0,
+        mix_in_point=intro_end + 1.0, mix_out_point=duration - 61.0,
         sections=_sections(intro_end=intro_end, duration=duration),
       ),
     ]
 
   def test_overlap_survives_sections(self):
-    """Mit sections + Mix-In am Intro-Ende bleibt der Overlap nutzbar."""
+    """Mit strikten Strukturpunkten bleibt der Overlap nutzbar."""
     rec = compute_transition_recommendations(
       self._pair_with_sections(), bpm_tolerance=3.0, default_overlap=16.0
     )[0]
@@ -302,12 +374,11 @@ class TestOverlapWindowClamp:
     """Ein kurzer B-Track begrenzt den Overlap wirklich."""
     tracks = self._pair_with_sections()
     tracks[1].duration = 70.0
-    tracks[1].mix_in_point = 60.0
+    tracks[1].mix_in_point = 61.0
     tracks[1].sections = _sections(intro_end=60.0, outro_start=65.0, duration=70.0)
-    rec = compute_transition_recommendations(
+    assert compute_transition_recommendations(
       tracks, bpm_tolerance=3.0, default_overlap=64.0
-    )[0]
-    assert rec.overlap <= 10.0 + 1e-6, f"Overlap {rec.overlap}s > Restdauer von B"
+    ) == []
 
 
 # ---------------------------------------------------------------------------

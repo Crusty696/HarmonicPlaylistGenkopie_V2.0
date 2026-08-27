@@ -5,6 +5,7 @@ import json
 import pytest
 
 import main
+from hpg_core import candidate_preferences as cp
 from hpg_core.genres import CANONICAL_GENRES
 from hpg_core.playlist import TransitionMetrics
 from hpg_core.tolerances import reset_cache
@@ -31,39 +32,56 @@ def test_sliders_exist_with_default_start_values(qtbot, monkeypatch, tmp_path):
   qtbot.addWidget(widget)
 
   sliders = widget.transition_weight_sliders
-  # groove 30 statt 12: Default in genres.py angehoben (Begruendung dort).
-  assert sliders["groove_weight"].value() == 30
-  assert sliders["bass_weight"].value() == 8
-  assert sliders["timbre_weight"].value() == 5
-  assert sliders["mood_weight"].value() == 5
+  assert set(sliders) == {
+    "kandidaten_groove_weight",
+    "kandidaten_bass_weight",
+    "kandidaten_timbre_weight",
+    "kandidaten_mood_weight",
+    "kandidaten_loudness_weight",
+  }
+  assert sliders["kandidaten_groove_weight"].value() == 26
+  assert sliders["kandidaten_bass_weight"].value() == 7
+  assert sliders["kandidaten_timbre_weight"].value() == 4
+  assert sliders["kandidaten_mood_weight"].value() == 4
+  assert sliders["kandidaten_loudness_weight"].value() == 6
 
 
 def test_moving_slider_writes_override_file(qtbot, monkeypatch, tmp_path):
   override_pfad = tmp_path / "transition_tolerances.json"
   monkeypatch.setenv("HPG_TOLERANCES_FILE", str(override_pfad))
+  track_gewichte = {
+    "harmonic_weight": 0.20,
+    "bpm_weight": 0.10,
+    "energy_weight": 0.10,
+    "genre_weight": 0.10,
+    "groove_weight": 0.25,
+    "bass_weight": 0.10,
+    "timbre_weight": 0.075,
+    "mood_weight": 0.075,
+  }
+  override_pfad.write_text(
+    json.dumps({CANONICAL_GENRES[0]: track_gewichte}), encoding="utf-8"
+  )
+  reset_cache()
 
   widget = main.AdvancedParametersWidget()
   qtbot.addWidget(widget)
 
-  widget.transition_weight_sliders["groove_weight"].setValue(20)
+  widget.transition_weight_sliders["kandidaten_groove_weight"].setValue(20)
 
   assert override_pfad.is_file()
   daten = json.loads(override_pfad.read_text(encoding="utf-8"))
   ein_genre = daten[CANONICAL_GENRES[0]]
-  assert ein_genre["groove_weight"] == pytest.approx(0.20)
+  assert ein_genre["kandidaten_groove_weight"] == pytest.approx(0.20)
+  # Nur der bewegte Regler wird aus der ganzzahligen Anzeige uebernommen;
+  # unberuehrte echte Defaults duerfen nicht auf 4/26 Prozent abrunden.
+  assert ein_genre["kandidaten_timbre_weight"] == pytest.approx(0.044)
+  assert ein_genre["kandidaten_mood_weight"] == pytest.approx(0.044)
+  assert {key: ein_genre[key] for key in track_gewichte} == track_gewichte
 
+  from hpg_core.tolerances import KANDIDATEN_GEWICHT_SCHLUESSEL
   summe = sum(
-    ein_genre[k]
-    for k in (
-      "harmonic_weight",
-      "bpm_weight",
-      "energy_weight",
-      "genre_weight",
-      "groove_weight",
-      "bass_weight",
-      "timbre_weight",
-      "mood_weight",
-    )
+    ein_genre[k] for k in KANDIDATEN_GEWICHT_SCHLUESSEL
   )
   assert summe == pytest.approx(1.0)
 
@@ -77,44 +95,57 @@ def test_weights_summing_to_one_or_more_show_error_and_skip_write(
   widget = main.AdvancedParametersWidget()
   qtbot.addWidget(widget)
 
-  # Jeder einzelne Schritt ist fuer sich gueltig und wird sofort
-  # geschrieben (40, dann 40+30, dann 40+30+20 -> je < 1.0).
-  widget.transition_weight_sliders["groove_weight"].setValue(40)
-  widget.transition_weight_sliders["bass_weight"].setValue(30)
-  widget.transition_weight_sliders["timbre_weight"].setValue(20)
+  # 50 + 30 + 4 + 4 + 6 = 94 % ist noch gueltig.
+  widget.transition_weight_sliders["kandidaten_groove_weight"].setValue(50)
+  widget.transition_weight_sliders["kandidaten_bass_weight"].setValue(30)
   stand_vor_fehler = override_pfad.read_text(encoding="utf-8")
 
-  # 40 + 30 + 20 + 20 = 110 -> Summe 1.10, ValueError erwartet. Die zuletzt
-  # gueltig geschriebene Datei darf dabei NICHT ueberschrieben werden.
-  widget.transition_weight_sliders["mood_weight"].setValue(20)
+  # 50 + 30 + 10 + 4 + 6 = 100 % -> ValueError. Die zuletzt gueltig
+  # geschriebene Datei darf dabei nicht ueberschrieben werden.
+  widget.transition_weight_sliders["kandidaten_timbre_weight"].setValue(10)
 
   assert "ungueltig" in widget.transition_weight_status.text()
   assert override_pfad.read_text(encoding="utf-8") == stand_vor_fehler
+  assert widget.transition_weight_sliders["kandidaten_timbre_weight"].value() == 4
 
 
 def test_reset_button_restores_default_start_values(qtbot, monkeypatch, tmp_path):
   override_pfad = tmp_path / "transition_tolerances.json"
   monkeypatch.setenv("HPG_TOLERANCES_FILE", str(override_pfad))
+  track_gewichte = {
+    "harmonic_weight": 0.20,
+    "bpm_weight": 0.10,
+    "energy_weight": 0.10,
+    "genre_weight": 0.10,
+    "groove_weight": 0.25,
+    "bass_weight": 0.10,
+    "timbre_weight": 0.075,
+    "mood_weight": 0.075,
+  }
+  override_pfad.write_text(
+    json.dumps({CANONICAL_GENRES[0]: track_gewichte}), encoding="utf-8"
+  )
+  reset_cache()
 
   widget = main.AdvancedParametersWidget()
   qtbot.addWidget(widget)
 
-  widget.transition_weight_sliders["groove_weight"].setValue(20)
-  widget.transition_weight_sliders["bass_weight"].setValue(20)
+  widget.transition_weight_sliders["kandidaten_groove_weight"].setValue(20)
+  widget.transition_weight_sliders["kandidaten_bass_weight"].setValue(20)
 
   widget._on_transition_weights_reset()
 
   sliders = widget.transition_weight_sliders
-  assert sliders["groove_weight"].value() == 30
-  assert sliders["bass_weight"].value() == 8
-  assert sliders["timbre_weight"].value() == 5
-  assert sliders["mood_weight"].value() == 5
-  # Zuruecksetzen LOESCHT den Override, es schreibt ihn nicht. Die alte
-  # Zusicherung (`is_file()`) hielt genau den Fehler fest: ein geschriebener
-  # Default liegt in der Ladekette UEBER den mitgelieferten, aus echten Mixen
-  # gelernten Werten und verdeckt sie dauerhaft — der Knopf taete dann das
-  # Gegenteil seiner Beschriftung.
-  assert not override_pfad.exists()
+  assert sliders["kandidaten_groove_weight"].value() == 26
+  assert sliders["kandidaten_bass_weight"].value() == 7
+  assert sliders["kandidaten_timbre_weight"].value() == 4
+  assert sliders["kandidaten_mood_weight"].value() == 4
+  assert sliders["kandidaten_loudness_weight"].value() == 6
+  daten = json.loads(override_pfad.read_text(encoding="utf-8"))
+  assert {key: daten[CANONICAL_GENRES[0]][key] for key in track_gewichte} == track_gewichte
+  assert not any(
+    key.startswith("kandidaten_") for key in daten[CANONICAL_GENRES[0]]
+  )
 
 
 def test_passung_tooltip_zeigt_alle_acht_faktoren(qtbot):
@@ -201,3 +232,65 @@ def test_lautheit_regler_schreibt_kandidaten_gewicht(qtbot, monkeypatch, tmp_pat
   assert w["groove_weight"] == pytest.approx(0.30)                # Track-Gewichte unberuehrt
   daten = json.loads(override_pfad.read_text(encoding="utf-8"))
   assert daten[CANONICAL_GENRES[0]]["kandidaten_loudness_weight"] == pytest.approx(0.20)
+
+
+def test_bpm_tooltip_beschreibt_transitionplan_gate_statt_nachbar_garantie(qtbot):
+  panel = main.LibraryPanel()
+  qtbot.addWidget(panel)
+
+  tooltip = panel.bpm_tolerance_slider.toolTip()
+
+  assert "TransitionPlan" in tooltip
+  assert "Half-/Double-Time" in tooltip
+  assert "garantiert nicht" in tooltip
+  assert "UNGEPLANT" in tooltip
+  assert "nicht gerendert" in tooltip
+
+
+def test_kandidaten_toleranzbasis_zeigt_initial_sofort_hoertest_overrides_sortiert(
+  qtbot, monkeypatch, tmp_path
+):
+  toleranzen = tmp_path / "toleranzen.json"
+  prefs = tmp_path / "prefs.json"
+  monkeypatch.setenv("HPG_TOLERANCES_FILE", str(toleranzen))
+  monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(prefs))
+  gewichte = {key: 0.1 for key in cp.GEWICHT_SCHLUESSEL}
+  prefs.write_text(json.dumps({
+    "Techno": gewichte,
+    "Psytrance": gewichte,
+  }), encoding="utf-8")
+  cp.reset_cache()
+  reset_cache()
+
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+
+  assert widget.transition_weight_group.title() == "Editierbare Kandidaten-Toleranzbasis"
+  status = widget.transition_weight_status.text()
+  assert "naechsten Lauf" in status
+  assert "Psytrance, Techno" in status
+  assert "wirkt dort nicht" in status
+
+
+def test_speichern_und_reset_zeigen_den_gleichen_override_hinweis(
+  qtbot, monkeypatch, tmp_path
+):
+  toleranzen = tmp_path / "toleranzen.json"
+  prefs = tmp_path / "prefs.json"
+  monkeypatch.setenv("HPG_TOLERANCES_FILE", str(toleranzen))
+  monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(prefs))
+  prefs.write_text(json.dumps({
+    "Psytrance": {key: 0.1 for key in cp.GEWICHT_SCHLUESSEL}
+  }), encoding="utf-8")
+  cp.reset_cache()
+  reset_cache()
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+
+  widget.transition_weight_sliders["kandidaten_groove_weight"].setValue(20)
+  assert "Kandidaten-Toleranzbasis gespeichert" in widget.transition_weight_status.text()
+  assert "wirkt dort nicht" in widget.transition_weight_status.text()
+
+  widget._on_transition_weights_reset()
+  assert "Kandidaten-Toleranzbasis" in widget.transition_weight_status.text()
+  assert "wirkt dort nicht" in widget.transition_weight_status.text()

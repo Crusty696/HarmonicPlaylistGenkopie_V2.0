@@ -71,17 +71,77 @@ def test_unbekannter_kind_wird_als_unbekannt_beschriftet_nicht_verworfen():
     assert phrases[1]["label"] == "Unbekannt(11)" and phrases[2]["label"] == "Outro"
 
 
-def test_beat_ausserhalb_des_beatgrids_wird_geklemmt():
+def test_beat_ausserhalb_des_beatgrids_wird_verworfen():
     times = _beatgrid(10)
     pssi = _Tag(SimpleNamespace(mood=1, end_beat=50, entries=[_entry(1, 1, 1), _entry(2, 40, 6)]))
     phrases = phrases_from_anlz(_Anlz({"PSSI": pssi}), _Anlz({"PQTZ": _Pqtz(times)}), duration=30.0)
-    assert phrases[1]["start_s"] == pytest.approx(times[-1])
-    assert phrases[1]["end_s"] == pytest.approx(30.0)
+    assert len(phrases) == 1
+    assert phrases[0]["start_s"] == pytest.approx(0.0)
+    assert phrases[0]["end_s"] == pytest.approx(30.0)
 
 
 def test_ohne_pssi_oder_pqtz_leere_liste():
     assert phrases_from_anlz(_Anlz({}), _Anlz({}), duration=30.0) == []
     assert phrases_from_anlz(None, None, duration=30.0) == []
+
+
+@pytest.mark.parametrize("duration", [None, True, 0.0, -1.0, float("nan"), float("inf")])
+def test_ungueltige_dauer_liefert_keine_phrasen(duration):
+    times = _beatgrid(33)
+    pssi = _Tag(SimpleNamespace(
+        mood=1, end_beat=33, entries=[_entry(1, 1, 1)],
+    ))
+
+    assert phrases_from_anlz(
+        _Anlz({"PSSI": pssi}), _Anlz({"PQTZ": _Pqtz(times)}), duration
+    ) == []
+
+
+@pytest.mark.parametrize("bad_time", [-1.0, float("nan"), float("inf")])
+def test_ungueltige_pqtz_zeiten_werden_verworfen(bad_time):
+    times = [0.0, bad_time, 2.0]
+    pssi = _Tag(SimpleNamespace(mood=1, end_beat=3, entries=[
+        _entry(1, 1, 1), _entry(2, 2, 2), _entry(3, 3, 6),
+    ]))
+
+    phrases = phrases_from_anlz(
+        _Anlz({"PSSI": pssi}), _Anlz({"PQTZ": _Pqtz(times)}), duration=3.0
+    )
+
+    assert [phrase["start_s"] for phrase in phrases] == [0.0, 2.0]
+    assert all(
+        np.isfinite(phrase["start_s"]) and np.isfinite(phrase["end_s"])
+        for phrase in phrases
+    )
+
+
+def test_defekter_mittlerer_pssi_eintrag_verwirft_spaetere_nicht():
+    times = _beatgrid(65)
+    broken = SimpleNamespace(beat="kaputt", kind=2, fill=0)
+    pssi = _Tag(SimpleNamespace(mood=1, end_beat=65, entries=[
+        _entry(1, 1, 1), broken, _entry(3, 33, 6),
+    ]))
+
+    phrases = phrases_from_anlz(
+        _Anlz({"PSSI": pssi}), _Anlz({"PQTZ": _Pqtz(times)}), duration=40.0
+    )
+
+    assert [phrase["label"] for phrase in phrases] == ["Intro", "Outro"]
+
+
+def test_doppelte_geklemmte_startzeiten_werden_dedupliziert():
+    times = _beatgrid(10)
+    pssi = _Tag(SimpleNamespace(mood=1, end_beat=50, entries=[
+        _entry(1, 1, 1), _entry(2, 40, 2), _entry(3, 50, 6),
+    ]))
+
+    phrases = phrases_from_anlz(
+        _Anlz({"PSSI": pssi}), _Anlz({"PQTZ": _Pqtz(times)}), duration=30.0
+    )
+
+    grid = phrase_grid_from_phrases(phrases)
+    assert grid == sorted(set(grid))
+    assert all(left < right for left, right in zip(grid, grid[1:]))
 
 
 def test_phrase_grid_sind_die_phrasenstarts_plus_ende():
@@ -91,3 +151,12 @@ def test_phrase_grid_sind_die_phrasenstarts_plus_ende():
     ]
     assert phrase_grid_from_phrases(phrases) == [0.0, 15.0, 30.0]
     assert phrase_grid_from_phrases([]) == []
+
+
+def test_phrase_grid_verwirft_nicht_endliche_und_negative_punkte():
+    phrases = [
+        {"start_s": -1.0, "end_s": 2.0},
+        {"start_s": float("nan"), "end_s": float("inf")},
+    ]
+
+    assert phrase_grid_from_phrases(phrases) == []

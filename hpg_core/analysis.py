@@ -1,6 +1,7 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
 import logging
+import math
 import os
 import re
 import time
@@ -11,7 +12,12 @@ import mutagen
 import numpy as np
 import soundfile as sf
 
-from .caching import cache_track, generate_cache_key, get_cached_track
+from .caching import (
+    VALID_ANALYSIS_MODES,
+    cache_track,
+    generate_cache_key,
+    get_cached_track,
+)
 from .config import (
     HOP_LENGTH,
     METER,
@@ -28,15 +34,20 @@ from .config import (
     SECURITY_MAX_TRACK_DURATION,
 )
 from .dj_brain import (
+    _get_intro_end_from_sections,
+    _get_outro_start_from_sections,
     align_ai_mix_points,
     calculate_genre_aware_mix_points,
 )
 from .downbeat import (
+    BeatgridValidation,
     DOWNBEAT_RELIABLE_MIN,
     estimate_first_downbeat,
     estimate_first_phrase,
+    validate_beatgrid_windows,
 )
-from .genre_classifier import GenreClassification, classify_genre
+from .genre_classifier import GenreClassification, classify_genre, match_id3_genre
+from .genres import GENRE_PROFILES
 from .groove import (
     BASS_KENNWERTE_MIN_SEC,
     GrooveFeatures,
@@ -54,6 +65,7 @@ from .models import (
     QUANTIZE_TOLERANCE_SEC,
     Track,
     get_camelot_components,
+    quantize_to_grid,
 )
 from .rekordbox_importer import get_rekordbox_importer
 from .rekordbox_phrases import phrase_grid_from_phrases
@@ -65,6 +77,109 @@ from .structure_analyzer import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BEATGRID_WINDOW_SECONDS = 16.0
+ID3_BPM_FACTOR_CANDIDATES = (
+    0.5,
+    2.0 / 3.0,
+    3.0 / 4.0,
+    1.0,
+    4.0 / 3.0,
+    1.5,
+    2.0,
+)
+ID3_BPM_DIRECT_DEVIATION_MIN = 0.08
+ID3_BPM_FACTOR_DEVIATION_MAX = 0.06
+
+
+def _correct_id3_bpm_factor(
+    tag_bpm: float,
+    measured_bpm: float,
+    id3_genre: str,
+) -> float:
+    """Korrigiert ausschliesslich klare Faktorfehler eines ID3-BPM-Tags."""
+    tag = float(tag_bpm)
+    try:
+        measured = float(measured_bpm)
+    except (TypeError, ValueError):
+        return tag
+    if not np.isfinite(measured) or measured <= 0.0:
+        return tag
+
+    canonical = match_id3_genre(id3_genre or "")
+    if not canonical or canonical not in GENRE_PROFILES:
+        return tag
+    lower, upper = GENRE_PROFILES[canonical].bpm_range
+    if lower <= tag <= upper:
+        return tag
+
+    direct = abs(tag - measured) / measured
+    if direct <= ID3_BPM_DIRECT_DEVIATION_MIN:
+        return tag
+    candidates = [
+        (abs(tag * factor - measured) / measured, factor)
+        for factor in ID3_BPM_FACTOR_CANDIDATES
+        if lower <= tag * factor <= upper
+    ]
+    if not candidates:
+        return tag
+    deviation, factor = min(candidates)
+    corrected = tag * factor
+    if (
+        factor == 1.0
+        or (
+            deviation > ID3_BPM_FACTOR_DEVIATION_MAX
+            and not math.isclose(
+                deviation,
+                ID3_BPM_FACTOR_DEVIATION_MAX,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        or not lower <= corrected <= upper
+    ):
+        return tag
+    return round(corrected, 2)
+
+
+def _validate_track_beatgrid(
+    file_path: str,
+    duration: float,
+    bpm: float,
+    anchor: float,
+    *,
+    grid_points: list[dict] | None = None,
+    head_audio: np.ndarray | None = None,
+    head_sr: int = 0,
+) -> BeatgridValidation:
+    """Laedt bis zu drei getrennte Fenster und prueft deren reale Kickphase."""
+    span = min(_BEATGRID_WINDOW_SECONDS, max(1.0, float(duration)))
+    raw_offsets = (
+        0.0,
+        max(0.0, float(duration) / 2.0 - span / 2.0),
+        max(0.0, float(duration) - span),
+    )
+    offsets = tuple(dict.fromkeys(raw_offsets))
+    windows: list[tuple[float, np.ndarray]] = []
+    sample_rate = int(head_sr or 0)
+    for index, offset in enumerate(offsets):
+        try:
+            if index == 0 and head_audio is not None and sample_rate > 0:
+                audio = np.asarray(head_audio)[: int(span * sample_rate)]
+            else:
+                audio, loaded_sr = librosa.load(
+                    file_path, sr=sample_rate or None, mono=True,
+                    offset=offset, duration=span,
+                )
+                sample_rate = int(loaded_sr)
+        except (OSError, RuntimeError, ValueError, sf.LibsndfileError) as error:
+            logger.warning("Beatgrid-Fenster %.2fs nicht lesbar: %s", offset, error)
+            continue
+        windows.append((offset, np.asarray(audio)))
+    grid_times = [float(point["time"]) for point in (grid_points or [])]
+    return validate_beatgrid_windows(
+        windows, sample_rate, bpm, anchor=anchor, grid_times=grid_times
+    )
 
 # Reverse mapping: Camelot code → (Note, Mode)
 REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
@@ -1079,11 +1194,43 @@ def parse_filename_for_metadata(file_path: str) -> tuple[str, str]:
     return None, None
 
 
+def _mutagen_text_value(container, key: str) -> str | None:
+    """Liest einen Textwert aus Easy-Tags oder rohen Mutagen-Frames."""
+    if container is None:
+        return None
+    sources = (container, getattr(container, "tags", None))
+    for source in sources:
+        if source is None:
+            continue
+        try:
+            value = source.get(key)
+        except Exception:
+            continue
+        if hasattr(value, "text"):
+            value = value.text
+        if isinstance(value, (list, tuple)):
+            value = next(
+                (
+                    item.strip()
+                    for item in value
+                    if isinstance(item, str) and item.strip()
+                ),
+                None,
+            )
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                return value
+    return None
+
+
 def extract_metadata(file_path: str) -> tuple[str, str, str]:
     """
-    Extracts Artist, Title, and Genre from ID3 tags or filename.
+    Liest Artist, Titel und Genre aus Easy-Tags oder rohen ID3-Frames.
 
-    Tries ID3 tags first, then falls back to filename parsing if tags are missing.
+    Fehlende Easy-Felder werden einmalig mit TPE1/TIT2/TCON nachgelesen.
+    Nur weiterhin fehlende Artist-/Titelwerte kommen aus dem Dateinamen;
+    ein fehlendes Genre wird zu ``Unknown``.
 
     Returns:
         tuple: (artist, title, genre)
@@ -1092,15 +1239,35 @@ def extract_metadata(file_path: str) -> tuple[str, str, str]:
     title = None
     genre = None
 
-    # Try to extract from ID3 tags first
+    audio_easy = None
     try:
-        audio = mutagen.File(file_path, easy=True)
-        if audio:
-            artist = audio.get("artist", [None])[0]
-            title = audio.get("title", [None])[0]
-            genre = audio.get("genre", [None])[0]
+        audio_easy = mutagen.File(file_path, easy=True)
     except Exception as e:
-        logger.warning(f"ID3-Tags nicht lesbar fuer {file_path}: {e}")
+        logger.warning(f"Easy-Tags nicht lesbar fuer {file_path}: {e}")
+    if audio_easy is not None:
+        artist = _mutagen_text_value(audio_easy, "artist")
+        title = _mutagen_text_value(audio_easy, "title")
+        genre = _mutagen_text_value(audio_easy, "genre")
+        if not artist:
+            artist = _mutagen_text_value(audio_easy, "TPE1")
+        if not title:
+            title = _mutagen_text_value(audio_easy, "TIT2")
+        if not genre:
+            genre = _mutagen_text_value(audio_easy, "TCON")
+
+    if not artist or not title or not genre:
+        audio_raw = None
+        try:
+            audio_raw = mutagen.File(file_path, easy=False)
+        except Exception as e:
+            logger.warning(f"Rohe ID3-Tags nicht lesbar fuer {file_path}: {e}")
+        if audio_raw is not None:
+            if not artist:
+                artist = _mutagen_text_value(audio_raw, "TPE1")
+            if not title:
+                title = _mutagen_text_value(audio_raw, "TIT2")
+            if not genre:
+                genre = _mutagen_text_value(audio_raw, "TCON")
 
     # Fallback to filename parsing if artist or title is missing
     if not artist or not title or artist == "Unknown" or title == "Unknown":
@@ -1123,8 +1290,8 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
     """
     Liest BPM direkt aus ID3/AIFF-Tags (kein Librosa).
 
-    Beatport-Exporte enthalten immer korrekte BPM-Werte in den Tags.
-    Diese Funktion hat Vorrang vor der Librosa-BPM-Erkennung.
+    Der gelesene Wert ist nur Metadaten-Rohmaterial. ``analyze_track`` prueft
+    bekannte Faktorfehler spaeter gegen Audio und kanonisches ID3-Genre.
 
     Returns:
         float: BPM-Wert aus Tags, oder None wenn nicht vorhanden
@@ -1304,6 +1471,7 @@ def _offset_section(
     section: TrackSection,
     offset: float,
     bpm: float,
+    duration: float,
     seconds_per_bar: float | None = None,
 ) -> TrackSection:
     """Verschiebt eine lokal analysierte Tail-Sektion auf die Track-Zeitachse."""
@@ -1312,12 +1480,17 @@ def _offset_section(
     end = section.end_time + offset
     return TrackSection(
         label=section.label,
-        start_time=round(start, 2),
-        end_time=round(end, 2),
+        start_time=_round_time_within_duration(start, duration),
+        end_time=_round_time_within_duration(end, duration),
         start_bar=int(round(start / seconds_bar)) if seconds_bar else 0,
         end_bar=int(round(end / seconds_bar)) if seconds_bar else 0,
         avg_energy=section.avg_energy,
     )
+
+
+def _round_time_within_duration(value: float, duration: float) -> float:
+    """Rundet Zeitwerte, ohne sie hinter die rohe Trackdauer zu schieben."""
+    return min(round(value, 2), duration)
 
 
 def _kandidaten_berechnen(
@@ -1325,7 +1498,7 @@ def _kandidaten_berechnen(
     downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
     phrase_unit: int, sections: list, phrases: list, cues: list,
     analyzer_in: float, analyzer_out: float, outro_covered: bool,
-) -> tuple[list, list]:
+) -> tuple[list, list] | None:
     """Mix-Kandidaten beider Seiten berechnen; Fehler kippen die Analyse nie.
     `pfad` ("fast"/"voll") erscheint im Log, damit tools/kandidaten_messen.py die
     Laufzeit je Analysepfad trennen kann."""
@@ -1340,7 +1513,7 @@ def _kandidaten_berechnen(
         )
     except Exception as e:
         logger.warning(f"Kandidaten [{pfad}] fehlgeschlagen: {e}")
-        return [], []
+        return None
     logger.info(
         f"Kandidaten [{pfad}]: {len(mix_in)} in / {len(mix_out)} out "
         f"in {time.perf_counter() - t0:.2f}s"
@@ -1373,7 +1546,10 @@ def analyze_structure_windows(
     for section in head.sections:
         section.end_time = min(section.end_time, head_duration)
 
-    coverage = [{"start": 0.0, "end": round(head_duration, 2)}]
+    coverage = [{
+        "start": 0.0,
+        "end": _round_time_within_duration(head_duration, duration),
+    }]
     if duration <= head_duration + 1.0:
         return head, coverage, True
 
@@ -1404,8 +1580,8 @@ def analyze_structure_windows(
             head.sections.append(
                 TrackSection(
                     label="unanalysed",
-                    start_time=round(head_duration, 2),
-                    end_time=round(duration, 2),
+                    start_time=_round_time_within_duration(head_duration, duration),
+                    end_time=duration,
                     start_bar=(
                         int(round(head_duration / seconds_bar)) if seconds_bar else 0
                     ),
@@ -1440,10 +1616,19 @@ def analyze_structure_windows(
             section.label = "main"
 
     shifted_tail = [
-        _offset_section(section, tail_start, bpm, seconds_per_bar=seconds_per_bar)
+        _offset_section(
+            section,
+            tail_start,
+            bpm,
+            duration,
+            seconds_per_bar=seconds_per_bar,
+        )
         for section in tail.sections
     ]
-    coverage.append({"start": round(tail_start, 2), "end": round(tail_end, 2)})
+    coverage.append({
+        "start": _round_time_within_duration(tail_start, duration),
+        "end": _round_time_within_duration(tail_end, duration),
+    })
 
     head_sections = [section for section in head.sections if section.start_time < tail_start]
     if head_sections:
@@ -1455,8 +1640,8 @@ def analyze_structure_windows(
         merged_sections.append(
             TrackSection(
                 label="unanalysed",
-                start_time=round(head_duration, 2),
-                end_time=round(tail_start, 2),
+                start_time=_round_time_within_duration(head_duration, duration),
+                end_time=_round_time_within_duration(tail_start, duration),
                 start_bar=int(round(head_duration / seconds_bar)) if seconds_bar else 0,
                 end_bar=int(round(tail_start / seconds_bar)) if seconds_bar else 0,
                 avg_energy=0.0,
@@ -1479,42 +1664,136 @@ def cue_in_verwerfen(
     benannter_cue: bool,
     intro_ende: float,
 ) -> bool:
-    """Soll ein per Heuristik geratener Mix-In-Cue verworfen werden?
+    """Verwirft jeden Cue auf oder vor der harten Intro-Sicherheitsgrenze.
 
-    Invariante 5 (Mix-In nie im Intro) galt bisher nur in
-    calculate_genre_aware_mix_points; die Cue-Uebernahme umging sie. Gemessen
-    an 231 Tracks lagen dadurch 24 Mix-Punkte im fuehrenden Intro, bis zu
-    56,5 s tief — alle aus dem Heuristik-Zweig (``dedup_positions[1]``, der
-    zweite Hot Cue liegt bei DJs typisch bei rund 30 s), kein einziger aus
-    einem benannten Cue.
-
-    Ein BENANNTER Cue wird nie verworfen: er ist eine bewusste Entscheidung
-    des Nutzers (Ausnahme in der Guard-Spec vom 2026-03-11 festgehalten).
-
-    Geprueft wird der ROHE Cue, nicht der quantisierte Wert — und das ist der
-    Unterschied zwischen 24 und 35 betroffenen Tracks. `align_ai_mix_points`
-    hebt einen Cue per ceil auf die naechste Phrasengrenze; liegt der Cue
-    knapp im Intro, landet er dadurch oft exakt auf dem Intro-Ende und sieht
-    im Cache sauber aus. Nachgemessen an der Neuanalyse mit CACHE_VERSION 33:
-    24 Tracks hatten einen sichtbar im Intro liegenden Mix-In, weitere 11
-    einen rohen Cue im Intro, den die Quantisierung kaschierte (Beispiel:
-    roher Cue 30,3 s bei Intro-Ende 34,0 s, gespeichert waren 34,0 s).
-
-    Ohne Sektionen (``intro_ende <= 0``) gibt es kein Urteil — dann bleibt der
-    Cue stehen, statt auf gut Glueck verworfen zu werden.
-
-    Das Epsilon faengt Quantisierungsrauschen. Gemessen an denselben 231
-    Tracks liegen 36 um weniger als 0,5 s unter dem Intro-Ende — tatsaechlich
-    aber alle unter 5 ms (Median 3,2 ms, Maximum 4,9 ms). Benutzt wird
-    QUANTIZE_TOLERANCE_SEC statt eines eigenen Werts: dieselbe Konstante
-    entscheidet in `quantize_to_grid`, wann ein Punkt noch als "auf dem
-    Raster" gilt. Ein kleineres Epsilon (1 ms) faenge nur 3 der 36.
+    ``benannter_cue`` bleibt aus Kompatibilitaetsgruenden im Aufrufvertrag,
+    gewaehrt aber ausdruecklich keine Ausnahme mehr.
     """
-    if cue_in is None or benannter_cue:
+    if cue_in is None:
         return False
-    if intro_ende <= 0.0:
+    return cue_in <= intro_ende + QUANTIZE_TOLERANCE_SEC
+
+
+def _mixpoint_pair_erfuellt_harten_vertrag(
+    mix_in: float,
+    mix_out: float,
+    *,
+    bpm: float,
+    duration: float,
+    phrase_unit: int,
+    anchor: float,
+    sections: list[dict],
+) -> bool:
+    """Prueft das finale quantisierte Paar ohne Cue-Sonderrechte."""
+    values = (mix_in, mix_out, bpm, duration, anchor)
+    if not all(np.isfinite(float(value)) for value in values):
         return False
-    return cue_in < intro_ende - QUANTIZE_TOLERANCE_SEC
+    if bpm <= 0.0 or duration <= 0.0 or not 0.0 <= mix_in < mix_out <= duration:
+        return False
+
+    intro_end = _get_intro_end_from_sections(sections)
+    outro_start = _get_outro_start_from_sections(sections, duration)
+    tolerance = QUANTIZE_TOLERANCE_SEC
+    if mix_in <= intro_end + tolerance or mix_out >= outro_start - tolerance:
+        return False
+
+    unit = int(phrase_unit) if phrase_unit and phrase_unit > 0 else 8
+    phrase_grid = (60.0 / bpm) * METER * unit
+    if phrase_grid <= 0.0 or mix_out - mix_in + tolerance < 2.0 * phrase_grid:
+        return False
+    aligned_in = quantize_to_grid(mix_in, phrase_grid, anchor, "round")
+    aligned_out = quantize_to_grid(mix_out, phrase_grid, anchor, "round")
+    return (
+        abs(aligned_in - mix_in) <= tolerance
+        and abs(aligned_out - mix_out) <= tolerance
+    )
+
+
+def _apply_manual_mixpoint_cues(
+    mix_in: float,
+    mix_out: float,
+    *,
+    cue_points: list[dict],
+    bpm: float,
+    duration: float,
+    phrase_unit: int,
+    anchor: float,
+    sections: list[dict],
+) -> tuple[float, float]:
+    """Uebernimmt gerichtete manuelle Cues nur nach dem harten Vertrag.
+
+    IN und OUT werden getrennt versucht. Ein ungueltiger Cue verwirft daher
+    weder den berechneten Trackpunkt noch einen gueltigen Cue der Gegenseite.
+    """
+    cue_in = None
+    cue_out = None
+    for cue in cue_points or []:
+        if cue.get("provenance") != "manual":
+            continue
+        name = str(cue.get("name") or "").upper()
+        if cue_in is None and CUE_IN_PATTERN.search(name):
+            cue_in = float(cue["t"])
+        elif cue_out is None and CUE_OUT_PATTERN.search(name):
+            cue_out = float(cue["t"])
+
+    intro_end = _get_intro_end_from_sections(sections)
+    outro_start = _get_outro_start_from_sections(sections, duration)
+    if cue_in is not None and cue_in <= intro_end + QUANTIZE_TOLERANCE_SEC:
+        cue_in = None
+    if cue_out is not None and cue_out >= outro_start - QUANTIZE_TOLERANCE_SEC:
+        cue_out = None
+
+    def ausrichten(candidate_in: float, candidate_out: float) -> tuple[float, float] | None:
+        aligned_in, aligned_out = align_ai_mix_points(
+            candidate_in,
+            candidate_out,
+            bpm,
+            duration,
+            phrase_unit,
+            anchor=anchor,
+        )
+        if _mixpoint_pair_erfuellt_harten_vertrag(
+            aligned_in,
+            aligned_out,
+            bpm=bpm,
+            duration=duration,
+            phrase_unit=phrase_unit,
+            anchor=anchor,
+            sections=sections,
+        ):
+            return aligned_in, aligned_out
+        return None
+
+    if cue_in is not None and cue_out is not None:
+        gemeinsam = ausrichten(cue_in, cue_out)
+        if gemeinsam is not None:
+            return gemeinsam
+
+    result_in, result_out = mix_in, mix_out
+    if cue_in is not None:
+        nur_in = ausrichten(cue_in, result_out)
+        if nur_in is not None:
+            result_in, result_out = nur_in
+    if cue_out is not None:
+        nur_out = ausrichten(result_in, cue_out)
+        if nur_out is not None:
+            result_in, result_out = nur_out
+    return result_in, result_out
+
+
+def _persist_analysis_result(cache_key: str | None, track: Track) -> bool:
+    """Meldet Analyseerfolg nur nach bestaetigter Cache-Persistenz."""
+    try:
+        persisted = cache_track(cache_key, track)
+    except Exception as error:
+        # cache_track kapselt Schreibfehler laut API selbst. Dieser Guard
+        # verhindert trotzdem einen falschen Erfolg bei Vertragsverletzungen.
+        logger.error("Cache-Persistenz warf unerwartet eine Exception: %s", error)
+        return False
+    if persisted is not True:
+        logger.error("Analyse konnte nicht persistiert werden: %s", track.filePath)
+        return False
+    return True
 
 
 def analyze_track(file_path: str) -> Track | None:
@@ -1541,6 +1820,9 @@ def analyze_track(file_path: str) -> Track | None:
             logger.warning("Datei wegen Groessenlimit uebersprungen: %s", file_path)
             return None
         file_duration = _get_file_duration(file_path)
+        if not np.isfinite(file_duration) or file_duration <= 0.0:
+            logger.warning("Datei hat keine gueltige Audiodauer: %s", file_path)
+            return None
         if file_duration > SECURITY_MAX_TRACK_DURATION:
             logger.warning("Datei wegen Dauerlimit uebersprungen: %s", file_path)
             return None
@@ -1550,18 +1832,57 @@ def analyze_track(file_path: str) -> Track | None:
 
     # Rekordbox-Metadaten koennen sich ohne Audio-Dateiaenderung aendern.
     # Die Signatur muss deshalb vor dem Cache-Lookup ermittelt werden.
-    rekordbox_importer = get_rekordbox_importer()
-    rekordbox_data = rekordbox_importer.get_track_data(file_path)
-    signature_builder = getattr(rekordbox_importer, "get_track_signature", None)
-    rekordbox_signature = (
-        signature_builder(file_path) if callable(signature_builder) else ""
-    )
-    cache_key = generate_cache_key(file_path, rekordbox_signature)
-    cached_track = get_cached_track(cache_key, file_path=file_path)
+    rekordbox_importer = None
+    rekordbox_data = None
+    rekordbox_signature = ""
+    try:
+        rekordbox_importer = get_rekordbox_importer()
+        rekordbox_data = rekordbox_importer.get_track_data(file_path)
+    except Exception as error:
+        logger.warning(
+            "Rekordbox-Daten nicht lesbar; Audiofallback fuer %s: %s",
+            os.path.basename(file_path),
+            error,
+        )
+
+    if rekordbox_importer is not None:
+        signature_builder = getattr(rekordbox_importer, "get_track_signature", None)
+        if callable(signature_builder):
+            try:
+                rekordbox_signature = signature_builder(file_path) or ""
+            except Exception as error:
+                logger.warning(
+                    "Rekordbox-Signatur nicht lesbar; Audiofallback fuer %s: %s",
+                    os.path.basename(file_path),
+                    error,
+                )
+                rekordbox_data = None
+
+    try:
+        cache_key = generate_cache_key(file_path, rekordbox_signature)
+    except Exception as error:
+        logger.error("Cache-Key konnte nicht sicher erzeugt werden: %s", error)
+        return None
+    if not cache_key:
+        logger.error("Cache-Key konnte nicht sicher erzeugt werden: %s", file_path)
+        return None
+
+    try:
+        cached_track = get_cached_track(cache_key, file_path=file_path)
+    except Exception as error:
+        logger.warning("Cache-Lesefehler; Track wird neu analysiert: %s", error)
+        cached_track = None
 
     if cached_track:
-        logger.debug(f"Cache-Hit: {os.path.basename(file_path)}")
-        return cached_track
+        cached_mode = getattr(cached_track, "analysis_mode", None)
+        if cached_mode in VALID_ANALYSIS_MODES:
+            logger.debug(f"Cache-Hit: {os.path.basename(file_path)}")
+            return cached_track
+        logger.warning(
+            "Cache-Hit mit ungueltigem analysis_mode %r; Track wird neu analysiert: %s",
+            cached_mode,
+            os.path.basename(file_path),
+        )
 
     logger.info(f"Analysiere: {os.path.basename(file_path)}")
 
@@ -1586,7 +1907,7 @@ def analyze_track(file_path: str) -> Track | None:
             y, sr = librosa.load(file_path, duration=LIBROSA_FAST_PATH_DURATION)
             feature_cache = FeatureCache(y, sr)
             # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
-            duration = rekordbox_data.duration or file_duration
+            duration = file_duration
 
             # Calculate energy and bass (not in Rekordbox)
             energy = calculate_energy(y)
@@ -1608,21 +1929,50 @@ def analyze_track(file_path: str) -> Track | None:
 
             # Downbeat-Anker (2026-07-17): zuerst der exakte Rekordbox-Beatgrid
             # (ANLZ/PQTZ, Konfidenz 1.0), sonst eigene Schaetzung (Phase-Voting)
-            anlz_downbeat = rekordbox_importer.get_first_downbeat(file_path)
+            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
+            rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
+            anlz_downbeat = next(
+                (point["time"] for point in rekordbox_grid if point["beat"] == 1),
+                None,
+            )
             # Rekordbox-Phrasen (PSSI) und Cues mit Provenienz — Rohmaterial
             # fuer die Mixpunkt-Kandidaten (Spec 2026-08-21)
-            phrases = (
-                rekordbox_importer.get_phrases(file_path)
-                if hasattr(rekordbox_importer, "get_phrases") else []
+            cue_points = normalize_cues(
+                rekordbox_data.cue_points,
+                duration=file_duration,
+                source=file_path,
             )
-            cue_points = normalize_cues(rekordbox_data.cue_points)
             if anlz_downbeat is not None:
-                first_downbeat, downbeat_confidence = anlz_downbeat, 1.0
-                logger.info(f"Downbeat aus Rekordbox-Beatgrid: {first_downbeat:.3f}s")
+                beatgrid_source = "rekordbox"
+                beatgrid_validation = _validate_track_beatgrid(
+                    file_path, duration, rekordbox_data.bpm, float(anlz_downbeat),
+                    grid_points=rekordbox_grid, head_audio=y, head_sr=sr,
+                )
+                if beatgrid_validation.status == "verified":
+                    first_downbeat, downbeat_confidence = float(anlz_downbeat), 1.0
+                else:
+                    # Das Rekordbox-Grid bleibt als Diagnose sichtbar, darf die
+                    # musikalische Analyse aber nicht sperren. Fuer Mixpunkte
+                    # wird in diesem Fall der Audio-Anker verwendet.
+                    first_downbeat, downbeat_confidence = estimate_first_downbeat(
+                        y, sr, rekordbox_data.bpm
+                    )
             else:
                 first_downbeat, downbeat_confidence = estimate_first_downbeat(
                     y, sr, rekordbox_data.bpm
                 )
+                beatgrid_source = "audio"
+                beatgrid_validation = _validate_track_beatgrid(
+                    file_path, duration, rekordbox_data.bpm, first_downbeat,
+                    head_audio=y, head_sr=sr,
+                )
+            phrases = (
+                rekordbox_importer.get_phrases(file_path, duration=file_duration)
+                if beatgrid_source == "rekordbox"
+                and beatgrid_validation.status == "verified"
+                and hasattr(rekordbox_importer, "get_phrases")
+                else []
+            )
 
             phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
             if downbeat_confidence > 0.0:
@@ -1633,7 +1983,8 @@ def analyze_track(file_path: str) -> Track | None:
                 first_phrase, phrase_confidence = -1.0, 0.0
             phrase_anchor = (
                 first_phrase
-                if first_phrase >= 0.0 and phrase_confidence >= PHRASE_CONFIDENCE_MIN
+                if first_phrase >= 0.0
+                and phrase_confidence >= PHRASE_CONFIDENCE_MIN
                 else first_downbeat
             )
 
@@ -1690,52 +2041,22 @@ def analyze_track(file_path: str) -> Track | None:
                     )
                 )
 
-            # Override mix points if Rekordbox has cue points
-            # H1-Fix: Cues validieren + phrase-quantisieren statt roh uebernehmen.
-            # Wortgrenzen-Match statt Substring ("BREAKDOWN" darf kein OUT ausloesen),
-            # erster Treffer gewinnt (deterministisch statt letzter-gewinnt).
-            #
-            # Heuristik entfernt 2026-08-21, Spec Abschnitt 1 — unbenannte
-            # Cues sind jetzt Kandidaten (mix_candidates), kein Override.
-            # Damit entfaellt auch der Intro-Guard `cue_in_verwerfen` (er galt
-            # nur fuer die Heuristik; die Funktion bleibt im Modul, wird hier
-            # aber nicht mehr gerufen). Nur BENANNTE Cues ("MIX IN", "OUT", ...)
-            # ueberschreiben als bewusste Nutzerentscheidung die Mixpunkte.
-            if cue_points:
-                cue_in, cue_out = None, None
-                # "OUTRO" ist ein gaengiger Mix-Out-Cue-Name; "INTRO" markiert
-                # dagegen den Intro-START und ist KEIN Mix-In-Punkt
-                for c in cue_points:
-                    if c["provenance"] != "manual":
-                        continue
-                    name_upper = c["name"].upper()
-                    if cue_in is None and CUE_IN_PATTERN.search(name_upper):
-                        cue_in = float(c["t"])
-                    elif cue_out is None and CUE_OUT_PATTERN.search(name_upper):
-                        cue_out = float(c["t"])
-
-                candidate_in = cue_in if cue_in is not None else mix_in_point
-                candidate_out = cue_out if cue_out is not None else mix_out_point
-                if 0 <= candidate_in < candidate_out <= duration:
-                    # Gleiche Quantisierungs-Pipeline wie der AI-Override
-                    mix_in_point, mix_out_point = align_ai_mix_points(
-                        candidate_in,
-                        candidate_out,
-                        rekordbox_data.bpm,
-                        duration,
-                        structure.phrase_unit,
-                        anchor=phrase_anchor,  # A1: Phrasen- statt Takt-Anker
-                    )
-                    seconds_per_bar = (60.0 / rekordbox_data.bpm) * METER
-                    mix_in_bars = int(mix_in_point / seconds_per_bar)
-                    mix_out_bars = int(mix_out_point / seconds_per_bar)
-                else:
-                    logger.warning(
-                        f"Rekordbox-Cues ungueltig (Reihenfolge/Trackgrenzen) "
-                        f"(in={candidate_in:.1f}, out={candidate_out:.1f}, "
-                        f"duration={duration:.1f}) — "
-                        f"behalte berechnete Mix-Punkte"
-                    )
+            # Gerichtete manuelle Cues behalten ihre Prioritaet, muessen aber
+            # denselben quantisierten Intro-/Outro-Vertrag wie Analyzerpunkte
+            # erfuellen. Der gemeinsame Helfer wird auch im Vollpfad benutzt.
+            mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
+                mix_in_point,
+                mix_out_point,
+                cue_points=cue_points,
+                bpm=rekordbox_data.bpm,
+                duration=duration,
+                phrase_unit=structure.phrase_unit,
+                anchor=phrase_anchor,
+                sections=section_dicts,
+            )
+            seconds_per_bar = (60.0 / rekordbox_data.bpm) * METER
+            mix_in_bars = int(mix_in_point / seconds_per_bar)
+            mix_out_bars = int(mix_out_point / seconds_per_bar)
 
             # Audio Feature Extensions
             brightness = calculate_brightness(y, sr, feature_cache)
@@ -1755,41 +2076,10 @@ def analyze_track(file_path: str) -> Track | None:
             # AUDIT-FIX A-02 (2026-07-24): Nur die tatsaechlich erwarteten
             # Lade-/Decode-Fehlerklassen fangen (vorher `except Exception`, was
             # auch echte Programmierfehler als "Load fehlgeschlagen" tarnte).
-            # Das Ergebnis ist ein DEGRADIERTER Track mit Default-Werten — der
-            # wird unten NICHT gecacht, sonst liefert der mtime-basierte Cache
-            # den Muell (energy=50, mix_in=0) fuer immer zurueck.
-            logger.warning(f"Schneller Librosa-Load fehlgeschlagen: {e}")
-            analysis_degraded = True
-            duration = rekordbox_data.duration or file_duration
-            energy = 50  # Default energy
-            bass_intensity = 50
-            mix_in_point, mix_out_point = 0.0, duration
-            mix_in_bars, mix_out_bars = 0, 0
-            brightness = 0
-            vocal_instrumental = "unknown"
-            danceability = 0
-            mfcc_fingerprint = []
-            first_downbeat, downbeat_confidence = 0.0, 0.0
-            first_phrase, phrase_confidence = -1.0, 0.0  # A1 (R4: Sentinel -1.0)
-            lufs = 0.0
-            lufs_status = "error"
-            lufs_coverage = 0.0
-            lufs_channels = 0
-            lufs_sample_rate = 0
-            key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
-            # K1 Audit-Fix: Richtige Dataclasses statt fragiler Dummy-Objekte
-            genre_result = GenreClassification(
-                genre="Unknown", confidence=0.0, source="fallback",
-                mfcc_fingerprint=[]
-            )
-            section_dicts = []
-            structure = TrackStructure()
-            analysis_coverage = []
-            outro_covered = False
-            phrases = []
-            cue_points = []
-            phrase_grid = []
-            mix_in_candidates, mix_out_candidates = [], []
+            # Ohne decodiertes Audio existiert kein belastbarer Analyseerfolg.
+            # Insbesondere duerfen keine Default-Mixpunkte nach außen gelangen.
+            logger.warning("Schneller Librosa-Load fehlgeschlagen: %s", e)
+            return None
 
         # Extract key note and mode from Camelot code (for backward compatibility)
         key_note = ""
@@ -1886,7 +2176,7 @@ def analyze_track(file_path: str) -> Track | None:
         # sind die Listen bereits leer gesetzt und duerfen nicht ueberschrieben
         # werden (section_dicts/structure waeren dort Platzhalter).
         if not analysis_degraded:
-            mix_in_candidates, mix_out_candidates = _kandidaten_berechnen(
+            kandidaten = _kandidaten_berechnen(
                 file_path, pfad="fast", bpm=rekordbox_data.bpm, duration=duration,
                 first_downbeat=first_downbeat,
                 downbeat_confidence=downbeat_confidence,
@@ -1897,6 +2187,9 @@ def analyze_track(file_path: str) -> Track | None:
                 analyzer_in=mix_in_point, analyzer_out=mix_out_point,
                 outro_covered=outro_covered,
             )
+            if kandidaten is None:
+                return None
+            mix_in_candidates, mix_out_candidates = kandidaten
             phrase_grid = phrase_grid_from_phrases(phrases)
 
         # Create Track object with Rekordbox data
@@ -1939,12 +2232,20 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            beatgrid_source=beatgrid_source,
+            beatgrid_status=beatgrid_validation.status,
+            beatgrid_windows_checked=beatgrid_validation.windows_checked,
+            beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
             key_confidence=key_confidence,
             lufs=lufs,
             rekordbox_signature=rekordbox_signature,
-            analysis_mode="rekordbox_fast_tail",
+            analysis_mode=(
+                "rekordbox_degraded"
+                if analysis_degraded
+                else "rekordbox_fast_tail"
+            ),
             analysis_coverage=analysis_coverage,
             outro_covered=outro_covered,
             lufs_status=lufs_status,
@@ -1962,16 +2263,25 @@ def analyze_track(file_path: str) -> Track | None:
         # sonst liefert der mtime-basierte Cache die erfundenen Default-Werte
         # (energy=50, mix_in=0.0) fuer immer zurueck, ohne sichtbaren Fehler.
         if not analysis_degraded:
-            cache_track(cache_key, track)
+            if not _persist_analysis_result(cache_key, track):
+                return None
         else:
             logger.warning(
                 f"Degradierte Analyse NICHT gecacht: {os.path.basename(file_path)}"
             )
         return track
 
-    # No Rekordbox data - fallback to full librosa analysis
-    logger.info("Volle Librosa-Analyse (keine Rekordbox-Daten)")
-    artist, title, genre = extract_metadata(file_path)
+    # Kein Rekordbox-Tempo: BPM kommt aus dem Audio. Ein vorhandener, aber in
+    # Rekordbox noch nicht analysierter Datensatz bleibt fuer unabhaengige
+    # Metadaten (Artist/Title/Genre, validierter Key, Cues/ANLZ) nutzbar.
+    logger.info("Volle Librosa-Analyse (kein nutzbares Rekordbox-Tempo)")
+    artist_id3, title_id3, genre_id3 = extract_metadata(file_path)
+    if rekordbox_data is not None:
+        artist = rekordbox_data.artist or artist_id3
+        title = rekordbox_data.title or title_id3
+        genre = rekordbox_data.genre or genre_id3
+    else:
+        artist, title, genre = artist_id3, title_id3, genre_id3
 
     try:
         # K2 Audit-Fix: Safety-Net gegen extrem lange Dateien (>10 Min)
@@ -2016,53 +2326,17 @@ def analyze_track(file_path: str) -> Track | None:
             # unterscheiden. Der kanonische BPM-Bereich des Genres kann es:
             # 92 BPM sind fuer Psytrance (135-150) unmoeglich, 138 nicht.
             # Ist das ID3-Genre bekannt, gilt dessen kanonischer Bereich.
-            # Sonst der Vereinigungsbereich ALLER unterstuetzten Genres —
-            # gemessen tragen genau die Dateien ohne Rekordbox-Daten auch
-            # kein Genre-Tag, der spezifische Bereich waere dort also nie
-            # verfuegbar. Ein Tag unterhalb jedes unterstuetzten Genres ist
-            # unabhaengig vom Stil unplausibel.
-            genre_bpm_range = None
-            try:
-                from .genre_classifier import match_id3_genre
-                from .genres import GENRE_PROFILES
-
-                canonical = match_id3_genre(genre)
-                if canonical and canonical in GENRE_PROFILES:
-                    genre_bpm_range = GENRE_PROFILES[canonical].bpm_range
-                elif GENRE_PROFILES:
-                    genre_bpm_range = (
-                        min(p.bpm_range[0] for p in GENRE_PROFILES.values()),
-                        max(p.bpm_range[1] for p in GENRE_PROFILES.values()),
-                    )
-            except Exception as error:
-                logger.debug(f"Genre-BPM-Bereich nicht ermittelbar: {error}")
-
-            def _in_genre_range(value: float) -> bool:
-                if not genre_bpm_range:
-                    return False
-                return genre_bpm_range[0] <= value <= genre_bpm_range[1]
-
-            if measured > 0:
-                # 2/3 und 3/2 decken die verbreiteten Triolen-/Shuffle-Fehl-
-                # taggings ab, 1/2 und 2 den klassischen Halftime/Doubletime.
-                candidates = [
-                    (abs(tag_bpm * factor - measured) / measured, factor)
-                    for factor in (0.5, 2.0 / 3.0, 1.0, 1.5, 2.0)
-                ]
-                deviation, factor = min(candidates)
-                direct = abs(tag_bpm - measured) / measured
-                # Vier Bedingungen muessen ALLE halten:
-                #   1. ein anderes Vielfaches als 1 passt am besten
-                #   2. der Tag selbst liegt klar daneben (>8 %)
-                #   3. das Vielfache trifft das gemessene Tempo eng (<=6 %)
-                #   4. der Tag liegt AUSSERHALB des Genre-Bereichs und das
-                #      korrigierte Tempo INNERHALB — sonst gewinnt der Tag
-                plausible = (
-                    not _in_genre_range(tag_bpm)
-                    and _in_genre_range(tag_bpm * factor)
+            # Fehlendes oder unbekanntes ID3-Genre darf keinen Audiowert zum
+            # Schiedsrichter machen; insbesondere gibt es keinen Union-Fallback.
+            if np.isfinite(measured) and measured > 0.0:
+                corrected = _correct_id3_bpm_factor(
+                    tag_bpm,
+                    measured,
+                    genre_id3,
                 )
-                if factor != 1.0 and direct > 0.08 and deviation <= 0.06 and plausible:
-                    corrected = round(tag_bpm * factor, 2)
+                direct = abs(tag_bpm - measured) / measured
+                if corrected != tag_bpm:
+                    factor = corrected / tag_bpm
                     logger.warning(
                         "ID3-BPM %.2f widerspricht dem Audio (%.1f gemessen) — "
                         "als Faktor %.3f erkannt, korrigiert auf %.2f: %s",
@@ -2070,7 +2344,7 @@ def analyze_track(file_path: str) -> Track | None:
                         os.path.basename(file_path),
                     )
                     bpm = corrected
-                elif direct > 0.08:
+                elif direct > ID3_BPM_DIRECT_DEVIATION_MIN:
                     logger.warning(
                         "ID3-BPM %.2f weicht um %.0f%% vom gemessenen Tempo "
                         "%.1f ab, wird aber uebernommen (kein plausibles "
@@ -2111,32 +2385,45 @@ def analyze_track(file_path: str) -> Track | None:
                 bpm = round(bpm / 2, 2)
             logger.info(f"BPM via Librosa: {bpm:.2f} (keine BPM-Tags gefunden)")
 
-        chroma = feature_cache.get_chroma()
-        chroma_vector = np.mean(chroma, axis=1)
-        # Key-Confidence-Feature 2026-07-17: Essentia-Muster (strength + margin)
-        key_note, key_mode, key_strength, key_margin, second_note, second_mode = (
-            get_key_with_confidence(chroma_vector)
+        rekordbox_key = (
+            REVERSE_CAMELOT_MAP.get(rekordbox_data.camelot_code)
+            if rekordbox_data is not None and rekordbox_data.camelot_code
+            else None
         )
-        key_confidence = key_confidence_score(
-            key_strength, key_margin, key_note, key_mode, second_note, second_mode
-        )
-        logger.info(
-            f"Key: {key_note} {key_mode} (Konfidenz {key_confidence:.2f}, "
-            f"strength={key_strength:.2f}, margin={key_margin:.3f})"
-        )
-
-        # Get Camelot code from key
-        # AUDIT-FIX F15 (2026-07-24): Bei flacher/stiller/mehrdeutiger Chroma
-        # (Kontrast praktisch 0) KEINEN erfundenen Key setzen — sonst landen
-        # alle fehlgeschlagenen Analysen auf demselben Default-Camelot (5A) und
-        # scoren untereinander 100 ("perfekt harmonischer" Block aus Muell).
-        # Leerer Code -> neutraler Fallback-Score (10) im Scoring.
-        if key_strength <= 0.05 and key_margin <= 1e-4:
-            camelot_code = ""
-            key_confidence = 0.0
-            logger.info("Key-Detection nicht eindeutig (flache Chroma) -> kein Camelot-Code")
+        if rekordbox_key is not None:
+            # Camelot-Codes werden nur nach erfolgreicher Reverse-Map als
+            # sicher uebernommen; unbekannte Werte fallen auf Audio zurueck.
+            key_note, key_mode = rekordbox_key
+            camelot_code = rekordbox_data.camelot_code
+            key_confidence = 1.0
+            logger.info("Key aus Rekordbox trotz fehlendem RB-Tempo: %s", camelot_code)
         else:
-            camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
+            chroma = feature_cache.get_chroma()
+            chroma_vector = np.mean(chroma, axis=1)
+            # Key-Confidence-Feature 2026-07-17: Essentia-Muster (strength + margin)
+            key_note, key_mode, key_strength, key_margin, second_note, second_mode = (
+                get_key_with_confidence(chroma_vector)
+            )
+            key_confidence = key_confidence_score(
+                key_strength, key_margin, key_note, key_mode, second_note, second_mode
+            )
+            logger.info(
+                f"Key: {key_note} {key_mode} (Konfidenz {key_confidence:.2f}, "
+                f"strength={key_strength:.2f}, margin={key_margin:.3f})"
+            )
+
+            # AUDIT-FIX F15: Bei flacher/stiller/mehrdeutiger Chroma keinen
+            # erfundenen Key setzen; leerer Code nutzt den neutralen Score.
+            if key_strength <= 0.05 and key_margin <= 1e-4:
+                key_note = ""
+                key_mode = ""
+                camelot_code = ""
+                key_confidence = 0.0
+                logger.info(
+                    "Key-Detection nicht eindeutig (flache Chroma) -> kein Camelot-Code"
+                )
+            else:
+                camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
 
         energy = calculate_energy(y)
         bass_intensity = calculate_bass_intensity(y, sr)
@@ -2151,9 +2438,54 @@ def analyze_track(file_path: str) -> Track | None:
             f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
         )
 
-        # Downbeat-Anker (2026-07-17): eigene Schaetzung (Phase-Voting nach
-        # Vande Veire), BPM ist an dieser Stelle final
-        first_downbeat, downbeat_confidence = estimate_first_downbeat(y, sr, bpm)
+        # Ein BPM-loser Rekordbox-Datensatz kann dennoch ein PQTZ/PSSI-Paket
+        # besitzen. Es wird erst gegen das jetzt gemessene Tempo validiert;
+        # bei Mismatch bleibt nur die Diagnose, der Anker kommt aus dem Audio.
+        rekordbox_grid: list[dict] = []
+        if rekordbox_data is not None:
+            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
+            rekordbox_grid = (
+                grid_reader(file_path) if callable(grid_reader) else []
+            )
+        anlz_downbeat = next(
+            (point["time"] for point in rekordbox_grid if point["beat"] == 1),
+            None,
+        )
+        if anlz_downbeat is not None:
+            beatgrid_source = "rekordbox"
+            beatgrid_validation = _validate_track_beatgrid(
+                file_path, duration, bpm, float(anlz_downbeat),
+                grid_points=rekordbox_grid, head_audio=y, head_sr=sr,
+            )
+            if beatgrid_validation.status == "verified":
+                first_downbeat = float(anlz_downbeat)
+                downbeat_confidence = 1.0
+            else:
+                first_downbeat, downbeat_confidence = estimate_first_downbeat(
+                    y, sr, bpm
+                )
+        else:
+            first_downbeat, downbeat_confidence = estimate_first_downbeat(y, sr, bpm)
+            beatgrid_source = "audio"
+            beatgrid_validation = _validate_track_beatgrid(
+                file_path, duration, bpm, first_downbeat, head_audio=y, head_sr=sr
+            )
+        phrases = (
+            rekordbox_importer.get_phrases(file_path, duration=file_duration)
+            if rekordbox_data is not None
+            and beatgrid_source == "rekordbox"
+            and beatgrid_validation.status == "verified"
+            and hasattr(rekordbox_importer, "get_phrases")
+            else []
+        )
+        cue_points = (
+            normalize_cues(
+                rekordbox_data.cue_points,
+                duration=file_duration,
+                source=file_path,
+            )
+            if rekordbox_data is not None else []
+        )
 
         phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
         if downbeat_confidence > 0.0:
@@ -2164,7 +2496,8 @@ def analyze_track(file_path: str) -> Track | None:
             first_phrase, phrase_confidence = -1.0, 0.0
         phrase_anchor = (
             first_phrase
-            if first_phrase >= 0.0 and phrase_confidence >= PHRASE_CONFIDENCE_MIN
+            if first_phrase >= 0.0
+            and phrase_confidence >= PHRASE_CONFIDENCE_MIN
             else first_downbeat
         )
         median_bar_length = _median_seconds_per_bar(beat_frames, sr, bpm)
@@ -2221,6 +2554,20 @@ def analyze_track(file_path: str) -> Track | None:
                     first_downbeat=first_downbeat,  # R3
                 )
             )
+
+        mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
+            mix_in_point,
+            mix_out_point,
+            cue_points=cue_points,
+            bpm=bpm,
+            duration=duration,
+            phrase_unit=structure.phrase_unit,
+            anchor=phrase_anchor,
+            sections=section_dicts,
+        )
+        seconds_per_bar = (60.0 / bpm) * METER
+        mix_in_bars = int(mix_in_point / seconds_per_bar)
+        mix_out_bars = int(mix_out_point / seconds_per_bar)
 
         # Audio Feature Extensions
         brightness = calculate_brightness(y, sr, feature_cache)
@@ -2290,13 +2637,10 @@ def analyze_track(file_path: str) -> Track | None:
             groove = GrooveFeatures()
 
         # Mixpunkt-Kandidaten (Spec 2026-08-21), Spiegel des Rekordbox-Pfads.
-        # Ohne Rekordbox gibt es keine Phrasen/Cues: Kandidaten kommen nur aus
-        # Analyzer, Sektionen und Energie-Neuheit. Kein analysis_degraded-Guard
-        # noetig: ein Load-Fehler landet im aeusseren except (return None).
-        phrases: list[dict] = []
-        cue_points: list[dict] = []
-        phrase_grid: list[float] = []
-        mix_in_candidates, mix_out_candidates = _kandidaten_berechnen(
+        # Ohne validiertes Rekordbox-Raster bleiben Phrasen leer; benannte und
+        # unbenannte Cues sind davon unabhaengige, sichere Nutzerdaten.
+        phrase_grid = phrase_grid_from_phrases(phrases)
+        kandidaten = _kandidaten_berechnen(
             file_path, pfad="voll", bpm=bpm, duration=duration,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
@@ -2307,6 +2651,9 @@ def analyze_track(file_path: str) -> Track | None:
             analyzer_in=mix_in_point, analyzer_out=mix_out_point,
             outro_covered=outro_covered,
         )
+        if kandidaten is None:
+            return None
+        mix_in_candidates, mix_out_candidates = kandidaten
 
         track = Track(
             groove_pattern=groove.groove_pattern,
@@ -2347,6 +2694,10 @@ def analyze_track(file_path: str) -> Track | None:
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            beatgrid_source=beatgrid_source,
+            beatgrid_status=beatgrid_validation.status,
+            beatgrid_windows_checked=beatgrid_validation.windows_checked,
+            beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
             key_confidence=key_confidence,
@@ -2366,7 +2717,8 @@ def analyze_track(file_path: str) -> Track | None:
             mix_out_candidates=mix_out_candidates,
         )
 
-        cache_track(cache_key, track)
+        if not _persist_analysis_result(cache_key, track):
+            return None
         return track
 
     except Exception as e:

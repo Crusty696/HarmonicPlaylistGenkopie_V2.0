@@ -1,14 +1,17 @@
 # HPG — Produktionsstatus
 
-Stand der Abnahme: 2026-07-26 (nach Fullstack-Audit und autonomem Restlauf;
-Details: AUDIT_REPORT_2026-07-26_FULLSTACK.md).
-Zahlen nachgemessen am 2026-08-14, siehe Abschnitt "Messung 2026-08-14".
+Aktueller technischer Arbeitsstand: 2026-08-26. Analyse, 30-Paar-Render,
+Audioaudit, reales E2E und finaler Volltest sind noch nicht abgeschlossen. Die
+Abnahmen vom 2026-07-26 sowie Messungen vom 2026-08-14 und 2026-08-25 bleiben
+unten als historische Snapshots erhalten.
 
 ## Umgebung (verbindlich)
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
-- Tests: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --no-cov -q`
-- Baseline: **1389 Tests grün**, 26 Warnungen (gemessen 2026-08-14)
+- Abschluss-Gate: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --tb=short -q`
+- Letzter abgeschlossener Volltest-Zwischenstand: **2751 Tests gruen**,
+  **84,27 % Coverage** (gemessen 2026-08-26 vor dem anschliessenden
+  Cue-/Dauer- und CLI-Statusfix; deshalb kein aktueller Abschlussbeleg)
 - Das alte defekte `venv\` (Python 3.14) wurde 2026-07-17 geloescht
 - Build: `build.bat` (findet Python 3.12 automatisch, nutzt venv312)
 - Python-Basis: **3.12.10** (2026-07-16 aktualisiert; 3.12.0 hatte einen
@@ -19,7 +22,9 @@ Zahlen nachgemessen am 2026-08-14, siehe Abschnitt "Messung 2026-08-14".
 
 - **Mixpoint-Engine**: sektions-/phrasenbasiert, genre-aware (dj_brain), auf echter
   DJ-Praxis kalibriert (Techno 16-32 Bars, Trance 32-64, Psytrance 16er-Phrasen).
-  LLM-Mixpoints und Rekordbox-Cues werden phrase-quantisiert. Cache-Version 24;
+  LLM-Mixpoints sind rein advisory und schreiben keine Track-Mixpoints;
+  Rekordbox-Cues werden phrase-quantisiert und gegen die framegenaue echte
+  Audiodauer geprueft. Cache-Version 40;
   `-1.0` ist der Nicht-gesetzt-Sentinel, `0.0` ein gueltiger Mix-In.
   Transition-Preview mit Beat-Phase-Alignment.
 - **8 Playlist-Strategien** (Harmonic Flow, Warm-Up, Cool-Down, Peak-Time,
@@ -33,7 +38,17 @@ Zahlen nachgemessen am 2026-08-14, siehe Abschnitt "Messung 2026-08-14".
   Half/Double-Erkennung mit 4%-Toleranz
 - **Export**: m3u8 + Rekordbox XML (Folder/Playlist-Anlage gefixt)
 
-## Messung 2026-08-14
+## Letzter Volltest-Snapshot: Messung 2026-08-25
+
+Selbst gemessen mit dem Abschluss-Gate:
+
+- **2035 passed**, 25 Warnungen
+- Coverage gesamt: **81,65 %** — das Gate `--cov-fail-under=70` ist erfuellt
+- `main.py`: **5752 Zeilen**
+- **8** Strategien, **3** Strategie-Aliase, **9** kanonische Genres
+- `CACHE_VERSION = 37`, Python 3.12.10 im `venv312`
+
+## Historischer Snapshot: Messung 2026-08-14
 
 Selbst gemessen mit `.\venv312\Scripts\python.exe -m pytest`:
 
@@ -52,9 +67,11 @@ nachgemessen: Gate erfüllt, Suite vollständig grün.
 
 ## Offene Punkte
 
-- Die Arbeitskopie ist nicht sauber: `git status` zeigt uncommittete
-  Änderungen (u. a. `main.py`, `hpg_core/`, `tests/`, `requirements.txt`).
-  Die Angaben in diesem Dokument beschreiben also keinen committeten Zustand.
+- Die Arbeitskopie enthaelt weiterhin uncommittete Aenderungen. Die aktuelle
+  Messung beschreibt den getesteten Worktree, keinen Git-Commit.
+- Der isolierte 3666-Track-v40-Lauf ist aktiv. Erst danach folgen der neue
+  30-Paar-Kandidatensatz, strikter PCM-/Kick-Audit, reales Render-E2E,
+  Abschlussvolltest und unabhaengiger Waechter.
 - Eine subjektive Langzeit-Hörsession bleibt optional und ist als
   Produktkalibrierung nicht vollständig automatisierbar.
 

@@ -26,6 +26,7 @@ Plan + Quellen: docs/plans/2026-07-17-downbeat-erkennung.md
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 import librosa
@@ -98,6 +99,85 @@ _MIN_BEATS = 16
 # 3,8 % und 24 % ist eindeutig, 10 % liegt mit Faktor 2,6 Abstand zu beiden
 # Seiten darin.
 _GRID_TEMPO_TOLERANCE = 0.10
+
+# Grid-vs.-Audio-Pruefung. Analyse und Renderer verwenden dieselbe exakte
+# Restfehlergrenze: ein als "verified" persistiertes Grid darf nicht spaeter
+# am strengeren Rendervertrag scheitern. Die alte 1/8-Beat-Flamgrenze und der
+# zwischenzeitliche 20-ms-Betriebswert sind dafuer zu gross.
+EXACT_BEAT_SYNC_TOLERANCE_SECONDS = 0.006
+BEATGRID_MAX_PHASE_ERROR_SECONDS = EXACT_BEAT_SYNC_TOLERANCE_SECONDS
+BEATGRID_MIN_FOLD_LOCK = 0.10
+BEATGRID_MIN_WINDOWS = 3
+BEATGRID_MAX_INTERVAL_DEVIATION = 0.02
+
+
+@dataclass(frozen=True)
+class BeatgridValidation:
+    status: str
+    windows_checked: int
+    max_phase_error_ms: float
+
+
+def validate_beatgrid_windows(
+    windows: list[tuple[float, np.ndarray]],
+    sr: int,
+    bpm: float,
+    *,
+    anchor: float | None = None,
+    grid_times: list[float] | None = None,
+) -> BeatgridValidation:
+    """Prueft ein Beatgrid gegen tieffrequente Kickphasen mehrerer Fenster.
+
+    ``windows`` enthaelt ``(absoluter_offset, mono_audio)``. Dadurch bleibt
+    die Phasenrechnung auch fuer Mitte und Ende des Tracks korrekt.
+    Variable Rekordbox-Grids werden bewusst als technisch nicht unterstuetzt
+    gesperrt, weil der Renderer nur ein konstantes Zieltempo stretchen kann.
+    """
+    if sr <= 0 or bpm <= 0 or not windows:
+        return BeatgridValidation("unverifiable", 0, -1.0)
+    ibi = 60.0 / float(bpm)
+    ticks = sorted(
+        float(t) for t in (grid_times or [])
+        if isinstance(t, (int, float)) and np.isfinite(t) and t >= 0.0
+    )
+    if len(ticks) >= 3:
+        intervals = np.diff(np.asarray(ticks, dtype=float))
+        median_interval = float(np.median(intervals))
+        if median_interval <= 0.0:
+            return BeatgridValidation("unsupported", 0, -1.0)
+        relative = np.abs(intervals - median_interval) / median_interval
+        if float(np.max(relative)) > BEATGRID_MAX_INTERVAL_DEVIATION:
+            return BeatgridValidation("unsupported", 0, -1.0)
+        if abs(median_interval - ibi) / ibi > BEATGRID_MAX_INTERVAL_DEVIATION:
+            return BeatgridValidation("mismatch", 0, -1.0)
+    if anchor is not None and np.isfinite(anchor) and anchor >= 0.0:
+        reference = float(anchor)
+    elif ticks:
+        reference = ticks[0]
+    else:
+        return BeatgridValidation("unverifiable", 0, -1.0)
+
+    errors: list[float] = []
+    for offset, audio in windows:
+        mono = np.asarray(audio, dtype=float)
+        if mono.ndim == 2:
+            mono = np.mean(mono, axis=1)
+        phase, lock = _beat_phase_from_fold(mono, sr, ibi)
+        if phase is None or lock < BEATGRID_MIN_FOLD_LOCK:
+            continue
+        expected = (reference - float(offset)) % ibi
+        delta = abs(float(phase) - expected) % ibi
+        errors.append(min(delta, ibi - delta))
+
+    if len(errors) < BEATGRID_MIN_WINDOWS:
+        return BeatgridValidation("unverifiable", len(errors), -1.0)
+    maximum = max(errors)
+    status = (
+        "verified"
+        if maximum <= BEATGRID_MAX_PHASE_ERROR_SECONDS + 1e-12
+        else "mismatch"
+    )
+    return BeatgridValidation(status, len(errors), round(maximum * 1000.0, 3))
 
 
 def _grid_is_commensurate(grid_ibi: float, expected_ibi: float) -> bool:

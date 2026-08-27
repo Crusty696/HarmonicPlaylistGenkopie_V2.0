@@ -3,15 +3,25 @@
 Geprueft werden die reinen Teile: Pfad-Sanitizing der Clip-Auslieferung und
 das Zusammenfuehren der Noten in bewertung.csv. Kein Netzwerk, kein Audio.
 """
+import csv
+import http.client
+import json
+import threading
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tools.hoertest_server import (
   BEWERTUNG_SPALTEN,
+  HoertestHandler,
+  _port,
+  lade_track_infos,
   lade_uebersicht,
   lies_range,
   merge_bewertungen,
+  schreibe_csv,
   sichere_clip_datei,
 )
 
@@ -134,6 +144,256 @@ def test_lade_uebersicht_kommt_ohne_cache_infos_aus():
   assert zeile["genre_b"] == ""
 
 
+def test_lade_track_infos_reicht_expliziten_cache_weiter(monkeypatch, tmp_path: Path):
+  cache = tmp_path / "test.db"
+  aufrufe = []
+  track = SimpleNamespace(
+    filePath="C:/Musik/a.wav", bpm=140.0, genre="Psytrance",
+    detected_genre="", camelotCode="8A",
+  )
+  monkeypatch.setattr(
+    "tools.rate_transitions.lade_tracks_aus_cache",
+    lambda db_pfad=None: aufrufe.append(db_pfad) or [track],
+  )
+  infos = lade_track_infos(str(cache))
+  assert aufrufe == [str(cache)]
+  assert infos["c:/musik/a.wav"]["bpm"] == 140.0
+
+
+@pytest.mark.parametrize("wert", ["0", "65536", "-1", "abc"])
+def test_port_weist_ungueltige_werte_ab(wert):
+  with pytest.raises(Exception):
+    _port(wert)
+
+
+def test_schreibe_csv_belaesst_alte_datei_wenn_replace_scheitert(monkeypatch, tmp_path: Path):
+  pfad = tmp_path / "bewertung.csv"
+  pfad.write_text("alt\n", encoding="utf-8")
+  monkeypatch.setattr("tools.hoertest_server.os.replace", lambda *_: (_ for _ in ()).throw(OSError("gesperrt")))
+  with pytest.raises(OSError):
+    schreibe_csv(pfad, BEWERTUNG_SPALTEN, _zeilen())
+  assert pfad.read_text(encoding="utf-8") == "alt\n"
+  assert list(tmp_path.glob(".bewertung.csv.*.tmp")) == []
+
+
+def _server_post(server, pfad: str, daten: dict) -> int:
+  verbindung = http.client.HTTPConnection(*server.server_address, timeout=5)
+  koerper = json.dumps(daten).encode("utf-8")
+  verbindung.request("POST", pfad, body=koerper, headers={"Content-Type": "application/json"})
+  antwort = verbindung.getresponse()
+  antwort.read()
+  status = antwort.status
+  verbindung.close()
+  return status
+
+
+def _server_get(server, pfad: str) -> int:
+  verbindung = http.client.HTTPConnection(*server.server_address, timeout=5)
+  verbindung.request("GET", pfad)
+  antwort = verbindung.getresponse()
+  antwort.read()
+  status = antwort.status
+  verbindung.close()
+  return status
+
+
+@pytest.fixture
+def hoertest_server(tmp_path: Path):
+  ordner = tmp_path / "satz"
+  ordner.mkdir()
+  schreibe_csv(ordner / "bewertung.csv", BEWERTUNG_SPALTEN, _zeilen())
+  handler = type("TestHoertestHandler", (HoertestHandler,), {})
+  handler.ordner = ordner
+  handler.track_infos = {}
+  handler.reihenfolge = {}
+  server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+  thread = threading.Thread(target=server.serve_forever, daemon=True)
+  thread.start()
+  try:
+    yield server, ordner
+  finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+
+
+def test_post_unbekanntes_paar_ist_keine_falsche_erfolgsmeldung(hoertest_server):
+  server, _ = hoertest_server
+  assert _server_post(server, "/note", {"pair_id": "999", "note": 5}) == 404
+
+
+@pytest.mark.parametrize(
+  "payload",
+  [
+    {"pair_id": "001"},
+    {"pair_id": "001", "note": True},
+    {"pair_id": "001", "note": False},
+    {"pair_id": "001", "note": 1.0},
+    {"pair_id": "001", "note": "1"},
+  ],
+)
+def test_legacy_note_verwirft_fehlenden_oder_nicht_exakt_ganzzahligen_json_wert_bytegleich(
+  hoertest_server, payload
+):
+  server, ordner = hoertest_server
+  vorher = (ordner / "bewertung.csv").read_bytes()
+  assert _server_post(server, "/note", payload) == 400
+  assert (ordner / "bewertung.csv").read_bytes() == vorher
+
+
+@pytest.mark.parametrize("note", [1, 5])
+def test_legacy_note_akzeptiert_exakte_json_ganzzahlgrenzen(hoertest_server, note):
+  server, ordner = hoertest_server
+  assert _server_post(server, "/note", {"pair_id": "001", "note": note}) == 200
+  with (ordner / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+    row = next(csv.DictReader(handle))
+  assert row["bewertung"] == str(note)
+
+
+def test_legacy_note_loescht_nur_mit_explizitem_json_null(hoertest_server):
+  server, ordner = hoertest_server
+  assert _server_post(server, "/note", {"pair_id": "002", "note": None}) == 200
+  with (ordner / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+    rows = {row["pair_id"]: row for row in csv.DictReader(handle)}
+  assert rows["002"]["bewertung"] == ""
+
+
+def _setze_kandidaten_csv(ordner: Path) -> None:
+  schreibe_csv(
+    ordner / "bewertung.csv",
+    BEWERTUNG_KANDIDATEN_SPALTEN,
+    [
+      {"pair_id": "001", "clip_id": "001_k1", "note": "4", "gewaehlt": "1", "zeit": "alt"},
+      {"pair_id": "001", "clip_id": "001_k2", "note": "3", "gewaehlt": "", "zeit": "alt"},
+    ],
+  )
+
+
+@pytest.mark.parametrize(
+  "payload",
+  [
+    {"pair_id": "001", "clip_id": "001_k1"},
+    {"pair_id": "001", "clip_id": "001_k1", "note": True},
+    {"pair_id": "001", "clip_id": "001_k1", "note": False},
+    {"pair_id": "001", "clip_id": "001_k1", "note": 1.0},
+    {"pair_id": "001", "clip_id": "001_k1", "note": "1"},
+  ],
+)
+def test_kandidaten_note_verwirft_fehlenden_oder_nicht_exakt_ganzzahligen_json_wert_bytegleich(
+  hoertest_server, payload
+):
+  server, ordner = hoertest_server
+  _setze_kandidaten_csv(ordner)
+  vorher = (ordner / "bewertung.csv").read_bytes()
+  assert _server_post(server, "/note", payload) == 400
+  assert (ordner / "bewertung.csv").read_bytes() == vorher
+
+
+@pytest.mark.parametrize("note", [1, 5])
+def test_kandidaten_note_akzeptiert_exakte_json_ganzzahlgrenzen(hoertest_server, note):
+  server, ordner = hoertest_server
+  _setze_kandidaten_csv(ordner)
+  assert _server_post(
+    server, "/note", {"pair_id": "001", "clip_id": "001_k2", "note": note}
+  ) == 200
+  with (ordner / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+    rows = {row["clip_id"]: row for row in csv.DictReader(handle)}
+  assert rows["001_k2"]["note"] == str(note)
+
+
+def test_kandidaten_note_loescht_nur_mit_explizitem_null_und_bereinigt_wahl(
+  hoertest_server,
+):
+  server, ordner = hoertest_server
+  _setze_kandidaten_csv(ordner)
+  assert _server_post(
+    server, "/note", {"pair_id": "001", "clip_id": "001_k1", "note": None}
+  ) == 200
+  with (ordner / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+    rows = {row["clip_id"]: row for row in csv.DictReader(handle)}
+  assert rows["001_k1"]["note"] == ""
+  assert rows["001_k1"]["gewaehlt"] == ""
+
+
+def test_parallele_noten_gehen_nicht_verloren(hoertest_server):
+  server, ordner = hoertest_server
+  start = threading.Barrier(3)
+  ergebnisse = []
+
+  def speichern(pair_id, note):
+    start.wait()
+    ergebnisse.append(_server_post(server, "/note", {"pair_id": pair_id, "note": note}))
+
+  threads = [
+    threading.Thread(target=speichern, args=("001", 4)),
+    threading.Thread(target=speichern, args=("002", 5)),
+  ]
+  for thread in threads:
+    thread.start()
+  start.wait()
+  for thread in threads:
+    thread.join(timeout=5)
+  with (ordner / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+    noten = {z["pair_id"]: z["bewertung"] for z in csv.DictReader(handle)}
+  assert sorted(ergebnisse) == [200, 200]
+  assert noten == {"001": "4", "002": "5"}
+
+
+def test_korrupte_bestehende_note_beendet_request_kontrolliert(hoertest_server):
+  server, ordner = hoertest_server
+  schreibe_csv(
+    ordner / "bewertung.csv",
+    BEWERTUNG_KANDIDATEN_SPALTEN,
+    [{"pair_id": "001", "clip_id": "001_k1", "note": "kaputt", "gewaehlt": "", "zeit": ""}],
+  )
+  assert _server_post(server, "/bester", {"pair_id": "001", "clip_id": "001_k1"}) == 400
+
+
+def test_get_csv_fehler_liefert_kontrollierte_500(monkeypatch, hoertest_server):
+  from tools import hoertest_server as hs
+
+  server, _ = hoertest_server
+  monkeypatch.setattr(
+    hs, "lies_csv", lambda _pfad: (_ for _ in ()).throw(csv.Error("kaputt"))
+  )
+  assert _server_get(server, "/daten") == 500
+
+
+def test_post_csv_fehler_liefert_kontrollierte_500(monkeypatch, hoertest_server):
+  from tools import hoertest_server as hs
+
+  server, _ = hoertest_server
+  monkeypatch.setattr(
+    hs, "lies_csv", lambda _pfad: (_ for _ in ()).throw(csv.Error("kaputt"))
+  )
+  assert _server_post(server, "/note", {"pair_id": "001", "note": 4}) == 500
+
+
+def test_clip_stat_fehler_liefert_kontrollierte_500(monkeypatch, hoertest_server):
+  from tools import hoertest_server as hs
+
+  class NichtLesbarerClip:
+    def is_file(self):
+      return True
+
+    def stat(self):
+      raise OSError("kaputt")
+
+  server, _ = hoertest_server
+  monkeypatch.setattr(hs, "sichere_clip_datei", lambda *_args: NichtLesbarerClip())
+  assert _server_get(server, "/clips/001.wav") == 500
+
+
+def test_serverstart_faengt_unlesbare_bewertung_csv_ab(monkeypatch, tmp_path):
+  from tools import hoertest_server as hs
+
+  ordner = tmp_path / "satz"
+  ordner.mkdir()
+  (ordner / "bewertung.csv").write_text("pair_id,clip,bewertung\n", encoding="utf-8")
+  monkeypatch.setattr(hs, "lies_csv", lambda _pfad: (_ for _ in ()).throw(PermissionError("gesperrt")))
+  assert hs.main(["--dir", str(ordner)]) == 2
+
+
 # --- lies_range ------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -204,6 +464,29 @@ def test_merge_kandidaten_note_und_bester_exklusiv_mit_zeit():
   assert neu[2]["gewaehlt"] == "" and neu[1]["zeit"] == "alt"
   neu = merge_kandidaten_bewertung(neu, pair_id="001", clip_id="001_k1", note=None, zeit="t")
   assert neu[0]["note"] == ""
+
+
+def test_note_eins_kann_keine_beste_wahl_behalten():
+  zeilen = [
+    {"pair_id": "001", "clip_id": "001_k1", "note": "4", "gewaehlt": "1", "zeit": "alt"},
+    {"pair_id": "001", "clip_id": "001_k2", "note": "3", "gewaehlt": "", "zeit": "alt"},
+  ]
+  neu = merge_kandidaten_bewertung(
+    zeilen, pair_id="001", clip_id="001_k1", note=1, zeit="neu"
+  )
+  assert neu[0]["note"] == "1"
+  assert not any(z["gewaehlt"] == "1" for z in neu)
+
+
+def test_mehrere_clips_erlauben_explizit_keinen_besten():
+  zeilen = [
+    {"pair_id": "001", "clip_id": "001_k1", "note": "2", "gewaehlt": "1", "zeit": "alt"},
+    {"pair_id": "001", "clip_id": "001_k2", "note": "3", "gewaehlt": "", "zeit": "alt"},
+  ]
+  neu = merge_kandidaten_bewertung(
+    zeilen, pair_id="001", clip_id="", kein_bester=True, zeit="neu"
+  )
+  assert all(z["gewaehlt"] == "0" for z in neu)
 
 
 def test_lade_uebersicht_kandidaten_gruppiert_verdeckt_und_in_reihenfolge():

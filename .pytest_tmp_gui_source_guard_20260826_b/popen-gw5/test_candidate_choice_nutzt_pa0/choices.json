@@ -1,0 +1,12 @@
+{
+  "c:\\a.wav||c:\\b.wav": {
+    "t_out": 164.6,
+    "t_in": 82.3,
+    "blend_bars": 32,
+    "zeit": "2026-08-26T22:43:59",
+    "version": 2,
+    "bpm_a": 140.0,
+    "bpm_b": 140.0,
+    "overlap_sec": 54.9
+  }
+}

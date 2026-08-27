@@ -7,7 +7,7 @@ description: Use when working on HPG audio analysis — librosa loading, BPM/Key
 
 ## Einstieg
 
-`analysis.analyze_track(file_path) -> Track | None` [analysis.py:1282] ist die
+`analysis.analyze_track(file_path) -> Track | None` [analysis.py:1659] ist die
 **einzige** oeffentliche Analyse-Funktion. Sie macht Limits, Cache, Decode,
 Features, Struktur und Mixpoints in einem Zug. Rueckgabe `None` heisst
 "uebersprungen" — nie eine Exception nach oben.
@@ -17,7 +17,7 @@ Features, Struktur und Mixpoints in einem Zug. Rueckgabe `None` heisst
 | | Fast-Path | Voll-Path |
 |---|---|---|
 | Bedingung | `rekordbox_data and rekordbox_data.bpm` | sonst |
-| BPM/Key | aus Rekordbox-DB, `key_confidence = 1.0` | librosa + Chroma |
+| BPM/Key | aus Rekordbox-DB, `key_confidence = 1.0` | BPM aus ID3-/AIFF-Tag mit Audio-Faktorpruefung, sonst librosa; Key aus Chroma |
 | Decode | `LIBROSA_FAST_PATH_DURATION = 360` s | `LIBROSA_MAX_DURATION = 600` s |
 | Speed | ~12x schneller | Referenz |
 
@@ -31,7 +31,7 @@ muss den anderen mitaendern** — historisch die haeufigste Fehlerquelle
 abgeschnitten. Damit Outro und Mix-Out trotzdem echt sind, gibt es ein
 **zweites Fenster**:
 
-`analyze_structure_windows()` [analysis.py:1181]
+`analyze_structure_windows()` [analysis.py:1503]
 - Head = das bereits geladene `y`
 - Tail = separater Offset-Load der letzten `LIBROSA_TAIL_DURATION = 180` s
 - Luecke dazwischen wird als Section `label="unanalysed"` eingefuegt — sie
@@ -39,7 +39,7 @@ abgeschnitten. Damit Outro und Mix-Out trotzdem echt sind, gibt es ein
 - Rueckgabe `(structure, coverage, outro_covered)`; `outro_covered` ist
   `tail_end >= duration - 1.0`
 
-**Fenster-Artefakt-Regel** [analysis.py:1236, B7/N1]: der Section-Labeler
+**Fenster-Artefakt-Regel** [analysis.py:1535/1590, B7/N1]: der Section-Labeler
 markiert die letzte Section eines Fensters immer als Outro-Kandidat. Endet das
 Fenster nicht am Track-Ende, wird `outro` zu `main` degradiert. Ohne das zog
 der Outro-Scanner in `dj_brain` den Mix-Out in die Track-Mitte (reproduziert:
@@ -47,17 +47,20 @@ der Outro-Scanner in `dj_brain` den Mix-Out in die Track-Mitte (reproduziert:
 
 ## outro_covered — wer prueft es, wer nicht
 
-Nur zwei Stellen im Code:
-- `ai_engine.py:108` — LLM-Mix-Out wird mit `ValueError` verworfen
-- `exporters/rekordbox_xml_exporter.py:346` — Cue-Export verweigert
+Aktuelle direkte Konsumenten:
+- `pair_candidates.py:498/966` — lokales Paar-Gate und globaler Early Return;
+  die Playlist uebernimmt diesen Guard mittelbar ueber das Kandidaten-Ranking
+- `ai_engine.py:119-126` — nur die advisory KI-Mixpunkte werden auf `None`
+  gesetzt; Mood und Subgenre bleiben erhalten
+- `exporters/rekordbox_xml_exporter.py:539-547` — Cue-Export verweigert
 
-**Nicht** geprueft in `playlist.py`, `dj_brain.py`, `transition_renderer.py`,
-m3u8-Export und GUI-Anzeige. Wer dort neue Mix-Out-Konsumenten baut, muss den
-Guard selbst setzen — verifiziert per `grep -rn outro_covered`.
+`dj_brain.py`, `transition_renderer.py`, m3u8-Export und GUI-Anzeige pruefen das
+Feld nicht direkt. Neue Mix-Out-Konsumenten brauchen einen eigenen Guard oder
+muessen nachweislich ueber das PairCandidate-Gate laufen.
 
 ## FeatureCache
 
-`FeatureCache(y, sr)` [analysis.py:48] ist ein lazy, track-lokaler Cache fuer
+`FeatureCache(y, sr)` [analysis.py:174] ist ein lazy, track-lokaler Cache fuer
 MFCC/RMS/STFT/Chroma/Centroid/Flatness/Contrast/Onset/HPSS. Er wird durch
 Genre-Klassifikation, Downbeat, Phrase und Struktur durchgereicht.
 Neue Feature-Berechnung? **Erst pruefen, ob der Cache sie schon hat.**
@@ -98,31 +101,33 @@ Details zu Quantisierung und Sentinels: Skill `hpg-mixpoint-engineering`.
 
 ## BPM aus ID3-Tags: der Faktor ist das Problem, nicht die Praezision
 
-Fehlt Rekordbox, liefert der ID3-Tag die BPM. Der Tag ist praezise, aber sein
-**Oktav-/Faktor-Fehler ist haeufig**: gemessen widersprach er bei 23 von 52
-Tracks der Rekordbox-Analyse, ein Track stand mit 69 BPM im Tag bei real 138.
+Fehlt Rekordbox-BPM, liefert ein vorhandener ID3-/AIFF-Tag die BPM. Artist,
+Titel und Genre werden feldweise aus Easy-Tags und bei dort fehlenden Werten
+aus rohen `TPE1`-/`TIT2`-/`TCON`-Frames ergaenzt [analysis.py:1212-1265]. Der
+Tag bleibt praezise, kann aber einen Oktav-/Faktorfehler enthalten.
 
 `analyze_track` prueft deshalb den Faktor gegen das Audio. Korrigiert wird nur,
 wenn **alle vier** Bedingungen halten:
 
-1. ein Vielfaches aus (0.5, 2/3, 1.5, 2) passt besser als 1
+1. ein Vielfaches aus (0.5, 2/3, 3/4, 4/3, 1.5, 2) passt besser als 1
 2. der Tag liegt >8 % neben dem gemessenen Tempo
 3. das Vielfache trifft das gemessene Tempo auf <=6 %
-4. der Tag liegt **ausserhalb** des kanonischen Genre-BPM-Bereichs und das
-   korrigierte Tempo **innerhalb** (ohne ID3-Genre: Vereinigungsbereich aller
-   `GENRE_PROFILES`, aktuell 118-180)
+4. `match_id3_genre` erkennt ein kanonisches ID3-Genre, der Tag liegt
+   **ausserhalb** und das korrigierte Tempo **innerhalb** genau dessen
+   BPM-Bereichs
+
+Fehlt das ID3-Genre oder ist es unbekannt, bleibt der Tag unveraendert. Es gibt
+ausdruecklich keinen genreuebergreifenden Union-Fallback
+[analysis.py:71-127/2201-2216].
 
 **Warum Bedingung 4 unverzichtbar ist:** `librosa.beat.beat_track` kann
-vollkommen stabil falsch liegen. An einem echten 140-BPM-Track liefert es ueber
-vier verschiedene 60-s-Fenster konstant 92.3 BPM — Streuung 0.0, exakt das
-Verhaeltnis 2/3. Eine Stabilitaets- oder Mehrfachmessung kann "Tag falsch" und
-"Messung falsch" also **nicht** unterscheiden; nur die Genre-Plausibilitaet
-kann es.
+vollkommen stabil um einen einfachen Faktor falsch liegen. Eine Stabilitaets-
+oder Mehrfachmessung kann "Tag falsch" und "Messung falsch" deshalb nicht
+allein unterscheiden; nur der kanonische Bereich eines bekannten ID3-Genres
+darf als Schiedsrichter dienen.
 
 **Der Rekordbox-Pfad bekommt diese Pruefung bewusst NICHT.** Dort ist der
-BPM-Wert nutzergepflegt und verlaesslicher als die Messung — derselbe
-Pyramid-Track haette sonst seine korrekten 140 BPM auf ~93 "korrigiert"
-bekommen.
+BPM-Wert nutzergepflegt und verlaesslicher als die Messung.
 
 ## Sentinels und Konfidenzen
 

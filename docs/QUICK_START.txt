@@ -2,7 +2,7 @@
 HARMONICPLAYLISTGENERATOR v3.7.2 - QUICK START GUIDE
 ================================================================================
 
-Stand: 2026-08-14. Die Angaben hier sind gegen den Code gemessen.
+Stand: 2026-08-26. Die Angaben hier sind gegen den Code gemessen.
 Im Zweifel gilt der Code, nicht dieses Dokument.
 
 1. APP STARTEN
@@ -33,7 +33,10 @@ Im Zweifel gilt der Code, nicht dieses Dokument.
    Genre Explorer, Smooth Crossfade, Harmonic Consistent.
 
 4. EINSTELLUNGEN (Optional)
-   BPM TOLERANCE: Slider 1-15, Standard +/-3
+   BPM TOLERANCE: Slider 1-2, Standard +/-2
+   -> Liegt ein Nachbarpaar ausserhalb der eingestellten Toleranz, bleibt der
+      Track in der Playlist. Die Kante erscheint als UNGEPLANT (Score 0) und
+      wird weder vorgespielt noch gerendert.
    ADVANCED PARAMETERS (rechte Spalte): es bleiben nur die Regler aktiv,
    die die gewaehlte Strategie wirklich nutzt
    (hpg_core/playlist.py, SUPPORTED_STRATEGY_PARAMETERS)
@@ -97,17 +100,16 @@ Immer den venv-Interpreter benutzen. pytest.ini setzt bereits -n auto,
 Coverage auf hpg_core + main und --cov-fail-under=70.
 
 VOLLSTAENDIG MIT COVERAGE (vor Commit):
-  .\venv312\Scripts\python.exe -m pytest -q
-  -> gemessen 2026-08-14: 1471 passed, 26 warnings, 188 s
+  .\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
+  -> letzter Volltest-Snapshot 2026-08-25: 2035 passed, 25 warnings,
+     81,65 % Coverage
 
 SCHNELL, OHNE COVERAGE:
   .\venv312\Scripts\python.exe -m pytest -q --no-cov -m "not requires_audio"
-  -> gemessen 2026-08-14: ca. 174 s (nur 4 Tests tragen requires_audio,
-     der Marker spart also kaum Zeit)
+  -> nur fuer den Entwicklungszyklus, nicht als Abschlussbeleg
 
 NUR AUDIO-TESTS:
   .\venv312\Scripts\python.exe -m pytest -q --no-cov -m requires_audio
-  -> gemessen 2026-08-14: 4 passed in 8 s
 
 COVERAGE REPORT (HTML):
   .\venv312\Scripts\python.exe -m pytest --cov-report=html
@@ -117,8 +119,7 @@ COVERAGE REPORT (HTML):
 DATEIEN VERSTEHEN
 ================================================================================
 
-main.py                        -> PyQt6-GUI, alle QThread-Worker
-                                  (rund 4900 Zeilen, Stand 2026-08-14).
+main.py                        -> PyQt6-GUI, alle QThread-Worker.
                                   Es gibt KEINEN GUI/-Ordner, kein ui/-Paket
                                   und kein theme.py im Wurzelverzeichnis.
 
@@ -132,7 +133,7 @@ hpg_core/
   genre_classifier.py          -> regelbasierte Genre-Erkennung (kein ML)
   structure_analyzer.py        -> Intro/Breakdown/Drop/Outro
   transition_renderer.py       -> Uebergangs-Preview (Crossfade, EQ, Limiter)
-  caching.py                   -> SQLite-Cache, CACHE_VERSION 28
+  caching.py                   -> SQLite-Cache, CACHE_VERSION 40
   genres.py                    -> 9 kanonische Genres (Single Source of Truth)
   theme.py                     -> Farben und Styles der GUI
   models.py                    -> Track-Dataclass, Camelot-Map
@@ -149,7 +150,7 @@ tests/
   (eine Datei tests/test_playlist.py gibt es nicht)
 
 Der Laufzeit-Cache liegt ausserhalb des Repos:
-  %LOCALAPPDATA%\HPG\hpg_cache_v28.db
+  %LOCALAPPDATA%\HPG\hpg_cache_v40.db
   (ueberschreibbar mit HPG_CACHE_DIR bzw. HPG_CACHE_FILE)
 
 ================================================================================
@@ -204,9 +205,11 @@ F: Warum sind diese Tracks zusammen?
 A: Siehe docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md und das Panel MIX TIPS
 
 F: Kann ich die Gewichte anpassen?
-A: Ja, in hpg_core/playlist.py sind Strategien und Scoring definiert.
-   Achtung: geaenderte Analyse-Ausgaben brauchen einen CACHE_VERSION-Bump,
-   sonst maskiert der Cache die Aenderung.
+A: Ja. Alle fuenf sichtbaren Regler fuer Groove, Bassdruck, Klangfarbe,
+   Stimmung und Lautheit gewichten ausschliesslich Mixpunkt-Kandidaten.
+   Harmonik, BPM, Energie, Genre und Struktur stammen aus
+   Hoertestpraeferenzen oder den Toleranzvorgaben. Gewichtsaenderungen brauchen keine Neuanalyse;
+   geaenderte Analyse-Ausgaben dagegen schon einen CACHE_VERSION-Bump.
 
 F: Warum ist die Audio-Analyse so langsam?
 A: librosa ist gruendlich (BPM, Key, Struktur, Energie ...). Der optionale
@@ -225,8 +228,8 @@ GitHub: https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0
 Code: Siehe tests/ fuer Beispiele
 
 Version: 3.7.2
-Tests:    1471 passed, 26 warnings (gemessen 2026-08-14, Volllauf mit Coverage)
-Coverage: 66,82 % gemessen; das Gate liegt bei 70 % und ist damit aktuell
-          NICHT erfuellt (Stand 2026-08-14, uncommittete Arbeitskopie)
+Letzter Volltest-Snapshot 2026-08-25:
+Tests:    2035 passed, 25 warnings (Volllauf mit Coverage)
+Coverage: 81,65 %; das Gate liegt bei 70 % und ist erfuellt
 
 Happy DJing!

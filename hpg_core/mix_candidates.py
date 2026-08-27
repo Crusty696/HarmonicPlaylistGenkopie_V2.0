@@ -3,7 +3,7 @@
 Ein Kandidat ist ein Zeitpunkt auf dem Gitter plus lokale Messwerte im
 Fenster +-1 Phrase. Quellen ("schema"): benannter Cue, Auto-Cue,
 PSSI-Phrasengrenze, Sektionsgrenze, Energie-Neuheit, Analyzer-Mixpunkt.
-Harte Gates (Intro/Outro-Guard, Coverage, Gitter, 2 Phrasen) entscheiden,
+Harte Gates (strikte Intro-/Outro-Grenzen, Coverage und Gitter) entscheiden,
 ob ein Kandidat ueberhaupt entsteht. Bewertung und Paarung: Teil 2.
 """
 from __future__ import annotations
@@ -93,10 +93,28 @@ class MixCandidate:
         return cls(**{k: v for k, v in d.items() if k in names})
 
 
-def normalize_cues(cues: list | None) -> list[dict]:
+def normalize_cues(
+    cues: list | None,
+    *,
+    duration: float | None = None,
+    source: str = "",
+) -> list[dict]:
     """Rekordbox-Cues → [{t, name, typ, hot_cue, provenance}], sortiert, dedupliziert
     (< CUE_DEDUPE_SEC), Provenienz: manual (benannt, nicht 'CUE(Auto)'),
-    auto ('CUE(Auto)'), leer (kein Name)."""
+    auto ('CUE(Auto)'), leer (kein Name).
+
+    Wenn die echte Audiodauer bekannt ist, werden Cues hinter dem Dateiende
+    einzeln verworfen. Die Rekordbox-Dauer ist dafuer absichtlich ungeeignet,
+    weil sie ganzzahlig gerundet oder veraltet sein kann.
+    """
+    duration_limit: float | None = None
+    if duration is not None:
+        if isinstance(duration, bool):
+            raise ValueError("duration muss endlich und positiv sein")
+        duration_limit = float(duration)
+        if not math.isfinite(duration_limit) or duration_limit <= 0.0:
+            raise ValueError("duration muss endlich und positiv sein")
+
     out: list[dict] = []
     for cue in cues or []:
         pos = cue.get("position")
@@ -109,14 +127,26 @@ def normalize_cues(cues: list | None) -> list[dict]:
         if not math.isfinite(t) or t < 0.0:
             continue
         name = (cue.get("name") or "").strip()
+        if duration_limit is not None and t > duration_limit:
+            logger.warning(
+                "Rekordbox-Cue hinter Dateiende verworfen: datei=%s name=%r "
+                "position=%.6f dauer=%.6f",
+                source or "<unbekannt>", name, t, duration_limit,
+            )
+            continue
         if not name:
             prov = "leer"
         elif name.upper().startswith("CUE(AUTO)"):
             prov = "auto"
         else:
             prov = "manual"
+        normalized_t = round(t, 3)
+        if duration_limit is not None:
+            # Nur Rundung darf einen physisch gueltigen Cue nicht ueber die
+            # ungerundete Dateigrenze schieben.
+            normalized_t = min(normalized_t, duration_limit)
         out.append({
-            "t": round(t, 3), "name": name, "typ": cue.get("type"),
+            "t": normalized_t, "name": name, "typ": cue.get("type"),
             "hot_cue": cue.get("hot_cue_number"), "provenance": prov,
         })
     out.sort(key=lambda c: c["t"])
@@ -155,17 +185,17 @@ def quantize_to_points(t: float, points: list[float], mode: str) -> float | None
 
 def passes_track_gates(t: float, seite: str, *, intro_end: float, outro_start: float,
                        duration: float, grid: float) -> bool:
-    """Track-seitige harte Gates (Spec Abschnitt 1): Intro/Outro-Guard und
-    Platz fuer das Mindestfenster von 2 Phrasen zur jeweils anderen Seite.
+    """Track-seitige harte Gates: Intro/Outro-Guard und zwei Phrasen
+    Mindestfenster.
     Ungueltige Geometrie (grid/duration <= 0, t ausserhalb) → False;
     ungueltige `seite` → ValueError (Programmierfehler)."""
     if grid <= 0 or duration <= 0 or t < 0 or t > duration:
         return False
     eps = QUANTIZE_TOLERANCE_SEC
     if seite == "in":
-        return t + eps >= intro_end and t <= duration - 2 * grid + eps
+        return t > intro_end + eps and t <= duration - 2 * grid + eps
     if seite == "out":
-        return t - eps <= outro_start and t >= 2 * grid - eps
+        return t < outro_start - eps and t >= 2 * grid - eps
     raise ValueError(f"seite muss 'in' oder 'out' sein, nicht {seite!r}")
 
 
@@ -197,10 +227,12 @@ def _phrase_at(phrases: list[dict], t: float) -> dict | None:
 
 
 def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict[str, list[tuple[float, str, bool]]]:
-    """Je Seite: [(t_roh, schema, guard_frei)]. Benannte Cues mit IN/OUT-Muster
-    gehen nur auf ihre Seite und sind guard_frei (Spec-Ausnahme); andere
-    benannte Cues ("Drop 2") sind Schema benannter_cue auf beiden Seiten MIT
-    Guard; Auto-/leere Cues Schema auto_cue. Uebrige Quellen auf beide Seiten."""
+    """Je Seite: ``(t_roh, schema, gerichteter_cue)``.
+
+    Gerichtete manuelle Cues bleiben ihrer IN-/OUT-Seite zugeordnet. Das
+    dritte Feld ist nur Herkunftsinformation; alle Quellen durchlaufen
+    ausnahmslos dieselben Track-Gates.
+    """
     beide: list[tuple[float, str, bool]] = []
     rohe = {"in": [], "out": []}
     for c in cues:
@@ -248,19 +280,15 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             ergebnis[seite] = []
             continue
         je_t: dict[float, MixCandidate] = {}
-        for t_roh, schema, guard_frei in rohe[seite]:
+        for t_roh, schema, _gerichteter_cue in rohe[seite]:
             tq = _quantize(t_roh, seite, seite_grid, grid_sec, anchor)
             if tq is None:
                 continue
             tq = round(float(tq), 3)
-            # Spec-Ausnahme: ein benannter Cue mit MIX IN/IN/START bzw. OUT-
-            # Muster ist eine bewusste Nutzerentscheidung und schlaegt den
-            # Intro/Outro-Guard; nur Trackgrenzen gelten. Alle anderen: Gates.
-            if guard_frei:
-                gate_ok = 0.0 <= tq <= duration
-            else:
-                gate_ok = passes_track_gates(tq, seite, intro_end=intro_end, outro_start=outro_start,
-                                             duration=duration, grid=grid_sec)
+            gate_ok = passes_track_gates(
+                tq, seite, intro_end=intro_end, outro_start=outro_start,
+                duration=duration, grid=grid_sec,
+            )
             if not gate_ok:
                 continue
             sek = _section_at(sections, tq)
@@ -348,8 +376,12 @@ def _bass_rms_dbfs(y: np.ndarray, sr: int) -> float | None:
 
 
 def _kick_aktiv(bass_pattern: list[float], bass_rms_dbfs: float | None) -> bool | None:
-    if not bass_pattern or bass_rms_dbfs is None:
+    if bass_rms_dbfs is None:
         return None
+    if not bass_pattern:
+        # Ein gemessen stilles Fenster ist ein belastbares "kein Kick". Nur
+        # bei lautem Bass ohne Rhythmusmuster bleibt der Zustand unbekannt.
+        return False if bass_rms_dbfs < KICK_AKTIV_MIN_DBFS else None
     onbeat = sum(bass_pattern[i] for i in ON_BEAT_SLOTS)
     return bool(bass_rms_dbfs >= KICK_AKTIV_MIN_DBFS and onbeat >= KICK_AKTIV_ONBEAT_MIN)
 
@@ -439,7 +471,12 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
         cand.percussive_ratio_lokal, cand.flatness_lokal = round(pr, 4), round(flat, 4)
         cand.brightness_lokal = calculate_brightness(y, sr, fc)
         cand.timbre_fingerprint_lokal = generate_timbre_fingerprint(y, sr, fc)
-        cand.vocal_aktiv_lokal = detect_vocal_instrumental(y, sr, fc) == "vocal"
+        vocal_status = detect_vocal_instrumental(y, sr, fc)
+        cand.vocal_aktiv_lokal = (
+            True if vocal_status == "vocal"
+            else False if vocal_status == "instrumental"
+            else None
+        )
     except Exception as exc:
         logger.warning("Klangfarbe lokal: %s", exc)
     cand.mood = {"pssi_mood": pssi_mood}   # bleibt auch bei Harmonie-Fehler erhalten
@@ -470,8 +507,6 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
             if fc_n is not None:
                 g_n = extract_groove(y_nach, sr, bpm, first_downbeat - cand.t, feature_cache=fc_n)
                 cand.traegt_allein = _kick_aktiv(g_n.bass_pattern, _bass_rms_dbfs(y_nach, sr))
-                if cand.traegt_allein is None:
-                    cand.traegt_allein = False
     except Exception as exc:
         logger.warning("Bass/Groove lokal: %s", exc)
     try:

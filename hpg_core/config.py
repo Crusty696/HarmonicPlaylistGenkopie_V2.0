@@ -4,6 +4,7 @@ Centralizes all magic numbers and configurable parameters.
 """
 
 # === Audio Processing Parameters ===
+SUPPORTED_AUDIO_EXTENSIONS = (".wav", ".aiff", ".aif", ".mp3", ".flac")
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)
 MAX_TRANSITION_OVERLAP_SECONDS = 64.0
@@ -93,6 +94,11 @@ PAAR_BPM_MAX = 2.0                 # |BPM_A - BPM_B| effektiv (Half/Double erkan
 PAAR_PITCH_MAX = 0.04
 PAAR_HALF_DOUBLE_MAX_BARS = 16     # kurzer Cut bei Half/Double
 PAAR_MAX_KOMBINATIONEN = 6         # Zeitpunkt-Kombinationen je Paar (x 2 Blenden)
+# Gemeinsamer Qualitaetsvertrag fuer App und Hoertest. Diese Werte sind keine
+# Track-Messwerte: Jeder Faktor darunter stammt weiterhin individuell aus den
+# lokalen Mixfenstern von Track A und Track B.
+PAAR_MIN_LOCAL_SCORE = 0.70
+PAAR_MIN_LOCAL_GROOVE = 0.50
 # Teilwerte. Spec-Werte: PAAR_BPM_SKALA, LUFS_DELTA_MAX_DB, PERCUSSIVE_HOCH/NIEDRIG.
 # BASS_RMS/SYNCOPATION/MIDS_HIGHS sind gemessene p90-Spannen (Normierung, keine
 # Gewichte): 231 Tracks, 3664 Kandidaten, Stichprobe 20 000 zufaellige

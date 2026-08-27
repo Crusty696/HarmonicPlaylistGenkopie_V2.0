@@ -15,14 +15,15 @@ from tests.fixtures.track_factories import make_track
 
 
 def _mk(bpm, energy, camelot="8A", genre="Techno", title=None):
-  t = make_track()
   identity = title or f"{bpm}-{energy}-{camelot}-{genre}"
-  t.filePath = f"/test/{identity}.mp3"
-  t.fileName = f"{identity}.mp3"
-  t.bpm = bpm
-  t.energy = energy
-  t.camelotCode = camelot
-  t.genre = genre
+  t = make_track(
+    filePath=f"/test/{identity}.mp3",
+    fileName=f"{identity}.mp3",
+    bpm=bpm,
+    energy=energy,
+    camelotCode=camelot,
+    genre=genre,
+  )
   t.detected_genre = genre
   if title:
     t.title = title
@@ -72,6 +73,8 @@ class TestContextFlowStrategy:
   def test_works_via_generate_playlist(self):
     tracks = [_mk(120 + i, 30 + i * 6) for i in range(6)]
     result = generate_playlist(tracks, mode="Context Flow", bpm_tolerance=8.0)
+    # Nicht lokal anschliessbare Tracks bleiben sichtbar in der Library,
+    # werden aber nicht als stiller schlechter Uebergang angehaengt.
     assert len(result) == 6
 
   def test_peak_position_changes_auto_energy_arc(self):

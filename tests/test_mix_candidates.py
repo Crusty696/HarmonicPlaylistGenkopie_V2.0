@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from hpg_core.models import QUANTIZE_TOLERANCE_SEC
 from hpg_core.mix_candidates import (
     MixCandidate, normalize_cues, quantize_to_points, passes_track_gates,
     collect_candidate_times, measure_candidate_window, build_track_candidates, candidate_confidence,
@@ -47,12 +48,16 @@ def test_quantize_to_points_ceil_floor_mit_toleranz():
 
 def test_track_gates_in_und_out():
     # intro_end 20, outro_start 280, duration 300, grid 15 → 2 Phrasen = 30
-    assert passes_track_gates(20.0, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert not passes_track_gates(20.0, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert not passes_track_gates(20.05, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert passes_track_gates(20.1, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
     assert not passes_track_gates(19.9, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
-    assert not passes_track_gates(275.0, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)  # > dur-2grid
-    assert passes_track_gates(280.0, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert not passes_track_gates(275.0, "in", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert not passes_track_gates(280.0, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert not passes_track_gates(279.95, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
+    assert passes_track_gates(279.9, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
     assert not passes_track_gates(280.1, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
-    assert not passes_track_gates(20.0, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)   # < 2grid
+    assert not passes_track_gates(20.0, "out", intro_end=20.0, outro_start=280.0, duration=300.0, grid=15.0)
 
 
 def test_normalize_cues_verwirft_nan_und_inf():
@@ -60,6 +65,42 @@ def test_normalize_cues_verwirft_nan_und_inf():
             {"position": float("inf"), "name": "", "type": 0, "hot_cue_number": None, "color": None},
             {"position": 12.0, "name": "", "type": 0, "hot_cue_number": None, "color": None}]
     assert [c["t"] for c in normalize_cues(cues)] == [12.0]
+
+
+def test_normalize_cues_prueft_echte_dateigrenze_pro_cue(caplog):
+    cues = [
+        {"position": 10.0, "name": "MIX IN"},
+        {"position": 120.001, "name": "ALT OUT"},
+        {"position": 110.0, "name": "MIX OUT"},
+        {"position": 120.0, "name": "END"},
+    ]
+
+    out = normalize_cues(cues, duration=120.0, source="track.aiff")
+
+    assert [(cue["t"], cue["name"]) for cue in out] == [
+        (10.0, "MIX IN"), (110.0, "MIX OUT"), (120.0, "END"),
+    ]
+    assert "track.aiff" in caplog.text
+    assert "ALT OUT" in caplog.text
+
+
+def test_normalize_cues_korrigiert_nur_rundungsbedingtes_ueberschiessen():
+    duration = 120.0006
+
+    out = normalize_cues(
+        [{"position": duration, "name": "END"}],
+        duration=duration,
+    )
+
+    assert out[0]["t"] == duration
+
+
+@pytest.mark.parametrize(
+    "duration", [0.0, -1.0, float("nan"), float("inf"), False, True],
+)
+def test_normalize_cues_verweigert_ungueltige_dateidauer(duration):
+    with pytest.raises(ValueError, match="endlich und positiv"):
+        normalize_cues([], duration=duration)
 
 
 def _sections():
@@ -91,13 +132,12 @@ def test_collect_candidate_times_alle_schemata_mit_pssi_gitter():
     assert 45.0 in t_in and "benannter_cue" in t_in[45.0].schema
     assert 75.0 in t_in and "auto_cue" in t_in[75.0].schema            # 61 ceil → 75
     assert 60.0 in t_in and {"analyzer", "pssi_phrase", "sektion", "energie_neuheit"} <= set(t_in[60.0].schema)
-    assert 30.0 in t_in and "benannter_cue" in t_in[30.0].schema       # 25 s ceil → 30, schlaegt den Guard
-    assert all(c.t >= 30.0 for c in ins)                                  # "Drop 2" @20 s: ceil → 30 (Guard), nicht 20
-    assert "benannter_cue" in t_in[30.0].schema and t_in[30.0].provenance == "rekordbox_manual"
+    assert 30.0 not in t_in
+    assert all(c.t > 30.0 + QUANTIZE_TOLERANCE_SEC for c in ins)
     t_out = {c.t: c for c in outs}
     assert 225.0 in t_out and "auto_cue" in t_out[225.0].schema          # 233 floor → 225
-    assert 240.0 in t_out and "analyzer" in t_out[240.0].schema
-    assert all(c.t <= 240.0 for c in outs)                                # Outro-Guard
+    assert 240.0 not in t_out
+    assert all(c.t < 240.0 - QUANTIZE_TOLERANCE_SEC for c in outs)
     assert len(ins) <= 8 and len(outs) <= 8
     assert ins == sorted(ins, key=lambda c: c.t)
     assert t_in[45.0].provenance == "rekordbox_manual"
@@ -224,6 +264,22 @@ def test_measure_window_ohne_downbeat_keine_muster_aber_rest_gemessen(tmp_path):
                              grid_sec=15.0, duration=60.0, sections=[])
     assert c.bass_pattern_lokal == [] and c.kick_aktiv is None
     assert c.lufs_lokal is not None and c.energy_lokal is not None
+
+
+def test_measure_window_erhaelt_unbekannten_vocal_status(monkeypatch, tmp_path):
+    path = _kick_track(tmp_path)
+    monkeypatch.setattr(
+        "hpg_core.analysis.detect_vocal_instrumental",
+        lambda *_args, **_kwargs: "unknown",
+    )
+    c = MixCandidate(t=30.0)
+
+    measure_candidate_window(
+        path, c, bpm=128.0, first_downbeat=0.0, downbeat_confidence=0.0,
+        grid_sec=15.0, duration=60.0, sections=[],
+    )
+
+    assert c.vocal_aktiv_lokal is None
 
 
 def test_measure_window_am_trackrand_klemmt_und_kurz_ist_kein_absturz(tmp_path):

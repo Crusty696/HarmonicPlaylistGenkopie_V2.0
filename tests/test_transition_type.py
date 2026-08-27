@@ -11,6 +11,7 @@ from hpg_core.theme import (
     TRANSITION_TYPE_DESCRIPTIONS,
 )
 from hpg_core.models import Track
+from tests.fixtures.track_factories import make_track
 
 
 # === Hilfsfunktionen ===
@@ -23,14 +24,20 @@ def _make_track(
     genre: str = "Unknown",
 ) -> Track:
   """Erstellt einen minimalen Track fuer Transition-Tests."""
-  return Track(
-    filePath="test.mp3",
-    fileName="test.mp3",
+  return make_track(
+    filePath=f"{title}-{bpm}.mp3",
+    fileName=f"{title}-{bpm}.mp3",
     title=title,
     bpm=bpm,
     camelotCode=camelot,
     energy=energy,
+    genre=genre,
     detected_genre=genre,
+    beatgrid_source="audio",
+    beatgrid_status="verified",
+    beatgrid_windows_checked=3,
+    beatgrid_max_phase_error_ms=0.0,
+    analysis_mode="test_fixture",
   )
 
 
@@ -347,8 +354,8 @@ class TestTransitionInRecommendation:
 
   def test_recommendation_has_transition_type(self):
     from hpg_core.playlist import compute_transition_recommendations
-    t1 = _make_track(title="T1", bpm=128.0, camelot="8A", energy=50)
-    t2 = _make_track(title="T2", bpm=128.0, camelot="8A", energy=55)
+    t1 = _make_track(title="T1", bpm=128.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=128.0, camelot="8A", energy=55, genre="Tech House")
     recs = compute_transition_recommendations([t1, t2], bpm_tolerance=6.0)
     assert len(recs) == 1
     assert recs[0].transition_type in TRANSITION_TYPE_LABELS
@@ -366,9 +373,9 @@ class TestTransitionInRecommendation:
   def test_multiple_recommendations(self):
     """Mehrere Recommendations haben jeweils ihren eigenen Typ."""
     from hpg_core.playlist import compute_transition_recommendations
-    t1 = _make_track(title="T1", bpm=128.0, camelot="8A", energy=50)
-    t2 = _make_track(title="T2", bpm=128.0, camelot="8A", energy=80)
-    t3 = _make_track(title="T3", bpm=70.0, camelot="8A", energy=50)
+    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t3 = _make_track(title="T3", bpm=70.0, camelot="8A", energy=50, genre="Tech House")
     recs = compute_transition_recommendations([t1, t2, t3], bpm_tolerance=6.0)
     assert len(recs) == 2
     for rec in recs:
@@ -377,8 +384,8 @@ class TestTransitionInRecommendation:
   def test_halftime_in_recommendation(self):
     """Half-Time Transition wird in Recommendation korrekt gesetzt."""
     from hpg_core.playlist import compute_transition_recommendations
-    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50)
-    t2 = _make_track(title="T2", bpm=70.0, camelot="8A", energy=50)
+    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=70.0, camelot="8A", energy=50, genre="Tech House")
     recs = compute_transition_recommendations([t1, t2], bpm_tolerance=6.0)
     assert len(recs) == 1
     assert recs[0].transition_type == "halftime_switch"

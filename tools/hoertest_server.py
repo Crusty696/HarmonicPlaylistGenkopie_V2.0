@@ -24,8 +24,11 @@ import argparse
 import csv
 import datetime
 import json
+import os
 import re
 import sys
+import tempfile
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -44,6 +47,8 @@ NOTEN = (1, 2, 3, 4, 5)
 # zu schreiben blockiert den Thread bis zum Ende und bricht ab, sobald der
 # Player weiterspringt.
 BLOCK = 256 * 1024
+MAX_POST_BYTES = 64 * 1024
+CSV_SCHREIB_LOCK = threading.RLock()
 
 # Nachlauf von Track B hinter der Blende, aus tools/rate_transitions.py. Der
 # Clip ist [pre_roll | crossfade | post_roll] (transition_renderer.py:10). Der
@@ -180,18 +185,23 @@ def ist_kandidatensatz(bewertung_zeilen: list[dict]) -> bool:
 
 
 def merge_kandidaten_bewertung(zeilen: list[dict], *, pair_id: str, clip_id: str,
-                               note=None, bester: bool = False, zeit: str = "") -> list[dict]:
+                               note=None, bester: bool = False,
+                               kein_bester: bool = False, zeit: str = "") -> list[dict]:
     """Traegt Note (None = loeschen) bzw. die exklusive Wahl 'bester' eines
     Clips ein; `zeit` wird nur auf dem beruehrten Clip gesetzt."""
     neu = []
     for z in zeilen:
         k = dict(z)
         if k.get("pair_id") == pair_id:
-            if bester:
+            if kein_bester:
+                k["gewaehlt"] = "0"
+            elif bester:
                 k["gewaehlt"] = "1" if k.get("clip_id") == clip_id else ""
             if k.get("clip_id") == clip_id:
                 if not bester:
                     k["note"] = "" if note in (None, "") else str(int(note))
+                    if k.get("gewaehlt") == "1" and note in (None, "", 1, "1"):
+                        k["gewaehlt"] = ""
                 k["zeit"] = zeit
         neu.append(k)
     return neu
@@ -238,7 +248,7 @@ def lade_uebersicht_kandidaten(merkmale_zeilen, bewertung_zeilen, reihenfolge: d
 # Dateizugriff
 # ===========================================================================
 
-def lade_track_infos() -> dict:
+def lade_track_infos(db_pfad: str | None = None) -> dict:
     """Liest BPM, Genre und Key der analysierten Tracks aus dem Cache.
 
     Diese Angaben stehen nicht in merkmale.csv — dort sind `bpm` und `genre`
@@ -251,7 +261,7 @@ def lade_track_infos() -> dict:
         print(f"Hinweis: BPM/Genre nicht verfuegbar ({exc})")
         return {}
     try:
-        tracks = lade_tracks_aus_cache()
+        tracks = lade_tracks_aus_cache(db_pfad)
     except Exception as exc:  # noqa: BLE001 - Anzeige ist Beiwerk
         print(f"Hinweis: BPM/Genre nicht verfuegbar ({exc})")
         return {}
@@ -274,10 +284,28 @@ def lies_csv(pfad: Path) -> list[dict]:
 
 
 def schreibe_csv(pfad: Path, spalten, zeilen) -> None:
-    with pfad.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(spalten))
-        writer.writeheader()
-        writer.writerows(zeilen)
+    """Schreibt eine CSV atomar, damit Leser nie eine Teildatei sehen."""
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    temp_pfad: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", newline="", dir=pfad.parent,
+            prefix=f".{pfad.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            temp_pfad = Path(handle.name)
+            writer = csv.DictWriter(handle, fieldnames=list(spalten))
+            writer.writeheader()
+            writer.writerows(zeilen)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_pfad, pfad)
+        temp_pfad = None
+    finally:
+        if temp_pfad is not None:
+            try:
+                temp_pfad.unlink()
+            except FileNotFoundError:
+                pass
 
 
 # ===========================================================================
@@ -551,8 +579,9 @@ laden();
 
 
 # Seite fuer den Kandidatenmodus: EIN Paar je Ansicht, alle Clips des Paars in
-# der gespeicherten (zufaelligen) Reihenfolge, je Clip Note 1-5 und die Wahl
-# "bester". Kein Score, kein Schema, keine Teilwerte (verdeckt).
+# der gespeicherten (zufaelligen) Reihenfolge. Einzelclips erhalten nur eine
+# Note; bei mehreren Clips gibt es genau einen Sieger oder "kein bester".
+# Note 1 kann nie Sieger sein. Kein Score/Schema/Teilwert wird gezeigt.
 SEITE_KANDIDATEN = """<!doctype html>
 <html lang="de">
 <head>
@@ -628,7 +657,12 @@ function paarAusUrl() {
   return i >= 0 ? i : 0;
 }
 
-function fertig(p) { return p.clips.every(c => c.note) && p.clips.some(c => c.gewaehlt === '1'); }
+function fertig(p) {
+  const notenFertig = p.clips.every(c => c.note);
+  if (p.clips.length === 1) return notenFertig;
+  return notenFertig && (p.clips.some(c => c.gewaehlt === '1') ||
+                         p.clips.some(c => c.gewaehlt === '0'));
+}
 
 function zeichneKopf() {
   const p = paare[pi];
@@ -698,22 +732,34 @@ function zeichne() {
       b.onclick = () => setzeNote(p.pair_id, c.clip_id, n);
       noten.appendChild(b);
     }
-    const w = document.createElement('button');
-    w.textContent = 'bester';
-    w.className = 'wahl' + (c.gewaehlt === '1' ? ' aktiv' : '');
-    w.onclick = () => setzeBester(p.pair_id, c.clip_id);
-    noten.appendChild(w);
+    if (p.clips.length > 1) {
+      const w = document.createElement('button');
+      w.textContent = 'bester';
+      w.className = 'wahl' + (c.gewaehlt === '1' ? ' aktiv' : '');
+      w.disabled = Number(c.note || 0) < 2;
+      w.onclick = () => setzeBester(p.pair_id, c.clip_id);
+      noten.appendChild(w);
+    }
     box.appendChild(noten);
     box.onclick = () => { aktuell = i; markiere(); };
     liste.appendChild(box);
   });
+  if (p.clips.length > 1) {
+    const kein = document.createElement('button');
+    kein.textContent = 'kein bester';
+    kein.className = 'wahl' + (p.clips.some(c => c.gewaehlt === '0') ? ' aktiv' : '');
+    kein.onclick = () => setzeKeinBester(p.pair_id);
+    liste.appendChild(kein);
+  }
   zaehleFuss();
 }
 
 function zaehleFuss() {
   const p = paare[pi];
   const noten = p.clips.filter(c => c.note).length;
-  const wahl = p.clips.some(c => c.gewaehlt === '1') ? 'bester gewaehlt' : 'bester fehlt';
+  const wahl = p.clips.length === 1 ? 'kein Vergleich erforderlich' :
+    (p.clips.some(c => c.gewaehlt === '1') ? 'bester gewaehlt' :
+     (p.clips.some(c => c.gewaehlt === '0') ? 'kein bester' : 'Entscheidung fehlt'));
   document.getElementById('fuss').textContent =
     'Paar ' + p.pair_id + ': ' + noten + ' von ' + p.clips.length + ' benotet, ' + wahl +
     '   |   gesamt ' + paare.filter(fertig).length + ' von ' + paare.length + ' Paaren vollstaendig';
@@ -792,16 +838,21 @@ async function setzeNote(pairId, clipId, note) {
   const i = p.clips.findIndex(c => c.clip_id === clipId);
   if (i < 0) return;
   p.clips[i].note = String(note);
+  if (p.clips[i].gewaehlt === '1' && note === 1) {
+    p.clips.forEach(c => { c.gewaehlt = ''; });
+  }
   // Nur die Karte anfassen — ein Neuaufbau wuerde das <audio> ersetzen.
   const box = document.querySelectorAll('.clip')[i];
   box.classList.add('fertig');
   box.querySelectorAll('.noten button:not(.wahl)').forEach((b, k) => b.classList.toggle('aktiv', k + 1 === note));
-  zeichneKopf(); zaehleFuss();
+  zeichne();
 }
 
 async function setzeBester(pairId, clipId) {
-  if (!await sende('/bester', {pair_id: pairId, clip_id: clipId})) return;
   const p = paare[pi];
+  const clip = p.clips.find(c => c.clip_id === clipId);
+  if (!clip || Number(clip.note || 0) < 2) return;
+  if (!await sende('/bester', {pair_id: pairId, clip_id: clipId})) return;
   p.clips.forEach(c => { c.gewaehlt = (c.clip_id === clipId) ? '1' : ''; });
   document.querySelectorAll('.clip').forEach((box, k) => {
     const ist = p.clips[k].clip_id === clipId;
@@ -809,6 +860,13 @@ async function setzeBester(pairId, clipId) {
     box.querySelector('.noten button.wahl').classList.toggle('aktiv', ist);
   });
   zeichneKopf(); zaehleFuss();
+}
+
+async function setzeKeinBester(pairId) {
+  if (!await sende('/bester', {pair_id: pairId, clip_id: ''})) return;
+  const p = paare[pi];
+  p.clips.forEach(c => { c.gewaehlt = '0'; });
+  zeichne();
 }
 
 async function laden() {
@@ -851,11 +909,39 @@ class HoertestHandler(BaseHTTPRequestHandler):
     def _kandidatenmodus(self) -> bool:
         return ist_kandidatensatz(lies_csv(self._bewertung_pfad()))
 
+    def _lies_json(self) -> dict | None:
+        """Liest eine kleine JSON-Nutzlast oder sendet eine kontrollierte Antwort."""
+        try:
+            laenge = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Laenge")
+            return None
+        if laenge < 0:
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Laenge")
+            return None
+        if laenge > MAX_POST_BYTES:
+            self._sende(413, "text/plain; charset=utf-8", b"Nutzlast zu gross")
+            return None
+        try:
+            daten = json.loads(self.rfile.read(laenge) or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltiges JSON")
+            return None
+        if not isinstance(daten, dict):
+            self._sende(400, "text/plain; charset=utf-8", b"JSON-Objekt erwartet")
+            return None
+        return daten
+
     # --- Routen ---------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802 - Name der Basisklasse
         pfad = self.path.split("?", 1)[0]
         if pfad in ("/", "/index.html"):
-            vorlage = SEITE_KANDIDATEN if self._kandidatenmodus() else SEITE
+            try:
+                kandidatenmodus = self._kandidatenmodus()
+            except (OSError, csv.Error):
+                self._sende(500, "text/plain; charset=utf-8", b"CSV-Lesen fehlgeschlagen")
+                return
+            vorlage = SEITE_KANDIDATEN if kandidatenmodus else SEITE
             seite = vorlage.replace("__NACHLAUF__", repr(float(NACHLAUF_SEK)))
             self._sende(200, "text/html; charset=utf-8", seite.encode("utf-8"))
             return
@@ -868,28 +954,33 @@ class HoertestHandler(BaseHTTPRequestHandler):
             # (Music\HPG-Hoertest-Probe2\hoertest_server.py): pair_id -> Note.
             # Beibehalten, damit die dort liegenden bewerten.html-Seiten nicht
             # gegen ein zweites, abweichendes Protokoll laufen.
-            noten = {
-                str(z.get("pair_id", "")).strip(): int(z["bewertung"])
-                for z in lies_csv(self._bewertung_pfad())
-                if str(z.get("bewertung") or "").strip().isdigit()
-            }
+            try:
+                noten = {
+                    str(z.get("pair_id", "")).strip(): int(z["bewertung"])
+                    for z in lies_csv(self._bewertung_pfad())
+                    if str(z.get("bewertung") or "").strip().isdigit()
+                }
+            except (OSError, csv.Error):
+                self._sende(500, "text/plain; charset=utf-8", b"CSV-Lesen fehlgeschlagen")
+                return
             koerper = json.dumps(noten).encode("utf-8")
             self._sende(200, "application/json; charset=utf-8", koerper)
             return
         if pfad == "/daten":
-            if self._kandidatenmodus():
-                uebersicht = lade_uebersicht_kandidaten(
-                    lies_csv(self.ordner / "merkmale.csv"),
-                    lies_csv(self._bewertung_pfad()),
-                    self.reihenfolge,
-                    self.track_infos,
-                )
-            else:
-                uebersicht = lade_uebersicht(
-                    lies_csv(self.ordner / "merkmale.csv"),
-                    lies_csv(self._bewertung_pfad()),
-                    self.track_infos,
-                )
+            try:
+                bewertung = lies_csv(self._bewertung_pfad())
+                merkmale = lies_csv(self.ordner / "merkmale.csv")
+                if ist_kandidatensatz(bewertung):
+                    uebersicht = lade_uebersicht_kandidaten(
+                        merkmale, bewertung, self.reihenfolge, self.track_infos,
+                    )
+                else:
+                    uebersicht = lade_uebersicht(
+                        merkmale, bewertung, self.track_infos,
+                    )
+            except (OSError, csv.Error):
+                self._sende(500, "text/plain; charset=utf-8", b"CSV-Lesen fehlgeschlagen")
+                return
             koerper = json.dumps(uebersicht, ensure_ascii=False).encode("utf-8")
             self._sende(200, "application/json; charset=utf-8", koerper)
             return
@@ -917,7 +1008,11 @@ class HoertestHandler(BaseHTTPRequestHandler):
             self._sende(404, "text/plain; charset=utf-8", b"Clip fehlt")
             return
 
-        groesse = datei.stat().st_size
+        try:
+            groesse = datei.stat().st_size
+        except OSError:
+            self._sende(500, "text/plain; charset=utf-8", b"Clip nicht lesbar")
+            return
         start, ende = lies_range(self.headers.get("Range"), groesse)
         laenge = ende - start + 1
 
@@ -945,7 +1040,12 @@ class HoertestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - Name der Basisklasse
         pfad = self.path.split("?", 1)[0]
-        if self._kandidatenmodus() and pfad in ("/note", "/bester"):
+        try:
+            kandidatenmodus = self._kandidatenmodus()
+        except (OSError, csv.Error):
+            self._sende(500, "text/plain; charset=utf-8", b"CSV-Lesen fehlgeschlagen")
+            return
+        if kandidatenmodus and pfad in ("/note", "/bester"):
             self._post_kandidaten(pfad)
             return
         # Pfad und Nutzlast wie beim Vorlaeufer: {"pair_id": ..., "note": 1..5},
@@ -953,57 +1053,110 @@ class HoertestHandler(BaseHTTPRequestHandler):
         if pfad != "/note":
             self._sende(404, "text/plain; charset=utf-8", b"nicht gefunden")
             return
-        laenge = int(self.headers.get("Content-Length") or 0)
+        daten = self._lies_json()
+        if daten is None:
+            return
         try:
-            daten = json.loads(self.rfile.read(laenge) or b"{}")
             pair_id = str(daten.get("pair_id", "")).strip()
-            note = daten.get("note")
-            if note is not None and int(note) not in NOTEN:
+            if "note" not in daten:
+                raise ValueError("note fehlt")
+            note = daten["note"]
+            if not pair_id or (
+                note is not None and (type(note) is not int or note not in NOTEN)
+            ):
                 raise ValueError("Note muss 1 bis 5 sein")
-            noten = {pair_id: None if note is None else int(note)}
+            noten = {pair_id: note}
         except (ValueError, TypeError, AttributeError):
             self._sende(400, "text/plain; charset=utf-8", b"ungueltige Note")
             return
-        zeilen = lies_csv(self._bewertung_pfad())
-        schreibe_csv(
-            self._bewertung_pfad(),
-            BEWERTUNG_SPALTEN,
-            merge_bewertungen(zeilen, noten),
-        )
+        try:
+            with CSV_SCHREIB_LOCK:
+                zeilen = lies_csv(self._bewertung_pfad())
+                if not any(str(z.get("pair_id", "")).strip() == pair_id for z in zeilen):
+                    self._sende(404, "text/plain; charset=utf-8", b"Paar unbekannt")
+                    return
+                schreibe_csv(
+                    self._bewertung_pfad(), BEWERTUNG_SPALTEN,
+                    merge_bewertungen(zeilen, noten),
+                )
+        except (OSError, csv.Error):
+            self._sende(500, "text/plain; charset=utf-8", b"Speichern fehlgeschlagen")
+            return
         self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
 
 
     def _post_kandidaten(self, pfad: str) -> None:
         """Kandidatenmodus: /note {pair_id, clip_id, note|null}, /bester
         {pair_id, clip_id}; beides mit Zeitstempel in bewertung.csv."""
-        laenge = int(self.headers.get("Content-Length") or 0)
+        daten = self._lies_json()
+        if daten is None:
+            return
         try:
-            daten = json.loads(self.rfile.read(laenge) or b"{}")
             pair_id = str(daten.get("pair_id", "")).strip()
             clip_id = str(daten.get("clip_id", "")).strip()
-            if not pair_id or not clip_id:
-                raise ValueError("pair_id und clip_id noetig")
-            note = daten.get("note")
-            if pfad == "/note" and note is not None and int(note) not in NOTEN:
-                raise ValueError("Note muss 1 bis 5 sein")
+            if not pair_id or (pfad == "/note" and not clip_id):
+                raise ValueError("pair_id und fuer Noten clip_id noetig")
+            if pfad == "/note":
+                if "note" not in daten:
+                    raise ValueError("note fehlt")
+                note = daten["note"]
+                if note is not None and (type(note) is not int or note not in NOTEN):
+                    raise ValueError("Note muss 1 bis 5 sein")
+            else:
+                note = None
         except (ValueError, TypeError, AttributeError):
             self._sende(400, "text/plain; charset=utf-8", b"ungueltige Eingabe")
             return
         zeit = datetime.datetime.now().isoformat(timespec="seconds")
-        zeilen = lies_csv(self._bewertung_pfad())
-        if pfad == "/bester":
-            neu = merge_kandidaten_bewertung(zeilen, pair_id=pair_id, clip_id=clip_id, bester=True, zeit=zeit)
-        else:
-            neu = merge_kandidaten_bewertung(zeilen, pair_id=pair_id, clip_id=clip_id,
-                                            note=None if note is None else int(note), zeit=zeit)
-        schreibe_csv(self._bewertung_pfad(), BEWERTUNG_KANDIDATEN_SPALTEN, neu)
+        try:
+            with CSV_SCHREIB_LOCK:
+                zeilen = lies_csv(self._bewertung_pfad())
+                paar_zeilen = [z for z in zeilen if z.get("pair_id") == pair_id]
+                ziel = next((z for z in paar_zeilen if z.get("clip_id") == clip_id), None)
+                if not paar_zeilen or (clip_id and ziel is None):
+                    self._sende(404, "text/plain; charset=utf-8", b"Paar oder Clip unbekannt")
+                    return
+                if pfad == "/bester":
+                    if clip_id:
+                        try:
+                            bestehende_note = int(ziel.get("note") or 0)
+                        except (TypeError, ValueError):
+                            self._sende(400, "text/plain; charset=utf-8", b"Bestehende Note ungueltig")
+                            return
+                        if bestehende_note < 2:
+                            self._sende(400, "text/plain; charset=utf-8", b"Note 1 kann nicht bester sein")
+                            return
+                    neu = merge_kandidaten_bewertung(
+                        zeilen, pair_id=pair_id, clip_id=clip_id,
+                        bester=bool(clip_id), kein_bester=not bool(clip_id), zeit=zeit,
+                    )
+                else:
+                    neu = merge_kandidaten_bewertung(
+                        zeilen, pair_id=pair_id, clip_id=clip_id,
+                        note=note, zeit=zeit,
+                    )
+                schreibe_csv(self._bewertung_pfad(), BEWERTUNG_KANDIDATEN_SPALTEN, neu)
+        except (OSError, csv.Error):
+            self._sende(500, "text/plain; charset=utf-8", b"Speichern fehlgeschlagen")
+            return
         self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
+
+
+def _port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Port muss eine Zahl sein") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("Port muss zwischen 1 und 65535 liegen")
+    return port
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", required=True, help="Hoertest-Ordner von prepare")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=_port, default=8765)
+    parser.add_argument("--cache", help="Explizite Cache-Datenbank (nur lesend)")
     args = parser.parse_args(argv)
 
     ordner = Path(args.dir)
@@ -1012,14 +1165,28 @@ def main(argv=None) -> int:
         return 2
 
     HoertestHandler.ordner = ordner
-    HoertestHandler.track_infos = lade_track_infos()
+    HoertestHandler.track_infos = lade_track_infos(args.cache)
     reihenfolge_pfad = ordner / "reihenfolge.json"
-    HoertestHandler.reihenfolge = (
-        json.loads(reihenfolge_pfad.read_text(encoding="utf-8")) if reihenfolge_pfad.is_file() else {}
-    )
-    if ist_kandidatensatz(lies_csv(ordner / "bewertung.csv")):
+    try:
+        HoertestHandler.reihenfolge = (
+            json.loads(reihenfolge_pfad.read_text(encoding="utf-8"))
+            if reihenfolge_pfad.is_file() else {}
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"reihenfolge.json ist nicht lesbar: {exc}")
+        return 2
+    try:
+        bewertung_zeilen = lies_csv(ordner / "bewertung.csv")
+    except (OSError, csv.Error) as exc:
+        print(f"bewertung.csv ist nicht lesbar: {exc}")
+        return 2
+    if ist_kandidatensatz(bewertung_zeilen):
         print("Kandidatenmodus erkannt (Spalte clip_id): Seite je Paar, Note + bester.")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), HoertestHandler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), HoertestHandler)
+    except OSError as exc:
+        print(f"Server konnte nicht gestartet werden: {exc}")
+        return 2
     print(f"Hoertest laeuft: http://127.0.0.1:{args.port}   (Strg+C beendet)")
     try:
         server.serve_forever()

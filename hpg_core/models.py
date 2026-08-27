@@ -41,6 +41,11 @@ CAMELOT_MAP = {
 # ueberspringen, die ein Hoerer als Versatz wahrnaehme.
 QUANTIZE_TOLERANCE_SEC = 0.05
 
+BEATGRID_SOURCES = frozenset({"unknown", "none", "rekordbox", "audio"})
+BEATGRID_STATUSES = frozenset(
+    {"unknown", "verified", "mismatch", "unverifiable", "unsupported"}
+)
+
 
 def quantize_to_grid(
     t: float, grid: float, anchor: float = 0.0, mode: str = "round"
@@ -272,6 +277,11 @@ class Track:
     # (mix_in_bars/mix_out_bars) zaehlt weiterhin ab Track-Start.
     first_downbeat: float = 0.0
     downbeat_confidence: float = 0.0  # 0-1; 1.0 = aus Rekordbox-Beatgrid
+    # -1.0 ist der Sentinel fuer "kein messbares Fenster".
+    beatgrid_source: str = "unknown"
+    beatgrid_status: str = "unknown"
+    beatgrid_windows_checked: int = 0
+    beatgrid_max_phase_error_ms: float = -1.0
 
     # AUDIT-FEATURE A1 (2026-07-26): PHRASEN-Anker — Zeitpunkt der ersten
     # Phrasengrenze in Sekunden (liegt auf dem Bar-Raster: first_downbeat +

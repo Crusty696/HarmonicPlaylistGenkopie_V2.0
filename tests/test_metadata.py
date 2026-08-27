@@ -2,7 +2,148 @@
 Tests fuer Metadata-Parsing (Dateiname + ID3 Tags).
 Prueft parse_filename_for_metadata und extract_metadata.
 """
-from hpg_core.analysis import parse_filename_for_metadata
+from unittest.mock import Mock, call
+
+from hpg_core import analysis
+from hpg_core.analysis import extract_metadata, parse_filename_for_metadata
+
+
+class _Frame:
+  def __init__(self, text):
+    self.text = text
+
+
+class _Tags:
+  def __init__(self, values=None, *, tags=None, truth=True):
+    self._values = values or {}
+    self.tags = tags
+    self._truth = truth
+
+  def get(self, key, default=None):
+    return self._values.get(key, default)
+
+  def __bool__(self):
+    return self._truth
+
+
+class TestExtractMetadata:
+  def test_raw_frames_im_easy_objekt_verhindern_rohen_zweitaufruf(
+    self, monkeypatch
+  ):
+    easy = _Tags({
+      "TPE1": _Frame(["Easy Raw Artist"]),
+      "TIT2": _Frame(["Easy Raw Title"]),
+      "TCON": _Frame(["Psytrance"]),
+    }, truth=False)
+    loader = Mock(return_value=easy)
+    monkeypatch.setattr(analysis.mutagen, "File", loader)
+
+    assert extract_metadata("Fallback - Name.aiff") == (
+      "Easy Raw Artist", "Easy Raw Title", "Psytrance"
+    )
+    loader.assert_called_once_with("Fallback - Name.aiff", easy=True)
+
+  def test_aiff_raw_frames_werden_feldweise_gelesen(self, monkeypatch):
+    easy = _Tags(truth=False)
+    raw = _Tags({
+      "TPE1": _Frame(["Raw Artist"]),
+      "TIT2": _Frame("Raw Title"),
+      "TCON": ["Psytrance"],
+    })
+    loader = Mock(side_effect=[easy, raw])
+    monkeypatch.setattr(analysis.mutagen, "File", loader)
+
+    assert extract_metadata("Fallback - Name.aiff") == (
+      "Raw Artist", "Raw Title", "Psytrance"
+    )
+    assert loader.call_args_list == [
+      call("Fallback - Name.aiff", easy=True),
+      call("Fallback - Name.aiff", easy=False),
+    ]
+
+  def test_raw_frames_unter_tags_werden_gelesen(self, monkeypatch):
+    easy = _Tags()
+    raw = _Tags(tags={
+      "TPE1": _Frame(["Tags Artist"]),
+      "TIT2": _Frame(["Tags Title"]),
+      "TCON": _Frame(["Trance"]),
+    })
+    monkeypatch.setattr(analysis.mutagen, "File", Mock(side_effect=[easy, raw]))
+
+    assert extract_metadata("Fallback - Name.aiff") == (
+      "Tags Artist", "Tags Title", "Trance"
+    )
+
+  def test_vollstaendige_easy_tags_verhindern_rohen_zweitaufruf(self, monkeypatch):
+    easy = _Tags({
+      "artist": ["Easy Artist"],
+      "title": ["Easy Title"],
+      "genre": ["Techno"],
+    })
+    loader = Mock(return_value=easy)
+    monkeypatch.setattr(analysis.mutagen, "File", loader)
+
+    assert extract_metadata("Fallback - Name.aiff") == (
+      "Easy Artist", "Easy Title", "Techno"
+    )
+    loader.assert_called_once_with("Fallback - Name.aiff", easy=True)
+
+  def test_raw_fallback_ueberschreibt_keinen_easy_wert(self, monkeypatch):
+    easy = _Tags({"artist": ["Easy Artist"]})
+    raw = _Tags({
+      "TPE1": _Frame(["Raw Artist"]),
+      "TIT2": _Frame(["Raw Title"]),
+      "TCON": _Frame(["Psytrance"]),
+    })
+    monkeypatch.setattr(analysis.mutagen, "File", Mock(side_effect=[easy, raw]))
+
+    assert extract_metadata("Fallback - Name.aiff") == (
+      "Easy Artist", "Raw Title", "Psytrance"
+    )
+
+  def test_leere_und_defekte_frames_fallen_kontrolliert_zurueck(self, monkeypatch):
+    easy = _Tags()
+    raw = _Tags({
+      "TPE1": _Frame(["", None]),
+      "TIT2": object(),
+      "TCON": _Frame([]),
+    })
+    monkeypatch.setattr(analysis.mutagen, "File", Mock(side_effect=[easy, raw]))
+
+    assert extract_metadata("Fallback Artist - Fallback Title.aiff") == (
+      "Fallback Artist", "Fallback Title", "Unknown"
+    )
+
+  def test_roher_lesefehler_behaelt_easy_und_dateinamenfallback(
+    self, monkeypatch
+  ):
+    easy = _Tags({"artist": ["Easy Artist"]})
+    monkeypatch.setattr(
+      analysis.mutagen,
+      "File",
+      Mock(side_effect=[easy, RuntimeError("raw kaputt")]),
+    )
+
+    assert extract_metadata("Fallback Artist - Fallback Title.aiff") == (
+      "Easy Artist", "Fallback Title", "Unknown"
+    )
+
+  def test_easy_lesefehler_versucht_rohe_frames(self, monkeypatch):
+    raw = _Tags({
+      "TPE1": _Frame(["Raw Artist"]),
+      "TIT2": _Frame(["Raw Title"]),
+      "TCON": _Frame(["Psy-Trance"]),
+    })
+    loader = Mock(side_effect=[RuntimeError("easy kaputt"), raw])
+    monkeypatch.setattr(analysis.mutagen, "File", loader)
+
+    assert extract_metadata("Fallback - Name.aiff") == (
+      "Raw Artist", "Raw Title", "Psy-Trance"
+    )
+    assert loader.call_args_list == [
+      call("Fallback - Name.aiff", easy=True),
+      call("Fallback - Name.aiff", easy=False),
+    ]
 
 
 class TestFilenameParsingBasic:

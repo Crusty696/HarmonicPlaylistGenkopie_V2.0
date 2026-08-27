@@ -78,7 +78,7 @@ def test_fetch_ai_analysis_verwirft_nur_die_mixpunkte_ohne_tail_coverage(monkeyp
 
   Bis 2026-08-21 hiess dieser Test `..._rejects_mixout_without_tail_coverage`
   und erwartete `{}`: das GESAMTE Ergebnis wurde verworfen — auch sub_genre
-  und moods, die im KI-Bonus (playlist.py) tatsaechlich wirken. Die Mixpunkte
+  und moods, die als erklaerende KI-Metadaten erhalten bleiben. Die Mixpunkte
   selbst liest kein Produktivpfad (advisory, siehe
   docs/DATA_AND_VALIDATION_CONTRACT.md). Regel nach Ruecksprache gelockert:
   Mixpunkte None, Rest bleibt.
@@ -98,11 +98,13 @@ def test_fetch_ai_analysis_verwirft_nur_die_mixpunkte_ohne_tail_coverage(monkeyp
 def test_ai_metadata_cache_requires_exact_provenance():
   track = _track()
   track.ai_metadata = {
+    **_valid_data(),
     "_provenance": {
       "provider": "Ollama",
       "model": "test-model",
       "prompt_version": AI_PROMPT_VERSION,
       "schema_version": AI_SCHEMA_VERSION,
+      "mixpoints_advisory": True,
     }
   }
 

@@ -1,0 +1,78 @@
+{
+  "tracks_mit_datei": 2,
+  "generierung_s": 0.0,
+  "paare": 1,
+  "paare_mit_kandidat": 1,
+  "kette_neustarts": [],
+  "preview_rang_aktiv": {
+    "datei": "preview_aktiv.wav",
+    "dauer_s": 0.03,
+    "erwartet_s": 0.03,
+    "peak": 0.011,
+    "rms_crossfade_db": -39.2,
+    "mix_out_a": 1.0,
+    "mix_in_b": 2.0,
+    "overlap": 0.01,
+    "typ": "pro_eq_swap",
+    "kandidat_aktiv": 1,
+    "pcm_sha256": "8fe905c0b3ee0775d579ce60fb46e1099a4507899656e15a57a4972c607686e2",
+    "plan_gleich_kandidat": true
+  },
+  "wahl": {
+    "gewaehlt": {
+      "t_out": 1.5,
+      "t_in": 2.5,
+      "blend_bars": 8
+    },
+    "plan_danach": {
+      "mix_out_a": 1.5,
+      "mix_in_b": 2.5,
+      "overlap": 0.01
+    },
+    "kandidat_aktiv": 1,
+    "flag_gespeicherte_wahl": true,
+    "konsistent": true,
+    "plan_folgt_wahl": true,
+    "datei_persistiert": true,
+    "preview_unterschiedlich": true,
+    "nach_vergessen_wieder_wie_vorher": true
+  },
+  "preview_nach_wahl": {
+    "datei": "preview_wahl.wav",
+    "dauer_s": 0.03,
+    "erwartet_s": 0.03,
+    "peak": 0.011,
+    "rms_crossfade_db": -38.8,
+    "mix_out_a": 1.5,
+    "mix_in_b": 2.5,
+    "overlap": 0.01,
+    "typ": "pro_eq_swap",
+    "kandidat_aktiv": 1,
+    "pcm_sha256": "9fe1edaa9965b824640e362f844f18a1ab6237f4ee89b35234ed15f8cf74e624"
+  },
+  "regler": {
+    "loudness_weight": 0.4,
+    "rang1_geaendert": 1,
+    "von": 1,
+    "override_summe": 1.0,
+    "nach_reset_rang1_wie_vorher": true
+  },
+  "export": {
+    "tracks_im_xml": 2,
+    "position_marks": 4,
+    "hpg_k_cues": 2,
+    "mix_out_gleich_plan": "1/1",
+    "mix_in_gleich_plan": "1/1",
+    "report": {
+      "status": "success",
+      "tracks_written": 2,
+      "cues_written": 4,
+      "cue_gate_meldungen": 0,
+      "errors": []
+    },
+    "beispiel_cues": [
+      "HPG K1 OUT",
+      "HPG K1 IN"
+    ]
+  }
+}

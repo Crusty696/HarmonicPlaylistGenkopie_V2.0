@@ -1,0 +1,5 @@
+{
+  "ok": false,
+  "error": "[WinError 2] Das System kann die angegebene Datei nicht finden: 'C:\\\\Users\\\\david\\\\Documents\\\\HarmonicPlaylistGenkopie_V2.0-main\\\\HarmonicPlaylistGenkopie_V2.0-main\\\\.pytest-candidate-e2e-safety\\\\popen-gw1\\\\test_cli_schreibt_fehlerreport0\\\\set\\\\clips\\\\001_k1.wav'",
+  "error_type": "FileNotFoundError"
+}

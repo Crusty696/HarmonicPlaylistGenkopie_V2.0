@@ -83,6 +83,7 @@ class FakeContent:
     # pyrekordbox: DjmdContent.FolderPath ist der VOLLE Dateipfad (inkl. Name),
     # nicht der Ordner. Fixture bildet das real ab (Audit-Fix 2026-07-21).
     self.FolderPath = os.path.join(folder_path, filename) if filename else folder_path
+    self.ID = "1"
     self.FileNameL = filename
     self.FileNameS = filename
     self.BPM = bpm
@@ -217,6 +218,21 @@ class TestSafeBpm:
     assert RekordboxImporter._safe_bpm("") is None
 
 
+class TestSafeDuration:
+  """Nur belastbare positive Rekordbox-Dauern duerfen weiterfliessen."""
+
+  @pytest.mark.parametrize(
+    "raw_duration",
+    [None, "", "kaputt", 0, -1, float("nan"), float("inf"), -float("inf"), True],
+  )
+  def test_ungueltige_dauer_ergibt_none(self, raw_duration):
+    assert RekordboxImporter._safe_duration(raw_duration) is None
+
+  @pytest.mark.parametrize("raw_duration", [240, 240.5, "240.5"])
+  def test_positive_endliche_dauer_wird_uebernommen(self, raw_duration):
+    assert RekordboxImporter._safe_duration(raw_duration) == pytest.approx(240.5 if raw_duration != 240 else 240.0)
+
+
 # ─── Tests: _convert_key_to_camelot ──────────────────────────────────────────
 
 class TestConvertKeyToCamelot:
@@ -314,6 +330,23 @@ class TestExtractCuePoints:
     # Fehler wird abgefangen, leere Liste zurueck
     assert isinstance(result, list)
 
+  def test_defekter_mittlerer_cue_verwirft_spaetere_gueltige_cues_nicht(self):
+    imp = make_importer()
+
+    class BrokenCue:
+      @property
+      def InMsec(self):
+        raise RuntimeError("Kaputt")
+
+    result = imp._extract_cue_points([
+      FakeCue(in_msec=1000, comment="Erster"),
+      BrokenCue(),
+      FakeCue(in_msec=3000, comment="Letzter"),
+    ])
+
+    assert [cue["name"] for cue in result] == ["Erster", "Letzter"]
+    assert [cue["position"] for cue in result] == [1.0, 3.0]
+
 
 class TestRekordboxTimeHeuristic:
   """Gemeinsamer ms/s-Vertrag fuer Cues und Downbeats."""
@@ -330,9 +363,9 @@ class TestRekordboxTimeHeuristic:
 
   @pytest.mark.parametrize(
     "raw_time, expected",
-    [(12500, 12.5), (1500, 1.5), (100000, 100.0), (101000, 101.0)],
+    [(12.5, 12.5), (1.5, 1.5), (100.0, 100.0), (101.0, 101.0)],
   )
-  def test_downbeat_flache_tagform_verwendet_rekordbox_millisekunden(
+  def test_downbeat_flache_tagform_verwendet_pyrekordbox_sekunden(
     self, raw_time, expected
   ):
     tag = FakeBeatTag(beats=[1], times=[raw_time])
@@ -347,6 +380,156 @@ class TestRekordboxTimeHeuristic:
       [FakeAnlzFile(tag)]
     )
     assert result == pytest.approx(1.5)
+
+  def test_flache_tagform_teilt_pyrekordbox_sekunden_nicht_erneut(self):
+    tag = FakeBeatTag(beats=[2, 3], times=[0.434, 0.868])
+
+    result = RekordboxImporter._extract_beatgrid_from_anlz([FakeAnlzFile(tag)])
+
+    assert result == [
+      {"beat": 2, "time": 0.434},
+      {"beat": 3, "time": 0.868},
+    ]
+
+  @pytest.mark.parametrize(
+    "tag",
+    [
+      FakeBeatTag(beats=[1, 2, 3, 4], times=[0.0, 0.5, 1.0, 1.5]),
+      FakeBeatTag(entries=[
+        FakeBeatEntry(1, 0), FakeBeatEntry(2, 500),
+        FakeBeatEntry(3, 1000), FakeBeatEntry(4, 1500),
+      ]),
+    ],
+  )
+  def test_vollstaendiges_beatgrid_wird_aus_beiden_tagformen_extrahiert(self, tag):
+    result = RekordboxImporter._extract_beatgrid_from_anlz([FakeAnlzFile(tag)])
+
+    assert result == [
+      {"beat": 1, "time": 0.0},
+      {"beat": 2, "time": 0.5},
+      {"beat": 3, "time": 1.0},
+      {"beat": 4, "time": 1.5},
+    ]
+
+  def test_defekter_mittlerer_entry_verwirft_gueltige_gridpunkte_nicht(self):
+    tag = FakeBeatTag(entries=[
+      FakeBeatEntry(1, 0),
+      FakeBeatEntry("kaputt", 500),
+      FakeBeatEntry(3, 1000),
+    ])
+
+    result = RekordboxImporter._extract_beatgrid_from_anlz([FakeAnlzFile(tag)])
+
+    assert result == [
+      {"beat": 1, "time": 0.0},
+      {"beat": 3, "time": 1.0},
+    ]
+
+  def test_first_downbeat_wird_aus_vollstaendigem_grid_abgeleitet(self, monkeypatch):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    monkeypatch.setattr(imp, "get_beatgrid", lambda _path: [
+      {"beat": 3, "time": 0.0},
+      {"beat": 4, "time": 0.5},
+      {"beat": 1, "time": 1.0},
+      {"beat": 2, "time": 1.5},
+    ])
+
+    assert imp.get_first_downbeat(path) == pytest.approx(1.0)
+
+
+class TestBeatgridCacheSignatur:
+  """Manuelle Rekordbox-Gridkorrekturen muessen den HPG-Cache invalidieren."""
+
+  def test_identisches_grid_liefert_stabile_signatur(self, monkeypatch):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    grid = [
+      {"beat": 1, "time": 0.0},
+      {"beat": 2, "time": 0.5},
+      {"beat": 3, "time": 1.0},
+    ]
+    monkeypatch.setattr(imp, "get_beatgrid", lambda _path: list(grid))
+
+    assert imp.get_track_signature(path) == imp.get_track_signature(path)
+
+  def test_spaeter_gridtick_aendert_die_signatur(self, monkeypatch):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    grids = iter([
+      [
+        {"beat": 1, "time": 0.0},
+        {"beat": 2, "time": 0.5},
+        {"beat": 3, "time": 1.0},
+      ],
+      [
+        {"beat": 1, "time": 0.0},
+        {"beat": 2, "time": 0.5},
+        {"beat": 3, "time": 1.025},
+      ],
+    ])
+    monkeypatch.setattr(imp, "get_beatgrid", lambda _path: next(grids))
+
+    before = imp.get_track_signature(path)
+    after = imp.get_track_signature(path)
+
+    assert before != after
+
+  def test_geaenderte_pssi_phrasen_aendern_die_signatur(self, monkeypatch):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    monkeypatch.setattr(imp, "get_beatgrid", lambda _path: [
+      {"beat": 1, "time": 0.0},
+      {"beat": 2, "time": 0.5},
+    ])
+    phrasen = iter([
+      [{"start_s": 0.0, "end_s": 16.0, "label": "Intro"}],
+      [{"start_s": 0.0, "end_s": 16.0, "label": "Chorus"}],
+    ])
+    monkeypatch.setattr(imp, "get_phrases", lambda _path: next(phrasen))
+
+    before = imp.get_track_signature(path)
+    after = imp.get_track_signature(path)
+
+    assert before != after
+
+  def test_signatur_downbeat_und_phrasen_teilen_einen_anlz_snapshot(self):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    aufrufe = 0
+    anlz = FakeAnlzFile(FakeBeatTag(
+      beats=[1, 2, 3, 4], times=[0.0, 0.5, 1.0, 1.5],
+    ))
+
+    def read_anlz_files(_content_id):
+      nonlocal aufrufe
+      aufrufe += 1
+      return {"ANLZ0000.DAT": anlz}
+
+    imp.db.read_anlz_files = read_anlz_files
+
+    assert imp.get_track_signature(path)
+    assert imp.get_first_downbeat(path) == pytest.approx(0.0)
+    assert imp.get_phrases(path) == []
+    assert aufrufe == 1
+
+  def test_signatur_leert_alle_dauer_memos_nur_fuer_diese_content_id(
+    self, monkeypatch
+  ):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    imp._phrases_cache = {
+      ("1", 0.0): [{"label": "alt-null"}],
+      ("1", 90.0): [{"label": "alt-90"}],
+      ("andere", 120.0): [{"label": "behalten"}],
+    }
+    monkeypatch.setattr(imp, "get_beatgrid", lambda _path: [])
+    monkeypatch.setattr(imp, "get_phrases", lambda _path: [])
+
+    assert imp.get_track_signature(path)
+    assert imp._phrases_cache == {
+      ("andere", 120.0): [{"label": "behalten"}]
+    }
 
 
 # ─── Tests: Track-Cache ───────────────────────────────────────────────────────
@@ -378,6 +561,55 @@ class TestBuildTrackCache:
 
     imp = make_importer(db=FakeDatabase([NoNameContent()]))
     assert len(imp.track_cache) == 0
+
+  def test_defekter_mittlerer_record_verwirft_spaetere_tracks_nicht(self):
+    first = FakeContent(folder_path="C:\\Music", filename="first.mp3")
+    last = FakeContent(folder_path="C:\\Music", filename="last.mp3")
+
+    class BrokenContent:
+      FolderPath = "C:\\Music\\broken.mp3"
+      FileNameL = "broken.mp3"
+      FileNameS = "broken.mp3"
+      ID = "broken"
+      BPM = 12800
+      KeyName = "8A"
+      Length = 240
+
+      @property
+      def Title(self):
+        raise RuntimeError("Kaputter Record")
+
+    imp = make_importer(db=FakeDatabase([first, BrokenContent(), last]))
+
+    assert set(imp.track_cache) == {
+      os.path.normpath("C:\\Music\\first.mp3").lower(),
+      os.path.normpath("C:\\Music\\last.mp3").lower(),
+    }
+
+  def test_unlesbarer_dateiname_im_fehlerlog_stoppt_scan_nicht(self):
+    class BrokenNameContent:
+      ID = "broken-name"
+
+      @property
+      def FileNameL(self):
+        raise RuntimeError("Dateiname kaputt")
+
+    last = FakeContent(folder_path="C:\\Music", filename="last.mp3")
+    imp = make_importer(db=FakeDatabase([BrokenNameContent(), last]))
+
+    assert list(imp.track_cache) == [
+      os.path.normpath("C:\\Music\\last.mp3").lower()
+    ]
+
+  @pytest.mark.parametrize(
+    "length",
+    [0, -1, float("nan"), float("inf"), -float("inf"), "kaputt", True],
+  )
+  def test_ungueltige_record_dauer_wird_als_unbekannt_importiert(self, length):
+    content = FakeContent(length=length)
+    imp = make_importer(db=FakeDatabase([content]))
+
+    assert next(iter(imp.track_cache.values())).duration is None
 
   def test_bpm_wird_korrekt_geladen(self):
     """BPM 13600 → 136.0 BPM."""
@@ -802,3 +1034,114 @@ def test_get_phrases_liest_ext_und_dat_ueber_read_anlz_files(monkeypatch):
   # memoisiert
   imp.db = None
   assert imp.get_phrases("C:/irgendwo/track.mp3") == phrases
+
+
+def test_get_phrases_memo_trennt_effektive_dauern(monkeypatch):
+  from types import SimpleNamespace
+  from hpg_core import rekordbox_phrases
+
+  imp = RekordboxImporter.__new__(RekordboxImporter)
+  imp._phrases_cache = {}
+  imp.db = object()
+  data = RekordboxTrackData(duration=None, content_id="42")
+  imp.get_track_data = lambda _path: data
+  tagged = SimpleNamespace(get_tag=lambda _key: object())
+  imp._read_anlz_files = lambda _content_id: [tagged]
+  verwendete_dauern = []
+
+  def fake_phrases(_ext, _dat, duration):
+    verwendete_dauern.append(duration)
+    return [{"start_s": 0.0, "end_s": duration, "label": "Intro"}]
+
+  monkeypatch.setattr(rekordbox_phrases, "phrases_from_anlz", fake_phrases)
+
+  assert imp.get_phrases("track.wav")[0]["end_s"] == 0.0
+  assert imp.get_phrases("track.wav", duration=90.0)[0]["end_s"] == 90.0
+  assert imp.get_phrases("track.wav", duration=90.0)[0]["end_s"] == 90.0
+  assert imp.get_phrases("track.wav", duration=120.0)[0]["end_s"] == 120.0
+  assert verwendete_dauern == [0.0, 90.0, 120.0]
+
+
+def test_get_phrases_positiver_override_gewinnt_gegen_rb_dauer(monkeypatch):
+  from types import SimpleNamespace
+  from hpg_core import rekordbox_phrases
+
+  imp = RekordboxImporter.__new__(RekordboxImporter)
+  imp._phrases_cache = {}
+  imp.db = object()
+  imp.get_track_data = lambda _path: RekordboxTrackData(
+    duration=60.0, content_id="42"
+  )
+  tagged = SimpleNamespace(get_tag=lambda _key: object())
+  imp._read_anlz_files = lambda _content_id: [tagged]
+  verwendete_dauern = []
+  monkeypatch.setattr(
+    rekordbox_phrases,
+    "phrases_from_anlz",
+    lambda _ext, _dat, duration: verwendete_dauern.append(duration) or [],
+  )
+
+  assert imp.get_phrases("track.wav", duration=90.0) == []
+  assert verwendete_dauern == [90.0]
+  assert set(imp._phrases_cache) == {("42", 90.0)}
+
+
+@pytest.mark.parametrize("override", [float("nan"), float("inf"), -1.0, -0.0])
+def test_get_phrases_ungueltige_dauer_faellt_auf_rb_dauer_zurueck(
+  monkeypatch, override
+):
+  from types import SimpleNamespace
+  from hpg_core import rekordbox_phrases
+
+  imp = RekordboxImporter.__new__(RekordboxImporter)
+  imp._phrases_cache = {}
+  imp.db = object()
+  imp.get_track_data = lambda _path: RekordboxTrackData(
+    duration=60.0, content_id="42"
+  )
+  tagged = SimpleNamespace(get_tag=lambda _key: object())
+  imp._read_anlz_files = lambda _content_id: [tagged]
+  verwendete_dauern = []
+  monkeypatch.setattr(
+    rekordbox_phrases,
+    "phrases_from_anlz",
+    lambda _ext, _dat, duration: verwendete_dauern.append(duration) or [],
+  )
+
+  assert imp.get_phrases("track.wav", duration=override) == []
+  assert verwendete_dauern == [60.0]
+  assert set(imp._phrases_cache) == {("42", 60.0)}
+
+
+@pytest.mark.parametrize(
+  ("override", "rb_duration"),
+  [
+    (None, None),
+    (float("nan"), float("inf")),
+    (-1.0, -0.0),
+  ],
+)
+def test_get_phrases_beide_dauern_ungueltig_verwendet_exakt_null(
+  monkeypatch, override, rb_duration
+):
+  from types import SimpleNamespace
+  from hpg_core import rekordbox_phrases
+
+  imp = RekordboxImporter.__new__(RekordboxImporter)
+  imp._phrases_cache = {}
+  imp.db = object()
+  imp.get_track_data = lambda _path: RekordboxTrackData(
+    duration=rb_duration, content_id="42"
+  )
+  tagged = SimpleNamespace(get_tag=lambda _key: object())
+  imp._read_anlz_files = lambda _content_id: [tagged]
+  verwendete_dauern = []
+  monkeypatch.setattr(
+    rekordbox_phrases,
+    "phrases_from_anlz",
+    lambda _ext, _dat, duration: verwendete_dauern.append(duration) or [],
+  )
+
+  assert imp.get_phrases("track.wav", duration=override) == []
+  assert verwendete_dauern == [0.0]
+  assert set(imp._phrases_cache) == {("42", 0.0)}

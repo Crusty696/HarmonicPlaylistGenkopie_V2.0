@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import QModelIndex, Qt, QSettings, QThread
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QLabel, QPushButton
 
@@ -22,7 +22,39 @@ from main import (
   map_phase_progress,
 )
 from hpg_core.models import Track
-from hpg_core.playlist import TransitionRecommendation
+from hpg_core.playlist import TransitionPlan, TransitionRecommendation
+
+
+class _MemorySettings:
+  def __init__(self):
+    self.values = {}
+
+  def value(self, key, default=None):
+    return self.values.get(key, default)
+
+  def setValue(self, key, value):
+    self.values[key] = value
+
+  def sync(self):
+    pass
+
+  def status(self):
+    return QSettings.Status.NoError
+
+
+def _worker_double(*, running=True):
+  return SimpleNamespace(
+    isRunning=Mock(return_value=running),
+    request_cancel=Mock(),
+    wait=Mock(return_value=True),
+    deleteLater=Mock(),
+    get_temp_dir=Mock(return_value=None),
+    get_temp_files=Mock(return_value=[]),
+    progress=Mock(),
+    status_update=Mock(),
+    analysis_issues=Mock(),
+    analysis_done=Mock(),
+  )
 
 
 def test_phase_progress_mapping_is_bounded_and_monotonic():
@@ -63,7 +95,7 @@ def test_cancel_button_visibility_matches_lifecycle(qtbot):
 
 def test_cancel_requests_worker_without_claiming_completion(qtbot, monkeypatch):
   monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
-  window = MainWindow()
+  window = MainWindow(settings=_MemorySettings())
   qtbot.addWidget(window)
   worker = Mock()
   worker.isRunning.return_value = True
@@ -77,9 +109,73 @@ def test_cancel_requests_worker_without_claiming_completion(qtbot, monkeypatch):
   assert "angefordert" in window.status_bar.status_label.text()
 
 
+def test_cancel_preview_ende_vor_playlist_bleibt_bis_playlist_finished(
+  qtbot, monkeypatch
+):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  playlist_worker = _worker_double()
+  preview_worker = _worker_double()
+  window.playlist_worker = playlist_worker
+  window.mix_tips_panel._render_worker = preview_worker
+  window.mix_tips_panel._render_workers = [preview_worker]
+  window._set_run_state(RunState.PLAYLIST)
+
+  window.cancel_analysis()
+  # QThread kann bereits False melden, obwohl sein queued finished-Cleanup
+  # die MainWindow-Ownership noch nicht auf None gesetzt hat.
+  playlist_worker.isRunning.return_value = False
+  preview_worker.isRunning.return_value = False
+  window.mix_tips_panel._on_preview_worker_finished(preview_worker)
+
+  assert window.run_state == RunState.CANCELLING
+  window._cleanup_playlist_worker(playlist_worker)
+  assert window.run_state == RunState.CANCELLED
+
+
+def test_cancel_playlist_ende_vor_preview_bleibt_bis_preview_finished(
+  qtbot, monkeypatch
+):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  playlist_worker = _worker_double()
+  preview_worker = _worker_double()
+  window.playlist_worker = playlist_worker
+  window.mix_tips_panel._render_worker = preview_worker
+  window.mix_tips_panel._render_workers = [preview_worker]
+  window._set_run_state(RunState.PLAYLIST)
+
+  window.cancel_analysis()
+  playlist_worker.isRunning.return_value = False
+  window._cleanup_playlist_worker(playlist_worker)
+
+  assert window.run_state == RunState.CANCELLING
+  preview_worker.isRunning.return_value = False
+  window.mix_tips_panel._on_preview_worker_finished(preview_worker)
+  assert window.run_state == RunState.CANCELLED
+
+
+def test_cancel_analysis_done_ist_noch_nicht_qthread_finished(qtbot, monkeypatch):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  worker = _worker_double()
+  window.worker = worker
+  window._set_run_state(RunState.CANCELLING)
+
+  window.analysis_finished([], {}, worker)
+
+  assert window.run_state == RunState.CANCELLING
+  worker.isRunning.return_value = False
+  window._cleanup_analysis_worker(worker)
+  assert window.run_state == RunState.CANCELLED
+
+
 def test_active_ai_state_blocks_second_start(qtbot, monkeypatch):
   monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
-  window = MainWindow()
+  window = MainWindow(settings=_MemorySettings())
   qtbot.addWidget(window)
   window._set_run_state(RunState.AI)
 
@@ -199,20 +295,91 @@ def test_reorder_uses_full_track_identity_for_duplicate_basenames(qtbot):
     filePath="C:/set-b/track.wav", fileName="track.wav", bpm=128.0
   )
   panel.set_playlist_data([first, second], {})
-  first_id = panel.table.item(0, 1).data(Qt.ItemDataRole.UserRole)
-  second_id = panel.table.item(1, 1).data(Qt.ItemDataRole.UserRole)
-  panel.table.item(0, 1).setData(Qt.ItemDataRole.UserRole, second_id)
-  panel.table.item(1, 1).setData(Qt.ItemDataRole.UserRole, first_id)
+  requests = []
+  panel.playlist_reordered.connect(requests.append)
 
-  panel._on_rows_moved()
+  assert panel.table.model().moveRows(
+    QModelIndex(), 0, 1, QModelIndex(), 2
+  ) is True
 
   assert [track.track_id for track in panel.playlist] == [
+    first.track_id,
+    second.track_id,
+  ]
+  assert [track.track_id for track in requests[0].playlist] == [
     second.track_id,
     first.track_id,
   ]
 
 
-def test_playlist_shows_colored_transition_fit_column(qtbot):
+def test_generation_result_reorder_nutzt_occurrences_bei_gleichem_pfad(
+  qtbot, monkeypatch
+):
+  from hpg_core.playlist import generate_playlist_result
+
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  first = Track(
+    filePath="C:/same/track.wav", fileName="first.wav", bpm=128.0,
+    duration=300.0,
+  )
+  second = Track(
+    filePath="C:/same/track.wav", fileName="second.wav", bpm=129.0,
+    duration=300.0,
+  )
+  result = generate_playlist_result(
+    [first, second], "Harmonic Flow", bpm_tolerance=2.0
+  )
+  window._publiziere_generation_result(result)
+  ids = [
+    window.playlist_panel.table.item(row, 1).data(Qt.ItemDataRole.UserRole)
+    for row in range(2)
+  ]
+
+  assert ids[0] != ids[1]
+  assert all(
+    window.playlist_panel.table.item(row, 1).data(main.TRACK_FILE_PATH_ROLE)
+    == "C:/same/track.wav"
+    for row in range(2)
+  )
+
+  assert window.playlist_panel.table.model().moveRows(
+    QModelIndex(), 0, 1, QModelIndex(), 2
+  ) is True
+
+  assert tuple(
+    occurrence.occurrence_id
+    for occurrence in window.current_generation_result.occurrences
+  ) == (ids[1], ids[0])
+  assert [track.fileName for track in window.playlist] == ["second.wav", "first.wav"]
+
+
+def test_neuer_analysestart_behaelt_altes_result_bis_zum_publish(
+  qtbot, monkeypatch, tmp_path
+):
+  from hpg_core.playlist import generate_playlist_result
+
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  monkeypatch.setattr(main.AnalysisWorker, "start", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  old_track = Track(
+    filePath="C:/old.wav", fileName="old.wav", bpm=128.0, duration=300.0
+  )
+  old_result = generate_playlist_result([old_track], "Harmonic Flow", 2.0)
+  window._publiziere_generation_result(old_result)
+  window.library_panel.set_folder_path(str(tmp_path))
+
+  window.start_analysis()
+
+  assert window.current_generation_result is old_result
+  assert window.playlist == [old_track]
+  assert window.playlist_panel.generation_result is old_result
+  assert window.run_state == RunState.AUDIO
+
+
+def test_playlist_shows_unplanned_transition_without_executable_plan(qtbot):
   from hpg_core.theme import transition_score_style
 
   panel = PlaylistPanel()
@@ -228,8 +395,9 @@ def test_playlist_shows_colored_transition_fit_column(qtbot):
   assert panel.table.item(0, 14).text() == "—"
   score_item = panel.table.item(1, 14)
   score = score_item.data(Qt.ItemDataRole.UserRole)
-  accent_color, _, label = transition_score_style(score / 100.0)
-  assert label in score_item.text()
+  assert score == 0.0
+  assert score_item.text() == "0% · UNGEPLANT"
+  accent_color, _, _ = transition_score_style(0.0)
   assert score_item.background().color().name() == QColor(accent_color).name()
 
 
@@ -264,6 +432,7 @@ def test_preview_temp_directory_is_removed_after_cache_cleanup(qtbot, tmp_path):
   worker._temp_dir = str(directory)
   worker._temp_files = [str(clip)]
   panel._render_worker = worker
+  panel._render_workers = [worker]
   panel._preview_cache[0] = str(clip)
 
   panel._on_preview_worker_finished(worker)
@@ -276,7 +445,7 @@ def test_preview_temp_directory_is_removed_after_cache_cleanup(qtbot, tmp_path):
 
 def test_preview_state_controls_cancel_visibility(qtbot, monkeypatch):
   monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
-  window = MainWindow()
+  window = MainWindow(settings=_MemorySettings())
   qtbot.addWidget(window)
 
   window._on_preview_state_changed(True)
@@ -307,6 +476,14 @@ def test_mix_tip_uses_same_transition_fit_color(qtbot):
     compatibility_score=75,
     risk_level="medium-low",
     notes="",
+    plan=TransitionPlan(
+      mix_out_a=30.0,
+      mix_in_b=0.0,
+      fade_out_start=30.0,
+      fade_out_end=40.0,
+      overlap=10.0,
+      transition_type="standard_crossfade",
+    ),
   )
 
   panel.set_recommendations([recommendation])
@@ -335,5 +512,19 @@ def test_strategy_ui_disables_parameters_that_are_not_consumed(qtbot):
   widget.apply_strategy_support("Peak-Time")
   assert widget.peak_position_slider.isEnabled() is True
   assert widget.genre_weight.isEnabled() is False
+  assert "● AKTIV" in widget.energy_strategy_hint.text()
+  assert "Peak Position" in widget.energy_strategy_hint.text()
+  assert "#00E676" in widget.energy_group.styleSheet()
   assert "Peak-Time" in widget.harmony_strategy_hint.text()
   assert "#00E676" in widget.harmony_group.styleSheet()
+
+
+def test_bass_header_tooltip_beschreibt_anzeige_und_eq_sektionskontext(qtbot):
+  panel = PlaylistPanel()
+  qtbot.addWidget(panel)
+
+  tooltip = panel.table.horizontalHeaderItem(12).toolTip()
+
+  assert "Trackweiter Mittelwert" in tooltip
+  assert "Mix-Out-/Mix-In-Sektionen" in tooltip
+  assert "Genre-Flow" not in tooltip

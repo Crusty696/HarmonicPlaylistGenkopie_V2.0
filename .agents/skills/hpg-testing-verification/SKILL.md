@@ -17,19 +17,24 @@ System-Python liefert numba-Fehler, die wie Code-Bugs aussehen.
 Volllauf mit Coverage (langsamer, aber das ist das echte Gate):
 
 ```bat
-.\venv312\Scripts\python.exe -m pytest tests/ -q
+.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 ```
 
-## Baseline
+## Letzter Volltest-Snapshot
 
-**1492 passed, 26 warnings, ~102 s** im vollen Lauf (`pytest -m ""`),
-**rund 1303 in ~70 s** im Standardlauf. Gemessen 2026-08-15.
+**2035 passed, 25 warnings, 81,65 % Coverage** wurden am 2026-08-25 vor den
+nachfolgenden GUI-/E2E-/Kandidatensatz-Auditor-Aenderungen gemessen mit:
 
-Die zwei Integrationstests mit echter Audio-Analyse sind als `slow` markiert
-und per `pytest.ini` standardmaessig abgewaehlt — sie brauchen rund 92 s bzw.
-90 s CPU und kosten unter `-n auto` etwa 32 s Wall-Clock (102 s statt
-70 s). Coverage faellt dadurch von 75,92 % auf rund 73,5 %, das 70-%-Gate
-haelt in beiden Faellen.
+```bat
+.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
+```
+
+Diese Zahlen sind keine aktuelle Baseline und kein Abschlussbeleg fuer den
+jetzigen Worktree. Immer neu messen.
+
+**Historischer Snapshot 2026-08-15:** 1492 passed, 26 Warnungen und 75,92 %
+Coverage mit den damals vorhandenen Tests. Diese Zahlen sind keine aktuelle
+Baseline.
 
 Aeltere Zahlen im Repo sind datierte Snapshots, keine Widersprueche:
 `docs/AGENT_HANDOFF.md` nennt 1313, der historische Abschnitt in

@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<DJ_PLAYLISTS Version="1.0.0">
+	<PRODUCT Name="pyrekordbox" Version="0.0.1" Company="" />
+	<COLLECTION Entries="1">
+		<TRACK Location="file://localhost/C:/Music/Track%20A.wav" TrackID="1" Name="T" Artist="A" Genre="Unknown" />
+	</COLLECTION>
+	<PLAYLISTS>
+		<NODE Name="ROOT" Type="0" Count="1">
+			<NODE Name="HPG Playlists" Type="0" Count="1">
+				<NODE Name="HPG Playlist" Type="1" KeyType="0" Entries="1">
+					<TRACK Key="1" />
+				</NODE>
+			</NODE>
+		</NODE>
+	</PLAYLISTS>
+</DJ_PLAYLISTS>

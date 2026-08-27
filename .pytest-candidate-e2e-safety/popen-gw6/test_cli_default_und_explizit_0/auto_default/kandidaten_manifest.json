@@ -1,0 +1,216 @@
+{
+  "format_version": 1,
+  "app_version": "3.7.2",
+  "algorithm_build": {
+    "scheme": "sha256-path-bytes-v1",
+    "files": 36,
+    "sha256": "02fd504fc49c75156a4e455a629df46d165c003c5604e1d8d5fb5011849d798e"
+  },
+  "hearing_test_contract": {
+    "harmonic_gate_scope": "candidate_hearing_test_only",
+    "minimum_harmonic_score": 60
+  },
+  "cache": {
+    "version": 42,
+    "size": 5,
+    "sha256": "5e1ecee06a7fc06f305ae5c12acfe7a7f67b8ece7af76932ed3afab00c3c6921"
+  },
+  "render_args": {
+    "anzahl": 1,
+    "max_versionen_pro_paar": 5,
+    "nur_genre": null,
+    "transition_type_mode": "kontrolliert",
+    "seed": 20260820
+  },
+  "scoring_snapshot": {
+    "rank_args": {
+      "bpm_tolerance": 2.0,
+      "energy_direction": "auto",
+      "harmonic_strictness": 7,
+      "allow_experimental": true
+    },
+    "candidate_tolerances_by_genre": {
+      "Psytrance": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Tech House": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Progressive": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Melodic Techno": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Techno": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Deep House": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Trance": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Drum & Bass": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      },
+      "Minimal": {
+        "kandidaten_harmonic_weight": 0.14,
+        "kandidaten_bpm_weight": 0.106,
+        "kandidaten_energy_weight": 0.106,
+        "kandidaten_genre_weight": 0.106,
+        "kandidaten_groove_weight": 0.264,
+        "kandidaten_bass_weight": 0.07,
+        "kandidaten_timbre_weight": 0.044,
+        "kandidaten_mood_weight": 0.044,
+        "kandidaten_loudness_weight": 0.06,
+        "kandidaten_structure_weight": 0.06,
+        "groove_sim_floor": 0.65,
+        "bass_delta_max": 0.5,
+        "brightness_delta_max": 60.0
+      }
+    },
+    "candidate_tolerances_fallback": {
+      "kandidaten_harmonic_weight": 0.14,
+      "kandidaten_bpm_weight": 0.106,
+      "kandidaten_energy_weight": 0.106,
+      "kandidaten_genre_weight": 0.106,
+      "kandidaten_groove_weight": 0.264,
+      "kandidaten_bass_weight": 0.07,
+      "kandidaten_timbre_weight": 0.044,
+      "kandidaten_mood_weight": 0.044,
+      "kandidaten_loudness_weight": 0.06,
+      "kandidaten_structure_weight": 0.06,
+      "groove_sim_floor": 0.65,
+      "bass_delta_max": 0.5,
+      "brightness_delta_max": 60.0
+    },
+    "candidate_schema_ranks_by_genre": {
+      "Psytrance": [],
+      "Tech House": [],
+      "Progressive": [],
+      "Melodic Techno": [],
+      "Techno": [],
+      "Deep House": [],
+      "Trance": [],
+      "Drum & Bass": [],
+      "Minimal": []
+    },
+    "candidate_schema_rank_fallback": [],
+    "candidate_choices": {}
+  },
+  "pairs": [
+    {
+      "pair_id": "001",
+      "track_a": "a",
+      "track_b": "b",
+      "clips": [
+        {
+          "clip_id": "001_k1",
+          "rank": 1,
+          "t_out": 160.0,
+          "t_in": 80.0,
+          "blend_bars": 16,
+          "overlap_sec": 27.424,
+          "rendered_transition_type": "pro_eq_swap"
+        }
+      ]
+    }
+  ]
+}
