@@ -9,6 +9,33 @@ Dieses Dokument erklärt zwei getrennte Entscheidungen:
 
 Die Analyse erzeugt pro Track lokale Mix-In- und Mix-Out-Kandidaten. Beim Ordnen der Tracks bewertet HPG eine gerichtete Trackkante jedoch mit einem eigenen Acht-Faktoren-Score. Falls ein lokaler Rang-1-Kandidat existiert, liefert er dafür nur die lokale Energiedifferenz und sichtbare Detailwerte; sein Zehn-Faktoren-`PairCandidate.score` wird nicht als Sortierscore übernommen. Erst wenn die Reihenfolge feststeht, werden genau die `N - 1` gerichteten Nachbarpaare vollständig bewertet und ihre Mixpoints gemeinsam gewählt. Die ursprünglichen Analysewerte am `Track` werden dabei nicht nachträglich verändert; der tatsächlich verwendete Übergang lebt im `TransitionPlan`.
 
+## Kurzantwort mit einem einfachen Beispiel
+
+Angenommen, Track A läuft bereits und `Harmonic Flow` kann als Nächstes Track B
+oder Track C wählen. Die Strategie bewertet beide gerichteten Kanten mit dem
+Acht-Faktoren-Trackscore und berücksichtigt zusätzlich den weiteren Pfad per
+Lookahead. Sind die späteren Möglichkeiten gleichwertig, wird bei beispielsweise
+`0,82` für `A -> B` und `0,71` für `A -> C` B bevorzugt. Diese Zahlen bestimmen
+die Reihenfolge, aber noch nicht die endgültigen Sekundenpositionen des
+Übergangs. Andere Strategien priorisieren stattdessen ihren eigenen Zielverlauf,
+etwa steigende BPM bei `Warm-Up`.
+
+Für das nun feste Nachbarpaar `A -> B` kombiniert HPG anschließend mögliche
+Mix-Out-Punkte von A, Mix-In-Punkte von B und zulässige Blendenlängen. Jede
+Kombination muss zuerst alle harten Gates bestehen. Danach entsteht ihr
+Zehn-Faktoren-Paarscore. Der lokal beste Kandidat kann etwa bei Mix-Out A
+`214,0 s` und Mix-In B `32,0 s` liegen. Die globale Kettenwahl darf trotzdem
+einen anderen Kandidaten nehmen. Sie bevorzugt der Reihe nach mehr geplante
+Kanten, mehr gültig wiedererkannte gespeicherte Nutzerwahlen, die höhere
+Gesamtscore-Summe und erst bei weiterem Gleichstand mehr zeitlich konsistente
+Links zum folgenden Übergang `B -> D`.
+Genau dieser Gewinner wird als `TransitionPlan` gemeinsam an GUI, Preview,
+Timeline, Export und Renderer weitergegeben. Die Zahlen in diesem Absatz sind
+nur ein Rechenbeispiel; die echten Werte stammen immer aus dem aktuellen Lauf.
+
+Eine bereits gerenderte Übersicht ist zusätzlich als
+[PNG-Systemkarte](trackauswahl-mixpoints-systemkarte.png) verfügbar.
+
 ## Gesamtbild
 
 ```mermaid
@@ -71,7 +98,7 @@ Analysefehler. Ersatzwerte gelangen damit nicht in das Scoring.
 flowchart LR
     A[Datei] --> R[Ressourcenlimits und echte Audiodauer prüfen]
     R --> S[Rekordbox-Daten und Signatur lesen]
-    S --> B{Cache 42 mit exaktem Schlüssel gültig?}
+    S --> B{Cache 43 mit exaktem Schlüssel gültig?}
     B -- ja --> C[Track aus Cache]
     B -- nein --> D{Rekordbox-Daten vorhanden?}
     D -- vollständig --> E[Fast Path]
