@@ -11,7 +11,6 @@ from .models import (
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
-    _get_intro_end_from_sections,
     _get_outro_start_from_sections,
     get_genre_compatibility,
     generate_dj_recommendation,
