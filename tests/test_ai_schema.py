@@ -1,6 +1,10 @@
 """Tests fuer strukturierten, versionierten KI-Output."""
 
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socketserver
+import threading
+import time
 from unittest.mock import Mock
 
 import pytest
@@ -133,3 +137,80 @@ def test_fetch_ai_analysis_rejects_non_json_number_mixpoints(
   )
 
   assert fetch_ai_analysis(_track(), url="http://local/test") == {}
+
+
+def test_fetch_ai_analysis_cancel_beendet_blockierenden_http_prozess():
+  verbunden = threading.Event()
+  getrennt = threading.Event()
+
+  class BlockingHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+      verbunden.set()
+      try:
+        while self.request.recv(4096):
+          pass
+      finally:
+        getrennt.set()
+
+  server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), BlockingHandler)
+  server.daemon_threads = True
+  server_thread = threading.Thread(target=server.serve_forever)
+  server_thread.start()
+  start = time.monotonic()
+  try:
+    with pytest.raises(InterruptedError, match="abgebrochen"):
+      fetch_ai_analysis(
+        _track(),
+        url=f"http://127.0.0.1:{server.server_address[1]}/v1/chat/completions",
+        cancel_check=lambda: verbunden.is_set(),
+      )
+    elapsed = time.monotonic() - start
+    assert elapsed < 10.0
+    assert getrennt.wait(2.0), "Terminierter HTTP-Prozess hielt Socket offen"
+  finally:
+    server.shutdown()
+    server.server_close()
+    server_thread.join(2.0)
+  assert not server_thread.is_alive()
+
+
+def test_fetch_ai_analysis_spawn_pfad_behaelt_ergebnisvertrag():
+  payloads = []
+
+  class SuccessHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+      length = int(self.headers.get("Content-Length", "0"))
+      payloads.append(json.loads(self.rfile.read(length)))
+      body = json.dumps({
+        "model": "test-model",
+        "choices": [{"message": {"content": json.dumps(_valid_data())}}],
+      }).encode("utf-8")
+      self.send_response(200)
+      self.send_header("Content-Type", "application/json")
+      self.send_header("Content-Length", str(len(body)))
+      self.end_headers()
+      self.wfile.write(body)
+
+    def log_message(self, _format, *_args):
+      pass
+
+  server = ThreadingHTTPServer(("127.0.0.1", 0), SuccessHandler)
+  server_thread = threading.Thread(target=server.serve_forever)
+  server_thread.start()
+  try:
+    result = fetch_ai_analysis(
+      _track(),
+      provider="Ollama",
+      model="test-model",
+      url=f"http://127.0.0.1:{server.server_address[1]}/v1/chat/completions",
+      cancel_check=lambda: False,
+    )
+  finally:
+    server.shutdown()
+    server.server_close()
+    server_thread.join(2.0)
+
+  assert not server_thread.is_alive()
+  assert result["mix_out_time"] == 260.0
+  assert result["_provenance"]["model"] == "test-model"
+  assert payloads[0]["response_format"]["type"] == "json_schema"

@@ -389,6 +389,8 @@ class AIAnalysisWorker(QThread):
                 self.provider = status.name
                 if status.active_model:
                     self.model = status.active_model
+        except InterruptedError:
+            raise
         except Exception as exc:
             logging.getLogger("hpg_core.ai_engine").error(
                 "AI provider setup failed: %s", exc
@@ -403,15 +405,25 @@ class AIAnalysisWorker(QThread):
         import logging
         import os
         logger = logging.getLogger("hpg_core.ai_engine")
-        if not self._ensure_ready():
+        try:
+            ready = self._ensure_ready()
+        except InterruptedError:
+            logger.info("AI Mood Tagging cancelled during provider setup.")
+            return
+        if not ready:
+            if self._should_cancel or self.isInterruptionRequested():
+                logger.info("AI Mood Tagging cancelled during provider setup.")
+                return
             self._fail("Kein einsatzbereiter KI-Provider oder kein Modell verfuegbar.")
             self.progress.emit(len(self.playlist), len(self.playlist))
             return
         logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
         total_tracks = len(self.playlist)
+        cancelled = False
         for i, track in enumerate(self.playlist):
             if self._should_cancel:
                 logger.info("AI Mood Tagging cancelled by user.")
+                cancelled = True
                 break
             self.progress.emit(i, total_tracks)
             try:
@@ -426,9 +438,17 @@ class AIAnalysisWorker(QThread):
                 filename = os.path.basename(track.filePath)
                 logger.info(f"[{i+1}/{total_tracks}] AI analyzing track: '{filename}'...")
                 ai_data = fetch_ai_analysis(
-                    track, provider=self.provider, model=self.model, url=self.base_url
+                    track,
+                    provider=self.provider,
+                    model=self.model,
+                    url=self.base_url,
+                    cancel_check=self.isInterruptionRequested,
                 )
-                if ai_data and not self._should_cancel:
+                if self._should_cancel or self.isInterruptionRequested():
+                    logger.info("AI Mood Tagging cancelled by user.")
+                    cancelled = True
+                    break
+                if ai_data:
                     # Cache-I/O kann auf einen extern gehaltenen SQLite-Lock bis
                     # zum Timeout warten. Es bleibt deshalb im AI-Worker und darf
                     # niemals den Qt-GUI-Thread blockieren.
@@ -461,13 +481,18 @@ class AIAnalysisWorker(QThread):
                     logger.warning(reason)
                     self._fail(reason)
                     break
+            except InterruptedError:
+                logger.info("AI Mood Tagging cancelled by user.")
+                cancelled = True
+                break
             except Exception as e:
                 reason = f"KI-Verarbeitung gestoppt: {e}"
                 logger.error(reason, exc_info=True)
                 self._fail(reason)
                 break
-        self.progress.emit(total_tracks, total_tracks)
-        logger.info("AI Mood Tagging complete.")
+        if not cancelled:
+            self.progress.emit(total_tracks, total_tracks)
+            logger.info("AI Mood Tagging complete.")
 
 
 class AIDetectWorker(QThread):
@@ -929,7 +954,10 @@ class PlaylistGenerationWorker(QThread):
                 advanced_params=self.advanced_params,
                 scoring_context=self.scoring_context,
                 candidate_choice_snapshot=self.candidate_choice_snapshot,
+                cancel_check=self.isInterruptionRequested,
             )
+        except InterruptedError:
+            return
         except Exception as exc:
             if not self.isInterruptionRequested():
                 self.generation_failed.emit(str(exc))
@@ -3752,17 +3780,15 @@ class PlaylistPanel(QWidget):
     def set_reorder_locked(self, locked: bool):
         """Sperrt/entsperrt das Drag&Drop-Reorder der Playlist.
 
-        Waehrend der KI-Veredelung (RunState.AI) laeuft die Playlist-Generierung
-        nach KI-Abschluss noch einmal komplett durch — eine in diesem Fenster
-        manuell umsortierte Reihenfolge wuerde sonst kommentarlos ueberschrieben.
-        Deshalb wird das Sortieren gesperrt und sichtbar gekennzeichnet.
+        Waehrend KI-Veredelung oder Playlist-Berechnung wuerde eine manuelle
+        Umsortierung mit dem laufenden Ergebnis konkurrieren. Deshalb wird das
+        Sortieren gesperrt und sichtbar gekennzeichnet.
         """
         if locked:
             self.table.setDragDropMode(QTableWidget.DragDropMode.NoDragDrop)
             self._drag_info.setText(
-                "🔒 Sortieren gesperrt — die KI-Analyse laeuft noch. Die Reihenfolge "
-                "wuerde sonst nach Abschluss ueberschrieben. Freigabe automatisch, "
-                "sobald die KI-Veredelung fertig ist."
+                "🔒 Sortieren gesperrt — eine Berechnung laeuft noch. Die Reihenfolge "
+                "wuerde sonst nach Abschluss ueberschrieben. Freigabe automatisch."
             )
             self._drag_info.setStyleSheet(
                 f"QLabel {{ color: {COLORS['accent_warning']}; font-size: 10px; font-weight: bold; }}"
@@ -5415,12 +5441,11 @@ class MainWindow(QMainWindow):
     def _set_run_state(self, state: RunState) -> None:
         """Setzt den zentralen Pipelinezustand."""
         self.run_state = state
-        # Reorder-Sperre zentral an den Zustand koppeln: nur waehrend der
-        # KI-Veredelung (RunState.AI) gesperrt, jeder Uebergang weg davon
-        # (PLAYLIST/CANCELLED/ERROR) gibt das Sortieren automatisch wieder frei.
+        # Reorder-Sperre und Slot-Guard verwenden dieselbe aktive Zustandsmenge.
+        # So bietet die Tabelle keine Aktion an, die anschliessend zurueckrollt.
         panel = getattr(self, "playlist_panel", None)
         if panel is not None:
-            panel.set_reorder_locked(state == RunState.AI)
+            panel.set_reorder_locked(state in ACTIVE_RUN_STATES)
         mix_tips = getattr(self, "mix_tips_panel", None)
         if mix_tips is not None:
             mix_tips.set_candidate_choices_enabled(state not in ACTIVE_RUN_STATES)
@@ -6109,7 +6134,9 @@ class MainWindow(QMainWindow):
             toolbar.set_generate_enabled(self.toolbar.generate_btn.isEnabled())
             toolbar.set_export_enabled(self.toolbar.export_btn.isEnabled())
             toolbar.set_quality(quality_metrics.get("overall_score", 0))
-            playlist_panel.set_reorder_locked(self.run_state == RunState.AI)
+            playlist_panel.set_reorder_locked(
+                self.run_state in ACTIVE_RUN_STATES
+            )
             mix_tips_panel.set_candidate_choices_enabled(
                 self.run_state not in ACTIVE_RUN_STATES
             )
@@ -6487,6 +6514,11 @@ class MainWindow(QMainWindow):
 
     def _on_playlist_reordered(self, alter_zustand=None):
         """Aktualisiert alle Reorder-Views atomar oder stellt den Vorzustand her."""
+        if self.run_state in ACTIVE_RUN_STATES:
+            self.status_bar.set_status(
+                "Umsortieren ist waehrend eines laufenden Vorgangs gesperrt."
+            )
+            return
         if self.current_generation_result is not None and isinstance(
             alter_zustand, tuple
         ) and all(

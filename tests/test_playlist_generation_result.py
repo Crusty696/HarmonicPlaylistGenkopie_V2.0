@@ -822,6 +822,13 @@ def test_scoring_context_akzeptiert_typisierte_strategy_config_werte():
     assert context["overlap"] == 24.0
 
 
+def test_scoring_context_verwirft_strategy_fremde_skalare_werte():
+    with pytest.raises(ValueError, match="Warm-Up.*harmonic_strictness"):
+        pl._complete_run_scoring_context(
+            "Warm-Up", {}, {"harmonic_strictness": 1}
+        )
+
+
 @pytest.mark.parametrize(
     "value",
     ["Auto", "Build Up", "Cool Down", "Maintain", "auto", "up", "down", "maintain"],
@@ -863,6 +870,82 @@ def test_dp_priorisiert_wahl_vor_score_und_tiebreakt_kleineren_key():
     )
     selected, *_ = pl._select_snapshot_path(((right, left),), occurrences)
     assert selected == (min((left, right), key=lambda item: item.key),)
+
+
+def test_result_score_bleibt_rang_eins_bei_dp_wahl_rang_zwei(monkeypatch):
+    _identity_strategy(monkeypatch)
+    tracks = [_track("a.wav"), _track("b.wav")]
+    rank_one = _candidate(140.0, 70.0, score=0.9, rank=1)
+    rank_two_base = _candidate(180.0, 80.0, score=0.1, saved=True, rank=2)
+    rank_two = replace(
+        rank_two_base,
+        out_a=replace(rank_two_base.out_a, energy_lokal=0.0),
+        in_b=replace(rank_two_base.in_b, energy_lokal=100.0),
+    )
+    monkeypatch.setattr(candidate_choices, "snapshot", lambda: {})
+    monkeypatch.setattr(
+        pc, "rank_pair_candidates", lambda *args, **kwargs: [rank_one, rank_two]
+    )
+
+    result = pl.generate_playlist_result(
+        tracks, "Warm-Up", scoring_context={}, candidate_choice_snapshot={}
+    )
+    context = result.scoring_context_dict()
+    expected = pl._calculate_track_edge_metrics(
+        tracks[0], tracks[1], result.bpm_tolerance, None, context, rank_one
+    )
+    selected_score = pl._calculate_track_edge_metrics(
+        tracks[0], tracks[1], result.bpm_tolerance, None, context, rank_two
+    )
+
+    boundary = result.boundaries[0]
+    assert boundary.selected.key == boundary.snapshots[1].key
+    assert boundary.recommendation.plan.mix_out_a == rank_two.out_a.t
+    assert boundary.metrics.kandidat.key == boundary.snapshots[0].key
+    assert boundary.metrics.overall_score == pytest.approx(expected.overall_score)
+    assert boundary.metrics.overall_score != pytest.approx(selected_score.overall_score)
+    assert boundary.recommendation.compatibility_score == round(expected.overall_score * 100)
+    assert result.quality_dict()["overall_score"] == pytest.approx(
+        round(expected.overall_score * 100) / 100.0
+    )
+
+
+@pytest.mark.parametrize("strategy", tuple(pl.STRATEGIES.values()))
+def test_alle_strategien_pruefen_cancel_check_am_einstieg(strategy):
+    with pytest.raises(InterruptedError, match="Playlist-Generierung abgebrochen"):
+        strategy([_track("a.wav"), _track("b.wav")], 2.0, cancel_check=lambda: True)
+
+
+def test_boundary_ranking_bricht_vor_naechstem_teilergebnis_ab(monkeypatch):
+    occurrences = tuple(
+        pl.TrackOccurrence("run", index, _track(f"{index}.wav"))
+        for index in range(3)
+    )
+    calls = 0
+
+    def cancel_check():
+        nonlocal calls
+        calls += 1
+        return calls >= 3
+
+    ranking_calls = 0
+
+    def rank(*args, **kwargs):
+        nonlocal ranking_calls
+        ranking_calls += 1
+        return []
+
+    monkeypatch.setattr(pc, "rank_pair_candidates", rank)
+
+    with pytest.raises(InterruptedError, match="Playlist-Generierung abgebrochen"):
+        pl._rank_fixed_boundaries(
+            occurrences,
+            2.0,
+            pl.resolve_run_scoring_context("Warm-Up", {}),
+            {},
+            cancel_check,
+        )
+    assert ranking_calls == 1
 
 
 def test_dp_zaehlt_exakt_144_links_und_behaelt_geplante_inkonsistenz():

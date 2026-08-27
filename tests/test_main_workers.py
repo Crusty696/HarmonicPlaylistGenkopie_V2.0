@@ -122,7 +122,7 @@ def test_ai_analysis_worker_cancel_and_exception(monkeypatch):
   emitted = []
   worker.progress.connect(lambda current, total: emitted.append((current, total)))
   worker.run()
-  assert emitted[-1] == (1, 1)
+  assert emitted == []
 
   worker = main.AIAnalysisWorker(
     [track], provider="Ollama", model="model", base_url="http://local"
@@ -135,6 +135,57 @@ def test_ai_analysis_worker_cancel_and_exception(monkeypatch):
   worker.failed.connect(failures.append)
   worker.run()
   assert failures == ["KI-Verarbeitung gestoppt: schema crash"]
+
+
+def test_ai_analysis_worker_provider_setup_cancel_is_silent(monkeypatch):
+  worker = main.AIAnalysisWorker(
+    [Track(filePath="C:/a.wav", fileName="a.wav")],
+    provider="Ollama",
+    model="model",
+  )
+
+  def detect_and_start(**_kwargs):
+    worker.request_cancel()
+    raise InterruptedError("abgebrochen")
+
+  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect_and_start)
+  failures = []
+  progress = []
+  worker.failed.connect(failures.append)
+  worker.progress.connect(lambda current, total: progress.append((current, total)))
+
+  worker.run()
+
+  assert failures == []
+  assert progress == []
+
+
+def test_ai_analysis_worker_cancel_after_response_discards_result(monkeypatch):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+
+  def fetch(*_args, **_kwargs):
+    worker.request_cancel()
+    return metadata
+
+  monkeypatch.setattr("hpg_core.ai_engine.ai_metadata_matches", lambda *_args: False)
+  monkeypatch.setattr("hpg_core.ai_engine.fetch_ai_analysis", fetch)
+  failures = []
+  finished = []
+  progress = []
+  worker.failed.connect(failures.append)
+  worker.ai_finished.connect(lambda *args: finished.append(args))
+  worker.progress.connect(lambda current, total: progress.append((current, total)))
+
+  worker.run()
+
+  assert failures == []
+  assert finished == []
+  assert progress == [(0, 1)]
+  assert track.ai_metadata == {}
 
 
 def test_ai_analysis_worker_persists_metadata_off_gui_thread(monkeypatch):
@@ -160,6 +211,34 @@ def test_ai_analysis_worker_persists_metadata_off_gui_thread(monkeypatch):
 
   assert track.ai_metadata == metadata
   assert cached == [("key", track.filePath, metadata)]
+
+
+def test_ai_analysis_worker_reicht_cancel_durch_und_meldet_keinen_fehler(
+  monkeypatch,
+):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+  captured = {}
+
+  def fetch(*_args, **kwargs):
+    captured["cancel_check"] = kwargs["cancel_check"]
+    worker.request_cancel()
+    raise InterruptedError("abgebrochen")
+
+  monkeypatch.setattr("hpg_core.ai_engine.ai_metadata_matches", lambda *_args: False)
+  monkeypatch.setattr("hpg_core.ai_engine.fetch_ai_analysis", fetch)
+  failures = []
+  progress = []
+  worker.failed.connect(failures.append)
+  worker.progress.connect(lambda current, total: progress.append((current, total)))
+
+  worker.run()
+
+  assert captured["cancel_check"] == worker.isInterruptionRequested
+  assert failures == []
+  assert progress == [(0, 1)]
 
 
 def test_detect_worker_passes_cooperative_cancel(monkeypatch):
@@ -929,6 +1008,42 @@ def test_playlist_generation_laeuft_im_worker_und_gui_bleibt_responsiv(
   freigabe.set()
   _wait_playlist_worker(qtbot, window)
   publish.assert_called_once_with(result)
+
+
+def test_playlist_worker_bricht_innerhalb_der_berechnung_ohne_signal_ab(
+  monkeypatch,
+):
+  track = Track(filePath="C:/a.wav", fileName="a.wav", bpm=128.0)
+  worker = main.PlaylistGenerationWorker(
+    [track],
+    mode="Harmonic Flow",
+    bpm_tolerance=3.0,
+    advanced_params={},
+    scoring_context={},
+    candidate_choice_snapshot={},
+  )
+  captured = {}
+  cancelled = {"value": False}
+  monkeypatch.setattr(
+    worker, "isInterruptionRequested", lambda: cancelled["value"]
+  )
+
+  def generate(*_args, **kwargs):
+    captured["cancel_check"] = kwargs["cancel_check"]
+    cancelled["value"] = True
+    assert kwargs["cancel_check"]()
+    raise InterruptedError("abgebrochen")
+
+  monkeypatch.setattr("hpg_core.playlist.generate_playlist_result", generate)
+  done, failed = [], []
+  worker.generation_done.connect(done.append)
+  worker.generation_failed.connect(failed.append)
+
+  worker.run()
+
+  assert captured["cancel_check"] == worker.isInterruptionRequested
+  assert done == []
+  assert failed == []
 
 
 def test_stale_playlist_worker_result_und_fehler_werden_ignoriert(

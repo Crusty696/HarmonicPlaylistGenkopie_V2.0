@@ -487,6 +487,45 @@ class TestDJRecommendation:
     risk_text = " ".join(rec.risk_notes).lower()
     assert "tonart" in risk_text or "camelot" in risk_text
 
+  def test_recommendation_preserves_unset_mix_in_without_overlap(self):
+    a = _make_track(
+      genre="Tech House", bpm=128.0, duration=180.0,
+      sections=[{"label": "main", "start_time": 0.0, "end_time": 180.0}],
+      mix_out=120.0,
+    )
+    b = _make_track(
+      genre="Tech House", bpm=128.0, duration=65.0,
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 64.0},
+        {"label": "main", "start_time": 64.0, "end_time": 65.0},
+      ],
+      mix_in=64.0,
+    )
+
+    rec = generate_dj_recommendation(a, b)
+
+    assert rec.adjusted_mix_in_b == MIX_POINT_UNSET
+    assert rec.incoming_section == "unknown"
+    assert rec.overlap_seconds == 0.0
+
+  def test_recommendation_preserves_unset_mix_out_without_overlap(self):
+    a = _make_track(
+      genre="Tech House", bpm=60.0, duration=10.0,
+      sections=[{"label": "outro", "start_time": 0.0, "end_time": 10.0}],
+      mix_out=4.0,
+    )
+    b = _make_track(
+      genre="Tech House", bpm=60.0, duration=30.0,
+      sections=[{"label": "main", "start_time": 0.0, "end_time": 30.0}],
+      mix_in=0.0,
+    )
+
+    rec = generate_dj_recommendation(a, b)
+
+    assert rec.adjusted_mix_out_a == MIX_POINT_UNSET
+    assert rec.outgoing_section == "unknown"
+    assert rec.overlap_seconds == 0.0
+
 
 # === Hilfsfunktionen ===
 

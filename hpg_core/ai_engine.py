@@ -2,7 +2,9 @@ import requests
 import logging
 import json
 import math
+import multiprocessing
 from datetime import datetime, timezone
+from typing import Callable
 from .models import Track
 from . import config
 
@@ -32,6 +34,100 @@ AI_JSON_SCHEMA = {
         },
     },
 }
+
+_CANCEL_POLL_SECONDS = 0.05
+_PROCESS_STOP_TIMEOUT_SECONDS = 1.0
+
+
+class _ResponseSnapshot:
+    """Kleine, prozessuebergreifend transportierbare HTTP-Antwort."""
+
+    def __init__(self, status_code: int, text: str):
+        self.status_code = int(status_code)
+        self.text = str(text)
+
+    def json(self):
+        return json.loads(self.text)
+
+
+def _http_post_in_spawned_process(send_connection, url, payload, timeout):
+    """Spawn-Target: keine Closures, damit Windows und PyInstaller es laden koennen."""
+    try:
+        response = requests.post(url, json=payload, timeout=timeout)
+        send_connection.send(("response", response.status_code, response.text))
+    except requests.exceptions.Timeout as exc:
+        send_connection.send(("timeout", str(exc)))
+    except requests.exceptions.ConnectionError as exc:
+        send_connection.send(("connection", str(exc)))
+    except requests.exceptions.RequestException as exc:
+        send_connection.send(("request", str(exc)))
+    except BaseException as exc:
+        send_connection.send(("unexpected", f"{type(exc).__name__}: {exc}"))
+    finally:
+        send_connection.close()
+
+
+def _stop_spawned_process(process) -> None:
+    """Beendet einen Request-Prozess nachweisbar; nie einen QThread."""
+    if process.is_alive():
+        process.terminate()
+    process.join(_PROCESS_STOP_TIMEOUT_SECONDS)
+    if process.is_alive():
+        process.kill()
+        process.join(_PROCESS_STOP_TIMEOUT_SECONDS)
+    if process.is_alive():
+        raise RuntimeError("KI-HTTP-Prozess konnte nicht beendet werden")
+    process.close()
+
+
+def _cancelable_post(url, payload, timeout, cancel_check: Callable[[], bool]):
+    """Fuehrt nur den blockierenden HTTP-Aufruf in einem terminierbaren Prozess aus."""
+    if cancel_check():
+        raise InterruptedError("KI-Analyse abgebrochen")
+
+    context = multiprocessing.get_context("spawn")
+    receive_connection, send_connection = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_http_post_in_spawned_process,
+        args=(send_connection, url, payload, timeout),
+        daemon=True,
+    )
+    started = False
+    try:
+        process.start()
+        started = True
+        send_connection.close()
+        while True:
+            if cancel_check():
+                raise InterruptedError("KI-Analyse abgebrochen")
+            if receive_connection.poll(_CANCEL_POLL_SECONDS):
+                message = receive_connection.recv()
+                break
+            if not process.is_alive():
+                if receive_connection.poll():
+                    message = receive_connection.recv()
+                    break
+                raise requests.exceptions.RequestException(
+                    f"KI-HTTP-Prozess endete ohne Ergebnis (Exitcode {process.exitcode})"
+                )
+    finally:
+        receive_connection.close()
+        if not started:
+            send_connection.close()
+        if started:
+            _stop_spawned_process(process)
+
+    kind, *values = message
+    if kind == "response":
+        return _ResponseSnapshot(values[0], values[1])
+    error_message = values[0] if values else "Unbekannter KI-HTTP-Fehler"
+    if kind == "timeout":
+        raise requests.exceptions.Timeout(error_message)
+    if kind == "connection":
+        raise requests.exceptions.ConnectionError(error_message)
+    if kind == "request":
+        raise requests.exceptions.RequestException(error_message)
+    raise RuntimeError(error_message)
 
 
 def validate_ai_metadata(metadata, *, duration: float | None = None) -> bool:
@@ -158,8 +254,14 @@ def validate_ai_analysis(
         raise ValueError("KI-Ergebnis verletzt den persistierbaren Vertrag")
     return result
 
-def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
-                      url: str = None) -> dict:
+def fetch_ai_analysis(
+    track: Track,
+    provider: str = None,
+    model: str = None,
+    url: str = None,
+    *,
+    cancel_check: Callable[[], bool] | None = None,
+) -> dict:
     """
     Sendet Track-Daten an die lokale AI-Engine (Ollama oder LM Studio).
     Extrahiert und parst das zurückgegebene JSON-Objekt aus dem OpenAI-Kompatibilitätsformat.
@@ -241,7 +343,11 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
     
     try:
         logger.debug(f"Sending AI request to {url} for track: {track.title}")
-        resp = requests.post(url, json=payload, timeout=(5.0, config.AI_TIMEOUT))
+        request_timeout = (5.0, config.AI_TIMEOUT)
+        if cancel_check is None:
+            resp = requests.post(url, json=payload, timeout=request_timeout)
+        else:
+            resp = _cancelable_post(url, payload, request_timeout, cancel_check)
         
         # Überprüfe den Statuscode
         if resp.status_code != 200:
@@ -289,6 +395,8 @@ def fetch_ai_analysis(track: Track, provider: str = None, model: str = None,
             
         logger.warning(f"AI-Antwort besass kein 'choices'-Array: {resp_json}")
         return {}
+    except InterruptedError:
+        raise
     except requests.exceptions.Timeout as e:
         logger.error(f"AI API Timeout for track {track.title}: {e}")
         return {}

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from hpg_core.config import MIX_POINT_UNSET
 from hpg_core.playlist import (
   _clamp_transition_overlap,
   _outro_overlap_limit,
@@ -185,6 +186,37 @@ class TestRecommendationFields:
 
     assert rec.overlap == rec.plan.overlap == spec.crossfade_sec
     assert rec.overlap == pytest.approx(rec.kandidaten[0]["blend_bars"] * 60.0 / 128.0 * 4.0)
+
+  @pytest.mark.parametrize(
+    "paired_points",
+    [
+      (MIX_POINT_UNSET, MIX_POINT_UNSET),
+      (MIX_POINT_UNSET, 16.0),
+      (360.0, MIX_POINT_UNSET),
+    ],
+  )
+  def test_sentinel_dj_points_do_not_replace_candidate_plan(
+    self, monkeypatch, paired_points
+  ):
+    pair = _make_pair(duration=420.0)
+    for track in pair:
+      track.detected_genre = "Tech House"
+    monkeypatch.setattr(
+      "hpg_core.dj_brain.calculate_paired_mix_points",
+      lambda *_: paired_points,
+    )
+
+    rec = compute_transition_recommendations(pair)[0]
+
+    assert rec.plan is not None
+    assert rec.plan.mix_out_a >= 0.0
+    assert rec.plan.mix_in_b >= 0.0
+    assert rec.plan.overlap >= 0.0
+    assert rec.fade_out_start >= 0.0
+    assert rec.fade_out_end >= rec.fade_out_start
+    assert rec.dj_rec is not None
+    assert rec.dj_rec.adjusted_mix_out_a == rec.plan.mix_out_a
+    assert rec.dj_rec.adjusted_mix_in_b == rec.plan.mix_in_b
 
   def test_index_is_zero_based(self):
     """Index ist 0-basiert."""

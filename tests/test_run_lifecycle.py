@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 from PyQt6.QtCore import QModelIndex, Qt, QSettings, QThread
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QLabel, QPushButton
@@ -91,6 +92,47 @@ def test_cancel_button_visibility_matches_lifecycle(qtbot):
 
   status.hide_progress()
   assert status.cancel_btn.isHidden()
+
+
+@pytest.mark.parametrize(
+  "active_state", sorted(main.ACTIVE_RUN_STATES, key=lambda state: state.value)
+)
+def test_aktive_berechnung_sperrt_reorder_bis_terminalzustand(
+  qtbot, monkeypatch, active_state
+):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+
+  window._set_run_state(active_state)
+  assert (
+    window.playlist_panel.table.dragDropMode()
+    == window.playlist_panel.table.DragDropMode.NoDragDrop
+  )
+
+  window._set_run_state(RunState.SUCCESS)
+  assert (
+    window.playlist_panel.table.dragDropMode()
+    == window.playlist_panel.table.DragDropMode.InternalMove
+  )
+
+
+def test_reorder_slot_verwirft_queued_signal_in_aktivem_zustand(
+  qtbot, monkeypatch
+):
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  verteile = Mock()
+  monkeypatch.setattr(window, "_verteile_uebergaenge", verteile)
+  window._set_run_state(RunState.PREVIEW)
+
+  window._on_playlist_reordered(
+    main.LegacyReorderRequest((), {}, (), 2.0, {})
+  )
+
+  verteile.assert_not_called()
+  assert "gesperrt" in window.status_bar.status_label.text()
 
 
 def test_cancel_requests_worker_without_claiming_completion(qtbot, monkeypatch):

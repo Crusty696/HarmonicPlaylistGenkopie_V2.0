@@ -472,6 +472,12 @@ def _normalize_energy_direction(value) -> Optional[EnergyDirection]:
     }.get(value.strip().casefold())
 
 
+def _check_cancel(cancel_check) -> None:
+    """Bricht kooperativ ab; Aufrufer publizieren dadurch kein Teilergebnis."""
+    if cancel_check is not None and cancel_check():
+        raise InterruptedError("Playlist-Generierung abgebrochen")
+
+
 def _track_cache_key(track: Track) -> int:
     """Trennt Track-Instanzen in den kurzlebigen Scoring-Caches.
 
@@ -501,7 +507,9 @@ def _enhanced_cache_key(
 ) -> tuple:
     normalized_direction = _normalize_energy_direction(energy_direction)
     direction = normalized_direction.value if normalized_direction is not None else None
-    options = _stable_fingerprint(kwargs)
+    options = _stable_fingerprint({
+        key: value for key, value in kwargs.items() if key != "cancel_check"
+    })
     return (
         _track_cache_key(track1),
         _track_cache_key(track2),
@@ -628,6 +636,8 @@ def _kandidaten_fuer_paar(
     energy_direction, kwargs; geleert von reset_pair_candidate_cache, das Wahl,
     Praeferenz und Toleranzen lazy aufrufen). Leer, wenn eine Seite keine
     Kandidaten traegt."""
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if not (getattr(track1, "mix_out_candidates", None) and getattr(track2, "mix_in_candidates", None)):
         return []
     try:
@@ -674,6 +684,7 @@ def _kandidaten_fuer_paar(
                 "candidate_tolerances_by_genre",
                 "candidate_schema_ranks_by_genre",
                 "candidate_choice_snapshot",
+                "cancel_check",
             }
         }),
         _stable_fingerprint(tolerances),
@@ -693,6 +704,7 @@ def _kandidaten_fuer_paar(
         wahl=wahl,
         schema_rang=schema_rang,
     )
+    _check_cancel(cancel_check)
     # Weakrefs pruefen bei einer spaeteren id()-Wiederverwendung die Identitaet,
     # ohne alte Analyse-Trackobjekte dauerhaft im Speicher zu halten.
     _PAIR_CANDIDATE_CACHE[key] = (weakref.ref(track1), weakref.ref(track2), paare)
@@ -921,6 +933,7 @@ def calculate_transition_objective(
     track1: Track, track2: Track, bpm_tolerance: float, **kwargs
 ) -> int:
     """Gemeinsame Zielfunktion fuer Sortierung, Anzeige und Empfehlungen."""
+    _check_cancel(kwargs.get("cancel_check"))
     metrics = calculate_enhanced_compatibility(
         track1, track2, bpm_tolerance, **kwargs
     )
@@ -1009,7 +1022,7 @@ def calculate_compatibility(
     return _calculate_compatibility_inner(track1, track2, bpm_tolerance, **kwargs)
 
 
-def _small_pool_order(tracks: list[Track], score_key) -> list[Track]:
+def _small_pool_order(tracks: list[Track], score_key, cancel_check=None) -> list[Track]:
     """Wertet kleine Pools vollstaendig und eingabereihenfolgefest aus."""
     if len(tracks) <= 1:
         return list(tracks)
@@ -1031,6 +1044,7 @@ def _small_pool_order(tracks: list[Track], score_key) -> list[Track]:
     best_score = None
     best_stable_key = None
     for order in permutations(tracks):
+        _check_cancel(cancel_check)
         score = tuple(score_key(order))
         order_stable_key = stable_key(order)
         if (
@@ -1056,10 +1070,13 @@ def _sort_harmonic_flow(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if len(tracks) <= 2:
         return _small_pool_order(
             tracks,
             lambda order: _transition_path_score(order, bpm_tolerance, kwargs),
+            cancel_check,
         )
 
     # Create a local cache specifically to avoid repeated function calls during lookahead
@@ -1081,6 +1098,7 @@ def _sort_harmonic_flow(
         # Top-K Kandidaten — reduziert O(n^3) auf O(n^2 * K) bei grossen Listen
         scored = []
         for candidate in remaining:
+            _check_cancel(cancel_check)
             cache_key = (_track_cache_key(current), _track_cache_key(candidate))
             if cache_key in compat_cache:
                 immediate_score = compat_cache[cache_key]
@@ -1106,6 +1124,7 @@ def _sort_harmonic_flow(
         best_candidate = None
         best_total_score = -1
         for immediate_score, candidate in scored[:LOOKAHEAD_TOP_K]:
+            _check_cancel(cancel_check)
             future_score = 0.0
             if depth > 1 and len(remaining) > 1:
                 next_remaining = [t for t in remaining if t is not candidate]
@@ -1130,6 +1149,7 @@ def _sort_harmonic_flow(
 
     current_track = start_track
     while unprocessed:
+        _check_cancel(cancel_check)
         best_next, score = _lookahead_score(
             current_track, unprocessed, depth=2
         )  # Optimized: depth=2 (was 3)
@@ -1161,6 +1181,8 @@ def _find_best_starting_track(
 
     Optimized: For large playlists, uses a more efficient sampling strategy.
     """
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if not tracks:
         return None
     if len(tracks) <= 1:
@@ -1189,11 +1211,13 @@ def _find_best_starting_track(
     best_score = -1
 
     for i in candidate_indices:
+        _check_cancel(cancel_check)
         track = tracks[i]
         total_compatibility = 0
         connections = 0
 
         for j in comparison_indices:
+            _check_cancel(cancel_check)
             if i == j:
                 continue
 
@@ -1225,6 +1249,8 @@ def _sort_directional_bpm(
     **kwargs,
 ) -> list[Track]:
     """Sortiert nach BPM und nutzt bei Gleichstand das volle Uebergangsziel."""
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if len(tracks) <= 1:
         return list(tracks)
 
@@ -1233,6 +1259,7 @@ def _sort_directional_bpm(
     position = 0
 
     while position < len(bpm_ordered):
+        _check_cancel(cancel_check)
         reference_bpm = bpm_ordered[position].bpm
         group = []
         while position < len(bpm_ordered) and math.isclose(
@@ -1263,6 +1290,7 @@ def _sort_directional_bpm(
             _remove_track(remaining, current)
 
         while remaining:
+            _check_cancel(cancel_check)
             def _tie_break_score(candidate: Track) -> float:
                 immediate = calculate_transition_objective(
                     current, candidate, bpm_tolerance, **kwargs
@@ -1381,6 +1409,8 @@ def _sort_energy_wave(
     Strategie hat keine Zielfunktion, auf die sie ausweichen koennte.
     `bpm_tolerance` bleibt deshalb ungenutzt — die Naehe entscheidet.
     """
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if not tracks:
         return []
 
@@ -1398,6 +1428,7 @@ def _sort_energy_wave(
     take_high = True
 
     while nach_unten or nach_oben:
+        _check_cancel(cancel_check)
         seite = nach_oben if (take_high and nach_oben) else (
             nach_unten if nach_unten else nach_oben
         )
@@ -1432,6 +1463,8 @@ def _sort_peak_time(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Enhanced peak-time arrangement with harmonic considerations and multiple peaks."""
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if not tracks:
         return []
 
@@ -1454,7 +1487,7 @@ def _sort_peak_time(
             )
             return valid, curve_fit, transition_score
 
-        return _small_pool_order(tracks, small_score)
+        return _small_pool_order(tracks, small_score, cancel_check)
 
     scored_tracks = _prepare_track_metrics(tracks)
     count = len(scored_tracks)
@@ -1475,6 +1508,7 @@ def _sort_peak_time(
     scored_by_energy = sorted(scored_tracks, key=lambda item: item[1])
 
     for track_idx in zip(scored_by_energy, waveform_positions):
+        _check_cancel(cancel_check)
         track, score, norm_bpm, norm_energy = track_idx[0]
         position = track_idx[1]
 
@@ -1507,6 +1541,8 @@ def _apply_harmonic_smoothing(
 
     Optimized: Max 3 iterations (was len/2) - most improvements happen in first 2-3 passes.
     """
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if len(tracks) <= 2:
         return tracks
 
@@ -1516,10 +1552,12 @@ def _apply_harmonic_smoothing(
     max_iterations = SMOOTHING_MAX_ITERATIONS
 
     while improved and iterations < max_iterations:
+        _check_cancel(cancel_check)
         improved = False
         iterations += 1
 
         for i in range(len(result) - 1):
+            _check_cancel(cancel_check)
             current_score = calculate_transition_objective(
                 result[i], result[i + 1], bpm_tolerance, **kwargs
             )
@@ -1569,6 +1607,8 @@ def _sort_genre_flow(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Arrange tracks to create smooth genre transitions while maintaining energy."""
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     # Get genre parameters
     genre_mixing_enabled = kwargs.get("genre_mixing", True)
     genre_weight = kwargs.get("genre_weight", 0.3)  # 0.0-1.0
@@ -1603,11 +1643,12 @@ def _sort_genre_flow(
                 sum(harmonic_scores),
             )
 
-        return _small_pool_order(tracks, small_score)
+        return _small_pool_order(tracks, small_score, cancel_check)
 
     # Group tracks by genre (bevorzuge eine echte Klassifikation, sonst ID3)
     genre_groups = {}
     for track in tracks:
+        _check_cancel(cancel_check)
         detected = getattr(track, "detected_genre", "") or ""
         genre = detected if detected != "Unknown" else (track.genre or "")
         if not genre or genre == "Unknown":
@@ -1629,6 +1670,7 @@ def _sort_genre_flow(
     current_genre = max(genre_groups.keys(), key=lambda g: len(genre_groups[g]))
 
     while len(processed_genres) < len(genre_groups):
+        _check_cancel(cancel_check)
         if current_genre in genre_groups and current_genre not in processed_genres:
             # Arrange tracks within current genre (pass kwargs for harmonic params)
             genre_tracks = _sort_consistent(
@@ -1642,6 +1684,7 @@ def _sort_genre_flow(
         best_compatibility = 0
 
         for genre in genre_groups:
+            _check_cancel(cancel_check)
             if genre not in processed_genres:
                 # genre_weight blendet zwischen dem besten realen Uebergang
                 # in die Gruppe (0 = Genre ignorieren) und der DJ-Brain-Matrix
@@ -1650,12 +1693,16 @@ def _sort_genre_flow(
                 # die Rangfolge niemals veraendern.
                 dj_compat = get_genre_compatibility(current_genre, genre)
                 current_track = result[-1]
-                transition_compat = max(
-                    calculate_compatibility(
-                        current_track, candidate, bpm_tolerance, **kwargs
+                transition_compat = 0
+                for candidate in genre_groups[genre]:
+                    _check_cancel(cancel_check)
+                    transition_compat = max(
+                        transition_compat,
+                        calculate_compatibility(
+                            current_track, candidate, bpm_tolerance, **kwargs
+                        ),
                     )
-                    for candidate in genre_groups[genre]
-                ) / 100.0
+                transition_compat /= 100.0
                 compatibility = (
                     (1.0 - genre_weight) * transition_compat
                     + genre_weight * dj_compat
@@ -1684,6 +1731,8 @@ def _sort_consistent(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """Keep transitions smooth by minimising BPM/Energy jumps while preferring harmonic compatibility."""
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if not tracks:
         return []
 
@@ -1712,6 +1761,7 @@ def _sort_consistent(
     _remove_track(remaining, current)
 
     while remaining:
+        _check_cancel(cancel_check)
 
         def _transition_cost(candidate: Track) -> float:
             bpm_delta, _ = effective_bpm_diff(
@@ -2681,6 +2731,8 @@ def _sort_context_flow(
     frueheren "Emotional Journey"-Strategie — "Build Up"/"Cool Down"/"Maintain"
     formen die Zielenergie-Kurve, "Auto" = klassische Set-Dramaturgie.
     """
+    cancel_check = kwargs.get("cancel_check")
+    _check_cancel(cancel_check)
     if not tracks:
         return []
 
@@ -2714,6 +2766,7 @@ def _sort_context_flow(
             total_score = 0.0
             valid_edges = 0
             for position, track in enumerate(order):
+                _check_cancel(cancel_check)
                 target = _target_energy(position, len(order))
                 total_score += 10.0 - min(30.0, abs(track.energy - target)) / 3.0
                 if position == 0:
@@ -2741,7 +2794,7 @@ def _sort_context_flow(
                     total_score -= 15.0
             return valid_edges, total_score
 
-        return _small_pool_order(tracks, small_score)
+        return _small_pool_order(tracks, small_score, cancel_check)
 
     unprocessed = list(tracks)
     total = len(tracks)
@@ -2757,6 +2810,7 @@ def _sort_context_flow(
     _remove_track(unprocessed, start)
 
     while unprocessed:
+        _check_cancel(cancel_check)
         current = final_playlist[-1]
         target_energy = _target_energy(len(final_playlist), total)
 
@@ -2768,6 +2822,7 @@ def _sort_context_flow(
         streak_genre = _resolve_track_genre(current)
         streak = 0
         for t in reversed(final_playlist):
+            _check_cancel(cancel_check)
             if _resolve_track_genre(t) == streak_genre:
                 streak += 1
             else:
@@ -2776,6 +2831,7 @@ def _sort_context_flow(
         best_next = None
         highest_score = -999999.0
         for candidate in unprocessed:
+            _check_cancel(cancel_check)
             # Reine Harmonik als Basis; Energie und Genre werden unten als
             # explizite Context-Regler addiert. So bedeutet genre_weight=0
             # tatsaechlich, dass Genre die Reihenfolge nicht beeinflusst.
@@ -3036,6 +3092,20 @@ def _complete_run_scoring_context(
             "scoring_context enthaelt unbekannte Schluessel: "
             + ", ".join(repr(key) for key in unknown_keys)
         )
+    scalar_keys = SCORING_PARAMETERS | {"target_energy", "overlap"}
+    supported_scalars = (
+        SUPPORTED_STRATEGY_PARAMETERS.get(STRATEGY_ALIASES.get(mode, mode), set())
+        & scalar_keys
+    )
+    unsupported_scalars = sorted(
+        (set(supplied) & scalar_keys) - supported_scalars
+    )
+    if unsupported_scalars:
+        raise ValueError(
+            f"scoring_context enthaelt fuer Strategie {mode!r} nicht "
+            "unterstuetzte Schluessel: "
+            + ", ".join(repr(key) for key in unsupported_scalars)
+        )
 
     if "energy_direction" in supplied:
         energy_direction = supplied["energy_direction"]
@@ -3220,6 +3290,7 @@ def _candidate_link_consistent(
 def _select_snapshot_path(
     candidates_by_boundary: tuple[tuple["CandidateSnapshot", ...], ...],
     occurrences: tuple[TrackOccurrence, ...],
+    cancel_check=None,
 ) -> tuple[tuple[Optional["CandidateSnapshot"], ...], tuple[bool, ...], int, int, int]:
     """Begrenzter DP: hoechstens 12 Kandidaten plus UNGEPLANT je Kante."""
     if not candidates_by_boundary:
@@ -3229,14 +3300,17 @@ def _select_snapshot_path(
     link_checks = 0
 
     for index, snapshots in enumerate(candidates_by_boundary):
+        _check_cancel(cancel_check)
         options: tuple[Optional["CandidateSnapshot"], ...] = (*snapshots[:12], None)
         current_states: dict[Optional[tuple], _PathState] = {}
         predecessors = tuple(previous_states.values()) or (
             _PathState((), (), 0, 0, 0.0, 0, ()),
         )
         for option in options:
+            _check_cancel(cancel_check)
             best: Optional[_PathState] = None
             for predecessor in predecessors:
+                _check_cancel(cancel_check)
                 previous = predecessor.selections[-1] if predecessor.selections else None
                 if option is None:
                     consistent = False
@@ -3423,6 +3497,7 @@ def _rank_fixed_boundaries(
     bpm_tolerance: float,
     context: dict,
     choice_snapshot: Mapping,
+    cancel_check=None,
 ) -> tuple[
     tuple[tuple["CandidateSnapshot", ...], ...],
     tuple[dict[tuple, object], ...],
@@ -3435,6 +3510,7 @@ def _rank_fixed_boundaries(
     mutable_maps: list[dict[tuple, object]] = []
     saved_present = 0
     for index in range(max(0, len(occurrences) - 1)):
+        _check_cancel(cancel_check)
         track_a = occurrences[index].track
         track_b = occurrences[index + 1].track
         choice_key = candidate_choices.schluessel(track_a.filePath, track_b.filePath)
@@ -3463,6 +3539,7 @@ def _rank_fixed_boundaries(
             wahl=persisted,
             schema_rang=schema_rank,
         )[:12]
+        _check_cancel(cancel_check)
         snapshots = tuple(
             CandidateSnapshot.from_pair_candidate(candidate, original_ordinal=ordinal)
             for ordinal, candidate in enumerate(mutable)
@@ -3636,25 +3713,29 @@ def _build_generation_result(
     bpm_tolerance: float,
     context: dict,
     choice_snapshot: Mapping,
+    cancel_check=None,
 ) -> PlaylistGenerationResult:
+    _check_cancel(cancel_check)
     snapshots_by_boundary, mutable_maps, saved_present = _rank_fixed_boundaries(
-        occurrences, bpm_tolerance, context, choice_snapshot
+        occurrences, bpm_tolerance, context, choice_snapshot, cancel_check
     )
     selected, consistencies, link_checks, passed_links, states_retained = (
-        _select_snapshot_path(snapshots_by_boundary, occurrences)
+        _select_snapshot_path(snapshots_by_boundary, occurrences, cancel_check)
     )
     boundaries: list[BoundaryResult] = []
     metrics: list[ImmutableMetricsSnapshot] = []
     recommendations: list[ImmutableRecommendationSnapshot] = []
     for index, candidates in enumerate(snapshots_by_boundary):
+        _check_cancel(cancel_check)
         chosen = selected[index]
         consistent = consistencies[index]
+        objective_candidate = candidates[0] if candidates else None
         metric = _immutable_metrics_for_snapshot(
             occurrences[index].track,
             occurrences[index + 1].track,
             bpm_tolerance,
             context,
-            chosen,
+            objective_candidate,
             mutable_maps[index],
         )
         recommendation = _recommendation_snapshot(
@@ -3683,17 +3764,20 @@ def _build_generation_result(
         recommendations.append(recommendation)
 
     legacy_metrics = [legacy_transition_metrics_for_snapshot(item) for item in metrics]
+    _check_cancel(cancel_check)
     quality = calculate_playlist_quality(
         [occurrence.track for occurrence in occurrences],
         bpm_tolerance,
         context,
         transition_metrics=legacy_metrics,
     )
+    _check_cancel(cancel_check)
     planned = sum(item is not None for item in selected)
     total = len(snapshots_by_boundary)
     segments = 0
     in_segment = False
     for item in selected:
+        _check_cancel(cancel_check)
         if item is not None and not in_segment:
             segments += 1
             in_segment = True
@@ -3728,6 +3812,7 @@ def _build_generation_result(
         states_retained=states_retained,
         total_score=sum(item.score for item in selected if item is not None),
     )
+    _check_cancel(cancel_check)
     return PlaylistGenerationResult(
         run_id=run_id,
         mode=mode,
@@ -3753,6 +3838,7 @@ def generate_playlist_result(
     scoring_context: Optional[Dict] = None,
     *,
     candidate_choice_snapshot: Optional[Mapping] = None,
+    cancel_check=None,
 ) -> PlaylistGenerationResult:
     """
     Generates a playlist based on the selected mode and parameters.
@@ -3771,6 +3857,8 @@ def generate_playlist_result(
         scoring_context: Expliziter, bereits eingefrorener Scoring-Vertrag.
         candidate_choice_snapshot: Optional eingefrorene Kandidatenwahlen vom
             Run-Start. Ohne Wert wird der bisherige Live-Snapshot verwendet.
+        cancel_check: Optionaler Callback; ein wahrer Wert bricht kooperativ
+            mit ``InterruptedError`` ab.
     """
     from . import candidate_choices
 
@@ -3787,6 +3875,9 @@ def generate_playlist_result(
     mode = STRATEGY_ALIASES.get(mode, mode)
     if mode not in STRATEGIES:
         raise ValueError(f"Unbekannte Playlist-Strategie: {mode!r}")
+    if cancel_check is not None and not callable(cancel_check):
+        raise ValueError("cancel_check muss aufrufbar oder None sein")
+    _check_cancel(cancel_check)
     if advanced_params is None:
         advanced_snapshot = None
     elif isinstance(advanced_params, Mapping):
@@ -3810,6 +3901,7 @@ def generate_playlist_result(
 
     # Ensure all tracks have a camelot code before sorting
     for track in tracks:
+        _check_cancel(cancel_check)
         key_to_camelot(track)
 
     # Nur unbrauchbare BPM-Werte ausschliessen. Fehlende Keys bleiben erhalten
@@ -3818,6 +3910,7 @@ def generate_playlist_result(
     valid_ordinals: list[int] = []
     unresolved_keys = []
     for ordinal, candidate in enumerate(tracks):
+        _check_cancel(cancel_check)
         bpm_value = getattr(candidate, "bpm", None)
         try:
             bpm_numeric = float(bpm_value)
@@ -3851,6 +3944,7 @@ def generate_playlist_result(
             bpm_tolerance=bpm_tolerance,
             context=run_context,
             choice_snapshot=choice_snapshot,
+            cancel_check=cancel_check,
         )
 
     # Get the sorting function from the strategy map
@@ -3869,6 +3963,7 @@ def generate_playlist_result(
         sorter_params = deepcopy(effective_config)
         sorter_params.update(run_context)
         sorter_params["candidate_choice_snapshot"] = choice_snapshot
+        sorter_params["cancel_check"] = cancel_check
         logger.info("Effektive Strategieparameter %s: %s", mode, effective_config)
         sorted_tracks = sorter(
             valid_tracks, bpm_tolerance=bpm_tolerance, **sorter_params
@@ -3880,9 +3975,11 @@ def generate_playlist_result(
 
     pools: dict[int, list[int]] = {}
     for ordinal, track in zip(valid_ordinals, valid_tracks):
+        _check_cancel(cancel_check)
         pools.setdefault(id(track), []).append(ordinal)
     occurrences: list[TrackOccurrence] = []
     for track in sorted_tracks:
+        _check_cancel(cancel_check)
         ordinals = pools.get(id(track), [])
         if not ordinals:
             raise RuntimeError(
@@ -3905,6 +4002,7 @@ def generate_playlist_result(
         bpm_tolerance=bpm_tolerance,
         context=run_context,
         choice_snapshot=choice_snapshot,
+        cancel_check=cancel_check,
     )
     quality = generation_result.quality_dict()
     logger.info(
@@ -3915,6 +4013,7 @@ def generate_playlist_result(
         f"BPM={quality['bpm_smoothness']:.2f}"
     )
 
+    _check_cancel(cancel_check)
     return generation_result
 
 

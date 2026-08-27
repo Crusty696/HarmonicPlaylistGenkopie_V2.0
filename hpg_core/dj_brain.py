@@ -222,17 +222,11 @@ def calculate_genre_aware_mix_points(
       mix_in_time = duration * 0.15
       mix_out_time = duration * 0.85
 
-  # AUDIT-FIX N5 (2026-07-24): Auch die Notfall-Pfade liefern jetzt Werte auf
-  # dem Phrasen-Gitter, wenn das ohne Fenster-Kollaps moeglich ist. Vorher
-  # gingen reine Prozentwerte (duration*0.15/0.85) ungefiltert und off-grid
-  # in Track.mix_in_point/mix_out_point.
-  # AUDIT-FIX N5b (2026-08-14): Die Quantisierung wurde vorher nur auf dem
-  # PHRASEN-Gitter versucht. Kollabiert das Fenster dort (kurze Tracks, enge
-  # Sektionen), blieben die rohen Prozentwerte off-grid stehen — auf
-  # synthetischen Kurztracks bis zu 12.6 s neben der Phrasengrenze. Analog zu
-  # align_ai_mix_points wird jetzt das feinere Bar-Gitter als zweite Stufe
-  # versucht; erst wenn auch das kein gueltiges Fenster liefert, bleibt der
-  # Rohwert (Invariante 1 hat Vorrang vor Invariante 2).
+  # AUDIT-FIX N5 (2026-07-24): Auch die Notfall-Pfade werden auf dem
+  # Phrasen-Gitter ausgerichtet. Ein Bar-Fallback ist hier absichtlich nicht
+  # erlaubt: Track-Mixpunkte muessen auf dem genre-spezifischen Phrasenraster
+  # liegen. Reicht das Fenster dafuer nicht, liefert der bindende Vertrag unten
+  # MIX_POINT_UNSET statt eines off-grid Rohwerts.
   for candidate_grid in (grid_seconds,):
     if candidate_grid <= 0:
       continue
@@ -546,20 +540,20 @@ def generate_dj_recommendation(
 
   # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
   adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
-  if adjusted_mix_out_a < 0.0 or adjusted_mix_in_b < 0.0:
-    raise ValueError("Keine Mixpunkte strikt ausserhalb von Intro und Outro moeglich")
-  overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
-  # AUDIT-FIX B3/M1 (2026-08-14): Der alte "M1-Deckel" war
-  #   intro_window_b = _get_intro_end(track_b) - adjusted_mix_in_b
-  # und sollte verhindern, dass der Crossfade ueber das Intro-Ende von B
-  # hinauslaeuft. Seit der Intro-Guard in calculate_paired_mix_points den
-  # Mix-In auf ceil(intro_end) legt, ist diese Differenz per Konstruktion
-  # <= 0 — der Deckel griff auf 51 realen Paaren genau 1x (und auch nur im
-  # Sonderfall "Track B ohne Intro-Sektion", der jetzt ebenfalls geschlossen
-  # ist). Der tatsaechlich bindende Deckel ist der Rest von Track B nach dem
-  # Mix-In: laenger als B noch spielt kann der Uebergang nicht sein.
-  room_b = max(0.0, track_b.duration - adjusted_mix_in_b)
-  overlap_seconds = min(overlap_seconds, room_b)
+  overlap_seconds = 0.0
+  if adjusted_mix_out_a >= 0.0 and adjusted_mix_in_b >= 0.0:
+    overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+    # AUDIT-FIX B3/M1 (2026-08-14): Der alte "M1-Deckel" war
+    #   intro_window_b = _get_intro_end(track_b) - adjusted_mix_in_b
+    # und sollte verhindern, dass der Crossfade ueber das Intro-Ende von B
+    # hinauslaeuft. Seit der Intro-Guard in calculate_paired_mix_points den
+    # Mix-In auf ceil(intro_end) legt, ist diese Differenz per Konstruktion
+    # <= 0 — der Deckel griff auf 51 realen Paaren genau 1x (und auch nur im
+    # Sonderfall "Track B ohne Intro-Sektion", der jetzt ebenfalls geschlossen
+    # ist). Der tatsaechlich bindende Deckel ist der Rest von Track B nach dem
+    # Mix-In: laenger als B noch spielt kann der Uebergang nicht sein.
+    room_b = max(0.0, track_b.duration - adjusted_mix_in_b)
+    overlap_seconds = min(overlap_seconds, room_b)
 
   # Struktur-Kontext auf Basis der wirklich empfohlenen paarspezifischen Punkte
   outgoing_section = _get_section_at_time(track_a, adjusted_mix_out_a, "out")
