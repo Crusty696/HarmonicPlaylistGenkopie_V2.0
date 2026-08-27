@@ -14,8 +14,10 @@ on:
           - rebase
 
 permissions:
+  checks: read
   contents: write
   pull-requests: write
+  statuses: read
 
 jobs:
   auto-merge-and-cleanup:
@@ -94,19 +96,54 @@ jobs:
           
           for idx, pr in enumerate(prs_sorted, 1):
               try:
+                  # Zustand unmittelbar vor dem Merge neu laden und den
+                  # geprueften Head gegen einen TOCTOU-Wechsel binden.
+                  pr = repo.get_pull(pr.number)
                   pr_number = pr.number
                   pr_title = pr.title
                   pr_branch = pr.head.ref
+                  head_sha = pr.head.sha
                   
                   print(f"[{idx}/{len(prs_sorted)}] 🔄 Merging PR #{pr_number}: {pr_title}")
+
+                  if pr.draft:
+                      raise RuntimeError("Draft-PR wird nicht automatisch gemergt")
+                  if pr.mergeable is not True or pr.mergeable_state != 'clean':
+                      raise RuntimeError(
+                          "PR ist nicht eindeutig mergebar und frei von Blockern: "
+                          f"mergeable={pr.mergeable}, state={pr.mergeable_state}"
+                      )
+
+                  head_commit = repo.get_commit(head_sha)
+                  check_runs = list(head_commit.get_check_runs())
+                  if not check_runs:
+                      raise RuntimeError("Keine CI-Check-Runs fuer den PR-Head gefunden")
+                  failed_checks = [
+                      f"{check.name}: {check.status}/{check.conclusion}"
+                      for check in check_runs
+                      if check.status != 'completed'
+                      or check.conclusion not in {'success', 'neutral', 'skipped'}
+                  ]
+                  if failed_checks:
+                      raise RuntimeError(
+                          "CI-Check-Runs nicht erfolgreich abgeschlossen: "
+                          + "; ".join(failed_checks)
+                      )
+
+                  combined_status = head_commit.get_combined_status()
+                  if combined_status.statuses and combined_status.state != 'success':
+                      raise RuntimeError(
+                          "Klassische Commit-Statuses sind nicht erfolgreich: "
+                          f"{combined_status.state}"
+                      )
                   
                   # Merge-Methode
                   if merge_strategy == 'squash':
-                      result = pr.merge(merge_method='squash', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                      result = pr.merge(merge_method='squash', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})", sha=head_sha)
                   elif merge_strategy == 'rebase':
-                      result = pr.merge(merge_method='rebase', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                      result = pr.merge(merge_method='rebase', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})", sha=head_sha)
                   else:
-                      result = pr.merge(merge_method='merge', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})")
+                      result = pr.merge(merge_method='merge', commit_message=f"🤖 Merge: {pr_title} (PR #{pr_number})", sha=head_sha)
 
                   if not result.merged:
                       raise RuntimeError(result.message or "GitHub hat den Merge abgelehnt")

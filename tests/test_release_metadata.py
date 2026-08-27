@@ -1,5 +1,6 @@
 """Konsistenztests fuer Dokumentation und reproduzierbare Release-Metadaten."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,18 @@ from tools import release_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _exact_requirement_pins(path):
+  pins = {}
+  for raw_line in path.read_text(encoding="utf-8").splitlines():
+    requirement = raw_line.partition("#")[0].strip()
+    if "==" not in requirement:
+      continue
+    package, version = requirement.split("==", 1)
+    normalized_package = re.sub(r"[-_.]+", "-", package.strip()).casefold()
+    pins[normalized_package] = version.strip()
+  return pins
 
 
 def test_version_is_consistent_across_user_facing_release_files():
@@ -73,6 +86,26 @@ def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   assert 'Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe"' in installer_ci
 
 
+def test_release_notes_do_not_link_to_missing_changelog():
+  release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+  assert "CHANGELOG.md" not in release
+  assert "generate_release_notes: true" in release
+
+
+def test_optional_performance_requirements_do_not_conflict_with_main_pins():
+  main_pins = _exact_requirement_pins(ROOT / "requirements.txt")
+  performance_pins = _exact_requirement_pins(ROOT / "requirements-performance.txt")
+
+  shared_packages = main_pins.keys() & performance_pins.keys()
+  conflicts = {
+    package: (main_pins[package], performance_pins[package])
+    for package in shared_packages
+    if main_pins[package] != performance_pins[package]
+  }
+  assert conflicts == {}
+
+
 def test_custom_installer_dialogs_are_disabled_in_silent_mode():
   installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
 
@@ -89,6 +122,30 @@ def test_auto_merge_cleanup_is_limited_to_confirmed_merged_heads():
   assert "merged_heads.append" in workflow
   assert "for branch_name in sorted(set(merged_heads))" in workflow
   assert "for branch in branches" not in workflow
+
+
+def test_auto_merge_requires_completed_ci_and_binds_checked_head_sha():
+  workflow = (
+    ROOT / ".github/workflows/auto-merge-all-prs.yml"
+  ).read_text(encoding="utf-8")
+
+  assert "checks: read" in workflow
+  assert "statuses: read" in workflow
+  assert "pr = repo.get_pull(pr.number)" in workflow
+  assert "if pr.draft" in workflow
+  assert "pr.mergeable is not True" in workflow
+  assert "pr.mergeable_state != 'clean'" in workflow
+  assert "check_runs = list(head_commit.get_check_runs())" in workflow
+  assert "if not check_runs" in workflow
+  assert "check.status != 'completed'" in workflow
+  assert "{'success', 'neutral', 'skipped'}" in workflow
+  assert "combined_status.statuses and combined_status.state != 'success'" in workflow
+  assert workflow.count("sha=head_sha") == 3
+  trigger_block = workflow.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+  top_level_triggers = re.findall(
+    r"^  ([A-Za-z_][\w-]*):", trigger_block, re.MULTILINE
+  )
+  assert top_level_triggers == ["workflow_dispatch"]
 
 
 def test_release_manifest_contains_commit_size_and_sha256(tmp_path, monkeypatch):

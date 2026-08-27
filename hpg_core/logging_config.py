@@ -13,11 +13,25 @@ Einmalig beim App-Start:
 
 import logging
 import logging.handlers
+import os
 import sys
 from pathlib import Path
 
 # === Konfiguration ===
-LOG_DIR = Path(__file__).parent.parent / "logs"
+def _resolve_default_log_dir():
+  """Liefert ein dauerhaftes, schreibbares Log-Verzeichnis."""
+  if getattr(sys, "frozen", False):
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    base_dir = (
+      Path(local_app_data)
+      if local_app_data
+      else Path.home() / "AppData" / "Local"
+    )
+    return base_dir / "HPG" / "logs"
+  return Path(__file__).resolve().parent.parent / "logs"
+
+
+LOG_DIR = _resolve_default_log_dir()
 LOG_FILE = LOG_DIR / "hpg.log"
 LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB pro Datei
 LOG_BACKUP_COUNT = 3  # 3 Backup-Dateien behalten
@@ -117,7 +131,7 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
 
   # Datei-Handler (mit Rotation)
   if log_to_file:
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
       LOG_FILE,
       maxBytes=LOG_MAX_BYTES,

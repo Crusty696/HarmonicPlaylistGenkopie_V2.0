@@ -15,6 +15,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from . import logging_config
+
 logger = logging.getLogger(__name__)
 
 # Rotation: nur die letzten N Fehler behalten, Datei waechst nicht unbegrenzt
@@ -22,8 +24,9 @@ MAX_ENTRIES = 200
 
 
 class ErrorReporter:
-    def __init__(self, log_dir="logs"):
-        self.error_log_file = Path(log_dir) / "error_report.json"
+    def __init__(self, log_dir=None):
+        resolved_log_dir = logging_config.LOG_DIR if log_dir is None else Path(log_dir)
+        self.error_log_file = resolved_log_dir / "error_report.json"
         self._lock = threading.Lock()
         try:
             self.error_log_file.parent.mkdir(parents=True, exist_ok=True)

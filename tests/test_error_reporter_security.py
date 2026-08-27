@@ -5,6 +5,7 @@ Tests fuer ErrorReporter (JSON-Fehler-Sink) und playlist_security
 import json
 
 
+import hpg_core.logging_config as logging_config
 from hpg_core.error_reporter import ErrorReporter, MAX_ENTRIES, get_error_reporter
 from hpg_core.playlist_security import (
   sanitize_playlist,
@@ -23,6 +24,13 @@ def make_existing_track(tmp_path, **overrides):
 
 
 class TestErrorReporter:
+  def test_default_uses_shared_logging_directory(self, tmp_path, monkeypatch):
+    monkeypatch.setattr(logging_config, "LOG_DIR", tmp_path / "shared-logs")
+
+    reporter = ErrorReporter()
+
+    assert reporter.error_log_file == tmp_path / "shared-logs" / "error_report.json"
+
   def test_log_and_read_roundtrip(self, tmp_path):
     reporter = ErrorReporter(log_dir=str(tmp_path))
     reporter.log_error("analysis", "Testfehler mit Umlauten: äöü", {"folder": "X:\\Musik"})

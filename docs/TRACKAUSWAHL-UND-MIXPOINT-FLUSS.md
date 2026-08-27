@@ -1,13 +1,13 @@
 # Trackauswahl und Mixpoint-Bestimmung in HPG
 
-Stand: 26. August 2026, abgeleitet aus dem aktuellen Code (Cache-Version 42).
+Stand: 27. August 2026, abgeleitet aus dem aktuellen Code (Cache-Version 43).
 
 Dieses Dokument erklärt zwei getrennte Entscheidungen:
 
 1. **Trackauswahl:** Welcher Track folgt auf welchen?
 2. **Mixpoint-Auswahl:** An welchen Stellen von Track A und Track B findet dieser Übergang statt?
 
-Die Trennung ist wichtig, aber sie bedeutet nicht, dass Mixpoint-Kandidaten erst nach der Sortierung betrachtet werden. Die Analyse erzeugt pro Track lokale Mix-In- und Mix-Out-Kandidaten. Strategien, deren Zielfunktion lokale Übergänge bewertet, verwenden daraus gebildete `PairCandidate`-Scores bereits beim Ordnen der Tracks. Erst wenn die Reihenfolge feststeht, werden genau die `N - 1` gerichteten Nachbarpaare erneut vollständig bewertet und ihre Mixpoints gemeinsam gewählt. Die ursprünglichen Analysewerte am `Track` werden dabei nicht nachträglich verändert; der tatsächlich verwendete Übergang lebt im `TransitionPlan`.
+Die Analyse erzeugt pro Track lokale Mix-In- und Mix-Out-Kandidaten. Beim Ordnen der Tracks bewertet HPG eine gerichtete Trackkante jedoch mit einem eigenen Acht-Faktoren-Score. Falls ein lokaler Rang-1-Kandidat existiert, liefert er dafür nur die lokale Energiedifferenz und sichtbare Detailwerte; sein Zehn-Faktoren-`PairCandidate.score` wird nicht als Sortierscore übernommen. Erst wenn die Reihenfolge feststeht, werden genau die `N - 1` gerichteten Nachbarpaare vollständig bewertet und ihre Mixpoints gemeinsam gewählt. Die ursprünglichen Analysewerte am `Track` werden dabei nicht nachträglich verändert; der tatsächlich verwendete Übergang lebt im `TransitionPlan`.
 
 ## Gesamtbild
 
@@ -17,7 +17,7 @@ flowchart TD
     B --> C[Trackdaten: BPM, Key, Energie, Genre, Struktur]
     B --> D[Lokale Mix-In- und Mix-Out-Kandidaten]
     C --> E[Gewählte Playlist-Strategie]
-    D -->|bei Strategien mit lokalem Übergangsscore| E
+    D -->|lokale Energiedifferenz, falls verfügbar| E
     E --> F[Finale Trackreihenfolge mit eindeutigen Occurrence-IDs]
     F --> G[N minus 1 gerichtete Nachbarpaare]
     D --> G
@@ -104,7 +104,31 @@ Alte Strategienamen werden auf die aktuellen Namen abgebildet. Danach arbeitet g
 
 Nur Parameter, welche die gewählte Strategie wirklich unterstützt, werden aktiv. Ein explizit übergebener alter oder partieller `scoring_context` wird zuerst gegen den vollständigen Laufvertrag ergänzt und validiert. Dieser fertige Snapshot wird danach unverändert an Qualitätsanzeige, Reorder, Übergangsempfehlungen und Preview weitergereicht.
 
-### 2.2 Harte Gates vor dem Score
+### 2.2 Acht-Faktoren-Score für die Trackreihenfolge
+
+Die Sortierstrategien verwenden für eine gerichtete Trackkante `A -> B` eine
+eigene Zielfunktion. Sie kombiniert acht Trackfaktoren; Lautheit und Struktur
+gehören nicht zu diesem Sortierscore:
+
+| Trackfaktor | Standardgewicht |
+|---|---:|
+| Harmonik | 0,160 |
+| BPM | 0,120 |
+| Energie | 0,120 |
+| Genre | 0,120 |
+| Groove | 0,300 |
+| Bass | 0,080 |
+| Klangfarbe | 0,050 |
+| Stimmung | 0,050 |
+
+Die Gewichte stammen aus dem pro Lauf eingefrorenen
+`track_tolerances_by_genre`-Profil des Quelltracks und müssen zusammen exakt
+1 ergeben. Der Rang-1-Paarkandidat kann die lokale Energiedifferenz und
+angezeigte Detailwerte liefern. Der `overall_score` der Trackkante wird aber
+immer neu aus diesen acht Faktoren berechnet. Dieser Wert ist die gemeinsame
+Zielfunktion für Sortierung, Anzeige, Reorder, Quality und Empfehlungen.
+
+### 2.3 Harte Gates vor dem Score
 
 Ein hoher Score darf keinen technisch unbrauchbaren Übergang retten. Deshalb gelten zuerst harte Bedingungen:
 
@@ -117,7 +141,7 @@ Ein hoher Score darf keinen technisch unbrauchbaren Übergang retten. Deshalb ge
 
 Erst wenn diese Gates erfüllt sind, wird ein Kandidat bewertet.
 
-### 2.3 Bewertung einer gerichteten Kante A → B
+### 2.4 Bewertung lokaler Mixpoint-Kandidaten A → B
 
 Die Richtung ist relevant: A läuft bereits, B wird zugemischt. Für ein lokales Kandidatenpaar entstehen zehn Teilwerte zwischen 0 und 1:
 
@@ -159,17 +183,32 @@ KI-Mood-/Subgenre-Metadaten dienen nur der Erklärung: Sie beeinflussen weder
 Trackreihenfolge, Zielfunktion, Qualitätsanzeige, Empfehlung noch lokalen
 Paarwert. `TransitionMetrics.ai_bonus` bleibt immer `0.0`.
 
+Die getrennten Standardgewichte des Kandidatenscores sind:
+
+| Kandidatenfaktor | Standardgewicht |
+|---|---:|
+| Harmonik | 0,140 |
+| BPM | 0,106 |
+| Energie | 0,106 |
+| Genre | 0,106 |
+| Groove | 0,264 |
+| Bass | 0,070 |
+| Klangfarbe | 0,044 |
+| Stimmung | 0,044 |
+| Lautheit | 0,060 |
+| Struktur | 0,060 |
+
 Die wirksame Gewichtquelle hat folgende Priorität:
 
 1. explizit übergebene Toleranzen,
 2. gelernte Hörtest-Präferenz für das Genre,
 3. genreabhängige Standard-/Benutzer-Toleranzen.
 
-Alle Gewichte müssen endlich und nicht negativ sein. Die Kandidatengewichte werden zusammen auf Summe 1 gehalten. Bei einem partiellen Laufkontext bleiben ausdrücklich angegebene Gewichte exakt erhalten; die nicht angegebenen Gewichte werden proportional auf den verbleibenden Anteil skaliert. Eine unmögliche Summe über 1 oder ein vollständiger Gewichtskreis mit einer anderen Summe wird abgelehnt. Fehlt `candidate_tolerances_by_genre` oder `candidate_schema_ranks_by_genre` vollständig, werden die einmal aufgelösten Laufdefaults verwendet. Ein ausdrücklich übergebener Top-Level-Wert `None` ist dagegen ungültig und wird abgelehnt. Innerhalb eines gelieferten Schema-Snapshots wird zusätzlich jede Rangfolge validiert: Sie muss eine eindeutige Liste bekannter Schemata sein. Unbekannte Genre-Schlüssel werden im App-Laufkontext derzeit als zusätzliche Schlüssel übernommen, aber von keinem aufgelösten Trackgenre benutzt; der App-Validator weist sie nicht allein wegen ihres Namens zurück. Das strikte Hörtest-Manifest ist enger und verlangt dagegen exakt die kanonischen Genre-Schlüssel plus einen getrennten Fallback.
+Alle Gewichte müssen endlich und nicht negativ sein. Die Kandidatengewichte werden zusammen auf Summe 1 gehalten. Bei einem partiellen Laufkontext bleiben ausdrücklich angegebene Gewichte exakt erhalten; die nicht angegebenen Gewichte werden proportional auf den verbleibenden Anteil skaliert. Eine unmögliche Summe über 1 oder ein vollständiger Gewichtskreis mit einer anderen Summe wird abgelehnt. Fehlt `candidate_tolerances_by_genre` oder `candidate_schema_ranks_by_genre` vollständig, werden die einmal aufgelösten Laufdefaults verwendet. Ein ausdrücklich übergebener Top-Level-Wert `None` ist dagegen ungültig und wird abgelehnt. Innerhalb eines gelieferten Schema-Snapshots wird zusätzlich jede Rangfolge validiert: Sie muss eine eindeutige Liste bekannter Schemata sein. Für Track- und Kandidatenprofile sind ausschließlich die kanonischen Genres plus `Unknown` erlaubt; unbekannte Genre-Schlüssel werden mit `ValueError` abgelehnt.
 
-### 2.4 Von der Strategie zur endgültigen Trackreihenfolge
+### 2.5 Von der Strategie zur endgültigen Trackreihenfolge
 
-Die Strategie produziert die endgültige Reihenfolge und darf dabei keinen Track mit gültiger BPM verlieren. Lokale Kandidaten beeinflussen die Zielfunktion der dafür vorgesehenen Strategien, sind aber kein nachgeschalteter Filter. Dadurch bleibt die Playlist vollständig, selbst wenn zwischen zwei Nachbarn kein ausreichend belegter lokaler Übergang existiert.
+Die Strategie produziert die endgültige Reihenfolge und darf dabei keinen Track mit gültiger BPM verlieren. Ein vorhandener lokaler Kandidat kann die lokale Energiedifferenz der separaten Acht-Faktoren-Zielfunktion liefern, sein `PairCandidate.score` wird aber nicht als Sortierwert verwendet. Kandidaten sind außerdem kein nachgeschalteter Trackfilter. Dadurch bleibt die Playlist vollständig, selbst wenn zwischen zwei Nachbarn kein ausreichend belegter lokaler Übergang existiert.
 
 Die Übergangsebene arbeitet anschließend strenger: Für ein Nachbarpaar ohne vollständig qualifizierten Kandidaten wird keine scheinbar sichere `TransitionRecommendation` erfunden. Das gilt auch, wenn seine effektive BPM-Differenz über der aktuell eingestellten Toleranz liegt. Der Track bleibt in der Playlist; die Kante erscheint als `UNGEPLANT` mit Score 0 und wird weder vorgespielt noch gerendert.
 
@@ -403,7 +442,7 @@ Dezimalstellen, `UNGEPLANT` oder beim letzten Track ein Gedankenstrich.
 |---|---|
 | Strategie | wählt den Sortieralgorithmus für die endgültige Trackreihenfolge |
 | BPM-Toleranz | GUI-Bereich 1–2 BPM; ein Nachbarpaar außerhalb dieses Gates erhält keinen `TransitionPlan`, erscheint als `UNGEPLANT` und wird nicht gerendert; der lokale Paarvertrag erlaubt nie mehr als 2 BPM |
-| Energy Direction | normalisiert `Build Up`, `Cool Down`, `Maintain` oder `Auto` für das lokale Scoring |
+| Energy Direction | normalisiert `Build Up`, `Cool Down`, `Maintain` oder `Auto`; produktiv nur bei Context Flow |
 | Peak Position | Zielposition des Peaks bei Peak-Time/Context Flow |
 | Harmonic Strictness | beeinflusst lockere Camelot-Beziehungen |
 | Allow Experimental | erlaubt oder verbietet experimentelle +4/+7-Beziehungen |
@@ -412,6 +451,19 @@ Dezimalstellen, `UNGEPLANT` oder beim letzten Track ein Gedankenstrich.
 | gespeicherte Kandidatenwahl | erkennt einen konkreten Mixpoint über Timing, Blende und gespeicherten BPM-/Overlap-Auditkontext wieder; der Candidate-Key gilt nur im aktuellen Result, Konsistenz ist ein eigener Vergleichswert |
 
 Nicht unterstützte Parameter werden für die jeweilige Strategie nicht heimlich verwendet. Der effektive Kontext wird einmal aufgelöst und an alle nachfolgenden Konsumenten weitergereicht.
+
+Die exakte Zuordnung lautet:
+
+| Strategie | Wirksame erweiterte Parameter |
+|---|---|
+| Harmonic Flow | `harmonic_strictness`, `allow_experimental` |
+| Warm-Up | keine |
+| Cool-Down | keine |
+| Peak-Time | `peak_position`, `harmonic_strictness`, `allow_experimental` |
+| Energy Wave | keine |
+| Genre Flow | `genre_mixing`, `genre_weight` |
+| Consistent | `harmonic_strictness`, `allow_experimental` |
+| Context Flow | `energy_direction`, `peak_position`, `harmonic_strictness`, `allow_experimental`, `genre_mixing`, `genre_weight`, `target_energy`, `overlap` |
 
 ### 6.1 Separater Hörtest-, Manifest- und Audit-Fluss
 
@@ -423,7 +475,7 @@ Kandidaten gerankt und Hörclips erzeugt.
 
 ```mermaid
 flowchart LR
-    A[Cache v42 unverändert lesen] --> B[Scoring-Snapshot einmal einfrieren]
+    A[Cache v43 unverändert lesen] --> B[Scoring-Snapshot einmal einfrieren]
     B --> C[Geeignete Paarreserve bestimmen]
     C --> D[Je Paar exakt mit Snapshot ranken]
     D --> E[Top-N mit höchstens fünf Clips rendern]
@@ -491,7 +543,7 @@ um genreabhängige Hörtestpräferenzen zu erzeugen.
 
 | Daten | Speicherort | Lebensdauer und Verwendung |
 |---|---|---|
-| Trackanalyse einschließlich lokaler Mix-In-/Mix-Out-Kandidaten | SQLite-Cache v42 unter `%LOCALAPPDATA%\HPG\hpg_cache_v42.db`, sofern nicht über die Cache-Umgebungsvariablen umgeleitet | Bleibt über Programmstarts erhalten; wird bei passendem Cache-Key und passender Cache-Version wieder geladen |
+| Trackanalyse einschließlich lokaler Mix-In-/Mix-Out-Kandidaten | SQLite-Cache v43 unter `%LOCALAPPDATA%\HPG\hpg_cache_v43.db`, sofern nicht über die Cache-Umgebungsvariablen umgeleitet | Bleibt über Programmstarts erhalten; wird bei passendem Cache-Key und passender Cache-Version wieder geladen |
 | gerichtete Kandidatenwahl `A -> B` | `%LOCALAPPDATA%\HPG\candidate_choices.json` oder `HPG_CANDIDATE_CHOICES_FILE` | Bleibt über Programmstarts erhalten; enthält Timing, Blende sowie BPM-/Overlap-Auditdaten, nicht den nur im aktuellen Result stabilen Candidate-Key |
 | gelernte Hörtestpräferenzen | mitgelieferte Vorgabe plus Benutzerdatei `%LOCALAPPDATA%\HPG\candidate_preferences.json` oder `HPG_CANDIDATE_PREFERENCES_FILE` | Wird genreabhängig geladen und in den Laufkontext übernommen |
 | Benutzergewichte und Toleranzen | mitgelieferte Vorgabe plus Benutzerdatei `%LOCALAPPDATA%\HPG\transition_tolerances.json` oder `HPG_TOLERANCES_FILE` | Bleibt über Programmstarts erhalten und wird vor der Generierung mit den übrigen Quellen aufgelöst |

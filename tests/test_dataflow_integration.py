@@ -41,8 +41,7 @@ def get_test_files(n=5):
     for pat in patterns:
         files.extend(glob.glob(os.path.join(AUDIO_DIR, pat)))
     if not files:
-        print(f"FATAL: Keine Audio-Dateien in {AUDIO_DIR}")
-        sys.exit(1)
+        pytest.skip(f"Keine Audio-Dateien in {AUDIO_DIR}")
     return files[:n]
 
 

@@ -1,9 +1,11 @@
 import logging
 import logging.handlers
 import sys
+from pathlib import Path
 
 import pytest
 
+import hpg_core.logging_config as logging_config
 from hpg_core.logging_config import (
     setup_logging,
     set_module_level,
@@ -11,6 +13,7 @@ from hpg_core.logging_config import (
     _CompactFormatter,
     _FileFormatter,
     MODULE_LEVELS,
+    _resolve_default_log_dir,
 )
 
 @pytest.fixture(autouse=True)
@@ -76,6 +79,32 @@ def test_setup_logging_defaults():
     # Check that external libs are quiet
     for lib in ["librosa", "numba", "audioread", "matplotlib", "PIL"]:
         assert logging.getLogger(lib).level == logging.WARNING
+
+
+def test_default_log_dir_uses_project_logs_in_source_mode(monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+
+    assert _resolve_default_log_dir() == (
+        Path(logging_config.__file__).resolve().parent.parent / "logs"
+    )
+
+
+def test_default_log_dir_uses_local_app_data_in_frozen_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    assert _resolve_default_log_dir() == tmp_path / "HPG" / "logs"
+
+
+def test_setup_logging_creates_nested_frozen_log_directory(tmp_path, monkeypatch):
+    nested_log_dir = tmp_path / "HPG" / "logs"
+    monkeypatch.setattr(logging_config, "LOG_DIR", nested_log_dir)
+    monkeypatch.setattr(logging_config, "LOG_FILE", nested_log_dir / "hpg.log")
+
+    setup_logging(log_to_console=False)
+
+    assert nested_log_dir.is_dir()
+    assert (nested_log_dir / "hpg.log").is_file()
 
 
 def test_setup_logging_level():
