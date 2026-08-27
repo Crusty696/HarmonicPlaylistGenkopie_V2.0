@@ -19,8 +19,8 @@ def test_faktoren_enthalten_drei_viertel_und_vier_drittel():
     assert 4.0 / 3.0 in ID3_BPM_FACTOR_CANDIDATES
 
 
-def test_geaenderter_bpm_vertrag_ist_in_cache_version_43_enthalten():
-    assert CACHE_VERSION == 43
+def test_geaenderter_bpm_vertrag_ist_seit_cache_version_43_enthalten():
+    assert CACHE_VERSION >= 43
 
 
 @pytest.mark.parametrize(

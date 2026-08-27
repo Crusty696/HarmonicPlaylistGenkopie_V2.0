@@ -2359,7 +2359,7 @@ def analyze_track(file_path: str) -> Track | None:
             tempo_array = np.atleast_1d(tempo)
             bpm_value = float(tempo_array[0]) if tempo_array.size else 0.0
             if bpm_value <= 0:
-                alt_tempo = librosa.beat.tempo(y=y, sr=sr)
+                alt_tempo = librosa.feature.rhythm.tempo(y=y, sr=sr)
                 alt_array = np.atleast_1d(alt_tempo)
                 bpm_value = float(alt_array[0]) if alt_array.size else 0.0
             if bpm_value <= 0 and beat_frames.size > 1:

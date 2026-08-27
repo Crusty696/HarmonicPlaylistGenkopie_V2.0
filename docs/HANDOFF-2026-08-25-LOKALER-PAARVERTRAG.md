@@ -113,12 +113,18 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   gezielten Staging separat und danach nochmals im staged Diff geprueft.
 - Abschlusslauf:
   `venv312\Scripts\python.exe -m pytest tests\ --tb=short -q`
-- Letzter Volltest-Snapshot vom 2026-08-25 vor den nachfolgenden
+- Aktueller staerkerer Abschlusslauf vom 2026-08-27 mit allen Markern,
+  explizitem isoliertem Windows-Basetemp und sichtbarer Warnungsauswertung:
+  3568 bestanden, 0 Warnungen, Coverage 86.00 Prozent, Exitcode 0. Ein erster
+  inhaltlich ebenfalls bis 100 Prozent gruener Versuch scheiterte erst beim
+  pytest-eigenen Aufraeumen des globalen Temp-Symlinks mit `WinError 5`; der
+  technisch geaenderte Wiederholungslauf mit explizitem Basetemp beseitigte
+  genau diese Infrastrukturursache.
+- Historischer Volltest-Snapshot vom 2026-08-25 vor den nachfolgenden
   GUI-/E2E-/Kandidatensatz-Auditor-Aenderungen: 2035 bestanden, 25 Warnungen,
-  Coverage 81.65 Prozent, Exitcode 0. Er ist kein Abschlussbeleg fuer den
-  aktuellen Worktree; dafuer ist nach Analyse, Render und Audioaudit ein neuer
-  isolierter Volllauf erforderlich.
-- Aktueller Code-Iststand vom 2026-08-26: `CACHE_VERSION = 42`. Der historische
+  Coverage 81.65 Prozent, Exitcode 0. Dieser Wert ist nur Historie und wurde
+  durch den aktuellen 3568er Beleg ersetzt.
+- Aktueller Code-Iststand vom 2026-08-27: `CACHE_VERSION = 44`. Der historische
   Bump von 36 auf 37 erzwang die korrigierte `None`-Semantik; 37 auf 38
   invalidierte alte Analysezeilen fuer BPM-lose Rekordbox-Metadaten. Version 39
   erzwingt den strikten Vertrag aus 60 Track- und je 28 Kandidatenfeldern,
@@ -131,6 +137,9 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   rohen Frames. Version 42 entfernt die letzte manuelle Cue-Ausnahme auf
   Track-, Kandidaten- und Paarebene; alte v41-Zeilen koennen grenzverletzende
   Mixpunkte oder Kandidaten enthalten und werden nicht weiterverwendet.
+  Version 43 validiert mehrdeutige Keys, Beatgrids, PSSI-Grenzen und
+  KI-Metadaten strikt. Version 44 invalidiert alte Bar-Fallback-Mixpunkte,
+  wenn kein gueltiges Phrasenraster existiert.
 - Der damalige unabhaengige Waechterdurchgang fand keine funktionalen Blocker
   im damaligen Produktionscode-Stand. Die statische Pruefung bestaetigte insbesondere den
   lokalen Messvertrag, Sparse-Indizes, die begrenzte Kettensuche und den
@@ -147,8 +156,9 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   lokalen gerichteten Kante. Fehlt sie im Fixture-Limit, endet es eindeutig
   mit Exitcode 3 statt den korrekten Paarvertrag als Playlist-Crash zu melden.
 - Gezielt nach diesen Aenderungen: 55 GUI-Crash-/Worker-Tests und 6
-  E2E-Werkzeugtests bestanden (61 insgesamt). Der alte Volllauf deckt diese
-  spaeteren Aenderungen nicht ab; der aktuelle Gesamtbeleg steht noch aus.
+  E2E-Werkzeugtests bestanden (61 insgesamt). Der aktuelle 3568er Volllauf
+  deckt diese Aenderungen inzwischen ab. Bibliotheksanalyse, Render-/Audioaudit
+  und subjektiver Hoertest bleiben davon getrennte Laufzeitbelege.
 
 ### Vollstaendige Library und Cache-Iststand
 
@@ -224,10 +234,11 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   v41-Lauf wurde nach mindestens 24 analysierten Tracks kontrolliert beendet,
   als die noch vorhandene manuelle Intro-/Outro-Cue-Ausnahme nachgewiesen
   wurde. Seine DB und Logs bleiben unveraenderte historische Artefakte. Erst
-  nach fokussierten Tests und unabhaengigem TOR-2-Waechter beginnt ein neuer
-  v42-Lauf. Erfolgsschwelle bleibt 3661, weil fuenf bekannte Continuous-Mix-
-  Dateien das 500-MB-Limit ueberschreiten. Ein v42-Endergebnis oder Exitcode
-  ist noch nicht belegt.
+  Die historischen v42- und v43-Laeufe werden nicht fortgesetzt. Ein spaeter
+  ausdruecklich freigegebener Bibliothekslauf muss mit einem neuen isolierten
+  v44-Arbeitscache beginnen. Erfolgsschwelle bleibt 3661, weil fuenf bekannte
+  Continuous-Mix-Dateien das 500-MB-Limit ueberschreiten. Ein v44-Endergebnis
+  oder Exitcode ist noch nicht belegt.
 - Ein realer, isolierter E2E-Lauf analysierte 12 echte Psytrance-Tracks und
   endete korrekt mit Exitcode 3: innerhalb dieses kleinen deterministischen
   Satzes keine vollwertige lokale gerichtete Kante. 998 rohe
@@ -274,9 +285,10 @@ weder committed noch gepusht.
 
 ## Noch offen fuer Codex
 
-1. Nur die auftragsbezogenen Dateien sauber committen; die fruehere
-   Freigabe fuer den zugehoerigen Remote-Push ist im Chat dokumentiert.
-2. Die 3666 Master in einen neuen, getrennten v42-Arbeitscache analysieren;
+1. Die auftragsbezogenen Code- und Dokumentaenderungen mit aktuellem
+   Volltest- und Waechterbeleg committen und pushen.
+2. Die Bibliotheksanalyse bleibt auf ausdrueckliche Nutzeranweisung pausiert.
+   Ein spaeterer Lauf muss einen neuen getrennten v44-Arbeitscache verwenden;
    Benutzer-Cache, Rekordbox und Musik bleiben read-only.
 3. Neuen Ausgabeordner anlegen und 30 neue Psytrance-Paare aus der vollstaendig
    erreichbaren Library rendern, maximal fuenf lokale Versionen je Paar.
@@ -295,7 +307,8 @@ weder committed noch gepusht.
 
 Ein frischer Codex-Agent hat diese Datei und den damaligen Worktree read-only
 geprueft und die Arbeit als Ausgangsstand uebernommen. Die historischen v37-,
-v39-, v40- und partiellen v41-Laeufe werden nicht weiterverwendet. Offen sind
-der vollstaendig neue v42-Arbeitslauf mit belegtem Exitcode, der neue
-Render-/Audioaudit, der echte Render-E2E-Beleg und der anschliessende aktuelle
-Volllauf samt Abschlusswaechter.
+v39-, v40-, partiellen v41-, v42- und v43-Laeufe werden nicht weiterverwendet.
+Die Bibliotheksanalyse ist auf Nutzeranweisung pausiert. Vor einem spaeteren
+v44-Lauf bleiben der neue Render-/Audioaudit und ein echter Render-E2E-Beleg
+offen; fuer den Code-Abschluss sind aktueller Volllauf und Abschlusswaechter
+verbindlich.

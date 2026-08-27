@@ -13,10 +13,10 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12.10'
 
@@ -74,7 +74,7 @@ jobs:
       run: call build_installer.bat
 
     - name: Silent install, startup smoke, and uninstall
-      timeout-minutes: 5
+      timeout-minutes: 10
       shell: pwsh
       run: |
         $setups = @(Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe" -File)
@@ -83,45 +83,121 @@ jobs:
         }
         $setup = $setups[0].FullName
         $installDir = Join-Path $env:RUNNER_TEMP "HPG-Installer-Smoke"
-        $install = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -PassThru
-        if (-not $install.WaitForExit(120000)) {
-          Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-          throw "Installer timed out"
-        }
-        if ($install.ExitCode -ne 0) { throw "Installer failed with $($install.ExitCode)" }
         $installedExe = Join-Path $installDir "HarmonicPlaylistGenerator.exe"
-        if (-not (Test-Path $installedExe)) { throw "Installed executable missing" }
-
-        $env:HPG_CACHE_FILE = Join-Path $env:RUNNER_TEMP "hpg_installer_smoke_cache.db"
-        $app = Start-Process -FilePath $installedExe -WindowStyle Hidden -PassThru
-        Start-Sleep -Seconds 8
-        if ($app.HasExited) { throw "Installed application exited with $($app.ExitCode)" }
-
-        & taskkill.exe /PID $app.Id /T /F | Out-Host
-        if ($LASTEXITCODE -ne 0 -and -not $app.HasExited) {
-          throw "Failed to stop installed application process tree $($app.Id)"
-        }
-        Start-Sleep -Seconds 2
-        $remainingProcesses = @(
-          Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue
-        )
-        if ($remainingProcesses.Count -ne 0) {
-          throw "Installed application processes did not stop"
-        }
-
         $uninstaller = Join-Path $installDir "unins000.exe"
-        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
-        if (-not $uninstall.WaitForExit(120000)) {
-          Stop-Process -Id $uninstall.Id -Force -ErrorAction SilentlyContinue
-          throw "Uninstaller timed out"
+        $workerSmoke = $null
+        $app = $null
+        $installCompleted = $false
+        $failure = $null
+        $cleanupErrors = [System.Collections.Generic.List[string]]::new()
+
+        try {
+          $install = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -PassThru
+          if (-not $install.WaitForExit(120000)) {
+            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+            throw "Installer timed out"
+          }
+          if ($install.ExitCode -ne 0) { throw "Installer failed with $($install.ExitCode)" }
+          $installCompleted = $true
+          if (-not (Test-Path $installedExe)) { throw "Installed executable missing" }
+
+          $env:HPG_CACHE_FILE = Join-Path $env:RUNNER_TEMP "hpg_installer_smoke_cache.db"
+          $audioA = Join-Path $env:RUNNER_TEMP "hpg_worker_smoke_a.wav"
+          $audioB = Join-Path $env:RUNNER_TEMP "hpg_worker_smoke_b.wav"
+        @'
+        import sys
+        import numpy as np
+        import soundfile as sf
+
+        sr = 22050
+        seconds = 20.0
+        samples = np.arange(int(sr * seconds), dtype=np.float64)
+        for index, path in enumerate(sys.argv[1:]):
+            audio = 0.08 * np.sin(2.0 * np.pi * (110.0 + index * 55.0) * samples / sr)
+            kernel = np.exp(-np.arange(int(sr * 0.04), dtype=np.float64) / (sr * 0.008))
+            interval = int(sr * 60.0 / (138.0 + index * 2.0))
+            for start in range(0, samples.size, interval):
+                end = min(start + kernel.size, samples.size)
+                audio[start:end] += 0.8 * kernel[:end - start]
+            sf.write(path, np.clip(audio, -1.0, 1.0).astype(np.float32), sr)
+        '@ | python - $audioA $audioB
+          if ($LASTEXITCODE -ne 0) { throw "Failed to generate isolated worker-smoke audio" }
+
+          $workerInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $workerInfo.FileName = $installedExe
+          $workerInfo.UseShellExecute = $false
+          $workerInfo.CreateNoWindow = $true
+          [void]$workerInfo.ArgumentList.Add("--worker-smoke")
+          [void]$workerInfo.ArgumentList.Add($audioA)
+          [void]$workerInfo.ArgumentList.Add($audioB)
+          $workerSmoke = [System.Diagnostics.Process]::Start($workerInfo)
+          if (-not $workerSmoke.WaitForExit(180000)) { throw "Frozen worker smoke timed out" }
+          if ($workerSmoke.ExitCode -ne 0) {
+            throw "Frozen worker smoke failed with $($workerSmoke.ExitCode)"
+          }
+          if (-not (Test-Path $env:HPG_CACHE_FILE) -or (Get-Item $env:HPG_CACHE_FILE).Length -le 0) {
+            throw "Frozen worker smoke did not persist its isolated cache"
+          }
+
+          $app = Start-Process -FilePath $installedExe -WindowStyle Hidden -PassThru
+          Start-Sleep -Seconds 8
+          if ($app.HasExited) { throw "Installed application exited with $($app.ExitCode)" }
+        } catch {
+          $failure = $_
+        } finally {
+          foreach ($entry in @(
+            @{ Process = $workerSmoke; Name = "worker smoke" },
+            @{ Process = $app; Name = "GUI smoke" }
+          )) {
+            $process = $entry.Process
+            if ($null -eq $process) { continue }
+            try {
+              if (-not $process.HasExited) {
+                & taskkill.exe /PID $process.Id /T /F | Out-Host
+                [void]$process.WaitForExit(10000)
+              }
+              if (-not $process.HasExited) {
+                $cleanupErrors.Add("$($entry.Name) process tree did not stop")
+              }
+            } catch {
+              $cleanupErrors.Add("$($entry.Name) cleanup failed: $($_.Exception.Message)")
+            }
+          }
+
+          if (Test-Path $uninstaller) {
+            try {
+              $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
+              if (-not $uninstall.WaitForExit(120000)) {
+                Stop-Process -Id $uninstall.Id -Force -ErrorAction SilentlyContinue
+                $cleanupErrors.Add("Uninstaller timed out")
+              } elseif ($uninstall.ExitCode -ne 0) {
+                $cleanupErrors.Add("Uninstaller failed with $($uninstall.ExitCode)")
+              }
+            } catch {
+              $cleanupErrors.Add("Uninstaller cleanup failed: $($_.Exception.Message)")
+            }
+          } elseif ($installCompleted) {
+            $cleanupErrors.Add("Uninstaller missing after successful installation")
+          }
+
+          Start-Sleep -Seconds 2
+          $remainingProcesses = @(
+            Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue
+          )
+          if ($remainingProcesses.Count -ne 0) {
+            $cleanupErrors.Add("Installed application processes did not stop")
+          }
+          if ($installCompleted -and (Test-Path $installedExe)) {
+            $cleanupErrors.Add("Uninstall left the application executable behind")
+          }
         }
-        if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with $($uninstall.ExitCode)" }
-        Start-Sleep -Seconds 2
-        if (Test-Path $installedExe) { throw "Uninstall left the application executable behind" }
+
+        if ($null -ne $failure) { throw $failure }
+        if ($cleanupErrors.Count -ne 0) { throw ($cleanupErrors -join "; ") }
 
     - name: Upload Build Artifact
       if: success()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: HarmonicPlaylistGenerator-Windows
         path: |
@@ -142,10 +218,10 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12.10'
 

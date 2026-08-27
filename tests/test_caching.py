@@ -655,9 +655,12 @@ class TestCacheConcurrency:
     assert record_count == (len(jobs),)
 
 
-def test_cache_version_43_und_kandidatenfelder_sind_listenfelder():
+def test_cache_version_44_invalidiert_v43_mixpoint_fallbacks():
   from hpg_core import caching
-  assert caching.CACHE_VERSION == 43
+
+  assert caching.CACHE_VERSION == 44
+  assert not caching._cache_marker_is_current(("system", 43, "metadata"))
+  assert caching._cache_marker_is_current(("system", 44, "metadata"))
   for name in ("phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates"):
     assert name in caching.TRACK_LIST_FIELDS
 

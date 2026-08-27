@@ -148,7 +148,11 @@ logger = logging.getLogger(__name__)
 # geleert; Rekordbox-Beatgrids brauchen fuer Persistenz/Export wieder den
 # verifizierten Referenzvertrag. PSSI-Grenzen und KI-Metadaten werden strikt
 # validiert, damit keine falschen Erfolgsdaten wiederverwendet werden.
-CACHE_VERSION = 43
+# FIX 2026-08-27: 43 -> 44. Mixpunkte ohne erfuellbares Phrasenraster bleiben
+# jetzt explizit ungesetzt statt auf einen Bar-Anker auszuweichen. Alte
+# v43-Zeilen koennen weiterhin solche semantisch ungueltigen Fallback-Werte
+# enthalten und duerfen den strengeren Mixpoint-Vertrag nicht maskieren.
+CACHE_VERSION = 44
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

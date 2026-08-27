@@ -15,10 +15,10 @@ passen.
 
 ## CACHE_VERSION — wo und wann
 
-`CACHE_VERSION = 42` in **`hpg_core/caching.py`** — nicht in `config.py`.
+`CACHE_VERSION = 44` in **`hpg_core/caching.py`** — nicht in `config.py`.
 Das ist ein haeufiger Fehlgriff.
 
-Die Version steckt im **Dateinamen**: `hpg_cache_v42.db`. Ein Bump erzeugt
+Die Version steckt im **Dateinamen**: `hpg_cache_v44.db`. Ein Bump erzeugt
 also eine neue DB; zusaetzlich filtert der Read auf die Version und raeumt
 stale Rows auf.
 
@@ -67,6 +67,14 @@ Provenienz und Prioritaet, duerfen aber weder Track-Mixpunkte noch lokale
 Kandidaten oder Paar-Gates ueber Intro-/Outro-Grenzen hinwegsetzen. Alte
 v41-Zeilen koennen grenzverletzende Mixpunkte und Kandidaten enthalten.
 
+**Stand 43 (2026-08-27):** Mehrdeutige Audio-Keys werden vollstaendig geleert;
+Rekordbox-Beatgrids brauchen fuer Persistenz und Export den verifizierten
+Referenzvertrag. PSSI-Grenzen und KI-Metadaten werden strikt validiert.
+
+**Stand 44 (2026-08-27):** Ein nicht erfuellbares Phrasenraster liefert fuer
+Mix-In und Mix-Out den expliziten Sentinel statt eines Bar-Fallbacks. Alte
+v43-Zeilen koennen semantisch veraltete Fallback-Mixpunkte enthalten.
+
 **Bump ist Pflicht, wenn sich der Analyse-Output aendert:** Mixpoint-Formel,
 Quantisierung, Sektions-Labeling, Genre-Regeln, neue/geaenderte Track-Felder,
 Downbeat-/Phrase-Schaetzung. Ohne Bump maskieren alte Werte den Fix — und ein
@@ -79,9 +87,9 @@ Neue Bumps in diesem Stil ergaenzen.
 
 ```
 CACHE_FILE = HPG_CACHE_FILE                       # Env, hoechste Prioritaet
-           | HPG_CACHE_DIR/hpg_cache_v42.db       # Env
-           | %LOCALAPPDATA%\HPG\hpg_cache_v42.db  # Standard Windows
-           | ~/.hpg/hpg_cache_v42.db              # Fallback
+           | HPG_CACHE_DIR/hpg_cache_v44.db       # Env
+           | %LOCALAPPDATA%\HPG\hpg_cache_v44.db  # Standard Windows
+           | ~/.hpg/hpg_cache_v44.db              # Fallback
 LOCK_FILE  = <cache ohne .db> + ".lock"
 ```
 
