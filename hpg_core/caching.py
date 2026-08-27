@@ -15,7 +15,6 @@ import sys
 import hashlib
 import time
 import logging
-import errno
 from contextlib import contextmanager
 from .models import Track
 from .config import CACHE_LOCK_TIMEOUT
