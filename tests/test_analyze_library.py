@@ -42,7 +42,13 @@ def _gueltiger_cache(pfad: Path):
 
 
 def _track(pfad: Path) -> Track:
-    return Track(filePath=str(pfad.resolve()), fileName=pfad.name)
+    return Track(
+        filePath=str(pfad.resolve()),
+        fileName=pfad.name,
+        duration=1.0,
+        bpm=120.0,
+        analysis_mode="librosa_full_or_tail",
+    )
 
 
 def _cachezeile(pfad: Path, track: Track, *, key: str | None = None, version=None):

@@ -134,6 +134,8 @@ def test_complete_head_fractional_duration_is_cache_valid(monkeypatch):
     filePath="C:/fractional.aif",
     fileName="fractional.aif",
     duration=raw_duration,
+    bpm=140.0,
+    analysis_mode="librosa_full_or_tail",
     sections=[section.to_dict() for section in structure.sections],
     analysis_coverage=coverage,
   )

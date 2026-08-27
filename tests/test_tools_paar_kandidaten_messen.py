@@ -30,8 +30,13 @@ def test_lade_tracks_json_liest_kandidaten_messen_ausgabe(tmp_path):
     from hpg_core.caching import track_to_dict
     from hpg_core.mix_candidates import MixCandidate
     from hpg_core.models import Track
-    t = Track(filePath="x.mp3", fileName="x.mp3")
-    t.bpm = 140.0
+    t = Track(
+        filePath="x.mp3",
+        fileName="x.mp3",
+        duration=300.0,
+        bpm=140.0,
+        analysis_mode="librosa_full_or_tail",
+    )
     t.mix_in_candidates = [
         MixCandidate(
             t=30.0, schema=["sektion"], provenance="test_fixture"

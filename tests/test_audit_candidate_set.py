@@ -80,6 +80,7 @@ def candidate_set(tmp_path):
     for key, path, bpm in (("a", track_a, 120.0), ("b", track_b, 122.0)):
         track = Track(
             str(path), path.name, duration=100.0, bpm=bpm, outro_covered=True,
+            analysis_mode="librosa_full_or_tail",
             detected_genre="Psytrance", camelotCode="8A",
             sections=[{
                 "label": "main", "start_time": 0.0, "end_time": 100.0,
