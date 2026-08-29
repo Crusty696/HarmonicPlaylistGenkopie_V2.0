@@ -1,6 +1,3 @@
-from __future__ import annotations
-from math import ceil, floor
-import numpy as np
 """
 DJ Brain - Genre-spezifische Mix-Logik fuer den Harmonic Playlist Generator.
 
@@ -12,206 +9,44 @@ Berechnet intelligente, genre-spezifische Mix-Punkte basierend auf:
 Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 """
 
+from __future__ import annotations
 
-
+import math
 from dataclasses import dataclass, field
-from .models import Track
-from .config import METER
 
+import numpy as np
 
-# === Genre Mix Profiles ===
-# Basiert auf gaengigen DJ-Konventionen pro Genre
-
-@dataclass
-class GenreMixProfile:
-  """Definiert genre-spezifische Mix-Parameter."""
-  name: str
-  intro_bars: tuple[int, int]      # (min, max) Bars fuer Intro-Laenge
-  outro_bars: tuple[int, int]      # (min, max) Bars fuer Outro-Laenge
-  transition_bars: tuple[int, int] # (min, max) empfohlener Overlap in Bars
-  phrase_unit: int                  # Phrase-Einheit in Bars (8, 16, 32)
-  eq_strategy: str                 # EQ-Empfehlung
-  mix_technique: str               # Primaere Mix-Technik
-  description: str                 # Kurze Genre-Beschreibung fuer UI
-
-GENRE_MIX_PROFILES: dict[str, GenreMixProfile] = {
-  "Psytrance": GenreMixProfile(
-    name="Psytrance",
-    intro_bars=(32, 64),
-    outro_bars=(32, 64),
-    transition_bars=(16, 32),
-    phrase_unit=16,
-    eq_strategy="Bass Swap an der Drop-Grenze",
-    mix_technique="Langer Intro/Outro-Overlap mit Bass Swap",
-    description="Psytrance: 16-Bar Phrasen, Bass Swap am Drop",
-  ),
-  "Tech House": GenreMixProfile(
-    name="Tech House",
-    intro_bars=(16, 32),
-    outro_bars=(16, 32),
-    transition_bars=(8, 16),
-    phrase_unit=8,
-    eq_strategy="Schneller Bass Swap, Hi-Hats laufen lassen",
-    mix_technique="Enge Cuts, Loop-basiertes Mixen",
-    description="Tech House: 8-Bar Phrasen, schnelle Cuts",
-  ),
-  "Progressive": GenreMixProfile(
-    name="Progressive",
-    intro_bars=(32, 64),
-    outro_bars=(32, 64),
-    transition_bars=(32, 64),
-    phrase_unit=8,
-    eq_strategy="Langsamer EQ-Blend ueber 32+ Bars",
-    mix_technique="Langer Layer-Blend mit graduellem EQ-Shift",
-    description="Progressive: 8-Bar Phrasen, lange Blends",
-  ),
-  "Melodic Techno": GenreMixProfile(
-    name="Melodic Techno",
-    intro_bars=(32, 64),
-    outro_bars=(32, 64),
-    transition_bars=(16, 32),
-    phrase_unit=8,
-    eq_strategy="Filter Ride, Bass vom Incoming cutten bis Breakdown",
-    mix_technique="Filter Rides, Melodie-bewusstes Blending",
-    description="Melodic Techno: 8-Bar Phrasen, Filter Rides",
-  ),
-  "Techno": GenreMixProfile(
-    name="Techno",
-    intro_bars=(16, 32),
-    outro_bars=(16, 32),
-    transition_bars=(8, 16),
-    phrase_unit=8,
-    eq_strategy="Harter Bass Swap, Mids kontrollieren",
-    mix_technique="Schnelle Cuts, Loop-basiert, harte Uebergaenge",
-    description="Techno: 8-Bar Phrasen, harte Cuts und Bass Swaps",
-  ),
-  "Deep House": GenreMixProfile(
-    name="Deep House",
-    intro_bars=(32, 64),
-    outro_bars=(32, 64),
-    transition_bars=(32, 64),
-    phrase_unit=8,
-    eq_strategy="Sanfter Bass-Blend ueber 32+ Bars, Mids smooth halten",
-    mix_technique="Langer smooth Blend, Groove-Matching",
-    description="Deep House: 8-Bar Phrasen, lange smoothe Blends",
-  ),
-  "Trance": GenreMixProfile(
-    name="Trance",
-    intro_bars=(32, 64),
-    outro_bars=(32, 64),
-    transition_bars=(16, 32),
-    phrase_unit=16,
-    eq_strategy="Bass Swap am Build, Melodie rein-filtern",
-    mix_technique="Breakdown-basiertes Blending, Melodie-Layering",
-    description="Trance: 16-Bar Phrasen, Breakdown-Blends",
-  ),
-  "Drum & Bass": GenreMixProfile(
-    name="Drum & Bass",
-    intro_bars=(16, 32),
-    outro_bars=(16, 32),
-    transition_bars=(8, 16),
-    phrase_unit=8,
-    eq_strategy="Schneller Bass Swap, Drums laufen lassen",
-    mix_technique="Double Drop, schnelle Cuts, DJ Neumark style",
-    description="DnB: 8-Bar Phrasen, schnelle Drops und Cuts",
-  ),
-  "Minimal": GenreMixProfile(
-    name="Minimal",
-    intro_bars=(32, 64),
-    outro_bars=(32, 64),
-    transition_bars=(32, 64),
-    phrase_unit=8,
-    eq_strategy="Subtiler Bass-Blend, Texturen langsam einblenden",
-    mix_technique="Sehr langer Blend, hypnotische Uebergaenge",
-    description="Minimal: 8-Bar Phrasen, hypnotische Blends",
-  ),
-}
-
-# Default-Profil fuer unbekannte Genres
-DEFAULT_MIX_PROFILE = GenreMixProfile(
-  name="Default",
-  intro_bars=(16, 32),
-  outro_bars=(16, 32),
-  transition_bars=(16, 32),
-  phrase_unit=8,
-  eq_strategy="Standard Bass Swap",
-  mix_technique="Standard Intro/Outro-Blend",
-  description="Standard-Mix (Genre unbekannt)",
+from .config import (
+  DEFAULT_BPM,
+  DEFAULT_SECTION_ENERGY,
+  GAIN_DIFF_SHOW_DB,
+  GAIN_DIFF_WARN_DB,
+  KEY_CONFIDENCE_UNCERTAIN,
+  METER,
+  MIX_POINT_UNSET,
+)
+from .genres import (
+  DEFAULT_MIX_PROFILE,
+  GENRE_COMPATIBILITY,
+  GENRE_MIX_PROFILES,
+  GenreMixProfile,
+  _GENRE_COMPATIBILITY_NORMALIZED,
+  _MIX_PROFILES_NORMALIZED,
+)
+from .models import (
+  QUANTIZE_TOLERANCE_SEC,
+  Track,
+  effective_bpm_diff,
+  get_camelot_components,
+  quantize_to_grid,
+  seconds_to_bars,
 )
 
 
-# === Genre Compatibility Matrix ===
-# Werte 0.0-1.0: Wie gut passen zwei Genres zusammen?
-# Symmetrisch: (A, B) == (B, A)
-
-GENRE_COMPATIBILITY: dict[tuple[str, str], float] = {
-  # --- Selbst-Paare (1.0) ---
-  ("Psytrance", "Psytrance"):           1.0,
-  ("Tech House", "Tech House"):         1.0,
-  ("Progressive", "Progressive"):       1.0,
-  ("Melodic Techno", "Melodic Techno"): 1.0,
-  ("Techno", "Techno"):                 1.0,
-  ("Deep House", "Deep House"):         1.0,
-  ("Trance", "Trance"):                 1.0,
-  ("Drum & Bass", "Drum & Bass"):       1.0,
-  ("Minimal", "Minimal"):               1.0,
-
-  # --- Original 4-Genre Cross-Paare ---
-  ("Psytrance", "Tech House"):          0.3,
-  ("Psytrance", "Progressive"):         0.6,
-  ("Psytrance", "Melodic Techno"):      0.4,
-  ("Tech House", "Progressive"):        0.5,
-  ("Tech House", "Melodic Techno"):     0.75,
-  ("Progressive", "Melodic Techno"):    0.85,
-
-  # --- Psytrance Cross-Paare (neu) ---
-  ("Psytrance", "Techno"):              0.5,   # BPM-Overlap, aber unterschiedliche Stimmung
-  ("Psytrance", "Deep House"):          0.15,  # Kaum kompatibel - Tempo + Stimmung
-  ("Psytrance", "Trance"):              0.75,  # Verwandt, gemeinsame Wurzeln
-  ("Psytrance", "Drum & Bass"):         0.25,  # Nur ueber Breakdowns, Tempo-Sprung
-  ("Psytrance", "Minimal"):             0.2,   # Kaum kompatibel
-
-  # --- Tech House Cross-Paare (neu) ---
-  ("Tech House", "Techno"):             0.8,   # Nah verwandt, BPM-Overlap
-  ("Tech House", "Deep House"):         0.7,   # Gleiche Wurzeln, Groove-verwandt
-  ("Tech House", "Trance"):             0.35,  # Unterschiedliche Stimmung
-  ("Tech House", "Drum & Bass"):        0.2,   # Grosser Tempo-Sprung
-  ("Tech House", "Minimal"):            0.75,  # Verwandt, groove-basiert
-
-  # --- Progressive Cross-Paare (neu) ---
-  ("Progressive", "Techno"):            0.55,  # Moderater Match
-  ("Progressive", "Deep House"):        0.65,  # Smooth Transitions moeglich
-  ("Progressive", "Trance"):            0.8,   # Progressive Trance ist das Bindeglied
-  ("Progressive", "Drum & Bass"):       0.2,   # Kaum kompatibel
-  ("Progressive", "Minimal"):           0.6,   # Beide atmosphaerisch
-
-  # --- Melodic Techno Cross-Paare (neu) ---
-  ("Melodic Techno", "Techno"):         0.8,   # Nah verwandt
-  ("Melodic Techno", "Deep House"):     0.65,  # Melodisch, smooth
-  ("Melodic Techno", "Trance"):         0.7,   # Melodische Verwandtschaft
-  ("Melodic Techno", "Drum & Bass"):    0.2,   # Kaum kompatibel
-  ("Melodic Techno", "Minimal"):        0.6,   # Techno-Familie
-
-  # --- Techno Cross-Paare (neu) ---
-  ("Techno", "Deep House"):             0.4,   # Unterschiedliche Energie
-  ("Techno", "Trance"):                 0.55,  # Tempo-Overlap, unterschiedliche Stimmung
-  ("Techno", "Drum & Bass"):            0.35,  # Industrial DnB Bridge moeglich
-  ("Techno", "Minimal"):                0.8,   # Verwandt, Techno-Familie
-
-  # --- Deep House Cross-Paare (neu) ---
-  ("Deep House", "Trance"):             0.3,   # Unterschiedliche Energie + Tempo
-  ("Deep House", "Drum & Bass"):        0.1,   # Fast inkompatibel
-  ("Deep House", "Minimal"):            0.65,  # Beide subtil, smooth
-
-  # --- Trance Cross-Paare (neu) ---
-  ("Trance", "Drum & Bass"):            0.3,   # Nur ueber Breakdowns
-  ("Trance", "Minimal"):                0.35,  # Unterschiedliche Stimmung
-
-  # --- Drum & Bass Cross-Paare (neu) ---
-  ("Drum & Bass", "Minimal"):           0.15,  # Fast inkompatibel
-}
-
-
+# === Genre-Wissen ===
+# Audit-Refactoring 2026-07-17: alle Genre-Tabellen leben zentral in genres.py
+# (Single Source of Truth mit Import-Validierung). Hier re-exportiert, damit
+# bestehende Importe (analysis, structure_analyzer, main, Tests) stabil bleiben.
 def get_genre_compatibility(genre_a: str, genre_b: str) -> float:
   """
   Gibt die Kompatibilitaet zwischen zwei Genres zurueck (0.0-1.0).
@@ -240,6 +75,15 @@ def get_genre_compatibility(genre_a: str, genre_b: str) -> float:
   if score is not None:
     return score
 
+  # Case-insensitiver Fallback: ID3-Genres kommen oft kleingeschrieben
+  # ("tech house" statt "Tech House") -- sonst stiller 0.5-Fallback
+  key = (genre_a.casefold(), genre_b.casefold())
+  score = _GENRE_COMPATIBILITY_NORMALIZED.get(key)
+  if score is None:
+    score = _GENRE_COMPATIBILITY_NORMALIZED.get((key[1], key[0]))
+  if score is not None:
+    return score
+
   # Unbekannte Kombination
   return 0.5
 
@@ -254,7 +98,10 @@ def get_mix_profile(genre: str) -> GenreMixProfile:
   Returns:
     GenreMixProfile fuer das Genre oder Default-Profil
   """
-  return GENRE_MIX_PROFILES.get(genre, DEFAULT_MIX_PROFILE)
+  profile = GENRE_MIX_PROFILES.get(genre)
+  if profile is None and genre:
+    profile = _MIX_PROFILES_NORMALIZED.get(genre.casefold())
+  return profile if profile is not None else DEFAULT_MIX_PROFILE
 
 
 # === Mix-Punkt-Berechnung ===
@@ -264,6 +111,8 @@ def calculate_genre_aware_mix_points(
   bpm: float,
   duration: float,
   genre: str,
+  anchor: float = 0.0,
+  first_downbeat: float | None = None,
 ) -> tuple[float, float, int, int]:
   """
   Berechnet genre-spezifische Mix-In/Out-Punkte basierend auf Track-Struktur.
@@ -271,58 +120,153 @@ def calculate_genre_aware_mix_points(
   Logik:
   - Mix-In: Sektion mit Substanz (Energie-Dichte-Check)
   - Mix-Out: Punkt, an dem der Track "ausduennt"
-  - Quantisiert auf 4-Bar-Grenzen fuer musikalisches Phrase-Alignment
+  - Quantisiert aufs Phrasen-Gitter fuer musikalisches Phrase-Alignment
+
+  Args:
+    anchor: Anker des Phrasen-Gitters in Sekunden (seit A1: phrase_anchor,
+      vorher first_downbeat) — das Gitter liegt auf anchor + k*grid statt
+      auf k*grid. 0.0 = bisheriges Verhalten (Raster ab t=0).
+    first_downbeat: Takt-Anker in Sekunden (AUDIT-FIX R3, 2026-07-26) —
+      bindet die min_mix_in-Untergrenze an den Track-ANFANG statt an den
+      (ggf. spaeten) Phrasen-Anker. None = Fallback auf anchor
+      (Alt-Verhalten fuer Aufrufer ohne Downbeat-Info).
   """
-  if not sections or bpm <= 0 or duration <= 0:
-    return 0.0, duration, 0, 0
+  # AUDIT-FIX Z1 (2026-08-14): Der Guard reichte die ungueltige duration
+  # unveraendert als mix_out durch — bei duration=-5.0 kam (0.0, -5.0) heraus
+  # und verletzte damit genau die Invariante 0 <= mix_in < mix_out, die er
+  # schuetzen soll. Zusaetzlich griffen die Vergleiche bei NaN/inf gar nicht
+  # (NaN-Vergleiche sind immer False), die Funktion lief ungebremst durch und
+  # lieferte Mix-Punkte ohne jede Dauer-Begrenzung. Jetzt explizit auf
+  # Endlichkeit pruefen und nie einen negativen/nicht-endlichen mix_out
+  # zurueckgeben.
+  if (
+    not sections
+    or not math.isfinite(bpm)
+    or not math.isfinite(duration)
+    or bpm <= 0
+    or duration <= 0
+  ):
+    safe_duration = duration if math.isfinite(duration) and duration > 0 else 0.0
+    return 0.0, safe_duration, 0, 0
 
   profile = get_mix_profile(genre)
   seconds_per_beat = 60.0 / bpm
-  seconds_per_bar = seconds_per_beat * 4 # METER is 4
+  seconds_per_bar = seconds_per_beat * METER
 
   # --- Mix-In: Wo faengt der optimale Mix-Bereich an? ---
-  mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar)
+  mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar, anchor)
 
   # --- Mix-Out: Wo faengt der Track an auszuklingen? ---
-  mix_out_time = _find_mix_out_point(sections, profile, seconds_per_bar, duration)
+  mix_out_time = _find_mix_out_point(sections, profile, seconds_per_bar, duration, anchor)
 
-  # Quantisiere auf 4-Bar-Grenzen fuer musikalisches Phrase-Alignment
-  grid_seconds = seconds_per_bar * 4
+  # Genre-spezifisches Phrase-Gitter fuer musikalisches Phrase-Alignment
+  # (Downbeat-Feature 2026-07-17: Gitter am ersten Downbeat verankert)
+  grid_seconds = seconds_per_bar * profile.phrase_unit
   if grid_seconds > 0:
-    mix_in_time = ceil(mix_in_time / grid_seconds) * grid_seconds  # ceil = nach Intro
-    mix_out_time = floor(mix_out_time / grid_seconds) * grid_seconds  # floor = vor Outro
+    mix_in_time = quantize_to_grid(mix_in_time, grid_seconds, anchor, "ceil")
+    mix_out_time = quantize_to_grid(mix_out_time, grid_seconds, anchor, "floor")
 
-  # Sicherheitsgrenzen -- intro/outro-aware
+  # Sicherheitsgrenzen -- sektions- und phrasenbasiert statt Prozent-Schema.
+  # Ein DJ orientiert sich an Struktur-Grenzen (Intro-Ende, Outro-Start) und
+  # Phrasenraster, nicht an festen 40%/60%-Positionen.
   intro_end = _get_intro_end_from_sections(sections)
   outro_start = _get_outro_start_from_sections(sections, duration)
 
-  min_mix_in = max(intro_end, seconds_per_bar * 4)
-  # Mix-Out strikt VOR outro_start (mindestens 1 Bar Abstand)
-  max_mix_out = min(outro_start - seconds_per_bar, duration - seconds_per_bar * 4)
-  mix_in_time = max(min_mix_in, min(mix_in_time, duration * 0.4))
-  mix_out_time = min(max_mix_out, max(mix_out_time, duration * 0.6))
+  # AUDIT-FIX R3 (2026-07-26): Untergrenze an den TAKT-Anker (first_downbeat)
+  # binden. anchor ist seit A1 der PHRASEN-Anker und kann bis zu
+  # phrase_unit-1 Bars (~28 s bei 16-Bar-Phrasen) hinter dem ersten Downbeat
+  # liegen — min_mix_in wanderte entsprechend nach hinten und kollabierte das
+  # Mix-Fenster in den Notfall-Prozent-Pfad. Der Sinn der Grenze ("nicht in
+  # die allererste Phrase mixen") haengt am Track-Anfang, nicht an der
+  # Phrasen-Phase.
+  grid_epsilon = 1e-9
+  strict_boundary_step = QUANTIZE_TOLERANCE_SEC + grid_epsilon
+  strict_intro_floor = quantize_to_grid(
+    intro_end + strict_boundary_step, grid_seconds, anchor, "ceil"
+  )
+  strict_outro_ceiling = quantize_to_grid(
+    outro_start - strict_boundary_step, grid_seconds, anchor, "floor"
+  )
+  min_mix_in = strict_intro_floor
+  # Die Strukturgrenzen selbst sind ausgeschlossen: IN strikt nach dem Intro,
+  # OUT strikt vor dem Outro.
+  max_mix_out = strict_outro_ceiling
+  min_window = grid_seconds * 2
 
-  # Sicherstellen, dass Mix-Out nach Mix-In liegt
-  if mix_out_time <= mix_in_time + seconds_per_bar * 8:
-    mix_in_time = max(intro_end, duration * 0.15)
-    mix_out_time = min(outro_start - seconds_per_bar, duration * 0.85)
+  if max_mix_out - min_mix_in >= min_window:
+    mix_in_time = max(min_mix_in, min(mix_in_time, max_mix_out - min_window))
+    mix_out_time = min(max_mix_out, max(mix_out_time, mix_in_time + min_window))
+    # Konsolidierung 2026-07-17: Clamps koennen die Punkte vom Phrasen-Gitter
+    # schieben — zurueck aufs Gitter quantisieren, solange die Grenzen halten
+    # (reale DJ-Cues liegen auf Phrasengrenzen, arXiv 2407.06823)
+    if grid_seconds > 0:
+      aligned_out = quantize_to_grid(
+        mix_out_time + grid_epsilon, grid_seconds, anchor, "floor"
+      )
+      if aligned_out - mix_in_time >= min_window:
+        mix_out_time = aligned_out
+      aligned_in = quantize_to_grid(
+        mix_in_time - grid_epsilon, grid_seconds, anchor, "ceil"
+      )
+      if mix_out_time - aligned_in >= min_window:
+        mix_in_time = aligned_in
+  else:
+    return MIX_POINT_UNSET, MIX_POINT_UNSET, 0, 0
+
+  if mix_out_time <= mix_in_time:
+    # M7-Fix: auch der Notfall-Fallback respektiert Intro/Outro-Grenzen,
+    # reine Prozente nur als allerletzte Instanz
+    mix_in_time = max(min_mix_in, duration * 0.15)
+    mix_out_time = min(max(max_mix_out, 0.0), duration * 0.85)
+    if mix_out_time <= mix_in_time:
+      mix_in_time = duration * 0.15
+      mix_out_time = duration * 0.85
+
+  # AUDIT-FIX N5 (2026-07-24): Auch die Notfall-Pfade werden auf dem
+  # Phrasen-Gitter ausgerichtet. Ein Bar-Fallback ist hier absichtlich nicht
+  # erlaubt: Track-Mixpunkte muessen auf dem genre-spezifischen Phrasenraster
+  # liegen. Reicht das Fenster dafuer nicht, liefert der bindende Vertrag unten
+  # MIX_POINT_UNSET statt eines off-grid Rohwerts.
+  for candidate_grid in (grid_seconds,):
+    if candidate_grid <= 0:
+      continue
+    q_in = quantize_to_grid(
+      mix_in_time - grid_epsilon, candidate_grid, anchor, "ceil"
+    )
+    q_out = quantize_to_grid(
+      mix_out_time + grid_epsilon, candidate_grid, anchor, "floor"
+    )
+    if 0.0 <= q_in < q_out <= duration:
+      mix_in_time, mix_out_time = q_in, q_out
+      break
+
+  mix_in_time = max(mix_in_time, strict_intro_floor)
+  mix_out_time = min(mix_out_time, strict_outro_ceiling)
+  if not (
+    intro_end < mix_in_time < mix_out_time < outro_start
+    and mix_out_time - mix_in_time >= min_window
+  ):
+    return MIX_POINT_UNSET, MIX_POINT_UNSET, 0, 0
 
   # In Bars umrechnen
-  mix_in_bars = int(round(mix_in_time / seconds_per_bar))
-  mix_out_bars = int(round(mix_out_time / seconds_per_bar))
+  mix_in_bars = seconds_to_bars(mix_in_time, bpm)
+  mix_out_bars = seconds_to_bars(mix_out_time, bpm)
 
-  return round(mix_in_time, 2), round(mix_out_time, 2), mix_in_bars, mix_out_bars
+  # Interne Vertragsschnittstelle: Quantisierte Werte bleiben ungerundet.
+  # Anzeige-/Exportpfade runden erst an der jeweiligen Ausgabegrenze.
+  return mix_in_time, mix_out_time, mix_in_bars, mix_out_bars
 
 
 def _find_mix_in_point(
   sections: list[dict],
   profile: GenreMixProfile,
   seconds_per_bar: float,
+  anchor: float = 0.0,
 ) -> float:
   """
   ADAPTIVES MIX-IN: Sucht den musikalisch sinnvollsten Einstiegspunkt.
 
-  REGEL: Mix-In NIEMALS in einer Intro-Sektion.
+  REGEL: Mix-In IMMER strikt nach dem Intro.
 
   Strategie:
   1. Bestimme Intro-Ende aus Sektionen
@@ -336,41 +280,70 @@ def _find_mix_in_point(
   intro_end = _get_intro_end_from_sections(sections)
 
   # --- Energetischen Kontext berechnen ---
-  all_energies = [s.get("avg_energy", 50.0) for s in sections]
-  avg_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
+  all_energies = [s.get("avg_energy", DEFAULT_SECTION_ENERGY) for s in sections]
+  avg_energy = sum(all_energies) / len(all_energies) if all_energies else DEFAULT_SECTION_ENERGY
 
   # --- Kandidaten: Sektionen nach Intro, nicht Outro ---
+  # AUDIT-FIX E3 (2026-07-24): "unanalysed"-Pseudo-Sections (Coverage-Luecke
+  # bei langen Tracks) sind keine gueltigen Mix-Kandidaten.
   candidates = [
     s for s in sections
-    if s.get("start_time", 0.0) >= intro_end
-    and s.get("label", "main") not in ("intro", "outro")
+    if (
+      s.get("start_time", 0.0) > intro_end
+      or (intro_end <= 0.0 and s.get("start_time", 0.0) >= 0.0)
+    )
+    and s.get("label", "main") not in ("intro", "outro", "unanalysed")
   ]
 
   if not candidates:
     # Kein nutzbarer Bereich nach Intro gefunden
     phrase_seconds = seconds_per_bar * profile.phrase_unit
     if phrase_seconds > 0:
-      return max(intro_end, round(intro_end / phrase_seconds) * phrase_seconds)
-    return intro_end
+      return quantize_to_grid(
+        intro_end + QUANTIZE_TOLERANCE_SEC + 1e-9,
+        phrase_seconds,
+        anchor,
+        "ceil",
+      )
+    return intro_end + QUANTIZE_TOLERANCE_SEC + 1e-9
+
+  # AUDIT-FIX B4 (2026-07-24): Ein DJ startet den Mix-In frueh im Track.
+  # Ohne Positionsterm gewann z. B. ein spaetes "build" bei 64 % der Laenge
+  # gegen ein fruehes "main". Suchfenster: erste ~40 % des Track-Bereichs;
+  # nur wenn dort nichts liegt, alle Kandidaten zulassen.
+  track_end = max(s.get("end_time", 0.0) for s in sections)
+  search_limit = max(intro_end, track_end * 0.40)
+  early = [s for s in candidates if s.get("start_time", 0.0) <= search_limit]
+  if early:
+    candidates = early
 
   # --- Beste Sektion waehlen ---
-  # Praeferenz fuer Mix-In: build > main > breakdown > drop
+  # Praeferenz fuer Mix-In: build > main > breakdown > drop;
+  # bei gleichem Label gewinnt die FRUEHERE Section (Positionsterm),
+  # Energie-Naehe nur noch als Tiebreak.
   label_priority = {"build": 0, "main": 1, "breakdown": 2, "drop": 3}
 
   best = min(candidates, key=lambda s: (
     label_priority.get(s.get("label", "main"), 99),
-    abs(s.get("avg_energy", 50.0) - avg_energy * 0.75), # Slightly higher energy preference for mix in
+    s.get("start_time", 0.0),
+    abs(s.get("avg_energy", DEFAULT_SECTION_ENERGY) - avg_energy * 0.75),
   ))
 
   mix_in = best.get("start_time", intro_end)
 
-  # --- Quantisierung auf Phrasen-Grenze (ceil = NACH Intro) ---
+  # --- Quantisierung auf Phrasen-Grenze (ceil = NACH Intro), downbeat-verankert ---
   phrase_seconds = seconds_per_bar * profile.phrase_unit
   if phrase_seconds > 0:
-    mix_in = ceil(mix_in / phrase_seconds) * phrase_seconds
+    mix_in = quantize_to_grid(mix_in, phrase_seconds, anchor, "ceil")
 
-  # --- Guard: NIEMALS vor Intro-Ende ---
-  mix_in = max(mix_in, intro_end)
+  # --- Guard: STRIKT nach dem Intro-Ende ---
+  if intro_end > 0.0 and mix_in <= intro_end and phrase_seconds > 0:
+    mix_in = quantize_to_grid(
+      intro_end + QUANTIZE_TOLERANCE_SEC + 1e-9,
+      phrase_seconds,
+      anchor,
+      "ceil",
+    )
 
   return mix_in
 
@@ -380,11 +353,12 @@ def _find_mix_out_point(
   profile: GenreMixProfile,
   seconds_per_bar: float,
   duration: float,
+  anchor: float = 0.0,
 ) -> float:
   """
   ADAPTIVES MIX-OUT: Findet den optimalen Ausstiegspunkt.
 
-  REGEL: Mix-Out NIEMALS in einer Outro-Sektion.
+  REGEL: Mix-Out IMMER strikt vor dem Outro.
 
   Strategie:
   1. Bestimme Outro-Start aus Sektionen
@@ -399,48 +373,81 @@ def _find_mix_out_point(
   outro_start = _get_outro_start_from_sections(sections, duration)
 
   # --- Kandidaten: Sektionen vor Outro, nicht Intro ---
+  # AUDIT-FIX E3 (2026-07-24): "unanalysed" ausgeschlossen (siehe Mix-In).
   candidates = [
     s for s in sections
     if s.get("end_time", 0.0) <= outro_start
-    and s.get("label", "main") not in ("intro", "outro")
+    and s.get("label", "main") not in ("intro", "outro", "unanalysed")
   ]
 
   if not candidates:
     # Kein nutzbarer Bereich vor Outro
     phrase_seconds = seconds_per_bar * profile.phrase_unit
     if phrase_seconds > 0:
-      mix_out = (outro_start // phrase_seconds) * phrase_seconds
-      return max(0.0, min(mix_out, outro_start))
-    return outro_start
+      mix_out = quantize_to_grid(
+        outro_start - QUANTIZE_TOLERANCE_SEC - 1e-9,
+        phrase_seconds,
+        anchor,
+        "floor",
+      )
+      return max(0.0, mix_out)
+    return max(0.0, outro_start - QUANTIZE_TOLERANCE_SEC - 1e-9)
 
   # --- Letzte starke Sektion VOR Outro ---
-  # Bevorzugt main, breakdown, drop für den Übergang
+  # AUDIT-FIX B5 (2026-07-24): Position ist jetzt das PRIMAERE Kriterium.
+  # Vorher schlug das Label die Position: ein "main" bei 50 % gewann gegen
+  # ein "breakdown" bei 85 % — der Mix-Out landete in der Track-Mitte.
+  # Ein DJ steigt so spaet wie musikalisch sinnvoll aus; das Label
+  # entscheidet nur noch bei (praktisch) gleicher Endzeit. Drops bleiben
+  # als Ausstieg unattraktiv (Tiebreak-Prioritaet).
   label_priority = {"main": 0, "breakdown": 1, "build": 2, "drop": 3}
-  all_energies = [s.get("avg_energy", 50.0) for s in candidates]
-  avg_energy = sum(all_energies) / len(all_energies) if all_energies else 50.0
-
-  # Finde den besten Ausstieg (bevorzugt eine Sektion mit abnehmender Energie)
   best = min(candidates, key=lambda s: (
+    -s.get("end_time", 0.0),
     label_priority.get(s.get("label", "main"), 99),
-    -s.get("end_time", 0.0) # Eher am Ende, aber nicht strikt die allerletzte
   ))
 
   # Normalerweise mix_out am Ende dieser Sektion
   mix_out = best.get("end_time", outro_start)
 
-  # --- Quantisierung auf Phrasen-Grenze ---
+  # --- Quantisierung auf Phrasen-Grenze (floor = VOR Outro), downbeat-verankert ---
   phrase_seconds = seconds_per_bar * profile.phrase_unit
   if phrase_seconds > 0:
-    mix_out = (mix_out // phrase_seconds) * phrase_seconds
+    mix_out = quantize_to_grid(mix_out, phrase_seconds, anchor, "floor")
 
-  # --- Guard: NIEMALS nach Outro-Start ---
-  mix_out = min(mix_out, outro_start)
+  # --- Guard: STRIKT vor dem Outro-Start ---
+  # AUDIT-FIX B5-Regression (2026-07-24): Seit die Position das Primaerkriterium
+  # ist, kann die gewaehlte Sektion exakt am Outro-Start enden (z. B. letzter
+  # Drop 240-360, Outro ab 360). floor lieferte dann 360 == outro_start und der
+  # Uebergang reichte in das Outro hinein. Ein DJ steigt VOR dem Outro aus:
+  # landet der Punkt auf/hinter der Outro-Grenze, eine Phrase zurueck (analog
+  # calculate_paired_mix_points). Nur wenn ein echtes Outro existiert
+  # (outro_start < duration).
+  if mix_out >= outro_start and phrase_seconds > 0:
+    mix_out = quantize_to_grid(
+      outro_start - QUANTIZE_TOLERANCE_SEC - 1e-9,
+      phrase_seconds,
+      anchor,
+      "floor",
+    )
+
+  mix_out = min(mix_out, outro_start - QUANTIZE_TOLERANCE_SEC - 1e-9)
 
   # Wir wollen auch vermeiden, dass der Uebergang direkt im Drop liegt, wenn es Alternativen gibt
   return max(0.0, mix_out)
 
 
 # === DJ Empfehlungen ===
+
+@dataclass
+class TransitionContext:
+  """Kontextobjekt fuer Transition-Berechnungen, buendelt verwandte Parameter."""
+  bpm_a: float
+  bpm_b: float
+  energy_a: float
+  energy_b: float
+  profile_a: GenreMixProfile
+  profile_b: GenreMixProfile
+
 
 @dataclass
 class DJRecommendation:
@@ -466,10 +473,10 @@ class DJRecommendation:
   bpm_advice: str = ""        # Konkrete BPM/Pitching-Empfehlung
   key_advice: str = ""        # Camelot-basierte Tonart-Empfehlung
   energy_advice: str = ""     # Energie-Empfehlung basierend auf tatsaechlicher Differenz
+  gain_advice: str = ""       # LUFS-basierte Gain-Angleichung (2026-07-17)
   transition_type: str = "smooth_blend"  # Transition-Typ (fuer Farben in UI)
 
   # Advanced Audio Alignment
-  texture_score: float = 0.0
   bass_match_advice: str = ""
   rhythm_advice: str = ""
   
@@ -477,7 +484,11 @@ class DJRecommendation:
   # -1.0 = nicht berechnet -> UI nutzt track.mix_out_point / track.mix_in_point
   adjusted_mix_out_a: float = -1.0   # Angepasster Mix-Out fuer Track A (Sekunden)
   adjusted_mix_in_b: float = -1.0    # Angepasster Mix-In fuer Track B (Sekunden)
-  overlap_seconds: float = 0.0       # Berechnete Overlap-Dauer des Uebergangs
+  # Berechnete Overlap-Dauer des Uebergangs (Tail von A, begrenzt durch den
+  # Rest von B). Hinweis: in der Playlist-Pipeline ist transition_bars die
+  # autoritative Overlap-Quelle — playlist.compute_transition_recommendations
+  # ueberschreibt overlap_seconds danach mit seconds_per_bar * transition_bars.
+  overlap_seconds: float = 0.0
 
 
 def generate_dj_recommendation(
@@ -508,11 +519,15 @@ def generate_dj_recommendation(
   profile_a = get_mix_profile(genre_a)
 
   # Transition-Laenge: Dynamisch basierend auf tatsaechlichem BPM/Energy-Delta
-  transition_bars = _dynamic_transition_bars(
-    track_a.bpm, track_b.bpm,
-    float(track_a.energy), float(track_b.energy),
-    profile_a, profile_b,
+  ctx = TransitionContext(
+    bpm_a=track_a.bpm,
+    bpm_b=track_b.bpm,
+    energy_a=float(track_a.energy),
+    energy_b=float(track_b.energy),
+    profile_a=profile_a,
+    profile_b=profile_b,
   )
+  transition_bars = _dynamic_transition_bars(ctx)
 
   # Mix-Technik: Verwende die des eingehenden Tracks (der DJ passt sich an)
   mix_technique = profile_b.mix_technique
@@ -523,26 +538,44 @@ def generate_dj_recommendation(
     mix_technique = _get_cross_genre_technique(genre_a, genre_b)
     eq_advice = _get_cross_genre_eq(genre_a, genre_b)
 
-  # Struktur-Kontext
-  outgoing_section = _get_section_at_mix_out(track_a)
-  incoming_section = _get_section_at_mix_in(track_b)
+  # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
+  adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
+  overlap_seconds = 0.0
+  if adjusted_mix_out_a >= 0.0 and adjusted_mix_in_b >= 0.0:
+    overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+    # AUDIT-FIX B3/M1 (2026-08-14): Der alte "M1-Deckel" war
+    #   intro_window_b = _get_intro_end(track_b) - adjusted_mix_in_b
+    # und sollte verhindern, dass der Crossfade ueber das Intro-Ende von B
+    # hinauslaeuft. Seit der Intro-Guard in calculate_paired_mix_points den
+    # Mix-In auf ceil(intro_end) legt, ist diese Differenz per Konstruktion
+    # <= 0 — der Deckel griff auf 51 realen Paaren genau 1x (und auch nur im
+    # Sonderfall "Track B ohne Intro-Sektion", der jetzt ebenfalls geschlossen
+    # ist). Der tatsaechlich bindende Deckel ist der Rest von Track B nach dem
+    # Mix-In: laenger als B noch spielt kann der Uebergang nicht sein.
+    room_b = max(0.0, track_b.duration - adjusted_mix_in_b)
+    overlap_seconds = min(overlap_seconds, room_b)
+
+  # Struktur-Kontext auf Basis der wirklich empfohlenen paarspezifischen Punkte
+  outgoing_section = _get_section_at_time(track_a, adjusted_mix_out_a, "out")
+  incoming_section = _get_section_at_time(track_b, adjusted_mix_in_b, "in")
   structure_note = _build_structure_note(outgoing_section, incoming_section)
 
 
   # Risiko-Bewertung
-  risk_notes = _assess_transition_risks(track_a, track_b, compat)
+  risk_notes = _assess_transition_risks(
+    track_a, track_b, compat, adjusted_mix_out_a, adjusted_mix_in_b
+  )
   
   # Texture Similarity (Phase 3)
-  texture_sim = _calculate_texture_similarity(track_a.timbre_fingerprint, track_b.timbre_fingerprint)
   
   # Rhythm Advice
   pr_a = track_a.percussive_ratio
   pr_b = track_b.percussive_ratio
   rhythm_adv = ""
   if pr_a > 0.7 and pr_b > 0.7:
-      rhythm_adv = "Beide Tracks sehr perkussiv - Vorsicht vor Rhythmus-Salat, kurzen Übergang wählen"
+      rhythm_adv = "Beide Tracks sehr perkussiv - Vorsicht vor Rhythmus-Salat, kurzen Uebergang waehlen"
   elif pr_b < 0.3:
-      rhythm_adv = "Incoming Track sehr tonal - ideal für lange Filter-Blends"
+      rhythm_adv = "Incoming Track sehr tonal - ideal fuer lange Filter-Blends"
 
   # Konkrete Track-basierte Empfehlungen
 
@@ -550,15 +583,9 @@ def generate_dj_recommendation(
   bpm_advice = _bpm_advice(track_a.bpm, track_b.bpm)
   key_advice = _key_advice(track_a.camelotCode, track_b.camelotCode)
   energy_advice = _energy_advice(float(track_a.energy), float(track_b.energy))
-
-  # Advanced Audio Alignment
-  texture_score: float = 0.0
-  bass_match_advice: str = ""
-  rhythm_advice: str = ""
-  
-  # Paarspezifische Mix-Punkte: Overlap zwischen Outro(A) und Intro(B) abstimmen
-  adjusted_mix_out_a, adjusted_mix_in_b = calculate_paired_mix_points(track_a, track_b)
-  overlap_seconds = max(0.0, track_a.duration - adjusted_mix_out_a)
+  gain_advice = _gain_advice(
+    getattr(track_a, "lufs", 0.0), getattr(track_b, "lufs", 0.0)
+  )
 
   return DJRecommendation(
     genre_pair=genre_pair,
@@ -570,11 +597,11 @@ def generate_dj_recommendation(
     incoming_section=incoming_section,
     structure_note=structure_note,
     risk_notes=risk_notes,
-    texture_score=round(texture_sim, 2),
     rhythm_advice=rhythm_adv,
     bpm_advice=bpm_advice,
     key_advice=key_advice,
     energy_advice=energy_advice,
+    gain_advice=gain_advice,
     adjusted_mix_out_a=adjusted_mix_out_a,
     adjusted_mix_in_b=adjusted_mix_in_b,
     overlap_seconds=round(overlap_seconds, 2),
@@ -595,7 +622,7 @@ def _get_intro_end(track: Track) -> float:
     -> gibt 106.0 zurueck (Ende aller Intro-Sections)
   """
   if not track.sections:
-    return track.mix_in_point if track.mix_in_point > 0 else 0.0
+    return track.mix_in_point if track.mix_in_point >= 0 else 0.0
 
   last_intro_end = 0.0
   for section in track.sections:
@@ -604,15 +631,17 @@ def _get_intro_end(track: Track) -> float:
       # Akkumuliere Ende des Intros (auch Multi-Section Intros)
       last_intro_end = section.get("end_time", section.get("start_time", 0.0))
     else:
-      # Erste Non-Intro-Section nach dem Intro-Block: fertig
-      if last_intro_end > 0.0:
-        break
+      # AUDIT-FIX B7 (2026-07-24): IMMER beim ersten Non-Intro abbrechen.
+      # Vorher lief der Scan weiter, wenn die erste Section kein Intro war —
+      # eine "intro"-Section aus dem Tail-Analysefenster konnte intro_end
+      # dann ans Track-ENDE ziehen und alle Mix-Punkte mitreissen.
+      break
 
   if last_intro_end > 0.0:
     return last_intro_end
 
   # Kein Intro erkannt -> gespeicherter mix_in_point als Schaetzung
-  return track.mix_in_point if track.mix_in_point > 0 else 0.0
+  return track.mix_in_point if track.mix_in_point >= 0 else 0.0
 
 
 def _get_intro_end_from_sections(sections: list[dict]) -> float:
@@ -628,8 +657,10 @@ def _get_intro_end_from_sections(sections: list[dict]) -> float:
     if section.get("label", "main") == "intro":
       last_intro_end = section.get("end_time", section.get("start_time", 0.0))
     else:
-      if last_intro_end > 0.0:
-        break
+      # AUDIT-FIX B7 (2026-07-24): nur den zusammenhaengenden Intro-Block ab
+      # Index 0 auswerten — Tail-Fenster-"intro"-Sections duerfen intro_end
+      # nicht ans Track-Ende ziehen.
+      break
 
   return last_intro_end
 
@@ -650,8 +681,14 @@ def _get_outro_start_from_sections(sections: list[dict], duration: float) -> flo
       first_outro_start = section.get("start_time", duration)
       found_outro = True
     else:
-      if found_outro:
-        break
+      # AUDIT-FIX N1 (2026-07-24): IMMER bei der ersten Non-Outro-Section
+      # abbrechen. Vorher lief der Rueckwaerts-Scan weiter, wenn der Track
+      # nicht auf "outro" endete — und fand das "outro", das die Fenster-
+      # Analyse am Ende des HEAD-Fensters vergeben hatte. Folge: outro_start
+      # in der Track-Mitte, Mix-Out bei ~34 % der Laenge (reproduziert fuer
+      # jeden Track > Head-Fensterlaenge). Nur der zusammenhaengende Block
+      # am Track-ENDE zaehlt.
+      break
 
   return first_outro_start if found_outro else duration
 
@@ -668,17 +705,23 @@ def calculate_paired_mix_points(
 
   Diese Funktion loest das: Overlap = min(intro_dauer_B, outro_dauer_A).
 
-  Beispiel Psytrance:
+  ACHTUNG (AUDIT-FIX N3, 2026-08-14): Dieser Overlap steuert nur die
+  A-SEITE. Mix-In B ergibt sich ausschliesslich aus dem Intro-Guard
+  (Invariante 5: nie im Intro mixen) — die fruehere Rechnung
+  "Mix-In B = intro_end - overlap" landete per Definition im Intro und
+  wurde vom Guard in 50 von 51 realen Paaren sofort wieder ueberschrieben.
+
+  Beispiel Psytrance (phrase_unit=16, ~1.68 s/Bar):
     Track A: Duration 420s, Outro ab 367s -> Outro-Dauer = 53s
-    Track B: Intro bis 106s -> Intro-Dauer = 106s
-    Overlap = min(106, 53) = 53s
-    -> Mix-In B = max(0.0, 106 - 53) = 53s  (ab Bar 33, NICHT Bar 1!)
-    -> Mix-Out A = max(367, 420 - 53) = max(367, 367) = 367s (unveraendert)
+    Track B: Intro bis 106s
+    Overlap (A-Seite) = min(106, 53) = 53s
+    -> Mix-Out A = max(367, 420 - 53) = 367s (unveraendert)
+    -> Mix-In B  = ceil(106) auf die naechste 16-Bar-Phrasengrenze
 
   Kurzes Intro (Track B Intro = 26s, Track A Outro = 53s):
-    Overlap = min(26, 53) = 26s
-    -> Mix-In B = max(0.0, 26 - 26) = 0.0  (Bar 1, voll von Anfang)
+    Overlap (A-Seite) = min(26, 53) = 26s
     -> Mix-Out A = max(367, 420 - 26) = 394s  (spaeter als Original!)
+    -> Mix-In B  = ceil(26) auf die naechste Phrasengrenze
 
   Args:
     track_a: Ausgehender Track (dessen Mix-Out angepasst wird)
@@ -687,6 +730,15 @@ def calculate_paired_mix_points(
   Returns:
     (adjusted_mix_out_a, adjusted_mix_in_b) in Sekunden
   """
+  # AUDIT-FIX N4 (2026-07-24): Guard fuer fehlgeschlagene Analysen — bei
+  # duration <= 0 kollabiert die Overlap-Rechnung (Mix-Out hinter Track-Ende,
+  # unquantisierte Rohwerte). Dann lieber die Track-Werte unveraendert lassen.
+  if track_a.duration <= 0 or track_b.duration <= 0:
+    return (
+      round(max(track_a.mix_out_point, 0.0), 2),
+      round(max(track_b.mix_in_point, 0.0), 2),
+    )
+
   profile_b = get_mix_profile(track_b.detected_genre or "Unknown")
 
   # --- Intro-Dauer von Track B ---
@@ -698,79 +750,239 @@ def calculate_paired_mix_points(
     outro_start_a = track_a.duration * 0.8  # Fallback: letzte 20%
   outro_duration_a = max(0.0, track_a.duration - outro_start_a)
 
-  # --- Minimaler Overlap: mindestens 8 Bars (fuer BPM-Anpassung) ---
-  bpm_b = track_b.bpm if track_b.bpm > 0 else 140.0
+  # --- Minimaler Overlap: genre-spezifisch nach Startwert des Transition-Bereichs ---
+  bpm_b = track_b.bpm if track_b.bpm > 0 else DEFAULT_BPM
   seconds_per_bar_b = (60.0 / bpm_b) * METER
-  min_overlap = seconds_per_bar_b * 8  # mind. 8 Bars Overlap
+  min_overlap_bars = max(8, int(profile_b.transition_bars[0]))
+  min_overlap = seconds_per_bar_b * min_overlap_bars
 
   # --- Target Overlap: das Minimum beider Seiten (nicht mehr als das Kuerzere) ---
   target_overlap = max(min_overlap, min(intro_end_b, outro_duration_a))
-
-  # --- Track B Mix-In: Starte so spaet, dass noch genau target_overlap bleibt ---
-  adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
+  # M3-Fix: harte Obergrenze — min_overlap darf bei kurzen Intros/Outros den
+  # Overlap nicht ueber die halbe Laenge eines der beiden Tracks ziehen
+  target_overlap = min(target_overlap, track_a.duration * 0.5, track_b.duration * 0.5)
 
   # --- Track A Mix-Out: target_overlap Sekunden vor Track-Ende ---
+  # target_overlap steuert AUSSCHLIESSLICH die A-Seite (siehe N3 unten).
   adjusted_mix_out_a = track_a.duration - target_overlap
   # Aber nicht frueher als das urspruenglich berechnete Mix-Out
   # (wir verschieben nur nach hinten, nie nach vorne -- das waere schlechter)
   adjusted_mix_out_a = max(outro_start_a, adjusted_mix_out_a)
 
-  # --- Guard: Mix-In B NIEMALS im Intro ---
+  # --- Track B Mix-In: Intro-Guard ist die Autoritaet ---
+  # AUDIT-FIX N3 (2026-08-14): Vorher stand hier
+  #   adjusted_mix_in_b = max(0.0, intro_end_b - target_overlap)
+  # und direkt danach ein Guard, der jeden Wert unterhalb des Intro-Endes
+  # wieder auf ceil(intro_end) hochzog. Da target_overlap immer > 0 ist, lag
+  # der Startwert per Definition VOR dem Intro-Ende — der Guard feuerte in
+  # 50 von 51 realen Paaren und ueberschrieb das Ergebnis vollstaendig.
+  # target_overlap war fuer Track B also rechnerisch tot und suggerierte eine
+  # Wirkung, die es nie hatte. Invariante 5 (Mix-In nie im Intro) verlangt
+  # ohnehin genau das Guard-Ergebnis, deshalb wird es jetzt direkt berechnet.
+  # Der 51. Fall (Track B ohne Intro-Sektion) lief in den Sonderfall unten:
+  # _get_intro_end faellt dort auf track_b.mix_in_point zurueck, und
+  # (mix_in_point - target_overlap) schob den Mix-In faktisch an den
+  # Track-Anfang (gemessen 85.7 s -> 3.4 s, mitten in den ersten Drop).
   intro_end_sections_b = _get_intro_end_from_sections(track_b.sections or [])
+  phrase_seconds_b = seconds_per_bar_b * profile_b.phrase_unit
+  anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
   if intro_end_sections_b > 0:
-    # ceil auf naechsten Bar nach Intro-Ende (phrasen-aligned)
-    if adjusted_mix_in_b < intro_end_sections_b:
-      adjusted_mix_in_b = ceil(intro_end_sections_b / seconds_per_bar_b) * seconds_per_bar_b
+    # ceil auf naechste Phrasengrenze nach Intro-Ende (downbeat-verankert).
+    # Invariante 2: PHRASEN-Gitter (seconds_per_bar * phrase_unit), nicht ein
+    # einzelner Bar — sonst weicht der Punkt bei Trance/Psytrance
+    # (phrase_unit=16) bis zu 15 Bars von der Phrasengrenze ab (H2-Fix).
+    adjusted_mix_in_b = quantize_to_grid(
+      intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9,
+      phrase_seconds_b, anchor_b, "ceil"
+    )
+  else:
+    # Kein Intro erkannt: der per-Track berechnete Mix-In ist der beste
+    # verfuegbare Schaetzwert und wird nicht nach vorn verschoben.
+    adjusted_mix_in_b = max(0.0, track_b.mix_in_point)
 
   # --- Guard: Mix-Out A NIEMALS im Outro ---
+  profile_a = get_mix_profile(track_a.detected_genre or "Unknown")
   outro_start_sections_a = _get_outro_start_from_sections(
     track_a.sections or [], track_a.duration
   )
-  bpm_a = track_a.bpm if track_a.bpm > 0 else 140.0
+  bpm_a = track_a.bpm if track_a.bpm > 0 else DEFAULT_BPM
   seconds_per_bar_a = (60.0 / bpm_a) * METER
+  phrase_seconds_a = seconds_per_bar_a * profile_a.phrase_unit
   if adjusted_mix_out_a >= outro_start_sections_a:
-    adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
+    # floor auf Phrasengrenze VOR dem Outro (Invariante 1, downbeat-verankert)
+    anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
+    if phrase_seconds_a > 0:
+      adjusted_mix_out_a = quantize_to_grid(
+        outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
+        phrase_seconds_a, anchor_a, "floor"
+      )
+      # floor kann exakt auf outro_start landen -> eine Phrase zurueck, damit
+      # der Mix-Out garantiert VOR dem Outro liegt
+      if adjusted_mix_out_a >= outro_start_sections_a:
+        adjusted_mix_out_a -= phrase_seconds_a
+    else:
+      adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
 
   # Sicherheitscheck: Mix-Out vor Track-Ende
   adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
+  # M2-Fix: Lower-Bound — Outro-Guard kann den Wert sonst negativ/nahe 0
+  # druecken; negativer Wert wuerde den Sentinel-Check (>= 0.0) fehlleiten
+  adjusted_mix_out_a = max(adjusted_mix_out_a, 0.0)
 
-  return round(adjusted_mix_out_a, 2), round(adjusted_mix_in_b, 2)
+  # AUDIT-FIX B1 (2026-07-24): Die Endwerte werden IMMER aufs Phrasen-Gitter
+  # quantisiert (downbeat-verankert). Vorher quantisierten nur die
+  # Intro-/Outro-Guards — im Regelfall (Punkt ausserhalb Intro/Outro) gingen
+  # ROHE Subtraktionswerte zurueck, und genau diese ueberschreiben in
+  # playlist.compute_transition_recommendations die sauber quantisierten
+  # Track-Werte. Der real gerenderte Uebergang startete damit off-grid.
+  # Konvention: Mix-Out floor (nie NACH dem musikalischen Ereignis),
+  # Mix-In ceil (nie davor). Quantisierte Werte nur uebernehmen, wenn sie
+  # die Sicherheitsgrenzen nicht verletzen.
+  anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
+  # AUDIT-FIX N3b (2026-08-14): Epsilon gegen Float-Rauschen. Ein Wert, der
+  # bereits exakt auf dem Gitter liegt, darf durch ceil/floor nicht eine
+  # ganze Phrase weit springen (bei Psytrance ~27 s) — dieselbe Konvention
+  # wie in align_ai_mix_points und calculate_genre_aware_mix_points.
+  grid_epsilon = 1e-9
+  if phrase_seconds_a > 0:
+    q_out = quantize_to_grid(
+      adjusted_mix_out_a + grid_epsilon, phrase_seconds_a, anchor_a, "floor"
+    )
+    if seconds_per_bar_a <= q_out <= track_a.duration - seconds_per_bar_a:
+      adjusted_mix_out_a = q_out
+  if phrase_seconds_b > 0:
+    q_in = quantize_to_grid(
+      adjusted_mix_in_b - grid_epsilon, phrase_seconds_b, anchor_b, "ceil"
+    )
+    if 0.0 <= q_in < track_b.duration:
+      adjusted_mix_in_b = q_in
+    elif q_in >= track_b.duration:
+      # Bei sehr kurzen Tracks kann die naechste Phrase hinter dem Ende liegen.
+      # Der rohe Wert darf dann nicht als ungueltiger Off-Track-Mixpunkt
+      # zurueckbleiben. Fallback: letzter gueltiger Takt, mindestens nach dem
+      # erkannten Intro, sofern das Zeitfenster dies noch erlaubt.
+      last_bar = max(0.0, track_b.duration - seconds_per_bar_b)
+      adjusted_mix_in_b = max(last_bar, intro_end_sections_b)
+
+  # Letzter, bindender Vertrag: Strukturgrenzen sind ausgeschlossen. Reicht
+  # das Phrasengitter nicht, wird einmal das Taktgitter versucht.
+  outro_limit_a = outro_start_sections_a - QUANTIZE_TOLERANCE_SEC
+  if not (0.0 <= adjusted_mix_out_a < outro_limit_a):
+    adjusted_mix_out_a = quantize_to_grid(
+      outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
+      seconds_per_bar_a,
+      anchor_a,
+      "floor",
+    )
+  if not (0.0 <= adjusted_mix_out_a < outro_limit_a):
+    adjusted_mix_out_a = MIX_POINT_UNSET
+
+  intro_ok = (
+    0.0 <= adjusted_mix_in_b < track_b.duration
+    and adjusted_mix_in_b > intro_end_sections_b + QUANTIZE_TOLERANCE_SEC
+  )
+  if not intro_ok and intro_end_sections_b < track_b.duration:
+    adjusted_mix_in_b = quantize_to_grid(
+      intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9,
+      seconds_per_bar_b,
+      anchor_b,
+      "ceil",
+    )
+    intro_ok = (
+      0.0 <= adjusted_mix_in_b < track_b.duration
+      and adjusted_mix_in_b > intro_end_sections_b + QUANTIZE_TOLERANCE_SEC
+    )
+  if not intro_ok:
+    adjusted_mix_in_b = MIX_POINT_UNSET
+
+  # Keine Rundung innerhalb der Quantisierungskette (R9/N15).
+  return adjusted_mix_out_a, adjusted_mix_in_b
+
+
+def align_ai_mix_points(
+  mix_in: float,
+  mix_out: float,
+  bpm: float,
+  duration: float,
+  phrase_unit: int = 8,
+  anchor: float = 0.0,
+) -> tuple[float, float]:
+  """
+  Quantisiert extern gelieferte Mix-Punkte (z.B. vom LLM) aufs Phrasen-Gitter.
+
+  DJ-Konvention: Mix-In auf die naechste Phrasengrenze NACH dem Vorschlag
+  (ceil, landet hinter dem Intro), Mix-Out auf die Grenze DAVOR (floor,
+  bleibt vor dem Outro). Kollabiert das Fenster dadurch, wird auf das
+  feinere Bar-Gitter ausgewichen; ist auch das ungueltig, bleiben die
+  Originalwerte erhalten (LLM-Intent > kaputte Quantisierung).
+
+  Returns:
+    (aligned_mix_in, aligned_mix_out) in Sekunden
+  """
+  if bpm <= 0 or duration <= 0 or not (0 <= mix_in < mix_out <= duration):
+    return mix_in, mix_out
+
+  seconds_per_bar = (60.0 / bpm) * METER
+  unit = phrase_unit if phrase_unit > 0 else 8
+
+  # Epsilon gegen Float-Rauschen: 30.000001s darf nicht eine volle Phrase
+  # nach hinten springen
+  eps = 1e-6
+  for grid in (seconds_per_bar * unit, seconds_per_bar):
+    # Downbeat-verankertes Gitter (anchor=0.0 = bisheriges Verhalten)
+    aligned_in = quantize_to_grid(mix_in - eps, grid, anchor, "ceil")
+    aligned_out = quantize_to_grid(mix_out + eps, grid, anchor, "floor")
+    if 0 <= aligned_in < aligned_out <= duration:
+      return aligned_in, aligned_out
+
+  return mix_in, mix_out
 
 
 # === Hilfsfunktionen ===
 
-def _get_section_at_mix_out(track: Track) -> str:
-  """Findet die Sektion am Mix-Out-Punkt eines Tracks."""
-  if not track.sections or track.mix_out_point <= 0:
-    return "unknown"
+def section_dict_at_time(track: Track, time_seconds: float) -> dict | None:
+  """Die Sektion, die einen Zeitpunkt enthaelt — oder None.
 
-  for section in track.sections:
+  Einzige Quelle fuer "welche Sektion liegt bei t". Wer die Sektion an der
+  Nahtstelle braucht, nimmt diese Funktion und raet nicht ueber Labels:
+  gemessen an 200 Tracks liegt der Mix-Out im Median 76 s VOR dem Outro,
+  und die letzte Main/Drop-Sektion ist nur in 12 % der Faelle die, in der
+  der Mix-Out wirklich sitzt.
+  """
+  if not track.sections or time_seconds < 0:
+    return None
+  for index, section in enumerate(track.sections):
+    if not isinstance(section, dict):
+      continue
     start = section.get("start_time", 0.0)
     end = section.get("end_time", 0.0)
-    if start <= track.mix_out_point <= end:
-      return section.get("label", "unknown")
-
-  # Letzte Sektion als Fallback
-  if track.sections:
-    return track.sections[-1].get("label", "unknown")
-  return "unknown"
+    is_last = index == len(track.sections) - 1
+    if start <= time_seconds < end or (is_last and time_seconds == end):
+      return section
+  return None
 
 
-def _get_section_at_mix_in(track: Track) -> str:
-  """Findet die Sektion am Mix-In-Punkt eines Tracks."""
-  if not track.sections or track.mix_in_point <= 0:
+def _get_section_at_time(track: Track, time_seconds: float, fallback_edge: str) -> str:
+  """Label der Sektion an einem beliebigen Mix-Zeitpunkt."""
+  if not track.sections or time_seconds < 0:
     return "unknown"
 
-  for section in track.sections:
-    start = section.get("start_time", 0.0)
-    end = section.get("end_time", 0.0)
-    if start <= track.mix_in_point <= end:
-      return section.get("label", "unknown")
+  treffer = section_dict_at_time(track, time_seconds)
+  if treffer is not None:
+    return treffer.get("label", "unknown")
 
-  # Erste Sektion als Fallback
-  if track.sections:
+  if fallback_edge == "in":
     return track.sections[0].get("label", "unknown")
-  return "unknown"
+  return track.sections[-1].get("label", "unknown")
+
+
+def _effective_bpm_diff(bpm_a: float, bpm_b: float) -> tuple[float, str]:
+  """Kleinste musikalische BPM-Differenz inkl. Half/Double-Time.
+
+  Delegiert an die zentrale Definition in models — die fruehere lokale Kopie
+  ignorierte das BPM_HALF_DOUBLE_ENABLED-Flag (Audit-Fix 2026-07-17).
+  """
+  return effective_bpm_diff(bpm_a, bpm_b)
 
 
 def _build_structure_note(outgoing: str, incoming: str) -> str:
@@ -811,8 +1023,24 @@ def _bpm_advice(bpm_a: float, bpm_b: float) -> str:
     return ""
 
   diff = bpm_b - bpm_a
-  abs_diff = abs(diff)
+  abs_diff, relation = _effective_bpm_diff(bpm_a, bpm_b)
   pct = abs(diff / bpm_a) * 100  # Pitch-Prozent-Aenderung
+
+  # Audit-Fix 2026-07-21: Half/Double-Beziehung UNABHAENGIG von der 2.0-Grenze
+  # behandeln. Vorher fiel z.B. 140->73 (double, eff. Diff ~3 BPM) in die
+  # rohen Prozent-Zweige und meldete unsinnige "52% runter pitchen" — jetzt
+  # wird die effektive Abweichung genannt und auf Phrasen-Alignment verwiesen.
+  if relation in ("half", "double"):
+    if abs_diff < 0.3:
+      return (
+        f"{bpm_a:.1f} → {bpm_b:.1f} — Half/Double-Time kompatibel, "
+        f"Downbeat exakt auf Phrase setzen"
+      )
+    eff_pct = abs_diff / bpm_a * 100
+    return (
+      f"{bpm_a:.1f} → {bpm_b:.1f} — Half/Double-Time (eff. {abs_diff:.1f} BPM, "
+      f"~{eff_pct:.1f}% Fein-Pitch), Downbeat auf Phrase setzen"
+    )
 
   if abs_diff < 0.3:
     return f"{bpm_a:.1f} → {bpm_b:.1f} — Match, kein Pitching noetig"
@@ -838,22 +1066,22 @@ def _key_advice(code_a: str, code_b: str) -> str:
   Camelot Wheel: 1-12A/B (kreisfoermig), harmonisch = Distanz 1 gleicher Buchstabe.
   Wird als Prefix "Key: ..." in die Transition-Notes injiziert.
   """
-  code_a = (code_a or "").strip()
-  code_b = (code_b or "").strip()
+  code_a = code_a or ""
+  code_b = code_b or ""
   if not code_a or not code_b:
+    return ""
+
+  num_a = _extract_camelot_number(code_a)
+  num_b = _extract_camelot_number(code_b)
+  if num_a <= 0 or num_b <= 0:
     return ""
 
   # Gleiche Tonart = perfekt
   if code_a == code_b:
     return f"{code_a} → {code_b} — Gleiche Tonart, perfekt harmonisch"
 
-  num_a = _extract_camelot_number(code_a)
-  num_b = _extract_camelot_number(code_b)
   letter_a = code_a[-1].upper() if len(code_a) >= 2 else ""
   letter_b = code_b[-1].upper() if len(code_b) >= 2 else ""
-
-  if num_a <= 0 or num_b <= 0:
-    return f"{code_a} → {code_b}"
 
   # Camelot-Distanz: Kreis 1-12, kuerzester Weg
   dist = min(abs(num_a - num_b), 12 - abs(num_a - num_b))
@@ -874,8 +1102,32 @@ def _key_advice(code_a: str, code_b: str) -> str:
     return f"{code_a} → {code_b} — Distanz {dist}, Filter-Ride empfohlen"
   elif dist == 3:
     return f"{code_a} → {code_b} — Distanz {dist}, dezenter Clash — kein Melodie-Overlap"
+  elif dist in (4, 5) and letter_a == letter_b:
+    # Konsistenz mit calculate_compatibility: +4 (Energy Mix) und +7 (Mood
+    # Shift, Distanz 5) sind dort bewusst erlaubte Techniken, kein Clash
+    return f"{code_a} → {code_b} — Distanz {dist}, experimentelle Technik (+4/+7) — Energie-/Mood-Shift, kurz blenden"
   else:
     return f"{code_a} → {code_b} — Distanz {dist}, Key-Clash — nur Bass Swap"
+
+
+def _gain_advice(lufs_a: float, lufs_b: float) -> str:
+  """LUFS-basierte Gain-Angleichung zwischen zwei Tracks (2026-07-17).
+
+  0.0 = LUFS unbekannt (Alt-Cache/Messung fehlgeschlagen) -> kein Advice.
+  Anzeige ab GAIN_DIFF_SHOW_DB (1 dB = JND), Richtungsangabe fuer den
+  Trim/Gain-Regler des eingehenden Decks.
+  """
+  if lufs_a >= 0.0 or lufs_b >= 0.0:
+    return ""
+  diff = lufs_a - lufs_b  # positiv = Track B ist leiser
+  if abs(diff) < GAIN_DIFF_SHOW_DB:
+    return f"{lufs_a:.1f} → {lufs_b:.1f} LUFS — Pegel passt, kein Gain noetig"
+  direction = "rauf" if diff > 0 else "runter"
+  hint = " (deutlich — vor dem Mix angleichen!)" if abs(diff) >= GAIN_DIFF_WARN_DB else ""
+  return (
+    f"{lufs_a:.1f} → {lufs_b:.1f} LUFS — Track B Gain {abs(diff):.1f} dB "
+    f"{direction}{hint}"
+  )
 
 
 def _energy_advice(energy_a: float, energy_b: float) -> str:
@@ -923,14 +1175,7 @@ def _energy_advice(energy_a: float, energy_b: float) -> str:
     )
 
 
-def _dynamic_transition_bars(
-  bpm_a: float,
-  bpm_b: float,
-  energy_a: float,
-  energy_b: float,
-  profile_a: GenreMixProfile,
-  profile_b: GenreMixProfile,
-) -> int:
+def _dynamic_transition_bars(ctx: TransitionContext) -> int:
   """
   Berechnet die optimale Transition-Laenge in Bars.
 
@@ -940,12 +1185,12 @@ def _dynamic_transition_bars(
   """
   # Basis: Durchschnitt aus beiden Genre-Profilen
   base = int(
-    (profile_a.transition_bars[0] + profile_a.transition_bars[1] +
-     profile_b.transition_bars[0] + profile_b.transition_bars[1]) / 4.0
+    (ctx.profile_a.transition_bars[0] + ctx.profile_a.transition_bars[1] +
+     ctx.profile_b.transition_bars[0] + ctx.profile_b.transition_bars[1]) / 4.0
   )
 
-  bpm_diff = abs(bpm_a - bpm_b)
-  energy_diff = abs(energy_a - energy_b)
+  bpm_diff, bpm_relation = _effective_bpm_diff(ctx.bpm_a, ctx.bpm_b)
+  energy_diff = abs(ctx.energy_a - ctx.energy_b)
 
   # Mehr Zeit fuer grosse Abweichungen
   if bpm_diff > 8:
@@ -955,6 +1200,12 @@ def _dynamic_transition_bars(
 
   if energy_diff > 25:
     base += 4   # Mehr Zeit fuer grossen Energie-Shift
+
+  if bpm_relation in ("half", "double"):
+    # Audit-Fix 2026-07-17: Half/Double-Uebergaenge werden als KURZER Cut auf
+    # den Downbeat gefahren, nicht als langer Blend — langer Overlap legt
+    # Kick auf Doppel-Kick. Vorher wurde hier faelschlich +4 addiert.
+    base = min(base, 16)
 
   # Kuerzer wenn beides gut passt
   if bpm_diff < 1.0 and energy_diff < 10:
@@ -1021,6 +1272,14 @@ def _get_cross_genre_technique(genre_a: str, genre_b: str) -> str:
   if pair == frozenset({"Drum & Bass", "Trance"}):
     return "Breakdown-Bridge, harter Tempo-Wechsel"
 
+  # Audit-Fix 2026-07-17: Fallback nutzt die Kompatibilitaets-Matrix statt
+  # eines generischen Texts — schwer kompatible Paare (z.B. Psytrance/Deep
+  # House 0.15) verdienen eine explizite Bridge-Warnung
+  compat = get_genre_compatibility(genre_a, genre_b)
+  if compat < 0.3:
+    return "Schwierige Kombination -- Breakdown-Bridge oder Cold Cut, kein langer Blend"
+  if compat < 0.6:
+    return "Vorsichtiger Uebergang -- kurzer Blend am Phrasen-Ende, Energie angleichen"
   return "Standard cross-genre blend - match energy levels"
 
 
@@ -1080,6 +1339,9 @@ def _get_cross_genre_eq(genre_a: str, genre_b: str) -> str:
   if pair == frozenset({"Drum & Bass", "Trance"}):
     return "Full Cut am Drop, keine Bass-Ueberlappung"
 
+  compat = get_genre_compatibility(genre_a, genre_b)
+  if compat < 0.3:
+    return "Bass von Track A komplett cutten BEVOR Track B einsetzt -- keine Ueberlappung"
   return "Standard bass swap at phrase boundary"
 
 
@@ -1087,13 +1349,30 @@ def _assess_transition_risks(
   track_a: Track,
   track_b: Track,
   genre_compat: float,
+  mix_out_a: float | None = None,
+  mix_in_b: float | None = None,
 ) -> list[str]:
-  """Bewertet Risiken einer Transition."""
+  """Bewertet Risiken einer Transition.
+
+  AUDIT-FIX N2 (2026-08-14): mix_out_a/mix_in_b sind die PAARSPEZIFISCHEN
+  Mix-Punkte (adjusted_mix_out_a/adjusted_mix_in_b). Ohne sie bewertete der
+  Bass-Kollisions-Check die gespeicherten Track-Punkte — also eine Stelle,
+  die in diesem Uebergang gar nicht gemixt wird. Auf 51 realen Paaren kippte
+  dadurch das Kollisions-Urteil in 2 Faellen und die Dominanz-Warnung in 9.
+  None = Fallback auf die Track-Punkte (Alt-Aufrufer/Tests).
+  """
   risks = []
 
-  # BPM-Check
-  bpm_diff = abs(track_a.bpm - track_b.bpm)
-  if bpm_diff > 8:
+  # BPM-Check mit Half/Double-Time-Erkennung
+  # Audit-Fix 2026-07-21: Half/Double UNABHAENGIG von der 2.0-Grenze melden —
+  # sonst blieb ein Half/Double-Uebergang mit eff. Diff 2-4 BPM voellig ohne Hinweis.
+  bpm_diff, bpm_relation = _effective_bpm_diff(track_a.bpm, track_b.bpm)
+  if bpm_relation in ("half", "double"):
+    suffix = "" if bpm_diff <= 2.0 else f", eff. {bpm_diff:.1f} BPM angleichen"
+    risks.append(
+      f"Half/Double-Time ({track_a.bpm:.1f}↔{track_b.bpm:.1f}) -- exakt auf Phrase/Downbeat cutten{suffix}"
+    )
+  elif bpm_diff > 8:
     risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")
   elif bpm_diff > 4:
     risks.append(f"BPM-Differenz {bpm_diff:.1f} -- langsam angleichen")
@@ -1124,29 +1403,79 @@ def _assess_transition_risks(
 
   # Bass-Kollisions-Check (Phase 3)
   # Wir schauen uns die Bass-Energie der beteiligten Sektionen an
-  out_sec_data = next((s for s in track_a.sections if s.get('start_time') <= track_a.mix_out_point <= s.get('end_time')), {})
-  in_sec_data = next((s for s in track_b.sections if s.get('start_time') <= track_b.mix_in_point <= s.get('end_time')), {})
+  # Section-Dicts koennen unvollstaendig sein -- fehlende Zeiten nie vergleichen
+  def _section_covers(s: dict, t: float) -> bool:
+    start, end = s.get('start_time'), s.get('end_time')
+    return start is not None and end is not None and start <= t <= end
+
+  # Sentinel-Regel (config.MIX_POINT_UNSET = -1.0): 0.0 ist ein gueltiger
+  # Mix-Punkt, deshalb >= 0.0 und nicht > 0 pruefen.
+  point_a = mix_out_a if mix_out_a is not None and mix_out_a >= 0.0 else track_a.mix_out_point
+  point_b = mix_in_b if mix_in_b is not None and mix_in_b >= 0.0 else track_b.mix_in_point
+
+  out_sec_data = next((s for s in track_a.sections if _section_covers(s, point_a)), {})
+  in_sec_data = next((s for s in track_b.sections if _section_covers(s, point_b)), {})
   
   bass_a = out_sec_data.get('avg_bass', track_a.avg_bass)
   bass_b = in_sec_data.get('avg_bass', track_b.avg_bass)
   
+  # Audit-Fix 2026-07-17: unabhaengige Checks — der alte elif-Zweig war bei
+  # bass_a > 60 unerreichbar (bass_b > 80 impliziert bass_b > 60)
   if bass_a > 60 and bass_b > 60:
       risks.append(f"Bass-Kollision droht! (A:{bass_a:.0f}%, B:{bass_b:.0f}%) -- Bass von Track A hart cutten")
-  elif bass_b > 80:
-      risks.append(f"Incoming Track hat sehr dominanten Bass -- Bass-Swap am Phrasen-Ende empfohlen")
+  if bass_b > 80:
+      risks.append("Incoming Track hat sehr dominanten Bass -- Bass-Swap am Phrasen-Ende empfohlen")
+
+  # Key-Confidence (2026-07-17): unsichere Tonart = Harmonik-Empfehlung
+  # mit Vorsicht geniessen (0.0 = unbekannt/Alt-Cache -> keine Warnung)
+  for label, tr in (("A", track_a), ("B", track_b)):
+      kc = getattr(tr, "key_confidence", 0.0)
+      if 0.0 < kc < KEY_CONFIDENCE_UNCERTAIN:
+          risks.append(
+              f"Key von Track {label} unsicher erkannt ({kc:.0%}) -- "
+              f"Harmonik-Empfehlung pruefen, im Zweifel Bass Swap"
+          )
+
+  # Loudness (2026-07-17): grosser LUFS-Unterschied ohne Gain-Angleichung
+  # zerstoert den Uebergang hoerbar
+  lufs_a = getattr(track_a, "lufs", 0.0)
+  lufs_b = getattr(track_b, "lufs", 0.0)
+  if lufs_a < 0.0 and lufs_b < 0.0 and abs(lufs_a - lufs_b) >= GAIN_DIFF_WARN_DB:
+      risks.append(
+          f"Lautheits-Sprung {abs(lufs_a - lufs_b):.1f} dB "
+          f"({lufs_a:.1f} vs {lufs_b:.1f} LUFS) -- Gain vor dem Mix angleichen"
+      )
+
+  # AUDIT-FIX D2-light (2026-07-26): Vocal-Clash — zwei Lead-Vocals
+  # uebereinander sind einer der haeufigsten Mixfehler
+  if (
+      getattr(track_a, "vocal_instrumental", "unknown") == "vocal"
+      and getattr(track_b, "vocal_instrumental", "unknown") == "vocal"
+  ):
+      risks.append(
+          "Beide Tracks vocal-lastig -- Vocal-Ueberlappung vermeiden "
+          "(Uebergang ueber instrumentale Passagen legen)"
+      )
 
   return risks
 
 
 
 def _calculate_texture_similarity(fp_a: list, fp_b: list) -> float:
-    """Calculates cosine similarity between two MFCC fingerprints."""
+    """Calculates cosine similarity between two MFCC fingerprints.
+
+    Audit-Fix 2026-07-17: MFCC-0 (Gesamtlautheit) wird verworfen — er
+    dominierte die Cosine-Similarity, sodass "Textur" faktisch Lautheit mass.
+    """
     if not fp_a or not fp_b or len(fp_a) != len(fp_b):
         return 0.0
-    
+
     a = np.array(fp_a)
     b = np.array(fp_b)
-    
+    if len(a) > 2:
+        a = a[1:]
+        b = b[1:]
+
     # Cosine Similarity
     dot = np.dot(a, b)
     norm_a = np.linalg.norm(a)
@@ -1160,8 +1489,8 @@ def _calculate_texture_similarity(fp_a: list, fp_b: list) -> float:
 
 
 def _extract_camelot_number(code: str) -> int:
-  """Extrahiert die Nummer aus einem Camelot-Code (z.B. '8A' -> 8)."""
-  try:
-    return int(code[:-1])
-  except (ValueError, IndexError):
-    return 0
+  """Extrahiert die Nummer aus einem Camelot-Code (z.B. '8A' -> 8).
+
+  Delegiert an die zentrale Parsing-Definition in models (Audit 2026-07-17).
+  """
+  return get_camelot_components(code)[0]

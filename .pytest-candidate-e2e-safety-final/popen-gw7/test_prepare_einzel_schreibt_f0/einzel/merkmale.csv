@@ -1,0 +1,2 @@
+pair_id,groove,bass,timbre,mood,harmonic,bpm,energy,genre,crossfade_sek,overall_score,lufs_delta,plan_mix_out_sec,plan_mix_in_sec,plan_overlap_sec,plan_transition_type,plan_target_sr,kandidat_rang,bpm_toleranz,energy_direction,track_a,track_b
+001,0.91,0.7,0.7,0.7,0.77,0.9,0.8,1.0,17.3,0.83,-3.5,300.0,40.0,17.3,filter_ride,48000,2,1.5,down,a,b

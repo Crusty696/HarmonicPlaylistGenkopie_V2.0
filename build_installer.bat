@@ -1,87 +1,61 @@
 @echo off
-REM =========================================================
-REM Build Professional Windows Installer for HPG v3.5.3
-REM Requires: Inno Setup (https://jrsoftware.org/isdl.php)
-REM =========================================================
+setlocal EnableDelayedExpansion
+cd /d "%~dp0"
 
+echo ========================================
+echo Harmonic Playlist Generator - Installer bauen
+echo ========================================
 echo.
-echo ========================================================
-echo   HPG v3.5.3 - INSTALLER BUILD SCRIPT
-echo ========================================================
+echo Dieses Skript erzeugt NUR den Installer aus installer.iss.
+echo Die EXE baut build.bat - bitte vorher ausfuehren.
 echo.
 
-REM Check if executable exists
+rem --- 1/4: EXE muss vorhanden sein -------------------------------------
 if not exist "HarmonicPlaylistGenerator.exe" (
-    echo [ERROR] HarmonicPlaylistGenerator.exe not found!
+    echo [FEHLER] HarmonicPlaylistGenerator.exe nicht gefunden.
+    echo [INFO]   Zuerst build.bat ausfuehren.
     echo.
-    echo Please run build.bat first to create the executable.
-    echo.
-    pause
     exit /b 1
 )
+echo [1/4] EXE gefunden: HarmonicPlaylistGenerator.exe
 
-echo [1/4] Executable found: HarmonicPlaylistGenerator.exe
-echo.
+rem --- 2/4: Inno Setup finden -------------------------------------------
+set "INNO_PATH="
+if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "INNO_PATH=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if not defined INNO_PATH if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "INNO_PATH=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 
-REM Check if Inno Setup is installed
-set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if not exist "%INNO_PATH%" (
-    echo [ERROR] Inno Setup not found!
+if not defined INNO_PATH (
+    echo [FEHLER] Inno Setup 6 nicht gefunden ^(ISCC.exe^).
+    echo [INFO]   Download: https://jrsoftware.org/isdl.php
     echo.
-    echo Please install Inno Setup 6:
-    echo https://jrsoftware.org/isdl.php
-    echo.
-    echo After installation, run this script again.
-    echo.
-    pause
     exit /b 1
 )
+echo [2/4] Inno Setup gefunden: !INNO_PATH!
 
-echo [2/4] Inno Setup found
+rem --- 3/4: Ausgabeverzeichnis ------------------------------------------
+if not exist "installer_output\" mkdir "installer_output"
+echo [3/4] Ausgabeverzeichnis bereit: installer_output\
+
+rem --- 4/4: Installer kompilieren ---------------------------------------
+echo [4/4] Kompiliere installer.iss ^(dauert 1-2 Minuten^)...
 echo.
-
-REM Create output directory
-if not exist "installer_output\" mkdir installer_output
-echo [3/4] Output directory ready
-echo.
-
-REM Build installer
-echo [4/4] Building installer...
-echo [INFO] This may take 1-2 minutes...
-echo.
-
-"%INNO_PATH%" "installer.iss"
+"!INNO_PATH!" "installer.iss"
 if errorlevel 1 (
     echo.
-    echo [ERROR] Installer build failed!
-    echo Check error messages above.
-    pause
+    echo [FEHLER] Installer-Build fehlgeschlagen - Meldungen oben pruefen.
+    exit /b 1
+)
+
+if not exist "installer_output\HPG_v3.7.2_Setup.exe" (
+    echo [FEHLER] Erwartetes Installer-Artefakt wurde nicht erzeugt:
+    echo [INFO]   installer_output\HPG_v3.7.2_Setup.exe
     exit /b 1
 )
 
 echo.
-echo ========================================================
-echo   INSTALLER BUILD SUCCESSFUL!
-echo ========================================================
+echo ========================================
+echo   INSTALLER ERFOLGREICH ERSTELLT
+echo ========================================
+echo   Ablage: installer_output\
 echo.
-echo   Installer: installer_output\HPG_v3.5.3_Setup.exe
-echo   Size: ~300-500 MB (standalone installer)
-echo.
-echo   Features:
-echo   - One-click installation
-echo   - Desktop icon
-echo   - Start Menu entry
-echo   - Uninstaller
-echo   - Professional UI
-echo.
-echo   Ready to distribute!
-echo.
-echo ========================================================
-echo.
-
-REM Open output folder
-if exist "installer_output\HPG_v3.5.3_Setup.exe" (
-    explorer /select,"installer_output\HPG_v3.5.3_Setup.exe"
-)
-
-pause
+endlocal

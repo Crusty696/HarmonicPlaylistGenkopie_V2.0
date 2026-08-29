@@ -1,0 +1,315 @@
+"""Tests: Kandidaten im Playlist-Scoring und in den Empfehlungen (Spec Abschnitt 4)."""
+import pytest
+from copy import deepcopy
+
+from hpg_core import playlist as pl
+from hpg_core.genres import CANONICAL_GENRES
+from hpg_core.mix_candidates import MixCandidate
+from hpg_core.models import Track
+
+
+def _sections(duration=300.0, intro_end=60.0, outro_start=240.0):
+    return [
+        {"label": "intro", "start_time": 0.0, "end_time": intro_end, "avg_energy": 30},
+        {"label": "main", "start_time": intro_end, "end_time": outro_start, "avg_energy": 70},
+        {"label": "outro", "start_time": outro_start, "end_time": duration, "avg_energy": 30},
+    ]
+
+
+def _voll(t, **kw):
+    c = MixCandidate(t=t, schema=["pssi_phrase"], section_label="main", phrase_label="Chorus",
+                     neuheit=0.6, traegt_allein=True,
+                     groove_pattern_lokal=[0.25 if s % 4 == 0 else 0.0 for s in range(16)],
+                     bass_pattern_lokal=[0.25 if s % 4 == 0 else 0.0 for s in range(16)],
+                     syncopation_lokal=0.2, percussive_ratio_lokal=0.5, sub_energy=0.5, bass_punch=2.0,
+                     bass_rms_dbfs=-20.0, kick_aktiv=False, camelot_lokal="8A", key_confidence_lokal=0.9,
+                     timbre_fingerprint_lokal=[1.0, 0.5, 0.2], brightness_lokal=50, flatness_lokal=0.1,
+                     avg_mids_lokal=40.0, avg_highs_lokal=20.0, energy_lokal=70, energy_trend="rising",
+                     lufs_lokal=-10.0, mood={"pssi_mood": 1, "brightness": 50, "flatness": 0.1, "key_mode": "Minor"},
+                     vocal_aktiv_lokal=False)
+    for k, v in kw.items():
+        setattr(c, k, v)
+    return c
+
+
+def _track(name, bpm=140.0, camelot="8A", outs=(), ins=()):
+    g = (60.0 / bpm) * 4 * 16
+    t = Track(filePath=name, fileName=name)
+    t.bpm = bpm
+    t.duration = 300.0
+    t.detected_genre = "Psytrance"
+    t.phrase_unit = 16
+    t.first_downbeat = 0.0
+    t.downbeat_confidence = 1.0
+    t.beatgrid_source = "rekordbox"
+    t.beatgrid_status = "verified"
+    t.beatgrid_windows_checked = 3
+    t.beatgrid_max_phase_error_ms = 0.0
+    t.analysis_mode = "test_fixture"
+    t.sections = _sections()
+    t.outro_covered = True
+    t.analysis_coverage = [{"start": 0.0, "end": t.duration}]
+    t.camelotCode = camelot
+    t.keyNote = "A"
+    t.keyMode = "Minor"
+    t.energy = 70
+    t.mix_in_point = round(3 * g, 3)
+    t.mix_out_point = round(6 * g, 3)
+    t.mix_out_candidates = [c.to_dict() for c in outs]
+    t.mix_in_candidates = [c.to_dict() for c in ins]
+    return t
+
+
+def test_enhanced_compatibility_nutzt_kandidat_wenn_vorhanden():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    m = pl.calculate_enhanced_compatibility(a, b, 2.0)
+    assert m.kandidat is not None and m.kandidat["rang"] == 1
+    assert m.loudness_match == pytest.approx(1.0) and m.structure_match is not None
+    assert m.groove_match == pytest.approx(m.kandidat["teilwerte"]["groove"])
+    assert m.overall_score != pytest.approx(m.kandidat["score"])
+    assert m.ai_bonus == 0.0
+
+
+def test_transition_metrics_akzeptiert_keinen_score_bonus():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    kandidat = pl._kandidaten_fuer_paar(a, b, 2.0, None, {})[0]
+
+    with pytest.raises(TypeError):
+        pl.transition_metrics_from_candidate(kandidat, ai_bonus=0.14)
+
+
+def test_enhanced_compatibility_ohne_kandidaten_wie_bisher():
+    a, b = _track("a.mp3"), _track("b.mp3")
+    m = pl.calculate_enhanced_compatibility(a, b, 2.0)
+    assert m.kandidat is None and m.loudness_match is None and m.structure_match is None
+
+
+def test_bpm_hard_gate_bleibt_auch_mit_kandidat():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", bpm=143.0, ins=[_voll(round(3 * (60.0 / 143.0) * 64, 3))])
+    assert pl.calculate_enhanced_compatibility(a, b, 2.0).overall_score == 0.0
+
+
+def test_run_scoring_context_friert_genreprofile_und_unknown_ohne_praeferenz_ein(
+    monkeypatch,
+):
+    from hpg_core import candidate_preferences as cp
+    from hpg_core import tolerances as tol
+
+    basis = {
+        genre: {
+            "marker": genre,
+            **{
+                f"kandidaten_{faktor}_weight": 0.1
+                for faktor in (
+                    "harmonic", "bpm", "energy", "genre", "groove", "bass",
+                    "timbre", "mood", "loudness", "structure",
+                )
+            },
+        }
+        for genre in (*CANONICAL_GENRES, "Unknown")
+    }
+    pref = {
+        key: (1.0 if key == "kandidaten_harmonic_weight" else 0.0)
+        for key in cp.GEWICHT_SCHLUESSEL
+    }
+    monkeypatch.setattr(tol, "get_tolerances", lambda genre: basis[genre])
+    monkeypatch.setattr(
+        cp, "kandidaten_gewichte", lambda genre: pref if genre == "Psytrance" else None
+    )
+    monkeypatch.setattr(
+        cp, "schema_rangfolge", lambda genre: ["sektion", genre]
+    )
+
+    context = pl.resolve_run_scoring_context(
+        "Harmonic Flow", {"harmonic_strictness": 9}
+    )
+    profile = context["candidate_tolerances_by_genre"]
+    schema = context["candidate_schema_ranks_by_genre"]
+    assert set(profile) == {*CANONICAL_GENRES, "Unknown"}
+    assert profile["Psytrance"]["kandidaten_harmonic_weight"] == 1.0
+    assert profile["Psytrance"]["marker"] == "Psytrance"
+    assert profile["Unknown"]["kandidaten_harmonic_weight"] == 0.1
+    assert schema["Psytrance"] == ["sektion", "Psytrance"]
+    assert schema["Unknown"] == []
+
+    basis["Psytrance"]["marker"] = "live-geaendert"
+    pref["kandidaten_harmonic_weight"] = 0.0
+    assert profile["Psytrance"]["marker"] == "Psytrance"
+    assert profile["Psytrance"]["kandidaten_harmonic_weight"] == 1.0
+
+
+def test_kandidatenprofil_kommt_vom_quellgenre_und_ist_cachebestandteil(monkeypatch):
+    from hpg_core import pair_candidates as pc
+
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    a.detected_genre = "Techno"
+    aufrufe = []
+
+    def rank(*args, **kwargs):
+        aufrufe.append(kwargs)
+        return []
+
+    monkeypatch.setattr(pc, "rank_pair_candidates", rank)
+    pl.reset_pair_candidate_cache()
+    context = {
+        "candidate_tolerances_by_genre": {
+            "Techno": {"marker": 1}, "Unknown": {"marker": 0}
+        },
+        "candidate_schema_ranks_by_genre": {
+            "Techno": ["sektion"], "Unknown": []
+        },
+    }
+    pl._kandidaten_fuer_paar(a, b, 2.0, None, context)
+    pl._kandidaten_fuer_paar(a, b, 2.0, None, deepcopy(context))
+    assert len(aufrufe) == 1
+    assert aufrufe[0]["tolerances"] == {"marker": 1}
+    assert aufrufe[0]["schema_rang"] == ["sektion"]
+
+    context["candidate_tolerances_by_genre"]["Techno"]["marker"] = 2
+    pl._kandidaten_fuer_paar(a, b, 2.0, None, context)
+    assert len(aufrufe) == 2
+    assert aufrufe[1]["tolerances"] == {"marker": 2}
+
+
+def test_generate_playlist_nutzt_expliziten_kontext_und_advanced_sortierwerte(
+    monkeypatch,
+):
+    tracks = [_track("a.mp3"), _track("b.mp3")]
+    context = {"harmonic_strictness": 9}
+    gesehen = {}
+
+    def sorter(items, bpm_tolerance, **kwargs):
+        gesehen["sort"] = kwargs
+        return items
+
+    def quality(items, bpm_tolerance, scoring_context, transition_metrics=None):
+        gesehen["quality"] = scoring_context
+        assert transition_metrics is not None
+        return {
+            "overall_score": 1.0, "harmonic_flow": 1.0,
+            "energy_consistency": 1.0, "bpm_smoothness": 1.0,
+        }
+
+    monkeypatch.setitem(pl.STRATEGIES, "Peak-Time", sorter)
+    monkeypatch.setattr(pl, "calculate_playlist_quality", quality)
+    pl.generate_playlist(
+        tracks, "Peak-Time", 2.0,
+        advanced_params={"peak_position": 55, "harmonic_strictness": 1},
+        scoring_context=context,
+    )
+    assert gesehen["sort"]["peak_position"] == 55
+    assert gesehen["sort"]["harmonic_strictness"] == 9
+    profiles = gesehen["sort"]["candidate_tolerances_by_genre"]
+    assert "Psytrance" in profiles
+    assert gesehen["quality"]["harmonic_strictness"] == 9
+    assert gesehen["quality"]["candidate_tolerances_by_genre"] == profiles
+    assert gesehen["quality"]["candidate_schema_ranks_by_genre"]["Unknown"] == []
+
+
+def test_recommendations_tragen_kandidaten_und_plan_aus_rang_1():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3)), _voll(round(6 * g, 3), schema=["sektion"])])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)
+    r = recs[0]
+    assert r.kandidaten and r.kandidat_aktiv == 1
+    k1 = r.kandidaten[0]
+    assert r.plan.mix_out_a == pytest.approx(k1["t_out"]) and r.plan.mix_in_b == pytest.approx(k1["t_in"])
+    assert r.plan.overlap == pytest.approx(k1["overlap_sec"])
+    assert r.fade_out_end == pytest.approx(min(r.plan.mix_out_a + r.plan.overlap, 300.0))
+
+
+def test_bass_swap_pflicht_waehlt_bass_swap():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3), kick_aktiv=True)])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=True)])
+    r = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)[0]
+    assert r.kandidaten[0]["flags"]["bass_swap_pflicht"] is True
+    assert r.transition_type == "bass_swap" and r.plan.transition_type == "bass_swap"
+
+
+
+def test_recommendations_waehlen_kandidaten_sequentiell_konsistent():
+    """Playlist a -> b -> c: der Mix-Out von b (Paar 2) muss hinter dem Mix-In
+    von b (Paar 1) liegen (mindestens 2 Phrasen), sonst wuerde b rueckwaerts
+    gespielt. Rang 1 von Paar 2 laege davor -> Rang 2 wird aktiv."""
+    g = (60.0 / 140.0) * 4 * 16                       # 27.43 s
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    # b: Mix-In aus Paar 1 bei 4g (spaet), Mix-Out-Kandidaten bei 5g (zu frueh: < 4g + 2g) und 8g (ok)
+    b = _track("b.mp3", ins=[_voll(round(4 * g, 3))],
+               outs=[_voll(round(5 * g, 3), schema=["pssi_phrase"]),
+                     _voll(round(8 * g, 3), schema=["sektion"])])
+    c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
+    assert recs[0].plan.mix_in_b == pytest.approx(4 * g, abs=0.01)
+    # Paar 2: Rang 1 ist 5g (Schema-Prioritaet pssi_phrase), aber 5g < 4g + 2g -> 8g aktiv
+    assert recs[1].kandidaten[0]["t_out"] == pytest.approx(5 * g, abs=0.01)
+    assert recs[1].plan.mix_out_a == pytest.approx(8 * g, abs=0.01)
+    assert recs[1].kandidat_aktiv == [k["t_out"] for k in recs[1].kandidaten].index(recs[1].plan.mix_out_a) + 1
+    assert recs[1].kandidat_konsistent is True
+    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 0.05
+
+
+def test_recommendations_ohne_konsistenten_kandidaten_rang1_und_flag():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(6 * g, 3))], outs=[_voll(round(5 * g, 3))])   # Out vor In, kein anderer
+    c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
+    assert recs[1].kandidat_aktiv == 1 and recs[1].kandidat_konsistent is False
+
+
+
+def test_kette_waehlt_frueheren_mix_in_damit_naechstes_paar_konsistent_wird():
+    """Greedy wuerde in Paar 1 den Rang-1-Mix-In (4g, pssi) nehmen und Paar 2
+    dann inkonsistent lassen (einziger Mix-Out von b bei 5g < 4g + 2g). Die
+    Kettenwahl nimmt in Paar 1 den frueheren Mix-In (3g) — beide Paare konsistent."""
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
+    b = _track("b.mp3", ins=[_voll(round(4 * g, 3)), _voll(round(3 * g, 3), schema=["sektion"])],
+               outs=[_voll(round(5 * g, 3))])
+    c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
+    assert recs[0].plan.mix_in_b == pytest.approx(3 * g, abs=0.01)        # nicht Rang 1 (4g)
+    assert recs[0].kandidat_aktiv > 1 and recs[0].kandidat_konsistent is True
+    assert recs[1].plan.mix_out_a == pytest.approx(5 * g, abs=0.01) and recs[1].kandidat_konsistent is True
+    assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 0.05
+
+
+def test_kette_gespeicherte_wahl_gewinnt_wenn_konsistent(monkeypatch, tmp_path):
+    from hpg_core import candidate_choices as cc
+    from hpg_core import playlist as pl_mod
+    monkeypatch.setenv("HPG_CANDIDATE_CHOICES_FILE", str(tmp_path / "c.json"))
+    cc.reset_cache()
+    pl_mod.reset_pair_candidate_cache()
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3)), _voll(round(6 * g, 3), schema=["sektion"])])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3))])
+    recs = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)
+    assert recs[0].plan.mix_out_a == pytest.approx(5 * g, abs=0.01)
+    letzte = recs[0].kandidaten[-1]
+    cc.merke("a.mp3", "b.mp3", t_out=letzte["t_out"], t_in=letzte["t_in"], blend_bars=letzte["blend_bars"])
+    recs2 = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)
+    assert recs2[0].plan.mix_out_a == pytest.approx(letzte["t_out"], abs=0.01)
+    assert recs2[0].plan.overlap == pytest.approx(letzte["overlap_sec"])
+    assert recs2[0].kandidat_aktiv == 1 and recs2[0].kandidaten[0]["flags"]["gespeicherte_wahl"] is True
+    cc.reset_cache()
+    pl_mod.reset_pair_candidate_cache()
+
+
+def test_outro_overlap_limit_toleriert_rundungsrest():
+    """Kopfraum 24 Takte minus 1 ms (Teil-1-Rundung) darf nicht auf 23 Takte
+    fallen — die Kandidaten-Blende waere sonst still einen Takt kuerzer."""
+    a = _track("a.mp3")                      # 140 BPM, Outro ab 240 s, spb = 1.714 s
+    spb = 60.0 / 140.0 * 4
+    mix_out = 240.0 - 24 * spb + 0.001
+    assert pl._outro_overlap_limit(a, mix_out) == pytest.approx(24 * spb, abs=1e-6)
+    assert pl._outro_overlap_limit(a, 240.0 - 24 * spb - 0.5) == pytest.approx(24 * spb, abs=1e-6)

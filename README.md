@@ -1,7 +1,7 @@
-# Harmonic Playlist Generator (HPG) v3.5.3
+# Harmonic Playlist Generator (HPG) v3.7.2
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12.1+](https://img.shields.io/badge/python-3.12.1+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)]()
 
 > **Professional DJ Tool for Harmonically Perfect Playlists**
@@ -12,9 +12,9 @@
 
 ### Windows Standalone Executable
 
-**Latest Release: v3.5.3**
+**Latest Release: v3.7.2**
 
-[**DOWNLOAD HarmonicPlaylistGenerator.exe**](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/latest)
+[**DOWNLOAD HarmonicPlaylistGenerator.exe**](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/latest/download/HarmonicPlaylistGenerator.exe)
 
 **No installation required - Just download and run!**
 
@@ -35,22 +35,24 @@
 - **Rekordbox Import**: Optional fast import from Rekordbox 6/7 database
 
 ### Playlist Strategies
-10 sorting algorithms for any DJ scenario:
+8 sorting strategies:
 
 1. **Harmonic Flow** - Greedy harmonic compatibility (Camelot wheel)
 2. **Warm-Up** - Ascending BPM progression
 3. **Cool-Down** - Descending BPM progression
-4. **Harmonic Flow Enhanced** - Advanced harmonic + energy + genre compatibility
-5. **Peak-Time Enhanced** - Mathematical sine wave energy curve for club sets
-6. **Energy Wave Enhanced** - Alternating high/low energy pattern
-7. **Consistent Enhanced** - Minimal BPM/energy jumps with harmonic preference
-8. **Genre Flow** - Genre clustering with smooth transitions
-9. **Emotional Journey** - Multi-phase energy progression (intro/build/peak/cool)
-10. **Smart Harmonic** - Dynamic key/BPM weighting with local optimization
+4. **Peak-Time** - Adjustable peak placement with harmonic smoothing
+5. **Energy Wave** - Alternating high/low energy pattern
+6. **Genre Flow** - Genre clustering with smooth transitions
+7. **Consistent** - Minimal BPM/energy jumps with harmonic preference
+8. **Context Flow** - Phase-aware energy, trend and genre-fatigue objective
+
+### Optional local LLM enrichment
+
+Ollama or LM Studio can optionally add validated Mood/Subgenre metadata after the deterministic playlist is ready. This feature is disabled by default, does not analyze audio, and is not required for playlist generation.
 
 ### Performance
 - **4-12x faster** audio analysis with smart multi-core scaling
-- **Scales automatically** with CPU capabilities (up to 50% of cores)
+- **Scales automatically** with CPU capabilities (up to 50% of cores, capped at 4 worker processes — `config.PARALLEL_AUTO_MAX_WORKERS`)
 - **12x faster** when using Rekordbox import
 - Thread-safe caching with file-locking for parallel processing
 
@@ -63,7 +65,7 @@
 ## Installation (Developers)
 
 ### Prerequisites
-- Python 3.9+ (3.12 recommended)
+- Python 3.12.1+ — 3.12.x only, **not** 3.13+ (numba). 3.12.10 tested.
 - Windows 10/11
 
 ### Setup
@@ -75,7 +77,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Optional Rekordbox integration:
+Rekordbox integration is optional at runtime. The full developer requirements
+include its package; a lean installation can omit that line from
+`requirements.txt` and the app will continue with the librosa path:
 ```bash
 pip install pyrekordbox
 ```
@@ -103,7 +107,7 @@ HarmonicPlaylistGenkopie_V2.0/
 │       ├── base_exporter.py
 │       ├── m3u8_exporter.py
 │       └── rekordbox_xml_exporter.py
-├── tests/                           # Test suite (725+ tests)
+├── tests/                           # pytest unit/integration suite
 ├── requirements.txt                 # Python dependencies
 ├── pytest.ini                       # Test configuration
 ├── build.bat                        # Build standalone .exe

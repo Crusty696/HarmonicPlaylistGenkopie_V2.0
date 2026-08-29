@@ -31,6 +31,12 @@ class TestCamelotComponents:
     assert num == 0
     assert letter == ""
 
+  @pytest.mark.parametrize("code", ["8|", "13A", "0B", "8ABC", "8a", " 8A"])
+  def test_malformed_codes_rejected(self, code):
+    """Parser akzeptiert nur echte Camelot-Codes 1-12A/B."""
+    num, letter = _get_camelot_components(code)
+    assert (num, letter) == (0, "")
+
   def test_empty_code(self):
     """Leerer Code ergibt (0, '')."""
     num, letter = _get_camelot_components("")
@@ -52,19 +58,21 @@ class TestSameKeyCompatibility:
 
 
 class TestRelativeCompatibility:
-  """Relative Major/Minor = 90 Punkte."""
+  """Relative Major/Minor — richtungsabhaengig (H4-Fix):
+  A->B (Moll->Dur) = 90 (Energy Boost), B->A (Dur->Moll) = 85 (Energy Drop)."""
 
-  @pytest.mark.parametrize("code_a,code_b", [
-    ("8A", "8B"),
-    ("1A", "1B"),
-    ("12A", "12B"),
-    ("5B", "5A"),
+  @pytest.mark.parametrize("code_a,code_b,expected", [
+    ("8A", "8B", 90),
+    ("1A", "1B", 90),
+    ("12A", "12B", 90),
+    ("5B", "5A", 85),
+    ("8B", "8A", 85),
   ])
-  def test_relative_is_90(self, code_a, code_b):
+  def test_relative_directional(self, code_a, code_b, expected):
     """Relative Major/Minor (gleiche Nummer, anderer Buchstabe)."""
     t1 = make_track(camelotCode=code_a, bpm=128.0)
     t2 = make_track(camelotCode=code_b, bpm=128.0)
-    assert calculate_compatibility(t1, t2, 3.0) == 90
+    assert calculate_compatibility(t1, t2, 3.0) == expected
 
 
 class TestAdjacentCompatibility:

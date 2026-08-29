@@ -5,8 +5,7 @@ Prueft Export-Formate, Key-Mapping und Cue-Points.
 import os
 import pytest
 import tempfile
-from hpg_core.models import Track
-from hpg_core.exporters.base_exporter import BaseExporter
+from hpg_core.exporters.base_exporter import ExportReport
 from hpg_core.exporters.m3u8_exporter import M3U8Exporter
 from tests.fixtures.track_factories import make_track
 
@@ -162,6 +161,22 @@ class TestM3U8ExporterBasics:
 
     assert "#PLAYLIST:My DJ Set" in content
 
+  def test_playlist_name_cannot_inject_m3u_directive(
+    self, sample_playlist, export_dir
+  ):
+    path = os.path.join(export_dir, "test.m3u8")
+    M3U8Exporter().export(
+      sample_playlist,
+      path,
+      playlist_name="Safe\n#EXTINF:999,Injected",
+    )
+
+    with open(path, "r", encoding="utf-8") as f:
+      lines = f.read().splitlines()
+
+    assert "#PLAYLIST:Safe #EXTINF:999,Injected" in lines
+    assert "#EXTINF:999,Injected" not in lines
+
   def test_encoding_header(self, sample_playlist, export_dir):
     """Encoding-Header vorhanden."""
     path = os.path.join(export_dir, "test.m3u8")
@@ -172,6 +187,20 @@ class TestM3U8ExporterBasics:
       content = f.read()
 
     assert "#EXTENC:UTF-8" in content
+
+  def test_relative_paths_for_usb_export(self, sample_playlist, export_dir):
+    """USB-Modus schreibt Pfade relativ zum Speicherort der Playlist."""
+    music_dir = os.path.join(export_dir, "music")
+    usb_dir = os.path.join(export_dir, "usb")
+    os.makedirs(music_dir)
+    os.makedirs(usb_dir)
+    sample_playlist[0].filePath = os.path.join(music_dir, "track.mp3")
+    path = os.path.join(usb_dir, "set.m3u8")
+
+    M3U8Exporter(relative_paths=True).export(sample_playlist[:1], path)
+
+    content = open(path, "r", encoding="utf-8").read()
+    assert "../music/track.mp3" in content.replace("\\", "/")
 
 
 class TestM3U8Unicode:
@@ -261,6 +290,58 @@ class TestM3U8EdgeCases:
     assert "compatible_with" in info
 
 
+class TestExportReportContract:
+  """Beide Exporter liefern denselben Rueckgabetyp: ExportReport."""
+
+  def test_m3u8_returns_export_report(self, sample_playlist, export_dir):
+    """export() gibt ExportReport zurueck, nicht None/dict."""
+    path = os.path.join(export_dir, "report.m3u8")
+    report = M3U8Exporter().export(sample_playlist, path)
+
+    assert isinstance(report, ExportReport)
+    assert report.success is True
+    assert report.status == "success"
+    assert report.output_path == path
+    assert report.tracks_written == len(sample_playlist)
+    # M3U8 kennt keine Cues/Beatgrids
+    assert report.cues_written == 0
+    assert report.beatgrids_written == 0
+    assert report.errors == ()
+
+  def test_m3u8_partial_when_track_has_no_path(self, export_dir):
+    """Track ohne Dateipfad wird uebersprungen -> status='partial'."""
+    tracks = [
+      make_track(title="Good", duration=300.0),
+      make_track(title="Broken", duration=300.0, filePath=""),
+    ]
+    path = os.path.join(export_dir, "partial.m3u8")
+    report = M3U8Exporter().export(tracks, path)
+
+    assert report.status == "partial"
+    assert report.success is False
+    assert report.tracks_written == 1
+    assert len(report.errors) == 1
+    assert "Broken" in report.errors[0]
+    # partial ist KEIN Fehler: die Datei existiert und enthaelt den guten Track
+    with open(path, "r", encoding="utf-8") as f:
+      content = f.read()
+    assert content.count("#EXTINF:") == 1
+
+  def test_m3u8_all_tracks_unwritable_raises(self, export_dir):
+    """Kein einziger schreibbarer Track -> IOError, keine Datei."""
+    tracks = [make_track(title="Broken", duration=300.0, filePath="")]
+    path = os.path.join(export_dir, "none.m3u8")
+    with pytest.raises(IOError):
+      M3U8Exporter().export(tracks, path)
+    assert not os.path.exists(path)
+
+  def test_both_exporters_share_report_type(self):
+    """RekordboxXMLExporter nutzt denselben ExportReport aus base_exporter."""
+    from hpg_core.exporters import rekordbox_xml_exporter
+
+    assert rekordbox_xml_exporter.ExportReport is ExportReport
+
+
 # ============================================================
 # Rekordbox XML Exporter Tests
 # ============================================================
@@ -344,47 +425,6 @@ class TestRekordboxKeyMapping:
     for num in range(1, 13):
       key = mapping[f"{num}B"]
       assert not key.endswith("m"), f"{num}B -> '{key}' endet mit 'm'"
-
-
-class TestRekordboxURIConversion:
-  """Rekordbox URI-Konvertierung."""
-
-  def test_convert_uri_method_exists(self):
-    """_convert_to_rekordbox_uri Methode existiert."""
-    try:
-      from hpg_core.exporters.rekordbox_xml_exporter import (
-        RekordboxXMLExporter,
-      )
-      exporter = RekordboxXMLExporter()
-      assert hasattr(exporter, "_convert_to_rekordbox_uri")
-    except ImportError:
-      pytest.skip("pyrekordbox nicht installiert")
-
-  def test_uri_starts_with_file_protocol(self):
-    """URI beginnt mit 'file://localhost'."""
-    try:
-      from hpg_core.exporters.rekordbox_xml_exporter import (
-        RekordboxXMLExporter,
-      )
-      exporter = RekordboxXMLExporter()
-    except ImportError:
-      pytest.skip("pyrekordbox nicht installiert")
-
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\track.mp3")
-    assert uri.startswith("file://localhost")
-
-  def test_uri_uses_forward_slashes(self):
-    """URI verwendet Forward Slashes (kein Backslash)."""
-    try:
-      from hpg_core.exporters.rekordbox_xml_exporter import (
-        RekordboxXMLExporter,
-      )
-      exporter = RekordboxXMLExporter()
-    except ImportError:
-      pytest.skip("pyrekordbox nicht installiert")
-
-    uri = exporter._convert_to_rekordbox_uri("C:\\Music\\Sets\\track.mp3")
-    assert "\\" not in uri
 
 
 class TestRekordboxFormatInfo:

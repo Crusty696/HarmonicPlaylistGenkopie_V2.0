@@ -2,7 +2,7 @@
 
 ## Übersicht: Das Herz des DJ-Algorithmus
 
-Der Harmonic Playlist Generator ist wie ein virtueller DJ, der **20 Parameter** pro Track analysiert und dann **intelligent entscheidet**, welche Tracks nacheinander kommen sollen. Es gibt **10 verschiedene Strategien** zur Playlist-Generierung.
+Der Harmonic Playlist Generator ist wie ein virtueller DJ, der **20 Parameter** pro Track analysiert und dann **intelligent entscheidet**, welche Tracks nacheinander kommen sollen. Es gibt **8 Strategien** zur Playlist-Generierung (kanonische Liste: `CLAUDE.md` bzw. `hpg_core/playlist.py` `STRATEGIES`; die Altnamen "Harmonic Flow Enhanced", "Peak-Time Enhanced", "Emotional Journey" bleiben als Aliasse gueltig).
 
 ---
 
@@ -43,11 +43,11 @@ def _calculate_harmonic_compatibility(track1, track2):
 
 ---
 
-## 2. Die 10 Playlist-Strategien
+## 2. Die 8 Playlist-Strategien (hier vier als Beispiel)
 
 Jede Strategie priorisiert unterschiedliche Kriterien. Der Nutzer wählt, welche am besten zu seinen Tracks passt.
 
-### Strategie 1: **Harmonic Flow Enhanced** (BELIEBT)
+### Strategie 1: **Harmonic Flow** (BELIEBT, frueher "Harmonic Flow Enhanced")
 
 **Logik:** "Nimm immer den Track mit dem besten harmonischen Übergang"
 
@@ -251,7 +251,7 @@ Kandidaten:
 
 ## 5. Walkthrough: Eine Echtzeit-Playlist-Generierung
 
-Sagen wir, der Nutzer hat 5 Tracks und wählt "Harmonic Flow Enhanced":
+Sagen wir, der Nutzer hat 5 Tracks und wählt "Harmonic Flow":
 
 ```python
 initial_track = House 128 BPM, A Minor (8A), Energy 75
@@ -363,11 +363,11 @@ Wenn du die App startest, siehst du:
 ├─────────────────────────────────────┤
 │ [📊 Preview] [▶ Generate] [💾 Export]│
 ├─────────────────────────────────────┤
-│ Harmonic Flow Enhanced   Score: 0.89 │
+│ Harmonic Flow            Score: 0.89 │
 │ Genre Flow               Score: 0.76 │
 │ Peak Time                Score: 0.92 │
 │ Energy Wave              Score: 0.85 │
-│ ...7 weitere Strategien  │
+│ ...4 weitere Strategien  │
 ├─────────────────────────────────────┤
 │ Playlist (Preview):                 │
 │ 1. Better Days (House) 128 BPM      │

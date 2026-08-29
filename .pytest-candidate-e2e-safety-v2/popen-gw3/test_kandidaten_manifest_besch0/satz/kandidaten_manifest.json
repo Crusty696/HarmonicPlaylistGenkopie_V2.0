@@ -1,0 +1,65 @@
+{
+  "format_version": 1,
+  "app_version": "3.7.2",
+  "algorithm_build": {
+    "scheme": "sha256-path-bytes-v1",
+    "files": 36,
+    "sha256": "6b1a00738ea0ff69a73e6028a24731f1e4a9e6e14841c02f344df6e05a385d95"
+  },
+  "hearing_test_contract": {
+    "harmonic_gate_scope": "candidate_hearing_test_only",
+    "minimum_harmonic_score": 60
+  },
+  "cache": {
+    "version": 42,
+    "size": 12,
+    "sha256": "cce1a777cca016f22b2f58746283337b1a4a4d54857e0e1d62c969e3a2a29f37"
+  },
+  "render_args": {
+    "anzahl": 1,
+    "max_versionen_pro_paar": 2,
+    "nur_genre": "Psytrance",
+    "transition_type_mode": "kontrolliert",
+    "seed": 20260820
+  },
+  "scoring_snapshot": {
+    "rank_args": {
+      "bpm_tolerance": 2.0,
+      "energy_direction": "auto",
+      "harmonic_strictness": 7,
+      "allow_experimental": true
+    },
+    "candidate_tolerances_by_genre": {},
+    "candidate_tolerances_fallback": {},
+    "candidate_schema_ranks_by_genre": {},
+    "candidate_schema_rank_fallback": [],
+    "candidate_choices": {}
+  },
+  "pairs": [
+    {
+      "pair_id": "001",
+      "track_a": "A.wav",
+      "track_b": "B.wav",
+      "clips": [
+        {
+          "clip_id": "001_k1",
+          "rank": 1,
+          "t_out": 100.0,
+          "t_in": 60.0,
+          "blend_bars": 8,
+          "overlap_sec": 13.712,
+          "rendered_transition_type": "pro_eq_swap"
+        },
+        {
+          "clip_id": "001_k2",
+          "rank": 2,
+          "t_out": 101.0,
+          "t_in": 61.0,
+          "blend_bars": 8,
+          "overlap_sec": 13.712,
+          "rendered_transition_type": "pro_eq_swap"
+        }
+      ]
+    }
+  ]
+}

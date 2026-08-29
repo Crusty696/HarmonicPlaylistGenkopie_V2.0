@@ -16,7 +16,6 @@ from hpg_core.dj_brain import (
   calculate_genre_aware_mix_points,
   calculate_paired_mix_points,
   generate_dj_recommendation,
-  GenreMixProfile,
   DJRecommendation,
   GENRE_MIX_PROFILES,
   GENRE_COMPATIBILITY,
@@ -26,15 +25,16 @@ from hpg_core.dj_brain import (
   _get_intro_end,
   _get_intro_end_from_sections,
   _get_outro_start_from_sections,
-  _get_section_at_mix_out,
-  _get_section_at_mix_in,
+  _get_section_at_time,
   _build_structure_note,
   _get_cross_genre_technique,
   _get_cross_genre_eq,
+  _key_advice,
   _assess_transition_risks,
   _extract_camelot_number,
 )
-from hpg_core.models import Track
+from hpg_core.models import Track, QUANTIZE_TOLERANCE_SEC
+from hpg_core.config import MIX_POINT_UNSET
 
 
 # === Fixtures ===
@@ -62,6 +62,11 @@ def _make_track(
     keyNote=key_note,
     keyMode=key_mode,
     bass_intensity=bass_intensity,
+    beatgrid_source="audio",
+    beatgrid_status="verified",
+    beatgrid_windows_checked=3,
+    beatgrid_max_phase_error_ms=0.0,
+    analysis_mode="test_fixture",
   )
   return t
 
@@ -93,14 +98,12 @@ class TestGenreMixProfiles:
   def test_psytrance_profile(self):
     p = GENRE_MIX_PROFILES["Psytrance"]
     assert p.phrase_unit == 16
-    assert p.intro_bars == (32, 64)
     assert p.outro_bars == (32, 64)
     assert p.transition_bars == (16, 32)
 
   def test_tech_house_profile(self):
     p = GENRE_MIX_PROFILES["Tech House"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (16, 32)
     assert p.transition_bars == (8, 16)
 
   def test_progressive_profile(self):
@@ -121,31 +124,28 @@ class TestGenreMixProfiles:
   def test_techno_profile(self):
     p = GENRE_MIX_PROFILES["Techno"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (16, 32)
-    assert p.transition_bars == (8, 16)
+    # DJ-Praxis-Recherche 2026-07: 16 Bars Standard-Blend, 32 Bars Sweet Spot
+    assert p.transition_bars == (16, 32)
 
   def test_deep_house_profile(self):
     p = GENRE_MIX_PROFILES["Deep House"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (32, 64)
     assert p.transition_bars == (32, 64)
 
   def test_trance_profile(self):
     p = GENRE_MIX_PROFILES["Trance"]
     assert p.phrase_unit == 16
-    assert p.intro_bars == (32, 64)
-    assert p.transition_bars == (16, 32)
+    # DJ-Praxis-Recherche 2026-07: Uplifting Trance blendet 32-64+ Bars
+    assert p.transition_bars == (32, 64)
 
   def test_dnb_profile(self):
     p = GENRE_MIX_PROFILES["Drum & Bass"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (16, 32)
     assert p.transition_bars == (8, 16)
 
   def test_minimal_profile(self):
     p = GENRE_MIX_PROFILES["Minimal"]
     assert p.phrase_unit == 8
-    assert p.intro_bars == (32, 64)
     assert p.transition_bars == (32, 64)
 
   def test_get_mix_profile_unknown_genre(self):
@@ -156,7 +156,6 @@ class TestGenreMixProfiles:
   def test_default_profile_has_sensible_values(self):
     d = DEFAULT_MIX_PROFILE
     assert d.phrase_unit == 8
-    assert d.intro_bars[0] <= d.intro_bars[1]
     assert d.outro_bars[0] <= d.outro_bars[1]
     assert d.transition_bars[0] <= d.transition_bars[1]
 
@@ -311,14 +310,33 @@ class TestMixPointCalculation:
   def test_phrase_quantization_psytrance(self):
     """Psytrance Mix-Punkte sollten auf 16-bar Phrasen quantisiert sein."""
     sections = _standard_sections()
-    _, _, bars_in, bars_out = calculate_genre_aware_mix_points(
+    mix_in, mix_out, bars_in, bars_out = calculate_genre_aware_mix_points(
       sections, bpm=140.0, duration=420.0, genre="Psytrance"
     )
-    # 16-bar phrase unit fuer Psytrance
-    # Mix-In bei Bar 1 (Index 0) = korrekt fuer Psytrance
-    # (DJ spielt Track B ab dem allerersten Beat)
-    assert bars_in >= 0  # Bar 1 = 0 ist korrekt
+    seconds_per_bar = (60.0 / 140.0) * 4
+    phrase_seconds = seconds_per_bar * 16
+
+    def aligned(value: float) -> bool:
+      remainder = value % phrase_seconds
+      return remainder < 0.05 or (phrase_seconds - remainder) < 0.05
+
+    assert aligned(mix_in)
+    assert aligned(mix_out)
+    assert bars_in > 0
     assert bars_out > bars_in
+
+  def test_paired_mix_points_psytrance_keep_16_bar_overlap(self):
+    """Psytrance-Transitions sollten mindestens eine 16-Bar-Overlap haben."""
+    a = _make_track(genre="Psytrance", bpm=140.0, sections=_standard_sections(), mix_out=360.0)
+    b = _make_track(genre="Psytrance", bpm=140.0, sections=_standard_sections(), mix_in=60.0)
+
+    mix_out_a, mix_in_b = calculate_paired_mix_points(a, b)
+    seconds_per_bar = (60.0 / 140.0) * 4
+    overlap_bars = (a.duration - mix_out_a) / seconds_per_bar
+
+    assert mix_in_b >= 0.0
+    assert mix_out_a < a.duration
+    assert overlap_bars >= 16 - 0.5
 
   def test_tech_house_shorter_transitions(self):
     """Tech House sollte kuerzer Transitions haben als Progressive."""
@@ -344,6 +362,46 @@ class TestMixPointCalculation:
     )
     assert mix_in > 0
     assert mix_out < 360.0
+
+  def test_mix_in_hat_keine_zusaetzliche_phrasen_sperre(self):
+    """Nach dem Intro gilt keine zusaetzliche Ein-Phrasen-Sperre."""
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": 10.0, "avg_energy": 20.0},
+      {"label": "main", "start_time": 10.0, "end_time": 380.0, "avg_energy": 75.0},
+      {"label": "outro", "start_time": 380.0, "end_time": 420.0, "avg_energy": 25.0},
+    ]
+    bpm, duration, genre = 140.0, 420.0, "Psytrance"
+    grid = (60.0 / bpm) * 4 * 16  # 16-Bar-Phrase = 27.43 s
+    anchor = 40.0        # spaeter Phrasen-Anker
+    fd = 0.5             # frueher Takt-Anker
+
+    mi_old, mo_old, _, _ = calculate_genre_aware_mix_points(
+      sections, bpm, duration, genre, anchor=anchor
+    )
+    mi_new, mo_new, _, _ = calculate_genre_aware_mix_points(
+      sections, bpm, duration, genre, anchor=anchor, first_downbeat=fd
+    )
+
+    assert mi_old > 10.0
+    assert mi_new == pytest.approx(mi_old, abs=0.05)
+    assert mo_new == pytest.approx(mo_old, abs=0.05)
+    # Beide Ergebnisse liegen auf dem Phrasen-Gitter des Ankers
+    for value in (mi_old, mi_new, mo_new):
+      rem = (value - anchor) % grid
+      assert min(rem, grid - rem) < 0.05
+
+  def test_r3_first_downbeat_none_ist_altes_verhalten(self):
+    """Backward-Compat: first_downbeat=None (Default) muss exakt dem
+    bisherigen Verhalten entsprechen."""
+    sections = _standard_sections()
+    legacy = calculate_genre_aware_mix_points(
+      sections, bpm=140.0, duration=420.0, genre="Psytrance", anchor=1.9
+    )
+    explicit = calculate_genre_aware_mix_points(
+      sections, bpm=140.0, duration=420.0, genre="Psytrance", anchor=1.9,
+      first_downbeat=None,
+    )
+    assert legacy == explicit
 
 
 # === DJ Empfehlungen ===
@@ -429,6 +487,45 @@ class TestDJRecommendation:
     risk_text = " ".join(rec.risk_notes).lower()
     assert "tonart" in risk_text or "camelot" in risk_text
 
+  def test_recommendation_preserves_unset_mix_in_without_overlap(self):
+    a = _make_track(
+      genre="Tech House", bpm=128.0, duration=180.0,
+      sections=[{"label": "main", "start_time": 0.0, "end_time": 180.0}],
+      mix_out=120.0,
+    )
+    b = _make_track(
+      genre="Tech House", bpm=128.0, duration=65.0,
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 64.0},
+        {"label": "main", "start_time": 64.0, "end_time": 65.0},
+      ],
+      mix_in=64.0,
+    )
+
+    rec = generate_dj_recommendation(a, b)
+
+    assert rec.adjusted_mix_in_b == MIX_POINT_UNSET
+    assert rec.incoming_section == "unknown"
+    assert rec.overlap_seconds == 0.0
+
+  def test_recommendation_preserves_unset_mix_out_without_overlap(self):
+    a = _make_track(
+      genre="Tech House", bpm=60.0, duration=10.0,
+      sections=[{"label": "outro", "start_time": 0.0, "end_time": 10.0}],
+      mix_out=4.0,
+    )
+    b = _make_track(
+      genre="Tech House", bpm=60.0, duration=30.0,
+      sections=[{"label": "main", "start_time": 0.0, "end_time": 30.0}],
+      mix_in=0.0,
+    )
+
+    rec = generate_dj_recommendation(a, b)
+
+    assert rec.adjusted_mix_out_a == MIX_POINT_UNSET
+    assert rec.outgoing_section == "unknown"
+    assert rec.overlap_seconds == 0.0
+
 
 # === Hilfsfunktionen ===
 
@@ -477,20 +574,16 @@ class TestHelperFunctions:
     assert result <= 300.0
     assert result > 0.0
 
-  def test_section_at_mix_out(self):
-    track = _make_track(sections=_standard_sections(), mix_out=370.0)
-    section = _get_section_at_mix_out(track)
-    assert section == "outro"
+  def test_adjacent_section_boundary_belongs_to_following_section(self):
+    track = _make_track(
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 30.0},
+        {"label": "main", "start_time": 30.0, "end_time": 100.0},
+      ]
+    )
 
-  def test_section_at_mix_in(self):
-    track = _make_track(sections=_standard_sections(), mix_in=65.0)
-    section = _get_section_at_mix_in(track)
-    assert section == "build"
-
-  def test_section_no_sections(self):
-    track = _make_track(sections=[])
-    assert _get_section_at_mix_out(track) == "unknown"
-    assert _get_section_at_mix_in(track) == "unknown"
+    assert _get_section_at_time(track, 30.0, "in") == "main"
+    assert _get_section_at_time(track, 100.0, "out") == "main"
 
   def test_build_structure_note_ideal(self):
     note = _build_structure_note("outro", "intro")
@@ -533,6 +626,14 @@ class TestHelperFunctions:
     assert _extract_camelot_number("") == 0
     assert _extract_camelot_number("X") == 0
 
+  def test_key_advice_rejects_malformed_partial_camelot_codes(self):
+    """DJ Notes duerfen ungültige Camelot-Codes nicht durch strip/partial parsing harmonisch bewerten."""
+    malformed_codes = ["8|", "13A", "0B", "8ABC", "8a", " 8A"]
+
+    for code in malformed_codes:
+      assert _key_advice(code, "9A") == ""
+      assert _key_advice("9A", code) == ""
+
   def test_assess_risks_no_issues(self):
     a = _make_track(bpm=128.0, energy=70, camelot="8A")
     b = _make_track(bpm=128.0, energy=72, camelot="8A")
@@ -544,6 +645,15 @@ class TestHelperFunctions:
     b = _make_track(bpm=126.0, energy=30, camelot="7A")
     risks = _assess_transition_risks(a, b, 0.3)
     assert len(risks) >= 3  # BPM, Energy, Genre + evtl. Key
+
+  def test_halftime_bpm_pair_does_not_get_large_jump_risk(self):
+    """87 ↔ 174 BPM ist Half/Double-Time, kein roher 87-BPM-Sprung."""
+    a = _make_track(bpm=87.0, energy=70, camelot="8A")
+    b = _make_track(bpm=174.0, energy=72, camelot="8A")
+    risks = _assess_transition_risks(a, b, 1.0)
+    joined = " ".join(risks)
+    assert "Grosser BPM-Sprung" not in joined
+    assert "Half/Double-Time" in joined
 
 
 # === Integration mit Playlist ===
@@ -567,9 +677,10 @@ class TestPlaylistIntegration:
 
     metrics = calculate_enhanced_compatibility(a, b, bpm_tolerance=3.0)
 
-    # Genre-Kompatibilitaet sollte DJ Brain Wert haben (0.85)
-    # nicht den alten Wert (1.0 weil beide "Electronic")
-    assert 0.8 <= metrics.genre_compatibility <= 0.9
+    # Ohne lokale Mix-In-/Mix-Out-Messungen darf der DJ-Brain-Ganztrackwert
+    # keinen scheinbar gueltigen Uebergang erzeugen.
+    assert metrics.genre_compatibility == 0.0
+    assert metrics.kandidat is None
 
   def test_transition_recommendations_with_dj_brain(self):
     """compute_transition_recommendations sollte DJ Brain Notes enthalten."""
@@ -581,11 +692,7 @@ class TestPlaylistIntegration:
                     sections=_standard_sections(), mix_in=60.0, mix_out=360.0)
 
     recs = compute_transition_recommendations([a, b], bpm_tolerance=3.0)
-    assert len(recs) == 1
-
-    rec = recs[0]
-    # DJ Brain Notes sollten Mix-Technik oder EQ enthalten
-    assert "Mix:" in rec.notes or "EQ:" in rec.notes or "Transition:" in rec.notes
+    assert recs == []
 
 
 # === Paarspezifische Mix-Punkt-Berechnung ===
@@ -664,16 +771,16 @@ class TestCalculatePairedMixPoints:
   Tests fuer calculate_paired_mix_points(track_a, track_b).
 
   Szenario-Uebersicht:
-    [Gleiches Intro/Outro]: Guard: Mix-In B >= intro_end, Mix-Out A < outro_start
-    [Langes Intro B]:       Mix-In B nach Intro (>= 212s), Mix-Out A vor Outro
-    [Kurzes Intro B]:       Mix-In B nach Intro (>= 26s)
+    [Gleiches Intro/Outro]: Guard: Mix-In B > intro_end, Mix-Out A < outro_start
+    [Langes Intro B]:       Mix-In B strikt nach Intro, Mix-Out A vor Outro
+    [Kurzes Intro B]:       Mix-In B strikt nach Intro
     [Non-Psytrance]:        Gleiche Guards fuer alle Genres
   """
 
   def test_equal_intro_outro_mix_in_after_intro(self):
     """
     Intro B = 60s, Outro A = 60s.
-    Guard: Mix-In B darf NICHT im Intro liegen -> >= 60.0.
+    Guard: Mix-In B muss strikt nach dem Intro liegen -> > 60.0.
     """
     track_a = _make_track(
       genre="Psytrance", bpm=143.0, duration=420.0,
@@ -684,8 +791,45 @@ class TestCalculatePairedMixPoints:
       sections=_standard_sections(), mix_in=60.0,
     )
     mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
-    assert mix_in_b >= 60.0, f"Mix-In B im Intro! War {mix_in_b}, Intro endet bei 60s"
-    assert mix_out_a < 360.0, f"Mix-Out A im Outro! War {mix_out_a}, Outro startet bei 360s"
+    assert mix_in_b > 60.0 + QUANTIZE_TOLERANCE_SEC, (
+      f"Mix-In B im Sicherheitsband! War {mix_in_b}, Intro endet bei 60s"
+    )
+    assert mix_out_a < 360.0 - QUANTIZE_TOLERANCE_SEC, (
+      f"Mix-Out A im Sicherheitsband! War {mix_out_a}, Outro startet bei 360s"
+    )
+
+  @pytest.mark.parametrize(
+    ("intro_end", "outro_start"),
+    [(64.0, 320.0), (63.98, 320.02)],
+  )
+  def test_paired_points_schliessen_50ms_strukturband_aus(
+    self, intro_end, outro_start
+  ):
+    track_a = _make_track(
+      genre="Psytrance", bpm=120.0, duration=400.0,
+      sections=[
+        {"label": "main", "start_time": 0.0, "end_time": outro_start},
+        {"label": "outro", "start_time": outro_start, "end_time": 400.0},
+      ],
+      mix_out=outro_start,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=120.0, duration=400.0,
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": intro_end},
+        {"label": "main", "start_time": intro_end, "end_time": 400.0},
+      ],
+      mix_in=intro_end,
+    )
+
+    mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    assert mix_out_a == MIX_POINT_UNSET or (
+      mix_out_a < outro_start - QUANTIZE_TOLERANCE_SEC
+    )
+    assert mix_in_b == MIX_POINT_UNSET or (
+      mix_in_b > intro_end + QUANTIZE_TOLERANCE_SEC
+    )
 
   def test_long_intro_mix_in_not_zero(self):
     """
@@ -707,12 +851,11 @@ class TestCalculatePairedMixPoints:
     mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
 
     # Mix-In B = intro_end - outro_dauer_A = 211.7 - 60 = ~151.7s
-    expected_mix_in_b = intro_end_b - 60.0
     assert mix_in_b > 0.0, (
       f"Bei langem Intro sollte Mix-In B > 0 sein, war {mix_in_b}"
     )
     # Guard: Mix-In B nach Intro (Rundungstoleranz 1 Bar)
-    assert mix_in_b >= intro_end_b - 1.0, (
+    assert mix_in_b > intro_end_b, (
       f"Mix-In B {mix_in_b}s im Intro (endet bei {intro_end_b:.1f}s)"
     )
     # Guard: Mix-Out A vor Outro (startet bei 360s)
@@ -721,7 +864,7 @@ class TestCalculatePairedMixPoints:
   def test_short_intro_mix_in_after_intro(self):
     """
     Intro B = ~26s, Outro A = 60s.
-    Guard: Mix-In B NACH Intro (>= 26s), Mix-Out A VOR Outro (< 360s).
+    Guard: Mix-In B strikt NACH Intro, Mix-Out A VOR Outro.
     """
     sections_b, duration_b = _psytrance_sections_short()
 
@@ -738,10 +881,29 @@ class TestCalculatePairedMixPoints:
     # Guard: Mix-In B nach Intro (~26s, Rundungstoleranz 1 Bar)
     spb_b = (60.0 / 146.0) * 4
     intro_end_b = 16 * spb_b  # ~26.3s
-    assert mix_in_b >= intro_end_b - 1.0, (
+    assert mix_in_b > intro_end_b, (
       f"Mix-In B {mix_in_b}s im Intro (endet bei {intro_end_b:.1f}s)"
     )
-    assert mix_out_a < 420.0, f"Mix-Out A muss vor Track-Ende liegen"
+    assert mix_out_a < 420.0, "Mix-Out A muss vor Track-Ende liegen"
+
+  def test_paired_mix_in_b_phrase_aligned(self):
+    """H2-Regression: der Intro-Guard muss auf die PHRASENGRENZE quantisieren
+    (Psytrance phrase_unit=16), nicht auf einen einzelnen Bar. Vorher landete
+    Mix-In B auf Bar 36 (Bar-ceil), korrekt ist Bar 48 (16-Bar-Phrasengrenze)."""
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_in=60.0,
+    )
+    _mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+    spb_b = (60.0 / 143.0) * 4
+    bars_in = round(mix_in_b / spb_b)
+    assert bars_in % 16 == 0, (
+      f"Mix-In B {mix_in_b:.1f}s = Bar {bars_in} liegt nicht auf 16-Bar-Phrasengrenze"
+    )
 
   def test_tech_house_paired_points(self):
     """Tech House: Paired Mix Points werden berechnet (nicht mehr Sonderbehandlung)."""
@@ -760,8 +922,45 @@ class TestCalculatePairedMixPoints:
     assert mix_out_a <= track_a.duration
     assert mix_in_b <= track_b.duration
     # Intro endet bei 60s, Outro startet bei 360s (standard_sections)
-    assert mix_in_b >= 55.0, f"Mix-In B {mix_in_b}s zu nah am Intro"
+    assert mix_in_b > 60.0, f"Mix-In B {mix_in_b}s liegt nicht nach dem Intro"
     assert mix_out_a < 360.0, f"Mix-Out A {mix_out_a}s im Outro"
+
+  def test_zu_kurzer_track_b_liefert_keinen_mix_in_auf_introgrenze(self):
+    track_a = _make_track(
+      genre="Tech House", bpm=128.0, duration=180.0,
+      sections=_standard_sections(), mix_out=120.0,
+    )
+    track_b = _make_track(
+      genre="Tech House", bpm=128.0, duration=65.0,
+      sections=[
+        {"label": "intro", "start_time": 0.0, "end_time": 64.0},
+        {"label": "main", "start_time": 64.0, "end_time": 65.0},
+      ],
+      mix_in=64.0,
+    )
+
+    _mix_out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    assert mix_in_b == MIX_POINT_UNSET
+
+  def test_sehr_fruehes_outro_bleibt_strikt_ausgeschlossen(self):
+    track_a = _make_track(
+      genre="Tech House", bpm=60.0, duration=10.0,
+      sections=[
+        {"label": "main", "start_time": 0.0, "end_time": 1.0},
+        {"label": "outro", "start_time": 1.0, "end_time": 10.0},
+      ],
+      mix_out=4.0,
+    )
+    track_b = _make_track(
+      genre="Tech House", bpm=60.0, duration=30.0,
+      sections=[{"label": "main", "start_time": 0.0, "end_time": 30.0}],
+      mix_in=0.0,
+    )
+
+    mix_out_a, _mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    assert mix_out_a == MIX_POINT_UNSET or mix_out_a < 1.0
 
   def test_overlap_minimum_8_bars(self):
     """
@@ -985,7 +1184,7 @@ class TestGenreAwareMixPointsGuard:
     sections = _standard_sections()
     bpm = 140.0 if genre in ("Psytrance", "Trance") else 128.0
     mi, mo, _, _ = calculate_genre_aware_mix_points(sections, bpm, 420.0, genre)
-    assert mi >= 60.0, f"{genre}: Mix-In {mi}s im Intro (endet bei 60s)"
+    assert mi > 60.0, f"{genre}: Mix-In {mi}s nicht nach dem Intro"
 
   @pytest.mark.parametrize("genre", [
     "Psytrance", "Trance", "Tech House", "Techno",
@@ -1046,7 +1245,7 @@ class TestMixPointIntegration:
         f"Mix-Out A {rec.adjusted_mix_out_a}s im Outro (startet bei 360s)"
       )
     if rec.adjusted_mix_in_b > 0:
-      assert rec.adjusted_mix_in_b >= 53.0, (
+      assert rec.adjusted_mix_in_b > 53.0, (
         f"Mix-In B {rec.adjusted_mix_in_b}s im Intro (endet bei 53s)"
       )
 
@@ -1068,3 +1267,235 @@ class TestMixPointIntegration:
     assert rec.genre_pair
     assert rec.mix_technique
     assert rec.transition_bars > 0
+
+
+# === Audit 2026-08-14: Regressionstests zu den bestaetigten Befunden ===
+
+class TestAudit20260814MixPointAudit:
+  """Regressionen aus dem Ausfuehrungs-Audit von dj_brain.py (2026-08-14).
+
+  Jeder Test deckt genau einen auf echten Daten (52 Tracks / 51 Paare)
+  bestaetigten Befund ab.
+  """
+
+  # --- N2: Risiken an den PAARSPEZIFISCHEN Mix-Punkten bewerten ---
+
+  def test_n2_bass_risk_uses_pair_points_not_track_points(self):
+    """_assess_transition_risks bewertet die uebergebenen Paar-Punkte.
+
+    Track-Punkte zeigen auf bassarme Sektionen, die Paar-Punkte auf
+    bassstarke -- nur die Paar-Punkte werden wirklich gemixt.
+    """
+    sections_a = [
+      {"label": "main",  "start_time": 0.0,   "end_time": 200.0, "avg_bass": 10.0},
+      {"label": "drop",  "start_time": 200.0, "end_time": 360.0, "avg_bass": 95.0},
+      {"label": "outro", "start_time": 360.0, "end_time": 420.0, "avg_bass": 5.0},
+    ]
+    sections_b = [
+      {"label": "intro", "start_time": 0.0,   "end_time": 60.0,  "avg_bass": 5.0},
+      {"label": "drop",  "start_time": 60.0,  "end_time": 420.0, "avg_bass": 95.0},
+    ]
+    a = _make_track(sections=sections_a, mix_out=100.0)   # Track-Punkt: bassarm
+    b = _make_track(sections=sections_b, mix_in=10.0)     # Track-Punkt: bassarm
+
+    without = _assess_transition_risks(a, b, 1.0)
+    with_pair = _assess_transition_risks(a, b, 1.0, 300.0, 200.0)
+
+    assert not any(r.startswith("Bass-Kollision") for r in without), (
+      "Track-Punkte liegen in bassarmen Sektionen -- keine Kollision erwartet"
+    )
+    assert any(r.startswith("Bass-Kollision") for r in with_pair), (
+      f"Paar-Punkte (300s/200s) liegen in Drops mit 95% Bass, "
+      f"Kollision muss gemeldet werden. Bekommen: {with_pair}"
+    )
+    assert any("dominanten Bass" in r for r in with_pair)
+
+  def test_n2_recommendation_risks_match_adjusted_points(self):
+    """generate_dj_recommendation bewertet konsistent an adjusted_*."""
+    sections_a = [
+      {"label": "main",  "start_time": 0.0,   "end_time": 200.0, "avg_bass": 10.0},
+      {"label": "drop",  "start_time": 200.0, "end_time": 360.0, "avg_bass": 95.0},
+      {"label": "outro", "start_time": 360.0, "end_time": 420.0, "avg_bass": 5.0},
+    ]
+    sections_b = [
+      {"label": "intro", "start_time": 0.0,  "end_time": 60.0,  "avg_bass": 5.0},
+      {"label": "drop",  "start_time": 60.0, "end_time": 420.0, "avg_bass": 95.0},
+    ]
+    a = _make_track(sections=sections_a, mix_out=100.0)
+    b = _make_track(sections=sections_b, mix_in=10.0)
+    rec = generate_dj_recommendation(a, b)
+
+    def bass_at(track, point):
+      for s in track.sections:
+        if s["start_time"] <= point <= s["end_time"]:
+          return s["avg_bass"]
+      return 0.0
+
+    bass_a = bass_at(a, rec.adjusted_mix_out_a)
+    bass_b = bass_at(b, rec.adjusted_mix_in_b)
+    reported = any(r.startswith("Bass-Kollision") for r in rec.risk_notes)
+    assert reported == (bass_a > 60 and bass_b > 60), (
+      f"Kollisions-Urteil passt nicht zu den Paar-Punkten "
+      f"(A@{rec.adjusted_mix_out_a:.1f}s={bass_a}%, "
+      f"B@{rec.adjusted_mix_in_b:.1f}s={bass_b}%): {rec.risk_notes}"
+    )
+
+  # --- N3: Intro-Guard ist die Autoritaet fuer Mix-In B ---
+
+  def test_n3_mix_in_b_lands_exactly_on_first_phrase_after_intro(self):
+    """Mix-In B = erste Phrasengrenze NACH dem Intro, keine Phrase spaeter.
+
+    Vor dem Fix quantisierte die Kette zweimal ohne Epsilon; ein bereits
+    gitteraligner Wert sprang durch Float-Rauschen eine volle Phrase
+    (~27 s bei Psytrance) nach hinten. Auf echten Daten in 6 von 51 Paaren.
+    """
+    from hpg_core.models import quantize_to_grid, seconds_per_bar
+    bpm_b = 143.0
+    track_a = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=bpm_b, duration=420.0,
+      sections=_standard_sections(), mix_in=0.0,
+    )
+    _out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+
+    phrase = seconds_per_bar(bpm_b) * get_mix_profile("Psytrance").phrase_unit
+    expected = quantize_to_grid(60.0, phrase, track_b.phrase_anchor, "ceil")
+    assert mix_in_b == pytest.approx(expected, abs=1e-6), (
+      f"Mix-In B {mix_in_b:.3f}s statt {expected:.3f}s "
+      f"(Abweichung {abs(mix_in_b - expected) / phrase:.2f} Phrasen)"
+    )
+
+  def test_n3_no_intro_section_keeps_track_mix_in(self):
+    """Ohne Intro-Sektion rutscht Mix-In B nicht an den Track-Anfang.
+
+    Vorher: _get_intro_end() fiel auf track.mix_in_point zurueck und
+    (mix_in_point - target_overlap) schob den Punkt praktisch auf 0
+    (real gemessen 85.7s -> 3.4s, mitten in den ersten Drop).
+    """
+    sections_b = [
+      {"label": "drop", "start_time": 0.0,   "end_time": 200.0, "avg_energy": 85.0},
+      {"label": "main", "start_time": 200.0, "end_time": 400.0, "avg_energy": 70.0},
+    ]
+    track_a = _make_track(
+      genre="Psytrance", bpm=140.0, duration=420.0,
+      sections=_standard_sections(), mix_out=360.0,
+    )
+    track_b = _make_track(
+      genre="Psytrance", bpm=140.0, duration=400.0,
+      sections=sections_b, mix_in=85.72,
+    )
+    _out_a, mix_in_b = calculate_paired_mix_points(track_a, track_b)
+    assert mix_in_b >= 85.0, (
+      f"Mix-In B {mix_in_b:.2f}s wurde an den Track-Anfang geschoben "
+      f"(track.mix_in_point = 85.72s)"
+    )
+
+  def test_n3_mix_in_b_independent_of_partner_outro_length(self):
+    """Mix-In B haengt nur an B's Intro, nicht an A's Outro-Laenge.
+
+    Beweist, dass target_overlap die B-Seite nicht (mehr) scheinbar steuert.
+    """
+    sections_b = _standard_sections()
+    track_b = _make_track(
+      genre="Psytrance", bpm=143.0, duration=420.0,
+      sections=sections_b, mix_in=0.0,
+    )
+    results = []
+    for mix_out_a in (200.0, 300.0, 400.0):
+      track_a = _make_track(
+        genre="Psytrance", bpm=143.0, duration=420.0,
+        sections=_standard_sections(), mix_out=mix_out_a,
+      )
+      results.append(calculate_paired_mix_points(track_a, track_b)[1])
+    assert len(set(round(r, 6) for r in results)) == 1, (
+      f"Mix-In B variiert mit A's Outro-Laenge: {results}"
+    )
+
+  # --- M1/B3: overlap_seconds wird durch den Rest von B begrenzt ---
+
+  def test_m1_overlap_never_exceeds_remaining_length_of_b(self):
+    """overlap_seconds passt immer in den Rest von Track B."""
+    track_a = _make_track(
+      genre="Psytrance", bpm=140.0, duration=420.0,
+      sections=_standard_sections(), mix_out=100.0,
+    )
+    sections_b = [
+      {"label": "intro", "start_time": 0.0,  "end_time": 60.0,  "avg_energy": 20.0},
+      {"label": "main",  "start_time": 60.0, "end_time": 120.0, "avg_energy": 70.0},
+    ]
+    track_b = _make_track(
+      genre="Psytrance", bpm=140.0, duration=120.0,
+      sections=sections_b, mix_in=0.0,
+    )
+    rec = generate_dj_recommendation(track_a, track_b)
+    room_b = track_b.duration - rec.adjusted_mix_in_b
+    assert rec.overlap_seconds <= room_b + 1e-6, (
+      f"Overlap {rec.overlap_seconds:.1f}s > Rest von B {room_b:.1f}s"
+    )
+    assert rec.overlap_seconds >= 0.0
+
+  # --- N5: Notfall-Pfad bleibt auf einem Gitter ---
+
+  @pytest.mark.parametrize("bpm,duration,intro_end,outro_start,genre", [
+    (140.0, 70.0,  40.0,  60.0,  "Psytrance"),
+    (140.0, 100.0, 50.0,  90.0,  "Psytrance"),
+    (128.0, 25.0,  10.0,  25.0,  "Techno"),
+  ])
+  def test_kollabiertes_striktes_fenster_wird_abgelehnt(
+    self, bpm, duration, intro_end, outro_start, genre
+  ):
+    """Ohne zwei Phrasen zwischen Intro und Outro gibt es keinen Mixpunkt."""
+    anchor = 0.0
+    sections = [
+      {"label": "intro", "start_time": 0.0, "end_time": intro_end, "avg_energy": 20.0},
+      {"label": "main",  "start_time": intro_end, "end_time": outro_start, "avg_energy": 70.0},
+    ]
+    if outro_start < duration:
+      sections.append(
+        {"label": "outro", "start_time": outro_start, "end_time": duration, "avg_energy": 15.0}
+      )
+    mix_in, mix_out, _bi, _bo = calculate_genre_aware_mix_points(
+      sections, bpm, duration, genre, anchor, anchor
+    )
+    assert mix_in == MIX_POINT_UNSET
+    assert mix_out == MIX_POINT_UNSET
+
+  # --- Z1: Guard darf die Invariante nicht selbst brechen ---
+
+  @pytest.mark.parametrize("duration", [-5.0, 0.0, float("nan"), float("inf")])
+  def test_z1_invalid_duration_never_yields_invalid_mix_points(self, duration):
+    """Ungueltige Dauer -> (0.0, 0.0); nie ein negativer oder NaN-Mix-Out.
+
+    Vorher reichte der Early-Return die Dauer roh als mix_out durch
+    (duration=-5.0 -> (0.0, -5.0)); bei NaN/inf griff der Guard gar nicht.
+    """
+    import math
+    sections = [
+      {"label": "intro", "start_time": 0.0,   "end_time": 40.0},
+      {"label": "main",  "start_time": 40.0,  "end_time": 300.0},
+      {"label": "outro", "start_time": 300.0, "end_time": 400.0},
+    ]
+    mix_in, mix_out, bars_in, bars_out = calculate_genre_aware_mix_points(
+      sections, 138.0, duration, "Psytrance"
+    )
+    assert (mix_in, mix_out, bars_in, bars_out) == (0.0, 0.0, 0, 0), (
+      f"duration={duration} -> ({mix_in}, {mix_out})"
+    )
+    assert math.isfinite(mix_in) and math.isfinite(mix_out)
+    assert mix_in >= 0.0 and mix_out >= 0.0
+
+  def test_z1_non_finite_bpm_is_rejected(self):
+    """NaN-BPM darf nicht durch die Berechnung laufen."""
+    import math
+    sections = [
+      {"label": "intro", "start_time": 0.0,  "end_time": 40.0},
+      {"label": "main",  "start_time": 40.0, "end_time": 400.0},
+    ]
+    mix_in, mix_out, _bi, _bo = calculate_genre_aware_mix_points(
+      sections, float("nan"), 400.0, "Psytrance"
+    )
+    assert math.isfinite(mix_in) and math.isfinite(mix_out)
+    assert 0.0 <= mix_in <= mix_out <= 400.0

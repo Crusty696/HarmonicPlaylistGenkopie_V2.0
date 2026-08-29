@@ -3,7 +3,13 @@ Tests fuer hpg_core.models - Track Dataclass und Camelot-Mapping.
 Validiert alle 24 Camelot-Codes und Track-Defaults.
 """
 import pytest
-from hpg_core.models import Track, CAMELOT_MAP, key_to_camelot
+from hpg_core.models import (
+  CAMELOT_MAP,
+  Track,
+  bars_to_seconds,
+  key_to_camelot,
+  seconds_to_bars,
+)
 from tests.fixtures.camelot_test_data import EXPECTED_CAMELOT_MAP
 
 
@@ -102,6 +108,19 @@ class TestKeyToCamelot:
     key_to_camelot(track)
     assert track.camelotCode == ""
 
+  def test_cleared_key_invalidates_stale_camelot_code(self):
+    track = Track(
+      filePath="/test.mp3",
+      fileName="test.mp3",
+      keyNote="",
+      keyMode="Minor",
+      camelotCode="8A",
+    )
+
+    key_to_camelot(track)
+
+    assert track.camelotCode == ""
+
   def test_empty_mode_no_assignment(self):
     """Leere Mode = keine Zuweisung."""
     track = Track(filePath="/test.mp3", fileName="test.mp3",
@@ -147,8 +166,8 @@ class TestTrackDataclass:
     assert track.camelotCode == ""
     assert track.energy == 0
     assert track.bass_intensity == 0
-    assert track.mix_in_point == 0.0
-    assert track.mix_out_point == 0.0
+    assert track.mix_in_point == -1.0
+    assert track.mix_out_point == -1.0
     assert track.mix_in_bars == 0
     assert track.mix_out_bars == 0
 
@@ -200,3 +219,111 @@ class TestTrackDataclass:
     assert isinstance(track.mix_out_point, float)
     assert isinstance(track.mix_in_bars, int)
     assert isinstance(track.mix_out_bars, int)
+
+  def test_zero_is_a_valid_mix_in_point(self):
+    track = Track(
+      filePath="/t.mp3", fileName="t.mp3", mix_in_point=0.0, mix_out_point=30.0
+    )
+    assert track.mix_in_point == 0.0
+
+
+class TestPhraseAnchor:
+  """AUDIT-FIX R2/R4 (2026-07-26): Gates des phrase_anchor-Fallbacks.
+
+  R4: Sentinel fuer 'nicht geschaetzt' ist -1.0 — eine Phrasen-Phase von
+  exakt 0.0 ist GUELTIG und darf nicht verworfen werden.
+  R2: Ohne belastbaren Downbeat (downbeat_confidence == 0.0) waere das
+  Bar-Raster, auf dem first_phrase abgestimmt wurde, erfunden — dann
+  Fallback auf first_downbeat.
+  """
+
+  def _track(self, **kw) -> Track:
+    return Track(filePath="/t.mp3", fileName="t.mp3", **kw)
+
+  def test_default_ist_sentinel_und_faellt_auf_downbeat_zurueck(self):
+    t = self._track(first_downbeat=1.5, downbeat_confidence=0.8)
+    assert t.first_phrase == -1.0
+    assert t.phrase_anchor == 1.5
+
+  def test_gueltige_phase_null_wird_verwendet(self):
+    """R4-Kern: first_phrase == 0.0 (Track startet auf der Phrasengrenze)
+    mit ausreichender Konfidenz ist ein gueltiger Anker."""
+    t = self._track(
+      first_phrase=0.0, phrase_confidence=0.9,
+      first_downbeat=1.5, downbeat_confidence=0.8,
+    )
+    assert t.phrase_anchor == 0.0
+
+  def test_belastbare_phase_wird_verwendet(self):
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=0.5,
+      first_downbeat=0.5, downbeat_confidence=0.7,
+    )
+    assert t.phrase_anchor == 14.2
+
+  def test_schwache_konfidenz_faellt_auf_downbeat_zurueck(self):
+    from hpg_core.config import PHRASE_CONFIDENCE_MIN
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=PHRASE_CONFIDENCE_MIN - 0.01,
+      first_downbeat=0.5, downbeat_confidence=0.7,
+    )
+    assert t.phrase_anchor == 0.5
+
+  def test_ohne_downbeat_konfidenz_faellt_auf_downbeat_zurueck(self):
+    """R2-Kern: first_phrase aus einem erfundenen Raster (gescheiterter
+    Downbeat-Estimate, z. B. Alt-Cache) wird nicht als Anker verwendet."""
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=0.9,
+      first_downbeat=0.0, downbeat_confidence=0.0,
+    )
+    assert t.phrase_anchor == 0.0  # == first_downbeat (Fallback)
+
+  def test_sentinel_minus_1_faellt_auf_downbeat_zurueck(self):
+    t = self._track(
+      first_phrase=-1.0, phrase_confidence=0.9,
+      first_downbeat=2.25, downbeat_confidence=1.0,
+    )
+    assert t.phrase_anchor == 2.25
+
+
+def test_bar_conversion_has_explicit_rounding_contract():
+  assert bars_to_seconds(16, 120.0) == 32.0
+  assert seconds_to_bars(31.2, 120.0, rounding="floor") == 15
+  assert seconds_to_bars(31.2, 120.0, rounding="round") == 16
+  assert seconds_to_bars(31.2, 120.0, rounding="ceil") == 16
+
+
+def test_tracks_compare_and_hash_by_stable_file_identity():
+  first = Track("C:/music/song.mp3", "song.mp3")
+  restored = Track("C:/music/./song.mp3", "song.mp3")
+  other = Track("C:/music/other.mp3", "other.mp3")
+
+  assert first == restored
+  assert hash(first) == hash(restored)
+  assert first != other
+  assert len({first, restored, other}) == 2
+
+
+def test_track_hat_kandidaten_felder_mit_leeren_defaults():
+  t = Track(filePath="C:/x.mp3", fileName="x.mp3")
+  assert t.phrases == [] and t.cue_points == [] and t.phrase_grid == []
+  assert t.mix_in_candidates == [] and t.mix_out_candidates == []
+
+
+def test_camelot_relation_score_tabelle():
+  from hpg_core.models import camelot_relation_score as s
+  assert s("8A", "8A") == 100
+  assert s("8A", "8B") == 90      # Moll -> Dur
+  assert s("8B", "8A") == 85      # Dur -> Moll
+  assert s("8A", "9A") == 80
+  assert s("8A", "7A") == 80
+  assert s("8A", "10A") == 75     # +2, strictness 7 -> loose_factor 1.0
+  assert s("8A", "12A") == 70     # +4 experimentell
+  assert s("8A", "3A") == 65      # +7 experimentell
+  assert s("8A", "12A", allow_experimental=False) == max(5, 15 - 7)
+  assert s("8A", "9B") == 60      # diagonal
+  assert s("8A", "2A") == 8       # Rest: (15 - 7) * 1.0
+  assert s("8A", "8A", penalty=0.85) == 85
+  assert s("", "8A") == 10
+  assert s("XX", "8A", penalty=0.85) == 8
+  assert s("8A", "10A", harmonic_strictness=10) == int(75 * 0.76)

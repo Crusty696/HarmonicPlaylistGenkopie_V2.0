@@ -1,47 +1,51 @@
-; Inno Setup Script for Harmonic Playlist Generator v3.0
+; Inno Setup Script for Harmonic Playlist Generator v3.7.2
 ; Creates professional Windows installer with Desktop icon and Start Menu entry
 ; Download Inno Setup: https://jrsoftware.org/isdl.php
+
+#ifndef SourceExe
+  #define SourceExe "HarmonicPlaylistGenerator.exe"
+#endif
 
 [Setup]
 ; Application Information
 AppName=Harmonic Playlist Generator
-AppVersion=3.5.3
+AppVersion=3.7.2
 AppPublisher=HPG Team
-AppPublisherURL=https://github.com/yourusername/HPG
-AppSupportURL=https://github.com/yourusername/HPG/issues
-AppUpdatesURL=https://github.com/yourusername/HPG/releases
+AppPublisherURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0
+AppSupportURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/issues
+AppUpdatesURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases
 DefaultDirName={autopf}\HarmonicPlaylistGenerator
 DefaultGroupName=Harmonic Playlist Generator
 AllowNoIcons=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
-OutputBaseFilename=HPG_v3.5.3_Setup
+OutputBaseFilename=HPG_v3.7.2_Setup
 SetupIconFile=icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\HarmonicPlaylistGenerator.exe
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 
 ; Privileges
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 
 ; Visual Style
-WizardImageFile=compiler:WizModernImage-IS.bmp
-WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp
+;WizardImageFile=compiler:WizModernImage-IS.bmp
+;WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checked
-Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 ; Main executable
-Source: "HarmonicPlaylistGenerator.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "HarmonicPlaylistGenerator.exe"; Flags: ignoreversion
 
 ; Documentation
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -61,16 +65,13 @@ Name: "{group}\Uninstall HPG"; Filename: "{uninstallexe}"; Comment: "Uninstall H
 ; Desktop Icon
 Name: "{autodesktop}\Harmonic Playlist Generator"; Filename: "{app}\HarmonicPlaylistGenerator.exe"; IconFilename: "{app}\HarmonicPlaylistGenerator.exe"; Tasks: desktopicon; Comment: "Professional DJ Playlist Generator"
 
-; Quick Launch (Windows 7 and earlier)
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\Harmonic Playlist Generator"; Filename: "{app}\HarmonicPlaylistGenerator.exe"; Tasks: quicklaunchicon
-
 [Run]
 ; Offer to launch app after installation
 Filename: "{app}\HarmonicPlaylistGenerator.exe"; Description: "{cm:LaunchProgram,Harmonic Playlist Generator}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Clean up cache files on uninstall
-Type: filesandordirs; Name: "{app}\hpg_cache_*.dbm*"
+; Der produktive Cache liegt bewusst unter %LOCALAPPDATA%\HPG und wird bei
+; der Deinstallation nicht geloescht. So wird kein Benutzerzustand entfernt.
 Type: filesandordirs; Name: "{app}\*.log"
 
 [Code]
@@ -79,21 +80,22 @@ Type: filesandordirs; Name: "{app}\*.log"
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  MsgBox('Welcome to Harmonic Playlist Generator v3.5.3 Setup!' + #13#10 + #13#10 +
-         'This installer will install HPG on your computer.' + #13#10 + #13#10 +
-         'Features:' + #13#10 +
-         '  - 4-6x faster audio analysis (multi-core)' + #13#10 +
-         '  - Optional Rekordbox integration (12x speedup)' + #13#10 +
-         '  - 10 advanced playlist algorithms' + #13#10 +
-         '  - DJ-optimized mix points (phrase-aligned)' + #13#10 +
-         '  - M3U8 and Rekordbox XML export' + #13#10 + #13#10 +
-         'Click Next to continue.',
-         mbInformation, MB_OK);
+  if not WizardSilent then
+    MsgBox('Welcome to Harmonic Playlist Generator v3.7.2 Setup!' + #13#10 + #13#10 +
+           'This installer will install HPG on your computer.' + #13#10 + #13#10 +
+           'Features:' + #13#10 +
+           '  - 4-6x faster audio analysis (multi-core)' + #13#10 +
+           '  - Optional Rekordbox integration (12x speedup)' + #13#10 +
+           '  - 8 advanced playlist algorithms' + #13#10 +
+           '  - DJ-optimized mix points (phrase-aligned)' + #13#10 +
+           '  - M3U8 and Rekordbox XML export' + #13#10 + #13#10 +
+           'Click Next to continue.',
+           mbInformation, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
+  if (CurStep = ssPostInstall) and (not WizardSilent) then
   begin
     MsgBox('Installation Complete!' + #13#10 + #13#10 +
            'HPG has been successfully installed.' + #13#10 + #13#10 +
@@ -102,9 +104,9 @@ begin
            '  2. Drag & drop your music folder' + #13#10 +
            '  3. Choose playlist strategy' + #13#10 +
            '  4. Click Generate Playlist' + #13#10 + #13#10 +
-           'For Rekordbox integration, install pyrekordbox:' + #13#10 +
-           '  pip install pyrekordbox' + #13#10 + #13#10 +
-           'Enjoy harmonically perfect playlists!',
+           'Die optionale Rekordbox-Integration ist bereits enthalten und wird' + #13#10 +
+           'automatisch aktiviert, wenn eine kompatible lokale Datenbank vorhanden ist.' + #13#10 + #13#10 +
+         'Enjoy harmonically optimized playlists!',
            mbInformation, MB_OK);
   end;
 end;

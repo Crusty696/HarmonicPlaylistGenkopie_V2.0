@@ -1,0 +1,42 @@
+{
+  "_diagnose": {
+    "fit_kandidaten": {
+      "genres": {
+        "Techno": {
+          "uebernommen": true,
+          "messung": {
+            "auc": 0.75,
+            "stichprobe": 18
+          }
+        },
+        "Psytrance": {
+          "uebernommen": true
+        }
+      },
+      "lauf": {
+        "seed": 41,
+        "quelle": {
+          "name": "alt",
+          "version": 2
+        }
+      }
+    },
+    "plugin": {
+      "tief": {
+        "bleibt": true
+      }
+    }
+  },
+  "Psytrance": {
+    "kandidaten_harmonic_weight": 0.1,
+    "kandidaten_bpm_weight": 0.1,
+    "kandidaten_energy_weight": 0.1,
+    "kandidaten_genre_weight": 0.1,
+    "kandidaten_groove_weight": 0.1,
+    "kandidaten_bass_weight": 0.1,
+    "kandidaten_timbre_weight": 0.1,
+    "kandidaten_mood_weight": 0.1,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_structure_weight": 0.1
+  }
+}

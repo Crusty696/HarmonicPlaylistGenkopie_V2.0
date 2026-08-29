@@ -1,0 +1,110 @@
+{
+  "Psytrance": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.21339285714285713,
+    "kandidaten_bpm_weight": 0.07113095238095239,
+    "kandidaten_energy_weight": 0.07539880952380953,
+    "kandidaten_genre_weight": 0.07539880952380953,
+    "kandidaten_structure_weight": 0.04267857142857143
+  },
+  "Tech House": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.07113095238095239,
+    "kandidaten_bpm_weight": 0.21339285714285713,
+    "kandidaten_energy_weight": 0.07539880952380953,
+    "kandidaten_genre_weight": 0.07539880952380953,
+    "kandidaten_structure_weight": 0.04267857142857143
+  },
+  "Progressive": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  },
+  "Melodic Techno": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  },
+  "Techno": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  },
+  "Deep House": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  },
+  "Trance": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  },
+  "Drum & Bass": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  },
+  "Minimal": {
+    "kandidaten_groove_weight": 0.264,
+    "kandidaten_bass_weight": 0.07,
+    "kandidaten_timbre_weight": 0.044,
+    "kandidaten_mood_weight": 0.044,
+    "kandidaten_loudness_weight": 0.1,
+    "kandidaten_harmonic_weight": 0.1291891891891892,
+    "kandidaten_bpm_weight": 0.0978146718146718,
+    "kandidaten_energy_weight": 0.0978146718146718,
+    "kandidaten_genre_weight": 0.0978146718146718,
+    "kandidaten_structure_weight": 0.05536679536679536
+  }
+}

@@ -4,16 +4,48 @@ Bietet Audio-Generatoren, Track-Factories und gemeinsame Fixtures.
 """
 import sys
 import os
+import hashlib
+import shutil
+import tempfile
 import pytest
-import numpy as np
 
 # Projekt-Root zum Path hinzufuegen
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
 
-from hpg_core.models import Track, CAMELOT_MAP
-from tests.fixtures.audio_generators import (
+# Der Cache muss vor dem ersten hpg_core-Import isoliert werden. Jeder
+# pytest-/xdist-Prozess erhaelt eine eigene DB; ProcessPool-Kinder erben den
+# Pfad ueber die Umgebung.
+_TEST_CACHE_DIR = tempfile.mkdtemp(prefix=f"hpg_pytest_{os.getpid()}_")
+_TEST_CACHE_FILE = os.path.join(_TEST_CACHE_DIR, "hpg_cache_test.db")
+os.environ["HPG_CACHE_FILE"] = _TEST_CACHE_FILE
+
+from hpg_core.caching import CACHE_VERSION
+
+_PRODUCTION_CACHE = os.path.join(
+  os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+  "HPG",
+  f"hpg_cache_v{CACHE_VERSION}.db",
+)
+
+
+def _file_fingerprint(path: str) -> tuple[int, int, str] | None:
+  """Liefert Groesse, mtime_ns und SHA256 ohne die Datei zu veraendern."""
+  if not os.path.exists(path):
+    return None
+  digest = hashlib.sha256()
+  with open(path, "rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+      digest.update(chunk)
+  stat = os.stat(path)
+  return stat.st_size, stat.st_mtime_ns, digest.hexdigest()
+
+
+_PRODUCTION_CACHE_BEFORE = _file_fingerprint(_PRODUCTION_CACHE)
+
+from hpg_core.models import CAMELOT_MAP, Track  # noqa: E402
+from tests.fixtures.audio_generators import (  # noqa: E402
   generate_click_track,
-  generate_tone,
   generate_silence,
   generate_noise,
   generate_track_with_structure,
@@ -21,7 +53,7 @@ from tests.fixtures.audio_generators import (
   generate_minor_chord,
   DEFAULT_SR,
 )
-from tests.fixtures.track_factories import (
+from tests.fixtures.track_factories import (  # noqa: E402
   make_track,
   make_house_track,
   make_techno_track,
@@ -265,6 +297,27 @@ def pytest_collection_modifyitems(config, items):
     if "audio" in item.nodeid.lower() or "bpm" in item.nodeid.lower():
       item.add_marker(pytest.mark.audio)
 
-    # Mark slow tests
-    if "integration" in item.nodeid or "playlist" in item.nodeid:
-      item.add_marker(pytest.mark.slow)
+    # Slow ist eine Laufzeiteigenschaft, keine Dateinamen-Eigenschaft.
+    # Echte Audio-/Langlaeufer markieren sich explizit am Test.
+
+
+def pytest_sessionfinish(session, exitstatus):
+  """Schuetzt den Produktivcache und entfernt nur das eigene Testverzeichnis."""
+  after = _file_fingerprint(_PRODUCTION_CACHE)
+  if after != _PRODUCTION_CACHE_BEFORE:
+    raise pytest.UsageError(
+      f"Produktivcache hpg_cache_v{CACHE_VERSION}.db wurde waehrend der Tests veraendert"
+    )
+  shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _keine_kandidaten_praeferenzen(monkeypatch, tmp_path):
+  """Kandidaten-Praeferenzen (Hoertest Teil 3) aus Tests heraushalten: weder die
+  mitgelieferte noch eine Override-Datei darf das Scoring in Tests aendern."""
+  from hpg_core import candidate_preferences as cp
+  monkeypatch.setattr(cp, "_MITGELIEFERT", tmp_path / "keine_praeferenzen.json")
+  monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(tmp_path / "kein_override.json"))
+  cp.reset_cache()
+  yield
+  cp.reset_cache()

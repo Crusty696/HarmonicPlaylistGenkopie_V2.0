@@ -3,14 +3,15 @@ Tests fuer Transition Type Prediction.
 Prueft ob der optimale Transition-Typ korrekt vorhergesagt wird
 basierend auf BPM-Relation, Energie-Delta, Harmonie und Genre.
 """
-import pytest
-from unittest.mock import patch
 from hpg_core.playlist import (
     predict_transition_type,
+)
+from hpg_core.theme import (
     TRANSITION_TYPE_LABELS,
     TRANSITION_TYPE_DESCRIPTIONS,
 )
 from hpg_core.models import Track
+from tests.fixtures.track_factories import make_track
 
 
 # === Hilfsfunktionen ===
@@ -23,14 +24,20 @@ def _make_track(
     genre: str = "Unknown",
 ) -> Track:
   """Erstellt einen minimalen Track fuer Transition-Tests."""
-  return Track(
-    filePath="test.mp3",
-    fileName="test.mp3",
+  return make_track(
+    filePath=f"{title}-{bpm}.mp3",
+    fileName=f"{title}-{bpm}.mp3",
     title=title,
     bpm=bpm,
     camelotCode=camelot,
     energy=energy,
+    genre=genre,
     detected_genre=genre,
+    beatgrid_source="audio",
+    beatgrid_status="verified",
+    beatgrid_windows_checked=3,
+    beatgrid_max_phase_error_ms=0.0,
+    analysis_mode="test_fixture",
   )
 
 
@@ -103,10 +110,7 @@ class TestBpmOutOfTolerance:
     t1 = _make_track(bpm=128.0, camelot="8A")
     t2 = _make_track(bpm=100.0, camelot="8A")
     result = predict_transition_type(t1, t2, bpm_tolerance=3.0)
-    # BPM diff > 3, but harmony could be high (same key)
-    # effective_bpm_diff(128, 100): direct=28, half candidates differ
-    # With big diff and some harmony -> breakdown_bridge or cold_cut
-    assert result in ("breakdown_bridge", "cold_cut")
+    assert result == "breakdown_bridge"
 
   def test_large_bpm_diff_bad_harmony_cold_cut(self):
     """Grosse BPM-Diff + schlechte Harmonie = cold_cut."""
@@ -205,25 +209,33 @@ class TestGoodHarmony:
   """Tests fuer gute harmonische Uebergaenge."""
 
   def test_tech_house_bass_swap(self):
-    """Tech House mit guter Harmonie = bass_swap."""
+    """Tech House mit guter Harmonie = pro_eq_swap."""
     t1 = _make_track(bpm=128.0, camelot="8A", energy=60, genre="Tech House")
     t2 = _make_track(bpm=129.0, camelot="9A", energy=65, genre="Tech House")
     result = predict_transition_type(t1, t2)
-    assert result == "bass_swap"
+    assert result == "pro_eq_swap"
 
   def test_techno_bass_swap(self):
-    """Techno mit guter Harmonie = bass_swap."""
+    """Techno mit guter Harmonie = pro_eq_swap."""
     t1 = _make_track(bpm=135.0, camelot="8A", energy=70, genre="Techno")
     t2 = _make_track(bpm=136.0, camelot="9A", energy=65, genre="Techno")
     result = predict_transition_type(t1, t2)
-    assert result == "bass_swap"
+    assert result == "pro_eq_swap"
+
+  def test_unknown_detection_uses_id3_genre(self):
+    t1 = _make_track(bpm=135.0, camelot="8A", energy=70)
+    t2 = _make_track(bpm=136.0, camelot="9A", energy=65)
+    t1.genre = "Techno"
+    t2.genre = "Techno"
+
+    assert predict_transition_type(t1, t2) == "pro_eq_swap"
 
   def test_minimal_bass_swap(self):
-    """Minimal mit guter Harmonie = bass_swap."""
+    """Minimal mit guter Harmonie = pro_eq_swap."""
     t1 = _make_track(bpm=126.0, camelot="8A", energy=55, genre="Minimal")
     t2 = _make_track(bpm=126.0, camelot="9A", energy=50, genre="Minimal")
     result = predict_transition_type(t1, t2)
-    assert result == "bass_swap"
+    assert result == "pro_eq_swap"
 
   def test_dnb_bass_swap(self):
     """Drum & Bass mit guter Harmonie = bass_swap."""
@@ -342,8 +354,8 @@ class TestTransitionInRecommendation:
 
   def test_recommendation_has_transition_type(self):
     from hpg_core.playlist import compute_transition_recommendations
-    t1 = _make_track(title="T1", bpm=128.0, camelot="8A", energy=50)
-    t2 = _make_track(title="T2", bpm=128.0, camelot="8A", energy=55)
+    t1 = _make_track(title="T1", bpm=128.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=128.0, camelot="8A", energy=55, genre="Tech House")
     recs = compute_transition_recommendations([t1, t2], bpm_tolerance=6.0)
     assert len(recs) == 1
     assert recs[0].transition_type in TRANSITION_TYPE_LABELS
@@ -361,9 +373,9 @@ class TestTransitionInRecommendation:
   def test_multiple_recommendations(self):
     """Mehrere Recommendations haben jeweils ihren eigenen Typ."""
     from hpg_core.playlist import compute_transition_recommendations
-    t1 = _make_track(title="T1", bpm=128.0, camelot="8A", energy=50)
-    t2 = _make_track(title="T2", bpm=128.0, camelot="8A", energy=80)
-    t3 = _make_track(title="T3", bpm=70.0, camelot="8A", energy=50)
+    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t3 = _make_track(title="T3", bpm=70.0, camelot="8A", energy=50, genre="Tech House")
     recs = compute_transition_recommendations([t1, t2, t3], bpm_tolerance=6.0)
     assert len(recs) == 2
     for rec in recs:
@@ -372,8 +384,8 @@ class TestTransitionInRecommendation:
   def test_halftime_in_recommendation(self):
     """Half-Time Transition wird in Recommendation korrekt gesetzt."""
     from hpg_core.playlist import compute_transition_recommendations
-    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50)
-    t2 = _make_track(title="T2", bpm=70.0, camelot="8A", energy=50)
+    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=70.0, camelot="8A", energy=50, genre="Tech House")
     recs = compute_transition_recommendations([t1, t2], bpm_tolerance=6.0)
     assert len(recs) == 1
     assert recs[0].transition_type == "halftime_switch"

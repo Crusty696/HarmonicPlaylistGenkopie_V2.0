@@ -7,11 +7,15 @@ import sys
 import time
 import glob
 import traceback
+import pytest
 
 # Projekt-Pfad
 sys.path.insert(0, os.path.dirname(__file__))
 
-AUDIO_DIR = r"D:\beatport_tracks_2025-08"
+AUDIO_DIR = os.environ.get(
+    "HPG_TEST_AUDIO_DIR",
+    r"D:\beatport_tracks_2025-08",
+)
 RESULTS = {"pass": 0, "fail": 0, "warn": 0}
 
 
@@ -22,6 +26,7 @@ def check(name, condition, detail=""):
     else:
         RESULTS["fail"] += 1
         print(f"  [FAIL] {name} — {detail}")
+        raise AssertionError(f"{name}: {detail or 'Bedingung ist False'}")
 
 
 def warn(name, detail=""):
@@ -36,14 +41,14 @@ def get_test_files(n=5):
     for pat in patterns:
         files.extend(glob.glob(os.path.join(AUDIO_DIR, pat)))
     if not files:
-        print(f"FATAL: Keine Audio-Dateien in {AUDIO_DIR}")
-        sys.exit(1)
+        pytest.skip(f"Keine Audio-Dateien in {AUDIO_DIR}")
     return files[:n]
 
 
 # ============================================================
 # TEST 1: Einzeltrack-Analyse — Datenqualitaet
 # ============================================================
+@pytest.mark.slow
 def test_single_track_quality():
     print("\n" + "=" * 60)
     print("TEST 1: Einzeltrack-Analyse — Datenqualitaet")
@@ -144,6 +149,7 @@ def test_single_track_quality():
 # ============================================================
 # TEST 2: Cache-Integritaet
 # ============================================================
+@pytest.mark.slow
 def test_cache_integrity():
     print("\n" + "=" * 60)
     print("TEST 2: Cache-Integritaet")
@@ -165,7 +171,7 @@ def test_cache_integrity():
             continue
 
         # Cache-Key generieren
-        cache_key = generate_cache_key(fp)
+        cache_key = generate_cache_key(fp, track1.rekordbox_signature)
         check(f"{fname}: Cache-Key generiert", cache_key is not None)
 
         # Cache-Lookup (mit file_path fuer TOCTOU-Check)
@@ -197,6 +203,7 @@ def test_cache_integrity():
 # ============================================================
 # TEST 3: Parallel-Analyse — Datenfluss
 # ============================================================
+@pytest.mark.slow
 def test_parallel_analysis():
     print("\n" + "=" * 60)
     print("TEST 3: Parallel-Analyse — Datenfluss")
@@ -243,6 +250,7 @@ def test_parallel_analysis():
 # ============================================================
 # TEST 4: Playlist-Generierung — End-to-End
 # ============================================================
+@pytest.mark.slow
 def test_playlist_generation():
     print("\n" + "=" * 60)
     print("TEST 4: Playlist-Generierung — End-to-End")
@@ -312,10 +320,13 @@ def test_config_imports():
           f"got {PARALLEL_ANALYSIS_TIMEOUT}")
 
     from hpg_core.parallel_analyzer import ParallelAnalyzer
-    check("ParallelAnalyzer importierbar", True)
+    check("ParallelAnalyzer importierbar", ParallelAnalyzer is not None)
 
-    from hpg_core.caching import get_cached_track, generate_cache_key, cache_track
-    check("Cache-Funktionen importierbar", True)
+    from hpg_core.caching import cache_track, generate_cache_key, get_cached_track
+    check(
+        "Cache-Funktionen importierbar",
+        all(callable(item) for item in (cache_track, generate_cache_key, get_cached_track)),
+    )
 
     # Signatur-Check: get_cached_track akzeptiert file_path
     import inspect
@@ -354,7 +365,11 @@ def test_edge_cases():
 
     # Cache-Key fuer nicht existierende Datei
     key = generate_cache_key("nonexistent_file.wav")
-    check("generate_cache_key('nonexistent') = None", key is None)
+    check(
+        "generate_cache_key('nonexistent') ist deterministisch",
+        isinstance(key, str) and len(key) == 64,
+        f"key={key!r}",
+    )
 
     # Parallel-Analyse mit leerer Liste
     from hpg_core.parallel_analyzer import ParallelAnalyzer
@@ -378,12 +393,8 @@ def test_cooperative_cancel():
 
     # Pruefe ob AnalysisWorker._should_cancel existiert
     # (Wir koennen es nicht GUI-maessig starten, aber Code pruefen)
-    import importlib
-    spec = importlib.util.spec_from_file_location(
-        "main", os.path.join(os.path.dirname(__file__), "main.py"))
-
     # Einfacher Code-Check
-    with open(os.path.join(os.path.dirname(__file__), "main.py"), "r", encoding="utf-8") as f:
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py"), "r", encoding="utf-8") as f:
         source = f.read()
 
     check("_should_cancel in AnalysisWorker", "_should_cancel" in source)

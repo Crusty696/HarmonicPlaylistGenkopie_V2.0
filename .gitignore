@@ -24,11 +24,17 @@ dist/
 
 # Virtual Environments
 venv/
+venv312/
 .venv/
+
+# Build-Debug-Artefakte
+hpg_debug_*.txt
 
 # Testing & Coverage
 .pytest_cache/
+.pytest_tmp/
 .coverage
+.coverage.*
 htmlcov/
 
 # Cache Files
@@ -52,6 +58,7 @@ desktop.ini
 
 # Logs
 *.log
+logs/error_report.json
 
 # Environment
 .env
@@ -90,3 +97,15 @@ desktop.ini
 
 # Installer Output
 installer_output/
+
+# Validierungs-Outputs (lokale Library-Daten, nicht committen)
+validation_output/
+
+# PyInstaller Build-/Verify-Artefakte (regenerierbar, >100MB, GitHub lehnt ab)
+build-verify-freeze-support/
+
+# Lokale Wegwerf-Skripte und Mitschriften manueller Laeufe (nicht committen)
+tmp_*.py
+tmp_*.ps1
+_tmp_*.py
+manual_test_logs/

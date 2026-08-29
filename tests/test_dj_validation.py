@@ -6,24 +6,20 @@ Prueft ob die App aus DJ-Sicht korrekt funktioniert:
 """
 import pytest
 import numpy as np
-from math import floor
 
 from hpg_core.analysis import (
-  analyze_structure_and_mix_points, get_key, calculate_energy,
+  analyze_structure_and_mix_points, calculate_energy,
 )
 from hpg_core.playlist import (
   calculate_compatibility, generate_playlist, STRATEGIES,
   compute_transition_recommendations, calculate_playlist_quality,
 )
-from hpg_core.config import METER, BARS_PER_PHRASE, DEFAULT_BPM
-from hpg_core.models import CAMELOT_MAP
+from hpg_core.config import METER, BARS_PER_PHRASE
 from tests.fixtures.audio_generators import (
-  generate_track_with_structure, generate_click_track,
-  generate_silence, DEFAULT_SR,
+  generate_track_with_structure, DEFAULT_SR,
 )
 from tests.fixtures.track_factories import (
-  make_track, make_house_track, make_techno_track,
-  make_dnb_track, make_dj_set,
+  make_track, make_house_track, make_dj_set,
 )
 
 

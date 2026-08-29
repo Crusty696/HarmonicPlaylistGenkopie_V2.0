@@ -2,7 +2,6 @@
 Tests fuer Playlist-Qualitaetsmetriken.
 Prueft overall_score, harmonic_flow, energy_consistency, bpm_smoothness.
 """
-import pytest
 from hpg_core.playlist import calculate_playlist_quality
 from tests.fixtures.track_factories import make_track
 
@@ -155,3 +154,51 @@ class TestEdgeCases:
     ]
     result = calculate_playlist_quality(tracks, 0.0)
     assert isinstance(result["bpm_smoothness"], float)
+
+class TestBenchmarkAlgorithms:
+  """Tests for benchmark_algorithms function."""
+
+  def test_returns_dict_for_all_strategies(self):
+    from hpg_core.playlist import benchmark_algorithms, STRATEGIES
+    tracks = [
+      make_track(camelotCode="8A", bpm=128.0, energy=70),
+      make_track(camelotCode="9A", bpm=130.0, energy=75),
+      make_track(camelotCode="10A", bpm=132.0, energy=80),
+    ]
+    results = benchmark_algorithms(tracks, 3.0)
+
+    assert isinstance(results, dict)
+    assert set(results.keys()) == set(STRATEGIES.keys())
+
+  def test_each_strategy_has_quality_metrics(self):
+    from hpg_core.playlist import benchmark_algorithms
+    tracks = [
+      make_track(camelotCode="8A", bpm=128.0, energy=70),
+      make_track(camelotCode="9A", bpm=130.0, energy=75),
+    ]
+    results = benchmark_algorithms(tracks, 3.0)
+
+    required_keys = {"overall_score", "harmonic_flow",
+                     "energy_consistency", "bpm_smoothness"}
+
+    for strategy, metrics in results.items():
+        assert isinstance(metrics, dict)
+        for key in required_keys:
+            assert key in metrics, f"Key '{key}' missing in strategy '{strategy}'"
+
+  def test_empty_tracks(self):
+    from hpg_core.playlist import benchmark_algorithms, STRATEGIES
+    results = benchmark_algorithms([], 3.0)
+
+    assert set(results.keys()) == set(STRATEGIES.keys())
+    for strategy, metrics in results.items():
+        assert metrics["overall_score"] == 1.0
+
+  def test_single_track(self):
+    from hpg_core.playlist import benchmark_algorithms, STRATEGIES
+    tracks = [make_track(camelotCode="8A", bpm=128.0, energy=70)]
+    results = benchmark_algorithms(tracks, 3.0)
+
+    assert set(results.keys()) == set(STRATEGIES.keys())
+    for strategy, metrics in results.items():
+        assert metrics["overall_score"] == 1.0

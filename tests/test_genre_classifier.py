@@ -8,15 +8,11 @@ import numpy as np
 from hpg_core.genre_classifier import (
   GenreClassification,
   GenreFeatures,
-  GenreProfile,
   GENRE_PROFILES,
-  ID3_GENRE_MAP,
   match_id3_genre,
   classify_genre,
-  extract_genre_features,
   _score_range,
   _score_genre,
-  MIN_CONFIDENCE,
 )
 
 
@@ -92,10 +88,16 @@ class TestMatchId3Genre:
   def test_all_melodic_techno_variants(self):
     variants = [
       "melodic techno", "melodic house & techno", "melodic house",
-      "melodic house/techno", "indie dance", "organic house", "afro house",
+      "melodic house/techno", "indie dance",
     ]
     for v in variants:
       assert match_id3_genre(v) == "Melodic Techno", f"'{v}' sollte Melodic Techno sein"
+
+  def test_afro_organic_house_map_to_deep_house(self):
+    # Audit-Fix 2026-07-17: Afro/Organic House liegen im Groove naeher an
+    # Deep House als an Melodic Techno
+    for v in ["organic house", "afro house"]:
+      assert match_id3_genre(v) == "Deep House", f"'{v}' sollte Deep House sein"
 
   def test_all_techno_variants(self):
     variants = [
@@ -126,10 +128,15 @@ class TestMatchId3Genre:
     variants = [
       "drum & bass", "drum and bass", "dnb", "d&b",
       "jungle", "liquid dnb", "liquid funk", "neurofunk",
-      "jump up", "breakbeat",
+      "jump up",
     ]
     for v in variants:
       assert match_id3_genre(v) == "Drum & Bass", f"'{v}' sollte Drum & Bass sein"
+
+  def test_breakbeat_not_mapped_to_dnb(self):
+    # Audit-Fix 2026-07-17: Breakbeat (~130-140 BPM) ist kein DnB (~170) —
+    # Audio-Klassifikation soll entscheiden
+    assert match_id3_genre("breakbeat") != "Drum & Bass"
 
   def test_all_minimal_variants(self):
     variants = [

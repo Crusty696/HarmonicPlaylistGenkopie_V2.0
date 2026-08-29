@@ -146,7 +146,9 @@ def test_compatibility_rules_coverage():
   # Should have all major rule types
   assert "Same Key" in rule_types
   assert "Adjacent +1" in rule_types
-  assert "Relative Major/Minor" in rule_types
+  # H4-Fix: Relative Major/Minor ist jetzt richtungsabhaengig benannt
+  assert "Relative Minor->Major (Boost)" in rule_types
+  assert "Relative Major->Minor (Drop)" in rule_types
 
 
 def test_get_related_key():

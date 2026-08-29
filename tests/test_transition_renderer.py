@@ -6,22 +6,40 @@ Verwenden synthetische Numpy-Arrays — kein echtes Audiomaterial noetig.
 """
 
 import os
-import tempfile
+import sys
+import types
+from concurrent.futures import ProcessPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 import soundfile as sf
+from scipy.signal import sosfiltfilt
 
 from hpg_core.transition_renderer import (
+    BeatSyncError,
+    EqCrossfadeConfig,
+    FILTER_RAMP_SECONDS,
+    KICK_SYNC_MAX_ERROR_SECONDS,
+    SUPPORTED_TRANSITION_TYPES,
     TransitionClipSpec,
+    _align_beat_phase,
     _apply_compressor,
     _apply_eq_crossfade,
+    _apply_lufs_delta,
+    _apply_soft_limiter,
     _ensure_len,
     _load_segment,
     _make_sos,
+    _relative_kick_lag,
+    _kick_lags_across_overlap,
     _rms_normalize,
+    _render_clip_subprocess_wrapper,
+    _synchronize_and_verify_kicks,
     make_temp_output_path,
     render_transition_clip,
+    validate_transition_clip_spec,
 )
 
 
@@ -59,6 +77,397 @@ def _make_stereo_signal(frames: int, sr: int = 44100,
     t = np.linspace(0, frames / sr, frames, endpoint=False, dtype=np.float32)
     wave = (np.sin(2 * np.pi * freq * t) * 0.5).astype(np.float32)
     return np.stack([wave, wave], axis=1)
+
+
+def _strict_spec(**overrides) -> TransitionClipSpec:
+    values = dict(
+        track_a_path="a.wav",
+        track_b_path="b.wav",
+        mix_out_sec=2.0,
+        mix_in_sec=1.0,
+        crossfade_sec=2.0,
+        pre_roll_sec=1.0,
+        post_roll_sec=1.0,
+        target_sr=1000,
+        bpm_a=120.0,
+        bpm_b=120.0,
+        beatgrid_status_a="verified",
+        beatgrid_status_b="verified",
+        analysis_mode_a="full",
+        analysis_mode_b="full",
+        strict_beat_sync=True,
+        normalize_rms=False,
+    )
+    values.update(overrides)
+    return TransitionClipSpec(**values)
+
+
+def _spec_from_track_status(*, source, status, confidence):
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+    )
+    track = SimpleNamespace(
+        filePath="track.wav",
+        bpm=128.0,
+        first_downbeat=0.25,
+        downbeat_confidence=confidence,
+        beatgrid_source=source,
+        beatgrid_status=status,
+        analysis_mode="librosa_full_or_tail",
+        lufs=0.0,
+    )
+    return TransitionClipSpec.from_plan(plan, track, track)
+
+
+@pytest.mark.parametrize(
+    "crossfade_sec", [0.0, -1.0, 64.000001, float("nan"), float("inf"), True]
+)
+def test_rendervertrag_verwirft_ungueltigen_overlap(crossfade_sec):
+    with pytest.raises(ValueError, match="crossfade_sec"):
+        validate_transition_clip_spec(
+            _strict_spec(crossfade_sec=crossfade_sec)
+        )
+
+
+@pytest.mark.parametrize("feld", ["mix_out_sec", "mix_in_sec"])
+@pytest.mark.parametrize("wert", [-1.0, float("nan"), float("inf"), True])
+def test_rendervertrag_verwirft_ungueltige_mixzeiten_vor_audiozugriff(
+    feld, wert
+):
+    with pytest.raises(ValueError, match=feld):
+        validate_transition_clip_spec(_strict_spec(**{feld: wert}))
+
+
+def test_rendervertrag_akzeptiert_64_sekunden_unveraendert():
+    spec = _strict_spec(crossfade_sec=64.0)
+
+    validate_transition_clip_spec(spec)
+
+    assert spec.crossfade_sec == 64.0
+
+
+@pytest.mark.parametrize("target_sr", [0, -1, 44100.0, True])
+def test_rendervertrag_verwirft_ungueltige_samplerate(target_sr):
+    with pytest.raises(ValueError, match="target_sr"):
+        validate_transition_clip_spec(_strict_spec(target_sr=target_sr))
+
+
+def test_rendervertrag_akzeptiert_alle_oeffentlichen_transition_types():
+    for transition_type in SUPPORTED_TRANSITION_TYPES:
+        validate_transition_clip_spec(
+            _strict_spec(transition_type=transition_type)
+        )
+
+
+def test_from_plan_uebernimmt_tempovertrag_und_erzwingt_strikten_sync():
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+        tempo_ratio=1.05,
+    )
+    track_a = SimpleNamespace(filePath="a.wav", bpm=120.0)
+    track_b = SimpleNamespace(filePath="b.wav", bpm=126.0)
+
+    spec = TransitionClipSpec.from_plan(plan, track_a, track_b)
+
+    assert spec.tempo_ratio == pytest.approx(1.05)
+    assert spec.strict_beat_sync is True
+
+
+def test_from_plan_verwirft_tempovertrag_der_den_bpm_widerspricht():
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+        tempo_ratio=1.10,
+    )
+    track_a = SimpleNamespace(filePath="a.wav", bpm=120.0)
+    track_b = SimpleNamespace(filePath="b.wav", bpm=126.0)
+
+    with pytest.raises(ValueError, match="tempo_ratio widerspricht"):
+        TransitionClipSpec.from_plan(plan, track_a, track_b)
+
+
+@pytest.mark.parametrize("tempo_ratio", [None, float("nan"), float("inf"), True])
+def test_from_plan_verwirft_ungueltigen_tempovertrag(tempo_ratio):
+    plan = SimpleNamespace(
+        mix_out_a=60.0,
+        mix_in_b=30.0,
+        overlap=16.0,
+        transition_type="pro_eq_swap",
+        target_sr=44100,
+        tempo_ratio=tempo_ratio,
+    )
+    track_a = SimpleNamespace(filePath="a.wav", bpm=120.0)
+    track_b = SimpleNamespace(filePath="b.wav", bpm=120.0)
+
+    with pytest.raises(ValueError, match="tempo_ratio"):
+        TransitionClipSpec.from_plan(plan, track_a, track_b)
+
+
+def test_rendervertrag_verwirft_unbekannten_transition_type():
+    with pytest.raises(ValueError, match="transition_type"):
+        validate_transition_clip_spec(
+            _strict_spec(transition_type="smooth_blend_typo")
+        )
+
+
+@pytest.mark.parametrize("status", ["mismatch", "unverifiable", "unsupported"])
+def test_referenz_confidence_ohne_verifiziertes_rb_grid_vertraut_keiner_phase(status):
+    spec = _spec_from_track_status(
+        source="rekordbox", status=status, confidence=1.0
+    )
+
+    assert spec.downbeat_reliable_a is False
+    assert spec.downbeat_reliable_b is False
+    assert spec.bar_phase_reliable_a is False
+    assert spec.bar_phase_reliable_b is False
+
+
+def test_verifiziertes_rekordbox_grid_erlaubt_taktphase():
+    spec = _spec_from_track_status(
+        source="rekordbox", status="verified", confidence=1.0
+    )
+
+    assert spec.downbeat_reliable_a is True
+    assert spec.bar_phase_reliable_a is True
+
+
+def test_gemessener_audio_downbeat_bleibt_bei_diagnose_mismatch_nutzbar():
+    spec = _spec_from_track_status(
+        source="audio", status="mismatch", confidence=0.8
+    )
+
+    assert spec.downbeat_reliable_a is True
+    assert spec.downbeat_reliable_b is True
+    assert spec.bar_phase_reliable_a is False
+    assert spec.bar_phase_reliable_b is False
+
+
+class TestStrictKickSynchronitaet:
+    """Der App-Pfad muss relative Kicklage korrigieren oder hart ablehnen."""
+
+    def test_relative_kicklage_wird_auf_unter_sechs_ms_korrigiert(self):
+        sr, bpm, duration = 2000, 120.0, 12.0
+        frames = int(sr * duration)
+        mono = np.zeros(frames, dtype=np.float32)
+        burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+        burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+        for start in range(0, frames, int(0.5 * sr)):
+            stop = min(frames, start + len(burst))
+            mono[start:stop] += burst[:stop - start]
+        ref = np.stack([mono, mono], axis=1)
+        delay_frames = int(round(0.020 * sr))
+        delayed = np.concatenate([
+            np.zeros((delay_frames, 2), dtype=np.float32),
+            ref[:-delay_frames],
+        ])
+
+        corrected = _synchronize_and_verify_kicks(
+            ref, delayed, sr=sr, bpm=bpm, cf_frames=frames
+        )
+        residual = _relative_kick_lag(ref, corrected, sr, bpm)
+        regional = _kick_lags_across_overlap(ref, corrected, sr, bpm, frames)
+
+        assert residual is not None
+        assert abs(residual[0]) <= KICK_SYNC_MAX_ERROR_SECONDS
+        assert all(
+            value is not None and abs(value) <= KICK_SYNC_MAX_ERROR_SECONDS
+            for value in regional
+        )
+        assert len(corrected) == len(delayed)
+
+    def test_drift_nach_korrektur_wird_abgelehnt(self, monkeypatch):
+        measurements = iter([
+            [0.020, 0.020, 0.020],
+            [0.001, 0.009, -0.011],
+        ])
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._kick_lags_across_overlap",
+            lambda *_args, **_kwargs: next(measurements),
+        )
+
+        with pytest.raises(BeatSyncError, match="driften"):
+            _synchronize_and_verify_kicks(
+                np.zeros((200, 2), dtype=np.float32),
+                np.zeros((200, 2), dtype=np.float32),
+                sr=1000,
+                bpm=120.0,
+                cf_frames=150,
+            )
+
+    def test_stille_unmessbare_fenster_werden_im_strict_pfad_abgelehnt(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._kick_lags_across_overlap",
+            lambda *_args, **_kwargs: [],
+        )
+
+        with pytest.raises(BeatSyncError, match="Anfang, Mitte und Ende"):
+            _synchronize_and_verify_kicks(
+                np.zeros((200, 2), dtype=np.float32),
+                np.zeros((200, 2), dtype=np.float32),
+                sr=1000,
+                bpm=120.0,
+                cf_frames=150,
+            )
+
+    def test_vier_sekunden_blende_bleibt_bei_60_bpm_messbar(self):
+        sr, bpm, duration = 2000, 60.0, 4.0
+        frames = int(sr * duration)
+        mono = np.zeros(frames, dtype=np.float32)
+        burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+        burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+        for start in range(0, frames, sr):
+            stop = min(frames, start + len(burst))
+            mono[start:stop] += burst[:stop - start]
+        stereo = np.stack([mono, mono], axis=1)
+
+        regional = _kick_lags_across_overlap(
+            stereo, stereo, sr=sr, bpm=bpm, cf_frames=frames
+        )
+
+        assert all(value is not None and abs(value) <= 1.0 / sr for value in regional)
+
+    def test_nur_im_letzten_drittel_versetzte_kicks_werden_real_erkannt(self):
+        sr, bpm, duration = 2000, 120.0, 12.0
+        frames = int(sr * duration)
+        mono = np.zeros(frames, dtype=np.float32)
+        burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+        burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+        for start in range(0, frames, int(0.5 * sr)):
+            stop = min(frames, start + len(burst))
+            mono[start:stop] += burst[:stop - start]
+        ref = np.stack([mono, mono], axis=1)
+        drifted = ref.copy()
+        region_start = int(8.0 * sr)
+        delay_frames = int(round(0.020 * sr))
+        drifted[region_start:] = 0.0
+        drifted[region_start + delay_frames:] = ref[region_start:-delay_frames]
+
+        regional = _kick_lags_across_overlap(ref, drifted, sr, bpm, frames)
+
+        assert regional[0] is not None and abs(regional[0]) <= 1.0 / sr
+        assert regional[1] is not None and abs(regional[1]) <= 1.0 / sr
+        assert regional[2] is not None and regional[2] >= 0.015
+        with pytest.raises(BeatSyncError, match="driften"):
+            _synchronize_and_verify_kicks(ref, drifted, sr, bpm, frames)
+
+    def test_reale_kicks_laufen_auch_mit_beatgrid_diagnose_durch_strikten_pfad(
+        self, monkeypatch, tmp_path
+    ):
+        sr, bpm = 44100, 60.0
+
+        def kick_segment(duration_sec):
+            frames = int(round(duration_sec * sr))
+            mono = np.zeros(frames, dtype=np.float32)
+            burst_t = np.arange(int(0.12 * sr), dtype=np.float32) / sr
+            burst = np.sin(2 * np.pi * 60.0 * burst_t) * np.exp(-28.0 * burst_t)
+            for start in range(0, frames, sr):
+                stop = min(frames, start + len(burst))
+                mono[start:stop] += burst[:stop - start]
+            return np.stack([mono, mono], axis=1)
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._load_segment",
+            lambda _path, _start, duration, _sr: kick_segment(duration),
+        )
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._align_beat_phase",
+            lambda _a, b, _bpm, _sr, **kwargs: b[kwargs["lead_frames"]:],
+        )
+        output = tmp_path / "strict_4s_60bpm.wav"
+        spec = _strict_spec(
+            mix_out_sec=2.0,
+            mix_in_sec=1.0,
+            crossfade_sec=4.0,
+            target_sr=sr,
+            bpm_a=bpm,
+            bpm_b=bpm,
+            beatgrid_status_a="mismatch",
+            beatgrid_status_b="unverifiable",
+        )
+
+        result = render_transition_clip(spec, str(output))
+
+        assert result == str(output)
+        assert output.exists()
+
+
+class TestStrictRenderFehlerpfade:
+    @staticmethod
+    def _mock_audio(monkeypatch):
+        segment = np.zeros((8000, 2), dtype=np.float32)
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._load_segment",
+            lambda *_args, **_kwargs: segment.copy(),
+        )
+
+    def test_stretch_clamp_lehnt_ab_ohne_datei_zu_schreiben(self, monkeypatch):
+        self._mock_audio(monkeypatch)
+        writer = Mock()
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", writer)
+
+        with pytest.raises(BeatSyncError, match="ausserhalb des Stretch-Bereichs"):
+            render_transition_clip(_strict_spec(bpm_b=150.0), "unused.wav")
+
+        writer.assert_not_called()
+
+    def test_time_stretch_fehler_lehnt_ab_ohne_datei_zu_schreiben(self, monkeypatch):
+        self._mock_audio(monkeypatch)
+        writer = Mock()
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", writer)
+
+        def fail_stretch(*_args, **_kwargs):
+            raise RuntimeError("stretch kaputt")
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer.librosa.effects.time_stretch", fail_stretch
+        )
+
+        with pytest.raises(BeatSyncError, match="Time-Stretching fehlgeschlagen"):
+            render_transition_clip(_strict_spec(bpm_b=125.0), "unused.wav")
+
+        writer.assert_not_called()
+
+    def test_alignmentfehler_lehnt_ab_ohne_datei_zu_schreiben(self, monkeypatch):
+        self._mock_audio(monkeypatch)
+        writer = Mock()
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", writer)
+
+        def fail_alignment(*_args, **_kwargs):
+            raise RuntimeError("alignment kaputt")
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._align_beat_phase", fail_alignment
+        )
+
+        with pytest.raises(BeatSyncError, match="Alignment fehlgeschlagen"):
+            render_transition_clip(_strict_spec(), "unused.wav")
+
+        writer.assert_not_called()
+
+
+@pytest.fixture(scope="module")
+def native_compressor_outputs():
+    """Fuehrt den nativen Effekt wie die App in einem isolierten Worker aus."""
+    sr = 44100
+    normal = _make_stereo_signal(sr * 2)
+    loud = (normal * 1.8).astype(np.float32)
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        normal_result = executor.submit(_apply_compressor, normal, sr).result(timeout=30)
+        loud_result = executor.submit(_apply_compressor, loud, sr).result(timeout=30)
+    return normal, normal_result, loud_result
 
 
 # ---------------------------------------------------------------------------
@@ -140,69 +549,349 @@ class TestApplyEqCrossfade:
         self.seg_b = _make_stereo_signal(self.CF_FRAMES, self.SR, freq=528.0)
 
     def test_output_hat_richtige_form(self):
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config
         )
         assert result.shape == (self.CF_FRAMES, 2)
         assert result.dtype == np.float32
 
     def test_smooth_blend_am_anfang_ist_track_a(self):
-        """Erster Frame soll hauptsaechlich Track A sein (fo=1.0, fi=0.0)."""
+        """Erster Frame bleibt ungefiltertes Track A (fo=1.0, fi=0.0)."""
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config
         )
-        # Erster Frame: fo=1.0, fi≈0 → result ≈ seg_a[0]
-        np.testing.assert_allclose(result[0], self.seg_a[0], atol=0.01)
+        # Die kurze Filter-Rampe startet ohne harten Filter-Schalter.
+        np.testing.assert_allclose(result[0], self.seg_a[0], atol=1e-6)
 
     def test_smooth_blend_am_ende_ist_track_b(self):
         """Letzter Frame soll hauptsaechlich Track B sein (fo=0.0, fi=1.0)."""
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "smooth_blend")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+            config
         )
         # Letzter Frame: fo≈0, fi=1.0 → result ≈ seg_b[-1]
         np.testing.assert_allclose(result[-1], self.seg_b[-1], atol=0.01)
 
     def test_bass_swap_output_hat_richtige_form(self):
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "bass_swap")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "bass_swap"
+            config
         )
         assert result.shape == (self.CF_FRAMES, 2)
         assert result.dtype == np.float32
 
     def test_filter_ride_output_hat_richtige_form(self):
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "filter_ride")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "filter_ride"
+            config
         )
         assert result.shape == (self.CF_FRAMES, 2)
 
-    def test_unbekannter_typ_verwendet_smooth_blend(self):
-        """Unbekannte transition_type soll als linearer Crossfade behandelt werden."""
+    @pytest.mark.parametrize(
+        ("transition_type", "cutoff_hz", "filter_type"),
+        [
+            ("smooth_blend", 300.0, "low"),
+            ("filter_ride", 800.0, "high"),
+            ("breakdown_bridge", 250.0, "high"),
+        ],
+    )
+    def test_filter_einsatz_wird_kurz_eingeramped(
+        self, transition_type, cutoff_hz, filter_type
+    ):
+        """Filter-Einsatz startet ungefiltert und erreicht Ziel nach 50 ms."""
+        rng = np.random.RandomState(7)
+        seg_a = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        seg_b = np.zeros_like(seg_a)
+        config = EqCrossfadeConfig(
+            self.CF_FRAMES, self.SR, 200.0, transition_type
+        )
+
+        result = _apply_eq_crossfade(seg_a, seg_b, config)
+        sos = _make_sos(cutoff_hz, self.SR, filter_type)
+        filtered_a = sosfiltfilt(sos, seg_a, axis=0)
+        ramp_frames = int(round(FILTER_RAMP_SECONDS * self.SR))
+        fo = np.cos(
+            np.linspace(0.0, 1.0, self.CF_FRAMES, dtype=np.float32)
+            * (np.pi / 2.0)
+        )
+
+        np.testing.assert_allclose(result[0], seg_a[0], atol=1e-6)
+        np.testing.assert_allclose(
+            result[ramp_frames // 2],
+            (
+                seg_a[ramp_frames // 2] * 0.5
+                + filtered_a[ramp_frames // 2] * 0.5
+            ) * fo[ramp_frames // 2],
+            rtol=1e-5,
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            result[ramp_frames - 1],
+            filtered_a[ramp_frames - 1] * fo[ramp_frames - 1],
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    def test_unbekannter_typ_verwendet_equal_power_crossfade(self):
+        """Unbekannter transition_type -> Equal-Power-Crossfade (AUDIT-FIX C3).
+        Vorher linear (fo/fi = linspace), was in der Mitte ein -3-dB-Loch
+        erzeugte; jetzt cos/sin mit konstanter Summenleistung."""
+        config_unknown = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "totally_unknown_type")
         result_unknown = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "totally_unknown_type"
+            config_unknown
         )
-        result_smooth = _apply_eq_crossfade(
-            self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "smooth_blend"
+        # Equal-Power-Kurven (identisch zur Implementierung)
+        t = np.linspace(0.0, 1.0, self.CF_FRAMES, dtype=np.float32)
+        fo = np.cos(t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
+        fi = np.sin(t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
+        expected = self.seg_a * fo + self.seg_b * fi
+        np.testing.assert_allclose(result_unknown, expected, rtol=1e-5, atol=1e-6)
+
+    def test_pro_eq_swap_kein_energie_loch_am_mittelpunkt(self):
+        """AUDIT-FIX N-01 (2026-07-26): pro_eq_swap (Default-Modus fuer
+        Techno/Psy/Tech-House) fadete Mids+Highs mit amplituden-
+        komplementaeren LINEAREN Envelopes -> Summenleistung 0.5 = -3.01 dB
+        Energie-Loch am Uebergangs-Mittelpunkt. Mit Equal-Power (cos/sin,
+        fo^2 + fi^2 == 1) muss die RMS in der Mitte der RMS am Rand
+        entsprechen (unkorreliertes Rauschen = Worst Case fuer lineare
+        Fades). Der harte Bass-Swap bleibt unveraendert (Bass-Anteil des
+        weissen Rauschens < 1 %, beeinflusst die Messung nicht)."""
+        rng = np.random.RandomState(0)
+        noise_a = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        noise_b = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "pro_eq_swap")
+        result = _apply_eq_crossfade(noise_a, noise_b, config)
+
+        half = self.CF_FRAMES // 2
+        win = 2000
+        rms_mid = float(np.sqrt(np.mean(result[half - win:half + win] ** 2)))
+        rms_edge = float(np.sqrt(np.mean(result[:2 * win] ** 2)))
+        ratio_db = 20.0 * np.log10(rms_mid / (rms_edge + 1e-9))
+        assert abs(ratio_db) < 1.0, (
+            f"pro_eq_swap Mittelpunkt vs Rand = {ratio_db:+.2f} dB "
+            f"(lineare Envelopes ergaeben ~-3 dB)"
         )
-        np.testing.assert_array_equal(result_unknown, result_smooth)
+
+    def test_pro_eq_swap_hoehen_fenster_kein_energie_loch(self):
+        """N-01: auch am Mittelpunkt des Hoehen-Fade-Fensters (1/2 des
+        Crossfades = Mitte von [1/4..3/4]) und an den Fenster-Grenzen darf
+        kein Leistungsloch entstehen — Stichproben ueber den Verlauf."""
+        rng = np.random.RandomState(1)
+        noise_a = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        noise_b = (rng.randn(self.CF_FRAMES, 2) * 0.2).astype(np.float32)
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "pro_eq_swap")
+        result = _apply_eq_crossfade(noise_a, noise_b, config)
+
+        win = 2000
+        ref = float(np.sqrt(np.mean(result[:2 * win] ** 2)))
+        # Stichproben bei 1/4, 3/8, 1/2, 5/8, 3/4 des Crossfades
+        for frac in (0.25, 0.375, 0.5, 0.625, 0.75):
+            c = int(self.CF_FRAMES * frac)
+            rms = float(np.sqrt(np.mean(result[c - win:c + win] ** 2)))
+            ratio_db = 20.0 * np.log10(rms / (ref + 1e-9))
+            assert abs(ratio_db) < 1.0, (
+                f"Energie-Loch bei {frac:.0%}: {ratio_db:+.2f} dB"
+            )
 
     def test_kein_clipping_bei_bass_swap(self):
         """Bass-Swap darf nicht ueber 1.0 gehen (wegen Doppel-Addition)."""
+        config = EqCrossfadeConfig(self.CF_FRAMES, self.SR, 200.0, "bass_swap")
         result = _apply_eq_crossfade(
             self.seg_a, self.seg_b,
-            self.CF_FRAMES, self.SR, 200.0, "bass_swap"
+            config
         )
         # Peaks koennen durch Bass-Dopplung groeßer sein, aber der Soft-Limiter
         # in render_transition_clip() wird sie begrenzen — hier nur pruefen
         # dass die Funktion selbst keine NaN/Inf produziert
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
+
+
+# ---------------------------------------------------------------------------
+# Tests: _align_beat_phase — N-02 Vorlauf-Logik (2026-07-26)
+# ---------------------------------------------------------------------------
+
+class TestAlignBeatPhaseLead:
+    """AUDIT-FIX N-02: Das C1-Bar-Alignment darf nie in den Einsatz von
+    Track B schneiden — der Cut konsumiert ausschliesslich den mit
+    1 Takt Vorlauf geladenen Bereich davor.
+
+    Alle Faelle hier beschreiben den TAKT-Pfad, seit D-03 explizit ueber
+    `bar_aligned=True` angefordert (vorher implizit an bekannten Ankern)."""
+
+    SR = 1000        # kleine Abtastrate fuer schnelle, exakte Sample-Rechnung
+    BPM = 120.0      # beat_len = 500 Samples, Takt (grid) = 2000 Samples
+    GRID = 2000
+    LEAD = 2000      # 1 Takt Vorlauf
+
+    def _seg_with_entry_marker(self, frames: int = 10000) -> np.ndarray:
+        """Stilles Segment mit Impuls am Einsatzpunkt (Index LEAD)."""
+        seg = np.zeros((frames, 2), dtype=np.float32)
+        seg[self.LEAD] = 1.0
+        return seg
+
+    def _ref(self, frames: int = 8000) -> np.ndarray:
+        return np.zeros((frames, 2), dtype=np.float32)
+
+    def test_cut_schneidet_nur_in_den_vorlauf(self):
+        """Phasenversatz 0.3s (< Takt/2): vorher wurden 300 Samples vom
+        EINSATZ abgeschnitten — jetzt werden (lead - 1700) = 300 Samples
+        des Vorlaufs behalten und der Einsatz bleibt vollstaendig."""
+        seg_b = self._seg_with_entry_marker()
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=self.LEAD, bar_aligned=True,
+        )
+        # raw = 300 -> cut = 300 (<= lead), Einsatz-Impuls bei 2000-300 = 1700
+        assert out[1700, 0] == 1.0
+        assert float(np.sum(out[:, 0])) == 1.0  # Impuls nicht verworfen
+
+    def test_phasengleich_konsumiert_exakt_den_vorlauf(self):
+        """Kein Phasenversatz: der Cut entfernt genau den Vorlauf, der
+        Einsatz liegt exakt am Crossfade-Start."""
+        seg_b = self._seg_with_entry_marker()
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.25, known_first_beat_b=0.25,
+            lead_frames=self.LEAD, bar_aligned=True,
+        )
+        assert out[0, 0] == 1.0
+
+    def test_einsatz_bleibt_fuer_alle_phasenlagen_erhalten(self):
+        """Fuer jeden Versatz gilt: Impuls vorhanden und maximal
+        grid_len-1 Samples hinter dem Crossfade-Start."""
+        for offset_sec in (0.0, 0.1, 0.49, 0.5, 0.51, 1.0, 1.5, 1.99):
+            seg_b = self._seg_with_entry_marker()
+            out = _align_beat_phase(
+                self._ref(), seg_b, self.BPM, self.SR,
+                known_first_beat_a=0.0, known_first_beat_b=offset_sec,
+                lead_frames=self.LEAD, bar_aligned=True,
+            )
+            idx = np.flatnonzero(out[:, 0] == 1.0)
+            assert idx.size == 1, f"Einsatz verworfen bei offset={offset_sec}"
+            assert 0 <= int(idx[0]) < self.GRID, (
+                f"Einsatz {int(idx[0])} Samples hinter Start (offset={offset_sec})"
+            )
+            # Grid-Alignment: Der konsumierte Vorlauf ist phasenkongruent
+            # zum Rohversatz. Die Einsatzposition im Ergebnis ist
+            # `LEAD - cut`, nicht `LEAD + raw - cut`.
+            raw = int(round(offset_sec * self.SR))
+            consumed_cut = self.LEAD - int(idx[0])
+            assert (consumed_cut - raw) % self.GRID == 0
+
+    def test_ohne_vorlauf_bleibt_altes_verhalten(self):
+        """lead_frames=0 (Mix-In am Track-Anfang): naechstgelegene
+        Verschiebung wie bisher — Cut nach vorne bei Versatz <= Takt/2."""
+        seg_b = np.zeros((10000, 2), dtype=np.float32)
+        seg_b[500] = 1.0
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=0, bar_aligned=True,
+        )
+        # cut = 300 -> Marker wandert von 500 auf 200
+        assert out[200, 0] == 1.0
+
+    def test_ohne_vorlauf_padding_bei_grossem_versatz(self):
+        """lead_frames=0 und Versatz > Takt/2: Null-Padding statt Cut."""
+        seg_b = np.zeros((10000, 2), dtype=np.float32)
+        seg_b[0] = 1.0
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=1.7,
+            lead_frames=0, bar_aligned=True,
+        )
+        # offset = 1700 > 1000 -> pad = 300
+        assert out[300, 0] == 1.0
+        assert not np.any(out[:300])
+
+    def test_degenerierte_segmente_trimmen_den_vorlauf(self):
+        """Zu kurze Segmente: kein Alignment, aber der Vorlauf muss
+        trotzdem entfernt werden (sonst laege der Crossfade 1 Takt zu
+        frueh im Material von Track B)."""
+        seg_b = np.zeros((900, 2), dtype=np.float32)  # < 1s -> kein Alignment
+        seg_b[100] = 1.0
+        out = _align_beat_phase(
+            self._ref(), seg_b, self.BPM, self.SR, lead_frames=100,
+        )
+        assert out[0, 0] == 1.0
+        assert len(out) == 800
+
+
+class TestAlignBeatPhaseGridWidth:
+    """AUDIT-FIX D-03 (2026-08-14): Bekannte Anker allein rechtfertigen noch
+    kein TAKT-Alignment. Nur das Rekordbox-Referenz-Beatgrid belegt, welcher
+    Beat die "1" ist; die Eigenschaetzung lag an 19 gemessenen Tracks bei 9
+    um ganze Beats daneben. Ohne `bar_aligned` wird deshalb auf BEAT-Ebene
+    ausgerichtet — Kick auf Kick, ohne Takt-Behauptung."""
+
+    SR = 1000
+    BPM = 120.0     # beat_len = 500, Takt = 2000
+
+    def _seg(self, marker_at: int, frames: int = 10000) -> np.ndarray:
+        seg = np.zeros((frames, 2), dtype=np.float32)
+        seg[marker_at] = 1.0
+        return seg
+
+    def _ref(self) -> np.ndarray:
+        return np.zeros((8000, 2), dtype=np.float32)
+
+    def test_ohne_bar_aligned_ist_das_gitter_ein_beat(self):
+        """Versatz 0.3 s, Vorlauf 2000: auf Beat-Gitter (500) ist der
+        groesste phasengleiche Schnitt 1800, auf Takt-Gitter (2000) nur 300."""
+        out = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=False,
+        )
+        idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+        assert idx == 200, f"Beat-Gitter erwartet (200), war {idx}"
+
+    def test_bar_aligned_nutzt_das_taktgitter(self):
+        out = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=True,
+        )
+        idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+        assert idx == 1700, f"Takt-Gitter erwartet (1700), war {idx}"
+
+    def test_beat_gitter_ist_die_vorgabe(self):
+        """Der Default darf nicht versehentlich das Taktgitter sein."""
+        default = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000,
+        )
+        explicit = _align_beat_phase(
+            self._ref(), self._seg(2000), self.BPM, self.SR,
+            known_first_beat_a=0.0, known_first_beat_b=0.3,
+            lead_frames=2000, bar_aligned=False,
+        )
+        assert np.array_equal(default, explicit)
+
+    def test_takt_phasen_modulo_beat_bleiben_korrekt(self):
+        """Die uebergebenen Phasen sind Takt-Phasen. Auf dem Beat-Gitter
+        muss der Restversatz nach dem Cut ein Vielfaches des Beats sein."""
+        for a_phase, b_phase in ((0.0, 1.7), (0.25, 1.95), (1.2, 0.4)):
+            out = _align_beat_phase(
+                self._ref(), self._seg(2000), self.BPM, self.SR,
+                known_first_beat_a=a_phase, known_first_beat_b=b_phase,
+                lead_frames=2000, bar_aligned=False,
+            )
+            idx = int(np.flatnonzero(out[:, 0] == 1.0)[0])
+            raw = int(round((b_phase - a_phase) * self.SR))
+            assert (2000 - idx - raw) % 500 == 0
+            assert 0 <= idx < 500
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +1011,29 @@ class TestRenderTransitionClip:
         assert info.channels == 2
         assert info.samplerate == 44100
 
+    def test_pro_eq_swap_render_erstellt_gueltige_wav(self, tmp_path):
+        path_a = str(tmp_path / "track_a.wav")
+        path_b = str(tmp_path / "track_b.wav")
+        out_path = str(tmp_path / "pro_eq_swap_preview.wav")
+
+        _write_test_wav(path_a, duration_sec=60.0, freq=440.0)
+        _write_test_wav(path_b, duration_sec=60.0, freq=528.0)
+
+        spec = TransitionClipSpec(
+            track_a_path    = path_a,
+            track_b_path    = path_b,
+            mix_out_sec     = 30.0,
+            mix_in_sec      = 5.0,
+            crossfade_sec   = 8.0,
+            transition_type = "pro_eq_swap",
+            pre_roll_sec    = 5.0,
+            post_roll_sec   = 5.0,
+        )
+        render_transition_clip(spec, out_path)
+        info = sf.info(out_path)
+        assert info.channels == 2
+        assert info.samplerate == 44100
+
     def test_soft_limiter_verhindert_clipping(self, tmp_path):
         """Peak-Amplitude im Output soll <= 0.95 sein."""
         path_a = str(tmp_path / "loud_a.wav")
@@ -378,29 +1090,57 @@ class TestRenderTransitionClip:
         result = render_transition_clip(spec, out_path)
         assert os.path.exists(result)
 
-    def test_crossfade_sec_wird_auf_32s_begrenzt(self, tmp_path):
-        """crossfade_sec > 32 soll auf 32 reduziert werden."""
+    def test_kurzer_vorlauf_crossfade_nutzt_echtes_audio(self, tmp_path):
+        """C1-Regression: mix_out_sec < pre_roll_sec darf den Crossfade NICHT
+        pre_roll Sekunden hinter den echten Mix-Out schieben. Vorher landete
+        a_cf komplett im Null-Padding (stilles/falsches Audio ohne Crash)."""
         path_a = str(tmp_path / "a.wav")
         path_b = str(tmp_path / "b.wav")
-        out_path = str(tmp_path / "capped.wav")
+        out_path = str(tmp_path / "out.wav")
+        _write_test_wav(path_a, duration_sec=20.0)
+        _write_test_wav(path_b, duration_sec=20.0)
 
-        _write_test_wav(path_a, duration_sec=120.0)
-        _write_test_wav(path_b, duration_sec=120.0)
+        spec = TransitionClipSpec(
+            track_a_path    = path_a,
+            track_b_path    = path_b,
+            mix_out_sec     = 3.0,
+            mix_in_sec      = 0.0,
+            crossfade_sec   = 4.0,
+            transition_type = "smooth_blend",
+            pre_roll_sec    = 30.0,   # weit groesser als mix_out_sec
+            post_roll_sec   = 10.0,
+            normalize_rms   = False,
+        )
+        render_transition_clip(spec, out_path)
+        info = sf.info(out_path)
+        # Erwartet: real verfuegbarer Vorlauf (3s) + crossfade (4s) + post (10s) = 17s.
+        # Beim pre_frames-Bug waeren es ~44s (30s Vorlauf, grossteils Stille).
+        assert abs(info.duration - 17.0) < 0.5, \
+            f"Dauer {info.duration:.1f}s deutet auf pre_frames-Clamp-Bug (erwartet ~17s)"
+        # Kompletter Clip muss echtes Audio tragen — kein stiller Crossfade.
+        data, _ = sf.read(out_path)
+        assert np.sqrt(np.mean(data.astype(np.float64) ** 2)) > 0.01, \
+            "Clip ist nahezu still — Crossfade griff ins Null-Padding statt echtes Audio"
+
+    def test_crossfade_ueber_64s_wird_vor_dem_rendern_abgelehnt(self, tmp_path):
+        """Eine zu lange Blende darf nicht still auf 64 Sekunden schrumpfen."""
+        path_a = str(tmp_path / "a.wav")
+        path_b = str(tmp_path / "b.wav")
+        out_path = str(tmp_path / "rejected.wav")
 
         spec = TransitionClipSpec(
             track_a_path    = path_a,
             track_b_path    = path_b,
             mix_out_sec     = 60.0,
             mix_in_sec      = 10.0,
-            crossfade_sec   = 99.0,  # Wird auf 32s begrenzt
+            crossfade_sec   = 99.0,
             transition_type = "smooth_blend",
             pre_roll_sec    = 10.0,
             post_roll_sec   = 10.0,
         )
-        render_transition_clip(spec, out_path)
-        info = sf.info(out_path)
-        # Erwartete Dauer: 10 + 32 + 10 = 52s (nicht 10 + 99 + 10)
-        assert abs(info.duration - 52.0) < 0.5
+        with pytest.raises(ValueError, match="hoechstens 64 Sekunden"):
+            render_transition_clip(spec, out_path)
+        assert not os.path.exists(out_path)
 
     def test_gibt_output_pfad_zurueck(self, tmp_path):
         path_a = str(tmp_path / "a.wav")
@@ -564,6 +1304,62 @@ class TestRmsNormalize:
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
 
+    def test_reference_bestimmt_den_gain(self):
+        """Gain kommt aus der Referenz (Solo-Teil), wird aber auf das ganze
+        Segment angewendet: lauter Referenz-Teil soll auf -14 dB landen, auch
+        wenn der Rest des Segments 20 dB leiser ist."""
+        loud = self._make_signal(self.SR * 4, amplitude=0.5)
+        quiet = self._make_signal(self.SR * 8, amplitude=0.05)
+        seg = np.concatenate([loud, quiet], axis=0)
+        result = _rms_normalize(seg, target_rms_db=-14.0, reference=loud)
+        rms_loud_out = self._rms_db(result[: self.SR * 4])
+        assert abs(rms_loud_out - (-14.0)) < 1.5, (
+            f"Referenz-Teil erwartet ~-14 dBRMS, bekommen {rms_loud_out:.1f}"
+        )
+        # Verhaeltnis laut/leise bleibt erhalten (ein Gain fuer alles)
+        rms_quiet_out = self._rms_db(result[self.SR * 4:])
+        assert abs((rms_loud_out - rms_quiet_out) - 20.0) < 0.5
+
+    def test_stille_oder_kurze_reference_faellt_auf_segment_zurueck(self):
+        """Stille oder zu kurze Referenz darf das Segment nicht unnormalisiert
+        lassen — dann gilt der Segment-Pfad wie ohne Referenz."""
+        sig = self._make_signal(self.SR * 4, amplitude=0.5)
+        erwartet = _rms_normalize(sig, target_rms_db=-14.0)
+        still = np.zeros((self.SR, 2), dtype=np.float32)
+        kurz = self._make_signal(10, amplitude=0.5)
+        for ref in (still, kurz, np.zeros((0, 2), dtype=np.float32)):
+            result = _rms_normalize(sig, target_rms_db=-14.0, reference=ref)
+            assert np.allclose(result, erwartet), "Fallback muss dem Segment-Pfad entsprechen"
+
+class TestLufsDelta:
+    """LUFS darf nach der RMS-Norm nur noch relativ wirken."""
+
+    def test_delta_erhaelt_mittleren_absolutpegel(self):
+        a = np.ones((100, 2), dtype=np.float32)
+        b = np.ones((100, 2), dtype=np.float32)
+        out_a, out_b = _apply_lufs_delta(a, b, -10.0, -14.0)
+        assert np.mean(np.abs(out_a)) < 1.0
+        assert np.mean(np.abs(out_b)) > 1.0
+        assert np.mean(np.abs(out_a)) * np.mean(np.abs(out_b)) == pytest.approx(1.0)
+
+    def test_unbekannte_lufs_bleiben_unveraendert(self):
+        a = np.ones((10, 2), dtype=np.float32)
+        b = np.full((10, 2), 2.0, dtype=np.float32)
+        out_a, out_b = _apply_lufs_delta(a, b, 0.0, -12.0)
+        np.testing.assert_array_equal(out_a, a)
+        np.testing.assert_array_equal(out_b, b)
+
+
+class TestSoftLimiter:
+    """Limiter muss Stereo-Verhaeltnis und endliche Samples erhalten."""
+
+    def test_channel_linked_und_nan_sicher(self):
+        signal = np.array([[2.0, 1.0], [np.nan, np.inf]], dtype=np.float32)
+        result = _apply_soft_limiter(signal)
+        assert np.all(np.isfinite(result))
+        assert result[0, 0] / result[0, 1] == pytest.approx(2.0)
+        assert np.max(np.abs(result)) <= 1.0
+
 
 # ---------------------------------------------------------------------------
 # Tests: _apply_compressor
@@ -580,34 +1376,58 @@ class TestApplyCompressor:
         wave = (np.sin(2 * np.pi * 440 * t) * amplitude).astype(np.float32)
         return np.stack([wave, wave], axis=1)
 
-    def test_output_hat_richtige_form(self):
-        """Output soll gleiche Shape wie Input haben."""
-        sig = self._make_signal(self.SR * 2)
+    def test_pedalboard_erhaelt_zusammenhaengendes_kanal_layout(self, monkeypatch):
+        """Die native Grenze bekommt float32 im Layout (channels, frames)."""
+        observed = {}
+
+        class FakePedalboard:
+            def __init__(self, effects):
+                assert len(effects) == 1
+
+            def __call__(self, audio, sample_rate):
+                observed["audio"] = audio
+                observed["sample_rate"] = sample_rate
+                return audio
+
+        fake_module = types.SimpleNamespace(
+            Pedalboard=FakePedalboard,
+            Compressor=lambda **kwargs: kwargs,
+        )
+        monkeypatch.setitem(sys.modules, "pedalboard", fake_module)
+
+        sig = self._make_signal(128)
         result = _apply_compressor(sig, self.SR)
+
+        native_audio = observed["audio"]
+        assert native_audio.shape == (2, 128)
+        assert native_audio.dtype == np.float32
+        assert native_audio.flags.c_contiguous
+        assert observed["sample_rate"] == self.SR
+        np.testing.assert_array_equal(result, sig)
+
+    def test_output_hat_richtige_form(self, native_compressor_outputs):
+        """Output soll gleiche Shape wie Input haben."""
+        sig, result, _ = native_compressor_outputs
         assert result.shape == sig.shape
 
-    def test_output_ist_float32(self):
+    def test_output_ist_float32(self, native_compressor_outputs):
         """dtype soll float32 sein."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        _, result, _ = native_compressor_outputs
         assert result.dtype == np.float32
 
-    def test_kein_clipping(self):
+    def test_kein_clipping(self, native_compressor_outputs):
         """Output-Peak soll <= 1.0 sein (Compressor darf nicht verstaerken)."""
-        sig = self._make_signal(self.SR * 2, amplitude=0.9)
-        result = _apply_compressor(sig, self.SR)
+        _, _, result = native_compressor_outputs
         assert np.max(np.abs(result)) <= 1.0
 
-    def test_keine_nan_oder_inf(self):
+    def test_keine_nan_oder_inf(self, native_compressor_outputs):
         """Keine NaN oder Inf im Ergebnis."""
-        sig = self._make_signal(self.SR * 2)
-        result = _apply_compressor(sig, self.SR)
+        _, result, _ = native_compressor_outputs
         assert not np.any(np.isnan(result))
         assert not np.any(np.isinf(result))
 
     def test_fallback_bei_fehlendem_pedalboard(self):
         """Ohne pedalboard soll das unveraenderte Eingangssignal zurueckkommen."""
-        import sys
         import unittest.mock
 
         sig = self._make_signal(self.SR * 2)
@@ -654,6 +1474,46 @@ class TestRenderTransitionClipMitNormalisierung:
         assert info.channels == 2
         assert info.samplerate == 44100
 
+    def test_solo_teile_gleich_laut_trotz_breakdown_in_der_blende(self, tmp_path):
+        """Track A bricht in der Blende ein (-20 dB), Track B ist in der Blende
+        noch leise und erst im Nachlauf laut. Der Pegel der beiden SOLO-Teile
+        (Vorlauf nur A, Nachlauf nur B) muss trotzdem gleich sein — sonst
+        verfaelscht ein Pegelsprung von mehreren dB die Bewertung des Uebergangs."""
+        sr = 44100
+        dur = 60.0
+        mix_out, mix_in, cf, pre, post = 40.0, 5.0, 10.0, 8.0, 8.0
+        t = np.linspace(0, dur, int(sr * dur), endpoint=False, dtype=np.float32)
+        env_a = np.where(t < mix_out, 0.3, 0.03).astype(np.float32)
+        env_b = np.where(t < mix_in + cf, 0.03, 0.3).astype(np.float32)
+        wave_a = np.sin(2 * np.pi * 440 * t).astype(np.float32) * env_a
+        wave_b = np.sin(2 * np.pi * 528 * t).astype(np.float32) * env_b
+        path_a = str(tmp_path / "a.wav")
+        path_b = str(tmp_path / "b.wav")
+        out_path = str(tmp_path / "solo.wav")
+        sf.write(path_a, np.stack([wave_a, wave_a], axis=1), sr, subtype="PCM_16")
+        sf.write(path_b, np.stack([wave_b, wave_b], axis=1), sr, subtype="PCM_16")
+
+        spec = TransitionClipSpec(
+            track_a_path=path_a, track_b_path=path_b,
+            mix_out_sec=mix_out, mix_in_sec=mix_in, crossfade_sec=cf,
+            transition_type="smooth_blend",
+            pre_roll_sec=pre, post_roll_sec=post,
+            normalize_rms=True, normalize_target_db=-14.0,
+        )
+        render_transition_clip(spec, out_path)
+        data, _ = sf.read(out_path, dtype="float32")
+
+        def rms_db(x):
+            return 20.0 * np.log10(max(float(np.sqrt(np.mean(x.astype(np.float64) ** 2))), 1e-10))
+
+        pre_db = rms_db(data[: int(pre * sr)])
+        post_db = rms_db(data[int((pre + cf) * sr):])
+        assert abs(pre_db - post_db) < 1.5, (
+            f"Solo-Teile ungleich laut: Vorlauf {pre_db:.1f} dB, Nachlauf {post_db:.1f} dB"
+        )
+        assert abs(pre_db - (-14.0)) < 2.0, f"Vorlauf {pre_db:.1f} dB statt ~-14"
+        assert abs(post_db - (-14.0)) < 2.0, f"Nachlauf {post_db:.1f} dB statt ~-14"
+
     def test_render_deaktivierte_normalisierung_kein_fehler(self, tmp_path):
         """normalize_rms=False soll genauso funktionieren wie vorher."""
         path_a = str(tmp_path / "a.wav")
@@ -694,7 +1554,10 @@ class TestRenderTransitionClipMitNormalisierung:
             normalize_rms=True,
             use_compressor=True,
         )
-        render_transition_clip(spec, out_path)
+        with ProcessPoolExecutor(max_workers=1) as executor:
+            executor.submit(
+                _render_clip_subprocess_wrapper, (spec, out_path)
+            ).result(timeout=30)
 
         assert os.path.exists(out_path)
         info = sf.info(out_path)

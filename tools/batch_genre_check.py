@@ -15,7 +15,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hpg_core.analysis import analyze_track
+from hpg_core.analysis import analyze_track  # noqa: E402
 
 DEFAULT_FOLDER = r"D:\beatport_tracks_2025-08"
 EXTS = {".mp3", ".aiff", ".aif", ".flac", ".wav", ".m4a", ".ogg"}
@@ -43,7 +43,8 @@ def extract_genre_from_filename(name):
     
     # 2. Versuche Beatport Style: __(Genre)__
     m = re.search(r"__\(([^)]+)\)__", name)
-    if m: return m.group(1)
+    if m:
+        return m.group(1)
     
     # 3. Versuche einfache Klammern: (Genre), aber filtere Mix/Remix aus
     all_brackets = re.findall(r"\(([^)]+)\)", name)
@@ -74,7 +75,8 @@ def genre_match(fname_genre, detected):
         return True
         
     # Psytrance Sonderfälle
-    if "psy" in f and "psy" in d: return True
+    if "psy" in f and "psy" in d:
+        return True
     
     return False
 
@@ -98,6 +100,8 @@ print("=" * 110)
 
 falsch = []
 unbekannt = []
+fehlgeschlagen = []
+analysiert = 0
 
 for i, t in enumerate(tracks, 1):
     name = t.name
@@ -113,11 +117,15 @@ for i, t in enumerate(tracks, 1):
         tr = analyze_track(str(t))
     except Exception as e:
         print(f"{i:>3}  {'ERROR':>6}  {'---':<14}  {fname_genre:<25}  {'ERROR':<22}  {'---':>5}  {str(e)[:20]}")
+        fehlgeschlagen.append((i, name, str(e)))
         continue
         
     if not tr:
         print(f"{i:>3}  {'FAIL':>6}  {'---':<14}  {fname_genre:<25}  {'---':<22}  {'---':>5}  FAILED")
+        fehlgeschlagen.append((i, name, "analyze_track lieferte kein Ergebnis"))
         continue
+
+    analysiert += 1
 
     audio_genre = getattr(tr, 'detected_genre', 'Unknown') or "Unknown"
     conf = getattr(tr, 'genre_confidence', 0) or 0
@@ -137,14 +145,22 @@ for i, t in enumerate(tracks, 1):
     print(f"{i:>3}  {tr.bpm:>6.1f}  {tr.keyNote} {tr.keyMode:<10}  {fname_genre:<25}  {audio_genre:<22}  {conf:>5.2f}  {status}")
 
 print("=" * 110)
-print(f"\nERGEBNIS:")
-print(f"  Richtig erkannt : {len(tracks) - len(falsch) - len(unbekannt)}/{len(tracks)}")
+print("\nERGEBNIS:")
+print(f"  Richtig erkannt : {analysiert - len(falsch) - len(unbekannt)}/{analysiert}")
 print(f"  Falsch erkannt  : {len(falsch)}")
 print(f"  Unbekannt/n/a   : {len(unbekannt)}")
+print(f"  Analysefehler   : {len(fehlgeschlagen)}")
 
 if falsch:
-    print(f"\n[X] FALSCH ERKANNTE TRACKS (Audio passt nicht zu Dateiname):")
+    print("\n[X] FALSCH ERKANNTE TRACKS (Audio passt nicht zu Dateiname):")
     for entry in falsch:
         i, name, fg, ag, bpm = entry
         print(f"  {i:>2}. {name[:55]}")
         print(f"      Datei: {fg}  ->  Erkannt: {ag}  (BPM: {bpm:.1f})")
+
+if fehlgeschlagen:
+    print("\n[X] NICHT ANALYSIERTE TRACKS:")
+    for i, name, error in fehlgeschlagen:
+        print(f"  {i:>2}. {name[:55]}: {error}")
+
+raise SystemExit(1 if falsch or fehlgeschlagen else 0)

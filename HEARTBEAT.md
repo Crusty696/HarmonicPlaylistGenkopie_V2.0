@@ -1,0 +1,3 @@
+
+
+NAch jeder session  achst du ein Learning das du später und jeder anderer zeit wieder verwenden und einsetzten kannst und dieses wissen prüfst du gegen mit renommierten und nachweislich korrekten quellen  seicherst das ergebnis abb und wertestes aus . danach auf basis dieser erkenntnisse verbesserst oder gleichst den agenten und  die Kerndateien  an und verbssterst in soe in allen bereichen imer wieder ein kleines bischien  nicht an allen stelllen zur gleichen zeit oder auch  gleichviel das kammt imer individuel auf die mänge und die themen die in der session bearbeitet worden sind. das selbe auch mit den skills und anderen Tool 

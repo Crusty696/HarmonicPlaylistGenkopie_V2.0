@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain-Vault · Das Prinzip</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23167a5b' d='M8 16a8 8 0 0 1 8-8h12l6 7h14a8 8 0 0 1 8 8v25a8 8 0 0 1-8 8H16a8 8 0 0 1-8-8z'/%3E%3Cpath fill='%23fff' d='M32 22l3.1 7.2 7.8.7-5.9 5.2 1.8 7.7-6.8-4-6.8 4 1.8-7.7-5.9-5.2 7.8-.7z'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --ink: #14213d;
+      --muted: #637083;
+      --paper: #f7f8f4;
+      --surface: #ffffff;
+      --line: #dce2df;
+      --moss: #167a5b;
+      --moss-light: #dff4e9;
+      --sun: #f7be48;
+      --blue: #2463eb;
+      --shadow: 0 18px 45px rgba(20, 33, 61, .10);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: auto; }
+    header { padding: 24px 0 0; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 760; letter-spacing: -.02em; }
+    .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: white; background: var(--moss); font-size: 16px; }
+    nav { display: flex; flex-wrap: wrap; gap: 6px; }
+    nav a { color: var(--muted); text-decoration: none; font-size: .88rem; padding: 7px 10px; border-radius: 7px; }
+    nav a:hover, nav a.active { color: var(--ink); background: #eaf0ed; }
+    .hero { display: grid; grid-template-columns: 1.2fr .8fr; gap: 50px; align-items: center; padding: 82px 0 70px; }
+    .eyebrow { margin: 0 0 12px; color: var(--moss); font-weight: 750; font-size: .8rem; letter-spacing: .12em; text-transform: uppercase; }
+    h1, h2, h3 { margin: 0; line-height: 1.05; letter-spacing: -.045em; }
+    h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.8rem, 6vw, 5.7rem); max-width: 760px; }
+    h1 em { color: var(--moss); font-style: normal; }
+    .lead { max-width: 630px; margin: 24px 0 0; color: var(--muted); font-size: 1.15rem; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    button, .button { appearance: none; border: 0; cursor: pointer; font: inherit; font-weight: 700; border-radius: 8px; padding: 12px 17px; text-decoration: none; }
+    .primary { background: var(--ink); color: #fff; }
+    .primary:hover { background: #263b63; }
+    .secondary { color: var(--ink); background: #e8eeeb; }
+    .vault-card { position: relative; min-height: 360px; padding: 26px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+    .vault-card:before { content: ""; position: absolute; width: 270px; height: 270px; right: -110px; top: -120px; border-radius: 50%; background: var(--moss-light); }
+    .folder { position: relative; display: flex; align-items: center; gap: 13px; padding: 14px; margin: 10px 0; background: #f7faf8; border: 1px solid #e2ebe5; border-radius: 10px; transition: transform .2s, border-color .2s; }
+    .folder:hover { transform: translateX(7px); border-color: #9acfb8; }
+    .folder b { display: block; font-size: .95rem; }
+    .folder small { color: var(--muted); }
+    .folder-icon { width: 38px; height: 29px; border-radius: 5px 7px 7px 7px; background: var(--sun); position: relative; }
+    .folder-icon:before { content: ""; position: absolute; top: -5px; left: 2px; width: 15px; height: 7px; border-radius: 4px 4px 0 0; background: #ffd474; }
+    section { padding: 78px 0; }
+    .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 25px; margin-bottom: 35px; }
+    h2 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2rem, 4vw, 3.35rem); }
+    .section-intro { max-width: 490px; color: var(--muted); margin: 0; }
+    .principle { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #eff4f0; }
+    .layers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .layer { min-height: 260px; padding: 25px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+    .layer-number { color: var(--moss); font-weight: 800; font-size: .78rem; letter-spacing: .08em; }
+    .layer h3 { margin-top: 30px; font-size: 1.45rem; }
+    .layer p { color: var(--muted); }
+    .path { display: inline-block; color: #056143; background: var(--moss-light); padding: 4px 7px; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .83rem; }
+    .note { border-left: 3px solid var(--sun); margin-top: 15px; padding: 9px 12px; color: #655023; background: #fff7df; font-size: .9rem; }
+    .explorer { display: grid; grid-template-columns: .75fr 1.25fr; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+    .tree { padding: 20px; background: #f1f5f2; }
+    .tree button { width: 100%; margin: 3px 0; text-align: left; color: var(--ink); background: transparent; font-weight: 650; }
+    .tree button:hover, .tree button.selected { color: #075c41; background: var(--moss-light); }
+    .detail { min-height: 330px; padding: 34px; }
+    .detail .tag { display: inline-block; margin-bottom: 13px; color: var(--moss); font-size: .76rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+    .detail p { max-width: 630px; color: var(--muted); }
+    .detail ul { padding-left: 20px; color: var(--muted); }
+    .flow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; align-items: stretch; }
+    .flow-step { position: relative; min-height: 177px; padding: 17px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); transition: .25s ease; }
+    .flow-step strong { display: block; margin-bottom: 9px; font-size: .98rem; }
+    .flow-step span { display: block; color: var(--muted); font-size: .82rem; }
+    .flow-step.active { color: white; border-color: var(--moss); background: var(--moss); box-shadow: 0 10px 22px rgba(22,122,91,.25); transform: translateY(-5px); }
+    .flow-step.active span { color: #d8f5e7; }
+    .flow-controls { display: flex; align-items: center; gap: 13px; margin-top: 22px; }
+    #flow-status { color: var(--muted); font-size: .92rem; }
+    .rules { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+    .rule { border-bottom: 1px solid var(--line); padding: 0 0 18px; }
+    .rule button { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 7px 0; color: var(--ink); background: transparent; text-align: left; }
+    .rule button span:last-child { color: var(--moss); font-size: 1.3rem; transition: transform .2s; }
+    .rule p { display: none; margin: 8px 0 0; color: var(--muted); }
+    .rule.open p { display: block; }
+    .rule.open button span:last-child { transform: rotate(45deg); }
+    .cta { margin: 0 0 65px; padding: 45px; border-radius: 18px; color: white; background: var(--ink); }
+    .cta h2 { max-width: 670px; }
+    .cta p { max-width: 620px; color: #c5d1e4; }
+    footer { padding: 25px 0 42px; color: var(--muted); font-size: .88rem; }
+    @media (max-width: 880px) { .hero, .explorer { grid-template-columns: 1fr; } .layers { grid-template-columns: 1fr; } .flow { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 580px) { .shell { width: min(100% - 28px, 1180px); } header { padding-top: 14px; } nav { display: none; } .hero { padding: 55px 0; gap: 32px; } section { padding: 55px 0; } .section-heading { display: block; } .section-intro { margin-top: 14px; } .rules { grid-template-columns: 1fr; } .cta { padding: 28px; } }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <div class="topbar">
+      <div class="brand"><span class="brand-mark">✦</span> Brain-Vault</div>
+      <nav aria-label="Seitennavigation">
+        <a href="#prinzip">Prinzip</a><a href="#struktur">Struktur</a><a href="#ablauf">Ablauf</a><a href="#regeln">Regeln</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <section class="hero shell">
+      <div>
+        <p class="eyebrow">Wissen, das mitarbeitet</p>
+        <h1>Ein Gedächtnis für <em>Menschen und KI.</em></h1>
+        <p class="lead">Der Brain-Vault ist ein gemeinsamer Wissensspeicher. Rohes Material bleibt sicher erhalten, daraus wächst ein verständliches Wiki – nachvollziehbar, versioniert und dauerhaft nutzbar.</p>
+        <div class="hero-actions"><a class="button primary" href="#prinzip">Prinzip entdecken</a><button class="secondary" id="start-flow">Ablauf abspielen</button></div>
+      </div>
+      <aside class="vault-card" aria-label="Beispiel der Vault-Struktur">
+        <p class="eyebrow">Auf einen Blick</p>
+        <div class="folder"><span class="folder-icon"></span><div><b>_raw/</b><small>Originalquellen · unveränderlich</small></div></div>
+        <div class="folder"><span class="folder-icon"></span><div><b>_wiki/</b><small>aufbereitetes Wissen · verlinkt</small></div></div>
+        <div class="folder"><span class="folder-icon"></span><div><b>log.md</b><small>Chronik · append-only</small></div></div>
+      </aside>
+    </section>
+    <section class="principle" id="prinzip">
+      <div class="shell">
+        <div class="section-heading"><div><p class="eyebrow">Drei Schichten, klare Verantwortung</p><h2>Nichts geht verloren. Alles wird verständlich.</h2></div><p class="section-intro">Die Trennung schützt die Quelle und macht Erkenntnisse auffindbar. Jede Schicht hat einen eindeutigen Zweck.</p></div>
+        <div class="layers">
+          <article class="layer"><span class="layer-number">01 · QUELLE</span><h3>Raw Sources</h3><p><span class="path">_raw/</span></p><p>Fotos, Notizen, Exporte und Ideen landen unverändert hier. Das Original bleibt immer erhalten.</p><div class="note">David legt ab. Die KI liest – aber verändert nie.</div></article>
+          <article class="layer"><span class="layer-number">02 · WISSEN</span><h3>Wiki</h3><p><span class="path">_wiki/</span></p><p>Die KI verdichtet Quellen zu klaren Seiten: Entscheidungen, Konzepte, Abläufe und Zusammenfassungen.</p><div class="note">Verlinkt, mit Quellenangaben und leicht weiterpflegbar.</div></article>
+          <article class="layer"><span class="layer-number">03 · ORDNUNG</span><h3>Schema</h3><p><span class="path">Brain-Vault Schema</span></p><p>Gemeinsame Regeln legen fest, wo etwas hingehört, wie es aussieht und wer es bearbeiten darf.</p><div class="note">Das Schema entwickelt sich bewusst und dokumentiert weiter.</div></article>
+        </div>
+      </div>
+    </section>
+    <section class="shell" id="struktur">
+      <div class="section-heading"><div><p class="eyebrow">Interaktiv erkunden</p><h2>Jedes Projekt hat denselben ruhigen Kern.</h2></div><p class="section-intro">Klicke auf einen Eintrag. So wird sichtbar, wie Informationen vom Eingang bis zur langfristigen Erkenntnis organisiert sind.</p></div>
+      <div class="explorer">
+        <div class="tree" role="tablist" aria-label="Vault-Bereiche">
+          <button class="selected" role="tab" data-topic="project">▾ 10_Projects/Projektname</button>
+          <button role="tab" data-topic="index">　├─ INDEX.md</button>
+          <button role="tab" data-topic="log">　├─ log.md</button>
+          <button role="tab" data-topic="links">　├─ links.md</button>
+          <button role="tab" data-topic="raw">　├─ _raw/</button>
+          <button role="tab" data-topic="wiki">　└─ _wiki/</button>
+        </div>
+        <article class="detail" id="detail" aria-live="polite"></article>
+      </div>
+    </section>
+    <section class="principle" id="ablauf">
+      <div class="shell">
+        <div class="section-heading"><div><p class="eyebrow">Vom Material zur Erkenntnis</p><h2>Ein Ablauf, der Spuren hinterlässt.</h2></div><p class="section-intro">Starte die Simulation – jeder Schritt erklärt, wie der Vault im Alltag arbeitet.</p></div>
+        <div class="flow" id="flow">
+          <div class="flow-step"><strong>1. Ablegen</strong><span>Eine Quelle kommt in den passenden Projektordner.</span></div>
+          <div class="flow-step"><strong>2. Bewahren</strong><span>In <code>_raw/</code> bleibt sie unverändert.</span></div>
+          <div class="flow-step"><strong>3. Verstehen</strong><span>Die KI liest Kontext, Fakten und Verbindungen.</span></div>
+          <div class="flow-step"><strong>4. Verdichten</strong><span>Eine Wiki-Seite macht das Wesentliche greifbar.</span></div>
+          <div class="flow-step"><strong>5. Verlinken</strong><span>Quellen und verwandte Themen bleiben verbunden.</span></div>
+          <div class="flow-step"><strong>6. Protokollieren</strong><span><code>log.md</code> hält nachvollziehbar fest, was geschah.</span></div>
+          <div class="flow-step"><strong>7. Wiederfinden</strong><span>Suche, Tags und Graph machen Wissen wieder nutzbar.</span></div>
+        </div>
+        <div class="flow-controls"><button class="primary" id="next-step">Nächster Schritt</button><button class="secondary" id="reset-flow">Zurücksetzen</button><span id="flow-status">Bereit zum Start.</span></div>
+      </div>
+    </section>
+    <section class="shell" id="regeln">
+      <div class="section-heading"><div><p class="eyebrow">Leitplanken</p><h2>Einfach genug für den Alltag. Streng genug für Vertrauen.</h2></div><p class="section-intro">Diese Regeln machen aus einer Ordnersammlung ein belastbares gemeinsames Gedächtnis.</p></div>
+      <div class="rules">
+        <article class="rule"><button aria-expanded="false">Originale werden nicht überschrieben <span>+</span></button><p>Alles unter <code>_raw/</code> ist eine unveränderliche Quelle. Jede spätere Interpretation kann daher zum Ausgangsmaterial zurückverfolgt werden.</p></article>
+        <article class="rule"><button aria-expanded="false">Wissen nennt seine Quellen <span>+</span></button><p>Wiki-Seiten enthalten Frontmatter mit Typ, Projekt, Datum, Tags und Quellen. So bleibt klar, woher eine Aussage stammt.</p></article>
+        <article class="rule"><button aria-expanded="false">Das Log ist eine Chronik, kein Notizzettel <span>+</span></button><p>Neue Einträge werden angehängt, nicht umgeschrieben. Der Zeitstempel macht Entscheidungen und Veränderungen transparent.</p></article>
+        <article class="rule"><button aria-expanded="false">Verantwortung ist sichtbar getrennt <span>+</span></button><p>Der Mensch liefert und kontrolliert Quellen. Die KI strukturiert und verknüpft das Wiki. Das Schema wird gemeinsam weiterentwickelt.</p></article>
+      </div>
+    </section>
+    <div class="shell"><section class="cta"><p class="eyebrow" style="color:#9de2bd">Der Gedanke dahinter</p><h2>Gutes Wissen ist nicht nur gespeichert. Es bleibt verständlich, belegbar und lebendig.</h2><p>Der Brain-Vault macht aus einzelnen Dateien eine gemeinsame Landkarte – ohne die ursprünglichen Spuren zu verlieren.</p></section></div>
+  </main>
+  <footer class="shell">Brain-Vault · Interaktive Prinzipübersicht · Lokal nutzbar, keine Datenübertragung.</footer>
+  <script>
+    const topics = {
+      project: { tag: 'Projektstruktur', title: 'Ein Projekt ist ein eigener Wissensraum.', text: 'Jedes Projekt folgt demselben Muster. Dadurch lässt sich auch nach Monaten schnell erkennen, was wichtig ist, wo Quellen liegen und welche Entscheidungen bereits gefallen sind.', list: ['INDEX.md zeigt den aktuellen Überblick.', 'log.md dokumentiert Veränderung in zeitlicher Reihenfolge.', 'links.md verweist auf externe Quellen oder Arbeitsordner.'] },
+      index: { tag: 'Orientierung', title: 'INDEX.md ist der Einstieg.', text: 'Eine kompakte Übersicht zeigt Ziel, Status und wichtige Verbindungen des Projekts. Wer neu einsteigt, versteht hier zuerst den Kontext.', list: ['Projektziel und aktueller Stand', 'wichtige Wiki-Seiten', 'offene Fragen und nächste Schritte'] },
+      log: { tag: 'Nachvollziehbarkeit', title: 'log.md hält den Weg fest.', text: 'Einträge werden nur ergänzt. So bleibt sichtbar, wann etwas aufgenommen, geprüft oder entschieden wurde – ohne die Vergangenheit umzuschreiben.', list: ['Zeitstempel', 'Aktion und Bereich', 'kurze Beschreibung mit Verweis'] },
+      links: { tag: 'Verbindungen', title: 'links.md zeigt nach außen.', text: 'Nicht jede Quelle liegt im Vault. Diese Datei hält sichere, lesbare Zeiger auf externe Projektordner oder Systeme bereit.', list: ['keine Duplikate großer Daten', 'klare Herkunft', 'ein Ort für externe Pfade'] },
+      raw: { tag: 'Schutzraum', title: '_raw/ bewahrt das Original.', text: 'Hier liegen die eingehenden Materialien exakt so, wie sie geliefert wurden. Das schützt vor Bedeutungsverlust und macht jede Zusammenfassung prüfbar.', list: ['nur lesen, nicht verändern', 'Fotos, Exporte, Notizen, Daten', 'Basis jeder späteren Interpretation'] },
+      wiki: { tag: 'Arbeitswissen', title: '_wiki/ macht Wissen nutzbar.', text: 'Hier entstehen verständliche, verlinkte Seiten. Sie fassen zusammen, erklären Entscheidungen und verbinden Erkenntnisse über Projekte hinweg.', list: ['einheitliches Frontmatter', 'Tags und Wiki-Links', 'auf Quellen rückverfolgbar'] }
+    };
+    const detail = document.querySelector('#detail');
+    function showTopic(key) { const t = topics[key]; detail.innerHTML = `<span class="tag">${t.tag}</span><h3>${t.title}</h3><p>${t.text}</p><ul>${t.list.map(item => `<li>${item}</li>`).join('')}</ul>`; }
+    document.querySelectorAll('.tree button').forEach(button => button.addEventListener('click', () => { document.querySelector('.tree .selected').classList.remove('selected'); button.classList.add('selected'); showTopic(button.dataset.topic); }));
+    showTopic('project');
+    const steps = [...document.querySelectorAll('.flow-step')]; let current = -1;
+    const status = document.querySelector('#flow-status');
+    function advance() { if (current < steps.length - 1) { current++; steps[current].classList.add('active'); status.textContent = `Schritt ${current + 1} von ${steps.length}: ${steps[current].querySelector('strong').textContent}`; } else { status.textContent = 'Ablauf vollständig – Wissen ist wieder auffindbar.'; } }
+    function reset() { steps.forEach(step => step.classList.remove('active')); current = -1; status.textContent = 'Bereit zum Start.'; }
+    document.querySelector('#next-step').addEventListener('click', advance);
+    document.querySelector('#reset-flow').addEventListener('click', reset);
+    document.querySelector('#start-flow').addEventListener('click', () => { document.querySelector('#ablauf').scrollIntoView(); reset(); advance(); });
+    document.querySelectorAll('.rule button').forEach(button => button.addEventListener('click', () => { const open = button.parentElement.classList.toggle('open'); button.setAttribute('aria-expanded', String(open)); }));
+    const sections = [...document.querySelectorAll('main section[id]')];
+    const links = [...document.querySelectorAll('nav a')];
+    sections.forEach(section => new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) links.forEach(link => link.classList.toggle('active', link.getAttribute('href') === '#' + entry.target.id)); }), { rootMargin: '-40% 0px -55% 0px' }).observe(section));
+  </script>
+</body>
+</html>

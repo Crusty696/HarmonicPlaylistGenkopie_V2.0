@@ -40,9 +40,10 @@ COMPATIBILITY_RULES = [
   ("8A", "8A", 100, "Same Key"),
   ("1B", "1B", 100, "Same Key"),
 
-  # Relative Major/Minor = 90 (gleiche Nummer, anderer Buchstabe)
-  ("8A", "8B", 90, "Relative Major/Minor"),
-  ("5B", "5A", 90, "Relative Major/Minor"),
+  # Relative Major/Minor — richtungsabhaengig (H4-Fix):
+  # A->B (Moll->Dur) = 90 (Energy Boost), B->A (Dur->Moll) = 85 (Energy Drop)
+  ("8A", "8B", 90, "Relative Minor->Major (Boost)"),
+  ("5B", "5A", 85, "Relative Major->Minor (Drop)"),
 
   # Adjacent Keys = 80 (+-1 im Rad, gleicher Buchstabe)
   ("8A", "9A", 80, "Adjacent +1"),

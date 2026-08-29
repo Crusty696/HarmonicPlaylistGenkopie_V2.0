@@ -3,8 +3,37 @@ Base Exporter - Abstract Base Class for all playlist exporters
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import List
 from ..models import Track
+
+
+@dataclass(frozen=True)
+class ExportReport:
+    """Verifizierbares Ergebnis eines Playlist-Exports.
+
+    Gemeinsamer Rueckgabetyp ALLER Exporter, damit Aufrufer nicht pro Format
+    unterscheiden muessen.
+
+    status:
+        "success" - alles geschrieben, keine Warnungen
+        "partial" - Datei wurde geschrieben, aber einzelne Tracks/Details
+                    fehlen (KEIN Fehler; errors enthaelt die Details)
+        Ein echter Fehlschlag wird als Exception geworfen, nicht als Report.
+
+    Formate ohne Cues/Beatgrids (z. B. M3U8) melden dort 0.
+    """
+
+    status: str
+    output_path: str
+    tracks_written: int
+    cues_written: int
+    beatgrids_written: int
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def success(self) -> bool:
+        return self.status == "success"
 
 
 class BaseExporter(ABC):
@@ -15,7 +44,7 @@ class BaseExporter(ABC):
     """
 
     @abstractmethod
-    def export(self, playlist: List[Track], output_path: str, playlist_name: str = "HPG Playlist") -> None:
+    def export(self, playlist: List[Track], output_path: str, playlist_name: str = "HPG Playlist") -> ExportReport:
         """
         Export playlist to target format
 
@@ -23,6 +52,9 @@ class BaseExporter(ABC):
             playlist: List of Track objects to export
             output_path: Full path where to save the exported file
             playlist_name: Name of the playlist
+
+        Returns:
+            ExportReport mit status/tracks_written/cues_written/beatgrids_written
 
         Raises:
             IOError: If file cannot be written

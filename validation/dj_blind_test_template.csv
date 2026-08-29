@@ -1,0 +1,1 @@
+session_id,evaluator_id,pair_id,candidate_a_id,candidate_b_id,preferred_candidate,transition_smoothness_1_5,phrase_alignment_1_5,energy_flow_1_5,clash_free_1_5,exclusion_reason,notes,completed_at

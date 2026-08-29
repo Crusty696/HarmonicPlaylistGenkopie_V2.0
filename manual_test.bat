@@ -1,4 +1,5 @@
 @echo off
+setlocal
 cd /d "%~dp0"
 title HPG - DJ Manueller Test
 
@@ -14,15 +15,22 @@ echo   Direkter Track:   manual_test.bat "C:\pfad\zum\track.aiff"
 echo   Anderer Ordner:   manual_test.bat --folder "D:\mein_ordner"
 echo.
 
-if "%~1"=="" (
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -X utf8 tools\manual_test.py
-) else (
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -X utf8 tools\manual_test.py %*
+set "PYTHON_EXE=%~dp0venv312\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" (
+    echo [FEHLER] Projekt-venv nicht gefunden: venv312\Scripts\python.exe
+    pause
+    exit /b 1
 )
 
-if %errorlevel% neq 0 (
+"%PYTHON_EXE%" -X utf8 tools\manual_test.py %*
+set "EXIT_CODE=%ERRORLEVEL%"
+
+if not "%EXIT_CODE%"=="0" (
     echo.
-    echo Fehler beim Ausfuehren. Fehlercode: %errorlevel%
+    echo Fehler beim Ausfuehren. Fehlercode: %EXIT_CODE%
+    pause
+    exit /b %EXIT_CODE%
 )
 
 pause
+exit /b 0

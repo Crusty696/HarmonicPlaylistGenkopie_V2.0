@@ -5,7 +5,6 @@ Verwendet synthetische Click-Tracks mit bekanntem Tempo.
 import pytest
 import numpy as np
 import librosa
-from hpg_core.config import DEFAULT_BPM
 from tests.fixtures.audio_generators import (
   generate_click_track, generate_silence, generate_noise,
   generate_tone, DEFAULT_SR,
@@ -20,7 +19,7 @@ def _detect_bpm(y, sr):
   tempo_array = np.atleast_1d(tempo)
   bpm_value = float(tempo_array[0]) if tempo_array.size else 0.0
   if bpm_value <= 0:
-    alt_tempo = librosa.beat.tempo(y=y, sr=sr)
+    alt_tempo = librosa.feature.rhythm.tempo(y=y, sr=sr)
     alt_array = np.atleast_1d(alt_tempo)
     bpm_value = float(alt_array[0]) if alt_array.size else 0.0
   if bpm_value <= 0 and beat_frames.size > 1:

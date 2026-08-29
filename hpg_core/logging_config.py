@@ -18,7 +18,20 @@ import sys
 from pathlib import Path
 
 # === Konfiguration ===
-LOG_DIR = Path(__file__).parent.parent / "logs"
+def _resolve_default_log_dir():
+  """Liefert ein dauerhaftes, schreibbares Log-Verzeichnis."""
+  if getattr(sys, "frozen", False):
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    base_dir = (
+      Path(local_app_data)
+      if local_app_data
+      else Path.home() / "AppData" / "Local"
+    )
+    return base_dir / "HPG" / "logs"
+  return Path(__file__).resolve().parent.parent / "logs"
+
+
+LOG_DIR = _resolve_default_log_dir()
 LOG_FILE = LOG_DIR / "hpg.log"
 LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB pro Datei
 LOG_BACKUP_COUNT = 3  # 3 Backup-Dateien behalten
@@ -52,9 +65,9 @@ class _CompactFormatter(logging.Formatter):
   def format(self, record):
     # Kurzname: hpg_core.analysis -> analysis
     short_name = record.name
+    # Audit-Fix 2026-07-21: toter elif entfernt — "hpg_core.exporters." matcht
+    # bereits das erste if (identischer Strip).
     if short_name.startswith("hpg_core."):
-      short_name = short_name[9:]
-    elif short_name.startswith("hpg_core.exporters."):
       short_name = short_name[9:]
 
     tag = self.LEVEL_TAGS.get(record.levelname, f"[{record.levelname}]")
@@ -102,7 +115,15 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
     handler.close()
 
   # Konsolen-Handler (stderr, damit stdout frei bleibt)
-  if log_to_console:
+  if log_to_console and sys.stderr is not None:
+    # Umlaute/CJK in Log-Meldungen (z.B. Track-Titel) duerfen die Ausgabe nicht
+    # still verschlucken — bei cp1252-stderr wirft StreamHandler.emit sonst einen
+    # UnicodeEncodeError, den handleError() verschluckt. backslashreplace escaped
+    # statt zu crashen; der Datei-Handler ist bereits utf-8.
+    try:
+      sys.stderr.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+      pass  # umgeleiteter/gepatchter Stream ohne reconfigure
     console = logging.StreamHandler(sys.stderr)
     console.setLevel(numeric_level)
     console.setFormatter(_CompactFormatter())
@@ -110,7 +131,7 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
 
   # Datei-Handler (mit Rotation)
   if log_to_file:
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
       LOG_FILE,
       maxBytes=LOG_MAX_BYTES,
@@ -124,7 +145,10 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
   # Modul-spezifische Levels setzen
   for module_name, module_level in MODULE_LEVELS.items():
     mod_logger = logging.getLogger(module_name)
-    mod_logger.setLevel(getattr(logging, module_level.upper(), numeric_level))
+    mod_level = getattr(logging, module_level.upper(), numeric_level)
+    if numeric_level < mod_level:
+      mod_level = numeric_level
+    mod_logger.setLevel(mod_level)
 
   # Externe Bibliotheken ruhigstellen
   logging.getLogger("librosa").setLevel(logging.WARNING)
@@ -132,6 +156,7 @@ def setup_logging(level=None, log_to_file=True, log_to_console=True):
   logging.getLogger("audioread").setLevel(logging.WARNING)
   logging.getLogger("matplotlib").setLevel(logging.WARNING)
   logging.getLogger("PIL").setLevel(logging.WARNING)
+  logging.getLogger("requests").setLevel(logging.WARNING)
 
   logger = logging.getLogger(__name__)
   logger.info(f"Logging initialisiert (Level: {level})")
