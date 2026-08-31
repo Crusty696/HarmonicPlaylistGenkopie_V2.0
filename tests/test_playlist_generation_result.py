@@ -70,6 +70,39 @@ def test_partieller_scoring_context_behaelt_kandidatenvertrag(monkeypatch):
     )
 
 
+def test_vollstaendiger_laufstart_snapshot_wird_nicht_live_neu_geladen(monkeypatch):
+    snapshot = pl.resolve_run_scoring_context("Warm-Up", {})
+
+    def fail_live_reload(*args, **kwargs):
+        raise RuntimeError("kein Live-Reload nach dem Laufstart")
+
+    monkeypatch.setattr(pl, "resolve_run_scoring_context", fail_live_reload)
+    completed = pl._complete_run_scoring_context("Warm-Up", {}, snapshot)
+    result = pl.generate_playlist_result(
+        [_track("a.wav")],
+        "Warm-Up",
+        scoring_context=snapshot,
+        candidate_choice_snapshot={},
+    )
+
+    assert completed == snapshot
+    assert result.scoring_context_dict() == snapshot
+    assert result.path_stats.planned == 0
+    repeated = pl.generate_playlist_result(
+        [_track("b.wav")],
+        "Warm-Up",
+        scoring_context=result.scoring_context_dict(),
+        candidate_choice_snapshot={},
+    )
+    assert repeated.scoring_context_dict() == snapshot
+
+
+def test_immutable_result_erhaelt_leere_mapping_und_listentypen():
+    supplied = {"mapping": {}, "sequence": [], "pairs": [["x", 1]]}
+
+    assert pl._thaw_immutable(pl._freeze_immutable(supplied)) == supplied
+
+
 def test_partielles_genreprofil_wird_tief_in_laufkontext_gemerged():
     context = pl._complete_run_scoring_context(
         "Warm-Up",

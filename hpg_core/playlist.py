@@ -54,6 +54,14 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+
+class _FrozenMapping(tuple):
+    """Markiert eingefrorene Mappings, auch wenn sie leer sind."""
+
+
+class _FrozenSequence(tuple):
+    """Markiert eingefrorene Sequenzen, auch wenn sie leer sind."""
+
 # AUDIT-FIX D6/F28 (2026-07-24): vormals hartkodierte Scoring-Konstanten
 # (Magic Numbers) zentralisiert. Bei Bedarf spaeter nach config.py heben.
 SMOOTHING_ENERGY_DISRUPTION_MAX = 20  # max. Energiesprung fuer harmonischen Swap
@@ -75,7 +83,7 @@ def _freeze_immutable(value):
     if isinstance(value, Enum):
         return _freeze_immutable(value.value)
     if isinstance(value, Mapping):
-        return tuple(
+        return _FrozenMapping(
             (
                 unicodedata.normalize("NFC", str(key)),
                 _freeze_immutable(item),
@@ -83,15 +91,19 @@ def _freeze_immutable(value):
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         )
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_immutable(item) for item in value)
+        return _FrozenSequence(_freeze_immutable(item) for item in value)
     if isinstance(value, (set, frozenset)):
         frozen = [_freeze_immutable(item) for item in value]
-        return tuple(sorted(frozen, key=repr))
+        return _FrozenSequence(sorted(frozen, key=repr))
     raise ValueError(f"Result-Werttyp nicht unterstuetzt: {type(value).__name__}")
 
 
 def _thaw_immutable(value):
     """Defensive Legacy-Kopie einer eingefrorenen Result-Struktur."""
+    if isinstance(value, _FrozenMapping):
+        return {key: _thaw_immutable(item) for key, item in value}
+    if isinstance(value, _FrozenSequence):
+        return [_thaw_immutable(item) for item in value]
     if isinstance(value, dict):
         return {key: _thaw_immutable(item) for key, item in value.items()}
     if isinstance(value, tuple):
@@ -3067,15 +3079,38 @@ def _validate_candidate_tolerance_profile(profile, path: str) -> dict:
     return normalized
 
 
+def _has_complete_run_profile_snapshot(scoring_context: Mapping) -> bool:
+    """Erkennt den vollstaendigen GUI-Laufstart-Snapshot ohne Live-Zugriff."""
+    from .tolerances import ERLAUBTE_TOLERANZ_SCHLUESSEL
+
+    profile_keys = (
+        "track_tolerances_by_genre",
+        "candidate_tolerances_by_genre",
+    )
+    schema_key = "candidate_schema_ranks_by_genre"
+    allowed_genres = frozenset(CANONICAL_GENRES) | {"Unknown"}
+    for key in profile_keys:
+        profiles = scoring_context.get(key)
+        if not isinstance(profiles, Mapping) or set(profiles) != allowed_genres:
+            return False
+        if any(
+            not isinstance(profile, Mapping)
+            or set(profile) != ERLAUBTE_TOLERANZ_SCHLUESSEL
+            for profile in profiles.values()
+        ):
+            return False
+    schemas = scoring_context.get(schema_key)
+    return isinstance(schemas, Mapping) and set(schemas) == allowed_genres
+
+
 def _complete_run_scoring_context(
     mode: str,
     advanced_params: Optional[Dict],
     scoring_context: Optional[Dict],
 ) -> Dict:
     """Ergaenzt alte/partielle Kontexte um den vollstaendigen Laufvertrag."""
-    context = resolve_run_scoring_context(mode, advanced_params)
     if scoring_context is None:
-        return context
+        return resolve_run_scoring_context(mode, advanced_params)
     if not isinstance(scoring_context, Mapping):
         raise ValueError("scoring_context muss ein Mapping sein")
 
@@ -3083,6 +3118,17 @@ def _complete_run_scoring_context(
     tolerance_key = "candidate_tolerances_by_genre"
     track_tolerance_key = "track_tolerances_by_genre"
     schema_key = "candidate_schema_ranks_by_genre"
+    if _has_complete_run_profile_snapshot(supplied):
+        # Ein Laufstart-Snapshot ist bereits die Wahrheit dieses Laufs. Ein
+        # erneuter Datei-/Lock-Zugriff koennte spaetere Aenderungen einmischen
+        # oder einen gueltigen Lauf unnoetig scheitern lassen.
+        context = deepcopy(resolve_scoring_context(mode, advanced_params))
+        allowed_genres = tuple(CANONICAL_GENRES) + ("Unknown",)
+        context[track_tolerance_key] = {genre: {} for genre in allowed_genres}
+        context[tolerance_key] = {genre: {} for genre in allowed_genres}
+        context[schema_key] = {genre: [] for genre in allowed_genres}
+    else:
+        context = resolve_run_scoring_context(mode, advanced_params)
     allowed_keys = SCORING_PARAMETERS | {
         "target_energy", "overlap", tolerance_key, track_tolerance_key, schema_key,
     }
