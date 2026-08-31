@@ -375,7 +375,7 @@ class AIAnalysisWorker(QThread):
         Wird nur aufgerufen wenn der Detect-Worker beim Start nichts geliefert hat
         (z.B. Server war aus) oder der Endpoint inzwischen weggefallen ist.
         """
-        if self.base_url:
+        if self.base_url and self.provider and self.model:
             return True
         try:
             from hpg_core import ai_launcher

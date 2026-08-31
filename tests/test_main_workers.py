@@ -160,6 +160,66 @@ def test_ai_analysis_worker_provider_setup_cancel_is_silent(monkeypatch):
   assert progress == []
 
 
+def test_ai_analysis_worker_redetects_incomplete_ready_snapshot(monkeypatch):
+  status = SimpleNamespace(
+    running=True,
+    base_url="http://detected",
+    name="LM Studio",
+    active_model="detected-model",
+  )
+  detect = Mock(return_value=status)
+  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect)
+  worker = main.AIAnalysisWorker(
+    [], provider="Ollama", model="", base_url="http://stale"
+  )
+
+  assert worker._ensure_ready() is True
+  detect.assert_called_once()
+  assert worker.base_url == "http://detected"
+  assert worker.provider == "LM Studio"
+  assert worker.model == "detected-model"
+
+
+def test_ai_analysis_worker_rejects_provider_without_active_model(monkeypatch):
+  status = SimpleNamespace(
+    running=True,
+    base_url="http://detected",
+    name="Ollama",
+    active_model="",
+  )
+  monkeypatch.setattr(
+    "hpg_core.ai_launcher.detect_and_start", Mock(return_value=status)
+  )
+  fetch = Mock()
+  monkeypatch.setattr("hpg_core.ai_engine.fetch_ai_analysis", fetch)
+  worker = main.AIAnalysisWorker(
+    [Track(filePath="C:/a.wav", fileName="a.wav")],
+    provider="Ollama",
+    model="",
+    base_url="http://stale",
+  )
+  failures = []
+  worker.failed.connect(failures.append)
+
+  worker.run()
+
+  assert failures == [
+    "Kein einsatzbereiter KI-Provider oder kein Modell verfuegbar."
+  ]
+  fetch.assert_not_called()
+
+
+def test_ai_analysis_worker_complete_ready_snapshot_skips_detection(monkeypatch):
+  detect = Mock()
+  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect)
+  worker = main.AIAnalysisWorker(
+    [], provider="Ollama", model="model", base_url="http://local"
+  )
+
+  assert worker._ensure_ready() is True
+  detect.assert_not_called()
+
+
 def test_ai_analysis_worker_cancel_after_response_discards_result(monkeypatch):
   track = Track(filePath="C:/a.wav", fileName="a.wav")
   worker = main.AIAnalysisWorker(
