@@ -691,18 +691,9 @@ class AnalysisWorker(QThread):
     analysis_issues = pyqtSignal(object)  # tuple[AnalysisIssue, ...]
     rekordbox_coverage = pyqtSignal(object)  # RekordboxCoverage
 
-    def __init__(
-        self,
-        folder_path,
-        mode="Harmonic Flow",
-        bpm_tolerance=2.0,
-        advanced_params=None,
-    ):
+    def __init__(self, folder_path):
         super().__init__()
         self.folder_path = folder_path
-        self.mode = mode
-        self.bpm_tolerance = bpm_tolerance
-        self.advanced_params = advanced_params or {}
         self.supported_formats = hpg_config.SUPPORTED_AUDIO_EXTENSIONS
         self._should_cancel = False
 
@@ -5671,12 +5662,7 @@ class MainWindow(QMainWindow):
         # Worker erstellen und starten
         self._run_id += 1
         self._set_run_state(RunState.AUDIO)
-        self.worker = AnalysisWorker(
-            folder_path=settings["folder"],
-            mode=settings["strategy"],
-            bpm_tolerance=settings["bpm_tolerance"],
-            advanced_params=deepcopy(settings["advanced_params"]),
-        )
+        self.worker = AnalysisWorker(folder_path=settings["folder"])
 
         # Worker-Signale an StatusBar & progress_widget (skaliert auf 80%)
         self.worker.progress.connect(self._on_audio_progress)

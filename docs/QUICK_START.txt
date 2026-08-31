@@ -102,7 +102,7 @@ Coverage auf hpg_core + main und --cov-fail-under=70.
 VOLLSTAENDIG MIT COVERAGE (vor Commit):
   .\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
   -> lokaler Volltest-Snapshot 2026-08-31: 3537 passed,
-     85,81 % Coverage
+     85,80 % Coverage
 
 SCHNELL, OHNE COVERAGE:
   .\venv312\Scripts\python.exe -m pytest -q --no-cov -m "not requires_audio"
@@ -230,6 +230,6 @@ Code: Siehe tests/ fuer Beispiele
 Version: 3.7.2
 Lokaler Volltest-Snapshot 2026-08-31:
 Tests:    3537 passed (Standard-Volllauf mit Coverage)
-Coverage: 85,81 %; das Gate liegt bei 70 % und ist erfuellt
+Coverage: 85,80 %; das Gate liegt bei 70 % und ist erfuellt
 
 Happy DJing!

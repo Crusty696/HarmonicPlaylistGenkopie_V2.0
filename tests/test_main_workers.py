@@ -3050,20 +3050,12 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
 
   monkeypatch.setattr(main, "AnalysisWorker", _AnalysisWorker)
   second.start_analysis()
-  expected_worker_params = dict(restored["advanced_params"])
-  expected_worker_params.pop("ai_enabled")
-  assert captured == {
-    "folder_path": str(tmp_path),
-    "mode": "Context Flow",
-    "bpm_tolerance": 1.0,
-    "advanced_params": expected_worker_params,
-  }
+  assert captured == {"folder_path": str(tmp_path)}
   assert second._run_settings["ai_enabled"] is False
   assert second._run_settings["ai_provider"] == "LM Studio"
   assert second._run_settings["ai_model"] == "local-model"
   assert "candidate_tolerances_by_genre" in second._run_settings["scoring_context"]
   assert "Unknown" in second._run_settings["scoring_context"]["candidate_tolerances_by_genre"]
-  assert captured["advanced_params"] is not second._run_settings["advanced_params"]
   second.library_panel.advanced_params.harmonic_strictness.setValue(1)
   assert second._run_settings["advanced_params"]["harmonic_strictness"] == 9
 
