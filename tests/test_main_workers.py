@@ -3862,19 +3862,77 @@ def test_stale_ai_detect_und_progress_ergebnisse_werden_ignoriert(qtbot, monkeyp
   assert window.status_bar.status_label.text() == before
 
 
-def test_ai_disable_requests_current_detect_interruption(qtbot):
+def test_ai_disable_requests_all_current_worker_interruptions(qtbot):
   widget = main.AdvancedParametersWidget()
   qtbot.addWidget(widget)
-  worker = Mock()
-  worker.isRunning.return_value = True
-  widget._ai_detect_worker = worker
+  workers = [Mock(), Mock(), Mock()]
+  for worker in workers:
+    worker.isRunning.return_value = True
+  widget._ai_detect_worker, widget._test_worker, widget._pull_worker = workers
 
   widget._set_ai_enabled(False)
 
-  worker.requestInterruption.assert_called_once_with()
+  for worker in workers:
+    worker.requestInterruption.assert_called_once_with()
   assert widget.ai_status_label.text() == "KI deaktiviert (deterministischer Kernlauf)"
   assert not widget.test_ai_btn.isEnabled()
   widget._ai_detect_worker = None
+  widget._test_worker = None
+  widget._pull_worker = None
+
+
+def test_current_ai_test_result_after_disable_is_ignored(qtbot, monkeypatch):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.model_combo.blockSignals(True)
+  widget.model_combo.addItem("current-model")
+  widget.model_combo.setCurrentText("current-model")
+  widget.model_combo.blockSignals(False)
+  widget.detected_provider = "Ollama"
+  widget.detected_base_url = "http://current/v1/chat/completions"
+  worker = main.AITestWorker(
+    "Ollama", "current-model", "http://current/v1/chat/completions"
+  )
+  widget._test_worker = worker
+  widget._set_ai_enabled(False)
+  information = Mock()
+  critical = Mock()
+  question = Mock()
+  monkeypatch.setattr(main.QMessageBox, "information", information)
+  monkeypatch.setattr(main.QMessageBox, "critical", critical)
+  monkeypatch.setattr(main.QMessageBox, "question", question)
+
+  widget._on_test_finished(True, "OK", "current-model", 0.1, worker)
+
+  assert widget.ai_status_label.text() == "KI deaktiviert (deterministischer Kernlauf)"
+  assert not widget.ai_refresh_btn.isEnabled()
+  assert not widget.test_ai_btn.isEnabled()
+  information.assert_not_called()
+  critical.assert_not_called()
+  question.assert_not_called()
+
+
+def test_interrupted_ai_pull_worker_emits_no_result(qtbot, monkeypatch):
+  worker = main.AIPullWorker("cancel-model")
+  emitted = []
+  entered = threading.Event()
+  worker.pull_finished.connect(lambda *args: emitted.append(args))
+
+  def cancelled_pull(_model, cancel_check=None):
+    assert cancel_check is not None
+    entered.set()
+    while not cancel_check():
+      threading.Event().wait(0.005)
+    return True
+
+  monkeypatch.setattr("hpg_core.ai_launcher.ollama_pull", cancelled_pull)
+
+  with qtbot.waitSignal(worker.finished, timeout=2000):
+    worker.start()
+    assert entered.wait(1.0)
+    worker.requestInterruption()
+
+  assert emitted == []
 
 
 def test_current_ai_detect_result_after_disable_is_ignored(qtbot):
