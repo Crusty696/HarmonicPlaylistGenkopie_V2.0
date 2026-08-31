@@ -252,7 +252,7 @@ class TransitionMetrics:
     structure_match: Optional[float] = None
     energy_delta: Optional[float] = None
     lufs_delta: Optional[float] = None
-    kandidat: Optional[dict] = None   # PairCandidate.to_dict() von Rang 1
+    kandidat: Optional[dict] = None   # PairCandidate.to_dict() der aktiven Result-Kette
 
 
 @dataclass
@@ -2628,8 +2628,9 @@ def calculate_playlist_quality(
 ) -> Dict[str, float]:
     """Calculate comprehensive quality metrics for a playlist.
 
-    scoring_context (HPG-001): identischer Scoring-Vertrag wie bei der
-    Generierung, damit die angezeigte Qualitaet zum Sortierziel passt.
+    scoring_context (HPG-001): derselbe Laufkontext wie bei der Generierung.
+    Die Qualitaet bewertet jedoch die aktive Mixpoint-Kette, nicht die davon
+    getrennte Zielfunktion der Tracksortierung.
     """
     if len(tracks) < 2:
         return {
@@ -2956,10 +2957,10 @@ def resolve_scoring_context(
 
     Genau die Scoring-Parameter, die die gewaehlte Strategie beim Sortieren
     tatsaechlich nutzt. Strategien ohne harmonic_strictness (z.B. Warm-Up)
-    liefern {} — dann bewerten Sortierung UND Anzeige einheitlich mit Defaults.
-    Anzeige, Reorder, Preview, Quality und Empfehlungen muessen genau diesen
-    Kontext verwenden, damit sie denselben Optimierungsvertrag darstellen wie
-    die Generierung.
+    liefern {} — dann verwenden Sortierung und Ergebnisbewertung dieselben
+    Defaults. Anzeige, Reorder, Preview, Quality und Empfehlungen muessen genau
+    diesen Kontext verwenden. Die Sortierung bewertet dabei weiterhin ihre
+    eigene Zielfunktion; die Ergebnisbewertung folgt der aktiven Mixpoint-Kette.
     """
     resolved_mode = STRATEGY_ALIASES.get(mode, mode)
     effective = StrategyConfig.from_mapping(advanced_params).effective_kwargs(
@@ -3391,7 +3392,16 @@ def _immutable_metrics_for_snapshot(
     snapshot: Optional["CandidateSnapshot"],
     mutable_by_key: Mapping,
 ) -> ImmutableMetricsSnapshot:
-    mutable = mutable_by_key[snapshot.key] if snapshot is not None else None
+    """Bewertet den aktiven Result-Kandidaten; planlose Kanten bleiben null."""
+    if snapshot is None:
+        return ImmutableMetricsSnapshot(
+            harmonic_score=0,
+            bpm_smoothness=0.0,
+            energy_flow=0.0,
+            genre_compatibility=0.0,
+            overall_score=0.0,
+        )
+    mutable = mutable_by_key[snapshot.key]
     metrics = _calculate_track_edge_metrics(
         track1,
         track2,
@@ -3728,13 +3738,12 @@ def _build_generation_result(
         _check_cancel(cancel_check)
         chosen = selected[index]
         consistent = consistencies[index]
-        objective_candidate = candidates[0] if candidates else None
         metric = _immutable_metrics_for_snapshot(
             occurrences[index].track,
             occurrences[index + 1].track,
             bpm_tolerance,
             context,
-            objective_candidate,
+            chosen,
             mutable_maps[index],
         )
         recommendation = _recommendation_snapshot(

@@ -419,6 +419,7 @@ class AIAnalysisWorker(QThread):
         logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
         total_tracks = len(self.playlist)
         cancelled = False
+        failed = False
         for i, track in enumerate(self.playlist):
             if self._should_cancel:
                 logger.info("AI Mood Tagging cancelled by user.")
@@ -451,7 +452,6 @@ class AIAnalysisWorker(QThread):
                     # Cache-I/O kann auf einen extern gehaltenen SQLite-Lock bis
                     # zum Timeout warten. Es bleibt deshalb im AI-Worker und darf
                     # niemals den Qt-GUI-Thread blockieren.
-                    track.ai_metadata = ai_data
                     try:
                         from hpg_core.caching import (
                             generate_cache_key,
@@ -461,17 +461,40 @@ class AIAnalysisWorker(QThread):
                             track.filePath,
                             getattr(track, "rekordbox_signature", ""),
                         )
-                        if cache_key:
-                            merge_cached_ai_metadata(
-                                cache_key, track.filePath, ai_data
-                            )
-                    except Exception as cache_exc:
-                        logger.warning(
-                            "KI-Metadaten konnten nicht gecacht werden fuer '%s': %s",
-                            filename,
-                            cache_exc,
+                        if not cache_key:
+                            raise RuntimeError("kein sicherer Cache-Key")
+                        persisted = merge_cached_ai_metadata(
+                            cache_key, track.filePath, ai_data
                         )
+                    except Exception as cache_exc:
+                        reason = (
+                            f"KI-Metadaten fuer '{filename}' konnten nicht "
+                            f"persistiert werden: {cache_exc}"
+                        )
+                        logger.error(reason)
+                        self._fail(reason)
+                        failed = True
+                        break
+                    if persisted is not True:
+                        reason = (
+                            f"KI-Metadaten fuer '{filename}' konnten nicht "
+                            "bestaetigt persistiert werden."
+                        )
+                        logger.error(reason)
+                        self._fail(reason)
+                        failed = True
+                        break
+
+                    # Der bestaetigte Cache-Commit ist die atomare Grenze. Auch
+                    # ein waehrend des DB-Wartens eingetroffener Cancel darf das
+                    # bereits persistierte Ergebnis nicht im Arbeitsspeicher
+                    # beziehungsweise in der GUI unsichtbar lassen.
+                    track.ai_metadata = ai_data
                     self.ai_finished.emit(track.filePath, ai_data)
+                    if self._should_cancel or self.isInterruptionRequested():
+                        logger.info("AI Mood Tagging cancelled after persisted result.")
+                        cancelled = True
+                        break
                 else:
                     reason = (
                         f"KI-Verarbeitung bei '{filename}' gestoppt: Provider- oder "
@@ -479,6 +502,7 @@ class AIAnalysisWorker(QThread):
                     )
                     logger.warning(reason)
                     self._fail(reason)
+                    failed = True
                     break
             except InterruptedError:
                 logger.info("AI Mood Tagging cancelled by user.")
@@ -488,8 +512,9 @@ class AIAnalysisWorker(QThread):
                 reason = f"KI-Verarbeitung gestoppt: {e}"
                 logger.error(reason, exc_info=True)
                 self._fail(reason)
+                failed = True
                 break
-        if not cancelled:
+        if not cancelled and not failed:
             self.progress.emit(total_tracks, total_tracks)
             logger.info("AI Mood Tagging complete.")
 
@@ -2109,6 +2134,12 @@ class AdvancedParametersWidget(QWidget):
         if not self.ai_enabled_checkbox.isChecked():
             return
         preferred = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        if self.detected_provider != preferred:
+            # Ein Endpoint gehoert immer zum Provider, der ihn geliefert hat.
+            # Bis die neue Erkennung abgeschlossen ist, darf der naechste Lauf
+            # deshalb weder Provider noch URL der vorherigen Auswahl verwenden.
+            self.detected_provider = None
+            self.detected_base_url = None
         preferred_model = self.model_combo.currentText().strip() or hpg_config.AI_MODEL
         if self._ai_detect_worker and self._ai_detect_worker.isRunning():
             if (
@@ -5456,10 +5487,25 @@ class MainWindow(QMainWindow):
         playlist_alive = bool(
             self.playlist_worker and self.playlist_worker.isRunning()
         )
-        # Den Worker zusaetzlich zum Zustand pruefen, damit auch das kurze Fenster
-        # zwischen Threadstart und Preview-State sicher als aktiv gilt.
-        render_worker = getattr(getattr(self, "mix_tips_panel", None), "_render_worker", None)
-        render_alive = bool(render_worker and render_worker.isRunning())
+        def panel_has_running_renderer(panel) -> bool:
+            if panel is None:
+                return False
+            workers = list(getattr(panel, "_render_workers", ()))
+            current = getattr(panel, "_render_worker", None)
+            if current is not None and not any(item is current for item in workers):
+                workers.append(current)
+            return any(item.isRunning() for item in workers)
+
+        # Superseded und retirerte Panels behalten ihre Worker bis zum echten
+        # QThread.finished-Cleanup. Auch in diesem Fenster darf kein zweiter
+        # mutierender ProcessPool starten. Bereits beendete Cleanup-Objekte
+        # blockieren dagegen nicht.
+        render_alive = panel_has_running_renderer(
+            getattr(self, "mix_tips_panel", None)
+        ) or any(
+            panel_has_running_renderer(panel)
+            for panel in getattr(self, "_retired_mix_tips_panels", ())
+        )
         return (
             self.run_state in ACTIVE_RUN_STATES
             or worker_alive or ai_alive or playlist_alive or render_alive
@@ -5575,6 +5621,12 @@ class MainWindow(QMainWindow):
         # Ein Lauf verwendet einen unveraenderlichen Snapshot. Aenderungen an
         # Controls waehrend der Audioanalyse gelten erst fuer den naechsten Lauf.
         advanced = self.library_panel.advanced_params
+        selected_ai_provider = (
+            "LM Studio" if advanced.lmstudio_radio.isChecked() else "Ollama"
+        )
+        detected_provider_matches = (
+            advanced.detected_provider == selected_ai_provider
+        )
         self._run_settings = deepcopy({
             "folder": settings["folder"],
             "strategy": settings["strategy"],
@@ -5583,11 +5635,15 @@ class MainWindow(QMainWindow):
             "ai_enabled": ai_enabled,
             "scoring_context": scoring_context,
             "candidate_choice_snapshot": candidate_choice_snapshot,
-            "ai_provider": advanced.detected_provider or (
-                "LM Studio" if advanced.lmstudio_radio.isChecked() else "Ollama"
+            "ai_provider": (
+                advanced.detected_provider
+                if detected_provider_matches
+                else selected_ai_provider
             ),
             "ai_model": advanced.model_combo.currentText(),
-            "ai_base_url": advanced.detected_base_url,
+            "ai_base_url": (
+                advanced.detected_base_url if detected_provider_matches else None
+            ),
         })
         settings = self._run_settings
 

@@ -4,6 +4,7 @@ Prueft generate_cache_key, get_cached_track, cache_track.
 """
 import os
 import json
+import hashlib
 import pytest
 import tempfile
 import sqlite3
@@ -156,6 +157,30 @@ class TestGenerateCacheKey:
     key = generate_cache_key("/nonexistent/path/file.mp3")
     assert key is not None
     assert len(key) == 64  # SHA-256 hash length
+
+  def test_fallback_bindet_rekordbox_signatur_eindeutig(self):
+    path = r"X:\gibt\es\nicht\track.wav"
+    identifier = os.path.normcase(os.path.abspath(os.path.normpath(path)))
+    signature = "rekordbox:quelle-a"
+    expected_payload = json.dumps(
+      [identifier, signature], ensure_ascii=True, separators=(",", ":")
+    )
+
+    key = generate_cache_key(path, signature)
+
+    assert key == hashlib.sha256(expected_payload.encode("utf-8")).hexdigest()
+    assert key == generate_cache_key(path, signature)
+    assert key != generate_cache_key(path, "rekordbox:quelle-b")
+
+  def test_fallback_ohne_signatur_bleibt_kompatibel(self):
+    path = r"X:\gibt\es\nicht\track.wav"
+    identifier = os.path.normcase(os.path.abspath(os.path.normpath(path)))
+    expected = hashlib.sha256(
+      identifier.encode("utf-8", "ignore")
+    ).hexdigest()
+
+    assert generate_cache_key(path) == expected
+    assert generate_cache_key(path, "") == expected
 
   def test_key_format(self, temp_audio_file):
     """Key hat Format: path-size-mtime."""

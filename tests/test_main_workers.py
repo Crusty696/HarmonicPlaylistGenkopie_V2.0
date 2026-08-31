@@ -201,16 +201,152 @@ def test_ai_analysis_worker_persists_metadata_off_gui_thread(monkeypatch):
   monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *args: "key")
   monkeypatch.setattr(
     "hpg_core.caching.merge_cached_ai_metadata",
-    lambda key, path, value: cached.append((key, path, value)),
+    lambda key, path, value: cached.append((key, path, value)) or True,
   )
   worker = main.AIAnalysisWorker(
     [track], provider="Ollama", model="model", base_url="http://local"
   )
+  finished = []
+  worker.ai_finished.connect(lambda *args: finished.append(args))
 
   worker.run()
 
   assert track.ai_metadata == metadata
   assert cached == [("key", track.filePath, metadata)]
+  assert finished == [(track.filePath, metadata)]
+
+
+@pytest.mark.parametrize("merge_result", [False, None])
+def test_ai_analysis_worker_publiziert_nicht_bei_unbestaetigter_persistenz(
+  monkeypatch, merge_result,
+):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+  monkeypatch.setattr("hpg_core.ai_engine.ai_metadata_matches", lambda *_args: False)
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.fetch_ai_analysis", lambda *_args, **_kwargs: metadata
+  )
+  monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *_args: "key")
+  monkeypatch.setattr(
+    "hpg_core.caching.merge_cached_ai_metadata",
+    lambda *_args: merge_result,
+  )
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+  failures = []
+  finished = []
+  progress = []
+  worker.failed.connect(failures.append)
+  worker.ai_finished.connect(lambda *args: finished.append(args))
+  worker.progress.connect(lambda *args: progress.append(args))
+
+  worker.run()
+
+  assert len(failures) == 1
+  assert "nicht bestaetigt persistiert" in failures[0]
+  assert finished == []
+  assert progress == [(0, 1)]
+  assert track.ai_metadata == {}
+
+
+def test_ai_analysis_worker_publiziert_nicht_bei_persistenz_exception(monkeypatch):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+  monkeypatch.setattr("hpg_core.ai_engine.ai_metadata_matches", lambda *_args: False)
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.fetch_ai_analysis", lambda *_args, **_kwargs: metadata
+  )
+  monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *_args: "key")
+
+  def fail_merge(*_args):
+    raise RuntimeError("cache kaputt")
+
+  monkeypatch.setattr("hpg_core.caching.merge_cached_ai_metadata", fail_merge)
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+  failures = []
+  finished = []
+  progress = []
+  worker.failed.connect(failures.append)
+  worker.ai_finished.connect(lambda *args: finished.append(args))
+  worker.progress.connect(lambda *args: progress.append(args))
+
+  worker.run()
+
+  assert failures == [
+    "KI-Metadaten fuer 'a.wav' konnten nicht persistiert werden: cache kaputt"
+  ]
+  assert finished == []
+  assert progress == [(0, 1)]
+  assert track.ai_metadata == {}
+
+
+def test_ai_analysis_worker_publiziert_nicht_ohne_cache_key(monkeypatch):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+  merge = Mock(return_value=True)
+  monkeypatch.setattr("hpg_core.ai_engine.ai_metadata_matches", lambda *_args: False)
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.fetch_ai_analysis", lambda *_args, **_kwargs: metadata
+  )
+  monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *_args: None)
+  monkeypatch.setattr("hpg_core.caching.merge_cached_ai_metadata", merge)
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+  failures = []
+  finished = []
+  progress = []
+  worker.failed.connect(failures.append)
+  worker.ai_finished.connect(lambda *args: finished.append(args))
+  worker.progress.connect(lambda *args: progress.append(args))
+
+  worker.run()
+
+  assert failures == [
+    "KI-Metadaten fuer 'a.wav' konnten nicht persistiert werden: "
+    "kein sicherer Cache-Key"
+  ]
+  merge.assert_not_called()
+  assert finished == []
+  assert progress == [(0, 1)]
+  assert track.ai_metadata == {}
+
+
+def test_ai_analysis_worker_publiziert_commit_vor_nachlaufendem_cancel(monkeypatch):
+  track = Track(filePath="C:/a.wav", fileName="a.wav")
+  metadata = {"moods": ["driving"], "sub_genre": "Peak Techno"}
+  monkeypatch.setattr("hpg_core.ai_engine.ai_metadata_matches", lambda *_args: False)
+  monkeypatch.setattr(
+    "hpg_core.ai_engine.fetch_ai_analysis", lambda *_args, **_kwargs: metadata
+  )
+  monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *_args: "key")
+  worker = main.AIAnalysisWorker(
+    [track], provider="Ollama", model="model", base_url="http://local"
+  )
+
+  def persist_and_cancel(*_args):
+    worker.request_cancel()
+    return True
+
+  monkeypatch.setattr(
+    "hpg_core.caching.merge_cached_ai_metadata", persist_and_cancel
+  )
+  finished = []
+  failures = []
+  progress = []
+  worker.ai_finished.connect(lambda *args: finished.append(args))
+  worker.failed.connect(failures.append)
+  worker.progress.connect(lambda *args: progress.append(args))
+
+  worker.run()
+
+  assert failures == []
+  assert finished == [(track.filePath, metadata)]
+  assert progress == [(0, 1)]
+  assert track.ai_metadata == metadata
 
 
 def test_ai_analysis_worker_reicht_cancel_durch_und_meldet_keinen_fehler(
@@ -1500,6 +1636,33 @@ def test_cancel_retired_preview_weckt_drain_nach_finished(qtbot, monkeypatch):
   window._finish_retired_mix_tips_panel(retired)
   assert window.run_state == main.RunState.CANCELLED
   assert retired not in window._retired_mix_tips_panels
+
+
+def test_run_guard_erfasst_laufenden_superseded_render_worker(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  worker = SimpleNamespace(isRunning=Mock(return_value=True))
+  window.mix_tips_panel._render_worker = None
+  window.mix_tips_panel._render_workers = [worker]
+
+  assert window._run_is_active() is True
+
+  worker.isRunning.return_value = False
+  assert window._run_is_active() is False
+
+
+def test_run_guard_erfasst_laufenden_retired_render_worker(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  retired = main.MixTipsPanel()
+  qtbot.addWidget(retired)
+  worker = SimpleNamespace(isRunning=Mock(return_value=True))
+  retired._render_worker = None
+  retired._render_workers = [worker]
+  window._retired_mix_tips_panels.add(retired)
+
+  assert window._run_is_active() is True
+
+  worker.isRunning.return_value = False
+  assert window._run_is_active() is False
 
 
 def test_cancel_ai_finished_wartet_auf_current_preview(qtbot, monkeypatch):
@@ -2905,6 +3068,42 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   assert second._run_settings["advanced_params"]["harmonic_strictness"] == 9
 
 
+def test_laufsnapshot_verwirft_erkannten_endpoint_des_vorherigen_providers(
+  qtbot, monkeypatch, tmp_path
+):
+  window = _window(qtbot, monkeypatch)
+  window.library_panel.set_folder_path(str(tmp_path))
+  advanced = window.library_panel.advanced_params
+  advanced.detected_provider = "Ollama"
+  advanced.detected_base_url = "http://127.0.0.1:11434/api/generate"
+  advanced.lmstudio_radio.blockSignals(True)
+  advanced.lmstudio_radio.setChecked(True)
+  advanced.lmstudio_radio.blockSignals(False)
+
+  class _Signal:
+    def connect(self, _slot):
+      pass
+
+  class _AnalysisWorker:
+    def __init__(self, **_kwargs):
+      for name in (
+        "progress", "phase_changed", "status_update", "rekordbox_coverage",
+        "analysis_issues", "analysis_done", "finished",
+      ):
+        setattr(self, name, _Signal())
+      self.start = Mock()
+
+    def isRunning(self):
+      return False
+
+  monkeypatch.setattr(main, "AnalysisWorker", _AnalysisWorker)
+
+  window.start_analysis()
+
+  assert window._run_settings["ai_provider"] == "LM Studio"
+  assert window._run_settings["ai_base_url"] is None
+
+
 def test_laufsnapshot_bleibt_bis_generate_und_publish_unveraendert(
   qtbot, monkeypatch, tmp_path, request
 ):
@@ -3403,6 +3602,8 @@ def test_stale_ai_detect_und_progress_ergebnisse_werden_ignoriert(qtbot, monkeyp
   stale.isRunning.return_value = True
   widget._ai_detect_worker = stale
   widget._ai_detect_workers = [stale]
+  widget.detected_provider = "Ollama"
+  widget.detected_base_url = "http://127.0.0.1:11434/api/generate"
   widget.lmstudio_radio.blockSignals(True)
   widget.lmstudio_radio.setChecked(True)
   widget.lmstudio_radio.blockSignals(False)
@@ -3418,6 +3619,8 @@ def test_stale_ai_detect_und_progress_ergebnisse_werden_ignoriert(qtbot, monkeyp
   monkeypatch.setattr(main, "AIDetectWorker", lambda **_kwargs: replacement)
   widget.refresh_ai_providers()
   stale.requestInterruption.assert_called_once_with()
+  assert widget.detected_provider is None
+  assert widget.detected_base_url is None
   assert widget._ai_detect_worker is replacement
   assert widget._ai_detect_workers == [stale, replacement]
 

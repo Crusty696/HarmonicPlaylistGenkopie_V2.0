@@ -1,17 +1,21 @@
 # HPG — Produktionsstatus
 
-Aktueller technischer Arbeitsstand: 2026-08-26. Analyse, 30-Paar-Render,
-Audioaudit, reales E2E und finaler Volltest sind noch nicht abgeschlossen. Die
-Abnahmen vom 2026-07-26 sowie Messungen vom 2026-08-14 und 2026-08-25 bleiben
-unten als historische Snapshots erhalten.
+Aktueller technischer Arbeitsstand: 2026-08-31, verifizierter uncommitteter
+Code-Stand auf Commit `3c59dc8` von `origin/main`. Der lokale Code-Gate ist
+gruen; Installer- und CI-Gates sind erst nach dem naechsten Push erneut zu
+verifizieren. Die vollstaendige
+Bibliotheksanalyse und der neue 30-Paar-Hoertestsatz bleiben auf
+Nutzeranweisung pausiert. Abnahmen vom 2026-07-26 sowie Messungen vom
+2026-08-14 und 2026-08-25 bleiben unten als historische Snapshots erhalten.
 
 ## Umgebung (verbindlich)
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
 - Abschluss-Gate: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --tb=short -q`
-- Letzter abgeschlossener Volltest-Zwischenstand: **2751 Tests gruen**,
-  **84,27 % Coverage** (gemessen 2026-08-26 vor dem anschliessenden
-  Cue-/Dauer- und CLI-Statusfix; deshalb kein aktueller Abschlussbeleg)
+- Lokaler Standard-Abschlusslauf: **3537 Tests gruen**, **85,85 % Coverage**
+  (2026-08-31, isolierter Windows-Basetemp)
+- GitHub Actions Lauf 33113355362 auf `3c59dc8`: **3522 Tests gruen**, 46
+  Slow-Tests abgewählt, **85,77 % Coverage**; Installer-Smoke ebenfalls gruen
 - Das alte defekte `venv\` (Python 3.14) wurde 2026-07-17 geloescht
 - Build: `build.bat` (findet Python 3.12 automatisch, nutzt venv312)
 - Python-Basis: **3.12.10** (2026-07-16 aktualisiert; 3.12.0 hatte einen
@@ -24,7 +28,7 @@ unten als historische Snapshots erhalten.
   DJ-Praxis kalibriert (Techno 16-32 Bars, Trance 32-64, Psytrance 16er-Phrasen).
   LLM-Mixpoints sind rein advisory und schreiben keine Track-Mixpoints;
   Rekordbox-Cues werden phrase-quantisiert und gegen die framegenaue echte
-  Audiodauer geprueft. Cache-Version 40;
+  Audiodauer geprueft. Cache-Version 44;
   `-1.0` ist der Nicht-gesetzt-Sentinel, `0.0` ein gueltiger Mix-In.
   Transition-Preview mit Beat-Phase-Alignment.
 - **8 Playlist-Strategien** (Harmonic Flow, Warm-Up, Cool-Down, Peak-Time,
@@ -67,11 +71,11 @@ nachgemessen: Gate erfüllt, Suite vollständig grün.
 
 ## Offene Punkte
 
-- Die Arbeitskopie enthaelt weiterhin uncommittete Aenderungen. Die aktuelle
-  Messung beschreibt den getesteten Worktree, keinen Git-Commit.
-- Der isolierte 3666-Track-v40-Lauf ist aktiv. Erst danach folgen der neue
-  30-Paar-Kandidatensatz, strikter PCM-/Kick-Audit, reales Render-E2E,
-  Abschlussvolltest und unabhaengiger Waechter.
+- Die vollstaendige 3666-Track-Analyse ist pausiert. Ein spaeter freigegebener
+  Lauf muss mit einem neuen isolierten v44-Arbeitscache beginnen; historische
+  v37-v43-Artefakte werden nicht fortgesetzt.
+- Danach bleiben der neue 30-Paar-Kandidatensatz, der strikte PCM-/Kick-Audit
+  und ein reales Render-E2E auf diesem Satz auszufuehren.
 - Eine subjektive Langzeit-Hörsession bleibt optional und ist als
   Produktkalibrierung nicht vollständig automatisierbar.
 

@@ -654,6 +654,13 @@ def test_begruendung_aus_teilwerten_fester_text():
 
 def test_score_pair_nimmt_praeferenz_gewichte_vor_toleranzen(monkeypatch):
     from hpg_core import candidate_preferences as cp
+    from hpg_core import pair_candidates as pc
+
+    # Der Vergleich prueft die Prioritaet der drei Quellen, nicht den lokalen
+    # Benutzerstand unter %LOCALAPPDATA%.
+    monkeypatch.setattr(
+        pc, "get_tolerances", lambda genre: GENRE_TRANSITION_TOLERANCES[genre]
+    )
     a, b = _track(), _track("b.mp3")
     out, inn = _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False, camelot_lokal="3A")
     s_default, _, _ = score_pair(a, b, out, inn, 16)
@@ -664,7 +671,6 @@ def test_score_pair_nimmt_praeferenz_gewichte_vor_toleranzen(monkeypatch):
     assert s_pref == pytest.approx(0.65)          # 8A -> 3A = 65/100, nur Harmonie zaehlt
     assert s_pref != pytest.approx(s_default)
     # explizites tolerances-Argument gewinnt vor der Praeferenz
-    from hpg_core.genres import GENRE_TRANSITION_TOLERANCES
     s_expl, _, _ = score_pair(a, b, out, inn, 16, tolerances=GENRE_TRANSITION_TOLERANCES["Psytrance"])
     assert s_expl == pytest.approx(s_default)
 

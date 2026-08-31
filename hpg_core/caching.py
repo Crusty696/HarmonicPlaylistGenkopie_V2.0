@@ -1004,6 +1004,16 @@ def generate_cache_key(file_path: str, source_signature: str = "") -> str | None
             key = f"{key}-source-{source_signature}"
         return key
     except OSError:
+        # Auch ohne lesbare Dateistatistik muss die Rekordbox-Signatur Teil der
+        # Cache-Identitaet bleiben. JSON kodiert beide Felder eindeutig; eine
+        # einfache Trennzeichen-Verkettung koennte kollidierende Paare bilden.
+        if source_signature:
+            fallback_payload = json.dumps(
+                [identifier, str(source_signature)],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            return hashlib.sha256(fallback_payload.encode("utf-8")).hexdigest()
         return hashlib.sha256(identifier.encode("utf-8", "ignore")).hexdigest()
 
 

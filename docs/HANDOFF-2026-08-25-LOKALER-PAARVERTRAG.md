@@ -48,22 +48,25 @@ zentral sein. Sie sind keine Messwerte eines Tracks.
 
 ### App-Strategien, Kette und Anzeige
 
-- Genau eine der acht Strategien erzeugt zuerst die Trackreihenfolge. Strategien
-  mit lokaler Uebergangszielfunktion duerfen dabei den vollstaendigen
-  `PairCandidate`-Objective samt Lookahead verwenden; die Strategie bleibt aber
-  allein fuer die Tracksortierung verantwortlich.
+- Genau eine der acht Strategien erzeugt zuerst die Trackreihenfolge. Verwendet
+  sie die gerichtete Acht-Faktoren-Zielfunktion, darf deren Rang-1-Kandidat nur
+  lokale Energie- und Detailwerte liefern; sein Zehn-Faktoren-Paarwert
+  `PairCandidate.score` wird nicht zum Sortierscore. Die Strategie bleibt fuer die
+  Tracksortierung verantwortlich.
 - Nach der festen Reihenfolge entstehen genau `N - 1` gerichtete Boundaries.
   Fehlende lokale Kandidaten entfernen keinen Track, sondern bleiben als
   ausdrueckliche Kante `UNGEPLANT` sichtbar.
 - Die begrenzte Result-DP waehlt ueber diese festen Boundaries eine konsistente
   Folge aus hoechstens zwoelf Kandidaten-Snapshots plus `UNGEPLANT` je Kante.
   Nur ein gewaehlter Kandidat erzeugt einen ausfuehrbaren `TransitionPlan`.
-- Empfehlungen, Qualitaetsanzeige, aktiver Mixpoint und Export/Preview-Vertrag
-  verwenden danach denselben immutable `PlaylistGenerationResult` und dessen
-  aktiven `TransitionPlan`. `energy_direction` ist Teil des eingefrorenen
-  Scoring-Kontexts.
-- `calculate_playlist_quality` berechnet Harmonie, Energie und BPM aus den
-  lokalen aktiven Fenstern, nicht aus Ganztrack-Differenzen.
+- Empfehlungen, Qualitaetsanzeige und sichtbare Result-Metriken bewerten danach
+  den von der Kette aktiven Kandidaten. Export und Preview verwenden denselben
+  immutable `PlaylistGenerationResult` und dessen aktiven `TransitionPlan`.
+  Die getrennte Sortierzielfunktion wird dadurch nicht nachtraeglich geaendert.
+  `energy_direction` ist Teil des eingefrorenen Scoring-Kontexts.
+- `calculate_playlist_quality` verwendet die vom aktiven Kandidaten abgeleiteten
+  Resultmetriken: Der Acht-Faktoren-Ausgabescore kombiniert Track-Harmonik und
+  -BPM mit lokalen Kandidatenwerten, soweit sie vorhanden sind.
 - Result und Empfehlungen enthalten immer genau eine Boundary je Nachbarpaar.
   Eine ungueltige Kante bleibt mit echtem Paarindex und ohne Plan als
   `UNGEPLANT` erhalten; andere Kanten bleiben davon unberuehrt.
@@ -113,7 +116,7 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   gezielten Staging separat und danach nochmals im staged Diff geprueft.
 - Abschlusslauf:
   `venv312\Scripts\python.exe -m pytest tests\ --tb=short -q`
-- Aktueller staerkerer Abschlusslauf vom 2026-08-27 mit allen Markern,
+- Historischer staerkerer Abschlusslauf vom 2026-08-27 mit allen Markern,
   explizitem isoliertem Windows-Basetemp und sichtbarer Warnungsauswertung:
   3568 bestanden, 0 Warnungen, Coverage 86.00 Prozent, Exitcode 0. Ein erster
   inhaltlich ebenfalls bis 100 Prozent gruener Versuch scheiterte erst beim
@@ -123,7 +126,9 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
 - Historischer Volltest-Snapshot vom 2026-08-25 vor den nachfolgenden
   GUI-/E2E-/Kandidatensatz-Auditor-Aenderungen: 2035 bestanden, 25 Warnungen,
   Coverage 81.65 Prozent, Exitcode 0. Dieser Wert ist nur Historie und wurde
-  durch den aktuellen 3568er Beleg ersetzt.
+  durch den damaligen 3568er Beleg ersetzt.
+- Neuester Standard-Abschlusslauf vom 2026-08-31 mit explizitem isoliertem
+  Windows-Basetemp: 3537 bestanden, Coverage 85,85 Prozent, Exitcode 0.
 - Aktueller Code-Iststand vom 2026-08-27: `CACHE_VERSION = 44`. Der historische
   Bump von 36 auf 37 erzwang die korrigierte `None`-Semantik; 37 auf 38
   invalidierte alte Analysezeilen fuer BPM-lose Rekordbox-Metadaten. Version 39
@@ -156,7 +161,7 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   lokalen gerichteten Kante. Fehlt sie im Fixture-Limit, endet es eindeutig
   mit Exitcode 3 statt den korrekten Paarvertrag als Playlist-Crash zu melden.
 - Gezielt nach diesen Aenderungen: 55 GUI-Crash-/Worker-Tests und 6
-  E2E-Werkzeugtests bestanden (61 insgesamt). Der aktuelle 3568er Volllauf
+  E2E-Werkzeugtests bestanden (61 insgesamt). Der historische 3568er Volllauf
   deckt diese Aenderungen inzwischen ab. Bibliotheksanalyse, Render-/Audioaudit
   und subjektiver Hoertest bleiben davon getrennte Laufzeitbelege.
 

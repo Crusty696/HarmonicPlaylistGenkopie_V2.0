@@ -151,9 +151,10 @@ Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
   (Toleranz `QUANTIZE_TOLERANCE_SEC`); maximale Score-Summe, gespeicherte Wahl
   mit `_WAHL_BONUS` = 10; ohne konsistenten Anschluss Neustart mit
   `kandidat_konsistent = False`. Der aktive Kandidat ist daher nicht zwingend
-  Rang 1; `compatibility_score` der Karte stammt aus den Metriken (= Rang 1).
+  Rang 1; sichtbare Resultmetriken und Karten-Score folgen dem aktiven
+  Kandidaten der Result-Kette.
   Messung 2026-08-22 (231 Tracks): Cue-Gate-Verletzungen 73 → 2. **Track-Felder werden nicht
-  mutiert** — "Rang 1" lebt im Plan; Leser: Preview, Timeline, Tabelle Mix-In/
+  mutiert** — die aktive Result-Wahl lebt im Plan; Leser: Preview, Timeline, Tabelle Mix-In/
   Out (`mixpunkte_fuer_tabelle`), `on_ai_finished`, Export.
 - `rank_pair_candidates`/`select_pair_candidate` (pair_candidates): gespeicherte
   Wahl (`candidate_choices.hole`) nach vorn, Tiebreak `schema_rang` aus dem
