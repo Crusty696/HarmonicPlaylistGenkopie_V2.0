@@ -1576,6 +1576,135 @@ def test_stale_ai_test_result_leaves_new_detect_worker_authoritative(
   widget._ai_detect_worker = None
 
 
+@pytest.mark.parametrize("changed", ["disabled", "provider", "model"])
+def test_stale_ai_pull_result_does_not_overwrite_current_state(
+  qtbot, monkeypatch, changed
+):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(changed != "disabled")
+  widget.ai_enabled_checkbox.blockSignals(False)
+  widget.ollama_radio.blockSignals(True)
+  widget.lmstudio_radio.blockSignals(True)
+  widget.ollama_radio.setChecked(changed != "provider")
+  widget.lmstudio_radio.setChecked(changed == "provider")
+  widget.ollama_radio.blockSignals(False)
+  widget.lmstudio_radio.blockSignals(False)
+  widget.model_combo.blockSignals(True)
+  widget.model_combo.clear()
+  current_model = "new-model" if changed == "model" else "old-model"
+  widget.model_combo.addItem(current_model)
+  widget.model_combo.setCurrentText(current_model)
+  widget.model_combo.blockSignals(False)
+  widget.detected_provider = (
+    "LM Studio" if changed == "provider" else "Ollama"
+  )
+  widget.detected_base_url = "http://current/v1/chat/completions"
+  worker = main.AIPullWorker("old-model")
+  widget._pull_worker = worker
+  widget.ai_status_label.setText("aktueller Zustand")
+  widget.test_ai_btn.setEnabled(False)
+  widget.ai_refresh_btn.setEnabled(False)
+  test_connection = Mock()
+  refresh = Mock()
+  information = Mock()
+  critical = Mock()
+  monkeypatch.setattr(widget, "test_ai_connection", test_connection)
+  monkeypatch.setattr(widget, "refresh_ai_providers", refresh)
+  monkeypatch.setattr(main.QMessageBox, "information", information)
+  monkeypatch.setattr(main.QMessageBox, "critical", critical)
+
+  widget._on_pull_finished(True, "", worker)
+
+  assert widget.ai_status_label.text() == "aktueller Zustand"
+  if changed == "disabled":
+    assert not widget.test_ai_btn.isEnabled()
+    assert not widget.ai_refresh_btn.isEnabled()
+  else:
+    assert widget.test_ai_btn.isEnabled()
+    assert widget.ai_refresh_btn.isEnabled()
+  test_connection.assert_not_called()
+  refresh.assert_not_called()
+  information.assert_not_called()
+  critical.assert_not_called()
+
+
+def test_stale_ai_pull_result_leaves_new_detect_worker_authoritative(
+  qtbot, monkeypatch
+):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  widget.model_combo.addItem("new-model")
+  worker = main.AIPullWorker("old-model")
+  widget._pull_worker = worker
+  detect_worker = Mock()
+  detect_worker.isRunning.return_value = True
+  widget._ai_detect_worker = detect_worker
+  widget.ai_status_label.setText("neue Erkennung laeuft")
+  widget.test_ai_btn.setEnabled(False)
+  widget.ai_refresh_btn.setEnabled(False)
+  information = Mock()
+  monkeypatch.setattr(main.QMessageBox, "information", information)
+
+  widget._on_pull_finished(True, "", worker)
+
+  assert widget.ai_status_label.text() == "neue Erkennung laeuft"
+  assert not widget.test_ai_btn.isEnabled()
+  assert not widget.ai_refresh_btn.isEnabled()
+  information.assert_not_called()
+  widget._ai_detect_worker = None
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_current_ai_pull_result_keeps_success_and_error_paths(
+  qtbot, monkeypatch, success
+):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  widget.ollama_radio.blockSignals(True)
+  widget.ollama_radio.setChecked(True)
+  widget.ollama_radio.blockSignals(False)
+  widget.model_combo.blockSignals(True)
+  widget.model_combo.clear()
+  widget.model_combo.addItem("current-model")
+  widget.model_combo.setCurrentText("current-model")
+  widget.model_combo.blockSignals(False)
+  worker = main.AIPullWorker("current-model")
+  widget._pull_worker = worker
+  test_connection = Mock()
+  refresh = Mock()
+  information = Mock()
+  critical = Mock()
+  monkeypatch.setattr(widget, "test_ai_connection", test_connection)
+  monkeypatch.setattr(widget, "refresh_ai_providers", refresh)
+  monkeypatch.setattr(main.QMessageBox, "information", information)
+  monkeypatch.setattr(main.QMessageBox, "critical", critical)
+
+  widget._on_pull_finished(success, "download error", worker)
+
+  assert widget.test_ai_btn.isEnabled()
+  assert widget.ai_refresh_btn.isEnabled()
+  if success:
+    assert "Download abgeschlossen" in widget.ai_status_label.text()
+    test_connection.assert_called_once_with()
+    refresh.assert_called_once_with()
+    information.assert_called_once()
+    critical.assert_not_called()
+  else:
+    assert "Fehler beim Download" in widget.ai_status_label.text()
+    test_connection.assert_not_called()
+    refresh.assert_not_called()
+    information.assert_not_called()
+    critical.assert_called_once()
+
+
 def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   window = _window(qtbot, monkeypatch)
   window.playlist = [Track(filePath="C:/a.wav", fileName="a.wav")]

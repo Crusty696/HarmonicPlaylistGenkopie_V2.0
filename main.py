@@ -612,6 +612,7 @@ class AIPullWorker(QThread):
 
     def __init__(self, model: str, parent=None):
         super().__init__(parent)
+        self.provider = "Ollama"
         self.model = model
 
     def run(self):
@@ -2415,6 +2416,30 @@ class AdvancedParametersWidget(QWidget):
             and source_worker is not self._pull_worker
         ):
             return
+        if source_worker is not None:
+            selected_provider = (
+                "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+            )
+            stale_result = (
+                not self.ai_enabled_checkbox.isChecked()
+                or source_worker.provider != selected_provider
+                or source_worker.model != self.model_combo.currentText().strip()
+            )
+            if stale_result:
+                if not self.ai_enabled_checkbox.isChecked():
+                    return
+                detect_running = (
+                    self._ai_detect_worker is not None
+                    and self._ai_detect_worker.isRunning()
+                )
+                if not detect_running:
+                    self.ai_refresh_btn.setEnabled(True)
+                    self.test_ai_btn.setEnabled(
+                        bool(self.model_combo.currentText().strip())
+                        and bool(self.detected_base_url)
+                        and self.detected_provider == selected_provider
+                    )
+                return
         self.test_ai_btn.setEnabled(True)
         self.ai_refresh_btn.setEnabled(True)
         model_name = getattr(
