@@ -2300,6 +2300,34 @@ class AdvancedParametersWidget(QWidget):
             and source_worker is not self._test_worker
         ):
             return
+        if source_worker is not None:
+            selected_provider = (
+                "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+            )
+            current_snapshot = (
+                selected_provider,
+                self.model_combo.currentText().strip(),
+                self.detected_base_url,
+            )
+            worker_snapshot = (
+                source_worker.provider,
+                source_worker.model,
+                source_worker.base_url,
+            )
+            if worker_snapshot != current_snapshot:
+                detect_running = (
+                    self._ai_detect_worker is not None
+                    and self._ai_detect_worker.isRunning()
+                )
+                if not detect_running:
+                    self.ai_refresh_btn.setEnabled(True)
+                    self.test_ai_btn.setEnabled(
+                        self.ai_enabled_checkbox.isChecked()
+                        and bool(current_snapshot[1])
+                        and bool(self.detected_base_url)
+                        and self.detected_provider == selected_provider
+                    )
+                return
         self.test_ai_btn.setEnabled(True)
         self.ai_refresh_btn.setEnabled(True)
 

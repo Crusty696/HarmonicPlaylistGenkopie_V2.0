@@ -1481,6 +1481,101 @@ def test_ai_auxiliary_worker_guards_and_cleanup(qtbot):
   assert widget._test_worker is None
 
 
+@pytest.mark.parametrize("changed", ["provider", "model", "base_url"])
+def test_stale_ai_test_result_does_not_overwrite_current_selection(
+  qtbot, monkeypatch, changed
+):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  widget.ollama_radio.blockSignals(True)
+  widget.lmstudio_radio.blockSignals(True)
+  widget.ollama_radio.setChecked(True)
+  widget.lmstudio_radio.setChecked(False)
+  widget.ollama_radio.blockSignals(False)
+  widget.lmstudio_radio.blockSignals(False)
+  widget.model_combo.blockSignals(True)
+  widget.model_combo.clear()
+  widget.model_combo.addItem("old-model")
+  widget.model_combo.setCurrentText("old-model")
+  widget.model_combo.blockSignals(False)
+  widget.detected_provider = "Ollama"
+  widget.detected_base_url = "http://old/v1/chat/completions"
+  worker = main.AITestWorker(
+    "Ollama", "old-model", "http://old/v1/chat/completions"
+  )
+  widget._test_worker = worker
+
+  if changed == "provider":
+    widget.ollama_radio.blockSignals(True)
+    widget.lmstudio_radio.blockSignals(True)
+    widget.ollama_radio.setChecked(False)
+    widget.lmstudio_radio.setChecked(True)
+    widget.ollama_radio.blockSignals(False)
+    widget.lmstudio_radio.blockSignals(False)
+    widget.detected_provider = "LM Studio"
+  elif changed == "model":
+    widget.model_combo.setCurrentText("new-model")
+    widget.model_combo.addItem("new-model")
+    widget.model_combo.setCurrentText("new-model")
+  else:
+    widget.detected_base_url = "http://new/v1/chat/completions"
+
+  widget.ai_status_label.setText("aktueller Zustand")
+  widget.test_ai_btn.setEnabled(False)
+  widget.ai_refresh_btn.setEnabled(False)
+  information = Mock()
+  critical = Mock()
+  question = Mock()
+  monkeypatch.setattr(main.QMessageBox, "information", information)
+  monkeypatch.setattr(main.QMessageBox, "critical", critical)
+  monkeypatch.setattr(main.QMessageBox, "question", question)
+
+  widget._on_test_finished(True, "OK", "old-model", 0.1, worker)
+
+  assert widget.ai_status_label.text() == "aktueller Zustand"
+  assert widget.test_ai_btn.isEnabled()
+  assert widget.ai_refresh_btn.isEnabled()
+  information.assert_not_called()
+  critical.assert_not_called()
+  question.assert_not_called()
+
+
+def test_stale_ai_test_result_leaves_new_detect_worker_authoritative(
+  qtbot, monkeypatch
+):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  widget.model_combo.addItem("new-model")
+  widget.detected_provider = "LM Studio"
+  widget.detected_base_url = "http://new/v1/chat/completions"
+  worker = main.AITestWorker(
+    "Ollama", "old-model", "http://old/v1/chat/completions"
+  )
+  widget._test_worker = worker
+  detect_worker = Mock()
+  detect_worker.isRunning.return_value = True
+  widget._ai_detect_worker = detect_worker
+  widget.ai_status_label.setText("neue Erkennung laeuft")
+  widget.test_ai_btn.setEnabled(False)
+  widget.ai_refresh_btn.setEnabled(False)
+  information = Mock()
+  monkeypatch.setattr(main.QMessageBox, "information", information)
+
+  widget._on_test_finished(True, "OK", "old-model", 0.1, worker)
+
+  assert widget.ai_status_label.text() == "neue Erkennung laeuft"
+  assert not widget.test_ai_btn.isEnabled()
+  assert not widget.ai_refresh_btn.isEnabled()
+  information.assert_not_called()
+  widget._ai_detect_worker = None
+
+
 def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   window = _window(qtbot, monkeypatch)
   window.playlist = [Track(filePath="C:/a.wav", fileName="a.wav")]
