@@ -883,10 +883,10 @@ def _calculate_track_edge_metrics(
         "bpm": bpm_smoothness,
         "energy": energy_flow,
         "genre": get_genre_compatibility(genre_a, genre_b),
-        "groove": groove_match(track1, track2, genre_a),
-        "bass": bass_continuity(track1, track2, genre_a),
+        "groove": groove_match(track1, track2, genre_a, profile),
+        "bass": bass_continuity(track1, track2, genre_a, profile),
         "timbre": timbre_match(track1, track2, genre_a),
-        "mood": mood_match(track1, track2, genre_a),
+        "mood": mood_match(track1, track2, genre_a, profile),
     }
     overall_score = combine_weighted(components, weights)
     if bpm_diff > bpm_tolerance:

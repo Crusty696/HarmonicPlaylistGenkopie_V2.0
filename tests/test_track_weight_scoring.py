@@ -1,11 +1,13 @@
 import pytest
 
+from hpg_core import transition_features
 from hpg_core.genres import CANONICAL_GENRES
 from hpg_core.playlist import (
     calculate_enhanced_compatibility,
     calculate_track_edge_score,
     generate_playlist_result,
     rebuild_result_for_order,
+    resolve_run_scoring_context,
 )
 from tests.fixtures.track_factories import make_track
 
@@ -87,6 +89,66 @@ def test_run_and_rebuild_keep_frozen_track_weight_snapshot():
 
     assert result.scoring_context_dict()["track_tolerances_by_genre"]["Psytrance"]["groove_weight"] == 1.0
     assert rebuilt.metrics[0].overall_score == pytest.approx(before)
+
+
+def test_run_and_rebuild_use_only_frozen_track_tolerance_snapshot(monkeypatch):
+    tracks = [_track("a"), _track("b")]
+    tracks[1].groove_pattern = [0.8, 0.2]
+    tracks[1].bass_pattern = [0.7, 0.3]
+    tracks[1].sub_energy = 0.8
+    tracks[1].brightness = 90.0
+    context = resolve_run_scoring_context("Warm-Up", {})
+    context["track_tolerances_by_genre"]["Psytrance"].update({
+        "groove_sim_floor": 0.5,
+        "bass_delta_max": 0.4,
+        "brightness_delta_max": 50.0,
+    })
+
+    def fail_live_read(_genre):
+        raise AssertionError("kein Live-Toleranzzugriff im Snapshotlauf")
+
+    monkeypatch.setattr(transition_features, "get_tolerances", fail_live_read)
+    result = generate_playlist_result(
+        tracks,
+        "Warm-Up",
+        scoring_context=context,
+        candidate_choice_snapshot={},
+    )
+    before = result.metrics[0].overall_score
+    rebuilt = rebuild_result_for_order(
+        result, [occurrence.occurrence_id for occurrence in result.occurrences]
+    )
+
+    assert rebuilt.metrics[0].overall_score == pytest.approx(before)
+
+
+def test_transition_feature_legacy_call_uses_live_tolerance_fallback(monkeypatch):
+    calls = []
+
+    def load(genre):
+        calls.append(genre)
+        return {"groove_sim_floor": 0.5}
+
+    monkeypatch.setattr(transition_features, "get_tolerances", load)
+    score = transition_features.groove_match(
+        _track("source"), _track("target"), "Psytrance"
+    )
+
+    assert score == pytest.approx(1.0)
+    assert calls == ["Psytrance"]
+
+
+@pytest.mark.parametrize(
+    "feature",
+    [
+        transition_features.groove_match,
+        transition_features.bass_continuity,
+        transition_features.mood_match,
+    ],
+)
+def test_transition_features_reject_non_mapping_tolerance_snapshot(feature):
+    with pytest.raises(TypeError, match="Mapping oder None"):
+        feature(_track("source"), _track("target"), "Psytrance", [])
 
 
 @pytest.mark.parametrize("bad", [float("nan"), -0.1, 0.9])

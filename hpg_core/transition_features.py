@@ -7,6 +7,7 @@ statt den Uebergang zu bestrafen.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
 from .dj_brain import section_dict_at_time
 from .models import Track
@@ -75,7 +76,21 @@ def _normiert(delta: float, maximum: float) -> float:
     return max(0.0, 1.0 - abs(delta) / maximum)
 
 
-def groove_match(track_a: Track, track_b: Track, genre: str) -> float | None:
+def _tolerance_profile(genre: str, tolerances: Mapping | None) -> Mapping:
+    """Nutzt einen Lauf-Snapshot oder den Legacy-Live-Fallback."""
+    if tolerances is None:
+        return get_tolerances(genre)
+    if not isinstance(tolerances, Mapping):
+        raise TypeError("tolerances muss ein Mapping oder None sein")
+    return tolerances
+
+
+def groove_match(
+    track_a: Track,
+    track_b: Track,
+    genre: str,
+    tolerances: Mapping | None = None,
+) -> float | None:
     """Rhythmische Passung aus Gesamt- und Bassmuster."""
     onset_sim = cosine_similarity(track_a.groove_pattern, track_b.groove_pattern)
     bass_sim = cosine_similarity(track_a.bass_pattern, track_b.bass_pattern)
@@ -89,7 +104,7 @@ def groove_match(track_a: Track, track_b: Track, genre: str) -> float | None:
     else:
         roh = BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
 
-    return _spreize(roh, get_tolerances(genre).get(
+    return _spreize(roh, _tolerance_profile(genre, tolerances).get(
         "groove_sim_floor", DEFAULT_GROOVE_SIM_FLOOR
     ))
 
@@ -138,7 +153,12 @@ def _naht_werte(track: Track, rolle: str) -> tuple[float, float]:
     return float(sub), float(punch)
 
 
-def bass_continuity(track_a: Track, track_b: Track, genre: str) -> float | None:
+def bass_continuity(
+    track_a: Track,
+    track_b: Track,
+    genre: str,
+    tolerances: Mapping | None = None,
+) -> float | None:
     """Kontinuitaet des Bassdrucks an der Nahtstelle."""
     # ODER, nicht UND: liefert EIN Track keinen Wert, ist der Vergleich nicht
     # bestimmbar. Mit UND schluepfte der haeufige Fall durch — ein Track mit
@@ -151,7 +171,7 @@ def bass_continuity(track_a: Track, track_b: Track, genre: str) -> float | None:
     if track_a.sub_energy <= 0.0 or track_b.sub_energy <= 0.0:
         return None
 
-    tol = get_tolerances(genre)
+    tol = _tolerance_profile(genre, tolerances)
     sub_max = tol.get("bass_delta_max", DEFAULT_SUB_DELTA_MAX)
 
     # Verglichen wird die Sektion AM MIX-OUT von A gegen die Sektion AM
@@ -170,7 +190,12 @@ def timbre_match(track_a: Track, track_b: Track, genre: str) -> float | None:
     return cosine_similarity(track_a.timbre_fingerprint, track_b.timbre_fingerprint)
 
 
-def mood_match(track_a: Track, track_b: Track, genre: str) -> float | None:
+def mood_match(
+    track_a: Track,
+    track_b: Track,
+    genre: str,
+    tolerances: Mapping | None = None,
+) -> float | None:
     """Stimmungs-Passung aus Helligkeit, Flachheit und Tongeschlecht."""
     # ODER statt UND, gleiche Begruendung wie bei bass_continuity.
     # analysis.py setzt brightness bei gescheiterter Feature-Phase explizit
@@ -178,7 +203,7 @@ def mood_match(track_a: Track, track_b: Track, genre: str) -> float | None:
     if track_a.brightness <= 0 or track_b.brightness <= 0:
         return None
 
-    tol = get_tolerances(genre)
+    tol = _tolerance_profile(genre, tolerances)
     hell_max = tol.get("brightness_delta_max", DEFAULT_BRIGHTNESS_DELTA_MAX)
 
     hell_sim = _normiert(
