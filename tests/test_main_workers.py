@@ -3596,6 +3596,8 @@ def test_stale_ai_detect_und_progress_ergebnisse_werden_ignoriert(qtbot, monkeyp
   widget._ai_detect_workers = [stale]
   widget.detected_provider = "Ollama"
   widget.detected_base_url = "http://127.0.0.1:11434/api/generate"
+  widget.detected_active_model = "old"
+  widget.model_combo.addItem("old")
   widget.lmstudio_radio.blockSignals(True)
   widget.lmstudio_radio.setChecked(True)
   widget.lmstudio_radio.blockSignals(False)
@@ -3605,14 +3607,25 @@ def test_stale_ai_detect_und_progress_ergebnisse_werden_ignoriert(qtbot, monkeyp
       pass
 
   replacement = SimpleNamespace(
-    preferred="LM Studio", preferred_model=main.hpg_config.AI_MODEL,
+    preferred="LM Studio", preferred_model=None,
     detected=_Signal(), finished=_Signal(), start=Mock(), deleteLater=Mock(),
   )
-  monkeypatch.setattr(main, "AIDetectWorker", lambda **_kwargs: replacement)
+  detected_args = {}
+
+  def _replacement_worker(**kwargs):
+    detected_args.update(kwargs)
+    return replacement
+
+  monkeypatch.setattr(main, "AIDetectWorker", _replacement_worker)
   widget.refresh_ai_providers()
   stale.requestInterruption.assert_called_once_with()
   assert widget.detected_provider is None
   assert widget.detected_base_url is None
+  assert widget.detected_active_model is None
+  assert widget.model_combo.count() == 0
+  assert detected_args["preferred"] == "LM Studio"
+  assert detected_args["preferred_model"] is None
+  assert replacement.preferred_model is None
   assert widget._ai_detect_worker is replacement
   assert widget._ai_detect_workers == [stale, replacement]
 

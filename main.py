@@ -2126,13 +2126,29 @@ class AdvancedParametersWidget(QWidget):
         if not self.ai_enabled_checkbox.isChecked():
             return
         preferred = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        provider_changed = (
+            self.detected_provider is not None
+            and self.detected_provider != preferred
+        )
         if self.detected_provider != preferred:
             # Ein Endpoint gehoert immer zum Provider, der ihn geliefert hat.
             # Bis die neue Erkennung abgeschlossen ist, darf der naechste Lauf
             # deshalb weder Provider noch URL der vorherigen Auswahl verwenden.
             self.detected_provider = None
             self.detected_base_url = None
-        preferred_model = self.model_combo.currentText().strip() or hpg_config.AI_MODEL
+        if provider_changed:
+            # Modellnamen sind ebenfalls providerspezifisch. Ein fremder Name
+            # wuerde beim Zielprovider als automatischer Downloadauftrag gelten.
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.setPlaceholderText("KI erkennen, um Modelle zu laden")
+            self.model_combo.blockSignals(False)
+            self.detected_active_model = None
+        preferred_model = (
+            None
+            if provider_changed
+            else self.model_combo.currentText().strip() or hpg_config.AI_MODEL
+        )
         if self._ai_detect_worker and self._ai_detect_worker.isRunning():
             if (
                 self._ai_detect_worker.preferred == preferred
