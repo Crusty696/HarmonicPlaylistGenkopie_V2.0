@@ -111,6 +111,7 @@ from hpg_core.playlist import (
     STRATEGY_ALIASES,
     StrategyConfig,
     calculate_playlist_quality,
+    calculate_enhanced_compatibility,
     compute_transition_recommendations,
     compute_set_timeline,
     get_set_timing_summary,
