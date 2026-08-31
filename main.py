@@ -2045,6 +2045,8 @@ class AdvancedParametersWidget(QWidget):
         for control in self._ai_controls:
             control.setEnabled(enabled)
         if not enabled:
+            if self._ai_detect_worker and self._ai_detect_worker.isRunning():
+                self._ai_detect_worker.requestInterruption()
             self._set_ai_hint(False)
             self.test_ai_btn.setEnabled(False)
             self.ai_status_label.setText("KI deaktiviert (deterministischer Kernlauf)")
@@ -2184,6 +2186,8 @@ class AdvancedParametersWidget(QWidget):
             source_worker is not None
             and source_worker is not self._ai_detect_worker
         ):
+            return
+        if not self.ai_enabled_checkbox.isChecked():
             return
         self.ai_refresh_btn.setEnabled(True)
 

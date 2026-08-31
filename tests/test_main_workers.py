@@ -3862,6 +3862,74 @@ def test_stale_ai_detect_und_progress_ergebnisse_werden_ignoriert(qtbot, monkeyp
   assert window.status_bar.status_label.text() == before
 
 
+def test_ai_disable_requests_current_detect_interruption(qtbot):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  worker = Mock()
+  worker.isRunning.return_value = True
+  widget._ai_detect_worker = worker
+
+  widget._set_ai_enabled(False)
+
+  worker.requestInterruption.assert_called_once_with()
+  assert widget.ai_status_label.text() == "KI deaktiviert (deterministischer Kernlauf)"
+  assert not widget.test_ai_btn.isEnabled()
+  widget._ai_detect_worker = None
+
+
+def test_current_ai_detect_result_after_disable_is_ignored(qtbot):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  worker = Mock()
+  worker.isRunning.return_value = False
+  widget._ai_detect_worker = worker
+  widget._set_ai_enabled(False)
+  status = SimpleNamespace(
+    running=True,
+    name="Ollama",
+    models=["late-model"],
+    active_model="late-model",
+    base_url="http://late/v1/chat/completions",
+  )
+
+  widget._on_ai_detected(status, worker)
+
+  assert widget.ai_status_label.text() == "KI deaktiviert (deterministischer Kernlauf)"
+  assert not widget.ai_refresh_btn.isEnabled()
+  assert not widget.test_ai_btn.isEnabled()
+  assert widget.model_combo.count() == 0
+  assert widget.detected_provider is None
+  assert widget.detected_base_url is None
+  assert widget.detected_active_model is None
+
+
+def test_current_ai_detect_result_while_enabled_is_applied(qtbot):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  worker = Mock()
+  widget._ai_detect_worker = worker
+  status = SimpleNamespace(
+    running=True,
+    name="Ollama",
+    models=["current-model"],
+    active_model="current-model",
+    base_url="http://current/v1/chat/completions",
+  )
+
+  widget._on_ai_detected(status, worker)
+
+  assert widget.ai_refresh_btn.isEnabled()
+  assert widget.test_ai_btn.isEnabled()
+  assert widget.model_combo.currentText() == "current-model"
+  assert widget.detected_provider == "Ollama"
+  assert widget.detected_base_url == status.base_url
+  assert widget.detected_active_model == "current-model"
+  assert "AI bereit" in widget.ai_status_label.text()
+
+
 def test_close_erfasst_auch_superseded_ai_detect_worker(qtbot, monkeypatch):
   window = _window(qtbot, monkeypatch)
   advanced = window.library_panel.advanced_params
