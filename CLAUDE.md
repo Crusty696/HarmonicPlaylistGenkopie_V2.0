@@ -82,7 +82,7 @@ hpg_core/                  # Core analysis modules
   logging_config.py        # Logging-Setup
   app_metadata.py          # APP_VERSION, MIN_PYTHON (Single Source)
   exporters/               # m3u8, Rekordbox XML Export
-tests/                     # pytest (3537 bestanden, 85,85 % Coverage;
+tests/                     # pytest (3537 bestanden, 85,81 % Coverage;
                            # lokaler Abschlusslauf 2026-08-31)
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection,
                            # kandidaten_messen.py / paar_kandidaten_messen.py / playlist_kandidaten_messen.py

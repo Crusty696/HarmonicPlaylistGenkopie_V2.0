@@ -17,7 +17,7 @@ Behauptung im Code pruefen.
 ## Aktueller Abschlussbeleg (2026-08-31, selbst gemessen)
 
 Der lokale Standardlauf mit explizitem isoliertem Windows-Basetemp
-bestand **3537 Tests** und erreichte **85,85 % Coverage**. GitHub Actions auf
+bestand **3537 Tests** und erreichte **85,81 % Coverage**. GitHub Actions auf
 Commit `3c59dc8` bestand zusätzlich 3522
 Standardtests; 46 Slow-Tests waren dort explizit abgewählt.
 

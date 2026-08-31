@@ -12,7 +12,7 @@ Nutzeranweisung pausiert. Abnahmen vom 2026-07-26 sowie Messungen vom
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
 - Abschluss-Gate: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --tb=short -q`
-- Lokaler Standard-Abschlusslauf: **3537 Tests gruen**, **85,85 % Coverage**
+- Lokaler Standard-Abschlusslauf: **3537 Tests gruen**, **85,81 % Coverage**
   (2026-08-31, isolierter Windows-Basetemp)
 - GitHub Actions Lauf 33113355362 auf `3c59dc8`: **3522 Tests gruen**, 46
   Slow-Tests abgewählt, **85,77 % Coverage**; Installer-Smoke ebenfalls gruen

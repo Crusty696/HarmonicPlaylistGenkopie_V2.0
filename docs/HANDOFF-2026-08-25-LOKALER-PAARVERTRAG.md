@@ -128,7 +128,7 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   Coverage 81.65 Prozent, Exitcode 0. Dieser Wert ist nur Historie und wurde
   durch den damaligen 3568er Beleg ersetzt.
 - Neuester Standard-Abschlusslauf vom 2026-08-31 mit explizitem isoliertem
-  Windows-Basetemp: 3537 bestanden, Coverage 85,85 Prozent, Exitcode 0.
+  Windows-Basetemp: 3537 bestanden, Coverage 85,81 Prozent, Exitcode 0.
 - Aktueller Code-Iststand vom 2026-08-27: `CACHE_VERSION = 44`. Der historische
   Bump von 36 auf 37 erzwang die korrigierte `None`-Semantik; 37 auf 38
   invalidierte alte Analysezeilen fuer BPM-lose Rekordbox-Metadaten. Version 39
