@@ -441,6 +441,32 @@ class TestRekordboxTimeHeuristic:
 class TestBeatgridCacheSignatur:
   """Manuelle Rekordbox-Gridkorrekturen muessen den HPG-Cache invalidieren."""
 
+  def test_beatgrid_memo_ist_tief_von_quelle_und_rueckgaben_getrennt(
+    self, monkeypatch
+  ):
+    path = os.path.join("C:\\Music", "track.mp3")
+    imp = make_importer_with_track("C:\\Music", "track.mp3")
+    quelle = [
+      {"beat": 1, "time": 0.0, "meta": {"source": "PQTZ"}},
+      {"beat": 2, "time": 0.5, "meta": {"source": "PQTZ"}},
+    ]
+    monkeypatch.setattr(imp, "_read_anlz_files", lambda _content_id: [])
+    monkeypatch.setattr(imp, "_extract_beatgrid_from_anlz", lambda _files: quelle)
+
+    erster = imp.get_beatgrid(path)
+    quelle[0]["meta"]["source"] = "Quelle mutiert"
+    erster[0]["beat"] = 4
+    erster[0]["meta"]["source"] = "Rueckgabe mutiert"
+    erster.append({"beat": 3, "time": 1.0})
+
+    zweiter = imp.get_beatgrid(path)
+    assert zweiter == [
+      {"beat": 1, "time": 0.0, "meta": {"source": "PQTZ"}},
+      {"beat": 2, "time": 0.5, "meta": {"source": "PQTZ"}},
+    ]
+    zweiter[1]["meta"]["source"] = "Zweiter Treffer mutiert"
+    assert imp.get_beatgrid(path)[1]["meta"]["source"] == "PQTZ"
+
   def test_identisches_grid_liefert_stabile_signatur(self, monkeypatch):
     path = os.path.join("C:\\Music", "track.mp3")
     imp = make_importer_with_track("C:\\Music", "track.mp3")
@@ -1060,6 +1086,53 @@ def test_get_phrases_memo_trennt_effektive_dauern(monkeypatch):
   assert imp.get_phrases("track.wav", duration=90.0)[0]["end_s"] == 90.0
   assert imp.get_phrases("track.wav", duration=120.0)[0]["end_s"] == 120.0
   assert verwendete_dauern == [0.0, 90.0, 120.0]
+
+
+def test_get_phrases_memo_ist_tief_von_quelle_und_rueckgaben_getrennt(
+  monkeypatch
+):
+  from types import SimpleNamespace
+  from hpg_core import rekordbox_phrases
+
+  imp = RekordboxImporter.__new__(RekordboxImporter)
+  imp._phrases_cache = {}
+  imp.db = object()
+  imp.get_track_data = lambda _path: RekordboxTrackData(
+    duration=60.0, content_id="42"
+  )
+  tagged = SimpleNamespace(get_tag=lambda _key: object())
+  imp._read_anlz_files = lambda _content_id: [tagged]
+  quelle = [
+    {
+      "start_s": 0.0,
+      "end_s": 30.0,
+      "label": "Intro",
+      "meta": {"mood": 1},
+    }
+  ]
+  monkeypatch.setattr(
+    rekordbox_phrases,
+    "phrases_from_anlz",
+    lambda _ext, _dat, _duration: quelle,
+  )
+
+  erster = imp.get_phrases("track.wav")
+  quelle[0]["meta"]["mood"] = 3
+  erster[0]["label"] = "Mutiert"
+  erster[0]["meta"]["mood"] = 2
+  erster.append({"start_s": 30.0, "end_s": 60.0, "label": "Outro"})
+
+  zweiter = imp.get_phrases("track.wav")
+  assert zweiter == [
+    {
+      "start_s": 0.0,
+      "end_s": 30.0,
+      "label": "Intro",
+      "meta": {"mood": 1},
+    }
+  ]
+  zweiter[0]["meta"]["mood"] = 4
+  assert imp.get_phrases("track.wav")[0]["meta"]["mood"] == 1
 
 
 def test_get_phrases_positiver_override_gewinnt_gegen_rb_dauer(monkeypatch):

@@ -7,6 +7,7 @@ import pytest
 
 import hpg_core
 from hpg_core.app_metadata import APP_VERSION, MIN_PYTHON
+from hpg_core.caching import CACHE_VERSION
 from hpg_core.playlist import STRATEGIES
 from tools import release_manifest
 
@@ -52,6 +53,18 @@ def test_readme_strategy_count_and_python_floor_match_source():
   assert f"Python {MIN_PYTHON}+" in readme
 
 
+def test_living_docs_reference_current_cache_contract():
+  expected_version = f"CACHE_VERSION {CACHE_VERSION}"
+  expected_path = f"hpg_cache_v{CACHE_VERSION}.db"
+  for relative_path in ("AGENTS.md", "CLAUDE.md", "docs/QUICK_START.txt"):
+    content = (ROOT / relative_path).read_text(encoding="utf-8")
+    assert expected_version in content, relative_path
+    assert expected_path in content, relative_path
+
+  production_status = (ROOT / "PRODUCTION_STATUS.md").read_text(encoding="utf-8")
+  assert f"Cache-Version {CACHE_VERSION}" in production_status
+
+
 def test_pyinstaller_embeds_windows_version_resource():
   assert "version='version_info.txt'" in (ROOT / "HPG.spec").read_text(encoding="utf-8")
 
@@ -82,8 +95,65 @@ def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   assert "build_installer.bat" in release
   assert "HPG_${{ github.ref_name }}_Setup.exe" in release
   assert f"HPG_v{APP_VERSION}_Setup.exe" not in release
-  assert "Silent install, startup smoke, and uninstall" in installer_ci
-  assert 'Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe"' in installer_ci
+  assert "Silent install, frozen worker, GUI, and uninstall smoke" in installer_ci
+  assert 'installer_output/HPG_v$($appVersion)_Setup.exe' in installer_ci
+  assert "Get-ChildItem -Recurse" not in installer_ci
+  assert '"HarmonicPlaylistGenerator.exe"' in installer_ci
+  assert "dist/HarmonicPlaylistGenerator.exe" not in installer_ci
+
+
+def test_release_and_main_ci_share_one_strong_installer_runtime_gate():
+  release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+  installer_ci = (
+    ROOT / ".github/workflows/test-installer.yml"
+  ).read_text(encoding="utf-8")
+  smoke = (
+    ROOT / ".github/scripts/test_installer_runtime.ps1"
+  ).read_text(encoding="utf-8")
+  script_path = ".github/scripts/test_installer_runtime.ps1"
+
+  assert release.count(script_path) == 1
+  assert installer_ci.count(script_path) == 1
+  assert "/VERYSILENT" not in release
+  assert "/VERYSILENT" not in installer_ci
+  for marker in (
+    "/VERYSILENT",
+    "--worker-smoke",
+    "Frozen worker smoke did not persist both isolated tracks",
+    "SELECT COUNT(*) FROM cache WHERE key <> ?",
+    "Installed application exited",
+    "Uninstaller missing after successful installation",
+    "process tree did not stop",
+    "Installed executable differs from standalone release executable",
+  ):
+    assert marker in smoke
+
+
+def test_release_publishes_only_verified_sha_bound_candidate():
+  release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+  assert "permissions:\n  contents: read" in release
+  assert "publish:\n    needs: build-and-verify" in release
+  publish = release.split("\n  publish:\n", 1)[1]
+  assert "contents: write" in publish
+  assert "contents: write" not in release.split("\n  publish:\n", 1)[0]
+  assert release.count("hpg-release-candidate-${{ github.sha }}") == 2
+  assert "HarmonicPlaylistGenerator.exe" in release
+  assert "dist/HarmonicPlaylistGenerator.exe" not in release
+  assert "installer_output/HPG_${{ github.ref_name }}_Setup.exe" in release
+  assert release.index("test_installer_runtime.ps1") < release.index(
+    "Upload verified release candidate"
+  )
+  assert publish.index("Verify candidate boundary and manifest") < publish.index(
+    "softprops/action-gh-release@v2"
+  )
+  for marker in (
+    "Manifest commit does not match release commit",
+    "Manifest source was not clean",
+    "Manifest integrity mismatch",
+    "Release candidate boundary mismatch",
+  ):
+    assert marker in publish
 
 
 def test_release_notes_do_not_link_to_missing_changelog():

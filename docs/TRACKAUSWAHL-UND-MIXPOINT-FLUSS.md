@@ -98,7 +98,7 @@ Analysefehler. Ersatzwerte gelangen damit nicht in das Scoring.
 flowchart LR
     A[Datei] --> R[Ressourcenlimits und echte Audiodauer prüfen]
     R --> S[Rekordbox-Daten und Signatur lesen]
-    S --> B{Cache 43 mit exaktem Schlüssel gültig?}
+    S --> B{Cache 44 mit exaktem Schlüssel gültig?}
     B -- ja --> C[Track aus Cache]
     B -- nein --> D{Rekordbox-Daten vorhanden?}
     D -- vollständig --> E[Fast Path]
@@ -150,10 +150,12 @@ gehören nicht zu diesem Sortierscore:
 
 Die Gewichte stammen aus dem pro Lauf eingefrorenen
 `track_tolerances_by_genre`-Profil des Quelltracks und müssen zusammen exakt
-1 ergeben. Der Rang-1-Paarkandidat kann die lokale Energiedifferenz und
-angezeigte Detailwerte liefern. Der `overall_score` der Trackkante wird aber
-immer neu aus diesen acht Faktoren berechnet. Dieser Wert ist die gemeinsame
-Zielfunktion für Sortierung, Anzeige, Reorder, Quality und Empfehlungen.
+1 ergeben. Für die Tracksortierung kann der Rang-1-Paarkandidat die lokale
+Energiedifferenz und Detailwerte liefern; der Ordering-Score wird immer neu aus
+den acht Faktoren berechnet. Nach der festen Reihenfolge bewertet derselbe
+Acht-Faktoren-Rechenweg stattdessen den von der Kette aktiven Kandidaten. Diese
+aktive Ergebnisqualität speist Anzeige, Reorder, Quality und Empfehlungen,
+während das ursprüngliche Ordering-Objective unverändert bleibt.
 
 ### 2.3 Harte Gates vor dem Score
 

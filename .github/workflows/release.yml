@@ -6,10 +6,10 @@ on:
       - 'v*.*.*'  # Triggert bei Tags wie v3.0.0, v3.1.0, etc.
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-and-release:
+  build-and-verify:
     runs-on: windows-latest
 
     steps:
@@ -57,37 +57,14 @@ jobs:
         cmd /c build.bat
       shell: cmd
 
-    - name: Verify EXE was created
+    - name: Verify exact EXE was created
       shell: pwsh
       run: |
-        $exeFile = Get-ChildItem -Recurse -Filter "HarmonicPlaylistGenerator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        if ($exeFile) {
-          Write-Host "✅ EXE found: $($exeFile.FullName)"
-          Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
-
-          # Copy to predictable location (only if not already in working directory)
-          $targetPath = Join-Path (Get-Location) "HarmonicPlaylistGenerator.exe"
-          if ($exeFile.FullName -ne $targetPath) {
-            Copy-Item $exeFile.FullName "HarmonicPlaylistGenerator.exe" -Force
-            Write-Host "   Copied to working directory"
-          } else {
-            Write-Host "   EXE already in working directory, no copy needed"
-          }
-        } else {
-          Write-Error "❌ EXE not found!"
-          exit 1
+        $exePath = "HarmonicPlaylistGenerator.exe"
+        if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+          throw "Exact release executable missing: $exePath"
         }
-
-    - name: Frozen application startup smoke
-      shell: pwsh
-      run: |
-        $process = Start-Process -FilePath ".\HarmonicPlaylistGenerator.exe" -PassThru
-        Start-Sleep -Seconds 8
-        if ($process.HasExited) {
-          throw "Frozen application exited during startup smoke with code $($process.ExitCode)"
-        }
-        Stop-Process -Id $process.Id -Force
+        Get-Item -LiteralPath $exePath | Select-Object FullName, Length
 
     - name: Install Inno Setup
       shell: pwsh
@@ -101,9 +78,17 @@ jobs:
       shell: pwsh
       run: |
         $installerPath = "installer_output\HPG_${{ github.ref_name }}_Setup.exe"
-        if (-not (Test-Path $installerPath)) {
-          throw "Installer artifact missing"
+        if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+          throw "Exact installer artifact missing: $installerPath"
         }
+
+    - name: Silent install, frozen worker, GUI, and uninstall smoke
+      timeout-minutes: 10
+      shell: pwsh
+      run: |
+        & .github/scripts/test_installer_runtime.ps1 `
+          -InstallerPath "installer_output/HPG_${{ github.ref_name }}_Setup.exe" `
+          -StandaloneExePath "HarmonicPlaylistGenerator.exe"
 
     - name: Create release manifest
       run: >-
@@ -123,7 +108,8 @@ jobs:
 
         ## 📥 Download
 
-        Download \`HarmonicPlaylistGenerator.exe\` below (Windows 10/11, 64-bit)
+        Download the installer or portable \`HarmonicPlaylistGenerator.exe\`
+        below (Windows 10/11, 64-bit).
 
         ## 🚀 Installation
 
@@ -147,26 +133,98 @@ jobs:
 
         $NOTES | Out-File -FilePath "release_notes.md" -Encoding UTF8
 
+    - name: Upload verified release candidate
+      uses: actions/upload-artifact@v7
+      with:
+        name: hpg-release-candidate-${{ github.sha }}
+        path: |
+          HarmonicPlaylistGenerator.exe
+          installer_output/HPG_${{ github.ref_name }}_Setup.exe
+          release-manifest.json
+          release_notes.md
+        if-no-files-found: error
+        retention-days: 7
+
+  publish:
+    needs: build-and-verify
+    runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+    - name: Download verified release candidate
+      uses: actions/download-artifact@v7
+      with:
+        name: hpg-release-candidate-${{ github.sha }}
+        path: release-candidate
+
+    - name: Verify candidate boundary and manifest
+      shell: pwsh
+      run: |
+        $root = (Resolve-Path -LiteralPath "release-candidate").Path
+        $exe = Join-Path $root "HarmonicPlaylistGenerator.exe"
+        $installer = Join-Path $root "installer_output/HPG_${{ github.ref_name }}_Setup.exe"
+        $manifestPath = Join-Path $root "release-manifest.json"
+        $notes = Join-Path $root "release_notes.md"
+        $expectedPaths = @($exe, $installer, $manifestPath, $notes) |
+          ForEach-Object { [System.IO.Path]::GetFullPath($_) }
+        $actualPaths = @(Get-ChildItem -LiteralPath $root -Recurse -File) |
+          ForEach-Object { $_.FullName }
+        $unexpected = @($actualPaths | Where-Object { $_ -notin $expectedPaths })
+        $missing = @($expectedPaths | Where-Object { $_ -notin $actualPaths })
+        if ($unexpected.Count -ne 0 -or $missing.Count -ne 0) {
+          throw "Release candidate boundary mismatch"
+        }
+
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        if ($manifest.commit -ne "${{ github.sha }}") {
+          throw "Manifest commit does not match release commit"
+        }
+        if ($manifest.source_clean -ne $true) {
+          throw "Manifest source was not clean"
+        }
+        if ($manifest.version -ne "${{ github.ref_name }}".TrimStart("v")) {
+          throw "Manifest version does not match release tag"
+        }
+        if (@($manifest.artifacts).Count -ne 2) {
+          throw "Manifest must contain exactly two release binaries"
+        }
+        foreach ($artifactPath in @($exe, $installer)) {
+          $name = Split-Path -Leaf $artifactPath
+          $entries = @($manifest.artifacts | Where-Object { $_.path -eq $name })
+          if ($entries.Count -ne 1) {
+            throw "Manifest entry missing or duplicated: $name"
+          }
+          $file = Get-Item -LiteralPath $artifactPath
+          $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash
+          if ([int64]$entries[0].size -ne $file.Length -or
+              $entries[0].sha256 -ne $hash.ToLowerInvariant()) {
+            throw "Manifest integrity mismatch: $name"
+          }
+        }
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          HarmonicPlaylistGenerator.exe
-          installer_output/HPG_${{ github.ref_name }}_Setup.exe
-          release-manifest.json
-        body_path: release_notes.md
+          release-candidate/HarmonicPlaylistGenerator.exe
+          release-candidate/installer_output/HPG_${{ github.ref_name }}_Setup.exe
+          release-candidate/release-manifest.json
+        body_path: release-candidate/release_notes.md
         draft: false
         prerelease: false
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload Build Artifact (Backup)
+    - name: Upload release backup
       uses: actions/upload-artifact@v7
       with:
-        name: HarmonicPlaylistGenerator-${{ steps.get_version.outputs.VERSION }}
+        name: HarmonicPlaylistGenerator-${{ github.ref_name }}
         path: |
-          HarmonicPlaylistGenerator.exe
-          installer_output/HPG_${{ github.ref_name }}_Setup.exe
-          release-manifest.json
+          release-candidate/HarmonicPlaylistGenerator.exe
+          release-candidate/installer_output/HPG_${{ github.ref_name }}_Setup.exe
+          release-candidate/release-manifest.json
+        if-no-files-found: error
         retention-days: 30

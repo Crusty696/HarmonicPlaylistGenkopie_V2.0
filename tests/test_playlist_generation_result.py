@@ -542,13 +542,21 @@ def test_ungeplante_kante_bleibt_mit_n_minus_eins_empfehlung_sichtbar(monkeypatc
     first = result.boundaries[0]
     assert first.selected is None and first.consistent is False
     assert first.snapshots == ()
-    assert first.metrics.overall_score > 0.0
+    assert first.metrics.overall_score == 0.0
+    assert first.metrics.harmonic_score == 0
+    assert first.metrics.bpm_smoothness == 0.0
+    assert first.metrics.energy_flow == 0.0
+    assert first.metrics.kandidat is None
     assert first.recommendation.plan is None
     assert first.recommendation.compatibility_score == 0
     assert first.recommendation.active_candidate_key is None
     assert first.recommendation.candidate_consistent is False
     assert "UNGEPLANT" in first.recommendation.notes
     assert result.boundaries[1].consistent is True
+    expected_quality = (
+        round(result.boundaries[1].metrics.overall_score * 100) / 2 / 100.0
+    )
+    assert result.quality_dict()["overall_score"] == pytest.approx(expected_quality)
     assert result.graph_stats.saved_present == 1
     assert result.path_stats.saved_present == 1
     assert result.path_stats.saved_honored == 0
@@ -872,7 +880,7 @@ def test_dp_priorisiert_wahl_vor_score_und_tiebreakt_kleineren_key():
     assert selected == (min((left, right), key=lambda item: item.key),)
 
 
-def test_result_score_bleibt_rang_eins_bei_dp_wahl_rang_zwei(monkeypatch):
+def test_result_score_folgt_dp_wahl_rang_zwei_bei_getrenntem_ordering(monkeypatch):
     _identity_strategy(monkeypatch)
     tracks = [_track("a.wav"), _track("b.wav")]
     rank_one = _candidate(140.0, 70.0, score=0.9, rank=1)
@@ -882,6 +890,8 @@ def test_result_score_bleibt_rang_eins_bei_dp_wahl_rang_zwei(monkeypatch):
         out_a=replace(rank_two_base.out_a, energy_lokal=0.0),
         in_b=replace(rank_two_base.in_b, energy_lokal=100.0),
     )
+    tracks[0].mix_out_candidates = [rank_one.out_a, rank_two.out_a]
+    tracks[1].mix_in_candidates = [rank_one.in_b, rank_two.in_b]
     monkeypatch.setattr(candidate_choices, "snapshot", lambda: {})
     monkeypatch.setattr(
         pc, "rank_pair_candidates", lambda *args, **kwargs: [rank_one, rank_two]
@@ -891,7 +901,7 @@ def test_result_score_bleibt_rang_eins_bei_dp_wahl_rang_zwei(monkeypatch):
         tracks, "Warm-Up", scoring_context={}, candidate_choice_snapshot={}
     )
     context = result.scoring_context_dict()
-    expected = pl._calculate_track_edge_metrics(
+    ordering_score = pl._calculate_track_edge_metrics(
         tracks[0], tracks[1], result.bpm_tolerance, None, context, rank_one
     )
     selected_score = pl._calculate_track_edge_metrics(
@@ -901,13 +911,21 @@ def test_result_score_bleibt_rang_eins_bei_dp_wahl_rang_zwei(monkeypatch):
     boundary = result.boundaries[0]
     assert boundary.selected.key == boundary.snapshots[1].key
     assert boundary.recommendation.plan.mix_out_a == rank_two.out_a.t
-    assert boundary.metrics.kandidat.key == boundary.snapshots[0].key
-    assert boundary.metrics.overall_score == pytest.approx(expected.overall_score)
-    assert boundary.metrics.overall_score != pytest.approx(selected_score.overall_score)
-    assert boundary.recommendation.compatibility_score == round(expected.overall_score * 100)
-    assert result.quality_dict()["overall_score"] == pytest.approx(
-        round(expected.overall_score * 100) / 100.0
+    assert boundary.metrics.kandidat.key == boundary.selected.key
+    assert boundary.metrics.overall_score == pytest.approx(selected_score.overall_score)
+    assert boundary.metrics.overall_score != pytest.approx(ordering_score.overall_score)
+    assert boundary.recommendation.compatibility_score == round(
+        selected_score.overall_score * 100
     )
+    assert result.quality_dict()["overall_score"] == pytest.approx(
+        round(selected_score.overall_score * 100) / 100.0
+    )
+    ordering_metrics = pl.calculate_enhanced_compatibility(
+        tracks[0], tracks[1], result.bpm_tolerance, **context
+    )
+    assert ordering_metrics.kandidat["rang"] == 1
+    assert ordering_metrics.kandidat["t_out"] == rank_one.out_a.t
+    assert ordering_metrics.overall_score == pytest.approx(ordering_score.overall_score)
 
 
 @pytest.mark.parametrize("strategy", tuple(pl.STRATEGIES.values()))

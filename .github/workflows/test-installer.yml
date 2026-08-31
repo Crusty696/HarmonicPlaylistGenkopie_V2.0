@@ -33,37 +33,14 @@ jobs:
         cmd /c build.bat
       shell: cmd
 
-    - name: Check if EXE was created
-      run: |
-        Write-Host "=== Searching for EXE files ==="
-        $exeFile = Get-ChildItem -Recurse -Filter "HarmonicPlaylistGenerator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        if ($exeFile) {
-          Write-Host "✅ EXE found: $($exeFile.FullName)"
-          Write-Host "   Size: $([math]::Round($exeFile.Length / 1MB, 2)) MB"
-
-          # Ensure dist/ directory exists
-          if (-not (Test-Path "dist")) {
-            New-Item -ItemType Directory -Path "dist" -Force | Out-Null
-          }
-
-          # Define target path
-          $targetPath = Join-Path (Get-Location) "dist\HarmonicPlaylistGenerator.exe"
-
-          # Only copy if source and target are different
-          if ($exeFile.FullName -ne $targetPath) {
-            Copy-Item $exeFile.FullName $targetPath -Force
-            Write-Host "✅ Copied to dist/"
-          } else {
-            Write-Host "✅ EXE already in dist/"
-          }
-
-          Get-Item $targetPath | Select-Object Name, Length, LastWriteTime
-        } else {
-          Write-Host "❌ EXE was not created!"
-          exit 1
-        }
+    - name: Verify exact EXE was created
       shell: pwsh
+      run: |
+        $exePath = "HarmonicPlaylistGenerator.exe"
+        if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+          throw "Exact installer-test executable missing: $exePath"
+        }
+        Get-Item -LiteralPath $exePath | Select-Object FullName, Length, LastWriteTime
 
     - name: Install Inno Setup
       shell: pwsh
@@ -73,127 +50,20 @@ jobs:
       shell: cmd
       run: call build_installer.bat
 
-    - name: Silent install, startup smoke, and uninstall
+    - name: Silent install, frozen worker, GUI, and uninstall smoke
       timeout-minutes: 10
-      shell: pwsh
       run: |
-        $setups = @(Get-ChildItem "installer_output" -Filter "HPG_v*_Setup.exe" -File)
-        if ($setups.Count -ne 1) {
-          throw "Expected exactly one installer, found $($setups.Count)"
+        $appVersion = (python -c "from hpg_core.app_metadata import APP_VERSION; print(APP_VERSION)").Trim()
+        if ($LASTEXITCODE -ne 0) {
+          throw "Could not determine APP_VERSION"
         }
-        $setup = $setups[0].FullName
-        $installDir = Join-Path $env:RUNNER_TEMP "HPG-Installer-Smoke"
-        $installedExe = Join-Path $installDir "HarmonicPlaylistGenerator.exe"
-        $uninstaller = Join-Path $installDir "unins000.exe"
-        $workerSmoke = $null
-        $app = $null
-        $installCompleted = $false
-        $failure = $null
-        $cleanupErrors = [System.Collections.Generic.List[string]]::new()
-
-        try {
-          $install = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -PassThru
-          if (-not $install.WaitForExit(120000)) {
-            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-            throw "Installer timed out"
-          }
-          if ($install.ExitCode -ne 0) { throw "Installer failed with $($install.ExitCode)" }
-          $installCompleted = $true
-          if (-not (Test-Path $installedExe)) { throw "Installed executable missing" }
-
-          $env:HPG_CACHE_FILE = Join-Path $env:RUNNER_TEMP "hpg_installer_smoke_cache.db"
-          $audioA = Join-Path $env:RUNNER_TEMP "hpg_worker_smoke_a.wav"
-          $audioB = Join-Path $env:RUNNER_TEMP "hpg_worker_smoke_b.wav"
-        @'
-        import sys
-        import numpy as np
-        import soundfile as sf
-
-        sr = 22050
-        seconds = 20.0
-        samples = np.arange(int(sr * seconds), dtype=np.float64)
-        for index, path in enumerate(sys.argv[1:]):
-            audio = 0.08 * np.sin(2.0 * np.pi * (110.0 + index * 55.0) * samples / sr)
-            kernel = np.exp(-np.arange(int(sr * 0.04), dtype=np.float64) / (sr * 0.008))
-            interval = int(sr * 60.0 / (138.0 + index * 2.0))
-            for start in range(0, samples.size, interval):
-                end = min(start + kernel.size, samples.size)
-                audio[start:end] += 0.8 * kernel[:end - start]
-            sf.write(path, np.clip(audio, -1.0, 1.0).astype(np.float32), sr)
-        '@ | python - $audioA $audioB
-          if ($LASTEXITCODE -ne 0) { throw "Failed to generate isolated worker-smoke audio" }
-
-          $workerInfo = [System.Diagnostics.ProcessStartInfo]::new()
-          $workerInfo.FileName = $installedExe
-          $workerInfo.UseShellExecute = $false
-          $workerInfo.CreateNoWindow = $true
-          [void]$workerInfo.ArgumentList.Add("--worker-smoke")
-          [void]$workerInfo.ArgumentList.Add($audioA)
-          [void]$workerInfo.ArgumentList.Add($audioB)
-          $workerSmoke = [System.Diagnostics.Process]::Start($workerInfo)
-          if (-not $workerSmoke.WaitForExit(180000)) { throw "Frozen worker smoke timed out" }
-          if ($workerSmoke.ExitCode -ne 0) {
-            throw "Frozen worker smoke failed with $($workerSmoke.ExitCode)"
-          }
-          if (-not (Test-Path $env:HPG_CACHE_FILE) -or (Get-Item $env:HPG_CACHE_FILE).Length -le 0) {
-            throw "Frozen worker smoke did not persist its isolated cache"
-          }
-
-          $app = Start-Process -FilePath $installedExe -WindowStyle Hidden -PassThru
-          Start-Sleep -Seconds 8
-          if ($app.HasExited) { throw "Installed application exited with $($app.ExitCode)" }
-        } catch {
-          $failure = $_
-        } finally {
-          foreach ($entry in @(
-            @{ Process = $workerSmoke; Name = "worker smoke" },
-            @{ Process = $app; Name = "GUI smoke" }
-          )) {
-            $process = $entry.Process
-            if ($null -eq $process) { continue }
-            try {
-              if (-not $process.HasExited) {
-                & taskkill.exe /PID $process.Id /T /F | Out-Host
-                [void]$process.WaitForExit(10000)
-              }
-              if (-not $process.HasExited) {
-                $cleanupErrors.Add("$($entry.Name) process tree did not stop")
-              }
-            } catch {
-              $cleanupErrors.Add("$($entry.Name) cleanup failed: $($_.Exception.Message)")
-            }
-          }
-
-          if (Test-Path $uninstaller) {
-            try {
-              $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
-              if (-not $uninstall.WaitForExit(120000)) {
-                Stop-Process -Id $uninstall.Id -Force -ErrorAction SilentlyContinue
-                $cleanupErrors.Add("Uninstaller timed out")
-              } elseif ($uninstall.ExitCode -ne 0) {
-                $cleanupErrors.Add("Uninstaller failed with $($uninstall.ExitCode)")
-              }
-            } catch {
-              $cleanupErrors.Add("Uninstaller cleanup failed: $($_.Exception.Message)")
-            }
-          } elseif ($installCompleted) {
-            $cleanupErrors.Add("Uninstaller missing after successful installation")
-          }
-
-          Start-Sleep -Seconds 2
-          $remainingProcesses = @(
-            Get-Process -Name "HarmonicPlaylistGenerator" -ErrorAction SilentlyContinue
-          )
-          if ($remainingProcesses.Count -ne 0) {
-            $cleanupErrors.Add("Installed application processes did not stop")
-          }
-          if ($installCompleted -and (Test-Path $installedExe)) {
-            $cleanupErrors.Add("Uninstall left the application executable behind")
-          }
+        $installerPath = "installer_output/HPG_v$($appVersion)_Setup.exe"
+        if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+          throw "Exact installer-test artifact missing: $installerPath"
         }
-
-        if ($null -ne $failure) { throw $failure }
-        if ($cleanupErrors.Count -ne 0) { throw ($cleanupErrors -join "; ") }
+        & .github/scripts/test_installer_runtime.ps1 `
+          -InstallerPath $installerPath `
+          -StandaloneExePath "HarmonicPlaylistGenerator.exe"
 
     - name: Upload Build Artifact
       if: success()
@@ -201,7 +71,7 @@ jobs:
       with:
         name: HarmonicPlaylistGenerator-Windows
         path: |
-          dist/HarmonicPlaylistGenerator.exe
+          HarmonicPlaylistGenerator.exe
           installer_output/HPG_v*_Setup.exe
         retention-days: 7
 

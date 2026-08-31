@@ -18,6 +18,7 @@ import math
 import os
 import hashlib
 import json
+from copy import deepcopy
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 from .models import CAMELOT_MAP
@@ -458,7 +459,7 @@ class RekordboxImporter:
         if not data or not data.content_id:
             return []
         if data.content_id in self._beatgrid_cache:
-            return list(self._beatgrid_cache[data.content_id])
+            return deepcopy(self._beatgrid_cache[data.content_id])
         if self.db is None:
             return []
         result: List[Dict] = []
@@ -468,8 +469,8 @@ class RekordboxImporter:
             )
         except Exception as error:
             logger.warning("ANLZ-Beatgrid nicht lesbar fuer %s: %s", file_path, error)
-        self._beatgrid_cache[data.content_id] = result
-        return list(result)
+        self._beatgrid_cache[data.content_id] = deepcopy(result)
+        return deepcopy(self._beatgrid_cache[data.content_id])
 
     def _read_anlz_files(self, content_id: str) -> list:
         """Alle ANLZ-Dateien (DAT/EXT/2EX) eines Tracks, robust gegen die
@@ -539,7 +540,7 @@ class RekordboxImporter:
         # Memo-Treffer vor der db-Pruefung: einmal gelesene Phrasen bleiben
         # gueltig, auch wenn die DB-Verbindung spaeter wegfaellt.
         if cache_key in self._phrases_cache:
-            return self._phrases_cache[cache_key]
+            return deepcopy(self._phrases_cache[cache_key])
         if self.db is None:
             return []
         result: List[Dict] = []
@@ -550,8 +551,8 @@ class RekordboxImporter:
             result = phrases_from_anlz(ext, dat, effective_duration)
         except Exception as e:
             logger.warning(f"PSSI-Phrasen nicht lesbar fuer {file_path}: {e}")
-        self._phrases_cache[cache_key] = result
-        return result
+        self._phrases_cache[cache_key] = deepcopy(result)
+        return deepcopy(self._phrases_cache[cache_key])
 
     @staticmethod
     def _extract_first_downbeat_from_anlz(anlz_files) -> Optional[float]:
