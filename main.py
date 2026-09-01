@@ -41,7 +41,7 @@ import tempfile
 import threading
 import time
 from copy import deepcopy
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
@@ -851,7 +851,7 @@ class AnalysisWorker(QThread):
                 for track in analyzed_tracks
                 if getattr(track, "analysis_mode", "") not in VALID_ANALYSIS_MODES
             ]
-            issues = tuple(
+            issues = [
                 AnalysisIssue(
                     (
                         "rekordbox_decode_degraded"
@@ -872,7 +872,7 @@ class AnalysisWorker(QThread):
                     ),
                 )
                 for track in invalid_analysis_tracks
-            )
+            ]
             if issues:
                 for issue in issues:
                     logger.error(
@@ -884,23 +884,41 @@ class AnalysisWorker(QThread):
                     for track in analyzed_tracks
                     if getattr(track, "analysis_mode", "") in VALID_ANALYSIS_MODES
                 ]
-            try:
-                self.analysis_issues.emit(issues)
-            except Exception as exc:
-                # Der Diagnosekanal darf den sicherheitsrelevanten Filter nie
-                # rueckgaengig machen oder den restlichen Lauf abbrechen.
-                logger.error("Analysebefunde konnten nicht gemeldet werden: %s", exc)
-
             # Ressourcenfilter: defekte Eintraege und Tracks ueber den Limits
             # (Dateigroesse/Dauer) entfernen, Playlist-Groesse deckeln
+            tracks_before_resource_filter = list(analyzed_tracks)
             pre_count = len(analyzed_tracks)
             analyzed_tracks = apply_resource_limits(analyzed_tracks)
+            retained_by_identity = Counter(id(track) for track in analyzed_tracks)
+            resource_excluded = []
+            for track in tracks_before_resource_filter:
+                track_identity = id(track)
+                if retained_by_identity[track_identity]:
+                    retained_by_identity[track_identity] -= 1
+                else:
+                    resource_excluded.append(track)
+            issues.extend(
+                AnalysisIssue(
+                    "resource_limit_excluded",
+                    str(getattr(track, "filePath", "") or ""),
+                    "Track wurde durch den Ressourcenfilter ausgeschlossen "
+                    "(defekt oder ueber Limits).",
+                )
+                for track in resource_excluded
+            )
             if len(analyzed_tracks) < pre_count:
                 removed = pre_count - len(analyzed_tracks)
                 self.status_update.emit(
                     f"WARNING: {removed} Track(s) durch Ressourcenfilter entfernt (defekt oder ueber Limits)."
                 )
                 logger.warning(f"Ressourcenfilter entfernte {removed} von {pre_count} Tracks.")
+
+            try:
+                self.analysis_issues.emit(tuple(issues))
+            except Exception as exc:
+                # Der Diagnosekanal darf den sicherheitsrelevanten Filter nie
+                # rueckgaengig machen oder den restlichen Lauf abbrechen.
+                logger.error("Analysebefunde konnten nicht gemeldet werden: %s", exc)
 
             if not analyzed_tracks:
                 self.phase_changed.emit(1, "inactive")
@@ -5819,6 +5837,12 @@ class MainWindow(QMainWindow):
             for issue in self._analysis_issues
         )
 
+    def _resource_limit_excluded_count(self) -> int:
+        return sum(
+            issue.code == "resource_limit_excluded"
+            for issue in self._analysis_issues
+        )
+
     def _cleanup_analysis_worker(self, source_worker=None):
         """AUDIT-FIX T1: raeumt den AnalysisWorker sicher auf, NACHDEM der
         QThread wirklich beendet ist (an QThread.finished gebunden)."""
@@ -6042,10 +6066,16 @@ class MainWindow(QMainWindow):
         if finalize:
             partial_reasons = []
             degraded_count = self._degraded_analysis_count()
+            resource_excluded_count = self._resource_limit_excluded_count()
             if degraded_count:
                 partial_reasons.append(
                     f"{degraded_count} Track(s) wegen Audio-Decodefehler ausgeschlossen "
                     "(Details im Analyse-Log)"
+                )
+            if resource_excluded_count:
+                partial_reasons.append(
+                    f"{resource_excluded_count} Track(s) durch Ressourcenfilter "
+                    "ausgeschlossen"
                 )
             if invalid_bpm_excluded:
                 partial_reasons.append(
@@ -6147,12 +6177,29 @@ class MainWindow(QMainWindow):
         if not playlist:
             self.library_panel.progress_widget.reset_steps()
             degraded_count = self._degraded_analysis_count()
-            if degraded_count:
+            resource_excluded_count = self._resource_limit_excluded_count()
+            if degraded_count and not resource_excluded_count:
                 self._finish_run(
                     RunState.ERROR,
                     "ERROR: Alle "
                     f"{degraded_count} Tracks wegen Audio-Decodefehler ausgeschlossen. "
                     "Details stehen im Analyse-Log.",
+                )
+            elif degraded_count or resource_excluded_count:
+                reasons = []
+                if degraded_count:
+                    reasons.append(
+                        f"{degraded_count} Track(s) wegen Audio-Decodefehler"
+                    )
+                if resource_excluded_count:
+                    reasons.append(
+                        f"{resource_excluded_count} Track(s) durch Ressourcenfilter"
+                    )
+                self._finish_run(
+                    RunState.ERROR,
+                    "ERROR: Kein Track fuer die Playlist uebrig; ausgeschlossen: "
+                    + "; ".join(reasons)
+                    + ".",
                 )
             else:
                 self._finish_run(RunState.ERROR, "Analysis returned no results.")

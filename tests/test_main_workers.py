@@ -828,6 +828,88 @@ def test_analysis_worker_emittiert_leeres_issue_tuple_vor_ergebnis(
   assert events == [("issues", ()), ("done",)]
 
 
+def test_analysis_worker_emittiert_ressourcenbefund_vor_ergebnis(
+  tmp_path, monkeypatch
+):
+  valid_path = tmp_path / "valid.wav"
+  excluded_path = tmp_path / "too-long.wav"
+  valid_path.write_bytes(b"fixture")
+  excluded_path.write_bytes(b"fixture")
+  valid = Track(
+    filePath=str(valid_path), fileName=valid_path.name,
+    duration=300.0, analysis_mode="librosa_full_or_tail",
+  )
+  excluded = Track(
+    filePath=str(excluded_path), fileName=excluded_path.name,
+    duration=main.hpg_config.SECURITY_MAX_TRACK_DURATION + 1,
+    analysis_mode="librosa_full_or_tail",
+  )
+
+  class MixedAnalyzer:
+    def analyze_files(self, *_args, **_kwargs):
+      return [valid, excluded]
+
+  monkeypatch.setattr(main, "ParallelAnalyzer", MixedAnalyzer)
+  monkeypatch.setattr(
+    main.AnalysisWorker, "_report_rekordbox_coverage",
+    lambda self, analyzed_tracks: None,
+  )
+  worker = main.AnalysisWorker(str(tmp_path))
+  events = []
+  worker.analysis_issues.connect(lambda issues: events.append(("issues", issues)))
+  worker.analysis_done.connect(
+    lambda tracks, quality: events.append(("done", tracks, quality))
+  )
+
+  worker.run()
+
+  assert events[0] == (
+    "issues",
+    (
+      main.AnalysisIssue(
+        "resource_limit_excluded",
+        str(excluded_path),
+        "Track wurde durch den Ressourcenfilter ausgeschlossen "
+        "(defekt oder ueber Limits).",
+      ),
+    ),
+  )
+  assert events[1] == ("done", [valid], {})
+
+
+def test_analysis_worker_ressourcenbefund_beachtet_identitaet_und_multiplizitaet(
+  tmp_path, monkeypatch
+):
+  source = tmp_path / "shared.wav"
+  source.write_bytes(b"fixture")
+  shared = Track(
+    filePath=str(source), fileName=source.name,
+    duration=300.0, analysis_mode="librosa_full_or_tail",
+  )
+
+  class DuplicateAnalyzer:
+    def analyze_files(self, *_args, **_kwargs):
+      return [shared, shared]
+
+  monkeypatch.setattr(main, "ParallelAnalyzer", DuplicateAnalyzer)
+  monkeypatch.setattr(main, "apply_resource_limits", lambda tracks: tracks[:1])
+  monkeypatch.setattr(
+    main.AnalysisWorker, "_report_rekordbox_coverage",
+    lambda self, analyzed_tracks: None,
+  )
+  worker = main.AnalysisWorker(str(tmp_path))
+  issues = []
+  results = []
+  worker.analysis_issues.connect(issues.append)
+  worker.analysis_done.connect(lambda tracks, quality: results.append((tracks, quality)))
+
+  worker.run()
+
+  assert len(issues) == 1
+  assert [issue.code for issue in issues[0]] == ["resource_limit_excluded"]
+  assert results == [([shared], {})]
+
+
 def test_analysis_worker_cancel_during_scan(tmp_path):
   (tmp_path / "track.wav").write_bytes(b"fixture")
   worker = main.AnalysisWorker(str(tmp_path))
@@ -951,6 +1033,38 @@ def test_mainwindow_meldet_alle_degradierten_tracks_konkret(qtbot, monkeypatch):
   assert "Audio-Decodefehler" in status
 
 
+def test_mainwindow_meldet_reinen_ressourcenausfall_konkret(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  window._analysis_issues = (
+    main.AnalysisIssue("resource_limit_excluded", "C:/long.wav", "limit"),
+    main.AnalysisIssue("resource_limit_excluded", "C:/large.wav", "limit"),
+  )
+  window._set_run_state(main.RunState.AUDIO)
+
+  _deliver_current_analysis(window, [])
+
+  assert window.run_state == main.RunState.ERROR
+  status = window.status_bar.status_label.text()
+  assert "2 Track(s) durch Ressourcenfilter" in status
+  assert "Kein Track" in status
+
+
+def test_mainwindow_kombiniert_decode_und_ressourcenausfall(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  window._analysis_issues = (
+    main.AnalysisIssue("rekordbox_decode_degraded", "C:/decode.wav", "decode"),
+    main.AnalysisIssue("resource_limit_excluded", "C:/long.wav", "limit"),
+  )
+  window._set_run_state(main.RunState.AUDIO)
+
+  _deliver_current_analysis(window, [])
+
+  assert window.run_state == main.RunState.ERROR
+  status = window.status_bar.status_label.text()
+  assert "1 Track(s) wegen Audio-Decodefehler" in status
+  assert "1 Track(s) durch Ressourcenfilter" in status
+
+
 def _playlist_result_publish_stub(window):
   def publish(result):
     window.playlist = list(result.tracks)
@@ -1002,6 +1116,7 @@ def test_playlist_done_meldet_bpm_decode_und_ki_als_partial(qtbot, monkeypatch):
   window.playlist_worker = worker
   window._analysis_issues = (
     main.AnalysisIssue("rekordbox_decode_degraded", "C:/decode.wav", "decode"),
+    main.AnalysisIssue("resource_limit_excluded", "C:/long.wav", "limit"),
   )
   window._set_run_state(main.RunState.PLAYLIST)
   monkeypatch.setattr(
@@ -1014,6 +1129,7 @@ def test_playlist_done_meldet_bpm_decode_und_ki_als_partial(qtbot, monkeypatch):
   status = window.status_bar.status_label.text()
   assert "2 Track(s) wegen ungültiger BPM" in status
   assert "1 Track(s) wegen Audio-Decodefehler" in status
+  assert "1 Track(s) durch Ressourcenfilter" in status
   assert "KI-Anreicherung unvollstaendig" in status
 
 
