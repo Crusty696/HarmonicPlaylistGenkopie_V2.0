@@ -423,6 +423,45 @@ class TestSmallPoolStrategyContracts:
       assert [track.title for track in transition_first] == ["A", "B"]
       assert [track.title for track in genre_first] == ["B", "A"]
 
+  def test_genre_flow_mehrtrack_ohne_genre_mixing_delegiert_harmonic(self, monkeypatch):
+    tracks = [
+      _small_track("A", genre="Techno"),
+      _small_track("B", genre="Trance"),
+      _small_track("C", genre="House"),
+    ]
+    expected = list(reversed(tracks))
+    calls = []
+    cancel_check = lambda: None
+
+    def harmonic(received_tracks, tolerance, **kwargs):
+      calls.append((received_tracks, tolerance, kwargs))
+      return expected
+
+    monkeypatch.setattr("hpg_core.playlist._sort_harmonic_flow", harmonic)
+
+    result = _sort_genre_flow(
+      tracks,
+      1.75,
+      genre_mixing=False,
+      genre_weight=1.0,
+      harmonic_strictness=9,
+      allow_experimental=False,
+      cancel_check=cancel_check,
+    )
+
+    assert result is expected
+    assert len(calls) == 1
+    received_tracks, tolerance, kwargs = calls[0]
+    assert received_tracks is tracks
+    assert tolerance == 1.75
+    assert kwargs == {
+      "genre_mixing": False,
+      "genre_weight": 1.0,
+      "harmonic_strictness": 9,
+      "allow_experimental": False,
+      "cancel_check": cancel_check,
+    }
+
 
 class TestEdgeCases:
   """Edge Cases fuer alle Strategien."""

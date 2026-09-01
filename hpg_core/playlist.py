@@ -1650,6 +1650,9 @@ def _sort_genre_flow(
 
         return _small_pool_order(tracks, small_score, cancel_check)
 
+    if not genre_mixing_enabled:
+        return _sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
+
     # Group tracks by genre (bevorzuge eine echte Klassifikation, sonst ID3)
     genre_groups = {}
     for track in tracks:
