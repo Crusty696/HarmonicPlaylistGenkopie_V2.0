@@ -5982,8 +5982,23 @@ class MainWindow(QMainWindow):
             return
         if self.run_state in {RunState.CANCELLING, RunState.CANCELLED}:
             return
+        invalid_bpm_excluded = getattr(
+            getattr(neues_result, "graph_stats", None),
+            "invalid_bpm_excluded",
+            0,
+        )
         if not neues_result.tracks:
-            self._finish_run(RunState.ERROR, "ERROR: Playlist generation returned empty result.")
+            if invalid_bpm_excluded:
+                self._finish_run(
+                    RunState.ERROR,
+                    f"ERROR: {invalid_bpm_excluded} Track(s) wegen ungültiger "
+                    "BPM ausgeschlossen; kein Track für die Playlist übrig.",
+                )
+            else:
+                self._finish_run(
+                    RunState.ERROR,
+                    "ERROR: Playlist generation returned empty result.",
+                )
             return
 
         self.library_panel.progress_widget.set_step_status(2, "completed")
@@ -6031,6 +6046,10 @@ class MainWindow(QMainWindow):
                 partial_reasons.append(
                     f"{degraded_count} Track(s) wegen Audio-Decodefehler ausgeschlossen "
                     "(Details im Analyse-Log)"
+                )
+            if invalid_bpm_excluded:
+                partial_reasons.append(
+                    f"{invalid_bpm_excluded} Track(s) wegen ungültiger BPM ausgeschlossen"
                 )
             if ai_failure:
                 partial_reasons.append(f"KI-Anreicherung unvollstaendig: {ai_failure}")

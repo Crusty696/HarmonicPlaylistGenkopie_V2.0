@@ -951,6 +951,108 @@ def test_mainwindow_meldet_alle_degradierten_tracks_konkret(qtbot, monkeypatch):
   assert "Audio-Decodefehler" in status
 
 
+def _playlist_result_publish_stub(window):
+  def publish(result):
+    window.playlist = list(result.tracks)
+    window.quality_metrics = result.quality_dict()
+
+  return publish
+
+
+def test_playlist_done_meldet_reinen_bpm_ausfall_konkret(qtbot, monkeypatch):
+  from hpg_core.playlist import generate_playlist_result
+
+  window = _window(qtbot, monkeypatch)
+  result = generate_playlist_result(
+    [
+      Track(filePath="C:/zero.wav", fileName="zero.wav", bpm=0.0),
+      Track(filePath="C:/nan.wav", fileName="nan.wav", bpm=float("nan")),
+    ],
+    "Harmonic Flow",
+    2.0,
+  )
+  worker = SimpleNamespace(finalize_run=True, ai_failure="")
+  window.playlist_worker = worker
+  window._set_run_state(main.RunState.PLAYLIST)
+  publish = Mock()
+  monkeypatch.setattr(window, "_publiziere_generation_result", publish)
+
+  window._on_playlist_generation_done(result, worker)
+
+  assert window.run_state == main.RunState.ERROR
+  assert "2 Track(s)" in window.status_bar.status_label.text()
+  assert "ungültiger BPM" in window.status_bar.status_label.text()
+  publish.assert_not_called()
+
+
+def test_playlist_done_meldet_bpm_decode_und_ki_als_partial(qtbot, monkeypatch):
+  from hpg_core.playlist import generate_playlist_result
+
+  window = _window(qtbot, monkeypatch)
+  result = generate_playlist_result(
+    [
+      Track(filePath="C:/valid.wav", fileName="valid.wav", bpm=128.0),
+      Track(filePath="C:/zero.wav", fileName="zero.wav", bpm=0.0),
+      Track(filePath="C:/nan.wav", fileName="nan.wav", bpm=float("nan")),
+    ],
+    "Harmonic Flow",
+    2.0,
+  )
+  worker = SimpleNamespace(finalize_run=True, ai_failure="Provider nicht erreichbar")
+  window.playlist_worker = worker
+  window._analysis_issues = (
+    main.AnalysisIssue("rekordbox_decode_degraded", "C:/decode.wav", "decode"),
+  )
+  window._set_run_state(main.RunState.PLAYLIST)
+  monkeypatch.setattr(
+    window, "_publiziere_generation_result", _playlist_result_publish_stub(window)
+  )
+
+  window._on_playlist_generation_done(result, worker)
+
+  assert window.run_state == main.RunState.PARTIAL
+  status = window.status_bar.status_label.text()
+  assert "2 Track(s) wegen ungültiger BPM" in status
+  assert "1 Track(s) wegen Audio-Decodefehler" in status
+  assert "KI-Anreicherung unvollstaendig" in status
+
+
+def test_playlist_done_ohne_ausschluss_bleibt_success(qtbot, monkeypatch):
+  from hpg_core.playlist import generate_playlist_result
+
+  window = _window(qtbot, monkeypatch)
+  result = generate_playlist_result(
+    [Track(filePath="C:/valid.wav", fileName="valid.wav", bpm=128.0)],
+    "Harmonic Flow",
+    2.0,
+  )
+  worker = SimpleNamespace(finalize_run=True, ai_failure="")
+  window.playlist_worker = worker
+  window._set_run_state(main.RunState.PLAYLIST)
+  monkeypatch.setattr(
+    window, "_publiziere_generation_result", _playlist_result_publish_stub(window)
+  )
+
+  window._on_playlist_generation_done(result, worker)
+
+  assert window.run_state == main.RunState.SUCCESS
+
+
+def test_playlist_done_legacy_empty_behaelt_generischen_fehler(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+  worker = SimpleNamespace(finalize_run=True, ai_failure="")
+  window.playlist_worker = worker
+  window._set_run_state(main.RunState.PLAYLIST)
+  publish = Mock()
+  monkeypatch.setattr(window, "_publiziere_generation_result", publish)
+
+  window._on_playlist_generation_done(SimpleNamespace(tracks=()), worker)
+
+  assert window.run_state == main.RunState.ERROR
+  assert "empty result" in window.status_bar.status_label.text()
+  publish.assert_not_called()
+
+
 def test_analysis_finished_akzeptiert_nur_aktuellen_worker_nach_ownership_wechsel(
   qtbot, monkeypatch
 ):
