@@ -3,11 +3,15 @@ Tests fuer alle 10 Playlist-Sortierstrategien.
 Prueft ob jede Strategie korrekt sortiert und keine Tracks verliert.
 """
 import pytest
+from types import SimpleNamespace
+from unittest.mock import Mock
+import hpg_core.playlist as playlist_mod
 from hpg_core.playlist import (
   calculate_enhanced_compatibility, generate_playlist, STRATEGIES,
   STRATEGY_ALIASES, _sort_context_flow, _sort_genre_flow,
   _sort_harmonic_flow, _sort_peak_time,
   _sort_energy_wave, _remove_track, ENERGY_WAVE_FENSTER,
+  _process_dj_brain_recommendations,
 )
 from hpg_core.models import effective_bpm_diff
 from tests.fixtures.track_factories import (
@@ -81,6 +85,52 @@ class TestStrategyBasicProperties:
     """Ergebnis ist nicht leer."""
     result = generate_playlist(mixed_set[:], strategy, bpm_tolerance=6.0)
     assert len(result) > 0
+
+
+  def test_genre_flow_nutzt_gemeinsame_genre_aufloesung(self, monkeypatch):
+    tracks = [
+      make_track(title="Fallback Psy", detected_genre=" unknown ", genre="Psytrance"),
+      make_track(title="Detected Psy", detected_genre="Psytrance", genre="Techno"),
+      make_track(title="Trance", detected_genre="Trance", genre="Trance"),
+    ]
+    monkeypatch.setattr(
+      playlist_mod,
+      "get_genre_compatibility",
+      lambda _left, right: 1.0 if right == "Trance" else 0.0,
+    )
+
+    result = _sort_genre_flow(tracks, 2.0, genre_weight=1.0)
+
+    assert {track.title for track in result[:2]} == {
+      "Fallback Psy", "Detected Psy"
+    }
+    assert result[2].title == "Trance"
+
+  def test_dj_brain_dispatch_nutzt_id3_genre_fallback(self, monkeypatch):
+    current = make_track(detected_genre="Unknown", genre="Psytrance")
+    upcoming = make_track(detected_genre="Unknown", genre="Trance")
+    recommendation = SimpleNamespace(
+      mix_technique="Blend",
+      eq_advice="EQ",
+      transition_bars=16,
+      structure_note="",
+      genre_pair="Psytrance -> Trance",
+      risk_notes=[],
+      bpm_advice="",
+      key_advice="",
+      energy_advice="",
+      gain_advice="",
+      overlap_seconds=0.0,
+    )
+    generate = Mock(return_value=recommendation)
+    monkeypatch.setattr(playlist_mod, "generate_dj_recommendation", generate)
+
+    result, _notes, _overlap = _process_dj_brain_recommendations(
+      current, upcoming
+    )
+
+    assert result is recommendation
+    generate.assert_called_once_with(current, upcoming)
 
   @pytest.mark.parametrize("strategy", list(STRATEGIES.keys()))
   def test_no_duplicates(self, mixed_set, strategy):

@@ -3730,6 +3730,47 @@ def test_table_und_camelot_nutzen_empfehlungs_score_statt_rank1_recalc(
   assert color == main.QColor(main.COLORS["accent_success"])
 
 
+def test_playlist_tabelle_zeigt_effektives_genre_mit_quelltreuer_confidence(qtbot):
+  fallback = Track(
+    filePath="C:/fallback.wav",
+    fileName="fallback.wav",
+    detected_genre="Unknown",
+    genre="Psytrance",
+    genre_confidence=0.91,
+  )
+  detected = Track(
+    filePath="C:/detected.wav",
+    fileName="detected.wav",
+    detected_genre="Techno",
+    genre="Psytrance",
+    genre_confidence=0.82,
+  )
+  panel = main.PlaylistPanel()
+  qtbot.addWidget(panel)
+
+  panel.set_playlist_data([fallback, detected], {})
+
+  assert panel.table.item(0, 8).text() == "Psytrance"
+  assert panel.table.item(0, 9).text() == "-"
+  assert panel.table.item(1, 8).text() == "Techno"
+  assert panel.table.item(1, 9).text() == "82%"
+
+
+def test_mix_tips_zeigt_effektive_id3_genres(qtbot):
+  rec = _rec_mit_kandidaten(index=0)
+  rec.from_track.detected_genre = "Unknown"
+  rec.from_track.genre = "Psytrance"
+  rec.to_track.detected_genre = " unknown "
+  rec.to_track.genre = "Trance"
+  panel = main.MixTipsPanel()
+  qtbot.addWidget(panel)
+
+  panel.set_recommendations([rec])
+
+  labels = [label.text() for label in panel.findChildren(main.QLabel)]
+  assert any("Psytrance" in text and "Trance" in text for text in labels)
+
+
 def test_planlose_empfehlung_bleibt_ungeplant_und_score_null(qtbot, monkeypatch):
   import dataclasses
 

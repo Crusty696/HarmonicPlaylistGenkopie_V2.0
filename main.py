@@ -140,6 +140,7 @@ from hpg_core.theme import (
 )
 from hpg_core.error_reporter import get_error_reporter
 from hpg_core.resource_limits import sanitize_playlist as apply_resource_limits
+from hpg_core.genres import resolve_track_genre
 # AUDIT-FIX F1 (2026-07-24): hpg_config war nur lokal in init_ui importiert;
 # refresh_ai_providers() referenzierte es als Global -> NameError beim Aktivieren
 # der KI-Checkbox (Button blieb dauerhaft deaktiviert). Import jetzt auf Modulebene.
@@ -3797,8 +3798,19 @@ class PlaylistPanel(QWidget):
                     transition_score = int(rec.compatibility_score)
                     compatibility = self._result_metrics_for_row(i)
 
-            detected_genre = getattr(track, "detected_genre", "Unknown") or "Unknown"
-            genre_confidence = getattr(track, "genre_confidence", 0.0) or 0.0
+            detected_genre = (
+                getattr(track, "detected_genre", "") or ""
+            ).strip()
+            effective_genre = resolve_track_genre(track)
+            has_detected_genre = (
+                bool(detected_genre)
+                and detected_genre.casefold() != "unknown"
+            )
+            genre_confidence = (
+                (getattr(track, "genre_confidence", 0.0) or 0.0)
+                if has_detected_genre
+                else 0.0
+            )
 
             items = [
                 QTableWidgetItem(str(i + 1)),
@@ -3820,8 +3832,8 @@ class PlaylistPanel(QWidget):
                 self.table.setItem(i, col, item)
 
             # Genre-Badge
-            genre_item = QTableWidgetItem(detected_genre)
-            fg_color, bg_color = GENRE_COLORS.get(detected_genre, GENRE_DEFAULT)
+            genre_item = QTableWidgetItem(effective_genre)
+            fg_color, bg_color = GENRE_COLORS.get(effective_genre, GENRE_DEFAULT)
             genre_item.setForeground(QColor(fg_color))
             genre_item.setBackground(QColor(bg_color))
             self.table.setItem(i, 8, genre_item)
@@ -4236,8 +4248,8 @@ class MixTipsPanel(QWidget):
             card_layout.setSpacing(6)
 
             # Titel
-            from_genre = getattr(rec.from_track, "detected_genre", "") or ""
-            to_genre = getattr(rec.to_track, "detected_genre", "") or ""
+            from_genre = resolve_track_genre(rec.from_track)
+            to_genre = resolve_track_genre(rec.to_track)
             title_text = (
                 f"{rec.index + 1}. {rec.from_track.fileName} -> {rec.to_track.fileName}"
             )

@@ -30,6 +30,19 @@ CANONICAL_GENRES: tuple[str, ...] = (
     "Minimal",
 )
 
+
+def resolve_track_genre(track: object) -> str:
+    """Wirksames Track-Genre: Klassifikation vor ID3, sonst Unknown."""
+    for attribute in ("detected_genre", "genre"):
+        value = getattr(track, attribute, "") or ""
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if value and value.casefold() != "unknown":
+            return value
+    return "Unknown"
+
+
 @dataclass
 class GenreProfile:
     """Defines characteristic audio features for a genre."""

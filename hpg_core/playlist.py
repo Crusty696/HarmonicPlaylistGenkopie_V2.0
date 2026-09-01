@@ -29,7 +29,7 @@ from .config import (
     MIN_TRANSITION_BARS,
     PAAR_BPM_MAX,
 )
-from .genres import CANONICAL_GENRES
+from .genres import CANONICAL_GENRES, resolve_track_genre
 from .transition_features import (
     bass_continuity,
     groove_match,
@@ -629,10 +629,7 @@ def _resolve_track_genre(track: Track) -> str:
     aufloesen — vorher dreimal identisch lokal definiert (enhanced
     compatibility, predict_transition_type, Context Flow).
     """
-    detected = getattr(track, "detected_genre", "") or ""
-    if detected and detected != "Unknown":
-        return detected
-    return track.genre if (track.genre and track.genre != "Unknown") else "Unknown"
+    return resolve_track_genre(track)
 
 
 def _kandidaten_fuer_paar(
@@ -1660,9 +1657,8 @@ def _sort_genre_flow(
     genre_groups = {}
     for track in tracks:
         _check_cancel(cancel_check)
-        detected = getattr(track, "detected_genre", "") or ""
-        genre = detected if detected != "Unknown" else (track.genre or "")
-        if not genre or genre == "Unknown":
+        genre = _resolve_track_genre(track)
+        if genre == "Unknown":
             genre = "Mixed"
         if genre not in genre_groups:
             genre_groups[genre] = []
@@ -2223,8 +2219,8 @@ def _process_dj_brain_recommendations(
     notes_parts = []
     overlap = None
 
-    current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
-    upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
+    current_genre = _resolve_track_genre(current)
+    upcoming_genre = _resolve_track_genre(upcoming)
     has_dj_data = current_genre != "Unknown" and upcoming_genre != "Unknown"
 
     if has_dj_data:
