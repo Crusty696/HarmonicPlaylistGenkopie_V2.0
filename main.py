@@ -4800,7 +4800,9 @@ class TimelinePanel(QWidget):
         self.text_edit.setReadOnly(True)
         layout.addWidget(self.text_edit)
 
-    def set_timeline(self, playlist, transition_recommendations=None):
+    def set_timeline(
+        self, playlist, transition_recommendations=None, scoring_context=None
+    ):
         """Timeline aus Playlist berechnen und als HTML rendern."""
         if not playlist:
             self.text_edit.setHtml("<p>Keine Playlist vorhanden.</p>")
@@ -4810,7 +4812,23 @@ class TimelinePanel(QWidget):
             playlist, transition_recommendations
         )
         try:
-            timeline = compute_set_timeline(playlist, transition_plans=plans)
+            peak_position_pct = 0.65
+            if scoring_context is not None:
+                if not isinstance(scoring_context, Mapping):
+                    raise ValueError("scoring_context muss ein Mapping sein")
+                if "peak_position" in scoring_context:
+                    peak_position = scoring_context["peak_position"]
+                    if type(peak_position) is not int or not 40 <= peak_position <= 80:
+                        raise ValueError(
+                            "scoring_context.peak_position muss eine Ganzzahl "
+                            "von 40 bis 80 sein"
+                        )
+                    peak_position_pct = peak_position / 100.0
+            timeline = compute_set_timeline(
+                playlist,
+                transition_plans=plans,
+                peak_position_pct=peak_position_pct,
+            )
         except ValueError as exc:
             get_error_reporter().log_error(
                 "timeline",
@@ -6259,7 +6277,9 @@ class MainWindow(QMainWindow):
             )
             mix_tips_panel.set_recommendations(transition_plan, playlist)
             mix_tips_panel.setup_transition_previews(transition_plan)
-            timeline_panel.set_timeline(playlist, transition_plan)
+            timeline_panel.set_timeline(
+                playlist, transition_plan, scoring_context
+            )
             analytics_panel.set_analytics(
                 quality_metrics, playlist, bpm_tolerance,
                 transition_plan, scoring_context,

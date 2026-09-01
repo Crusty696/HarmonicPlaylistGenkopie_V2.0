@@ -99,6 +99,50 @@ def test_timeline_panel_meldet_ungueltige_kante_ohne_fallback(
   reporter.log_error.assert_called_once()
 
 
+@pytest.mark.parametrize(
+  ("scoring_context", "expected_peak"),
+  [(None, 0.65), ({}, 0.65), ({"peak_position": 40}, 0.4)],
+)
+def test_timeline_panel_nutzt_eingefrorene_peak_position(
+  qtbot, monkeypatch, scoring_context, expected_peak
+):
+  panel = main.TimelinePanel()
+  qtbot.addWidget(panel)
+  track = Track(
+    filePath="C:/a.wav", fileName="a.wav", title="A", duration=100.0
+  )
+  original_compute = main.compute_set_timeline
+  captured = []
+
+  def capture(*args, **kwargs):
+    captured.append(kwargs["peak_position_pct"])
+    return original_compute(*args, **kwargs)
+
+  monkeypatch.setattr(main, "compute_set_timeline", capture)
+
+  panel.set_timeline([track], scoring_context=scoring_context)
+
+  assert captured == [expected_peak]
+
+
+def test_timeline_panel_meldet_ungueltige_peak_position_kontrolliert(
+  qtbot, monkeypatch
+):
+  reporter = Mock()
+  monkeypatch.setattr(main, "get_error_reporter", lambda: reporter)
+  panel = main.TimelinePanel()
+  qtbot.addWidget(panel)
+  track = Track(
+    filePath="C:/a.wav", fileName="a.wav", title="A", duration=100.0
+  )
+
+  panel.set_timeline([track], scoring_context={"peak_position": 40.0})
+
+  assert "Timeline ungültig" in panel.text_edit.toPlainText()
+  assert "peak_position" in panel.text_edit.toPlainText()
+  reporter.log_error.assert_called_once()
+
+
 def test_ai_analysis_worker_reports_missing_provider():
   worker = main.AIAnalysisWorker([Track(filePath="C:/a.wav", fileName="a.wav")])
   failures = []
@@ -818,6 +862,28 @@ def _window(qtbot, monkeypatch, settings=None):
   window = main.MainWindow(settings=settings or _MemorySettings())
   qtbot.addWidget(window)
   return window
+
+
+def test_prepare_uebergangs_views_reicht_scoring_context_an_timeline(
+  qtbot, monkeypatch
+):
+  window = _window(qtbot, monkeypatch)
+  context = {"peak_position": 40}
+  captured = []
+
+  def capture(_panel, _playlist, _recommendations=None, scoring_context=None):
+    captured.append(scoring_context)
+
+  monkeypatch.setattr(main.TimelinePanel, "set_timeline", capture)
+
+  prepared = window._prepare_uebergangs_views(
+    [], {}, [], 2.0, context
+  )
+
+  assert captured == [context]
+  assert captured[0] is context
+  for widget in prepared:
+    widget.deleteLater()
 
 
 def _deliver_current_analysis(window, tracks, quality=None):
