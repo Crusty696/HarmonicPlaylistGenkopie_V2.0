@@ -492,7 +492,12 @@ Die exakte Zuordnung lautet:
 | Energy Wave | keine |
 | Genre Flow | `genre_mixing`, `genre_weight` |
 | Consistent | `harmonic_strictness`, `allow_experimental` |
-| Context Flow | `energy_direction`, `peak_position`, `harmonic_strictness`, `allow_experimental`, `genre_mixing`, `genre_weight`, `target_energy`, `overlap` |
+| Context Flow | `energy_direction`, `peak_position`, `harmonic_strictness`, `allow_experimental`, `genre_mixing`, `genre_weight`, `target_energy` |
+
+Die Blendenlaenge ist kein Strategieparameter. Sie stammt aus dem gegateten
+`PairCandidate.overlap_sec` und wird unveraendert in `TransitionPlan.overlap`
+uebernommen. So verwenden Tabelle, Mix-Tips, Timeline, Export und Renderer
+denselben tatsaechlich ausfuehrbaren Wert.
 
 ### 6.1 Separater Hörtest-, Manifest- und Audit-Fluss
 

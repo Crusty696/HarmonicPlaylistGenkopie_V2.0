@@ -659,10 +659,7 @@ def test_generate_result_verwirft_ungueltige_bpm_toleranz(monkeypatch, value):
         {"target_energy": float("inf")},
         {"target_energy": -0.01},
         {"target_energy": 100.01},
-        {"overlap": False},
-        {"overlap": float("nan")},
-        {"overlap": 3.99},
-        {"overlap": 64.01},
+        {"overlap": 16},
     ],
 )
 def test_generate_result_verwirft_ungueltige_advanced_params_vor_seiteneffekten(
@@ -712,7 +709,6 @@ def test_generate_result_akzeptiert_gueltige_bpm_toleranzen(
             "genre_mixing": True,
             "genre_weight": 0,
             "target_energy": None,
-            "overlap": 4,
         },
         {
             "energy_direction": "maintain",
@@ -722,7 +718,6 @@ def test_generate_result_akzeptiert_gueltige_bpm_toleranzen(
             "genre_mixing": False,
             "genre_weight": 1,
             "target_energy": 100,
-            "overlap": 64,
         },
     ],
 )
@@ -734,6 +729,7 @@ def test_generate_result_akzeptiert_advanced_parametergrenzen(
         [], "Context Flow", advanced_params=advanced_params, scoring_context={}
     )
     assert result.mode == "Context Flow"
+    assert "overlap" not in result.scoring_context
 
 
 @pytest.mark.parametrize("mode", [None, True, 7, object(), "", " ", "Unbekannt"])
@@ -809,6 +805,11 @@ def test_oeffentliche_playlist_bpm_defaults_nutzen_paar_gate():
         default = inspect.signature(funktion).parameters["bpm_tolerance"].default
         assert default == PAAR_BPM_MAX == 2.0
 
+    overlap_default = inspect.signature(
+        pl.compute_transition_recommendations
+    ).parameters["default_overlap"].default
+    assert overlap_default == 12.0
+
 
 @pytest.mark.parametrize("key", ["nested", 7])
 def test_scoring_context_verwirft_unbekannte_top_level_keys(key):
@@ -833,11 +834,6 @@ def test_scoring_context_verwirft_unbekannte_top_level_keys(key):
         ("target_energy", float("nan")),
         ("target_energy", -0.1),
         ("target_energy", 100.1),
-        ("overlap", None),
-        ("overlap", False),
-        ("overlap", float("inf")),
-        ("overlap", 3.9),
-        ("overlap", 64.1),
     ],
 )
 def test_scoring_context_verwirft_falsche_strategy_config_werte(key, value):
@@ -851,7 +847,6 @@ def test_scoring_context_akzeptiert_typisierte_strategy_config_werte():
         "harmonic_strictness": 9,
         "allow_experimental": False,
         "target_energy": 75,
-        "overlap": 24,
     }
 
     context = pl._complete_run_scoring_context("Context Flow", {}, supplied)
@@ -860,7 +855,22 @@ def test_scoring_context_akzeptiert_typisierte_strategy_config_werte():
     assert context["harmonic_strictness"] == 9
     assert context["allow_experimental"] is False
     assert context["target_energy"] == 75.0
-    assert context["overlap"] == 24.0
+    assert "overlap" not in context
+
+
+def test_scoring_context_verwirft_wirkungslosen_overlap_parameter():
+    with pytest.raises(ValueError, match="unbekannte Schluessel.*overlap"):
+        pl._complete_run_scoring_context(
+            "Context Flow", {}, {"overlap": 16}
+        )
+
+
+def test_transitionsempfehlung_verwirft_overlap_im_scoring_context():
+    with pytest.raises(ValueError, match="unbekannten Schluessel.*overlap"):
+        pl.compute_transition_recommendations(
+            [],
+            scoring_context={"overlap": 16},
+        )
 
 
 def test_scoring_context_verwirft_strategy_fremde_skalare_werte():

@@ -569,12 +569,11 @@ def test_strategy_config_filtert_gueltige_sichtbare_parameter():
   from hpg_core.playlist import StrategyConfig
 
   config = StrategyConfig.from_mapping(
-    {"peak_position": 80, "genre_weight": 0.0, "overlap": 64.0}
+    {"peak_position": 80, "genre_weight": 0.0}
   )
 
   assert config.peak_position == 80
   assert config.genre_weight == 0.0
-  assert config.overlap == 64.0
   assert set(config.effective_kwargs("Peak-Time")) == {
     "peak_position", "harmonic_strictness", "allow_experimental"
   }
@@ -585,7 +584,6 @@ def test_strategy_config_filtert_gueltige_sichtbare_parameter():
   [
     {"peak_position": 999},
     {"genre_weight": -2},
-    {"overlap": 500},
   ],
 )
 def test_strategy_config_verwirft_statt_zu_clampen(params):
@@ -593,6 +591,13 @@ def test_strategy_config_verwirft_statt_zu_clampen(params):
 
   with pytest.raises(ValueError, match="advanced_params"):
     StrategyConfig.from_mapping(params)
+
+
+def test_strategy_config_verwirft_wirkungslosen_overlap_parameter():
+  from hpg_core.playlist import StrategyConfig
+
+  with pytest.raises(ValueError, match="unbekannte Schluessel.*overlap"):
+    StrategyConfig.from_mapping({"overlap": 16})
 
 
 class TestDuplicateTrackReferences:

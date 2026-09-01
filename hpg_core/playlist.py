@@ -155,7 +155,6 @@ class StrategyConfig:
     genre_mixing: bool = True
     genre_weight: float = 0.3
     target_energy: Optional[float] = None
-    overlap: float = 16.0
 
     @classmethod
     def from_mapping(cls, values: Optional[Mapping]) -> "StrategyConfig":
@@ -168,7 +167,7 @@ class StrategyConfig:
         allowed = {
             "energy_direction", "peak_position", "harmonic_strictness",
             "allow_experimental", "genre_mixing", "genre_weight",
-            "target_energy", "overlap",
+            "target_energy",
         }
         unknown = sorted(set(source) - allowed, key=repr)
         if unknown:
@@ -224,7 +223,6 @@ class StrategyConfig:
             target_energy=finite_real(
                 "target_energy", None, 0.0, 100.0, allow_none=True
             ),
-            overlap=finite_real("overlap", 16.0, 4.0, 64.0),
         )
 
     def effective_kwargs(self, strategy: str) -> Dict:
@@ -237,7 +235,6 @@ class StrategyConfig:
             "genre_mixing": self.genre_mixing,
             "genre_weight": self.genre_weight,
             "target_energy": self.target_energy,
-            "overlap": self.overlap,
         }
         return {key: value for key, value in values.items() if key in supported}
 
@@ -2278,6 +2275,10 @@ def compute_adjacent_transition_metrics(
 ) -> List[TransitionMetrics]:
     """Berechnet alle sichtbaren Werte aus der wirklich aktiven lokalen Kette."""
     ctx = dict(scoring_context or {})
+    if "overlap" in ctx:
+        raise ValueError(
+            "scoring_context enthaelt unbekannten Schluessel: 'overlap'"
+        )
     if len(playlist) < 2:
         return []
     energy_direction = ctx.get("energy_direction")
@@ -2349,10 +2350,13 @@ def compute_transition_recommendations(
     faellt die Bewertung auf die Defaults zurueck — dann muessen aber auch
     Sortierung und Anzeige denselben Default nutzen.
     """
+    ctx = dict(scoring_context or {})
+    if "overlap" in ctx:
+        raise ValueError(
+            "scoring_context enthaelt unbekannten Schluessel: 'overlap'"
+        )
     if len(playlist) < 2:
         return []
-
-    ctx = dict(scoring_context or {})
     metrics_by_pair = (
         list(transition_metrics)
         if transition_metrics is not None
@@ -2360,7 +2364,7 @@ def compute_transition_recommendations(
     )
     if len(metrics_by_pair) != len(playlist) - 1:
         raise ValueError("transition_metrics muss genau ein Element pro Nachbarpaar enthalten")
-    configured_overlap = ctx.get("overlap", default_overlap)
+    configured_overlap = default_overlap
     try:
         configured_overlap = float(configured_overlap)
     except (TypeError, ValueError):
@@ -2946,7 +2950,6 @@ SUPPORTED_STRATEGY_PARAMETERS = {
         "genre_mixing",
         "genre_weight",
         "target_energy",
-        "overlap",
     },
 }
 
@@ -2977,7 +2980,7 @@ def resolve_scoring_context(
     return {
         key: value
         for key, value in effective.items()
-        if key in SCORING_PARAMETERS or key in {"target_energy", "overlap"}
+        if key in SCORING_PARAMETERS or key == "target_energy"
     }
 
 
@@ -3126,7 +3129,7 @@ def _complete_run_scoring_context(
     else:
         context = resolve_run_scoring_context(mode, advanced_params)
     allowed_keys = SCORING_PARAMETERS | {
-        "target_energy", "overlap", tolerance_key, track_tolerance_key, schema_key,
+        "target_energy", tolerance_key, track_tolerance_key, schema_key,
     }
     unknown_keys = sorted(set(supplied) - allowed_keys, key=repr)
     if unknown_keys:
@@ -3134,7 +3137,7 @@ def _complete_run_scoring_context(
             "scoring_context enthaelt unbekannte Schluessel: "
             + ", ".join(repr(key) for key in unknown_keys)
         )
-    scalar_keys = SCORING_PARAMETERS | {"target_energy", "overlap"}
+    scalar_keys = SCORING_PARAMETERS | {"target_energy"}
     supported_scalars = (
         SUPPORTED_STRATEGY_PARAMETERS.get(STRATEGY_ALIASES.get(mode, mode), set())
         & scalar_keys
@@ -3163,10 +3166,7 @@ def _complete_run_scoring_context(
             )
     if "allow_experimental" in supplied and type(supplied["allow_experimental"]) is not bool:
         raise ValueError("scoring_context.allow_experimental muss boolesch sein")
-    for key, minimum, maximum in (
-        ("target_energy", 0.0, 100.0),
-        ("overlap", 4.0, 64.0),
-    ):
+    for key, minimum, maximum in (("target_energy", 0.0, 100.0),):
         if key not in supplied or (
             key == "target_energy" and supplied[key] is None
         ):
