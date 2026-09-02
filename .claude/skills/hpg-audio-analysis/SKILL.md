@@ -7,7 +7,7 @@ description: Use when working on HPG audio analysis — librosa loading, BPM/Key
 
 ## Einstieg
 
-`analysis.analyze_track(file_path) -> Track | None` [analysis.py:1659] ist die
+`analysis.analyze_track(file_path) -> Track | None` [hpg_core/analysis.py] ist die
 **einzige** oeffentliche Analyse-Funktion. Sie macht Limits, Cache, Decode,
 Features, Struktur und Mixpoints in einem Zug. Rueckgabe `None` heisst
 "uebersprungen" — nie eine Exception nach oben.
@@ -31,7 +31,7 @@ muss den anderen mitaendern** — historisch die haeufigste Fehlerquelle
 abgeschnitten. Damit Outro und Mix-Out trotzdem echt sind, gibt es ein
 **zweites Fenster**:
 
-`analyze_structure_windows()` [analysis.py:1503]
+`analyze_structure_windows()` [hpg_core/analysis.py]
 - Head = das bereits geladene `y`
 - Tail = separater Offset-Load der letzten `LIBROSA_TAIL_DURATION = 180` s
 - Luecke dazwischen wird als Section `label="unanalysed"` eingefuegt — sie
@@ -39,7 +39,7 @@ abgeschnitten. Damit Outro und Mix-Out trotzdem echt sind, gibt es ein
 - Rueckgabe `(structure, coverage, outro_covered)`; `outro_covered` ist
   `tail_end >= duration - 1.0`
 
-**Fenster-Artefakt-Regel** [analysis.py:1535/1590, B7/N1]: der Section-Labeler
+**Fenster-Artefakt-Regel** (B7/N1) [hpg_core/analysis.py]: der Section-Labeler
 markiert die letzte Section eines Fensters immer als Outro-Kandidat. Endet das
 Fenster nicht am Track-Ende, wird `outro` zu `main` degradiert. Ohne das zog
 der Outro-Scanner in `dj_brain` den Mix-Out in die Track-Mitte (reproduziert:
@@ -48,11 +48,11 @@ der Outro-Scanner in `dj_brain` den Mix-Out in die Track-Mitte (reproduziert:
 ## outro_covered — wer prueft es, wer nicht
 
 Aktuelle direkte Konsumenten:
-- `pair_candidates.py:498/966` — lokales Paar-Gate und globaler Early Return;
+- `_gate_gruende_basis` / globaler Early Return [hpg_core/pair_candidates.py] — lokales Paar-Gate und globaler Early Return;
   die Playlist uebernimmt diesen Guard mittelbar ueber das Kandidaten-Ranking
-- `ai_engine.py:119-126` — nur die advisory KI-Mixpunkte werden auf `None`
+- `mixpunkte_gueltig` [hpg_core/ai_engine.py] — nur die advisory KI-Mixpunkte werden auf `None`
   gesetzt; Mood und Subgenre bleiben erhalten
-- `exporters/rekordbox_xml_exporter.py:539-547` — Cue-Export verweigert
+- `_cue_export_allowed` [hpg_core/exporters/rekordbox_xml_exporter.py] — Cue-Export verweigert
 
 `dj_brain.py`, `transition_renderer.py`, m3u8-Export und GUI-Anzeige pruefen das
 Feld nicht direkt. Neue Mix-Out-Konsumenten brauchen einen eigenen Guard oder
@@ -60,7 +60,7 @@ muessen nachweislich ueber das PairCandidate-Gate laufen.
 
 ## FeatureCache
 
-`FeatureCache(y, sr)` [analysis.py:174] ist ein lazy, track-lokaler Cache fuer
+`FeatureCache(y, sr)` [hpg_core/analysis.py] ist ein lazy, track-lokaler Cache fuer
 MFCC/RMS/STFT/Chroma/Centroid/Flatness/Contrast/Onset/HPSS. Er wird durch
 Genre-Klassifikation, Downbeat, Phrase und Struktur durchgereicht.
 Neue Feature-Berechnung? **Erst pruefen, ob der Cache sie schon hat.**
@@ -77,7 +77,7 @@ Wer hier etwas anfasst, muss den Cache durchreichen:
   Die spektrale Flachheit muss dabei weiter auf dem Ausschnitt gerechnet
   werden; der Cache-Wert gilt fuer den ganzen Track.
 - `_compute_bass_percussion_novelty(..., feature_cache=...)`
-  [structure_analyzer.py] — nutzt `get_hpss()[1]`, wenn die Signallaenge zur
+  [hpg_core/structure_analyzer.py] — nutzt `get_hpss()[1]`, wenn die Signallaenge zur
   Cache-Laenge passt.
 
 Der Laengenvergleich `len(feature_cache.y) == len(y)` ist die Sicherung: nur
@@ -103,7 +103,7 @@ Details zu Quantisierung und Sentinels: Skill `hpg-mixpoint-engineering`.
 
 Fehlt Rekordbox-BPM, liefert ein vorhandener ID3-/AIFF-Tag die BPM. Artist,
 Titel und Genre werden feldweise aus Easy-Tags und bei dort fehlenden Werten
-aus rohen `TPE1`-/`TIT2`-/`TCON`-Frames ergaenzt [analysis.py:1212-1265]. Der
+aus rohen `TPE1`-/`TIT2`-/`TCON`-Frames ergaenzt via `_mutagen_text_value` [hpg_core/analysis.py]. Der
 Tag bleibt praezise, kann aber einen Oktav-/Faktorfehler enthalten.
 
 `analyze_track` prueft deshalb den Faktor gegen das Audio. Korrigiert wird nur,
@@ -117,8 +117,8 @@ wenn **alle vier** Bedingungen halten:
    BPM-Bereichs
 
 Fehlt das ID3-Genre oder ist es unbekannt, bleibt der Tag unveraendert. Es gibt
-ausdruecklich keinen genreuebergreifenden Union-Fallback
-[analysis.py:71-127/2201-2216].
+ausdruecklich keinen genreuebergreifenden Union-Fallback — siehe
+`_correct_id3_bpm_factor` [hpg_core/analysis.py].
 
 **Warum Bedingung 4 unverzichtbar ist:** `librosa.beat.beat_track` kann
 vollkommen stabil um einen einfachen Faktor falsch liegen. Eine Stabilitaets-

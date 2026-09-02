@@ -22,7 +22,7 @@ Volllauf mit Coverage (langsamer, aber das ist das echte Gate):
 
 ## Letzter Volltest-Snapshot
 
-**2035 passed, 25 warnings, 81,65 % Coverage** wurden am 2026-08-25 vor den
+Der Abschlusslauf vom 2026-08-25 war gruen vor den
 nachfolgenden GUI-/E2E-/Kandidatensatz-Auditor-Aenderungen gemessen mit:
 
 ```bat
@@ -32,9 +32,8 @@ nachfolgenden GUI-/E2E-/Kandidatensatz-Auditor-Aenderungen gemessen mit:
 Diese Zahlen sind keine aktuelle Baseline und kein Abschlussbeleg fuer den
 jetzigen Worktree. Immer neu messen.
 
-**Historischer Snapshot 2026-08-15:** 1492 passed, 26 Warnungen und 75,92 %
-Coverage mit den damals vorhandenen Tests. Diese Zahlen sind keine aktuelle
-Baseline.
+**Historischer Snapshot 2026-08-15:** Lauf gruen mit 26 Warnungen und dem
+damaligen Testbestand. Kein Beleg fuer den jetzigen Worktree.
 
 Aeltere Zahlen im Repo sind datierte Snapshots, keine Widersprueche:
 `docs/AGENT_HANDOFF.md` nennt 1313, der historische Abschnitt in
@@ -62,7 +61,7 @@ einem Markdown uebernehmen — auch nicht aus diesem Skill.
   `structured_audio_128bpm`, `a_minor_chord`, `c_major_chord`
 - Tracks: `house_track`, `techno_track`, `dnb_track`, `minimal_track`,
   `dj_set_8tracks`, `dj_set_3tracks`, `all_camelot_tracks`
-- Invarianten: `assert_mix_points_valid` [:216], `assert_phrase_aligned` [:245]
+- Invarianten: `assert_mix_points_valid` [tests/conftest.py], `assert_phrase_aligned` [tests/conftest.py]
 - `tests/performance_fixtures.py` liefert vor-analysierte Tracks **ohne**
   Audio-Generierung — fuer alles, was keine echte Analyse braucht
 

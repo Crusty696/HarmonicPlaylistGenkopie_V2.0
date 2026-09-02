@@ -12,7 +12,7 @@ sitzt; die Detailregeln stehen im jeweiligen Fach-Skill.
 
 | Symptom | Zuerst pruefen | Skill |
 |---|---|---|
-| Codeaenderung zeigt keine Wirkung, alte Analysewerte | Cache-Hit. `CACHE_VERSION` (caching.py:39) gebumpt? | `hpg-cache-persistence` |
+| Codeaenderung zeigt keine Wirkung, alte Analysewerte | Cache-Hit. `CACHE_VERSION` [hpg_core/caching.py] gebumpt? | `hpg-cache-persistence` |
 | Mix-Out mitten im Track, Mixpoint off-grid | Anker/Gitter, Fenster-Artefakt, Notfall-Prozentpfad | `hpg-mixpoint-engineering` |
 | Lange Tracks: Outro wirkt erfunden | `LIBROSA_MAX_DURATION` + Tail-Fenster, `outro_covered` | `hpg-audio-analysis` |
 | `BrokenProcessPool` im Log | designtes Recovery. Welche Datei ist `[CRASHED/SKIPPED]`? | `hpg-parallel-performance` |

@@ -11,22 +11,22 @@ description: Use when adding, renaming or retuning an HPG genre, or when touchin
 genre_classifier re-exportieren nur; `structure_analyzer` leitet ab. Wer eine
 zweite Genre-Tabelle anlegt, baut Drift.
 
-`CANONICAL_GENRES` [genres.py:21] — aktuell 9:
+`CANONICAL_GENRES` [hpg_core/genres.py] — aktuell 9:
 Psytrance · Tech House · Progressive · Melodic Techno · Techno · Deep House ·
 Trance · Drum & Bass · Minimal.
 
 ## Die vier Tabellen
 
-| Tabelle | Zeile | Inhalt |
-|---|---|---|
-| `GENRE_PROFILES` | :47 | `GenreProfile` — BPM-Range, spektrale Merkmale; Input der Klassifikation |
-| `ID3_GENRE_MAP` | :189 | ID3-Tag-Text -> kanonisches Genre |
-| `GENRE_MIX_PROFILES` | :300 | `GenreMixProfile` — `phrase_unit`, `transition_bars`, `outro_bars` |
-| `GENRE_COMPATIBILITY` | :400 | `(a, b) -> 0.0-1.0`, symmetrisch gemeint |
+| Tabelle | Inhalt |
+|---|---|
+| `GENRE_PROFILES` [hpg_core/genres.py] | `GenreProfile` — BPM-Range, spektrale Merkmale; Input der Klassifikation |
+| `ID3_GENRE_MAP` [hpg_core/genres.py] | ID3-Tag-Text -> kanonisches Genre |
+| `GENRE_MIX_PROFILES` [hpg_core/genres.py] | `GenreMixProfile` — `phrase_unit`, `transition_bars`, `outro_bars` |
+| `GENRE_COMPATIBILITY` [hpg_core/genres.py] | `(a, b) -> 0.0-1.0`, symmetrisch gemeint |
 
 ## Neues Genre hinzufuegen — die Checkliste
 
-`_validate_genre_tables()` [genres.py:477] laeuft **beim Import** und wirft
+`_validate_genre_tables()` [hpg_core/genres.py] laeuft **beim Import** und wirft
 `ValueError("Genre-Tabellen inkonsistent: ...")`. Sie prueft:
 
 1. `set(GENRE_PROFILES) == set(CANONICAL_GENRES)`
@@ -48,7 +48,7 @@ Genres kommen **9 neue Cross-Paare** dazu. Nichts davon ist optional.
 
 ```
 GENRE_MIX_PROFILES[g].phrase_unit
-  -> GENRE_PHRASE_UNITS  [structure_analyzer.py:64, abgeleitet]
+  -> `GENRE_PHRASE_UNITS` [hpg_core/structure_analyzer.py] (abgeleitet)
   -> Sektions-Erkennung (analyze_structure)
   -> grid = seconds_per_bar * phrase_unit
   -> Quantisierung aller Mix-Punkte
@@ -58,9 +58,9 @@ GENRE_MIX_PROFILES[g].phrase_unit
 
 ## Lookups sind case-insensitiv — aber nur im Fallback
 
-`get_genre_compatibility` [dj_brain.py:47]: exakt -> vertauscht -> casefold
+`get_genre_compatibility` [hpg_core/dj_brain.py]: exakt -> vertauscht -> casefold
 (`_GENRE_COMPATIBILITY_NORMALIZED`) -> `0.5`. `get_mix_profile`
-[dj_brain.py:88]: exakt -> casefold -> `DEFAULT_MIX_PROFILE`.
+[hpg_core/dj_brain.py]: exakt -> casefold -> `DEFAULT_MIX_PROFILE`.
 
 `"Unknown"` oder leer liefert immer `0.5`. Achtung: `"Unknown"` ist ein
 **truthy** String — ein `if not track.detected_genre`-Fallback greift dort
@@ -68,9 +68,9 @@ nie (Altbefund F12).
 
 ## Klassifikation
 
-`classify_genre` [genre_classifier.py:279] ist **regelbasiert, kein ML**:
+`classify_genre` [hpg_core/genre_classifier.py] ist **regelbasiert, kein ML**:
 `extract_genre_features` -> `_score_genre` pro Profil -> bester Score.
-`GENRE_CONFIDENCE_THRESHOLD = 0.4` [config.py]. Ein neues Genre wird nur
+`GENRE_CONFIDENCE_THRESHOLD = 0.4` [hpg_core/config.py]. Ein neues Genre wird nur
 erkannt, wenn sein `GenreProfile` diskriminierende Ranges hat — die
 Validierung prueft Vollstaendigkeit, nicht Erkennungsqualitaet.
 

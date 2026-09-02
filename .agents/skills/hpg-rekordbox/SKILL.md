@@ -15,7 +15,7 @@ laeuft alles ueber librosa weiter.
 **Export** (`hpg_core/exporters/rekordbox_xml_exporter.py`): schreibt
 Collection + Playlist mit BPM, Key, TEMPO-Beatgrid und POSITION_MARK-Cues.
 
-`get_rekordbox_importer()` [:755] ist ein Singleton — nicht pro Track neu
+`get_rekordbox_importer()` [hpg_core/rekordbox_importer.py] ist ein Singleton — nicht pro Track neu
 instanziieren, der Cache-Aufbau scannt die ganze DB.
 
 ## Fast-Path
@@ -29,12 +29,12 @@ nicht kaputtmachen.
 
 Die reale lokale `master.db` hatte 2665 Content-Zeilen mit 77 doppelten
 normalisierten Pfaden und 60 mehrdeutigen Basenames. Der Importer loest das
-so [`_build_track_cache` :184]:
+so — `_build_track_cache` [hpg_core/rekordbox_importer.py]:
 
 | Fall | Verhalten |
 |---|---|
-| gleicher Pfad, **widerspruechliche** Felder (`_track_data_conflicts` :315) | Pfad landet in `_ambiguous_paths`, `get_track_data` liefert `None` |
-| gleicher Pfad, ein Record klar besser analysiert (`_track_data_quality` :307) | besserer Record gewinnt (z. B. gegen BPM `0`) |
+| gleicher Pfad, **widerspruechliche** Felder (`_track_data_conflicts` [hpg_core/rekordbox_importer.py]) | Pfad landet in `_ambiguous_paths`, `get_track_data` liefert `None` |
+| gleicher Pfad, ein Record klar besser analysiert (`_track_data_quality` [hpg_core/rekordbox_importer.py]) | besserer Record gewinnt (z. B. gegen BPM `0`) |
 | gleicher Basename, mehrere Dateien | `basename_cache`-Eintrag wird `None` -> Fallback verworfen |
 
 `get_statistics()` und `get_available_count()` zaehlen nur eindeutige Pfade.
@@ -46,15 +46,15 @@ als gar keine — sie fliessen still in BPM, Key und Mixpoints.
 pyrekordbox liefert flache `PQTZAnlzTag.times` bereits in **Sekunden**; diese
 Werte werden direkt als `float` uebernommen. Nur rohe Entry-Zeiten (`.time`)
 und Cue-Werte (`InMsec`) sind Millisekunden und laufen durch
-`_milliseconds_to_seconds` [:603] (`/1000.0`, gerundet auf 4 Stellen,
+`_milliseconds_to_seconds` [hpg_core/rekordbox_importer.py] (`/1000.0`, gerundet auf 4 Stellen,
 negative und nicht-endliche Werte -> `None`). Einheiten duerfen nicht aus der
 Zahlengroesse geraten werden; die jeweilige pyrekordbox-Feldsemantik ist
 verbindlich.
 
 ## ANLZ-Beatgrid
 
-`get_first_downbeat(file_path)` [:412] -> `get_beatgrid(file_path)` [:446] ->
-`_read_anlz_files(content_id)` [:465] -> `_extract_beatgrid_from_anlz` [:548]:
+`get_first_downbeat(file_path)` [hpg_core/rekordbox_importer.py] -> `get_beatgrid(file_path)` [hpg_core/rekordbox_importer.py] ->
+`_read_anlz_files(content_id)` [hpg_core/rekordbox_importer.py] -> `_extract_beatgrid_from_anlz` [hpg_core/rekordbox_importer.py]:
 sucht in den ANLZ-Dateien die
 Tags `PQTZ`, `PQT2`, `beat_grid`, `beats` und darin den ersten Tick mit
 `beat == 1`. Zwei Tag-Formen werden unterstuetzt (flache Parallel-Listen
@@ -74,7 +74,7 @@ Beat-Alignment-Pfad im Renderer (`downbeat_reliable_* = conf >= 0.9`).
 `first_downbeat`. Der Phrasen-Anker entsteht downstream — Skill
 `hpg-mixpoint-engineering`.
 
-## PSSI-Phrasen (`get_phrases`, [:508])
+## PSSI-Phrasen (`get_phrases` [hpg_core/rekordbox_importer.py])
 
 `get_phrases(file_path, *, duration=None)`, memoisiert je
 `(content_id, effective_duration)`: Als effektive Dauer gilt zuerst die
@@ -104,7 +104,8 @@ Mix-In-Rundungsfehler (`hpg-mixpoint-engineering`).
 
 ## Cue-Override (liegt in analysis.py, nicht im Importer)
 
-`analysis.py:1746`. Wortgrenzen-Regex, **nicht** Substring:
+`CUE_IN_PATTERN` / `CUE_OUT_PATTERN` [hpg_core/mix_candidates.py], angewendet
+in `analyze_track` [hpg_core/analysis.py]. Wortgrenzen-Regex, **nicht** Substring:
 
 ```
 IN : \b(MIX[- ]?IN|IN|START)\b
@@ -126,17 +127,17 @@ Uebernommen wird nur bei `0 <= in < out <= duration`, und **immer** durch
 
 ## Cache-Invalidierung
 
-`get_track_signature(file_path)` [:651] geht in den Cache-Key ein. Rekordbox-
+`get_track_signature(file_path)` [hpg_core/rekordbox_importer.py] geht in den Cache-Key ein. Rekordbox-
 Metadaten aendern sich ohne Aenderung der Audiodatei — ohne Signatur liefert
 der Cache still alte BPM/Key/Cues. Siehe `hpg-cache-persistence`.
 
 ## Export
 
-`export()` [:90] legt die Playlist ueber
+`export()` [hpg_core/exporters/rekordbox_xml_exporter.py] legt die Playlist ueber
 `add_playlist_folder("HPG Playlists").add_playlist(...)` an — `get_playlist()`
-wirft auf frischem XML immer `ValueError`. `_add_beat_grid` [:334] schreibt
-`TEMPO` mit `Inizio=first_downbeat`. `_add_cue_points` [:376] schreibt
-POSITION_MARKs, aber nur wenn `_cue_export_allowed` [:428] haelt
+wirft auf frischem XML immer `ValueError`. `_add_beat_grid` [hpg_core/exporters/rekordbox_xml_exporter.py] schreibt
+`TEMPO` mit `Inizio=first_downbeat`. `_add_cue_points` [hpg_core/exporters/rekordbox_xml_exporter.py] schreibt
+POSITION_MARKs, aber nur wenn `_cue_export_allowed` [hpg_core/exporters/rekordbox_xml_exporter.py] haelt
 (`outro_covered` und `duration > 0`).
 
 ## Verifikation

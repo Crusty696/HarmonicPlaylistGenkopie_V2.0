@@ -8,11 +8,11 @@ description: Use when working on the HPG transition preview audio — render_tra
 ## Kette
 
 ```
-compute_transition_recommendations   playlist.py:1459   -> TransitionPlan
-  -> TransitionRenderWorker.run      main.py:685
+compute_transition_recommendations   hpg_core/playlist.py   -> TransitionPlan
+  -> TransitionRenderWorker.run      main.py
      -> ProcessPoolExecutor(max_workers=1)   << Isolation
-        -> _render_clip_subprocess_wrapper   transition_renderer.py:313
-           -> render_transition_clip         transition_renderer.py:114
+        -> _render_clip_subprocess_wrapper   hpg_core/transition_renderer.py
+           -> render_transition_clip         hpg_core/transition_renderer.py
               -> sf.write(..., subtype="PCM_16")
 ```
 
@@ -20,7 +20,7 @@ compute_transition_recommendations   playlist.py:1459   -> TransitionPlan
 Im Kindprozess wird daraus ein `BrokenProcessPool`, den der Worker faengt —
 die App ueberlebt. Nie in den GUI- oder Analyse-Thread zurueckbauen.
 
-`TransitionClipSpec.from_plan(plan, from_track, to_track)` [:83] ist der
+`TransitionClipSpec.from_plan(plan, from_track, to_track)` [hpg_core/transition_renderer.py] ist der
 **einzige** erlaubte Weg vom Plan zur Render-Spec: keine zweite
 Timing-Berechnung. Wer Timing anpassen will, aendert den Plan.
 
@@ -37,7 +37,7 @@ um bis zu einen Takt; ohne Vorlauf wuerden bis zu 2 Beats vom Anfang von
 gelegt hat.
 
 `cf_sec = min(max(0.0, spec.crossfade_sec), MAX_TRANSITION_OVERLAP_SECONDS)`
-mit `MAX_TRANSITION_OVERLAP_SECONDS = 64.0` [config.py:9]. Die untere Klemme
+mit `MAX_TRANSITION_OVERLAP_SECONDS = 64.0` [hpg_core/config.py]. Die untere Klemme
 auf 0 ist Pflicht: ein degenerierter Plan (`overlap <= 0`) ergab sonst
 negative Frame-Zahlen und einen `sosfiltfilt`-Crash.
 
@@ -73,7 +73,7 @@ Der Split ist gemessen noetig: die Eigenschaetzung trifft die Beat-Phase gut
 daneben — und die Konfidenz trennt das nicht. Wer behauptet, auf Takt 1 zu
 liegen, braucht das Referenz-Beatgrid.
 
-Ohne verlaesslichen Anker schaetzt `_estimate_first_beat` [:328] aus dem
+Ohne verlaesslichen Anker schaetzt `_estimate_first_beat` [hpg_core/transition_renderer.py] aus dem
 Segment. Die eigene Downbeat-Schaetzung ist fuer sample-genaues Alignment zu
 ungenau (30-380 ms Phasenfehler) und wird hier bewusst nicht verwendet.
 
@@ -81,7 +81,7 @@ ungenau (30-380 ms Phasenfehler) und wird hier bewusst nicht verwendet.
 
 `smooth_blend` · `bass_swap` · `breakdown_bridge` · `drop_cut` ·
 `filter_ride` · `halftime_switch` · `echo_out` · `cold_cut` · `pro_eq_swap`.
-Gewaehlt von `predict_transition_type` [playlist.py:1223].
+Gewaehlt von `predict_transition_type` [hpg_core/playlist.py].
 
 `pro_eq_swap` ist der Default fuer Techno / Tech House / Minimal / Psytrance:
 3-Band-Trennung (Low/Mid bei 120 Hz, Mid/High bei 2500 Hz), **Bass hart am
@@ -158,7 +158,7 @@ nie das globale Temp-Verzeichnis.
 
 ## Verifikation
 
-`tests/test_transition_renderer.py` (1025 Zeilen) plus `e2e_check.py`, das
+`tests/test_transition_renderer.py` plus `e2e_check.py`, das
 Peak, Pegelverhaeltnis Mitte-vs-Rand, Kanalabweichung und
 Sample-Endlichkeit auf echtem Audio prueft. DSP-Aenderungen ohne diesen Lauf
 sind nicht verifiziert.

@@ -7,10 +7,10 @@ description: Use when working on HPG playlist generation or scoring — die 8 St
 
 ## Die 8 Strategien
 
-`STRATEGIES` [playlist.py:1864] — Harmonic Flow · Warm-Up · Cool-Down ·
+`STRATEGIES` [hpg_core/playlist.py] — Harmonic Flow · Warm-Up · Cool-Down ·
 Peak-Time · Energy Wave · Genre Flow · Consistent · Context Flow.
 
-`STRATEGY_ALIASES` [playlist.py:1902] haelt alte Namen gueltig:
+`STRATEGY_ALIASES` [hpg_core/playlist.py] haelt alte Namen gueltig:
 `Harmonic Flow Enhanced` -> `Harmonic Flow`, `Peak-Time Enhanced` ->
 `Peak-Time`, `Emotional Journey` -> `Context Flow`. `generate_playlist` loest
 sie auf. Alte Doku nennt 10-11 Strategien — das ist ueberholt.
@@ -19,8 +19,8 @@ sie auf. Alte Doku nennt 10-11 Strategien — das ist ueberholt.
 
 | Funktion | Skala | Rolle |
 |---|---|---|
-| `calculate_compatibility` [:501] | 0-100 | **reine Harmonik** |
-| `calculate_enhanced_compatibility` [:256] | `TransitionMetrics` | ausschliesslich ein voll qualifizierter lokaler `PairCandidate` |
+| `calculate_compatibility` [hpg_core/playlist.py] | 0-100 | **reine Harmonik** |
+| `calculate_enhanced_compatibility` [hpg_core/playlist.py] | `TransitionMetrics` | ausschliesslich ein voll qualifizierter lokaler `PairCandidate` |
 
 Aktuelle oder gecachte KI-Mood-/Subgenre-Metadaten sind nur erklaerende
 Metadaten. Sie beeinflussen weder Ordering, Objective, Quality,
@@ -28,7 +28,7 @@ TransitionRecommendation noch den lokalen `PairCandidate.score`.
 `TransitionMetrics.overall_score` entspricht dem lokalen Kandidatenscore und
 `TransitionMetrics.ai_bonus` bleibt immer `0.0`.
 
-## Camelot-Punktetabelle (`_calculate_compatibility_inner` [:399])
+## Camelot-Punktetabelle (`_calculate_compatibility_inner` [hpg_core/playlist.py])
 
 Reihenfolge der Zweige ist bindend — der erste Treffer gewinnt:
 
@@ -62,7 +62,7 @@ multipliziert, wenn die Relation nicht `direct` ist.
 liefert `(0.0, "half")`, Gate passiert, gleiche Tonart -> `int(100 * 0.85)` =
 **85**.
 
-## effective_bpm_diff [models.py:110]
+## effective_bpm_diff [hpg_core/models.py]
 
 Misst **immer im Tempo-Raum von bpm1** (Track A bleibt laufen):
 `|b1-b2|` direct, `|b1-b2*2|` half, `|b1-b2/2|` double, `min()` gewinnt.
@@ -72,14 +72,14 @@ reines `direct`.
 
 ## scoring_context — die HPG-001-Regel
 
-`resolve_scoring_context(mode, advanced_params)` [playlist.py:1909] liefert
+`resolve_scoring_context(mode, advanced_params)` [hpg_core/playlist.py] liefert
 genau die Scoring-Parameter, die die gewaehlte Strategie beim Sortieren
 wirklich nutzt (Strategien ohne `harmonic_strictness` liefern `{}`).
 
 **Anzeige, Reorder, Preview, Quality und Empfehlungen muessen exakt diesen
 Kontext durchreichen.** Sonst optimiert die Sortierung gegen ein anderes Ziel
 als die Zahl, die der Nutzer sieht. `calculate_playlist_quality(tracks,
-bpm_tolerance, scoring_context)` [:1649] mittelt denselben erweiterten Score.
+bpm_tolerance, scoring_context)` [hpg_core/playlist.py] mittelt denselben erweiterten Score.
 
 ## Caches
 
@@ -87,17 +87,17 @@ bpm_tolerance, scoring_context)` [:1649] mittelt denselben erweiterten Score.
 waehrend `generate_playlist`/`benchmark` gesetzt sind. Direkte API-Aufrufe
 laufen bewusst ungecacht. Cache-Key nutzt `_track_cache_key` (Track-Identitaet),
 nicht Deep-Compare — `Track` ist `@dataclass(eq=False)` mit `__eq__`/`__hash__`
-ueber `track_id` [models.py:135].
+ueber `track_id` [hpg_core/models.py].
 
 ## Transition-Ebene
 
-`predict_transition_type` [:1223] waehlt aus: `smooth_blend`, `bass_swap`,
+`predict_transition_type` [hpg_core/playlist.py] waehlt aus: `smooth_blend`, `bass_swap`,
 `breakdown_bridge`, `drop_cut`, `filter_ride`, `halftime_switch`, `echo_out`,
-`cold_cut`, `pro_eq_swap`. `compute_transition_recommendations` [:1459] baut
+`cold_cut`, `pro_eq_swap`. `compute_transition_recommendations` [hpg_core/playlist.py] baut
 daraus `TransitionRecommendation` + `TransitionPlan` (der **eine** Timing-
 Vertrag Richtung Renderer und Anzeige).
 
-`SetTimeline` / `compute_set_timeline` [:2172] liefert die Zeitleisten-Ansicht
+`SetTimeline` / `compute_set_timeline` [hpg_core/playlist.py] liefert die Zeitleisten-Ansicht
 (Phasen, Peak-Track, Energie-Kurve).
 
 ## Camelot-Tabelle als reine Funktion (2026-08-22)

@@ -9,7 +9,7 @@ description: Use when an HPG code change has no visible effect, or when working 
 
 **Cache-Hit.** `analyze_track` fragt den Cache vor Decode und Audio-Features,
 aber nach Pfad-/Ressourcenpruefung, echter Audiodauer und Ermittlung der
-Rekordbox-Daten samt Signatur [analysis.py:1659-1702]. Ein geaenderter
+Rekordbox-Daten samt Signatur in `analyze_track` [hpg_core/analysis.py]. Ein geaenderter
 Algorithmus liefert weiter die alten Werte, solange Cache-Key und Version
 passen.
 
@@ -99,7 +99,7 @@ Produktiv-DB anfassen.
 
 ## Cache-Key
 
-`generate_cache_key(file_path, source_signature)` [caching.py:754]:
+`generate_cache_key(file_path, source_signature)` [hpg_core/caching.py]:
 
 ```
 normcase(abspath(normpath(pfad))) - st_size - st_mtime - st_mtime_ns - st_ctime_ns
@@ -108,7 +108,9 @@ normcase(abspath(normpath(pfad))) - st_size - st_mtime - st_mtime_ns - st_ctime_
 
 `rekordbox_signature` ist wichtig: Rekordbox-BPM/Key/Cues koennen sich
 **ohne** Aenderung der Audiodatei aendern. Deshalb wird die Signatur *vor* dem
-Cache-Lookup geholt [analysis.py:1693-1702].
+Cache-Lookup geholt: `rekordbox_signature` entsteht in `analyze_track`
+[hpg_core/analysis.py], erst danach greift `get_cached_track`
+[hpg_core/caching.py].
 
 Der Key enthaelt **keinen** Algorithmus-Hash. Deshalb ist der `CACHE_VERSION`-
 Bump der einzige Weg, Code-Aenderungen zu invalidieren.
@@ -127,7 +129,7 @@ Bump der einzige Weg, Code-Aenderungen zu invalidieren.
 - ungueltige Zeile beim Lesen -> `_quarantine_cache_row_on_connection`,
   Zeile wird aus `cache` entfernt, Funktion liefert `None` (= Miss,
   Neuanalyse)
-- bestaetigt korrupte DB -> `_quarantine_corrupt_cache` [caching.py:628]
+- bestaetigt korrupte DB -> `_quarantine_corrupt_cache` [hpg_core/caching.py]
 
 ## Geschuetzte Dateien
 
@@ -139,7 +141,7 @@ editieren oder loeschen ohne Ankuendigung**. Zum Inspizieren gibt es
 
 1. Feld in `models.Track` mit sinnvollem Sentinel (`-1.0` wenn `0.0` gueltig
    waere)
-2. `track_to_dict` / `dict_to_track` [caching.py:676/681] pruefen — sie sind die
+2. `track_to_dict` / `dict_to_track` [hpg_core/caching.py] pruefen — sie sind die
    Serialisierungsgrenze
 3. `validate_track_dict` erweitern, falls numerisch/endlich
 4. `CACHE_VERSION` bumpen + Kommentar

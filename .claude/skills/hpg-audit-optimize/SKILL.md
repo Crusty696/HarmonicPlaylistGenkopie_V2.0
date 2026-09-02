@@ -14,23 +14,22 @@ sind. Wer sie als offene Punkte behandelt, auditiert die Vergangenheit.
 Vor jedem Audit: `git log --oneline -10`, `git status --short`, dann die
 Behauptung im Code pruefen.
 
-## Aktueller Abschlussbeleg (2026-08-31, selbst gemessen)
+## Testlauf selbst messen
 
-Der lokale Standardlauf mit explizitem isoliertem Windows-Basetemp
-bestand **3537 Tests** und erreichte **85,85 % Coverage**. GitHub Actions auf
-Commit `3c59dc8` bestand zusätzlich 3522
-Standardtests; 46 Slow-Tests waren dort explizit abgewählt.
+Testanzahl und Coverage stehen bewusst nicht mehr hier — sie veralten mit
+jedem Commit. Aktuellen Stand selbst messen:
+`.\venv312\Scripts\python.exe -m pytest tests/ -q`.
+
+GitHub Actions waehlt Slow-Tests ausdruecklich ab und laeuft deshalb mit
+weniger Tests als der lokale Standardlauf.
 
 ## Historischer Volltest-Snapshot (2026-08-25)
 
 | Fakt | Wert |
 |---|---|
 | Version | 3.7.2 |
-| Testsuite | **2035 passed**, 25 Warnungen (Abschlusslauf) |
-| Coverage | **81,65 %**, Gate 70 % erfuellt |
-| `CACHE_VERSION` | **37**, `hpg_cache_v37.db` |
+| `CACHE_VERSION` (damals) | 37, `hpg_cache_v37.db` |
 | Strategien | **8** (`STRATEGIES`) |
-| `main.py` | **5811 Zeilen** |
 | Kanonische Genres | **9** |
 | Python | 3.12.10 in `venv312` |
 | Worker-Cap | 4 (`PARALLEL_AUTO_MAX_WORKERS`) |
@@ -43,10 +42,10 @@ Volltest-Snapshots vom 2026-08-25. Der aktuelle Code steht seit 2026-08-26 auf
 
 | Fruehere Behauptung | Ehemaliger Fundort | Status 2026-08-25 |
 |---|---|---|
-| `main.py` mit 1600/4944/5351/5752 Zeilen | Statusdokus/Skills | korrigiert; volatile Zeilenzahl wird nicht mehr festgeschrieben |
+| feste Zeilenzahl fuer `main.py` | Statusdokus/Skills | korrigiert; volatile Zeilenzahl wird nicht mehr festgeschrieben |
 | 10-11 Strategien, alte Namen | `docs/QUICK_START.txt` | korrigiert; 8, Aliase bleiben gueltig |
 | `ui/main_window.py`, `GUI/`-Ordner | `docs/QUICK_START.txt` | korrigiert; alles in `main.py` |
-| veraltete Testzahlen | alte Handoffs/Fixlogs | historische Snapshots; aktueller lokaler Abschlussbeleg 3537 |
+| veraltete Testzahlen | alte Handoffs/Fixlogs | historische Snapshots; aktuellen Stand selbst messen |
 | "Build blockiert", `security.py`-Duplikat | alte Audit-Berichte | erledigt, Datei existiert nicht mehr |
 
 `AUDIT_SKILL-TEAM_2026-07-24.md`, `FULLSTACK_AUDIT_HPG_2026-07-20.md` und die

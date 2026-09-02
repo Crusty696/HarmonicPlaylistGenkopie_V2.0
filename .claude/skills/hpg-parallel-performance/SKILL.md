@@ -5,7 +5,7 @@ description: Use when HPG analysis is slow, hangs, or crashes workers — Parall
 
 # HPG Parallel & Performance
 
-## Worker-Anzahl (`get_optimal_worker_count` [parallel_analyzer.py:30])
+## Worker-Anzahl (`get_optimal_worker_count` [hpg_core/parallel_analyzer.py])
 
 ```
 explizites config.PARALLEL_MAX_WORKERS  -> min(cpu_count, wert)
@@ -18,7 +18,7 @@ dann Workload-Skalierung:
   >= 20         -> max_workers
 ```
 
-**Die harte Obergrenze ist 4** [config.py:108], unabhaengig von der Kernzahl.
+**Die harte Obergrenze ist 4** — `PARALLEL_AUTO_MAX_WORKERS` [hpg_core/config.py], unabhaengig von der Kernzahl.
 Grund im Docstring: mehr als vier parallele native Audio-Decoder fuehren unter
 Windows zu C-Level-Abstuerzen des Pools. Beispiele: 8 Dateien / 16 Kerne -> 2
 Worker; 200 Dateien / 16 Kerne -> 4 Worker.
@@ -28,9 +28,9 @@ Fixtures.
 
 ## In-Flight-Fenster — der Kern des Timeout-Vertrags
 
-`BATCH_SIZE = min(200, max(worker_count * 2, total // 4))` [:168], aber
+`BATCH_SIZE = min(200, max(worker_count * 2, total // 4))` [hpg_core/parallel_analyzer.py], aber
 **hoechstens `worker_count` Futures gleichzeitig eingereiht** (`submit_available`
-[:219]). Ohne das war `future.result(timeout=...)` wirkungslos: die Futures
+[hpg_core/parallel_analyzer.py]). Ohne das war `future.result(timeout=...)` wirkungslos: die Futures
 waren beim Aufruf laengst fertig oder standen noch in der Queue.
 
 Zwei unabhaengige Uhren:
@@ -44,19 +44,19 @@ Zwei unabhaengige Uhren:
 
 - `BrokenProcessPool` -> Pool als kaputt markieren, terminieren, restliche
   Dateien einzeln in einem **wiederverwendeten** Recovery-Executor
-  (`max_workers=1`, [:382]) nachfahren
+  (`max_workers=1`, [hpg_core/parallel_analyzer.py]) nachfahren
 - crasht auch der: diese eine Datei wird `[CRASHED/SKIPPED]` (Track `None`)
 - Logzeile lesen und fragen *welche Datei* korrupt ist — nicht den Mechanismus
   reparieren
 
-`_worker_init` [:74] waermt Imports im Kindprozess vor. Ohne den zahlte jeder
+`_worker_init` [hpg_core/parallel_analyzer.py] waermt Imports im Kindprozess vor. Ohne den zahlte jeder
 neue Pool librosa-Import + Rekordbox-DB-Scan.
 
 ## Cancel
 
 `analyze_files(..., cancel_callback=...)`; `AnalysisWorker.request_cancel`
 setzt nur ein Flag. Der Pool pollt kooperativ (`wait(..., timeout=0.5)`) und
-ruft `_terminate_executor_processes` [:21]. Wer einen neuen langlaufenden
+ruft `_terminate_executor_processes` [hpg_core/parallel_analyzer.py]. Wer einen neuen langlaufenden
 Pfad baut, muss das Callback durchreichen — sonst haengt Abbruch.
 
 ## Performance-Hebel (mit Messung, nicht mit Gefuehl)
@@ -65,7 +65,7 @@ Pfad baut, muss das Callback durchreichen — sonst haengt Abbruch.
 2. Rekordbox-Fast-Path nicht kaputtmachen (~12x) — Skill `hpg-rekordbox`
 3. `_COMPAT_CACHE`/`_ENHANCED_COMPAT_CACHE` in `generate_playlist`
 4. `LOOKAHEAD_TOP_K = 8` begrenzt die Harmonic-Flow-Rekursion
-5. `MAX_SSM_FRAMES = 3000` [structure_analyzer.py] deckelt die
+5. `MAX_SSM_FRAMES = 3000` [hpg_core/structure_analyzer.py] deckelt die
    Self-Similarity-Matrix (~72 MB); ohne das gab es 1,3 GB/Track
 
 Messen: `tests/performance_fixtures.py` (vor-analysierte Tracks, kein Audio

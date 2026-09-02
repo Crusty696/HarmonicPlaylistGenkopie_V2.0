@@ -23,11 +23,11 @@ Cache-Lookup passiert **vor** der Analyse, nicht danach. Mixpoints entstehen
 **innerhalb** von `analyze_track`, nicht in einem spaeteren Schritt.
 
 ```
-main.AnalysisWorker.run              [main.py:568, run :627]
+main.AnalysisWorker.run              [main.py]
   1 os.walk + Realpath-Containment (Symlink-Ausbruch verworfen)
     + Deckel SECURITY_MAX_PLAYLIST_SIZE (1000)
-  2 ParallelAnalyzer.analyze_files   [parallel_analyzer.py]
-      pro Datei: analysis.analyze_track  [analysis.py:1536]
+  2 ParallelAnalyzer.analyze_files   [hpg_core/parallel_analyzer.py]
+      pro Datei: analysis.analyze_track  [hpg_core/analysis.py]
         a Groessen-/Dauerlimit (500 MB / 7200 s)
         b Rekordbox-Signatur -> Cache-Key -> SQLite-Lookup   << CACHE HIER
         c Miss -> Fast-Path (Rekordbox-BPM/Key, librosa 360 s)
@@ -37,7 +37,7 @@ main.AnalysisWorker.run              [main.py:568, run :627]
         f Mixpunkt-Kandidaten (PSSI-Phrasen, Cues, Sektionen, Analyzer)
           -> cachen
   3 apply_resource_limits (Ressourcenfilter)
-  4 analysis_done -> MainWindow.analysis_finished  [main.py:5164]
+  4 analysis_done -> MainWindow.analysis_finished  [main.py]
   5 playlist.generate_playlist (8 Strategien)
   6 playlist.compute_transition_recommendations -> TransitionPlan
   7 optional AIAnalysisWorker (LLM, nur Mood/Subgenre, kein Audio)
@@ -48,20 +48,20 @@ main.AnalysisWorker.run              [main.py:568, run :627]
 
 | Thema | Datei | Einstieg |
 |---|---|---|
-| GUI, alle Worker, Panels | `main.py` (5811 Z., 2026-08-26) | `MainWindow.init_ui` |
-| Track-Datenmodell, Camelot, Anker | `hpg_core/models.py` | `class Track` :205 |
-| Audio-Analyse | `hpg_core/analysis.py` | `analyze_track` :1536 |
-| Mixpoints, DJ-Empfehlungen | `hpg_core/dj_brain.py` | `calculate_genre_aware_mix_points` :109, `generate_dj_recommendation` :500, `calculate_paired_mix_points` :702 |
-| Strategien + Scoring | `hpg_core/playlist.py` | `STRATEGIES` :2187 |
-| Genre-Tabellen (SSoT) | `hpg_core/genres.py` | `CANONICAL_GENRES` :21 |
-| Cache | `hpg_core/caching.py` | `CACHE_VERSION` :116 |
+| GUI, alle Worker, Panels | `main.py` | `MainWindow.init_ui` |
+| Track-Datenmodell, Camelot, Anker | `hpg_core/models.py` | `class Track` |
+| Audio-Analyse | `hpg_core/analysis.py` | `analyze_track` |
+| Mixpoints, DJ-Empfehlungen | `hpg_core/dj_brain.py` | `calculate_genre_aware_mix_points`, `generate_dj_recommendation`, `calculate_paired_mix_points` |
+| Strategien + Scoring | `hpg_core/playlist.py` | `STRATEGIES` |
+| Genre-Tabellen (SSoT) | `hpg_core/genres.py` | `CANONICAL_GENRES` |
+| Cache | `hpg_core/caching.py` | `CACHE_VERSION` |
 | PSSI-Phrasen | `hpg_core/rekordbox_phrases.py` | `phrases_from_anlz` |
 | Mixpunkt-Kandidaten | `hpg_core/mix_candidates.py` | `build_track_candidates` |
-| Preview-DSP | `hpg_core/transition_renderer.py` | `render_transition_clip` :164 |
-| Rekordbox-Import | `hpg_core/rekordbox_importer.py` | `class RekordboxImporter` :92 |
+| Preview-DSP | `hpg_core/transition_renderer.py` | `render_transition_clip` |
+| Rekordbox-Import | `hpg_core/rekordbox_importer.py` | `class RekordboxImporter` |
 | Export | `hpg_core/exporters/` | m3u8, Rekordbox-XML |
 
-**GUI-Navigation** (`SidebarWidget.NAV_ITEMS`, main.py:2182): LIBRARY ·
+**GUI-Navigation** (`SidebarWidget.NAV_ITEMS` [main.py]): LIBRARY ·
 PLAYLIST · MIX TIPS · TIMELINE · QUALITY, Umschalten per Ctrl+1..5.
 
 ## Welcher Skill fuer welche Frage
@@ -88,10 +88,10 @@ Dieses Repo hat massive Doku-Drift. Diese Aussagen sind **falsch**, immer im
 Code nachsehen:
 
 - `CLAUDE.md` / `AGENTS.md` enthielten frueher stark veraltete Groessenangaben.
-  Aktuell gemessen: `main.py` 5811 Zeilen (2026-08-26). Zahlen trotzdem vor
-  Gebrauch nachmessen.
+  Zeilenzahlen, Testanzahl und Coverage stehen bewusst nirgends mehr in den
+  Skills — sie veralten mit jedem Commit. Vor Gebrauch selbst messen.
 - `docs/QUICK_START.txt` nannte frueher 10 Strategien, `ui/main_window.py` und
-  "961 Tests". Das ist korrigiert: 8 Strategien, kein `ui/`-Paket.
+  eine laengst ueberholte Testzahl. Korrigiert: 8 Strategien, kein `ui/`-Paket.
 - `AUDIT_SKILL-TEAM_2026-07-24.md` und `FULLSTACK_AUDIT_*` sind **Snapshots**;
   ihre Befunde sind grossteils gefixt. Nicht als offene Punkte behandeln.
 

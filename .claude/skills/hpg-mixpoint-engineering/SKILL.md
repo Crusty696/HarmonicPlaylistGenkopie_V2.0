@@ -17,10 +17,10 @@ mix_in  = quantize_to_grid(t, grid, anchor, "ceil")     # nie VOR dem Ereignis
 mix_out = quantize_to_grid(t, grid, anchor, "floor")    # nie NACH dem Ereignis
 ```
 
-`quantize_to_grid` [models.py:50] ist die einzige erlaubte Quantisierung fuer
+`quantize_to_grid` [hpg_core/models.py] ist die einzige erlaubte Quantisierung fuer
 `Track.mix_in_point`/`mix_out_point`. Fuer das unregelmaessige PSSI-Gitter
 (Phrasenlaengen variieren) kommt zusaetzlich `quantize_to_points`
-[mix_candidates.py] dazu — gleiche `ceil`/`floor`-Toleranz
+[hpg_core/mix_candidates.py] dazu — gleiche `ceil`/`floor`-Toleranz
 (`QUANTIZE_TOLERANCE_SEC`), aber gegen eine sortierte Punktliste statt gegen
 ein festes Raster. Keine Inline-Formeln, keine `round(x, 2)` innerhalb der
 Kette — gerundet wird erst an der Anzeige-/Exportgrenze (R9/N15).
@@ -32,13 +32,13 @@ Kette — gerundet wird erst an der Anzeige-/Exportgrenze (R9/N15).
 | Takt-Anker | `Track.first_downbeat` | wo die "1" liegt; Untergrenze `min_mix_in` |
 | Phrasen-Anker | `Track.phrase_anchor` | das **Gitter** (`anchor`-Parameter) |
 
-`phrase_anchor` [models.py:226] liefert `first_phrase` nur, wenn **alle drei**
+`phrase_anchor` [hpg_core/models.py] liefert `first_phrase` nur, wenn **alle drei**
 Gates halten:
 
 ```python
 first_phrase >= 0.0                          # -1.0 = nicht geschaetzt
 and downbeat_confidence > 0.0                # kein erfundenes Raster
-and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # config.py:34, = 0.25
+and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # hpg_core/config.py, = 0.25
 ```
 
 sonst `first_downbeat`.
@@ -53,41 +53,43 @@ das Mix-Fenster kollabiert in den Notfall-Prozent-Pfad. Deshalb nimmt
 
 | # | Quelle | Ort | Bedingung |
 |---|---|---|---|
-| A | `calculate_genre_aware_mix_points` | dj_brain.py:109 | Sections vorhanden |
-| B | `analyze_structure_and_mix_points` | analysis.py:1197 | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
-| C | Rekordbox-Cue-Vorschlag | analysis.py | gerichteter manueller Cue; nach `align_ai_mix_points` nur Uebernahme, wenn das finale Paar den harten Vertrag ohne Sonderrechte erfuellt |
+| A | `calculate_genre_aware_mix_points` | `hpg_core/dj_brain.py` | Sections vorhanden |
+| B | `analyze_structure_and_mix_points` | `hpg_core/analysis.py` | **reine Fassade** — RMS-Aktivitaet -> 3 Pseudo-Sektionen -> delegiert an A |
+| C | Rekordbox-Cue-Vorschlag | `hpg_core/analysis.py` | gerichteter manueller Cue; nach `align_ai_mix_points` nur Uebernahme, wenn das finale Paar den harten Vertrag ohne Sonderrechte erfuellt |
 
-Zugewiesen wird **nur** im `Track(...)`-Konstruktor [analysis.py:1947 und
-:2364]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
+Zugewiesen wird **nur** an den beiden `Track(...)`-Aufbauten — Rekordbox-
+Fast-Path und Voll-Path — in `analyze_track` [hpg_core/analysis.py]. Es gibt kein `track.mix_in_point = ...` irgendwo im Produktivcode
 (per grep verifiziert).
 
 **Korrektur gegenueber aelteren Notizen:** Es gibt **keinen** vierten
 LLM-Schreibpfad mehr. Der AI-Auto-Apply-Block wurde entfernt; `ai_engine`
-liefert Mixpoints nur mit `"mixpoints_advisory": True` [ai_engine.py:132] und
-verwirft sie ganz, wenn `outro_covered` falsch ist [ai_engine.py:118].
+liefert Mixpoints nur mit `"mixpoints_advisory": True` [hpg_core/ai_engine.py] und
+setzt bei falschem `outro_covered` nur die Mixpunkte auf `None`; Subgenre,
+Moods und Beschreibung bleiben erhalten — `mixpunkte_gueltig`
+[hpg_core/ai_engine.py].
 "Letzter Schreibzugriff gewinnt" gilt nicht mehr.
 
 ## Paar-Ebene (ueberschreibt den Track NICHT)
 
-`calculate_paired_mix_points(track_a, track_b)` [dj_brain.py:702]
+`calculate_paired_mix_points(track_a, track_b)` [hpg_core/dj_brain.py]
 - Overlap = `min(Intro-Dauer B, Outro-Dauer A)`
 - loest das Problem, dass ein per-Track-Mix-In den Partner nicht kennt
 - quantisiert **immer** am Ende (B1) mit `anchor_a`/`anchor_b` aus
   `phrase_anchor`
 - `duration <= 0` -> Track-Werte unveraendert lassen (N4)
 
-`generate_dj_recommendation` [dj_brain.py:500] fuellt
+`generate_dj_recommendation` [hpg_core/dj_brain.py] fuellt
 `DJRecommendation.adjusted_mix_out_a` / `adjusted_mix_in_b` /
 `overlap_seconds`, Sentinel `-1.0`.
 
 Aufloesung zur Renderzeit: `resolve_transition_mix_points(transition)`
-[main.py:177] — Prioritaet `plan` > `dj.adjusted_*` (nur bei `>= 0.0`) >
+[main.py] — Prioritaet `plan` > `dj.adjusted_*` (nur bei `>= 0.0`) >
 `track.mix_*_point` > Fallback 16.0 s. **Diese Funktion ist die einzige
 erlaubte Aufloesung**; sie ersetzt drei frueher kopierte Varianten.
 
 ## Sentinel-Regel
 
-`MIX_POINT_UNSET = -1.0` [config.py:26]. `0.0` ist ein **gueltiger** Mixpoint
+`MIX_POINT_UNSET = -1.0` [hpg_core/config.py]. `0.0` ist ein **gueltiger** Mixpoint
 (Track-Anfang).
 
 ```python
@@ -95,7 +97,7 @@ if mix_out >= 0.0:   # richtig
 if mix_out > 0:      # FALSCH — verwirft den Mixpoint bei t=0
 ```
 
-Anzeige: `format_mix_point_display` [main.py:211] zeigt `--:-- (- bars)` bei
+Anzeige: `format_mix_point_display` [main.py] zeigt `--:-- (- bars)` bei
 negativem Wert.
 
 ## Invarianten (bei jeder Aenderung pruefen)
@@ -111,15 +113,15 @@ negativem Wert.
 6. Einheiten: Sekunden intern, Bars nur zur Anzeige
    (`mix_in_bars`/`mix_out_bars`), Samples nur im Renderer
 
-Test-Helfer: `assert_mix_points_valid` [tests/conftest.py:218],
-`assert_phrase_aligned` [tests/conftest.py:247].
+Test-Helfer: `assert_mix_points_valid` [tests/conftest.py],
+`assert_phrase_aligned` [tests/conftest.py].
 
 ## phrase_unit
 
 Kommt aus `GENRE_MIX_PROFILES[genre].phrase_unit`, erlaubt sind nur 8/16/32
 (erzwungen von `_validate_genre_tables`). Psytrance/Trance = 16, sonst
 ueberwiegend 8. Ableitung fuer den Struktur-Analyzer:
-`GENRE_PHRASE_UNITS` [structure_analyzer.py]. Details: Skill `hpg-genres`.
+`GENRE_PHRASE_UNITS` [hpg_core/structure_analyzer.py]. Details: Skill `hpg-genres`.
 
 ## Notfall-Pfade
 
@@ -166,7 +168,7 @@ Cue-Positionsheuristik ("2. Cue = Mix-In, letzter = Mix-Out") ist entfernt.
 `Track.mix_in_point`/`mix_out_point` bleiben in Teil 1 weiterhin Analyzer +
 benannter Cue nach demselben harten Vertrag — die Rang-1-Auswahl aus der Paar-Bewertung ist
 Teil 2/4. Dieser historische Teil-1-Bump fuehrte zu CACHE_VERSION 34;
-aktuell ist CACHE_VERSION 42.
+den aktuellen Wert traegt `CACHE_VERSION` [hpg_core/caching.py].
 
 ## Kandidaten Teil 2 (gebaut 2026-08-22) — Paarung und Bewertung
 
