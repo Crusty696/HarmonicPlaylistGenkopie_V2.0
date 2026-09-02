@@ -66,7 +66,14 @@ logs/error_report.json
 !.env.example
 
 # Claude Code
-.claude/
+# Nur die geteilten Skills und Agenten sind versioniert;
+# Settings, projects/ und memory/ bleiben lokal.
+.claude/*
+!.claude/skills/
+!.claude/agents/
+
+# VERITAS-Auditlaeufe sind Arbeitsartefakte, keine Quelle
+tools/audit/runs/
 
 # Blender Toolkit (nicht Teil von HPG)
 .blender-toolkit/

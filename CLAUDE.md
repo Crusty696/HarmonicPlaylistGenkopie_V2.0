@@ -17,6 +17,10 @@ laden, danach den fachlich passenden Skill:
 `hpg-transition-render`, `hpg-rekordbox`, `hpg-testing-verification`,
 `hpg-release-build`, `hpg-audit-optimize`.
 
+`hpg-veritas` ist kein Fach-Skill, sondern das Audit-Werkzeug: read-only
+Drei-Pass-Forensik mit getrenntem Verifikator. Nur bei ausdruecklichen Voll-,
+Delta- oder Release-Audits laden, nie fuer normale Bugfixes.
+
 Regel: Statusdokumente sind Hypothesen, der Code ist die Wahrheit. Jede
 Behauptung aus einem Markdown vor Gebrauch im Code nachpruefen.
 

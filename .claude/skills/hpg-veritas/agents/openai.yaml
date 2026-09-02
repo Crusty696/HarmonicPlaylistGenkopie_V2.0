@@ -1,0 +1,5 @@
+interface:
+  display_name: "HPG VERITAS"
+  short_description: "Drei-Pass-Forensik mit Evidenz und Sync"
+  default_prompt: "Nutze $hpg-veritas fuer ein read-only Drei-Pass-Audit des vereinbarten HPG-Scopes."
+

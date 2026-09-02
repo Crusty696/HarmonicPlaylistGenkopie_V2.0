@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "python": "3.12.10",
+  "tools": {
+    "bandit": {
+      "distribution": "bandit",
+      "required": false,
+      "version": null
+    },
+    "mypy": {
+      "distribution": "mypy",
+      "required": false,
+      "version": null
+    },
+    "pytest": {
+      "distribution": "pytest",
+      "required": true,
+      "version": "9.1.1"
+    },
+    "pytest-cov": {
+      "distribution": "pytest-cov",
+      "required": true,
+      "version": "7.1.0"
+    },
+    "radon": {
+      "distribution": "radon",
+      "required": false,
+      "version": null
+    },
+    "ruff": {
+      "distribution": "ruff",
+      "required": false,
+      "version": null
+    },
+    "vulture": {
+      "distribution": "vulture",
+      "required": false,
+      "version": null
+    }
+  }
+}
+
