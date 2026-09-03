@@ -632,9 +632,11 @@ def _kandidaten_fuer_paar(
     kwargs: dict,
 ) -> list:
     """PairCandidates des Paars in App-Reihenfolge (pair_candidates.rank_pair_candidates),
-    dauerhaft gecacht in _PAIR_CANDIDATE_CACHE (Schluessel: Track-Identitaet,
-    energy_direction, kwargs; geleert von reset_pair_candidate_cache, das Wahl,
-    Praeferenz und Toleranzen lazy aufrufen). Leer, wenn eine Seite keine
+    gecacht in _PAIR_CANDIDATE_CACHE (Schluessel: Track-Identitaet,
+    energy_direction, kwargs), gedeckelt auf _PAIR_CANDIDATE_CACHE_MAX -- der
+    aelteste Eintrag faellt heraus. Vollstaendig geleert nur von
+    reset_pair_candidate_cache, das Wahl, Praeferenz und Toleranzen lazy
+    aufrufen. Leer, wenn eine Seite keine
     Kandidaten traegt."""
     cancel_check = kwargs.get("cancel_check")
     _check_cancel(cancel_check)
@@ -708,6 +710,10 @@ def _kandidaten_fuer_paar(
     # Weakrefs pruefen bei einer spaeteren id()-Wiederverwendung die Identitaet,
     # ohne alte Analyse-Trackobjekte dauerhaft im Speicher zu halten.
     _PAIR_CANDIDATE_CACHE[key] = (weakref.ref(track1), weakref.ref(track2), paare)
+    # In place verdraengen, damit reset_pair_candidate_cache die einzige
+    # Stelle bleibt, die den Cache als Ganzes leert.
+    while len(_PAIR_CANDIDATE_CACHE) > _PAIR_CANDIDATE_CACHE_MAX:
+        _PAIR_CANDIDATE_CACHE.pop(next(iter(_PAIR_CANDIDATE_CACHE)), None)
     return paare
 
 
@@ -837,10 +843,17 @@ def _calculate_track_edge_metrics(
         track1, track2, bpm_tolerance, **kwargs
     )
     bpm_diff, _ = effective_bpm_diff(track1.bpm, track2.bpm)
-    bpm_smoothness = (
-        math.exp(-bpm_diff / max(float(bpm_tolerance) / 2.0, 1e-9))
-        if bpm_diff <= bpm_tolerance else 0.0
+    # Ohne belastbare BPM ist der Uebergang nicht bewertbar: effective_bpm_diff
+    # liefert fuer 0.0/0.0 die Differenz 0.0, was sonst als perfekte Passung
+    # durchginge. Dasselbe Praedikat wie der Filter in generate_playlist_result.
+    bpm_unbrauchbar = any(
+        not math.isfinite(float(bpm)) or float(bpm) <= 0.0
+        for bpm in (track1.bpm, track2.bpm)
     )
+    if bpm_unbrauchbar or bpm_diff > bpm_tolerance:
+        bpm_smoothness = 0.0
+    else:
+        bpm_smoothness = math.exp(-bpm_diff / max(float(bpm_tolerance) / 2.0, 1e-9))
     candidate_delta_energy = _candidate_delta(kandidat, "energy_lokal")
     if candidate_delta_energy is not None:
         energy_delta = candidate_delta_energy
@@ -878,7 +891,7 @@ def _calculate_track_edge_metrics(
         "mood": mood_match(track1, track2, genre_a),
     }
     overall_score = combine_weighted(components, weights)
-    if bpm_diff > bpm_tolerance:
+    if bpm_diff > bpm_tolerance or bpm_unbrauchbar:
         overall_score = 0.0
 
     candidate_values = kandidat.teilwerte if kandidat is not None else {}
@@ -891,6 +904,11 @@ def _calculate_track_edge_metrics(
         harmonic_score=harmonic_score,
         bpm_smoothness=bpm_smoothness,
         energy_flow=energy_flow,
+        # Bewusst KEIN display_value wie bei groove/bass/timbre/mood: ohne
+        # lokale Mix-In-/Mix-Out-Messung darf der DJ-Brain-Ganztrackwert keinen
+        # scheinbar gueltigen Uebergang vortaeuschen (festgehalten in
+        # tests/test_dj_brain.py). Der berechnete Wert steht in
+        # components["genre"] und geht dort in overall_score ein.
         genre_compatibility=(
             float(candidate_values["genre"])
             if kandidat is not None and candidate_values.get("genre") is not None
@@ -988,6 +1006,16 @@ _COMPAT_CACHE = None
 # Wahl (candidate_choices), Praeferenzen (candidate_preferences) oder Gewichte
 # (tolerances) aendern.
 _PAIR_CANDIDATE_CACHE: dict = {}
+# Gemessen 2026-09-03 (synthetische Tracks, Harmonic Flow, Toleranz 2.0):
+# 60 Tracks -> 2122 Eintraege, ~16,8 KiB je Eintrag. Ohne Grenze waeren es
+# hochgerechnet ~32000 Eintraege (~520 MiB) bei 231 Tracks und ~150000
+# (~2,4 GiB) bei 500. 4096 deckt bei dieser Toleranz einen Lauf bis rund 80
+# Tracks ohne Verdraengung ab und deckelt den Rest auf ~69 MiB. Bei weiter
+# Toleranz reisst kaum ein Paar das BPM-Gate, dann gilt n*(n-1) und der Deckel
+# greift schon ab rund 65 Tracks. Verdraengt wird der
+# aelteste Eintrag; ein Treffer weniger kostet eine Neuberechnung, kein
+# anderes Ergebnis.
+_PAIR_CANDIDATE_CACHE_MAX = 4096
 
 
 def reset_pair_candidate_cache() -> None:
@@ -1649,9 +1677,8 @@ def _sort_genre_flow(
     genre_groups = {}
     for track in tracks:
         _check_cancel(cancel_check)
-        detected = getattr(track, "detected_genre", "") or ""
-        genre = detected if detected != "Unknown" else (track.genre or "")
-        if not genre or genre == "Unknown":
+        genre = _resolve_track_genre(track)
+        if genre == "Unknown":
             genre = "Mixed"
         if genre not in genre_groups:
             genre_groups[genre] = []
@@ -2649,9 +2676,11 @@ def calculate_playlist_quality(
     )
     if len(metrics_by_pair) != len(tracks) - 1:
         raise ValueError("transition_metrics muss genau ein Element pro Nachbarpaar enthalten")
-    # Alle Qualitaetswerte stammen aus den individuellen lokalen Messungen
-    # genau der aktiven Mix-Out-/Mix-In-Kandidaten. Ganztrackwerte sind hier
-    # weder Ersatz noch Bonus.
+    # Bevorzugt stammen die Qualitaetswerte aus den lokalen Messungen der
+    # aktiven Mix-Out-/Mix-In-Kandidaten. Liegt fuer ein Paar kein Kandidat vor,
+    # traegt die Metrik Ganztrackwerte, ausser genre_compatibility (bleibt 0.0,
+    # siehe _calculate_track_edge_metrics) -- dieselbe Kante kann von
+    # compute_transition_recommendations trotzdem verworfen werden.
     avg_harmonic = sum(m.harmonic_score for m in metrics_by_pair) / len(metrics_by_pair) / 100.0
     avg_energy = sum(m.energy_flow for m in metrics_by_pair) / len(metrics_by_pair)
     avg_bpm = sum(m.bpm_smoothness for m in metrics_by_pair) / len(metrics_by_pair)
@@ -4052,6 +4081,7 @@ def rebuild_result_for_order(
     previous_result: PlaylistGenerationResult,
     ordered_occurrence_ids,
     choice_snapshot: Optional[Mapping] = None,
+    cancel_check=None,
 ) -> PlaylistGenerationResult:
     """Baut nur Kanten neu; Trackstrategie und Occurrence-IDs bleiben unangetastet."""
     requested = tuple(tuple(item) for item in ordered_occurrence_ids)
@@ -4087,6 +4117,7 @@ def rebuild_result_for_order(
         bpm_tolerance=previous_result.bpm_tolerance,
         context=previous_result.scoring_context_dict(),
         choice_snapshot=selected_choices,
+        cancel_check=cancel_check,
     )
 
 
