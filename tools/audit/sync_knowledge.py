@@ -19,6 +19,7 @@ try:
     from tools.audit.veritas import (
         AUDIT_ROOT,
         REPO_ROOT,
+        READABLE_SCHEMA_VERSIONS,
         SCHEMA_VERSION,
         VeritasError,
         evidence_markdown,
@@ -28,6 +29,7 @@ except ModuleNotFoundError:  # direkter Aufruf aus tools/audit
     from veritas import (  # type: ignore[no-redef]
         AUDIT_ROOT,
         REPO_ROOT,
+        READABLE_SCHEMA_VERSIONS,
         SCHEMA_VERSION,
         VeritasError,
         evidence_markdown,
@@ -73,7 +75,20 @@ def atomic_write(path: Path, content: str) -> None:
             raise
 
 
+def _windows_name(part: str) -> str:
+    """Windows ignoriert Punkte und Leerzeichen am Namensende.
+
+    Ohne das Abstreifen passiert '_raw.' die Schutzliste und landet beim
+    Aufloesen doch in '_raw'.
+    """
+    return part.rstrip(". ").casefold()
+
+
 def frontmatter_value(text: str, key: str) -> str | None:
+    # Notepad und PowerShell 5.1 schreiben UTF-8 mit BOM; ohne das Abstreifen
+    # galt das Frontmatter als nicht vorhanden und der Nutzerstatus fiel
+    # stillschweigend auf den Vorgabewert zurueck.
+    text = text.lstrip("﻿")
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---\n", 4)
@@ -85,8 +100,16 @@ def frontmatter_value(text: str, key: str) -> str | None:
 
 
 def user_comment(text: str) -> str:
+    """Nutzerkommentar hinter dem generierten Block.
+
+    Die Suche beginnt erst nach GENERATED_END: sonst trifft sie die
+    Zeichenfolge in einem Evidenz-Zitat, und die Notiz waechst bei jedem
+    Lauf um einen weiteren Block.
+    """
     marker = "## Nutzerkommentar"
-    start = text.find(marker)
+    ende = text.find(GENERATED_END)
+    ab = (ende + len(GENERATED_END)) if ende >= 0 else 0
+    start = text.find(marker, ab)
     if start < 0:
         return ""
     body_start = start + len(marker)
@@ -100,10 +123,15 @@ def safe_vault_dir(config: dict[str, Any]) -> Path:
         raise VeritasError("vault_root muss absolut sein")
     if relative.is_absolute() or ".." in relative.parts:
         raise VeritasError("vault_audit_dir muss sicher relativ sein")
-    lowered = {part.casefold() for part in (*root.parts, *relative.parts)}
+    resolved = (root / relative).resolve()
+    # Roh UND aufgeloest pruefen: '_raw.' passiert sonst die Liste und landet
+    # beim Aufloesen doch in '_raw'.
+    lowered = {
+        _windows_name(part)
+        for part in (*root.parts, *relative.parts, *resolved.parts)
+    }
     if lowered & PROTECTED_VAULT_PARTS:
         raise VeritasError("Geschuetztes Vault-Ziel ist verboten")
-    resolved = (root / relative).resolve()
     try:
         resolved.relative_to(root.resolve())
     except ValueError as exc:
@@ -141,17 +169,58 @@ def canonical_user_status(finding: dict[str, Any]) -> str:
 
 def render_finding_note(
     finding: dict[str, Any], existing: str, generated_at: str
-) -> tuple[str, str | None]:
+) -> tuple[str | None, str | dict[str, Any] | None]:
+    """Notizinhalt und Drift, ODER (None, Konflikt).
+
+    Ein Konflikt bedeutet: die vorhandene Notiz gehoert dem Nutzer und wird
+    nicht angefasst -- fremder Fingerprint oder unbekannter Statuswert.
+    """
     default_status = canonical_user_status(finding)
     saved_status = frontmatter_value(existing, "status") if existing else None
-    status = saved_status if saved_status in USER_STATUSES else default_status
+    alter_fp = frontmatter_value(existing, "fingerprint") if existing else None
+    fingerprint = str(finding.get("fingerprint", ""))
+    # Fremde Notiz unter derselben ID: nichts uebernehmen, sonst erbt ein
+    # offener Befund den Status "behoben" eines ganz anderen.
+    fremde_notiz = bool(existing) and alter_fp is not None and alter_fp != fingerprint
+    if fremde_notiz:
+        return None, {
+            "id": finding["id"],
+            "grund": "fremder Fingerprint",
+            "notiz_fingerprint": alter_fp,
+            "befund_fingerprint": fingerprint,
+        }
+    normalisiert = saved_status.casefold() if isinstance(saved_status, str) else None
+    schreibweise_geaendert = (
+        isinstance(saved_status, str)
+        and normalisiert in USER_STATUSES
+        and saved_status != normalisiert
+    )
+    if normalisiert in USER_STATUSES:
+        status = normalisiert
+    elif saved_status is not None and existing:
+        # C6: ein unbekannter Wert wurde bisher kommentarlos ersetzt.
+        return None, {
+            "id": finding["id"],
+            "grund": "unbekannter Statuswert",
+            "vorgefunden": saved_status,
+        }
+    else:
+        status = default_status
     comment = user_comment(existing) if existing else ""
     drift = status if status != default_status else None
+    if schreibweise_geaendert:
+        # Nutzertext wird kleingeschrieben zurueckgeschrieben -- das ist eine
+        # Aenderung an seiner Datei und gehoert gemeldet.
+        drift = drift or status
+    if existing and alter_fp is None:
+        # Erstmigration: die Notiz stammt aus der Zeit ohne Fingerprint.
+        drift = drift or status
     tags = f"[veritas, audit, {str(finding.get('category', '')).casefold().replace(' ', '-')}]"
     content = f"""---
 type: audit-finding
 project: HarmonicPlaylistGenerator
 id: {finding['id']}
+fingerprint: {fingerprint}
 status: {status}
 severity: {finding['severity']}
 kategorie: {finding['category']}
@@ -189,7 +258,7 @@ tags: {tags}
 
 
 def validate_learnings(data: dict[str, Any], finding_ids: set[str]) -> list[dict[str, Any]]:
-    if data.get("schema_version") != SCHEMA_VERSION:
+    if data.get("schema_version") not in READABLE_SCHEMA_VERSIONS:
         raise VeritasError("learnings.json: falsche schema_version")
     raw = data.get("learnings")
     if not isinstance(raw, list):
@@ -349,11 +418,18 @@ def render_active_learnings(learnings: list[dict[str, Any]], max_lines: int) -> 
     if not active:
         lines.append("Noch keine bestaetigten Learnings.")
     else:
+        # Die zwei Kopfzeilen zaehlten im Limit mit: von 25 aktiven Regeln
+        # landeten 18 in der Datei, ohne jeden Hinweis auf den Rest.
+        geschrieben = 0
         for learning in active:
-            candidate = f"- {learning['id']}: {learning['rule']}"
-            if len(lines) >= max_lines:
+            if len(lines) >= max_lines - 1:
                 break
-            lines.append(candidate)
+            lines.append(f"- {learning['id']}: {learning['rule']}")
+            geschrieben += 1
+        if geschrieben < len(active):
+            lines.append(
+                f"- ... {len(active) - geschrieben} weitere, siehe LESSONS.md"
+            )
     return "\n".join(lines)
 
 
@@ -379,7 +455,9 @@ def active_learning_targets(config: dict[str, Any]) -> list[str]:
 
 def build_expected(
     run_dir: Path, repo: Path, config: dict[str, Any]
-) -> tuple[dict[Path, str], list[dict[str, str]], list[str]]:
+) -> tuple[
+    dict[Path, str], list[dict[str, Any]], list[str], list[dict[str, Any]]
+]:
     canonical = read_json(run_dir / "findings.json")
     verifier_context = canonical.get("verifier_context_id")
     if not isinstance(verifier_context, str) or not verifier_context.strip():
@@ -420,11 +498,17 @@ def build_expected(
 
     vault_dir = safe_vault_dir(config)
     expected: dict[Path, str] = {}
-    status_drifts: list[dict[str, str]] = []
+    status_drifts: list[dict[str, Any]] = []
+    konflikte: list[dict[str, Any]] = []
     for finding in findings:
         target = vault_dir / "Befunde" / f"{finding['id']}.md"
         existing = target.read_text(encoding="utf-8") if target.is_file() else ""
         content, drift = render_finding_note(finding, existing, generated_at)
+        if content is None:
+            # Fremder Fingerprint oder unbekannter Statuswert: die Notiz
+            # gehoert dem Nutzer und wird nicht angefasst.
+            konflikte.append({**drift, "pfad": str(target)})
+            continue
         expected[target] = content
         if drift:
             status_drifts.append(
@@ -453,7 +537,7 @@ def build_expected(
             for path in directory.glob(pattern):
                 if path.stem not in known:
                     orphans.append(str(path))
-    return expected, status_drifts, sorted(orphans)
+    return expected, status_drifts, sorted(orphans), konflikte
 
 
 def diff_plan(expected: dict[Path, str], orphans: list[str]) -> dict[str, Any]:
@@ -466,7 +550,12 @@ def diff_plan(expected: dict[Path, str], orphans: list[str]) -> dict[str, Any]:
     return {
         "changes": changes,
         "orphans": orphans,
-        "sync_difference_count": len(changes) + len(orphans),
+        # Waisen zaehlen NICHT mit: --apply entfernt sie nie, der Zaehler
+        # koennte sonst nie 0 werden und das Abschluss-Gate waere mit einer
+        # einzigen Waise dauerhaft unerreichbar. Sie bleiben als eigener
+        # Posten sichtbar und sind Handarbeit.
+        "sync_difference_count": len(changes),
+        "orphan_count": len(orphans),
     }
 
 
@@ -479,21 +568,42 @@ def command_sync(
     # ein abweichendes Profil kann nur programmatisch uebergeben werden.
     resolved = config_path if config_path is not None else AUDIT_ROOT / "sync_targets.json"
     config = read_json(Path(resolved).resolve())
-    expected, status_drifts, orphans = build_expected(run_dir, repo, config)
+    expected, status_drifts, orphans, konflikte = build_expected(run_dir, repo, config)
     before = diff_plan(expected, orphans)
+    geschrieben: list[str] = []
     if args.apply:
-        for path, content in expected.items():
-            atomic_write(path, content)
+        # Nicht transaktional ueber mehrere Dateien: bricht ein Schreibvorgang
+        # ab, muss der Teilzustand sichtbar sein statt still zu bleiben.
+        try:
+            for path, content in expected.items():
+                atomic_write(path, content)
+                geschrieben.append(str(path))
+        except OSError as exc:
+            print(json.dumps({
+                "mode": "apply",
+                "abgebrochen_nach": geschrieben,
+                "fehler": str(exc),
+            }, ensure_ascii=False, indent=2))
+            raise VeritasError(
+                f"Sync nach {len(geschrieben)} von {len(expected)} Dateien "
+                f"abgebrochen: {exc}"
+            ) from exc
     after = diff_plan(expected, orphans)
     payload = {
         "mode": "apply" if args.apply else "dry-run",
         "planned": before,
         "after": after,
         "user_status_pending_verification": status_drifts,
-        "complete": bool(args.apply and after["sync_difference_count"] == 0),
+        # Notizen, die dem Nutzer gehoeren und deshalb nicht angefasst wurden.
+        "konflikte": konflikte,
+        "complete": bool(
+            args.apply
+            and after["sync_difference_count"] == 0
+            and not konflikte
+        ),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    if args.apply and after["sync_difference_count"] != 0:
+    if args.apply and (after["sync_difference_count"] != 0 or konflikte):
         return 1
     return 0
 

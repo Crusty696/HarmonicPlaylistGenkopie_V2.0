@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# Laeufe mit Schema 1 bleiben lesbar; neue Felder werden defensiv gelesen.
+READABLE_SCHEMA_VERSIONS = (1, 2)
 DEFAULT_SEED = 20260831
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AUDIT_ROOT = Path(__file__).resolve().parent
@@ -137,6 +139,11 @@ def finding_fingerprint(finding: dict[str, Any]) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
+def _ist_zeilennummer(wert: Any) -> bool:
+    """Echter Integer -- bool ist in Python ein int und waere sonst Zeile 1."""
+    return isinstance(wert, int) and not isinstance(wert, bool)
+
+
 def _required_string(
     container: dict[str, Any], key: str, prefix: str, errors: list[str]
 ) -> str:
@@ -164,7 +171,7 @@ def validate_evidence(
             start = item.get("line_start")
             end = item.get("line_end")
             quote = item.get("quote")
-            if not isinstance(start, int) or not isinstance(end, int):
+            if not _ist_zeilennummer(start) or not _ist_zeilennummer(end):
                 errors.append(f"{item_prefix}: line_start/line_end muessen Integer sein")
                 continue
             resolved, path_error = resolve_repo_path(repo, raw_path)
@@ -182,8 +189,10 @@ def validate_evidence(
             if quote != actual:
                 errors.append(f"{item_prefix}.quote: stimmt nicht exakt mit Quelle ueberein")
         elif kind in {"command", "test"}:
-            for key in ("command", "cwd", "output", "output_sha256", "timestamp"):
+            for key in ("command", "cwd", "output_sha256", "timestamp"):
                 _required_string(item, key, item_prefix, errors)
+            if not isinstance(item.get("output"), str):
+                errors.append(f"{item_prefix}.output: String erforderlich")
             if not isinstance(item.get("exit_code"), int):
                 errors.append(f"{item_prefix}.exit_code: Integer erforderlich")
             output = item.get("output")
@@ -199,8 +208,11 @@ def validate_pass_document(
     document: dict[str, Any], repo: Path, expected_pass: int | None = None
 ) -> list[str]:
     errors: list[str] = []
-    if document.get("schema_version") != SCHEMA_VERSION:
-        errors.append(f"schema_version: erwartet {SCHEMA_VERSION}")
+    if document.get("schema_version") not in READABLE_SCHEMA_VERSIONS:
+        errors.append(
+            "schema_version: erwartet eine von "
+            + ", ".join(str(x) for x in READABLE_SCHEMA_VERSIONS)
+        )
     pass_id = document.get("pass_id")
     if pass_id not in {1, 2, 3}:
         errors.append("pass_id: 1, 2 oder 3 erforderlich")
@@ -209,7 +221,9 @@ def validate_pass_document(
     _required_string(document, "agent_context_id", "pass", errors)
     if not isinstance(document.get("file_order_seed"), int):
         errors.append("pass.file_order_seed: Integer erforderlich")
-    _required_string(document, "role", "pass", errors)
+    rolle = _required_string(document, "role", "pass", errors)
+    if rolle and rolle not in AUDIT_ROLES:
+        errors.append("pass.role: unbekannte Fachrolle")
     role_results = document.get("role_results")
     if not isinstance(role_results, list):
         errors.append("role_results: Liste erforderlich")
@@ -260,7 +274,7 @@ def validate_pass_document(
             errors.append(f"{prefix}.confidence: hoch, mittel oder niedrig erforderlich")
         start = finding.get("line_start")
         end = finding.get("line_end")
-        if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start:
+        if not _ist_zeilennummer(start) or not _ist_zeilennummer(end) or start < 1 or end < start:
             errors.append(f"{prefix}: ungueltiger Zeilenbereich")
         path, path_error = resolve_repo_path(repo, str(finding.get("path", "")))
         if path_error:
@@ -355,9 +369,12 @@ def installed_version(distribution: str) -> str | None:
 
 
 def git_value(repo: Path, *args: str) -> str | None:
-    result = subprocess.run(
-        ["git", *args], cwd=repo, text=True, capture_output=True, check=False
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=repo, text=True, capture_output=True, check=False
+        )
+    except OSError:
+        return None
     if result.returncode != 0:
         return None
     return result.stdout.strip()
@@ -421,6 +438,18 @@ def command_init_run(args: argparse.Namespace) -> int:
         raise VeritasError("HPG venv312 fehlt im angegebenen Repository")
     if run_dir.exists() and any(run_dir.iterdir()):
         raise VeritasError(f"Laufverzeichnis ist nicht leer: {run_dir}")
+    # Umgebung VOR dem ersten Schreibvorgang pruefen: sonst bleibt ein halb
+    # angelegter Laufordner liegen, der sich nicht mehr initialisieren laesst.
+    snapshot = environment_snapshot(repo, args.seed)
+    umgebungsfehler = validate_toolchain(snapshot)
+    if umgebungsfehler and not getattr(args, "ignore_toolchain", False):
+        raise VeritasError(
+            "Umgebung erfuellt den Laufvertrag nicht:\n- "
+            + "\n- ".join(umgebungsfehler)
+            + "\nMit --ignore-toolchain trotzdem initialisieren; der Lauf gilt"
+            " dann als unter fremder Toolchain erhoben."
+        )
+    snapshot["toolchain_errors"] = umgebungsfehler
     run_dir.mkdir(parents=True, exist_ok=True)
     contract = {
         "schema_version": SCHEMA_VERSION,
@@ -446,7 +475,7 @@ def command_init_run(args: argparse.Namespace) -> int:
         ],
     }
     write_json(run_dir / "contract.json", contract)
-    write_json(run_dir / "environment.json", environment_snapshot(repo, args.seed))
+    write_json(run_dir / "environment.json", snapshot)
     for pass_id, pass_name in enumerate(PASS_NAMES, start=1):
         write_json(run_dir / pass_name / "findings.json", empty_pass(pass_id, args.seed))
     learning_source = (
@@ -459,10 +488,24 @@ def command_init_run(args: argparse.Namespace) -> int:
         if learning_source.is_file()
         else {"schema_version": SCHEMA_VERSION, "learnings": []}
     )
-    if learning_data.get("schema_version") != SCHEMA_VERSION or not isinstance(
+    if learning_data.get("schema_version") not in READABLE_SCHEMA_VERSIONS or not isinstance(
         learning_data.get("learnings"), list
     ):
         raise VeritasError(f"Ungueltiger Learning-Speicher: {learning_source}")
+    for learning in learning_data["learnings"]:
+        if not isinstance(learning, dict):
+            continue
+        anwendungen = learning.get("applications", [])
+        if isinstance(anwendungen, list) and learning.get("applied") not in (
+            None, len(anwendungen)
+        ):
+            raise VeritasError(
+                f"{learning_source}: {learning.get('id')} meldet applied="
+                f"{learning.get('applied')}, fuehrt aber {len(anwendungen)} "
+                "Anwendungen. Der Merge leitet den Zaehler aus den Anwendungen "
+                "ab und wuerde die Angabe stillschweigend ueberschreiben."
+            )
+    learning_data["schema_version"] = SCHEMA_VERSION
     write_json(run_dir / "learnings.json", learning_data)
     print(json.dumps({"status": "initialized", "run_dir": str(run_dir)}, ensure_ascii=False))
     return 0
@@ -506,14 +549,18 @@ def load_passes(run_dir: Path, repo: Path) -> list[dict[str, Any]]:
         pass_errors = validate_pass_document(document, repo, pass_id)
         errors.extend(f"{pass_name}: {error}" for error in pass_errors)
         documents.append(document)
-    contexts = [document.get("agent_context_id") for document in documents[:2]]
-    seeds = [document.get("file_order_seed") for document in documents[:2]]
-    if len(set(contexts)) != 2:
-        errors.append("Pass 1 und Pass 2 brauchen verschiedene agent_context_id")
-    if len(set(seeds)) != 2:
-        errors.append("Pass 1 und Pass 2 brauchen verschiedene file_order_seed")
-    if any(str(context).startswith("AUSFUELLEN") for context in contexts):
-        errors.append("Pass 1/2 enthalten noch Kontext-Platzhalter")
+    alle_kontexte = [document.get("agent_context_id") for document in documents]
+    alle_seeds = [document.get("file_order_seed") for document in documents]
+    if len(set(alle_kontexte)) != len(alle_kontexte):
+        errors.append("Alle drei Paesse brauchen verschiedene agent_context_id")
+    if len(set(alle_seeds)) != len(alle_seeds):
+        errors.append("Alle drei Paesse brauchen verschiedene file_order_seed")
+    for index, kontext in enumerate(alle_kontexte, start=1):
+        if str(kontext).startswith("AUSFUELLEN"):
+            errors.append(f"Pass {index} enthaelt noch den Kontext-Platzhalter")
+    for index, document in enumerate(documents, start=1):
+        if str(document.get("role", "")).startswith("AUSFUELLEN"):
+            errors.append(f"Pass {index} enthaelt noch den Rollen-Platzhalter")
     learning_data = read_json(run_dir / "learnings.json")
     raw_learnings = learning_data.get("learnings")
     if not isinstance(raw_learnings, list):
@@ -577,7 +624,21 @@ def merge_documents(
         # Formulierung ist Variante, kein Widerspruch.
         merge_status = "UNBESTAETIGT"
         conflicts: list[str] = []
-        hinweise: list[str] = []
+        hinweise: list[dict[str, str]] = []
+        # B1: der Fingerprint kennt bewusst keinen Zeilenbereich, damit
+        # Verschiebungen denselben Befund ergeben. Der Preis: zwei echte
+        # Fundstellen mit gleicher Regel und gleichem Kontext verschmelzen.
+        # Deshalb werden alle vorkommenden Bereiche gefuehrt.
+        fundstellen = sorted(
+            {(int(f["line_start"]), int(f["line_end"])) for _, f in occurrences}
+        )
+        if len(fundstellen) > 1:
+            hinweise.append({
+                "art": "zeilenbereich",
+                "text": "Die Paesse nennen verschiedene Zeilenbereiche: "
+                        + ", ".join(f"{a}-{b}" for a, b in fundstellen)
+                        + " -- moeglicherweise zwei verschiedene Fundstellen",
+            })
         if len(passes) >= 2:
             if len(severities) == 1 and len(confidences) == 1:
                 merge_status = "BESTAETIGT"
@@ -597,15 +658,32 @@ def merge_documents(
                 for pass_id, finding in occurrences
             }
             if 1 in texte and 2 in texte and texte[1] == texte[2]:
-                hinweise.append(
-                    "Claim und Impact sind in Pass 1 und Pass 2 zeichengleich -- "
-                    "die beiden Paesse waren nicht unabhaengig"
-                )
+                hinweise.append({
+                    "art": "prosa-gleichheit",
+                    "text": "Claim und Impact sind in Pass 1 und Pass 2 zeichengleich"
+                            " -- die beiden Paesse waren nicht unabhaengig",
+                })
+            # B4: Pass 3 darf A und B kennen. Ruht eine Bestaetigung allein
+            # auf einem Paar mit Pass 3, ist sie keine unabhaengige
+            # Reproduktion.
+            if 3 in passes and not (1 in passes and 2 in passes):
+                hinweise.append({
+                    "art": "pass-paar",
+                    "text": f"Bestaetigt durch die Paesse {passes} -- Pass 3 kennt"
+                            " Pass 1 und Pass 2, das Paar 1+2 fehlt",
+                })
         finding_id = old_ids.get(fingerprint)
         if finding_id is None:
             maximum += 1
             finding_id = f"V-{maximum:03d}"
         _, primary = occurrences[0]
+        # Bei WIDERSPRUCH ist die schaerfste Meldung massgeblich, sonst
+        # sortiert ein von Pass 2 gemeldetes P0 als P3 ans Ende.
+        kanon_severity = min(severities)
+        kanon_confidence = (
+            primary["confidence"] if len(confidences) == 1
+            else min(confidences, key=lambda c: ("niedrig", "mittel", "hoch").index(c))
+        )
         merged.append(
             {
                 "id": finding_id,
@@ -618,13 +696,16 @@ def merge_documents(
                 "rule": primary["rule"],
                 "claim": primary["claim"],
                 "impact": primary["impact"],
-                "severity": primary["severity"],
+                "severity": kanon_severity,
                 "category": primary["category"],
                 "path": primary["path"],
                 "line_start": primary["line_start"],
                 "line_end": primary["line_end"],
                 "context": primary["context"],
-                "confidence": primary["confidence"],
+                "confidence": kanon_confidence,
+                "fundstellen": [
+                    {"line_start": a, "line_end": b} for a, b in fundstellen
+                ],
                 "evidence": [
                     {"pass_id": pass_id, "items": finding["evidence"]}
                     for pass_id, finding in occurrences
@@ -641,12 +722,18 @@ def merge_documents(
                         "claim": finding["claim"],
                         "impact": finding["impact"],
                         "category": finding["category"],
+                        "severity": finding["severity"],
+                        "confidence": finding["confidence"],
                     }
                     for pass_id, finding in occurrences
                 ],
             }
         )
-    merged.sort(key=lambda finding: (finding["severity"], finding["id"]))
+    def _sortierschluessel(finding: dict[str, Any]) -> tuple[str, int, str]:
+        treffer = re.fullmatch(r"V-(\d+)", str(finding["id"]))
+        return (finding["severity"], int(treffer.group(1)) if treffer else 0, str(finding["id"]))
+
+    merged.sort(key=_sortierschluessel)
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": utc_now(),
@@ -666,21 +753,25 @@ def run_report_date(contract: dict[str, Any]) -> str:
 
 
 def evidence_markdown(finding: dict[str, Any]) -> str:
-    groups = finding.get("evidence", [])
-    if not groups:
-        return "Keine Evidenz gespeichert."
-    first_group = groups[0]
-    items = first_group.get("items", []) if isinstance(first_group, dict) else []
-    if not items:
-        return "Keine Evidenz gespeichert."
-    item = items[0]
-    if item.get("kind") == "source":
-        return (
-            f"`{item['path']}:{item['line_start']}`\n\n"
-            f"```text\n{item['quote']}\n```"
-        )
-    output = str(item.get("output", ""))
-    return f"`{item.get('command', '')}` (Exit {item.get('exit_code')})\n\n```text\n{output}\n```"
+    bloecke: list[str] = []
+    for gruppe in finding.get("evidence", []):
+        if not isinstance(gruppe, dict):
+            continue
+        for item in gruppe.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") == "source":
+                ort = f"{item.get('path', '?')}:{item.get('line_start', '?')}"
+                zitat = item.get("quote", "(kein Zitat gespeichert)")
+                block = f"`{ort}`\n\n```text\n{zitat}\n```"
+            else:
+                output = str(item.get("output", ""))
+                block = (
+                    f"`{item.get('command', '')}` (Exit {item.get('exit_code')})"
+                    f"\n\n```text\n{output}\n```"
+                )
+            bloecke.append(f"Pass {gruppe.get('pass_id', '?')}: {block}")
+    return "\n\n".join(bloecke) if bloecke else "Keine Evidenz gespeichert."
 
 
 def render_report(
@@ -688,8 +779,16 @@ def render_report(
 ) -> str:
     findings = canonical.get("findings", [])
     reproduced = sum(1 for finding in findings if len(finding.get("passes", [])) >= 2)
-    verdaechtig = sum(1 for finding in findings if finding.get("hinweise"))
-    quote = (100.0 * reproduced / len(findings)) if findings else 100.0
+    # Hinweise sind typisiert; der Kopf darf nicht jede Art als Prosa-
+    # Gleichheit ausgeben, sonst behauptet der Bericht etwas Falsches.
+    nach_art: dict[str, int] = defaultdict(int)
+    for finding in findings:
+        for hinweis in finding.get("hinweise", []):
+            # Schema 1 kannte nur Strings, und nur die Prosa-Gleichheit.
+            art = hinweis.get("art", "unbekannt") if isinstance(hinweis, dict) else "prosa-gleichheit"
+            nach_art[str(art)] += 1
+    # Quote ohne Befunde ist keine 100 % -- es gibt nichts zu reproduzieren.
+    quote = (100.0 * reproduced / len(findings)) if findings else 0.0
     lines = [
         f"# VERITAS Audit Report {run_report_date(contract)}",
         "",
@@ -703,12 +802,26 @@ def render_report(
         "",
         f"- Befunde gesamt: {len(findings)}",
         f"- In mindestens zwei Paessen: {reproduced}",
-        f"- Quote: {quote:.2f} %",
-        f"- Befunde mit Unabhaengigkeits-Hinweis: {verdaechtig}"
+        f"- Quote: {quote:.2f} %"
+        + ("  <- keine Befunde, es gibt nichts zu reproduzieren" if not findings else ""),
+        f"- Gleiche Prosa in Pass 1 und Pass 2: {nach_art['prosa-gleichheit']}"
         + (
-            "  <- Pass 1 und Pass 2 haben gleich formuliert; der Lauf ist kein"
+            "  <- die beiden Paesse waren nicht unabhaengig; der Lauf ist kein"
             " Drei-Pass-Audit, solange das nicht geklaert ist"
-            if verdaechtig
+            if nach_art["prosa-gleichheit"]
+            else ""
+        ),
+        f"- Bestaetigt ohne das Paar 1+2: {nach_art['pass-paar']}"
+        + (
+            "  <- Pass 3 kennt die Vorgaenger, das ist keine unabhaengige"
+            " Reproduktion"
+            if nach_art["pass-paar"]
+            else ""
+        ),
+        f"- Abweichende Zeilenbereiche: {nach_art['zeilenbereich']}"
+        + (
+            "  <- moeglicherweise zwei verschiedene Fundstellen unter einem Befund"
+            if nach_art["zeilenbereich"]
             else ""
         ),
         "- Pass-Kontexte: "
@@ -731,6 +844,12 @@ def render_report(
                     f"- Auswirkung: {finding['impact']}",
                     f"- Konfidenz: {finding['confidence']}",
                     f"- Merge: {finding['merge_status']}; Verifikator: {finding['verifier_status']}",
+                ]
+            )
+            if finding.get("verifier_note"):
+                lines.append(f"- Verifikator-Begruendung: {finding['verifier_note']}")
+            lines.extend(
+                [
                     "",
                     "Beweis:",
                     "",
@@ -745,11 +864,13 @@ def render_report(
                     + [""]
                 )
             if finding.get("hinweise"):
-                lines.extend(
-                    ["Hinweise:", ""]
-                    + [f"- {entry}" for entry in finding["hinweise"]]
-                    + [""]
-                )
+                lines.extend(["Hinweise:", ""])
+                for hinweis in finding["hinweise"]:
+                    if isinstance(hinweis, dict):
+                        lines.append(f"- [{hinweis.get('art')}] {hinweis.get('text')}")
+                    else:  # Laeufe mit Schema 1 fuehrten reine Strings
+                        lines.append(f"- {hinweis}")
+                lines.append("")
             varianten = finding.get("varianten", [])
             formulierungen = {
                 (
@@ -825,12 +946,12 @@ def update_learning_counters(
             if learning_id not in by_id:
                 raise VeritasError(f"Unbekanntes angewendetes Learning: {learning_id}")
             stored = by_id[learning_id]["applications"]
-            known_ids = {
-                item.get("application_id")
-                for item in stored
-                if isinstance(item, dict)
-            }
-            if application["application_id"] not in known_ids:
+            neu_id = application["application_id"]
+            for index, vorhanden in enumerate(stored):
+                if isinstance(vorhanden, dict) and vorhanden.get("application_id") == neu_id:
+                    stored[index] = application  # korrigierte Fassung ersetzt die alte
+                    break
+            else:
                 stored.append(application)
     for learning in by_id.values():
         applications = learning["applications"]
@@ -845,25 +966,55 @@ def update_learning_counters(
 
 def save_canonical(run_dir: Path, canonical: dict[str, Any], documents: list[dict[str, Any]]) -> Path:
     contract = read_json(run_dir / "contract.json")
-    write_json(run_dir / "findings.json", canonical)
+    # Datum zuerst aufloesen: sonst laege findings.json neu vor, waehrend der
+    # Report an einem kaputten created_at scheitert.
     report_path = run_dir / f"AUDIT_REPORT_{run_report_date(contract)}.md"
-    write_text(report_path, render_report(canonical, contract, documents))
+    bericht = render_report(canonical, contract, documents)
+    write_json(run_dir / "findings.json", canonical)
+    write_text(report_path, bericht)
     return report_path
 
 
 def command_merge(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
     repo = Path(args.repo).resolve()
+    eigener_kanon = run_dir / "findings.json"
+    # A5: merge_documents kennt die Verifikatorfelder nicht und wuerde sie
+    # ersatzlos ueberschreiben. Ein bereits beurteilter Lauf wird deshalb
+    # nicht stillschweigend neu gemergt.
+    if eigener_kanon.is_file() and not getattr(args, "force_remerge", False):
+        vorhanden = read_json(eigener_kanon)
+        if vorhanden.get("verifier_context_id"):
+            raise VeritasError(
+                f"{eigener_kanon} traegt bereits ein Verifikatorurteil "
+                f"({vorhanden['verifier_context_id']}). Ein erneuter Merge "
+                "loescht Status, Note und Kontext. Mit --force-remerge "
+                "erzwingen, nachdem der Laufordner gesichert wurde."
+            )
     documents = load_passes(run_dir, repo)
-    previous = Path(args.previous).resolve() if args.previous else None
+    # A1: ohne Vorgaenger vergibt merge_documents IDs nach Fingerprint-
+    # Sortierung neu; ein Verdikt fuer V-001 traefe danach einen anderen
+    # Befund. Der eigene Kanon ist die Vorgabe, --no-previous erzwingt
+    # bewusste Neunummerierung.
+    if args.previous:
+        previous = Path(args.previous).resolve()
+    elif getattr(args, "no_previous", False) or not eigener_kanon.is_file():
+        previous = None
+    else:
+        previous = eigener_kanon
     canonical = merge_documents(documents, previous)
     update_learning_counters(run_dir, documents, canonical)
     report_path = save_canonical(run_dir, canonical, documents)
-    verdaechtig = sum(1 for f in canonical["findings"] if f.get("hinweise"))
+    nach_art: dict[str, int] = defaultdict(int)
+    for f in canonical["findings"]:
+        for hinweis in f.get("hinweise", []):
+            art = hinweis.get("art", "unbekannt") if isinstance(hinweis, dict) else "prosa-gleichheit"
+            nach_art[str(art)] += 1
     summary = {
         "status": "merged_pending_verifier",
         "findings": len(canonical["findings"]),
-        "unabhaengigkeits_hinweise": verdaechtig,
+        "hinweise": dict(sorted(nach_art.items())),
+        "previous": str(previous) if previous else None,
         "report": str(report_path),
         "canonical": str(run_dir / "findings.json"),
     }
@@ -892,6 +1043,22 @@ def command_apply_verifier(args: argparse.Namespace) -> int:
     ]
     if missing:
         raise VeritasError("Verifikatorentscheidungen fehlen fuer: " + ", ".join(missing))
+    bekannte_ids = {
+        finding.get("id") for finding in canonical.get("findings", [])
+    }
+    unbekannt = sorted(str(k) for k in by_id if k not in bekannte_ids)
+    if unbekannt:
+        raise VeritasError(
+            "Verifikatorentscheidungen fuer unbekannte Befund-IDs: "
+            + ", ".join(unbekannt)
+        )
+    # Entscheidungen zu nicht bestaetigten Befunden werden nicht angewendet --
+    # das ist gewollt, muss aber sichtbar sein statt lautlos zu verschwinden.
+    nicht_angewendet = sorted(
+        str(finding["id"])
+        for finding in canonical.get("findings", [])
+        if finding.get("merge_status") != "BESTAETIGT" and finding.get("id") in by_id
+    )
     for finding in canonical.get("findings", []):
         if finding.get("merge_status") != "BESTAETIGT":
             continue
@@ -902,13 +1069,23 @@ def command_apply_verifier(args: argparse.Namespace) -> int:
             raise VeritasError(f"Ungueltige Entscheidung fuer {finding['id']}: {value}")
         if not isinstance(note, str) or not note.strip():
             raise VeritasError(f"Verifikatornote fehlt fuer {finding['id']}")
+        gemeldeter_fp = decision.get("fingerprint")
+        if gemeldeter_fp is not None and gemeldeter_fp != finding.get("fingerprint"):
+            raise VeritasError(
+                f"Verdikt fuer {finding['id']} traegt einen fremden Fingerprint - "
+                "die Befund-IDs des Laufs haben sich seit dem Urteil verschoben"
+            )
         finding["verifier_status"] = value.upper()
         finding["verifier_note"] = note
         finding["status"] = "BESTAETIGT" if value == "akzeptiert" else "UNBESTAETIGT"
     canonical["verifier_context_id"] = context
     canonical["verifier_applied_at"] = utc_now()
     report_path = save_canonical(run_dir, canonical, documents)
-    print(json.dumps({"status": "verifier_applied", "report": str(report_path)}, ensure_ascii=False))
+    print(json.dumps({
+        "status": "verifier_applied",
+        "nicht_angewendet": nicht_angewendet,
+        "report": str(report_path),
+    }, ensure_ascii=False))
     return 0
 
 
@@ -940,13 +1117,18 @@ def command_self_test(args: argparse.Namespace) -> int:
     vault_root = Path(str(config.get("vault_root", "")))
     if not vault_root.is_absolute():
         errors.append("sync_targets.json: vault_root muss absolut sein")
-    relative_dir = Path(str(config.get("vault_audit_dir", "")))
-    lowered = {
-        part.casefold()
-        for part in (*vault_root.parts, *relative_dir.parts)
-    }
-    if relative_dir.is_absolute() or "_raw" in lowered or "00_claude_memory" in lowered:
-        errors.append("sync_targets.json: unzulaessiges Vault-Ziel")
+    # Dieselbe Funktion wie der Sync, nicht dieselbe Regel zweimal: sonst
+    # meldet self-test gruen, waehrend --apply abbricht.
+    try:
+        from .sync_knowledge import safe_vault_dir
+
+        safe_vault_dir(config)
+    except ImportError:  # direkter Aufruf aus tools/audit
+        from sync_knowledge import safe_vault_dir  # type: ignore[no-redef]
+
+        safe_vault_dir(config)
+    except VeritasError as exc:
+        errors.append(f"sync_targets.json: {exc}")
     payload = {"ok": not errors, "errors": errors, "environment": snapshot}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not errors else 1
@@ -963,6 +1145,11 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--mode", choices=("full", "delta", "release"), default="full")
     init_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     init_parser.add_argument("--previous-learnings")
+    init_parser.add_argument(
+        "--ignore-toolchain",
+        action="store_true",
+        help="Lauf trotz nicht erfuellter Pflichtwerkzeuge initialisieren",
+    )
     init_parser.add_argument("--repo", default=str(REPO_ROOT))
     init_parser.set_defaults(func=command_init_run)
 
@@ -975,6 +1162,16 @@ def build_parser() -> argparse.ArgumentParser:
     merge_parser = subparsers.add_parser("merge", help="Drei valide Paesse mergen")
     merge_parser.add_argument("--run-dir", required=True)
     merge_parser.add_argument("--previous")
+    merge_parser.add_argument(
+        "--no-previous",
+        action="store_true",
+        help="Befund-IDs bewusst neu vergeben statt aus findings.json zu uebernehmen",
+    )
+    merge_parser.add_argument(
+        "--force-remerge",
+        action="store_true",
+        help="Neu mergen, obwohl ein Verifikatorurteil vorliegt (loescht es)",
+    )
     merge_parser.add_argument("--repo", default=str(REPO_ROOT))
     merge_parser.set_defaults(func=command_merge)
 

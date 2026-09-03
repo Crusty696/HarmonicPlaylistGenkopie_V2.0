@@ -263,7 +263,9 @@ def test_merge_updates_learning_counters_idempotently(tmp_path: Path) -> None:
             ],
         },
     )
-    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), previous=None)
+    args = argparse.Namespace(
+        run_dir=str(run_dir), repo=str(repo), previous=None, force_remerge=True
+    )
 
     assert veritas.command_merge(args) == 0
     assert veritas.command_merge(args) == 0
@@ -371,7 +373,7 @@ def test_sync_is_dry_run_by_default_and_apply_reaches_zero_difference(
     )
     assert sync_knowledge.command_sync(apply_args, config_path=config) == 0
     assert note.is_file()
-    expected, _, orphans = sync_knowledge.build_expected(
+    expected, _, orphans, _konflikte = sync_knowledge.build_expected(
         run_dir, repo, veritas.read_json(config)
     )
     assert sync_knowledge.diff_plan(expected, orphans)["sync_difference_count"] == 0
@@ -414,7 +416,7 @@ def test_sync_reports_orphan_without_deleting_it(tmp_path: Path) -> None:
     orphan = vault / "10_Projects" / "HPG" / "_wiki" / "audit" / "Befunde" / "V-999.md"
     orphan.parent.mkdir(parents=True)
     orphan.write_text("user note", encoding="utf-8")
-    expected, _, orphans = sync_knowledge.build_expected(
+    expected, _, orphans, _konflikte = sync_knowledge.build_expected(
         run_dir, repo, veritas.read_json(config)
     )
 
@@ -478,7 +480,7 @@ def test_sync_writes_every_active_learning_mirror(tmp_path: Path) -> None:
     contents = [mirror.read_text(encoding="utf-8") for mirror in mirrors]
     assert all(mirror.is_file() for mirror in mirrors)
     assert contents[0] == contents[1]
-    expected, _, orphans = sync_knowledge.build_expected(
+    expected, _, orphans, _konflikte = sync_knowledge.build_expected(
         run_dir, repo, veritas.read_json(config)
     )
     assert sync_knowledge.diff_plan(expected, orphans)["sync_difference_count"] == 0
@@ -596,10 +598,13 @@ def test_merge_meldet_zeichengleiche_prosa_als_unabhaengigkeitsverdacht() -> Non
 
     finding = merged["findings"][0]
     assert finding["merge_status"] == "BESTAETIGT"
-    assert any("nicht unabhaengig" in h for h in finding["hinweise"])
+    assert any(
+        h["art"] == "prosa-gleichheit" and "nicht unabhaengig" in h["text"]
+        for h in finding["hinweise"]
+    )
 
 
-def test_merge_meldet_keinen_verdacht_wenn_nur_pass3_uebernimmt() -> None:
+def test_merge_meldet_pass_paar_statt_prosa_verdacht_bei_pass3() -> None:
     """Pass 3 darf A und B kennen und ihre Formulierung uebernehmen.
 
     Nur Gleichheit zwischen Pass 1 und Pass 2 ist verdaechtig; sonst haette
@@ -616,7 +621,9 @@ def test_merge_meldet_keinen_verdacht_wenn_nur_pass3_uebernimmt() -> None:
 
     finding = merged["findings"][0]
     assert finding["merge_status"] == "BESTAETIGT"
-    assert finding["hinweise"] == []
+    arten = {h["art"] for h in finding["hinweise"]}
+    assert "prosa-gleichheit" not in arten
+    assert arten == {"pass-paar"}
 
 
 def test_merge_ohne_verdacht_bei_eigener_formulierung() -> None:
@@ -639,8 +646,12 @@ def test_report_zaehlt_unabhaengigkeits_hinweise_im_kopf(tmp_path: Path) -> None
 
     bericht = (run_dir / "AUDIT_REPORT_2026-09-01.md").read_text(encoding="utf-8")
 
-    assert "Befunde mit Unabhaengigkeits-Hinweis: 1" in bericht
+    # Seit die Hinweise typisiert sind, zaehlt der Kopf je Art -- ein
+    # Sammelzaehler haette Pass-Paar- und Zeilenbereichs-Hinweise als
+    # Prosa-Gleichheit ausgegeben und damit etwas Falsches behauptet.
+    assert "Gleiche Prosa in Pass 1 und Pass 2: 1" in bericht
     assert "kein Drei-Pass-Audit" in bericht
+    assert "Bestaetigt ohne das Paar 1+2: 0" in bericht
 
 
 def test_report_zeigt_impact_je_variante(tmp_path: Path) -> None:
@@ -657,3 +668,351 @@ def test_report_zeigt_impact_je_variante(tmp_path: Path) -> None:
 
     assert "Formulierungen je Pass:" in bericht
     assert "Voellig andere Auswirkung als im ersten Pass." in bericht
+
+
+# --- Fixes aus dem Werkzeug-Audit vom 2026-09-03 ---------------------------
+
+
+def test_merge_uebernimmt_ids_aus_dem_eigenen_kanon(tmp_path: Path) -> None:
+    """IDs wurden bei jedem Merge nach Fingerprint neu vergeben.
+
+    Kam ein Befund dazu, dessen Hash vorne einsortiert, rutschten alle
+    folgenden IDs. Ein Verifikatorurteil fuer V-001 traf danach einen anderen
+    Befund.
+    """
+    repo = _repo(tmp_path)
+    (repo / "sample.py").write_text("alpha = 1\nbeta = 2\ngamma = 3\n", encoding="utf-8")
+    erst = _finding()
+    documents = [_pass(1, [erst]), _pass(2, [erst]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    id_vorher = veritas.read_json(run_dir / "findings.json")["findings"][0]["id"]
+
+    zweit = _finding(claim="Gamma ist drei.", context="gamma = 3")
+    zweit["line_start"] = zweit["line_end"] = 3
+    zweit["evidence"][0].update(line_start=3, line_end=3, quote="gamma = 3")
+    paesse = [_pass(1, [erst, zweit]), _pass(2, [erst, zweit]), _pass(3, [])]
+    for pass_id, document in enumerate(paesse, start=1):
+        veritas.write_json(run_dir / f"pass-{pass_id}" / "findings.json", document)
+    args = argparse.Namespace(
+        run_dir=str(run_dir), repo=str(repo), previous=None, force_remerge=True
+    )
+    assert veritas.command_merge(args) == 0
+
+    kanon = veritas.read_json(run_dir / "findings.json")["findings"]
+    nach = {f["fingerprint"]: f["id"] for f in kanon}
+    assert nach[veritas.finding_fingerprint(erst)] == id_vorher
+
+
+def test_merge_verweigert_neuen_lauf_ueber_ein_verifikatorurteil(tmp_path: Path) -> None:
+    """Ein erneuter Merge loeschte Status, Note und Kontext des Verifikators."""
+    repo = _repo(tmp_path)
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), previous=None)
+
+    with pytest.raises(veritas.VeritasError, match="Verifikatorurteil"):
+        veritas.command_merge(args)
+
+
+def test_merge_fuehrt_alle_zeilenbereiche(tmp_path: Path) -> None:
+    """Gleiche Regel und gleicher Kontext an zwei Stellen ergaben EINEN Befund.
+
+    Der Fingerprint kennt bewusst keine Zeile; ohne die Liste der Fundstellen
+    verschwand die zweite Stelle spurlos.
+    """
+    repo = _repo(tmp_path)
+    (repo / "sample.py").write_text("beta = 2\nx = 1\nbeta = 2\n", encoding="utf-8")
+    a = _finding()
+    a["line_start"] = a["line_end"] = 1
+    a["evidence"][0].update(line_start=1, line_end=1)
+    b = _finding()
+    b["line_start"] = b["line_end"] = 3
+    b["evidence"][0].update(line_start=3, line_end=3)
+
+    merged = veritas.merge_documents([_pass(1, [a]), _pass(2, [b]), _pass(3, [])])
+
+    finding = merged["findings"][0]
+    assert finding["fundstellen"] == [
+        {"line_start": 1, "line_end": 1},
+        {"line_start": 3, "line_end": 3},
+    ]
+    assert any(h["art"] == "zeilenbereich" for h in finding["hinweise"])
+
+
+def test_merge_nimmt_die_schaerfste_severity() -> None:
+    """Der Kanon uebernahm Pass 1; ein von Pass 2 gemeldetes P0 verschwand."""
+    merged = veritas.merge_documents(
+        [
+            _pass(1, [_finding(severity="P3")]),
+            _pass(2, [_finding(severity="P0")]),
+            _pass(3, []),
+        ]
+    )
+
+    finding = merged["findings"][0]
+    assert finding["merge_status"] == "WIDERSPRUCH"
+    assert finding["severity"] == "P0"
+    assert {v["severity"] for v in finding["varianten"]} == {"P0", "P3"}
+
+
+def test_merge_erfindet_keine_kombination_aus_severity_und_konfidenz() -> None:
+    """Schaerfste Severity mit hoechster Konfidenz war eine Kombination,
+    die kein Pass gemeldet hat.
+
+    Pass 1 meldete P3/hoch, Pass 2 P0/niedrig -- der Kanon zeigte P0/hoch und
+    behauptete damit einen kritischen Befund mit hoher Sicherheit, den so
+    niemand erhoben hatte. Bei Widerspruch sind jetzt beide Achsen
+    konservativ.
+    """
+    a = _finding(severity="P3")
+    b = _finding(severity="P0")
+    b["confidence"] = "niedrig"
+
+    merged = veritas.merge_documents([_pass(1, [a]), _pass(2, [b]), _pass(3, [])])
+
+    finding = merged["findings"][0]
+    assert finding["severity"] == "P0"
+    assert finding["confidence"] == "niedrig"
+    gemeldet = {(v["severity"], v["confidence"]) for v in finding["varianten"]}
+    assert gemeldet == {("P3", "hoch"), ("P0", "niedrig")}
+
+
+def test_apply_verifier_lehnt_unbekannte_befund_ids_ab(tmp_path: Path) -> None:
+    """Verdikte zu unbekannten IDs verschwanden lautlos mit Exit 0."""
+    repo = _repo(tmp_path)
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    finding_id = veritas.read_json(run_dir / "findings.json")["findings"][0]["id"]
+    verdict = tmp_path / "verdict.json"
+    veritas.write_json(
+        verdict,
+        {
+            "agent_context_id": "fresh-verifier",
+            "decisions": [
+                {"id": finding_id, "decision": "akzeptiert", "note": "geprueft"},
+                {"id": "V-999", "decision": "verworfen", "note": "gibt es nicht"},
+            ],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), input=str(verdict))
+
+    with pytest.raises(veritas.VeritasError, match="unbekannte Befund-IDs"):
+        veritas.command_apply_verifier(args)
+
+
+def test_apply_verifier_prueft_den_fingerprint_im_verdikt(tmp_path: Path) -> None:
+    """Ein Verdikt aus einem aelteren Merge darf nicht am falschen Befund landen."""
+    repo = _repo(tmp_path)
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    finding_id = veritas.read_json(run_dir / "findings.json")["findings"][0]["id"]
+    verdict = tmp_path / "verdict.json"
+    veritas.write_json(
+        verdict,
+        {
+            "agent_context_id": "fresh-verifier",
+            "decisions": [
+                {
+                    "id": finding_id,
+                    "decision": "akzeptiert",
+                    "note": "geprueft",
+                    "fingerprint": "0" * 64,
+                }
+            ],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), input=str(verdict))
+
+    with pytest.raises(veritas.VeritasError, match="fremden Fingerprint"):
+        veritas.command_apply_verifier(args)
+
+
+def test_report_zeigt_alle_evidenz_und_die_verifikatornote(tmp_path: Path) -> None:
+    """Nur das erste Item des ersten Passes war sichtbar, die Note gar nicht."""
+    repo = _repo(tmp_path)
+    finding = _finding()
+    ausgabe = "AssertionError: erwartet 4, gefunden 7"
+    finding["evidence"].append(
+        {
+            "kind": "test",
+            "command": "pytest -q",
+            "cwd": str(repo),
+            "exit_code": 1,
+            "output": ausgabe,
+            "output_sha256": veritas.sha256_text(ausgabe),
+            "timestamp": "2026-09-03T00:00:00+00:00",
+        }
+    )
+    documents = [_pass(1, [finding]), _pass(2, [finding]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    finding_id = veritas.read_json(run_dir / "findings.json")["findings"][0]["id"]
+    verdict = tmp_path / "verdict.json"
+    veritas.write_json(
+        verdict,
+        {
+            "agent_context_id": "fresh-verifier",
+            "decisions": [
+                {
+                    "id": finding_id,
+                    "decision": "verworfen",
+                    "note": "Kein Produktivaufrufer erreichbar.",
+                }
+            ],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), input=str(verdict))
+    assert veritas.command_apply_verifier(args) == 0
+
+    bericht = (run_dir / "AUDIT_REPORT_2026-09-01.md").read_text(encoding="utf-8")
+    assert ausgabe in bericht
+    assert "Kein Produktivaufrufer erreichbar." in bericht
+
+
+def test_leerer_kommando_output_ist_gueltige_evidenz(tmp_path: Path) -> None:
+    """Ein sauberes `git status --short` konnte nichts belegen."""
+    repo = _repo(tmp_path)
+    finding = _finding()
+    finding["evidence"].append(
+        {
+            "kind": "command",
+            "command": "git status --short",
+            "cwd": str(repo),
+            "exit_code": 0,
+            "output": "",
+            "output_sha256": veritas.sha256_text(""),
+            "timestamp": "2026-09-03T00:00:00+00:00",
+        }
+    )
+
+    assert veritas.validate_pass_document(_pass(1, [finding]), repo, 1) == []
+
+
+def test_load_passes_prueft_auch_pass_drei(tmp_path: Path) -> None:
+    """Pass 3 war von jeder Unabhaengigkeits- und Platzhalterpruefung ausgenommen."""
+    repo = _repo(tmp_path)
+    run_dir = tmp_path / "run"
+    dritter = _pass(3, [])
+    dritter["agent_context_id"] = "AUSFUELLEN-FRISCHER-KONTEXT-P3"
+    for pass_id, document in enumerate([_pass(1, []), _pass(2, []), dritter], start=1):
+        veritas.write_json(run_dir / f"pass-{pass_id}" / "findings.json", document)
+    veritas.write_json(run_dir / "learnings.json", {"schema_version": 2, "learnings": []})
+
+    with pytest.raises(veritas.VeritasError, match="Kontext-Platzhalter"):
+        veritas.load_passes(run_dir, repo)
+
+
+def test_init_run_lehnt_fremde_toolchain_ab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """init-run pruefte nur, dass die venv312-Datei existiert.
+
+    Der Lauf lief mit fremdem Interpreter durch, environment.json hielt
+    `matches: False` fest und wurde danach nie wieder gelesen. Hier wird die
+    Verdrahtung geprueft, nicht die echte Umgebung -- die Suite laeuft ja in
+    venv312 und waere sonst immer gruen.
+    """
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(
+        veritas, "validate_toolchain", lambda snapshot: ["Pflichtwerkzeug pytest fehlt"]
+    )
+    args = argparse.Namespace(
+        repo=str(repo),
+        run_dir=str(tmp_path / "neuer-lauf"),
+        scope="Test",
+        mode="delta",
+        seed=1,
+        previous_learnings=None,
+        ignore_toolchain=False,
+    )
+
+    with pytest.raises(veritas.VeritasError, match="Umgebung erfuellt den Laufvertrag nicht"):
+        veritas.command_init_run(args)
+
+    args.ignore_toolchain = True
+    assert veritas.command_init_run(args) == 0
+    umgebung = veritas.read_json(Path(args.run_dir) / "environment.json")
+    assert umgebung["toolchain_errors"] == ["Pflichtwerkzeug pytest fehlt"]
+
+
+def test_vault_schutz_faengt_windows_namensvarianten(tmp_path: Path) -> None:
+    """'_raw.' passierte den Schutz und landete beim Aufloesen doch in _raw."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    for ziel in ("_raw", "_raw.", "_raw...", "_raw ", "00_Claude_Memory.", "_RAW."):
+        with pytest.raises(veritas.VeritasError, match="Geschuetztes Vault-Ziel"):
+            sync_knowledge.safe_vault_dir(
+                {"vault_root": str(vault), "vault_audit_dir": ziel}
+            )
+
+
+def test_nutzerkommentar_ueberlebt_ein_zitat_des_eigenen_markers() -> None:
+    """Ein Evidenz-Zitat mit der Marker-Zeile liess die Notiz bei jedem Lauf wachsen."""
+    marker_im_zitat = "marker = " + chr(34) + "## Nutzerkommentar" + chr(34)
+    notiz = (
+        "---\nstatus: offen\n---\n\n"
+        + sync_knowledge.GENERATED_START
+        + "\n\n## Beweis\n\n"
+        + marker_im_zitat
+        + "\n\n"
+        + sync_knowledge.GENERATED_END
+        + "\n\n## Nutzerkommentar\n\nMein echter Text.\n"
+    )
+
+    assert sync_knowledge.user_comment(notiz) == "Mein echter Text."
+
+
+def test_frontmatter_liest_status_trotz_bom() -> None:
+    """Mit BOM galt das Frontmatter als fehlend und der Status fiel zurueck."""
+    mit_bom = "\ufeff---\nstatus: behoben\n---\n\nx"
+
+    assert sync_knowledge.frontmatter_value(mit_bom, "status") == "behoben"
+
+
+def test_waisen_blockieren_das_abschluss_gate_nicht() -> None:
+    """Eine Waise machte sync_difference_count dauerhaft ungleich null."""
+    plan = sync_knowledge.diff_plan({}, ["C:/vault/Befunde/V-999.md"])
+
+    assert plan["sync_difference_count"] == 0
+    assert plan["orphan_count"] == 1
+
+
+def test_aktive_learnings_melden_abgeschnittene_regeln() -> None:
+    """18 von 25 Regeln wurden geschrieben, ohne Hinweis auf den Rest."""
+    viele = [
+        {"id": f"L-{i:03d}", "status": "aktiv", "rule": f"Regel {i}"}
+        for i in range(1, 26)
+    ]
+
+    text = sync_knowledge.render_active_learnings(viele, 20)
+
+    assert "weitere, siehe LESSONS.md" in text
+
+
+def test_sync_ueberschreibt_keine_fremde_notiz(tmp_path: Path) -> None:
+    """Beide Laeufe vergeben ab V-001; Lauf B erbte Status und Kommentar von A."""
+    repo = _repo(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    config = _sync_config(repo, vault, tmp_path)
+    finding_id = veritas.read_json(run_dir / "findings.json")["findings"][0]["id"]
+    note = vault / "10_Projects" / "HPG" / "_wiki" / "audit" / "Befunde" / f"{finding_id}.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "---\ntype: audit-finding\nid: "
+        + finding_id
+        + "\nfingerprint: "
+        + "f" * 64
+        + "\nstatus: behoben\n---\n\n"
+        + sync_knowledge.GENERATED_START
+        + "\n\nfremd\n\n"
+        + sync_knowledge.GENERATED_END
+        + "\n\n## Nutzerkommentar\n\nGehoert einem anderen Befund.\n",
+        encoding="utf-8",
+    )
+    vorher = note.read_text(encoding="utf-8")
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), apply=True)
+
+    assert sync_knowledge.command_sync(args, config_path=config) == 1
+    assert note.read_text(encoding="utf-8") == vorher
