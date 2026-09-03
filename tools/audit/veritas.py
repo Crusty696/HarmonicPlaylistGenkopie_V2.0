@@ -568,34 +568,39 @@ def merge_documents(
     for fingerprint in sorted(grouped):
         occurrences = sorted(grouped[fingerprint], key=lambda item: item[0])
         passes = sorted({pass_id for pass_id, _ in occurrences})
-        claims = {normalized(finding["claim"]) for _, finding in occurrences}
-        impacts = {normalized(finding["impact"]) for _, finding in occurrences}
         severities = {finding["severity"] for _, finding in occurrences}
-        categories = {normalized(finding["category"]) for _, finding in occurrences}
         confidences = {finding["confidence"] for _, finding in occurrences}
+        # Zwei unabhaengige Paesse formulieren denselben Sachverhalt nie
+        # zeichengleich. Uebereinstimmung wird deshalb nur auf den
+        # geschlossenen Vokabularen verlangt -- severity und confidence;
+        # rule, path und context stecken bereits im Fingerprint. Abweichende
+        # Formulierung ist Variante, kein Widerspruch.
         merge_status = "UNBESTAETIGT"
         conflicts: list[str] = []
+        hinweise: list[str] = []
         if len(passes) >= 2:
-            if (
-                len(claims) == 1
-                and len(impacts) == 1
-                and len(severities) == 1
-                and len(categories) == 1
-                and len(confidences) == 1
-            ):
+            if len(severities) == 1 and len(confidences) == 1:
                 merge_status = "BESTAETIGT"
             else:
                 merge_status = "WIDERSPRUCH"
-                if len(claims) > 1:
-                    conflicts.append("Claim unterscheidet sich zwischen Paessen")
                 if len(severities) > 1:
                     conflicts.append("Severity unterscheidet sich zwischen Paessen")
-                if len(impacts) > 1:
-                    conflicts.append("Impact unterscheidet sich zwischen Paessen")
-                if len(categories) > 1:
-                    conflicts.append("Kategorie unterscheidet sich zwischen Paessen")
                 if len(confidences) > 1:
                     conflicts.append("Konfidenz unterscheidet sich zwischen Paessen")
+            # Gleiche Prosa nach Normalisierung (Whitespace, Gross-/Klein-
+            # schreibung) ist kein Reproduktionsbeleg, sondern ein Hinweis auf
+            # nicht unabhaengiges Arbeiten -- aber nur zwischen Pass 1 und
+            # Pass 2. Pass 3 darf A und B kennen und deren Formulierung
+            # uebernehmen, das ist sein Auftrag.
+            texte = {
+                pass_id: (normalized(finding["claim"]), normalized(finding["impact"]))
+                for pass_id, finding in occurrences
+            }
+            if 1 in texte and 2 in texte and texte[1] == texte[2]:
+                hinweise.append(
+                    "Claim und Impact sind in Pass 1 und Pass 2 zeichengleich -- "
+                    "die beiden Paesse waren nicht unabhaengig"
+                )
         finding_id = old_ids.get(fingerprint)
         if finding_id is None:
             maximum += 1
@@ -629,6 +634,16 @@ def merge_documents(
                     for pass_id, finding in occurrences
                 ],
                 "conflicts": conflicts,
+                "hinweise": hinweise,
+                "varianten": [
+                    {
+                        "pass_id": pass_id,
+                        "claim": finding["claim"],
+                        "impact": finding["impact"],
+                        "category": finding["category"],
+                    }
+                    for pass_id, finding in occurrences
+                ],
             }
         )
     merged.sort(key=lambda finding: (finding["severity"], finding["id"]))
@@ -673,6 +688,7 @@ def render_report(
 ) -> str:
     findings = canonical.get("findings", [])
     reproduced = sum(1 for finding in findings if len(finding.get("passes", [])) >= 2)
+    verdaechtig = sum(1 for finding in findings if finding.get("hinweise"))
     quote = (100.0 * reproduced / len(findings)) if findings else 100.0
     lines = [
         f"# VERITAS Audit Report {run_report_date(contract)}",
@@ -688,6 +704,13 @@ def render_report(
         f"- Befunde gesamt: {len(findings)}",
         f"- In mindestens zwei Paessen: {reproduced}",
         f"- Quote: {quote:.2f} %",
+        f"- Befunde mit Unabhaengigkeits-Hinweis: {verdaechtig}"
+        + (
+            "  <- Pass 1 und Pass 2 haben gleich formuliert; der Lauf ist kein"
+            " Drei-Pass-Audit, solange das nicht geklaert ist"
+            if verdaechtig
+            else ""
+        ),
         "- Pass-Kontexte: "
         + ", ".join(str(document.get("agent_context_id")) for document in documents),
         "",
@@ -721,6 +744,32 @@ def render_report(
                     + [f"- {entry}" for entry in finding["conflicts"]]
                     + [""]
                 )
+            if finding.get("hinweise"):
+                lines.extend(
+                    ["Hinweise:", ""]
+                    + [f"- {entry}" for entry in finding["hinweise"]]
+                    + [""]
+                )
+            varianten = finding.get("varianten", [])
+            formulierungen = {
+                (
+                    normalized(str(v.get("claim", ""))),
+                    normalized(str(v.get("impact", ""))),
+                    normalized(str(v.get("category", ""))),
+                )
+                for v in varianten
+            }
+            if len(formulierungen) > 1:
+                lines.extend(["Formulierungen je Pass:", ""])
+                for variante in varianten:
+                    lines.extend(
+                        [
+                            f"- Pass {variante.get('pass_id')} [{variante.get('category')}]: "
+                            f"{variante.get('claim')}",
+                            f"  Auswirkung: {variante.get('impact')}",
+                        ]
+                    )
+                lines.append("")
     applications = [
         application
         for document in documents
@@ -810,9 +859,11 @@ def command_merge(args: argparse.Namespace) -> int:
     canonical = merge_documents(documents, previous)
     update_learning_counters(run_dir, documents, canonical)
     report_path = save_canonical(run_dir, canonical, documents)
+    verdaechtig = sum(1 for f in canonical["findings"] if f.get("hinweise"))
     summary = {
         "status": "merged_pending_verifier",
         "findings": len(canonical["findings"]),
+        "unabhaengigkeits_hinweise": verdaechtig,
         "report": str(report_path),
         "canonical": str(run_dir / "findings.json"),
     }

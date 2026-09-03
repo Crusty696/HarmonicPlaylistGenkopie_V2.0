@@ -65,9 +65,20 @@ Validiere jede Datei vor dem Merge:
   --run-dir <laufordner>
 ```
 
-Nur derselbe Fingerprint in mindestens zwei Paessen wird `BESTAETIGT`.
-Ein-Pass-Befunde bleiben `UNBESTAETIGT`. Widerspruechliche Claims werden
-`WIDERSPRUCH` und nie still gemittelt. Der frische Verifikator prueft danach
+Nur derselbe Fingerprint in mindestens zwei Paessen wird `BESTAETIGT`, und nur
+wenn `severity` und `confidence` uebereinstimmen. Ein-Pass-Befunde bleiben
+`UNBESTAETIGT`. Abweichende `severity` oder `confidence` ergeben `WIDERSPRUCH`
+und werden nie still gemittelt.
+
+Abweichend formulierte `claim`, `impact` und `category` sind KEIN Widerspruch --
+zwei unabhaengige Paesse schreiben praktisch nie dieselben Saetze. Sie werden als
+`varianten` gefuehrt und im Bericht nebeneinander gezeigt. Umgekehrt gilt: gleiche
+Prosa in Pass 1 und Pass 2 -- verglichen nach Normalisierung von Whitespace und
+Gross-/Kleinschreibung -- ist kein Reproduktionsbeleg, sondern ein Hinweis auf
+nicht unabhaengiges Arbeiten. Der Merge vermerkt das als `hinweise` und zaehlt
+es im Berichtskopf. Im zurueckgezogenen Lauf `veritas-mixanalysis-2026-09-03`
+traf das 22 von 22 gemeinsamen Befunden, im unabhaengigen `veritas-playlist-20260903`
+keinen einzigen. Der frische Verifikator prueft danach
 jeden Befund gegen Roh-Evidenz; ungepruefte Befunde bleiben unbestaetigt.
 
 ## Wissen synchronisieren

@@ -557,3 +557,103 @@ def test_report_filename_stays_stable_across_merge_and_verifier(tmp_path: Path) 
 def test_report_date_rejects_contract_without_timestamp() -> None:
     with pytest.raises(veritas.VeritasError, match="created_at"):
         veritas.run_report_date({"schema_version": 1})
+
+
+def test_merge_bestaetigt_trotz_abweichender_formulierung() -> None:
+    """Zwei unabhaengige Paesse formulieren nie zeichengleich.
+
+    Vor 2026-09-03 verlangte der Merge Gleichheit von claim, impact und
+    category. Damit war BESTAETIGT praktisch unerreichbar: im ersten echten
+    Lauf wurden drei in beiden Paessen reproduzierte Befunde WIDERSPRUCH,
+    einer davon bei 3/3 Paessen, nur weil eine Kategorie "Performance" statt
+    "Laufzeit" hiess.
+    """
+    a = _finding(claim="Der Zaehler laeuft ueber.")
+    b = _finding(claim="Ein Ueberlauf des Zaehlers ist moeglich.")
+    b["impact"] = "Andere Formulierung derselben Auswirkung."
+    b["category"] = "Laufzeit"
+
+    merged = veritas.merge_documents([_pass(1, [a]), _pass(2, [b]), _pass(3, [])])
+
+    finding = merged["findings"][0]
+    assert finding["merge_status"] == "BESTAETIGT"
+    assert finding["conflicts"] == []
+    assert len(finding["varianten"]) == 2
+    assert {v["category"] for v in finding["varianten"]} == {"Test", "Laufzeit"}
+
+
+def test_merge_meldet_zeichengleiche_prosa_als_unabhaengigkeitsverdacht() -> None:
+    """Byte-gleiche Prosa ist kein Reproduktionsbeleg.
+
+    Der zurueckgezogene Lauf `veritas-mixanalysis-2026-09-03` hatte ueber 22
+    gemeinsame Befunde 22/22 identische claim/impact/category und 0/22
+    identische reproduction — Pass 1 und Pass 2 waren nicht unabhaengig.
+    Das Werkzeug wertete das als staerkste Bestaetigung.
+    """
+    merged = veritas.merge_documents(
+        [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    )
+
+    finding = merged["findings"][0]
+    assert finding["merge_status"] == "BESTAETIGT"
+    assert any("nicht unabhaengig" in h for h in finding["hinweise"])
+
+
+def test_merge_meldet_keinen_verdacht_wenn_nur_pass3_uebernimmt() -> None:
+    """Pass 3 darf A und B kennen und ihre Formulierung uebernehmen.
+
+    Nur Gleichheit zwischen Pass 1 und Pass 2 ist verdaechtig; sonst haette
+    der Hinweis im echten playlist-Lauf 13 von 21 Befunden getroffen, in denen
+    Pass 3 auftragsgemaess wortgleich bestaetigt hat.
+    """
+    merged = veritas.merge_documents(
+        [
+            _pass(1, [_finding(claim="Der Zaehler laeuft ueber.")]),
+            _pass(2, []),
+            _pass(3, [_finding(claim="Der Zaehler laeuft ueber.")]),
+        ]
+    )
+
+    finding = merged["findings"][0]
+    assert finding["merge_status"] == "BESTAETIGT"
+    assert finding["hinweise"] == []
+
+
+def test_merge_ohne_verdacht_bei_eigener_formulierung() -> None:
+    merged = veritas.merge_documents(
+        [
+            _pass(1, [_finding(claim="Der Zaehler laeuft ueber.")]),
+            _pass(2, [_finding(claim="Ein Ueberlauf ist moeglich.")]),
+            _pass(3, []),
+        ]
+    )
+
+    assert merged["findings"][0]["hinweise"] == []
+
+
+def test_report_zaehlt_unabhaengigkeits_hinweise_im_kopf(tmp_path: Path) -> None:
+    """Ein Hinweis, den nur der Einzelbefund traegt, wird ueberlesen."""
+    repo = _repo(tmp_path)
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+
+    bericht = (run_dir / "AUDIT_REPORT_2026-09-01.md").read_text(encoding="utf-8")
+
+    assert "Befunde mit Unabhaengigkeits-Hinweis: 1" in bericht
+    assert "kein Drei-Pass-Audit" in bericht
+
+
+def test_report_zeigt_impact_je_variante(tmp_path: Path) -> None:
+    """Der Hinweis loest auch bei reiner Impact-Divergenz aus, also muss der
+    Bericht den Impact zeigen -- sonst stehen zwei optisch gleiche Zeilen da."""
+    repo = _repo(tmp_path)
+    a = _finding()
+    b = _finding()
+    b["impact"] = "Voellig andere Auswirkung als im ersten Pass."
+    documents = [_pass(1, [a]), _pass(2, [b]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+
+    bericht = (run_dir / "AUDIT_REPORT_2026-09-01.md").read_text(encoding="utf-8")
+
+    assert "Formulierungen je Pass:" in bericht
+    assert "Voellig andere Auswirkung als im ersten Pass." in bericht
