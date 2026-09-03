@@ -32,6 +32,8 @@ hpg_debug_*.txt
 
 # Testing & Coverage
 .pytest_cache/
+# Basetemp-Ordner paralleler Testlaeufe (pytest --basetemp=.pytest-*)
+.pytest-*/
 .pytest_tmp/
 .coverage
 .coverage.*
@@ -58,7 +60,9 @@ desktop.ini
 
 # Logs
 *.log
-logs/error_report.json
+# Laufzeit-Logs; der Ordner selbst bleibt, weil error_reporter dorthin schreibt
+logs/*.log
+logs/*.json
 
 # Environment
 .env

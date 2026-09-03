@@ -92,7 +92,8 @@ Code nachsehen:
   Skills — sie veralten mit jedem Commit. Vor Gebrauch selbst messen.
 - `docs/QUICK_START.txt` nannte frueher 10 Strategien, `ui/main_window.py` und
   eine laengst ueberholte Testzahl. Korrigiert: 8 Strategien, kein `ui/`-Paket.
-- `AUDIT_SKILL-TEAM_2026-07-24.md` und `FULLSTACK_AUDIT_*` sind **Snapshots**;
+- `docs/archive/AUDIT_SKILL-TEAM_2026-07-24.md` und `docs/archive/FULLSTACK_AUDIT_*`
+  sind **Snapshots**;
   ihre Befunde sind grossteils gefixt. Nicht als offene Punkte behandeln.
 
 Regel: Statusdokumente liefern Hypothesen, der Code liefert Fakten.

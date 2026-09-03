@@ -48,7 +48,8 @@ Volltest-Snapshots vom 2026-08-25. Der aktuelle Code steht seit 2026-08-26 auf
 | veraltete Testzahlen | alte Handoffs/Fixlogs | historische Snapshots; aktuellen Stand selbst messen |
 | "Build blockiert", `security.py`-Duplikat | alte Audit-Berichte | erledigt, Datei existiert nicht mehr |
 
-`AUDIT_SKILL-TEAM_2026-07-24.md`, `FULLSTACK_AUDIT_HPG_2026-07-20.md` und die
+`docs/archive/AUDIT_SKILL-TEAM_2026-07-24.md`,
+`docs/archive/FULLSTACK_AUDIT_HPG_2026-07-20.md` und die
 `FIXLOG_*`-Dateien sind ausdruecklich **Snapshots**.
 
 ## Wo Fehler in diesem Projekt real entstehen
