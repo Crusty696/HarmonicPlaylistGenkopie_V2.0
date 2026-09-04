@@ -945,11 +945,18 @@ def test_vault_schutz_faengt_windows_namensvarianten(tmp_path: Path) -> None:
             )
 
 
-def test_nutzerkommentar_ueberlebt_ein_zitat_des_eigenen_markers() -> None:
-    """Ein Evidenz-Zitat mit der Marker-Zeile liess die Notiz bei jedem Lauf wachsen."""
+def test_text_hinter_dem_endmarker_bleibt_erhalten() -> None:
+    """Alles hinter GENERATED_END gehoert dem Nutzer und bleibt stehen.
+
+    Geprueft wird ueber `render_finding_note`, also den Weg, den der Sync
+    tatsaechlich geht -- ein Test direkt auf einer Hilfsfunktion sicherte
+    einen Pfad ab, den der Produktivcode gar nicht mehr betritt.
+    """
     marker_im_zitat = "marker = " + chr(34) + "## Nutzerkommentar" + chr(34)
     notiz = (
-        "---\nstatus: offen\n---\n\n"
+        "---\ntype: audit-finding\nid: V-001\nfingerprint: "
+        + "a" * 64
+        + "\nstatus: behoben\ntags: [veritas]\n---\n\n"
         + sync_knowledge.GENERATED_START
         + "\n\n## Beweis\n\n"
         + marker_im_zitat
@@ -958,7 +965,13 @@ def test_nutzerkommentar_ueberlebt_ein_zitat_des_eigenen_markers() -> None:
         + "\n\n## Nutzerkommentar\n\nMein echter Text.\n"
     )
 
-    assert sync_knowledge.user_comment(notiz) == "Mein echter Text."
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert inhalt is not None
+    assert inhalt.count("## Nutzerkommentar") == 1
+    assert inhalt.endswith("Mein echter Text.\n")
 
 
 def test_frontmatter_liest_status_trotz_bom() -> None:
@@ -1016,3 +1029,967 @@ def test_sync_ueberschreibt_keine_fremde_notiz(tmp_path: Path) -> None:
 
     assert sync_knowledge.command_sync(args, config_path=config) == 1
     assert note.read_text(encoding="utf-8") == vorher
+
+
+# --- C2 und C3: Datenverlust am Vault und am Wissensspeicher ---------------
+
+
+def _befund_fuer_notiz() -> dict[str, object]:
+    return {
+        "id": "V-001",
+        "fingerprint": "a" * 64,
+        "status": "BESTAETIGT",
+        "merge_status": "BESTAETIGT",
+        "verifier_status": "AKZEPTIERT",
+        "severity": "P2",
+        "category": "Scoring",
+        "path": "hpg_core/playlist.py",
+        "line_start": 42,
+        "line_end": 42,
+        "pass_quote": "2/3",
+        "confidence": "hoch",
+        "claim": "Neuer Claim.",
+        "impact": "Neue Auswirkung.",
+        "rule": "R-1",
+        "evidence": [],
+    }
+
+
+def _notiz_mit_eigenem_inhalt() -> str:
+    return (
+        "---\ntype: audit-finding\nid: V-001\nfingerprint: "
+        + "a" * 64
+        + "\naliases: [Bug Playlist]\nprioritaet: hoch\nstatus: behoben\n"
+        "tags: [veritas, audit, scoring, meins]\n---\n\n"
+        "# V-001 - Alter Titel\n\n"
+        "## Meine Analyse\n\nWICHTIG: betrifft auch main.py Zeile 42.\n\n"
+        + sync_knowledge.GENERATED_START
+        + "\n\nALTER GENERIERTER INHALT\n\n"
+        + sync_knowledge.GENERATED_END
+        + "\n\n## Nutzerkommentar\n\nMein Text.\n\n### Eigene Unterueberschrift\n\nBleibt.\n"
+    )
+
+
+def test_notiz_behaelt_alles_ausserhalb_der_marker() -> None:
+    """Frueher wurde die ganze Datei neu geschrieben.
+
+    Eigene Frontmatter-Felder, eigene Tags und eigene Abschnitte verschwanden
+    restlos, obwohl die GENERATED-Marker versprechen, nur den Block dazwischen
+    zu erzeugen.
+    """
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), _notiz_mit_eigenem_inhalt(), "2026-09-03"
+    )
+
+    assert "aliases: [Bug Playlist]" in inhalt
+    assert "prioritaet: hoch" in inhalt
+    assert "meins" in inhalt
+    assert "## Meine Analyse" in inhalt
+    assert "WICHTIG: betrifft auch main.py Zeile 42." in inhalt
+    assert "### Eigene Unterueberschrift" in inhalt
+
+
+def test_notiz_aktualisiert_den_generierten_block() -> None:
+    """Der Bereich zwischen den Markern muss trotzdem neu geschrieben werden.
+
+    Die Zusicherung auf genau ein Markerpaar erfuellt nur der chirurgische
+    Pfad: wer den Block anhaengt statt ersetzt, laesst die Notiz wachsen.
+    """
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), _notiz_mit_eigenem_inhalt(), "2026-09-03"
+    )
+
+    assert "ALTER GENERIERTER INHALT" not in inhalt
+    assert "severity: P2" in inhalt
+    assert "updated: 2026-09-03" in inhalt
+    assert inhalt.count(sync_knowledge.GENERATED_START) == 1
+    assert inhalt.count(sync_knowledge.GENERATED_END) == 1
+    kern = inhalt.split(sync_knowledge.GENERATED_START)[1].split(
+        sync_knowledge.GENERATED_END
+    )[0]
+    assert "Neue Auswirkung." in kern
+
+
+def test_notiz_ohne_marker_wird_nicht_ueberschrieben() -> None:
+    """Von Hand angelegte Notizen sind kein Ziel des Generators."""
+    inhalt, konflikt = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), "---\nstatus: offen\n---\n\nHandarbeit.\n", "2026-09-03"
+    )
+
+    assert inhalt is None
+    assert konflikt["grund"] == "Notiz ohne VERITAS-Marker"
+
+
+def test_learnings_werden_vereinigt_statt_ersetzt(tmp_path: Path) -> None:
+    """Der lauf-lokale Stand ersetzte die persistente Datei komplett.
+
+    Ein Learning aus einem frueheren Lauf verschwand damit, sobald ein neuer
+    Lauf synchronisierte.
+    """
+    ziel = tmp_path / "learnings.json"
+    veritas.write_json(
+        ziel,
+        {
+            "schema_version": 2,
+            "learnings": [
+                {"id": "L-001", "rule": "Altes Wissen", "status": "aktiv"},
+                {"id": "L-002", "rule": "Wird ueberschrieben", "status": "aktiv"},
+            ],
+        },
+    )
+    lauf = {
+        "schema_version": 2,
+        "learnings": [
+            {"id": "L-002", "rule": "Neue Fassung", "status": "aktiv"},
+            {"id": "L-003", "rule": "Neu in diesem Lauf", "status": "aktiv"},
+        ],
+    }
+
+    vereinigt = sync_knowledge.vereinige_learnings(ziel, lauf)
+
+    nach_id = {x["id"]: x["rule"] for x in vereinigt["learnings"]}
+    assert nach_id == {
+        "L-001": "Altes Wissen",
+        "L-002": "Neue Fassung",
+        "L-003": "Neu in diesem Lauf",
+    }
+
+
+def test_learning_aus_dem_bestand_behaelt_fremde_quellen(tmp_path: Path) -> None:
+    """Sonst koennte akkumuliertes Wissen strukturell nie mitgefuehrt werden."""
+    daten = {
+        "schema_version": 2,
+        "learnings": [
+            {
+                "id": "L-001",
+                "sources": ["V-999"],
+                "situation": "s",
+                "rule": "r",
+                "counterexample": "g",
+                "tags": [],
+                "status": "aktiv",
+                "applied": 0,
+                "hits": 0,
+                "applications": [],
+            }
+        ],
+    }
+
+    # Aus dem Bestand: genau diese Quelle ist Historie, kein Tippfehler.
+    assert sync_knowledge.validate_learnings(daten, set(), {"L-001": {"V-999"}})
+
+    # Neu in diesem Lauf: V-999 muss auffallen.
+    with pytest.raises(veritas.VeritasError, match="Quellen ohne Befund"):
+        sync_knowledge.validate_learnings(daten, set(), {})
+
+
+def test_bekanntes_learning_schuetzt_nur_seine_eigenen_altquellen(
+    tmp_path: Path,
+) -> None:
+    """Sonst waere ein bekanntes Learning dauerhaft ohne Tippfehlerschutz.
+
+    Haengt die Freigabe an der Learning-ID statt an der einzelnen Quelle, dann
+    laesst sich an L-001 jede erfundene Quelle nachtragen, sobald es einmal im
+    persistenten Speicher steht.
+    """
+    daten = {
+        "schema_version": 2,
+        "learnings": [
+            {
+                "id": "L-001",
+                "sources": ["V-888"],
+                "situation": "s",
+                "rule": "r",
+                "counterexample": "g",
+                "tags": [],
+                "status": "aktiv",
+                "applied": 0,
+                "hits": 0,
+                "applications": [],
+            }
+        ],
+    }
+
+    with pytest.raises(veritas.VeritasError, match="Quellen ohne Befund"):
+        sync_knowledge.validate_learnings(daten, set(), {"L-001": {"V-999"}})
+
+
+def test_vereinigung_lehnt_bestand_ohne_id_und_mit_doppelter_id_ab(
+    tmp_path: Path,
+) -> None:
+    """Ein Eintrag ohne id liesse sich nie wieder aktualisieren.
+
+    Eine doppelte id wurde von der Vereinigung zweimal ausgegeben.
+    """
+    ziel = tmp_path / "learnings.json"
+    veritas.write_json(
+        ziel,
+        {"schema_version": 2, "learnings": [{"rule": "ohne id"}]},
+    )
+    with pytest.raises(veritas.VeritasError, match="ohne id"):
+        sync_knowledge.vereinige_learnings(ziel, {"schema_version": 2, "learnings": []})
+
+    veritas.write_json(
+        ziel,
+        {
+            "schema_version": 2,
+            "learnings": [{"id": "L-001", "rule": "a"}, {"id": "L-001", "rule": "b"}],
+        },
+    )
+    with pytest.raises(veritas.VeritasError, match="doppelte Learning-ID"):
+        sync_knowledge.vereinige_learnings(ziel, {"schema_version": 2, "learnings": []})
+
+
+def test_sync_traegt_bestands_learning_in_alle_ziele(tmp_path: Path) -> None:
+    """End-to-End ueber eine bereits gefuellte learnings.json.
+
+    Nur hier faellt auf, wenn der vereinigte Bestand ungeprueft in die
+    Renderer laeuft: die greifen per Index auf `sources`, `applied` und `hits`
+    zu und brechen sonst mit KeyError statt mit einer Meldung ab.
+    """
+    repo = _repo(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    config = _sync_config(repo, vault, tmp_path)
+    bestand = repo / "tools" / "audit" / "learnings.json"
+    bestand.parent.mkdir(parents=True, exist_ok=True)
+    veritas.write_json(
+        bestand,
+        {
+            "schema_version": 2,
+            "learnings": [
+                {
+                    "id": "L-042",
+                    "sources": ["V-777"],
+                    "situation": "Aus einem frueheren Lauf.",
+                    "rule": "Alte Regel bleibt gueltig.",
+                    "counterexample": "Alter Gegenbeleg.",
+                    "tags": ["alt"],
+                    "status": "aktiv",
+                    "applied": 0,
+                    "hits": 0,
+                    "applications": [],
+                }
+            ],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), apply=True)
+
+    assert sync_knowledge.command_sync(args, config_path=config) == 0
+
+    assert "L-042" in [
+        eintrag["id"] for eintrag in veritas.read_json(bestand)["learnings"]
+    ]
+    assert "Alte Regel bleibt gueltig." in (
+        repo / "tools" / "audit" / "LESSONS.md"
+    ).read_text(encoding="utf-8")
+    # Die aktiven Regeln sind ein eigenes Ziel: faellt jemand dort auf den
+    # Lauf zurueck, bliebe die Suite ohne diese Zeile gruen.
+    assert "L-042" in (
+        repo / ".claude" / "skills" / "hpg-veritas" / "references" / "active-learnings.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_notiz_mit_tags_im_blockstil_behaelt_gueltiges_frontmatter() -> None:
+    """Eine Inline-Liste ueber den Blockstil zu schreiben zerstoert das YAML.
+
+    Obsidian verliert dann das gesamte Frontmatter, nicht nur die Tags.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "tags: [veritas, audit, scoring, meins]\n",
+        "tags:\n  - veritas\n  - meins\n",
+    )
+
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert inhalt is not None
+    assert "tags:\n  - veritas\n  - meins\n" in inhalt
+    assert "tags: [" not in inhalt
+
+
+def test_zweiter_block_hinter_dem_ende_bleibt_nutzerterritorium() -> None:
+    """Alles hinter dem Endmarker gehoert dem Nutzer -- auch was wie ein Block aussieht.
+
+    Frueher galt jedes zweite Markerpaar als Konflikt. Das traf aber auch den
+    Nutzer, der in seinem Kommentar eine Markerzeile woertlich zitiert: seine
+    Notiz war dauerhaft blockiert, ohne dass er den Zusammenhang erkennen
+    kann. Ein Block hinter dem Ende wird deshalb wie jeder andere Nutzertext
+    unangetastet durchgereicht; einen veralteten Zweitblock raeumt der Sync
+    nicht auf, er beschaedigt ihn aber auch nicht.
+    """
+    zweitblock = (
+        sync_knowledge.GENERATED_START
+        + "\n\nZWEITER BLOCK\n\n"
+        + sync_knowledge.GENERATED_END
+        + "\n"
+    )
+    doppelt = _notiz_mit_eigenem_inhalt() + zweitblock
+
+    inhalt, konflikt = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), doppelt, "2026-09-03"
+    )
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert inhalt is not None
+    assert inhalt.endswith(zweitblock)
+    assert "ALTER GENERIERTER INHALT" not in inhalt
+
+
+def test_zweiter_startmarker_innerhalb_des_blocks_wird_gemeldet() -> None:
+    """Dort wuerde nur bis zum ersten Ende aktualisiert -- der Rest bliebe alt."""
+    kaputt = _notiz_mit_eigenem_inhalt().replace(
+        "ALTER GENERIERTER INHALT",
+        "ALTER GENERIERTER INHALT\n\n" + sync_knowledge.GENERATED_START,
+    )
+
+    inhalt, konflikt = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), kaputt, "2026-09-03"
+    )
+
+    assert inhalt is None
+    assert konflikt["grund"] == "mehrfache VERITAS-Marker"
+
+
+def test_generierter_titel_wandert_mit_dem_claim() -> None:
+    """Der Titel steht ausserhalb der Marker, stammt aber vom Generator.
+
+    Ohne Nachziehen zeigen Obsidian-Titel, Graph und Suche dauerhaft den
+    alten Wortlaut. Eine vom Nutzer umbenannte Ueberschrift bleibt stehen.
+    """
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), _notiz_mit_eigenem_inhalt(), "2026-09-03"
+    )
+    assert inhalt is not None
+    assert "# V-001 - Neuer Claim." in inhalt
+    assert "# V-001 - Alter Titel" not in inhalt
+
+    umbenannt = _notiz_mit_eigenem_inhalt().replace(
+        "# V-001 - Alter Titel", "# Mein eigener Titel"
+    )
+    inhalt2, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), umbenannt, "2026-09-03"
+    )
+    assert inhalt2 is not None
+    assert "# Mein eigener Titel" in inhalt2
+
+
+def _befund_mit_marker_im_zitat() -> dict[str, object]:
+    """Ein Audit ueber sync_knowledge.py selbst zitiert die Markerzeilen."""
+    befund = _befund_fuer_notiz()
+    befund["path"] = "tools/audit/sync_knowledge.py"
+    befund["evidence"] = [
+        {
+            "pass_id": 1,
+            "items": [
+                {
+                    "kind": "source",
+                    "path": "tools/audit/sync_knowledge.py",
+                    "line_start": 57,
+                    "quote": (
+                        f'GENERATED_START = "{sync_knowledge.GENERATED_START}"\n'
+                        f'GENERATED_END = "{sync_knowledge.GENERATED_END}"'
+                    ),
+                }
+            ],
+        }
+    ]
+    return befund
+
+
+def test_marker_im_evidenz_zitat_zerschneidet_die_notiz_nicht() -> None:
+    """Der aeussere Marker zaehlt, nicht der erste.
+
+    Ein Audit ueber dieses Modul zitiert die Markerzeilen im Beweis. Wird das
+    erste `END` genommen oder blind gezaehlt, meldet der zweite Lauf einen
+    Konflikt an einer Notiz, die das Werkzeug selbst geschrieben hat -- das
+    Abschluss-Gate waere dauerhaft unerreichbar.
+    """
+    befund = _befund_mit_marker_im_zitat()
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+
+    assert erst is not None
+    assert erst.count(sync_knowledge.GENERATED_START) == 2
+
+    zweit, konflikt = sync_knowledge.render_finding_note(befund, erst, "2026-09-03")
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert zweit is not None
+    # Zweiter Lauf ohne Aenderung am Befund: die Notiz muss stabil bleiben.
+    assert zweit == erst
+
+
+def test_eigenes_verschachteltes_frontmatter_bleibt_unveraendert() -> None:
+    """Eingerueckte Zeilen gehoeren zum Wert darueber, nicht zur obersten Ebene.
+
+    Wurde jede Zeile als Schluessel gelesen, verlor ein eigenes Feld mit einem
+    Unterschluessel `status` oder `datei` seinen Wert und seine Einrueckung.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "prioritaet: hoch\n",
+        "meins:\n  status: mein-eigener-wert\n  datei: meine-datei.md\n",
+    )
+
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert inhalt is not None
+    assert "  status: mein-eigener-wert" in inhalt
+    assert "  datei: meine-datei.md" in inhalt
+    # Der generierte Schluessel derselben Namen steht genau einmal.
+    assert inhalt.count("\nstatus: ") == 1
+    assert inhalt.count("\ndatei: ") == 1
+
+
+def test_tags_mit_kommentar_gilt_als_blockstil() -> None:
+    """`tags: # Kommentar` mit Eintraegen darunter ist kein Inline-Wert.
+
+    Wurde der Kommentar als Wert gelesen, entstand
+    `tags: [# meine Tags, veritas, ...]` mit einer verwaisten Listenzeile
+    darunter -- ungueltiges YAML.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "tags: [veritas, audit, scoring, meins]\n",
+        "tags: # meine Tags\n  - eigen\n",
+    )
+
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert inhalt is not None
+    assert "tags: # meine Tags\n  - eigen\n" in inhalt
+    assert "tags: [" not in inhalt
+
+
+def test_titel_im_codeblock_wird_nicht_fuer_die_ueberschrift_gehalten() -> None:
+    """Eine gleich aussehende Zeile in einem Zitat darf nicht getroffen werden.
+
+    Frueher suchte die Funktion die erste Ueberschrift ausserhalb eines
+    Codeblocks. Dieser Zustandsautomat haengt an fremdem Text: ein einzelner
+    nicht geschlossener Codeblock liesse ihn nie zum Ende kommen und froere
+    den Titel dauerhaft ein, ohne dass es auffiele. Jetzt zaehlt nur die erste
+    nicht leere Zeile -- steht dort etwas anderes als die erzeugte Form,
+    gehoert der Kopf dem Nutzer und der Titel bleibt bewusst stehen.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "# V-001 - Alter Titel",
+        "```text\n# V-001 - Zitat aus dem alten Bericht\n```\n\n# V-001 - Alter Titel",
+    )
+
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert inhalt is not None
+    # Das Zitat bleibt unangetastet -- das ist der Kern.
+    assert "# V-001 - Zitat aus dem alten Bericht" in inhalt
+    # Und der echte Titel wird eingefroren statt falsch getroffen.
+    assert "# V-001 - Alter Titel" in inhalt
+    assert "# V-001 - Neuer Claim." not in inhalt
+
+
+def test_zweiter_apply_lauf_aendert_keine_einzige_datei(tmp_path: Path) -> None:
+    """Idempotenz ueber zwei echte Laeufe, nicht nur aus dem Code geschlossen.
+
+    Nur hier faellt auf, wenn das Werkzeug seine eigene Ausgabe im zweiten
+    Lauf nicht mehr wiedererkennt.
+    """
+    repo = _repo(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    config = _sync_config(repo, vault, tmp_path)
+    # Ein LEERER Bestand wuerde die Vereinigung gar nicht auf die Probe
+    # stellen -- der interessante Fall ist ein Learning aus einem frueheren
+    # Lauf, das beide Laeufe unveraendert ueberstehen muss.
+    bestand = repo / "tools" / "audit" / "learnings.json"
+    bestand.parent.mkdir(parents=True, exist_ok=True)
+    veritas.write_json(
+        bestand,
+        {
+            "schema_version": 2,
+            "learnings": [
+                {
+                    "id": "L-042",
+                    "sources": ["V-777"],
+                    "situation": "Aus einem frueheren Lauf.",
+                    "rule": "Alte Regel bleibt gueltig.",
+                    "counterexample": "Alter Gegenbeleg.",
+                    "tags": ["alt"],
+                    "status": "aktiv",
+                    "applied": 0,
+                    "hits": 0,
+                    "applications": [],
+                }
+            ],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), apply=True)
+
+    assert sync_knowledge.command_sync(args, config_path=config) == 0
+    vorher = {
+        pfad: pfad.read_bytes() for pfad in vault.rglob("*.md")
+    }
+    assert vorher
+    # Die C2-Ziele liegen im Repository, nicht im Vault -- einschliesslich der
+    # beiden Spiegel fuer die aktiven Regeln. Ohne sie belegt der Test die
+    # Idempotenz der Vereinigung nicht.
+    def _repo_ziele() -> dict[Path, bytes]:
+        wurzeln = (
+            repo / "tools" / "audit",
+            repo / ".claude" / "skills" / "hpg-veritas",
+            repo / ".agents" / "skills" / "hpg-veritas",
+        )
+        return {
+            pfad: pfad.read_bytes()
+            for wurzel in wurzeln
+            if wurzel.is_dir()
+            for pfad in wurzel.rglob("*")
+            if pfad.is_file()
+        }
+
+    vor_repo = _repo_ziele()
+    assert vor_repo
+
+    assert sync_knowledge.command_sync(args, config_path=config) == 0
+
+    nach_repo = _repo_ziele()
+    nachher = {pfad: pfad.read_bytes() for pfad in vault.rglob("*.md")}
+    assert nachher == vorher
+    assert nach_repo == vor_repo
+
+
+def test_ungerade_fence_im_zitat_verschiebt_die_marker_nicht() -> None:
+    """Ein Zitat mit einer einzelnen ```-Zeile kippte die Fence-Zaehlung.
+
+    Der zweite Lauf hielt dann die eigene Endmarke fuer Teil eines
+    Codeblocks und meldete "Notiz ohne VERITAS-Marker" an einer Notiz, die
+    das Werkzeug selbst geschrieben hatte -- das Abschluss-Gate war fuer
+    diesen Lauf unerreichbar.
+    """
+    befund = _befund_fuer_notiz()
+    befund["path"] = "docs/beispiel.md"
+    befund["evidence"] = [
+        {
+            "pass_id": 1,
+            "items": [
+                {
+                    "kind": "source",
+                    "path": "docs/beispiel.md",
+                    "line_start": 1,
+                    "quote": "Beispiel:\n```python\nprint(1)",
+                }
+            ],
+        }
+    ]
+
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+    assert erst is not None
+
+    zweit, konflikt = sync_knowledge.render_finding_note(befund, erst, "2026-09-03")
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert zweit == erst
+
+
+def test_mehrzeilige_inline_liste_bleibt_unangetastet() -> None:
+    """Schliesst die Klammer erst in der Folgezeile, ist es kein Inline-Wert.
+
+    Wurde trotzdem eine Inline-Liste darueber geschrieben, blieb die zweite
+    Zeile als verwaister Rest stehen und Obsidian verlor das gesamte
+    Frontmatter -- also auch Status und eigene Felder.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "tags: [veritas, audit, scoring, meins]\n",
+        "tags: [veritas,\n  meins]\n",
+    )
+
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert inhalt is not None
+    assert "tags: [veritas,\n  meins]\n" in inhalt
+    assert inhalt.count("tags:") == 1
+
+
+def test_defekter_bestandseintrag_meldet_statt_abzustuerzen(tmp_path: Path) -> None:
+    """Der vereinigte Bestand geht durch dieselbe Pruefung wie der Lauf.
+
+    Vorher lief ein unvollstaendiger Alteintrag ungeprueft in die Renderer
+    und brach dort mit KeyError ab statt mit einer Meldung.
+    """
+    repo = _repo(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    config = _sync_config(repo, vault, tmp_path)
+    bestand = repo / "tools" / "audit" / "learnings.json"
+    bestand.parent.mkdir(parents=True, exist_ok=True)
+    veritas.write_json(
+        bestand,
+        {
+            "schema_version": 2,
+            "learnings": [{"id": "L-042", "rule": "Ohne sources und status."}],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), apply=False)
+
+    with pytest.raises(veritas.VeritasError, match="L-042"):
+        sync_knowledge.command_sync(args, config_path=config)
+
+
+def _befund_mit_zitat(quote: str) -> dict[str, object]:
+    befund = _befund_fuer_notiz()
+    befund["path"] = "tools/audit/sync_knowledge.py"
+    befund["evidence"] = [
+        {
+            "pass_id": 1,
+            "items": [
+                {
+                    "kind": "source",
+                    "path": "tools/audit/sync_knowledge.py",
+                    "line_start": 57,
+                    "quote": quote,
+                }
+            ],
+        }
+    ]
+    return befund
+
+
+def test_markerzeile_im_zitat_wird_entschaerft() -> None:
+    """Ein Audit ueber dieses Modul zitiert die Markerzeilen selbst.
+
+    Stand die Zeile unveraendert im Beweis, fand der naechste Lauf in seiner
+    eigenen Notiz mehrere Marker und meldete einen Konflikt, den niemand
+    aufloesen kann. Entschaerft wird nur eine Zeile, die dem Marker EXAKT
+    gleicht.
+    """
+    befund = _befund_mit_zitat(
+        f"```\n{sync_knowledge.GENERATED_END}\n```"
+    )
+
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+
+    assert erst is not None
+    assert erst.count(sync_knowledge.GENERATED_END) == 1
+    assert "-- >" in erst
+
+    zweit, konflikt = sync_knowledge.render_finding_note(befund, erst, "2026-09-03")
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert zweit == erst
+
+
+def test_offener_codeblock_im_nutzertext_versteckt_die_marker_nicht() -> None:
+    """Ein nicht geschlossener Codeblock ist in Obsidian ein haeufiger Tippfehler.
+
+    Solange die Marker-Erkennung ```-Zeilen mitzaehlte, galten die echten
+    Marker danach als "im Codeblock" -- der Sync meldete "Notiz ohne
+    VERITAS-Marker" an seiner eigenen Notiz und nannte einen Grund, der
+    nachweislich falsch war.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "## Meine Analyse\n\nWICHTIG:",
+        "## Meine Analyse\n\n```python\nvergessen = True\n\nWICHTIG:",
+    )
+
+    inhalt, konflikt = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert inhalt is not None
+    assert "vergessen = True" in inhalt
+    assert "Mein Text." in inhalt
+
+
+def test_bestand_mit_learnings_null_meldet_statt_abzustuerzen(tmp_path: Path) -> None:
+    """Eine von Hand editierte Datei endete in einem TypeError statt in einer Meldung."""
+    repo = _repo(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    config = _sync_config(repo, vault, tmp_path)
+    bestand = repo / "tools" / "audit" / "learnings.json"
+    bestand.parent.mkdir(parents=True, exist_ok=True)
+    veritas.write_json(bestand, {"schema_version": 2, "learnings": None})
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), apply=False)
+
+    with pytest.raises(veritas.VeritasError, match="learnings muss Liste sein"):
+        sync_knowledge.command_sync(args, config_path=config)
+
+
+def test_vereinigung_hebt_die_schema_version_nicht_still_an(tmp_path: Path) -> None:
+    """Ein Sync ist keine Migration.
+
+    Blind SCHEMA_VERSION zu schreiben hob eine Bestandsdatei an, obwohl der
+    Lauf selbst noch die aeltere Fassung lieferte. Herabgestuft wird trotzdem
+    nie.
+    """
+    ziel = tmp_path / "learnings.json"
+    veritas.write_json(
+        ziel, {"schema_version": 1, "learnings": [{"id": "L-001", "rule": "alt"}]}
+    )
+
+    gleich = sync_knowledge.vereinige_learnings(
+        ziel, {"schema_version": 1, "learnings": []}
+    )
+    assert gleich["schema_version"] == 1
+
+    hoeher = sync_knowledge.vereinige_learnings(
+        ziel, {"schema_version": 2, "learnings": []}
+    )
+    assert hoeher["schema_version"] == 2
+
+
+def test_markerzeile_in_der_auswirkung_wird_entschaerft() -> None:
+    """Nicht nur das Zitat wird roh interpoliert.
+
+    `impact`, `claim`, `rule` und `path` sind auf keine Zeile beschraenkt.
+    Lag die Entschaerfung nur um den Beweis, konnte ein Audit ueber dieses
+    Modul die Markerzeile ueber die Auswirkung einschleusen -- der naechste
+    Lauf fand dann mehrere Marker in seiner eigenen Notiz.
+    """
+    befund = _befund_fuer_notiz()
+    befund["impact"] = f"Die Zeile\n{sync_knowledge.GENERATED_END}\nsteht im Block."
+
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+
+    assert erst is not None
+    assert erst.count(sync_knowledge.GENERATED_END) == 1
+
+    zweit, konflikt = sync_knowledge.render_finding_note(befund, erst, "2026-09-03")
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert zweit == erst
+
+
+def test_markerzeile_im_claim_wird_entschaerft() -> None:
+    """Der Titel steht ausserhalb der Marker und wird ebenfalls roh gesetzt."""
+    befund = _befund_fuer_notiz()
+    befund["claim"] = f"Kaputt\n{sync_knowledge.GENERATED_START}\nEnde."
+
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+
+    assert erst is not None
+    assert erst.count(sync_knowledge.GENERATED_START) == 1
+
+
+def test_entschaerfung_wird_in_der_notiz_ausgewiesen() -> None:
+    """Sonst stuende dort ein als woertlich ausgewiesenes Zitat, das es nicht ist."""
+    ohne = _befund_fuer_notiz()
+    mit = _befund_fuer_notiz()
+    mit["impact"] = f"x\n{sync_knowledge.GENERATED_END}\ny"
+
+    schlicht, _ = sync_knowledge.render_finding_note(ohne, "", "2026-09-03")
+    entschaerft, _ = sync_knowledge.render_finding_note(mit, "", "2026-09-03")
+
+    assert sync_knowledge.HINWEIS_ENTSCHAERFT not in schlicht
+    assert sync_knowledge.HINWEIS_ENTSCHAERFT in entschaerft
+
+
+def test_bom_der_notiz_bleibt_erhalten() -> None:
+    """Notepad und PowerShell 5.1 schreiben UTF-8 mit BOM.
+
+    Der byteerhaltende Pfad streifte es beim Lesen ab und setzte es nie
+    zurueck -- eine stille Formataenderung an einer Nutzerdatei bei jedem Sync.
+    """
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), "\ufeff" + _notiz_mit_eigenem_inhalt(), "2026-09-03"
+    )
+
+    assert inhalt is not None
+    assert inhalt.startswith("\ufeff---\n")
+
+
+def test_markerzeile_im_claim_auch_beim_aktualisieren_entschaerft() -> None:
+    """Der Neuanlage-Pfad entschaerfte, der Aktualisierungs-Pfad nicht.
+
+    `_titel_aktualisieren` bekam den ROHEN Claim und schrieb die Markerzeile
+    damit VOR den Startmarker: Lauf 2 wuchs, Lauf 3 meldete dauerhaft
+    "mehrfache VERITAS-Marker" -- an einer Notiz, die das Werkzeug selbst
+    erzeugt hatte. Alle bisherigen Entschaerfungs-Tests starteten mit einer
+    leeren Notiz und konnten das nicht sehen.
+    """
+    befund = _befund_fuer_notiz()
+    befund["claim"] = f"Kaputt\n{sync_knowledge.GENERATED_START}\nEnde."
+
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+    assert erst is not None
+
+    zweit, konflikt = sync_knowledge.render_finding_note(befund, erst, "2026-09-03")
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert zweit is not None
+    assert zweit.count(sync_knowledge.GENERATED_START) == 1
+    assert zweit == erst
+
+    dritt, konflikt3 = sync_knowledge.render_finding_note(befund, zweit, "2026-09-03")
+    assert konflikt3 is None or isinstance(konflikt3, str)
+    assert dritt == erst
+
+
+def test_doppeltes_bom_verliert_kein_zeichen() -> None:
+    """`lstrip` entfernte beliebig viele BOMs, zurueck kam genau eines."""
+    inhalt, _ = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), "\ufeff\ufeff" + _notiz_mit_eigenem_inhalt(), "2026-09-03"
+    )
+
+    assert inhalt is None or not inhalt.startswith("\ufeff---")
+
+
+@pytest.mark.parametrize(
+    "feld,wert",
+    [
+        ("category", "Scoring\n<!-- VERITAS:GENERATED:START -->\nX"),
+        ("pass_quote", "2/3\n---\nX"),
+        ("severity", "P2\nzweite Zeile"),
+    ],
+)
+def test_mehrzeilige_frontmatter_werte_lassen_die_notiz_nicht_wachsen(
+    feld: str, wert: str
+) -> None:
+    """Frontmatter-Werte werden roh interpoliert und sind nicht einzeilig.
+
+    Eine Markerzeile ist dort schlimmer als im Rumpf: `_marker_positionen`
+    liest nur den Rumpf und meldet deshalb KEINEN Konflikt -- die Notiz wuchs
+    bei jedem Lauf um einen Marker, und `--apply` endete fuer immer mit einer
+    Differenz, ohne dass irgendwo stand warum. Eine `---`-Zeile schnitt
+    zusaetzlich das Frontmatter ab, schlichte Mehrzeiligkeit liess die Notiz
+    ebenfalls wachsen.
+    """
+    befund = _befund_fuer_notiz()
+    befund[feld] = wert
+
+    notiz = ""
+    laengen: list[int] = []
+    for _ in range(4):
+        notiz, konflikt = sync_knowledge.render_finding_note(
+            befund, notiz, "2026-09-03"
+        )
+        assert notiz is not None, konflikt
+        laengen.append(len(notiz))
+
+    assert len(set(laengen)) == 1
+    assert notiz.count(sync_knowledge.GENERATED_START) == 1
+    assert notiz.count(sync_knowledge.GENERATED_END) == 1
+
+
+def test_voller_claim_steht_im_block() -> None:
+    """Der Titel wird zusammengezogen -- der Wortlaut darf nicht verloren gehen.
+
+    Sonst stuende ein mehrzeiliger Claim nach dem Sync nirgends mehr
+    vollstaendig in der Notiz, ohne jeden Hinweis darauf.
+    """
+    befund = _befund_fuer_notiz()
+    befund["claim"] = "Erste Zeile.\nZweite Zeile."
+
+    inhalt, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+
+    assert inhalt is not None
+    assert "# V-001 - Erste Zeile. Zweite Zeile." in inhalt
+    kern = inhalt.split(sync_knowledge.GENERATED_START)[1]
+    assert "- Claim: Erste Zeile.\nZweite Zeile." in kern
+
+
+def test_bestands_learning_steht_im_moc_und_ist_keine_waise(tmp_path: Path) -> None:
+    """Alle Ziele beschreiben den GESAMTEN Wissensstand, nicht nur den Lauf.
+
+    Solange Vault-Notizen, MOC und Waisenerkennung nur den Lauf sahen, stand
+    ein akkumuliertes Learning zwar in LESSONS.md, fehlte aber im MOC und galt
+    als Waise -- seine Notiz wurde nie wieder aktualisiert. Genau in dem Fall,
+    fuer den die Vereinigung gebaut wurde.
+    """
+    repo = _repo(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    documents = [_pass(1, [_finding()]), _pass(2, [_finding()]), _pass(3, [])]
+    run_dir = _run_dir(repo, tmp_path, documents)
+    config = _sync_config(repo, vault, tmp_path)
+    bestand = repo / "tools" / "audit" / "learnings.json"
+    bestand.parent.mkdir(parents=True, exist_ok=True)
+    veritas.write_json(
+        bestand,
+        {
+            "schema_version": 2,
+            "learnings": [
+                {
+                    "id": "L-042",
+                    "sources": ["V-777"],
+                    "situation": "Aus einem frueheren Lauf.",
+                    "rule": "Alte Regel bleibt gueltig.",
+                    "counterexample": "Alter Gegenbeleg.",
+                    "tags": ["alt"],
+                    "status": "aktiv",
+                    "applied": 0,
+                    "hits": 0,
+                    "applications": [],
+                }
+            ],
+        },
+    )
+    args = argparse.Namespace(run_dir=str(run_dir), repo=str(repo), apply=True)
+    assert sync_knowledge.command_sync(args, config_path=config) == 0
+
+    expected, _, orphans, _konflikte = sync_knowledge.build_expected(
+        run_dir, repo, veritas.read_json(config)
+    )
+
+    audit_dir = vault / "10_Projects" / "HPG" / "_wiki" / "audit"
+    assert (audit_dir / "Learnings" / "L-042.md").is_file()
+    assert "L-042" in (audit_dir / "AUDIT-MOC.md").read_text(encoding="utf-8")
+    assert not any("L-042" in pfad for pfad in orphans)
+    assert sync_knowledge.diff_plan(expected, orphans)["sync_difference_count"] == 0
+
+
+def test_leere_kategorie_erzeugt_keine_scheindifferenz() -> None:
+    """`[veritas, audit, ]` raeumte der naechste Lauf auf.
+
+    Das meldete eine Aenderung an einer Datei, die niemand angefasst hat.
+    """
+    befund = _befund_fuer_notiz()
+    befund["category"] = ""
+
+    erst, _ = sync_knowledge.render_finding_note(befund, "", "2026-09-03")
+    assert erst is not None
+    assert "tags: [veritas, audit]" in erst
+
+    zweit, _ = sync_knowledge.render_finding_note(befund, erst, "2026-09-03")
+    assert zweit == erst
+
+
+def test_zitierter_endmarker_oberhalb_versteckt_die_marker_nicht() -> None:
+    """Nutzerterritorium gilt in BEIDE Richtungen, nicht nur hinter dem Block.
+
+    Wurde der erste Endmarker der ganzen Notiz mit dem ersten Startmarker
+    verglichen, galt eine Notiz mit einem woertlich zitierten Endmarker
+    OBERHALB des Blocks als "Notiz ohne VERITAS-Marker" -- und zwar dauerhaft,
+    mit einer Meldung, die dem Nutzer den Zusammenhang gerade nicht verraet,
+    weil die Marker ja sichtbar dastehen.
+    """
+    notiz = _notiz_mit_eigenem_inhalt().replace(
+        "## Meine Analyse\n",
+        "## Meine Analyse\n\nSo sieht die Endmarke aus:\n\n"
+        + sync_knowledge.GENERATED_END
+        + "\n",
+    )
+
+    inhalt, konflikt = sync_knowledge.render_finding_note(
+        _befund_fuer_notiz(), notiz, "2026-09-03"
+    )
+
+    assert konflikt is None or isinstance(konflikt, str)
+    assert inhalt is not None
+    assert "So sieht die Endmarke aus:" in inhalt
+    assert "ALTER GENERIERTER INHALT" not in inhalt
+    assert "Mein Text." in inhalt

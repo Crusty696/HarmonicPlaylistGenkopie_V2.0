@@ -12,8 +12,15 @@
 - Status `BESTAETIGT` erfordert denselben Fingerprint in mindestens zwei
   Paessen bei gleicher `severity` und `confidence` und
   Akzeptanz durch einen frischen Verifikator.
-- Ein Lauf mit fehlendem Pass, fehlender Evidenz oder Sync-Differenzen bleibt
-  offen.
+- Ein Lauf mit fehlendem Pass, fehlender Evidenz, Sync-Differenzen oder
+  offenen Sync-Konflikten bleibt offen. Waisen zaehlen getrennt und blockieren
+  nicht, muessen aber bewertet werden.
+- Befund-IDs werden ueber den `fingerprint` fortgeschrieben: `merge` uebernimmt
+  die ID des Vorgaengerlaufs, solange einer benannt ist (eigener Kanon oder
+  `--previous`). Stabil ist damit der `fingerprint`, die ID folgt ihm.
+  Verifikatorurteile binden am `fingerprint`. Eine Vault-Notiz heisst nach
+  ihrer ID (`Befunde/V-001.md`) -- Waisen entstehen deshalb, wenn ein
+  Fingerprint wegfaellt oder mit `--no-previous` kein Vorgaenger benannt ist.
 
 ## Rollen
 

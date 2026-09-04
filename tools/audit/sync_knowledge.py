@@ -87,8 +87,12 @@ def _windows_name(part: str) -> str:
 def frontmatter_value(text: str, key: str) -> str | None:
     # Notepad und PowerShell 5.1 schreiben UTF-8 mit BOM; ohne das Abstreifen
     # galt das Frontmatter als nicht vorhanden und der Nutzerstatus fiel
-    # stillschweigend auf den Vorgabewert zurueck.
-    text = text.lstrip("﻿")
+    # stillschweigend auf den Vorgabewert zurueck. Genau EIN BOM abstreifen,
+    # wie in `_frontmatter_teile`: zwei Leser mit zwei Regeln
+    # liessen eine doppelt praefixierte Notiz hier durchgehen und erst achtzig
+    # Zeilen spaeter mit "ohne lesbares Frontmatter" durchfallen.
+    if text.startswith("﻿"):
+        text = text[1:]
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---\n", 4)
@@ -97,23 +101,6 @@ def frontmatter_value(text: str, key: str) -> str | None:
     pattern = re.compile(rf"^{re.escape(key)}:\s*[\"']?([^\n\"']+)[\"']?\s*$", re.MULTILINE)
     match = pattern.search(text[4:end])
     return match.group(1).strip() if match else None
-
-
-def user_comment(text: str) -> str:
-    """Nutzerkommentar hinter dem generierten Block.
-
-    Die Suche beginnt erst nach GENERATED_END: sonst trifft sie die
-    Zeichenfolge in einem Evidenz-Zitat, und die Notiz waechst bei jedem
-    Lauf um einen weiteren Block.
-    """
-    marker = "## Nutzerkommentar"
-    ende = text.find(GENERATED_END)
-    ab = (ende + len(GENERATED_END)) if ende >= 0 else 0
-    start = text.find(marker, ab)
-    if start < 0:
-        return ""
-    body_start = start + len(marker)
-    return text[body_start:].lstrip("\r\n").rstrip()
 
 
 def safe_vault_dir(config: dict[str, Any]) -> Path:
@@ -156,6 +143,200 @@ def safe_project_target(repo: Path, raw: str) -> Path:
     if not any(rel == prefix or prefix in rel.parents for prefix in allowed):
         raise VeritasError(f"Projektziel nicht freigegeben: {raw}")
     return resolved
+
+
+def _frontmatter_teile(text: str) -> tuple[list[str], str] | None:
+    """Frontmatter-Zeilen und Rest, oder None wenn kein Frontmatter da ist."""
+    # Genau EIN BOM abstreifen. `lstrip` entfernte beliebig viele, zurueck
+    # geschrieben wird aber nur eines -- eine doppelt praefixierte Datei
+    # verloere sonst still ein Zeichen.
+    if text.startswith("﻿"):
+        text = text[1:]
+    if not text.startswith("---\n"):
+        return None
+    ende = text.find("\n---\n", 4)
+    if ende < 0:
+        return None
+    return text[4:ende].splitlines(), text[ende + len("\n---\n"):]
+
+
+def _tags_vereinigen(alt: str, neu: str) -> str:
+    """Eigene Tags erhalten, generierte ergaenzen.
+
+    `tags` ist das einzige Frontmatter-Feld, das beiden gehoert.
+    """
+    def zerlegen(wert: str) -> list[str]:
+        return [t.strip() for t in wert.strip().strip("[]").split(",") if t.strip()]
+
+    zusammen = zerlegen(alt)
+    for tag in zerlegen(neu):
+        if tag not in zusammen:
+            zusammen.append(tag)
+    return "[" + ", ".join(zusammen) + "]"
+
+
+def _frontmatter_mischen(vorhanden: list[str], generiert: dict[str, str]) -> list[str]:
+    """Generierte Schluessel aktualisieren, fremde unveraendert erhalten.
+
+    Vorher wurde die ganze Datei neu geschrieben; eigene Felder wie `aliases`
+    oder `prioritaet` verschwanden dabei restlos.
+    """
+    ergebnis: list[str] = []
+    gesehen: set[str] = set()
+    for zeile in vorhanden:
+        # Nur Zeilen ohne fuehrenden Leerraum sind Schluessel der obersten
+        # Ebene. Eine eingerueckte Zeile gehoert zum Wert darueber; wuerde sie
+        # als Schluessel behandelt, verloere ein eigenes verschachteltes Feld
+        # seinen Wert und seine Einrueckung.
+        ist_schluessel = bool(zeile[:1].strip()) and not zeile.startswith("#") and ":" in zeile
+        schluessel = zeile.split(":", 1)[0].strip() if ist_schluessel else ""
+        if schluessel == "tags":
+            alt = zeile.split(":", 1)[1]
+            wert = alt.strip()
+            mehrzeilig = wert.startswith("[") and not wert.endswith("]")
+            if not wert or wert.startswith("#") or mehrzeilig:
+                # Blockstil (`tags:` und darunter `  - x`), Kommentar statt
+                # Wert, oder eine Inline-Liste, die erst in einer Folgezeile
+                # schliesst. In allen drei Faellen gehoeren die Folgezeilen zum
+                # Wert, sind hier aber nicht sichtbar. Eine Inline-Liste
+                # darueberzuschreiben zerstoert das Frontmatter, also bleibt
+                # der Wert unangetastet.
+                ergebnis.append(zeile)
+            else:
+                ergebnis.append(f"tags: {_tags_vereinigen(alt, generiert['tags'])}")
+            gesehen.add("tags")
+        elif schluessel in generiert:
+            ergebnis.append(f"{schluessel}: {generiert[schluessel]}")
+            gesehen.add(schluessel)
+        else:
+            ergebnis.append(zeile)
+    for schluessel, wert in generiert.items():
+        if schluessel not in gesehen:
+            ergebnis.append(f"{schluessel}: {wert}")
+    return ergebnis
+
+
+def _marker_positionen(rumpf: str) -> tuple[list[int], list[int]]:
+    """Zeichenpositionen der Marker: Zeilen, die exakt der Markerzeile gleichen.
+
+    Bewusst OHNE Codeblock-Erkennung. Ein Zustandsautomat ueber ```-Zeilen
+    haengt an fremdem Text: ein einzelner nicht geschlossener Codeblock im
+    Nutzerabschnitt -- in Obsidian ein haeufiger Tippfehler -- liesse die
+    echten Marker als "im Codeblock" gelten, und der Sync meldete "Notiz ohne
+    VERITAS-Marker" an einer Notiz, die er selbst geschrieben hat.
+
+    Dass ein Evidenz-Zitat eine Markerzeile enthaelt, ist stattdessen an der
+    Quelle geloest: `_marker_entschaerfen` sorgt dafuer, dass im
+    erzeugten Block keine Zeile exakt einem Marker gleicht.
+    """
+    starts: list[int] = []
+    enden: list[int] = []
+    position = 0
+    for zeile in rumpf.split("\n"):
+        if zeile == GENERATED_START:
+            starts.append(position)
+        elif zeile == GENERATED_END:
+            enden.append(position)
+        position += len(zeile) + 1
+    return starts, enden
+
+
+def _titel_aktualisieren(davor: str, finding_id: str, claim: str) -> str:
+    """Die vom Generator gesetzte Ueberschrift nachziehen.
+
+    Der Titel `# V-001 - {claim}` steht ausserhalb der Marker, stammt aber vom
+    Generator. Ohne dieses Nachziehen zeigte eine Bestandsnotiz dauerhaft den
+    alten Claim. Eine vom Nutzer umbenannte Ueberschrift wird nicht angefasst:
+    erkannt wird nur die erzeugte Form mit dem Praefix `# {id} - `.
+
+    Betrachtet wird ausschliesslich die ERSTE nicht leere Zeile: genau dort
+    schreibt der Neuanlage-Pfad die Ueberschrift hin. Bewusst OHNE
+    Codeblock-Erkennung -- ein Zustandsautomat ueber ```-Zeilen haengt an
+    fremdem Text, und ein einzelner nicht geschlossener Codeblock oberhalb
+    liesse die Schleife nie zum Ende kommen und den Titel stillschweigend fuer
+    immer einfrieren. Steht in der ersten Zeile etwas anderes, gehoert der
+    Kopf dem Nutzer und bleibt unangetastet.
+    """
+    praefix = f"# {finding_id} - "
+    zeilen = davor.split("\n")
+    for index, zeile in enumerate(zeilen):
+        if not zeile.strip():
+            continue
+        if zeile.startswith(praefix):
+            zeilen[index] = f"{praefix}{claim}"
+        break
+    return "\n".join(zeilen)
+
+
+def _einzeilig(wert: str) -> str:
+    """Einen Wert auf eine Zeile ziehen und Markerzeichenfolgen entschaerfen.
+
+    Fuer alles, was AUSSERHALB der Marker landet: Frontmatter-Werte und die
+    Ueberschrift. Dort ist Mehrzeiligkeit schon fuer sich schaedlich -- der
+    Rueckbau ersetzt zeilenweise und liesse die Notiz bei jedem Lauf wachsen --
+    und eine Markerzeile waere unsichtbar, weil `_marker_positionen` nur den
+    Rumpf liest.
+    """
+    zusammengezogen = " ".join(str(wert).split())
+    for marker in (GENERATED_START, GENERATED_END):
+        zusammengezogen = zusammengezogen.replace(
+            marker, marker.replace("-->", "-- >")
+        )
+    return zusammengezogen
+
+
+def _marker_entschaerfen(text: str) -> tuple[str, bool]:
+    """Markerzeilen im erzeugten Text unschaedlich machen.
+
+    `evidence_markdown` setzt Quellzitate unveraendert in einen ```text-Block,
+    und `impact`, `claim`, `rule` und `path` werden roh interpoliert -- keines
+    davon ist auf eine Zeile beschraenkt. Ein Audit ueber dieses Modul oder
+    ueber die Skill-Doku kann die Markerzeile also an JEDER dieser Stellen
+    einschleusen, nicht nur im Zitat. Der naechste Lauf faende dann in seiner
+    eigenen Notiz mehrere Marker und meldete einen Konflikt, den niemand
+    aufloesen kann.
+
+    Betroffen ist nur eine Zeile, die dem Marker EXAKT gleicht; aus `-->` wird
+    `-- >`. Der Text im Vault ist dann an dieser einen Stelle nicht mehr
+    byteweise exakt -- die Laufdatei unter `tools/audit/runs/` bleibt es.
+    """
+    ersetzt: list[str] = []
+    getroffen = False
+    for zeile in text.split("\n"):
+        if zeile == GENERATED_START or zeile == GENERATED_END:
+            ersetzt.append(zeile.replace("-->", "-- >"))
+            getroffen = True
+        else:
+            ersetzt.append(zeile)
+    return "\n".join(ersetzt), getroffen
+
+
+HINWEIS_ENTSCHAERFT = (
+    "Hinweis: Mindestens eine Markerzeile in diesem Block wurde zu `-- >` "
+    "entschaerft, damit der naechste Lauf seine eigenen Marker wiederfindet. "
+    "Der Originaltext steht unveraendert in `tools/audit/runs/`."
+)
+
+
+def _generierter_block(finding: dict[str, Any]) -> str:
+    roh = f"""## Befund
+
+- Claim: {finding['claim']}
+- Status im Merge: {finding['merge_status']}
+- Status nach Verifikator: {finding['verifier_status']}
+- Datei: `{finding['path']}:{finding['line_start']}`
+- Regel: `{finding['rule']}`
+- Auswirkung: {finding['impact']}
+- Reproduziert: {finding['pass_quote']}
+
+## Beweis
+
+{evidence_markdown(finding)}"""
+    block, getroffen = _marker_entschaerfen(roh)
+    # Der Hinweis erscheint nur, wenn wirklich ersetzt wurde -- sonst wuechse
+    # jede Notiz um eine Zeile ohne Anlass. Ohne ihn stuende im Vault ein als
+    # woertlich ausgewiesenes Zitat, das an einer Stelle nicht woertlich ist.
+    return f"{block}\n\n{HINWEIS_ENTSCHAERFT}" if getroffen else block
 
 
 def canonical_user_status(finding: dict[str, Any]) -> str:
@@ -206,7 +387,6 @@ def render_finding_note(
         }
     else:
         status = default_status
-    comment = user_comment(existing) if existing else ""
     drift = status if status != default_status else None
     if schreibweise_geaendert:
         # Nutzertext wird kleingeschrieben zurueckgeschrieben -- das ist eine
@@ -215,49 +395,185 @@ def render_finding_note(
     if existing and alter_fp is None:
         # Erstmigration: die Notiz stammt aus der Zeit ohne Fingerprint.
         drift = drift or status
-    tags = f"[veritas, audit, {str(finding.get('category', '')).casefold().replace(' ', '-')}]"
-    content = f"""---
-type: audit-finding
-project: HarmonicPlaylistGenerator
-id: {finding['id']}
-fingerprint: {fingerprint}
-status: {status}
-severity: {finding['severity']}
-kategorie: {finding['category']}
-datei: {finding['path']}
-pass_quote: {finding['pass_quote']}
-konfidenz: {finding['confidence']}
-updated: {generated_at}
-tags: {tags}
----
+    # Ueber `_tags_vereinigen` normalisiert: bei leerem `category` entstuende
+    # sonst `[veritas, audit, ]`, das der Aktualisierungspfad im naechsten Lauf
+    # zu `[veritas, audit]` aufraeumt -- eine Differenz an einer Datei, die
+    # niemand angefasst hat.
+    tags = _tags_vereinigen(
+        "",
+        f"[veritas, audit, {str(finding.get('category', '')).casefold().replace(' ', '-')}]",
+    )
+    generiert = {
+        "type": "audit-finding",
+        "project": "HarmonicPlaylistGenerator",
+        "id": str(finding["id"]),
+        "fingerprint": fingerprint,
+        "status": status,
+        "severity": str(finding["severity"]),
+        "kategorie": str(finding["category"]),
+        "datei": str(finding["path"]),
+        "pass_quote": str(finding["pass_quote"]),
+        "konfidenz": str(finding["confidence"]),
+        "updated": generated_at,
+        "tags": tags,
+    }
+    # JEDER generierte Frontmatter-Wert muss einzeilig und markerfrei sein.
+    # `category`, `path` und `pass_quote` werden roh interpoliert und sind
+    # nicht auf eine Zeile beschraenkt. Eine Markerzeile dort ist schlimmer
+    # als im Rumpf: `_marker_positionen` liest nur den Rumpf, meldet also
+    # keinen Konflikt -- die Notiz wuchs bei JEDEM Lauf um einen Marker, und
+    # `--apply` endete fuer immer mit einer Differenz, ohne dass irgendwo
+    # stand warum. Eine `---`-Zeile schnitt zusaetzlich das Frontmatter ab.
+    generiert = {
+        schluessel: _einzeilig(wert) for schluessel, wert in generiert.items()
+    }
+    block = _generierter_block(finding)
+    # Die Ueberschrift steht ausserhalb der Marker und muss EINZEILIG sein.
+    # `claim` ist auf eine Zeile nicht beschraenkt: ein mehrzeiliger Claim
+    # erzeugte eine mehrzeilige Ueberschrift, die `_titel_aktualisieren`
+    # zeilenweise nicht stabil ersetzen kann -- die Notiz wuchs bei jedem Lauf.
+    # Enthielt er zudem eine Markerzeile, blockierte sie ab dem dritten Lauf
+    # dauerhaft. Zusammenziehen loest beides an der Wurzel.
+    titel_text = _einzeilig(str(finding["claim"]))
+    titel = f"{finding['id']} - {titel_text}"
 
-# {finding['id']} - {finding['claim']}
+    if not existing:
+        kopf = "\n".join(f"{k}: {v}" for k, v in generiert.items())
+        return (
+            f"---\n{kopf}\n---\n\n"
+            f"# {titel}\n\n"
+            f"{GENERATED_START}\n\n{block}\n\n{GENERATED_END}\n\n"
+            f"## Nutzerkommentar\n\n"
+        ), drift
 
-{GENERATED_START}
+    # Bestandsnotiz: nur der Bereich zwischen den Markern wird neu geschrieben.
+    # Alles davor und dahinter bleibt byteweise erhalten -- eigene Abschnitte,
+    # eigene Ueberschriften, eigene Frontmatter-Felder.
+    teile = _frontmatter_teile(existing)
+    if teile is None:
+        return None, {
+            "id": finding["id"],
+            "grund": "Notiz ohne lesbares Frontmatter",
+        }
+    fm_zeilen, rumpf = teile
+    starts, enden = _marker_positionen(rumpf)
+    # Der erste Startmarker, und dazu das ERSTE Ende DAHINTER. Ein woertlich
+    # zitierter Endmarker oberhalb des Blocks gehoert dem Nutzer und darf die
+    # Notiz nicht als "ohne Marker" erscheinen lassen -- dieselbe Regel wie
+    # hinter dem Block, nur nach vorn.
+    start = starts[0] if starts else None
+    ende = next((wert for wert in enden if wert > start), None) if starts else None
+    if start is None or ende is None:
+        # Von Hand angelegte Notiz ohne Marker: nicht ueberschreiben.
+        return None, {
+            "id": finding["id"],
+            "grund": "Notiz ohne VERITAS-Marker",
+        }
+    if any(start < weiterer < ende for weiterer in starts[1:]):
+        # Ein zweiter Startmarker INNERHALB des Blocks: es wuerde nur bis zum
+        # ersten Ende aktualisiert, der Rest bliebe mit veralteten Werten
+        # stehen. Marker HINTER dem Ende zaehlen bewusst nicht -- dort liegt
+        # der Nutzerkommentar, und ein woertlich zitierter Marker darin
+        # blockierte die Notiz sonst dauerhaft, ohne dass der Nutzer den
+        # Zusammenhang erkennen kann.
+        return None, {
+            "id": finding["id"],
+            "grund": "mehrfache VERITAS-Marker",
+        }
+    kopf = "\n".join(_frontmatter_mischen(fm_zeilen, generiert))
+    # Denselben einzeiligen Titel wie im Neuanlage-Pfad verwenden: der rohe
+    # Claim schriebe zusaetzliche Zeilen VOR den Startmarker, die Notiz wuechse
+    # bei jedem Lauf und blockierte ab dem dritten dauerhaft.
+    davor = _titel_aktualisieren(rumpf[:start], str(finding["id"]), titel_text)
+    dahinter = rumpf[ende + len(GENERATED_END):]
+    # Notepad und PowerShell 5.1 schreiben UTF-8 mit BOM. `_frontmatter_teile`
+    # streift es zum Lesen ab; ohne dieses Merken verloere die Notiz es bei
+    # jedem Sync -- eine stille Formataenderung an einer Nutzerdatei.
+    bom = "﻿" if existing.startswith("﻿") else ""
+    return (
+        f"{bom}---\n{kopf}\n---\n"
+        f"{davor}{GENERATED_START}\n\n{block}\n\n{GENERATED_END}{dahinter}"
+    ), drift
 
-## Befund
 
-- Status im Merge: {finding['merge_status']}
-- Status nach Verifikator: {finding['verifier_status']}
-- Datei: `{finding['path']}:{finding['line_start']}`
-- Regel: `{finding['rule']}`
-- Auswirkung: {finding['impact']}
-- Reproduziert: {finding['pass_quote']}
+def vereinige_learnings(ziel: Path, lauf_daten: dict[str, Any]) -> dict[str, Any]:
+    """Lauf-Stand in den persistenten Speicher mischen, nicht ersetzen.
 
-## Beweis
+    Vorher schrieb der Sync die Laufdatei ueber die persistente. Gemischt wird
+    ueber die `id`: was der Lauf kennt, gewinnt; was er nicht kennt, bleibt
+    unangetastet.
 
-{evidence_markdown(finding)}
+    ACHTUNG, Grenze: `veritas.command_init` seedet die Laufdatei aus dem
+    persistenten Speicher. Im Regelfall traegt der Lauf den Bestand also
+    bereits, und das alte Ueberschreiben verlor nichts. Verlust entstand nur,
+    wenn der Lauf aus einer anderen Quelle initialisiert wurde oder sich der
+    Bestand zwischen `init-run` und `sync` geaendert hat.
 
-{GENERATED_END}
+    Und: was der Lauf kennt, gewinnt VOLLSTAENDIG. Emittiert er ein bekanntes
+    Learning mit `applied: 0` neu, sind die akkumulierten Zaehler des Bestands
+    weg. Erhalten bleibt die Existenz des Learnings, nicht sein Zaehlerstand.
+    """
+    bestand: list[dict[str, Any]] = []
+    vorhandene_version: Any = None
+    if ziel.is_file():
+        vorhanden = read_json(ziel)
+        vorhandene_version = vorhanden.get("schema_version")
+        if vorhanden.get("schema_version") not in READABLE_SCHEMA_VERSIONS:
+            raise VeritasError(f"{ziel}: falsche schema_version")
+        roh = vorhanden.get("learnings")
+        if not isinstance(roh, list):
+            raise VeritasError(f"{ziel}: learnings muss Liste sein")
+        bestand = []
+        gesehene_ids: set[str] = set()
+        for index, eintrag in enumerate(roh):
+            if not isinstance(eintrag, dict):
+                raise VeritasError(f"{ziel}: learnings[{index}] muss Objekt sein")
+            kennung = eintrag.get("id")
+            if not isinstance(kennung, str) or not kennung:
+                # Ohne id liesse sich der Eintrag nie wieder aktualisieren.
+                raise VeritasError(f"{ziel}: learnings[{index}] ohne id")
+            if kennung in gesehene_ids:
+                raise VeritasError(f"{ziel}: doppelte Learning-ID {kennung}")
+            gesehene_ids.add(kennung)
+            bestand.append(eintrag)
+    aus_lauf = {
+        eintrag["id"]: eintrag
+        for eintrag in lauf_daten.get("learnings", [])
+        if isinstance(eintrag, dict) and isinstance(eintrag.get("id"), str)
+    }
+    ergebnis: list[dict[str, Any]] = []
+    gesehen: set[str] = set()
+    for alt in bestand:
+        kennung = str(alt["id"])
+        ergebnis.append(aus_lauf.get(kennung, alt))
+        gesehen.add(kennung)
+    for kennung, neu in aus_lauf.items():
+        if kennung not in gesehen:
+            ergebnis.append(neu)
+    # Nie herabgestuft, angehoben nur wenn der Lauf neuer ist. Blind
+    # `SCHEMA_VERSION` zu schreiben hob eine Bestandsdatei auch dann an, wenn
+    # der Lauf selbst noch die aeltere Fassung lieferte.
+    # ACHTUNG, Grenze dieser Regel: `veritas.command_init` stempelt der
+    # Laufdatei immer `SCHEMA_VERSION` auf. Im produktiven Pfad ist der Lauf
+    # also stets die neueste Fassung, und eine Bestandsdatei mit einer
+    # aelteren Version wird dadurch weiterhin angehoben. Wirksam ist die Regel
+    # nur fuer Aufrufer, die den Lauf-Stand selbst bilden.
+    versionen = [
+        wert
+        for wert in (vorhandene_version, lauf_daten.get("schema_version"))
+        if isinstance(wert, int) and wert in READABLE_SCHEMA_VERSIONS
+    ]
+    return {
+        "schema_version": max(versionen) if versionen else SCHEMA_VERSION,
+        "learnings": ergebnis,
+    }
 
-## Nutzerkommentar
 
-{comment}
-"""
-    return content, drift
-
-
-def validate_learnings(data: dict[str, Any], finding_ids: set[str]) -> list[dict[str, Any]]:
+def validate_learnings(
+    data: dict[str, Any],
+    finding_ids: set[str],
+    bekannte_quellen: dict[str, set[str]] | None = None,
+) -> list[dict[str, Any]]:
     if data.get("schema_version") not in READABLE_SCHEMA_VERSIONS:
         raise VeritasError("learnings.json: falsche schema_version")
     raw = data.get("learnings")
@@ -284,7 +600,14 @@ def validate_learnings(data: dict[str, Any], finding_ids: set[str]) -> list[dict
         ]
         if invalid_sources:
             raise VeritasError(f"{learning_id}: ungueltige Quellen {invalid_sources}")
-        unknown_sources = [source for source in sources if source not in finding_ids]
+        # Ein Learning behaelt genau die Quellen, die im persistenten Speicher
+        # schon an ihm hingen -- sonst koennte akkumuliertes Wissen strukturell
+        # nie mitgefuehrt werden. JEDE andere Quelle muss ein Befund dieses
+        # Laufs sein, sonst faellt ein Tippfehler wie V-999 nicht auf. Die
+        # Pruefung haengt an der einzelnen Quelle, nicht an der Learning-ID:
+        # sonst waere ein bekanntes Learning dauerhaft ungeschuetzt.
+        erlaubt = finding_ids | (bekannte_quellen or {}).get(learning_id, set())
+        unknown_sources = [source for source in sources if source not in erlaubt]
         if unknown_sources:
             raise VeritasError(
                 f"{learning_id}: Quellen ohne Befund im Lauf {sorted(unknown_sources)}"
@@ -489,7 +812,26 @@ def build_expected(
     if len(ids) != len(findings) or not all(isinstance(value, str) and FINDING_ID.fullmatch(value) for value in ids):
         raise VeritasError("findings.json: ungueltige oder doppelte IDs")
     learning_data = read_json(run_dir / "learnings.json")
-    learnings = validate_learnings(learning_data, set(ids))
+    learning_ziel_pfad = safe_project_target(repo, str(config["project_learnings"]))
+    bekannte: dict[str, set[str]] = {}
+    if learning_ziel_pfad.is_file():
+        roh_bestand = read_json(learning_ziel_pfad).get("learnings")
+        if not isinstance(roh_bestand, list):
+            # Ohne diese Pruefung endete eine von Hand editierte Datei mit
+            # `"learnings": null` in einem TypeError statt in einer Meldung.
+            raise VeritasError(f"{learning_ziel_pfad}: learnings muss Liste sein")
+        for eintrag in roh_bestand:
+            if isinstance(eintrag, dict) and isinstance(eintrag.get("id"), str):
+                quellen = eintrag.get("sources")
+                bekannte[eintrag["id"]] = {
+                    quelle for quelle in quellen if isinstance(quelle, str)
+                } if isinstance(quellen, list) else set()
+    # Der Lauf wird SEPARAT geprueft, obwohl unten der vereinigte Stand noch
+    # einmal durch dieselbe Pruefung geht: `vereinige_learnings` filtert
+    # Lauf-Eintraege ohne gueltige `id` heraus, die faenden sich dort also nie
+    # wieder. Das Ergebnis wird bewusst nicht gebunden -- gerendert wird
+    # ausschliesslich der vereinigte Stand.
+    validate_learnings(learning_data, set(ids), bekannte)
     report = report_path(run_dir)
     report_text = report.read_text(encoding="utf-8")
     missing_report_ids = sorted(value for value in ids if value not in report_text)
@@ -514,24 +856,35 @@ def build_expected(
             status_drifts.append(
                 {"id": finding["id"], "vault_status": drift, "audit_status": finding["status"]}
             )
-    for learning in learnings:
+    vereinigt = vereinige_learnings(learning_ziel_pfad, learning_data)
+    expected[learning_ziel_pfad] = (
+        json.dumps(vereinigt, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    # Der Bestand wird genauso geprueft wie der Lauf: die Renderer greifen per
+    # Index auf `sources`, `applied` und `hits` zu und wuerden bei einem
+    # unvollstaendigen Alteintrag mit KeyError statt mit einer Meldung
+    # abbrechen.
+    alle = validate_learnings(vereinigt, set(ids), bekannte)
+    # ALLE Ziele beschreiben den GESAMTEN Wissensstand, nicht nur diesen Lauf.
+    # Solange Notizen, MOC und Waisenerkennung nur den Lauf sahen, stand ein
+    # akkumuliertes Learning zwar in LESSONS.md, fehlte aber im MOC und galt
+    # als Waise -- seine Notiz wurde nie wieder aktualisiert. Genau in dem
+    # Fall, fuer den die Vereinigung ueberhaupt gebaut wurde.
+    for learning in alle:
         expected[vault_dir / "Learnings" / f"{learning['id']}.md"] = render_learning_note(
             learning, generated_at
         )
-    expected[vault_dir / "AUDIT-MOC.md"] = render_moc(findings, learnings, generated_at)
-    expected[safe_project_target(repo, str(config["project_lessons"]))] = render_lessons(learnings)
-    expected[safe_project_target(repo, str(config["project_learnings"]))] = (
-        json.dumps(learning_data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    )
+    expected[vault_dir / "AUDIT-MOC.md"] = render_moc(findings, alle, generated_at)
+    expected[safe_project_target(repo, str(config["project_lessons"]))] = render_lessons(alle)
     max_lines = int(config.get("max_active_learning_lines", 20))
-    active_text = render_active_learnings(learnings, max_lines)
+    active_text = render_active_learnings(alle, max_lines)
     for raw_target in active_learning_targets(config):
         expected[safe_project_target(repo, raw_target)] = active_text
 
     orphans: list[str] = []
     for directory, pattern, known in (
         (vault_dir / "Befunde", "V-*.md", set(ids)),
-        (vault_dir / "Learnings", "L-*.md", {learning["id"] for learning in learnings}),
+        (vault_dir / "Learnings", "L-*.md", {learning["id"] for learning in alle}),
     ):
         if directory.is_dir():
             for path in directory.glob(pattern):

@@ -103,8 +103,46 @@ einzige produktive Zielprofil ist `tools/audit/sync_targets.json`; Aenderungen
 daran sind normaler, pruefbarer Repository-Diff.
 
 Nie `_raw/`, `00_Claude_Memory/`, Cache/DB/Locks oder
-`Claude-Autopilot-*` schreiben. Vault-Status und `Nutzerkommentar` gehoeren
-dem Nutzer und werden nicht ueberschrieben. GitHub-Issues brauchen eine neue,
+`Claude-Autopilot-*` schreiben.
+
+In einer Befund-Notiz schreibt der Sync ausschliesslich den Block zwischen
+`VERITAS:GENERATED:START` und `:END`, die generierten Frontmatter-Felder und
+die Ueberschrift, solange sie noch die erzeugte Form `# V-001 - ...` hat.
+Betrachtet wird dafuer nur die ERSTE nicht leere Zeile; steht dort nicht die
+erzeugte Form, bleibt der Kopf unangetastet und der Titel eingefroren. Der
+Titel ist immer einzeilig -- ein mehrzeiliger Claim wird zusammengezogen.
+Alles andere bleibt erhalten: eigene Felder, eigene Ueberschriften, eigene
+Abschnitte und der `Nutzerkommentar`. Der Status gehoert dem Nutzer. Bei
+`tags` wird eine einzeilige Inline-Liste vereinigt. Steht sie im Blockstil
+(`tags:` und darunter `  - x`), traegt sie nur einen Kommentar, oder schliesst
+die Klammer erst in einer Folgezeile, bleibt sie unangetastet und die
+generierten Tags fehlen -- eine Inline-Liste darueber zu schreiben zerstoerte
+das ganze Frontmatter, also auch Status und eigene Felder.
+
+Enthaelt IRGENDEINE Stelle des generierten Blocks eine Zeile, die einer
+Markerzeile exakt gleicht -- Zitat, `impact`, `rule`, `path` --, schreibt der
+Sync dort `-- >` statt `-->` und weist das mit einer Hinweiszeile unter dem
+Beweis aus. Ueberschrift und generierte Frontmatter-Werte werden zusaetzlich
+auf eine Zeile zusammengezogen: dort ist Mehrzeiligkeit schon fuer sich
+schaedlich, weil der Rueckbau zeilenweise ersetzt und die Notiz sonst bei
+jedem Lauf waechst. Der Text im Vault ist an diesen Stellen nicht mehr
+byteweise exakt; die Laufdatei unter `tools/audit/runs/` bleibt es, und der
+volle Claim steht unverkuerzt im generierten Block.
+Fehlen die Marker, wird die Datei nicht angefasst.
+
+Learning-Notizen unter `Learnings/` sind KEINE Bestandsnotizen: sie werden
+bei jedem `--apply` vollstaendig neu geschrieben, ohne Markerbereich, ohne
+Fingerprint-Pruefung, ohne Statusuebernahme und ohne Konfliktpfad. Eigene
+Ergaenzungen darin gehen verloren. Seit die Vereinigung greift, gilt das auch
+fuer Learnings, die nur im Bestand stehen -- sie sind keine Waisen mehr,
+sondern Ziele. Wer dort eigenen Text braucht, legt ihn ausserhalb von
+`Learnings/` ab.
+
+`tools/audit/learnings.json` wird ueber die `id` vereinigt, nicht ersetzt --
+Wissen aus frueheren Laeufen bleibt erhalten. Ein Learning behaelt genau die
+Quellen, die im Bestand schon an ihm hingen; jede andere Quelle muss ein
+Befund dieses Laufs sein. Der vereinigte Stand wird vor dem Rendern genauso
+geprueft wie der Lauf. GitHub-Issues brauchen eine neue,
 ausdrueckliche Freigabe.
 
 ## Abschluss-Gate
@@ -113,7 +151,18 @@ Ein Lauf ist nur abgeschlossen, wenn:
 
 - alle drei Pass-Dateien valide sind;
 - der unabhaengige Verifikator jeden bestaetigten Befund akzeptiert hat;
-- `sync_knowledge.py --apply` mit `sync_difference_count = 0` endet;
+- `sync_knowledge.py --apply` mit `sync_difference_count = 0` endet und keine
+  `konflikte` meldet. `orphan_count` zaehlt getrennt: Waisen entstehen, wenn
+  eine Befund-ID wegfaellt, und `--apply` entfernt sie nie. Sie blockieren das
+  Gate nicht, sind aber Handarbeit und muessen bewertet werden;
+- gemeldete `konflikte` geklaert sind. Eine Notiz mit fremdem `fingerprint`,
+  unbekanntem Statuswert, ohne lesbares Frontmatter, ohne VERITAS-Marker oder
+  mit mehr als einem generierten Block gehoert dem Nutzer und wird nicht
+  ueberschrieben. CRLF-Notizen fallen NICHT darunter: `Path.read_text`
+  normalisiert die Zeilenenden beim Lesen, und der Sync schreibt sie mit LF
+  zurueck. `mehrfache VERITAS-Marker` meldet nur ein zweiter Startmarker
+  INNERHALB des Blocks -- hinter dem Endmarker liegt Nutzerterritorium, dort
+  wird nichts geprueft und nichts angefasst;
 - angewendete Learnings und Ergebnisse im Bericht stehen;
 - offene Fragen, fehlende Werkzeuge und nicht gepruefte Bereiche genannt sind;
 - der Bericht auf Deutsch ist und jede User-Nachricht mit `:-)` endet.
