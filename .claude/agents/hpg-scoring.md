@@ -12,8 +12,9 @@ Du arbeitest an dem, was die Reihenfolge einer Playlist bestimmt.
 
 `calculate_compatibility` liefert 0-100 und ist **reine Harmonik**.
 `calculate_enhanced_compatibility` liefert `TransitionMetrics` und mischt
-Harmonik, BPM, Energie, Genre und — hinter `TRANSITION_FEATURES_ENABLED` —
-Groove, Bass, Klangfarbe, Stimmung.
+Harmonik, BPM, Energie, Genre, Groove, Bass, Klangfarbe und Stimmung. Die
+vier letzten werden BEDINGUNGSLOS berechnet; gesteuert wird ihr Einfluss
+allein ueber die Gewichte in `genres.py`. Einen Schalter gibt es nicht.
 
 **Verfolge die Aufrufer, nicht die Funktionsruempfe.**
 `calculate_transition_objective` umschliesst die erweiterte Funktion; ein Grep
@@ -74,6 +75,6 @@ leistet mehr als jede neue Faktor-Idee.
 ## Bevor du fertig meldest
 
 - Alle fuenf HPG-001-Konsumenten geprueft?
-- Bei geaenderter Formel: bleibt der Altpfad bit-identisch, wenn der Schalter
-  aus ist?
+- Bei geaenderter Formel: laesst sich der Altpfad ueber ein Gewicht von 0
+  reproduzieren? (Einen Schalter gibt es nicht.)
 - Neue Konstante an genau einem Ort?

@@ -143,7 +143,7 @@ Nichts davon ist gebaut. Erst Tor 1 je Befund, dann Umsetzung.
   verschiedene `energy`- und `avg_*`-Werte, und die fliessen ueber
   `transition_features` ins Scoring. Fuer Struktur und Outro gibt es mit
   `LIBROSA_TAIL_DURATION` eine Kompensation, fuer die Merkmale nicht. Der
-  RAM-Grund der Fensterlaengen ist in `config.py:158-166` dokumentiert, die
+  RAM-Grund der Fensterlaengen ist in `config.py:162-167` dokumentiert, die
   Pfadabhaengigkeit der Merkmale nicht.
 
 ### Runde 2 — 2026-09-04 — D1, D3, D4 gebaut
@@ -360,12 +360,17 @@ Fehler durchgelassen, den der Waechter dann fand.
 
 ## Offen, wartet auf Entscheidung oder Umsetzung
 
-- **D2** Schalter `TRANSITION_FEATURES_ENABLED` -- Entscheidung des Nutzers,
-  siehe oben.
-- **D5** Trunkierung ueberschreibt die gerundeten Mix-Takte. Cache und
-  Anzeige widersprechen sich um einen Takt. CACHE_VERSION-Frage klaeren.
-- **D6** Zwei Begriffe von "Genre dieses Tracks" -- verschiebt Scoring,
-  deshalb Vorlage statt Alleingang.
+- **D9 (neu, 2026-09-04)** `config.py` behauptet im Kommentar zur
+  Ladefenster-Begrenzung "Rekordbox Fast-Path: ... daher reichen 120s fuer
+  Energy/Genre", waehrend `LIBROSA_FAST_PATH_DURATION` auf 360 steht.
+  Gefunden beim Korrigieren einer Zeilenangabe. Gehoert zu D8, wird dort
+  miterledigt -- nicht in den D2/D6-Commit gezogen.
+
+- ~~**D2** Schalter `TRANSITION_FEATURES_ENABLED`~~ -- ERLEDIGT Runde 9.
+- ~~**D5** Trunkierung ueberschreibt die gerundeten Mix-Takte~~ -- ERLEDIGT,
+  commit 8ca0e21.
+- ~~**D6** Zwei Begriffe von "Genre dieses Tracks"~~ -- ERLEDIGT Runde 9,
+  entschieden: dokumentieren statt angleichen.
 - **D7** `_outro_overlap_limit` gibt `None` = "keine Grenze", wo
   `blend_bars_options` `[]` = "unmoeglich" gibt.
 - **D8** Beide Analysepfade messen die Merkmale ueber verschieden lange
@@ -458,3 +463,82 @@ Der Sentinel-Test faengt ausdruecklich NICHT den alten `int()`-Pfad -- der
 lieferte hier 0 --, sondern die Regression, die der Wechsel auf `round` ohne
 Guard erzeugt haette. Das steht so im Docstring, damit niemand daraus einen
 Altfehler liest.
+
+### Runde 8 — 2026-09-04 — D8 nachgemessen
+
+Beide Analysepfade rechnen dieselben Merkmalsfunktionen ueber das komplette
+geladene Signal -- nur ist das Fenster verschieden lang: Fast-Path
+`duration=LIBROSA_FAST_PATH_DURATION` (360 s), Vollpfad
+`duration=LIBROSA_MAX_DURATION` (600 s). Betroffen sind `calculate_energy`,
+`calculate_brightness`, `analyze_frequency_bands` und `compute_groove_fields`.
+
+Gemessen an einem konstruierten Signal von 480 s Dauer, dessen letztes Drittel
+leiser ist (typischer Outro-Verlauf). Reproduktion: Sinus 110 Hz plus 3 kHz
+bei 22050 Hz, `sig[int(360*sr):] *= 0.25`, dann `calculate_energy` und
+`analyze_frequency_bands` je auf die ersten 360 s und auf die vollen 480 s:
+
+    energy   Fast-Path (360 s) = 100.0   Vollpfad (480 s) = 90.0   Delta 10.0
+
+Die Frequenzbaender blieben in dieser Probe gleich, weil sie normierte
+Verhaeltnisse sind; bei anderem Material koennen auch sie auseinanderlaufen.
+
+TRAGWEITE groesser als zunaechst notiert: 360 s sind SECHS MINUTEN. Ein
+Grossteil der Psytrance- und DnB-Tracks dieser Bibliothek ist laenger. Ein
+einzelner Track laeuft immer nur durch EINEN Pfad -- die Inkonsistenz
+entsteht also nicht am selben Track, sondern ZWISCHEN Tracks: ob ein Track
+ueber 360 oder ueber 600 Sekunden gemessen wird, haengt allein daran, ob
+Rekordbox-Metadaten vorliegen. Genau diese Werte vergleicht das Scoring
+anschliessend miteinander.
+
+Der RAM-Grund der beiden Fensterlaengen ist in `config.py:162-167`
+dokumentiert. Dass die Trackmerkmale dadurch pfadabhaengig werden, steht
+nirgends. Fuer Struktur und Outro gibt es mit `LIBROSA_TAIL_DURATION` eine
+Kompensation, fuer die Merkmale nicht.
+
+NICHT gebaut: jede Angleichung aendert Analysewerte, verschiebt damit das
+Scoring und verlangt einen CACHE_VERSION-Bump. Entscheidung des Nutzers.
+
+### Runde 9 — 2026-09-04 — D2 und D6 erledigt
+
+Der Nutzer hat am 2026-09-04 entschieden: D2 "Schalter loeschen und Doku
+richtigstellen", D6 "nur dokumentieren", D7 "angleichen, harter Schnitt",
+D8 "Cache-Matrizen beschneiden". D2 und D6 sind damit ERLEDIGT und stehen
+nicht mehr unter den offenen Posten.
+
+**D2 behoben.** `TRANSITION_FEATURES_ENABLED` ist entfernt. Kein Verhalten
+aendert sich -- die Konstante hatte nachweislich keinen Leser.
+
+Zwei Dinge, die der Waechter an Tor 1 gefunden hat und ohne die der Fix
+Schaden angerichtet haette:
+
+1. Der zu loeschende Kommentarblock enthielt die EINZIGE zutreffende
+   Beschreibung von `GENRE_WEIGHT_WITH_DJ_BRAIN` und
+   `GENRE_WEIGHT_WITHOUT_DJ_BRAIN` -- dass sie im Acht-Faktoren-Pfad nur noch
+   als VERHAELTNIS wirken (`playlist.py`: `weights["genre"] *=
+   GENRE_WEIGHT_WITHOUT_DJ_BRAIN / GENRE_WEIGHT_WITH_DJ_BRAIN`). Die
+   Kommentare an den Definitionen selbst behaupteten dagegen Absolutwerte und
+   waren falsch. Ein blosses Loeschen haette richtige Doku entfernt und
+   falsche stehen lassen. Der Text ist jetzt an die Definitionen verschoben.
+2. `docs/agent-memory/` ist laut `docs/AGENT_HANDOFF.md` nur eine KOPIE. Das
+   Gedaechtnis, das ein Agent tatsaechlich laedt, liegt ausserhalb des
+   Repositorys und trug dieselben drei falschen Aussagen. Beide Orte sind
+   nachgezogen; ein Abgleichskript existiert nicht.
+
+Ausdruecklich NICHT erledigt: der A/B-Vergleich fuer den Hoertest fehlt
+weiterhin. Er war nie moeglich -- der Schalter hat nie etwas geschaltet.
+Machbar waere er ueber das Groove-Gewicht 0. Das ist kein Teil dieser
+Aenderung.
+
+**D6 dokumentiert, nicht geaendert.** Der Kommentar an `has_dj_data` nennt
+jetzt den GRUND, nicht nur den Unterschied: `generate_dj_recommendation`
+loest das Genre intern ebenfalls nur aus `detected_genre` auf. Das Gate
+spiegelt also seinen Aufgerufenen und ist nicht willkuerlich. Ohne diesen
+Hinweis haette ein spaeterer Agent es allein hier auf `_resolve_track_genre`
+umgestellt -- dann liefe DJ-Brain mit dem `DEFAULT_MIX_PROFILE`, und das
+Ergebnis waere schlechter als heute. Die ausfuehrliche Fassung steht in
+`hpg-genres` (beide Spiegel), nicht in `hpg-playlist-scoring`: dort steht
+bereits die verwandte Truthy-"Unknown"-Regel.
+
+Der Kommentarverweis in `tests/test_scoring_contract.py` nennt jetzt die
+Gewichtsumstellung statt der geloeschten Konstante. Die Assertion darunter
+ist unveraendert.

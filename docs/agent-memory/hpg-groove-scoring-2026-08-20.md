@@ -9,8 +9,10 @@ metadata:
 ---
 
 Branch `feature/groove-scoring` (47 Commits, Suite 1658 gruen) ergaenzt die
-Playlist-Zielfunktion um Groove, Bassdruck, Klangfarbe und Stimmung — hinter
-`TRANSITION_FEATURES_ENABLED`, das auf `False` steht.
+Playlist-Zielfunktion um Groove, Bassdruck, Klangfarbe und Stimmung. Der
+damals genannte Schalter `TRANSITION_FEATURES_ENABLED` stand zwar auf
+`False`, hatte aber nie einen Leser -- die Faktoren wurden immer schon
+berechnet, wirksam war allein ihr Gewicht (nachgemessen 2026-09-04).
 
 **Die Kalibrierung aus DJ-Mixen ist gescheitert und bleibt es vorerst.** Nach
 Korrektur von vier methodischen Fehlern blieb ein Gewichtsbudget von 0,0121

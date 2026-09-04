@@ -1,6 +1,6 @@
 ---
 name: hpg-scoring-an-2026-08-21
-description: "TRANSITION_FEATURES_ENABLED seit 2026-08-21 AN mit Groove 0.30 (verteilt, nicht aus Harmonik allein); Startwerte, Hoertest soll sie ersetzen"
+description: "Seit 2026-08-21 Groove 0.30 (verteilt, nicht aus Harmonik allein); Startwerte, Hoertest soll sie ersetzen. Wirksam wurden die GEWICHTE -- der Schalter TRANSITION_FEATURES_ENABLED hatte nie einen Leser und ist am 2026-09-04 entfernt"
 metadata: 
   node_type: memory
   type: project
@@ -9,7 +9,7 @@ metadata:
 ---
 
 Am 2026-08-21 wurde `TRANSITION_FEATURES_ENABLED` auf True gesetzt (commit
-7caf50e auf main) mit groove 0.30 / harmonic 0.16 / bpm,energy,genre je
+7caf50e auf main) und gleichzeitig die Gewichte umgestellt: groove 0.30 / harmonic 0.16 / bpm,energy,genre je
 0.12. Der Nutzer entschied sich nach Messung fuer "Weg 2" (an + Groove
 hoeher) und gegen "Weg 3" (erst Hoertest, dann an) — Anlass war, dass die
 App Paare mit unpassendem Rhythmus waehlte.

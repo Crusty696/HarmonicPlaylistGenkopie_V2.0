@@ -151,9 +151,13 @@ BPM_HALFTIME_MAX_RESULT = 185.0
 # die frueheren *_BPM_RANGE-Konstanten hier waren ein ungelesenes Duplikat
 # und wurden entfernt (Audit 2026-07-17)
 
-# Genre Weight in Playlist-Kompatibilitaet
-GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2  # Wenn DJ Brain Genre-Daten vorhanden
-GENRE_WEIGHT_WITHOUT_DJ_BRAIN = 0.1  # Fallback ohne DJ Brain Daten
+# Genre Weight in Playlist-Kompatibilitaet.
+# ACHTUNG: keine Absolutwerte mehr. Im Acht-Faktoren-Pfad kommt das
+# Genre-Gewicht aus der Toleranztabelle; diese beiden wirken dort nur noch als
+# VERHAELTNIS -- Halbierung bei unbekanntem Genre, siehe
+# playlist._calculate_track_edge_metrics (dort `weights["genre"] *= ...`).
+GENRE_WEIGHT_WITH_DJ_BRAIN = 0.2
+GENRE_WEIGHT_WITHOUT_DJ_BRAIN = 0.1
 
 # === Librosa Memory Protection (K2 Audit-Fix) ===
 # Maximale Lade-Dauer in Sekunden — begrenzt RAM-Verbrauch bei langen Tracks.
@@ -183,18 +187,6 @@ SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung
 # === BPM Half/Double Tolerance ===
 BPM_HALF_DOUBLE_ENABLED = True  # 140 BPM ↔ 70 BPM als kompatibel erkennen
 BPM_HALF_DOUBLE_PENALTY = 0.85  # Leichter Abzug fuer Half/Double Transitions (0-1)
-
-# === Erweitertes Scoring: Groove/Bass/Timbre/Mood ===
-# Groove-/Bass-/Timbre-/Mood-Scoring (Spec 2026-08-19).
-# False = bit-identisches Verhalten zum Stand vor der Erweiterung.
-# True seit 2026-08-21 mit Startgewichten aus genres.py (groove 0.30) —
-# Begruendung und Messung dort. Bis dahin stand der Schalter aus, weil die
-# Kalibrierung aus fremden DJ-Mixen gescheitert war (Gewichtsbudget 0.012).
-# Im Acht-Faktoren-Pfad kommt das Genre-Gewicht aus der Toleranztabelle;
-# GENRE_WEIGHT_WITH/_WITHOUT_DJ_BRAIN wirken dort nur noch als VERHAELTNIS
-# (Halbierung bei unbekanntem Genre, siehe playlist.py
-# calculate_enhanced_compatibility), nicht mehr als Absolutwert.
-TRANSITION_FEATURES_ENABLED = True
 
 # === Logging & Debugging ===
 LOG_LEVEL = "INFO"  # Standard-Level: DEBUG, INFO, WARNING, ERROR (INFO fuer Produktion)

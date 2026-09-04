@@ -2239,6 +2239,16 @@ def _process_dj_brain_recommendations(
     notes_parts = []
     overlap = None
 
+    # Bewusst NUR `detected_genre`, ohne den ID3-Fallback aus
+    # `_resolve_track_genre`: `generate_dj_recommendation` loest das Genre
+    # intern genauso auf (dj_brain.py `genre_a = track_a.detected_genre or
+    # "Unknown"`). Dieses Gate spiegelt also seinen Aufgerufenen. Wer es
+    # allein hier auf `_resolve_track_genre` umstellt, laesst DJ-Brain mit dem
+    # "Unknown"-Profil laufen -- das Ergebnis waere schlechter als heute.
+    # Folge, bewusst so belassen (D6, Entscheidung 2026-09-04): ein Track mit
+    # `detected_genre = "Unknown"` und ID3 "Deep House" wird von der
+    # Kandidatenbewertung mit Deep-House-Toleranzen behandelt, waehrend dieser
+    # Zweig ihn ueberspringt.
     current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
     upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
     has_dj_data = current_genre != "Unknown" and upcoming_genre != "Unknown"

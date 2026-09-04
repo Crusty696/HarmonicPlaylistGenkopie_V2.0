@@ -66,6 +66,26 @@ GENRE_MIX_PROFILES[g].phrase_unit
 **truthy** String — ein `if not track.detected_genre`-Fallback greift dort
 nie (Altbefund F12).
 
+### Zwei Begriffe von "Genre dieses Tracks" — bewusst so
+
+`_resolve_track_genre` [hpg_core/playlist.py] faellt auf das **ID3-Genre**
+zurueck, wenn `detected_genre` fehlt oder `"Unknown"` ist. Genau diese
+Funktion benutzt `pair_candidates._genre` fuer Toleranzen und Blendenlaengen.
+
+Der DJ-Brain-Zweig kennt diesen Fallback NICHT: `has_dj_data`
+[hpg_core/playlist.py] prueft allein `detected_genre`, und
+`generate_dj_recommendation` [hpg_core/dj_brain.py] loest intern genauso auf
+(`genre_a = track_a.detected_genre or "Unknown"`). Dieselbe Regel gilt in der
+GUI [main.py].
+
+Folge: ein Track mit `detected_genre = "Unknown"` und ID3 `"Deep House"`
+bekommt Deep-House-Toleranzen in der Kandidatenbewertung, waehrend DJ-Brain
+ihn ueberspringt. Entscheidung 2026-09-04: **nicht angleichen, nur
+dokumentieren** — jede Angleichung verschiebt Scoring-Ergebnisse und braucht
+einen Hoerbeleg. Wer `has_dj_data` allein auf `_resolve_track_genre`
+umstellt, laesst DJ-Brain mit dem `DEFAULT_MIX_PROFILE` laufen; das waere
+schlechter als der heutige Verzicht.
+
 ## Klassifikation
 
 `classify_genre` [hpg_core/genre_classifier.py] ist **regelbasiert, kein ML**:
