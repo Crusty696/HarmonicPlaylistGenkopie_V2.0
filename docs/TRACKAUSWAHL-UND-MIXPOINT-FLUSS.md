@@ -1,6 +1,9 @@
 # Trackauswahl und Mixpoint-Bestimmung in HPG
 
-Stand: 27. August 2026, abgeleitet aus dem aktuellen Code (Cache-Version 44).
+Stand der Herleitung: 27. August 2026, damals Cache-Version 44.
+Geltender Cache-Vertrag: CACHE_VERSION 45, Laufzeitcache `hpg_cache_v45.db`
+(wird von `test_living_docs_reference_current_cache_contract` mitgeprueft --
+der naechste Bump erzwingt die Korrektur hier).
 
 Dieses Dokument erklärt zwei getrennte Entscheidungen:
 
@@ -98,7 +101,7 @@ Analysefehler. Ersatzwerte gelangen damit nicht in das Scoring.
 flowchart LR
     A[Datei] --> R[Ressourcenlimits und echte Audiodauer prüfen]
     R --> S[Rekordbox-Daten und Signatur lesen]
-    S --> B{Cache 44 mit exaktem Schlüssel gültig?}
+    S --> B{Cache 45 mit exaktem Schlüssel gültig?}
     B -- ja --> C[Track aus Cache]
     B -- nein --> D{Rekordbox-Daten vorhanden?}
     D -- vollständig --> E[Fast Path]
@@ -504,7 +507,7 @@ Kandidaten gerankt und Hörclips erzeugt.
 
 ```mermaid
 flowchart LR
-    A[Cache v44 unverändert lesen] --> B[Scoring-Snapshot einmal einfrieren]
+    A[Cache v45 unverändert lesen] --> B[Scoring-Snapshot einmal einfrieren]
     B --> C[Geeignete Paarreserve bestimmen]
     C --> D[Je Paar exakt mit Snapshot ranken]
     D --> E[Top-N mit höchstens fünf Clips rendern]
@@ -572,7 +575,7 @@ um genreabhängige Hörtestpräferenzen zu erzeugen.
 
 | Daten | Speicherort | Lebensdauer und Verwendung |
 |---|---|---|
-| Trackanalyse einschließlich lokaler Mix-In-/Mix-Out-Kandidaten | SQLite-Cache v44 unter `%LOCALAPPDATA%\HPG\hpg_cache_v44.db`, sofern nicht über die Cache-Umgebungsvariablen umgeleitet | Bleibt über Programmstarts erhalten; wird bei passendem Cache-Key und passender Cache-Version wieder geladen |
+| Trackanalyse einschließlich lokaler Mix-In-/Mix-Out-Kandidaten | SQLite-Cache v45 unter `%LOCALAPPDATA%\HPG\hpg_cache_v45.db`, sofern nicht über die Cache-Umgebungsvariablen umgeleitet | Bleibt über Programmstarts erhalten; wird bei passendem Cache-Key und passender Cache-Version wieder geladen |
 | gerichtete Kandidatenwahl `A -> B` | `%LOCALAPPDATA%\HPG\candidate_choices.json` oder `HPG_CANDIDATE_CHOICES_FILE` | Bleibt über Programmstarts erhalten; enthält Timing, Blende sowie BPM-/Overlap-Auditdaten, nicht den nur im aktuellen Result stabilen Candidate-Key |
 | gelernte Hörtestpräferenzen | mitgelieferte Vorgabe plus Benutzerdatei `%LOCALAPPDATA%\HPG\candidate_preferences.json` oder `HPG_CANDIDATE_PREFERENCES_FILE` | Wird genreabhängig geladen und in den Laufkontext übernommen |
 | Benutzergewichte und Toleranzen | mitgelieferte Vorgabe plus Benutzerdatei `%LOCALAPPDATA%\HPG\transition_tolerances.json` oder `HPG_TOLERANCES_FILE` | Bleibt über Programmstarts erhalten und wird vor der Generierung mit den übrigen Quellen aufgelöst |

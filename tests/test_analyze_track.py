@@ -1405,50 +1405,85 @@ class TestMerkmalsfenster:
 class TestMerkmalsfensterArgumente:
   """Absicherung ueber das ARGUMENT statt ueber die Ausgabe.
 
-  `detect_vocal_instrumental` und `compute_groove_fields` bleiben auf der
-  synthetischen Fixture stumm -- ihre Umstellung war dadurch nicht gegen
-  Rueckbau gesichert. Ein Spy prueft stattdessen, WAS ihnen uebergeben wird.
-  Das ist fixture-unabhaengig und deckt alle acht Merkmale gleich ab.
+  Deckt ALLE ACHT fensterabhaengigen Merkmalsaufrufe ab -- auch die, die auf
+  der Fixture stumm bleiben (`detect_vocal_instrumental`,
+  `compute_groove_fields`) und die, deren Ausgabe zwar reagiert, deren
+  Rueckbau man aber nur so eindeutig sieht.
+
+  DREI Fallen stecken hier drin, alle gemessen und nicht vermutet:
+
+  1. Die beiden Analysepfade haben VERSCHIEDENE Reihenfolge. Der Fast-Path
+     rechnet die Trackmittel vor der Sektionsschleife, der Vollpfad danach.
+     "Der erste Aufruf ist der aus dem Merkmalsblock" gilt deshalb nicht --
+     geprueft wird, dass ein passender Aufruf EXISTIERT.
+  2. `mix_candidates.measure_candidate_window` ruft sechs derselben acht
+     Funktionen mit einem eigenen FeatureCache. Sein Fenster ist
+     `2 * grid_sec * KANDIDATEN_FENSTER_PHRASEN` und misst bei der
+     Fixture-BPM 128 exakt 30 s = 661500 Samples. Ein Testfenster von 30 s
+     waere davon nicht zu unterscheiden gewesen -- die Zusicherung waere bei
+     VOLLSTAENDIGEM Rueckbau gruen geblieben.
+
+     Deshalb ZWEI verschiedene Fenster. Der Grund haengt NICHT an der BPM:
+     das Kandidatenfenster ist je Lauf EIN Wert und kann zwei verschiedene
+     Zielwerte nicht gleichzeitig treffen. Selbst wenn es zufaellig genau
+     einem der beiden entspraeche, bliebe der andere Lauf aussagekraeftig.
+     Voraussetzung ist allein, dass die beiden Fenster verschieden sind.
+  3. Die Signaturen sind uneinheitlich. `calculate_energy(y)` nimmt EIN
+     Argument, `compute_groove_fields` bekommt den Cache per Keyword, die
+     uebrigen positionell -- und bei `calculate_danceability` steht die BPM
+     davor. Der Cache wird deshalb ueber den TYP gesucht, nicht ueber die
+     Position.
   """
 
-  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
-  @pytest.mark.parametrize(
-    "funktion", ["detect_vocal_instrumental", "compute_groove_fields"]
+  ACHT = (
+    "calculate_energy",
+    "calculate_brightness",
+    "detect_vocal_instrumental",
+    "calculate_danceability",
+    "generate_timbre_fingerprint",
+    "analyze_frequency_bands",
+    "analyze_rhythm_complexity",
+    "compute_groove_fields",
   )
-  def test_bekommt_das_fenster_und_den_kindcache(
-    self, monkeypatch, wandel_wav, pfad, funktion
-  ):
+  # 30 s waere die Kollision aus Falle 2. Beide Werte liegen darunter/darueber.
+  FENSTER = (25, 40)
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  @pytest.mark.parametrize("funktion", ACHT)
+  def test_jeder_aufruf_sieht_das_fenster(self, wandel_wav, pfad, funktion):
     from hpg_core import analysis
 
-    fenster = 30
-    alle = []
-    original = getattr(analysis, funktion)
+    for fenster in self.FENSTER:
+      mp = pytest.MonkeyPatch()
+      try:
+        gesehen = []
+        original = getattr(analysis, funktion)
 
-    def spy(y_arg, sr_arg, *args, **kwargs):
-      # BEIDE Haelften erfassen. `detect_vocal_instrumental` liest bei
-      # gesetztem Cache alles aus dem Cache -- `y` dient dort nur als
-      # Leer-Guard. Ein Rueckbau NUR des Caches bliebe unsichtbar, wenn der
-      # Spy die Signallaenge allein prueft.
-      cache = kwargs.get("feature_cache")
-      if cache is None and args:
-        cache = args[-1]
-      alle.append((len(y_arg), len(cache.y) if cache is not None else None))
-      return original(y_arg, sr_arg, *args, **kwargs)
+        def spy(*args, **kwargs):
+          cache = kwargs.get("feature_cache")
+          if cache is None:
+            cache = next(
+              (a for a in reversed(args) if isinstance(a, analysis.FeatureCache)),
+              None,
+            )
+          gesehen.append((len(args[0]), len(cache.y) if cache is not None else None))
+          return original(*args, **kwargs)
 
-    monkeypatch.setattr(analysis, funktion, spy)
-    track = TestMerkmalsfenster._lauf(monkeypatch, wandel_wav, pfad, fenster)
+        mp.setattr(analysis, funktion, spy)
+        track = TestMerkmalsfenster._lauf(mp, wandel_wav, pfad, fenster)
 
-    assert track is not None
-    assert alle, f"{funktion} wurde im Pfad {pfad} gar nicht gerufen"
-    # Der ERSTE Aufruf ist der aus dem Merkmalsblock. Spaetere stammen aus
-    # `mix_candidates`, das dieselben Funktionen je Kandidatenfenster ruft --
-    # die duerfen und sollen andere Laengen haben.
-    erwartet = int(fenster * 22050)
-    assert alle[0] == (erwartet, erwartet), (
-      f"{funktion} bekommt im Merkmalsblock (Signal, Cache) = {alle[0]} "
-      f"statt ({erwartet}, {erwartet}) -- eine der beiden Uebergaben ist "
-      "zurueckgebaut"
-    )
+        assert track is not None
+        erwartet = int(fenster * 22050)
+        # `calculate_energy` bekommt keinen Cache -- das ist sein ganzer
+        # Vertrag, keine Luecke.
+        ziel = (erwartet, None) if funktion == "calculate_energy" else (erwartet, erwartet)
+        assert ziel in gesehen, (
+          f"{funktion} sieht im Pfad {pfad} bei Fenster {fenster}s nirgends "
+          f"{ziel}; gemessen wurden {sorted(set(gesehen))} -- die "
+          "Fensteruebergabe ist zurueckgebaut"
+        )
+      finally:
+        mp.undo()
 
 
 def test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung():

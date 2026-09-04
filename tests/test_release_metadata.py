@@ -56,7 +56,14 @@ def test_readme_strategy_count_and_python_floor_match_source():
 def test_living_docs_reference_current_cache_contract():
   expected_version = f"CACHE_VERSION {CACHE_VERSION}"
   expected_path = f"hpg_cache_v{CACHE_VERSION}.db"
-  for relative_path in ("AGENTS.md", "CLAUDE.md", "docs/QUICK_START.txt"):
+  # docs/TRACKAUSWAHL-... nannte bis 2026-09-04 v44, ohne dass ein Test das
+  # meldete (D13). Jetzt erzwingt der naechste Bump die Korrektur dort.
+  for relative_path in (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/QUICK_START.txt",
+    "docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md",
+  ):
     content = (ROOT / relative_path).read_text(encoding="utf-8")
     assert expected_version in content, relative_path
     assert expected_path in content, relative_path

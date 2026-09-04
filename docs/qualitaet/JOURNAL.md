@@ -361,7 +361,7 @@ Fehler durchgelassen, den der Waechter dann fand.
 
 ## Offen, wartet auf Entscheidung oder Umsetzung
 
-- **D15 (2026-09-04)** Kein Test sichert, dass die acht Merkmale DASSELBE
+- ~~**D15**~~ ERLEDIGT Runde 16. Kein Test sicherte, dass die acht Merkmale DASSELBE
   Fenster sehen -- jedes ist einzeln fensterabhaengig geprueft, aber keine
   Zusicherung vergleicht sie untereinander. Heute folgenlos, weil alle aus
   derselben Bindung stammen; wer spaeter `y_fenster` aendert und `energy`
@@ -378,8 +378,8 @@ Fehler durchgelassen, den der Waechter dann fand.
   Ein toter, aber getesteter Parameter suggeriert eine unterstuetzte
   Betriebsart und lockt zum Wiedereinbau. Entfernen waere Scope-Ausweitung.
 
-- **D13 (2026-09-04, beim Cache-Bump gefunden)**
-  `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` nennt an zwei Stellen
+- ~~**D13**~~ ERLEDIGT Runde 16 --
+  `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` nannte an FUENF Stellen auf vier Zeilen
   Cache-Version 44 und `hpg_cache_v44.db` als Laufzeitcache. Das Dokument
   beschreibt den laufenden Ablauf, traegt aber ein Datum und steht nicht in
   der Liste, die `test_living_docs_reference_current_cache_contract` prueft.
@@ -400,7 +400,7 @@ Fehler durchgelassen, den der Waechter dann fand.
   `bass_punch` in den Nahtstellen-Vergleich und damit ins Scoring. D8 schliesst
   diesen Teil NICHT; ohne diesen Eintrag gaelte D8 faelschlich als vollstaendig.
 
-- **D9 (neu, 2026-09-04)** `config.py` behauptet im Kommentar zur
+- ~~**D9**~~ ERLEDIGT Runde 11 (Kommentar nennt keine 120 s mehr). `config.py` behauptete im Kommentar zur
   Ladefenster-Begrenzung "Rekordbox Fast-Path: ... daher reichen 120s fuer
   Energy/Genre", waehrend `LIBROSA_FAST_PATH_DURATION` auf 360 steht.
   Gefunden beim Korrigieren einer Zeilenangabe. Gehoert zu D8, wird dort
@@ -835,3 +835,93 @@ Zwei offene Fehlerklassen sind als D15 und D16 eingetragen, statt sie im
 Bericht zu erwaehnen und dann zu verlieren. D13 hat einen NAECHSTEN SCHRITT
 bekommen: `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` gehoert in die Liste des
 Release-Tests, dann erzwingt der naechste Bump die Korrektur.
+
+### Runde 16 — 2026-09-04 — D13 und D15 strukturell geschlossen
+
+**D15.** `TestMerkmalsfensterArgumente` deckt jetzt ALLE ACHT Merkmalsaufrufe
+ab statt zwei. Drei Fallen steckten darin, alle vom Waechter gefunden und von
+mir nachgemessen:
+
+1. Die beiden Analysepfade haben VERSCHIEDENE REIHENFOLGE -- Fast-Path
+   rechnet die Trackmittel vor der Sektionsschleife, der Vollpfad danach.
+   Mein "erster Aufruf ist der aus dem Merkmalsblock" waere fuer zwei von
+   sechzehn Faellen dauerhaft rot gewesen, aus einem Grund, der mit D15
+   nichts zu tun hat.
+2. **Die gefaehrlichste:** `mix_candidates.measure_candidate_window` baut
+   einen eigenen FeatureCache ueber `2 * grid_sec * KANDIDATEN_FENSTER_PHRASEN`
+   -- bei der Fixture-BPM 128 exakt 30 s = 661500 Samples. Genau mein
+   gewaehltes Testfenster. Meine Existenzpruefung `(fenster, fenster)` waere
+   damit bei VOLLSTAENDIGEM Rueckbau gruen geblieben. Ich hatte das ±w in der
+   Fensterrechnung uebersehen und daraus "keine Kollision" geschlossen; erst
+   der Blick in `mix_candidates.py:449` zeigte es. Jetzt zwei kollisionsfreie
+   Fenster (25 s und 40 s) -- das Kandidatenfenster haengt nicht am
+   Merkmalsfenster und kann hoechstens einen Lauf vortaeuschen, nie beide.
+   Die Gegenprobe zeigt es woertlich: bei zurueckgebautem
+   `calculate_brightness` meldet der Test
+   `gemessen wurden [(363979, 363979), (661500, 661500), (1984500, 1984500)]`
+   -- die 661500 ist das Kandidatenfenster.
+3. Mein Spy haette bei `calculate_energy` mit `TypeError` abgebrochen (eine
+   Signatur, zwei erwartete Argumente) und bei `analyze_frequency_bands(y_seg, sr)`
+   mit `AttributeError`, weil er den Cache ueber die POSITION suchte. Jetzt
+   `spy(*args, **kwargs)` und Cache-Suche ueber den TYP.
+
+Den Korrekturvorschlag des Waechters -- Sektionsaufrufe ueber ihre Signatur
+ausschliessen -- habe ich NICHT uebernommen: das koppelt den Test an die
+Aufrufstellen. Die Existenzpruefung ist reihenfolge- und signaturunabhaengig.
+
+**D13.** `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` nannte FUENF Mal v44 auf
+VIER Zeilen -- ich hatte drei geplant, das JOURNAL sprach von zwei. Zeile 101
+(Flussdiagramm) haette ich uebersehen. Alle fuenf gehoben, mit `grep`
+gegengeprueft.
+
+Die Datei steht jetzt in der Liste von
+`test_living_docs_reference_current_cache_contract`. Das war nicht durch
+blosses Eintragen moeglich: der Test verlangt ZWEI Literale, und
+`CACHE_VERSION` kam im Dokument kein einziges Mal vor. Beide stehen jetzt
+drin. Gegenprobe: Literal auf 44 zurueckgesetzt -> Test rot mit dem
+Dateinamen. Damit erzwingt der naechste Bump die Korrektur, statt sie zu
+vergessen.
+
+Der datierte Satz behaelt bewusst "damals Cache-Version 44": ihn auf 45 zu
+heben haette behauptet, das Dokument sei am 27. August aus Code mit Version
+45 abgeleitet worden -- der D13-Fehler in neuer Form. Der geltende
+Cache-Vertrag steht daneben, undatiert.
+
+D9 war in der Offen-Liste stehengeblieben, obwohl Runde 11 ihn erledigt hat.
+Gestrichen -- eine Offen-Liste mit erledigten Posten verliert ihren Zweck.
+Das ist Scope-Ausweitung gegenueber D13/D15 und deshalb hier getrennt genannt.
+
+Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D14 (toter
+`beat_frames`-Parameter), D16 (Formvergleich prueft keine Werte).
+
+**Nachtrag Runde 16 — Verfahrensfehler, offengelegt.** Die dritte und
+tatsaechlich umgesetzte Fassung des D13/D15-Vorhabens lag NIE an Tor 1. Nach
+der zweiten Rueckweisung habe ich die Korrektur direkt gebaut und erst den
+Diff vorgelegt. Der Waechter hat Plan und Umsetzung damit in einem Zug
+beurteilt -- genau die Trennung entfaellt, die in diesem Vorgang vier
+Tor-1-Befunde gefunden hat, darunter die Fensterkollision, die den Test
+wertlos gemacht haette. Es ging diesmal gut; das ist kein Argument.
+
+Regel fuer den Rest dieser Schleife: aendert sich der ANSATZ (nicht nur ein
+Detail), geht die neue Fassung erneut an Tor 1, auch wenn sie sich wie eine
+blosse Nachbesserung anfuehlt.
+
+Zwei Praezisierungen aus dem Tor-2-Urteil:
+
+- Die Begruendung fuer die zwei Fenster war in meinem Docstring zu eng an die
+  BPM gebunden ("kann hoechstens einen Lauf vortaeuschen"). Der Waechter hat
+  ausgerechnet, dass das nur gilt, solange `2*grid_sec` unter dem groesseren
+  Fenster liegt -- im Vollpfad sind es 35,66 s bei 40 s Fenster, also 4,3 s
+  Luft. Der eigentliche Grund ist aber staerker und BPM-unabhaengig: das
+  Kandidatenfenster ist je Lauf EIN Wert und kann zwei verschiedene
+  Zielwerte nicht gleichzeitig treffen. Trifft es zufaellig einen, bleibt der
+  andere Lauf aussagekraeftig. Voraussetzung ist allein, dass die beiden
+  Fenster verschieden sind. So steht es jetzt im Test.
+- Der als erledigt markierte D13-Eintrag trug im Praesens weiter "nennt an
+  zwei Stellen", obwohl derselbe Commit fuenf Nennungen misst. Korrigiert.
+
+Bewusst NICHT behoben, als Preis benannt: der Test prueft, dass ein Aufruf
+mit der Fensterlaenge EXISTIERT. Er merkt nicht, wenn zusaetzlich ein
+zweiter, falscher Aufruf desselben Merkmals ins Ergebnis geht. Das ist der
+Preis der Reihenfolgeunabhaengigkeit, die noetig war, weil die beiden Pfade
+Trackmittel und Sektionsschleife in verschiedener Reihenfolge rechnen.
