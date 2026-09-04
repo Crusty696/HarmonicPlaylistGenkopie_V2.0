@@ -66,6 +66,7 @@ from .models import (
     Track,
     get_camelot_components,
     quantize_to_grid,
+    seconds_to_bars,
 )
 from .rekordbox_importer import get_rekordbox_importer
 from .rekordbox_phrases import phrase_grid_from_phrases
@@ -2056,9 +2057,20 @@ def analyze_track(file_path: str) -> Track | None:
                 anchor=phrase_anchor,
                 sections=section_dicts,
             )
-            seconds_per_bar = (60.0 / rekordbox_data.bpm) * METER
-            mix_in_bars = int(mix_in_point / seconds_per_bar)
-            mix_out_bars = int(mix_out_point / seconds_per_bar)
+            # Nach den manuellen Cues neu rechnen -- sie koennen die Punkte
+            # verschoben haben. Dieselbe Rundung wie `dj_brain` und die
+            # Anzeige: `int()` trunkierte, wodurch Cache und Anzeige um einen
+            # Takt auseinanderliefen. Der Sentinel MIX_POINT_UNSET (-1.0)
+            # ergaebe gerundet ab 174 BPM einen negativen Takt, den
+            # `caching.validate_track_dict` zurueckweist.
+            mix_in_bars = (
+                seconds_to_bars(mix_in_point, rekordbox_data.bpm)
+                if mix_in_point >= 0 else 0
+            )
+            mix_out_bars = (
+                seconds_to_bars(mix_out_point, rekordbox_data.bpm)
+                if mix_out_point >= 0 else 0
+            )
 
             # Audio Feature Extensions
             brightness = calculate_brightness(y, sr, feature_cache)
@@ -2567,9 +2579,9 @@ def analyze_track(file_path: str) -> Track | None:
             anchor=phrase_anchor,
             sections=section_dicts,
         )
-        seconds_per_bar = (60.0 / bpm) * METER
-        mix_in_bars = int(mix_in_point / seconds_per_bar)
-        mix_out_bars = int(mix_out_point / seconds_per_bar)
+        # Siehe Fast-Path: gleiche Rundung, gleicher Sentinel-Guard.
+        mix_in_bars = seconds_to_bars(mix_in_point, bpm) if mix_in_point >= 0 else 0
+        mix_out_bars = seconds_to_bars(mix_out_point, bpm) if mix_out_point >= 0 else 0
 
         # Audio Feature Extensions
         brightness = calculate_brightness(y, sr, feature_cache)

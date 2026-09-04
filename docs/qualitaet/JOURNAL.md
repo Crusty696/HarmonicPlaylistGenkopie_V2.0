@@ -113,10 +113,10 @@ Nichts davon ist gebaut. Erst Tor 1 je Befund, dann Umsetzung.
   `:2571-2572` (Vollpfad) ueberschreiben den Rueckgabewert sofort mit
   `int(mix_point / seconds_per_bar)`, also Trunkierung. Die Berechnung aus
   `dj_brain` wird damit verworfen. Bei `bpm=120`, `mix_out_point=99.0 s` sind
-  das `49` im Cache gegen `50` in der Anzeige (`main.py:319` rundet wieder).
-  Der gespeicherte Wert dient laut `main.py:322` nur noch als Fallback bei
-  `bpm <= 0`, der Schaden bleibt also bei einer Taktangabe in Cache und
-  Export. Kein Audio-Effekt: massgeblich sind die Sekundenwerte.
+  das `49` im Cache gegen `50` in der Anzeige (`main.py:320` rundet wieder).
+  Der gespeicherte Wert dient laut `main.py:317-320` als Fallback in ZWEI
+  Faellen: `sek < 0` und `bpm <= 0`, der Schaden bleibt also bei einer Taktangabe im Cache.
+  Die Exporter lesen die Felder NICHT (2026-09-04 nachgemessen). Kein Audio-Effekt: massgeblich sind die Sekundenwerte.
 - **D6 (mittel, Entscheidung noetig)** Zwei Begriffe von "Genre dieses
   Tracks" in derselben Schleife. `playlist.py:2242-2244` bildet `has_dj_data`
   allein aus `detected_genre`; alles andere geht ueber
@@ -373,3 +373,88 @@ Fehler durchgelassen, den der Waechter dann fand.
 - Half/Double: der Preview entsteht, die Taktlage ist ungemessen.
 - Vor dem naechsten `--apply` gegen den echten Vault: Trockenlauf lesen. Der
   neue Sync fasst jede Bestandsnotiz an.
+
+### Runde 7 — 2026-09-04 — D5 und D7 nachgemessen
+
+**D5 praezisiert.** Die Neuberechnung der Mix-Takte nach
+`_apply_manual_mixpoint_cues` ist RICHTIG und bleibt -- manuelle Cues koennen
+die Punkte verschieben. Der Defekt ist allein die Rundungsart: `int()` gegen
+`seconds_to_bars`. Bei `bpm=120`, `mix_out_point=99.0` stehen 49 im Cache und
+50 in der Anzeige.
+
+Beim Messen ein ZWEITER, latenter Fehler gefunden, der ohne Guard aus dem
+Fix eine echte Regression gemacht haette: `MIX_POINT_UNSET = -1.0`. Ein
+naiver Wechsel auf `seconds_to_bars` liefert
+
+    bpm 120 -> int() 0, round()  0    gleich
+    bpm 174 -> int() 0, round() -1    <-- Psytrance/DnB-Kerntempo
+    bpm 240 -> beide -1
+
+und `caching.py:688` verlangt nichtnegative Takte. Der Fix braucht deshalb
+zwingend `if mix_point >= 0 else 0`. Der heutige `int()`-Pfad ist ab 240 BPM
+ebenfalls betroffen, praktisch aber unerreichbar. Liegt an Tor 1, samt der
+Frage nach einem CACHE_VERSION-Bump.
+
+**D7 exakt nachgerechnet.** A: 140 BPM, Dauer 330 s, Outro ab 300 s, Mix-Out
+290 s. Takt = 1,7143 s, Kopfraum = 10,05 s, Mindestblende
+(`MIN_TRANSITION_BARS = 8`) = 13,71 s.
+
+- `blend_bars_options`: `max_bars = 5 < 8` -> `[]`, also kein Kandidat.
+- `_outro_overlap_limit`: Kopfraum unter der Mindestblende -> `None`, und
+  `None` heisst dort "KEINE Grenze". Der Legacy-Pfad klemmt dann auf
+  `min(64, 330-290) = 40 s` -- davon **30 Sekunden mitten im Outro**.
+
+Dieselbe Frage, zwei gegensaetzliche Antworten, und die groesszuegigere
+gewinnt ausgerechnet dort, wo der andere Pfad "unmoeglich" sagt. Die Ursache
+ist, dass `None` drei verschiedene Dinge bedeutet: "kein Outro vorhanden",
+"nicht berechenbar" und "zu eng". Nur der dritte Fall ist falsch behandelt.
+
+NICHT selbstaendig gebaut: die Korrektur aendert, was der Nutzer HOERT --
+statt 40 s Blende ein harter Schnitt oder ein verworfener Uebergang. Das ist
+eine Entscheidung wie bei V-004 und D6.
+
+**D5 behoben.** `seconds_to_bars` statt `int()`, mit `if mix_point >= 0 else 0`.
+Der Import fehlte (`NameError` beim ersten Track), die lokale
+`seconds_per_bar` ist damit tot und mit entfernt.
+
+ENTSCHEIDUNG CACHE_VERSION: **kein Bump.** Belegt: `mix_in_bars`/`mix_out_bars`
+werden zwar persistiert (`caching.py:216`) und validiert (`:688`), aber
+ausserhalb von `analysis.py` von KEINEM Konsumenten gelesen -- die Exporter
+enthalten kein Vorkommen, Scoring und Kandidaten ebenso wenig. Einziger Leser
+ist `main.py:317-320`, und der rechnet aus den Sekundenwerten neu; der
+gespeicherte Wert greift nur bei `sek < 0` (dort vor wie nach der Aenderung
+0) und bei `bpm <= 0` (dort existiert kein analysierter Mixpunkt). Ein Bump
+zwaenge die gesamte Bibliothek zur Neuanalyse, ohne dass ein Wert sichtbar
+falsch werden koennte. Die Projektregel "Analysewerte aendern sich -> Bump"
+wird hier bewusst und begruendet nicht angewendet.
+
+VERWORFEN: `docs/archive/ARBEITSPLAN_2026-07-26.md:44` (R8/B8) forderte
+`seconds_to_bars(..., floor)` UEBERALL. Nie umgesetzt -- beide lebenden
+Aufrufer nutzen `round`. Projektsemantik fuer Mix-Takte ist ab jetzt
+ausdruecklich `round`: die Mixpunkte sind phrasenquantisiert, und ein
+Rundungsrest von Millisekunden unter der Taktgrenze machte mit `floor` aus
+Takt 50 eine 49 -- dieselbe Fehlerklasse wie der dokumentierte
+3-ms-Phrasenfehler.
+
+FOLGENLOS, aber genannt: `seconds_to_bars` faengt `bpm <= 0` selbst ab, wo
+die alte Division `ZeroDivisionError` geworfen haette. Im Vollpfad ist das
+unerreichbar -- `analysis.py:2384` faellt bei `bpm_value <= 0` auf
+`DEFAULT_BPM` zurueck (`:2392` Verdopplung, `:2399` Halbierung halten den Wert
+positiv).
+
+Beide Tests laufen ueber BEIDE Analysepfade. Ein Test nur fuer den Fast-Path
+ist die haeufigste Fehlerquelle dieses Projekts, und die beiden geaenderten
+Stellen liegen 500 Zeilen auseinander -- der Vollpfad haette sich still
+zurueckbauen lassen. Gegenprobe deshalb einzeln je Pfad: Fast-Path
+zurueckgebaut -> ein Fall rot; Vollpfad zurueckgebaut -> ein Fall rot.
+
+Der Rundungstest berechnet die Mixpunkte aus der im Pfad gueltigen BPM
+(Bruchteil fest 0,6), weil er sonst vom erzeugten Audio abhinge -- mein
+erster Entwurf blieb bei zurueckgebauter Trunkierung zufaellig gruen. Im
+Vollpfad schaetzt librosa die BPM, ein fester Sekundenwert waere dort
+wirkungslos gewesen.
+
+Der Sentinel-Test faengt ausdruecklich NICHT den alten `int()`-Pfad -- der
+lieferte hier 0 --, sondern die Regression, die der Wechsel auf `round` ohne
+Guard erzeugt haette. Das steht so im Docstring, damit niemand daraus einen
+Altfehler liest.

@@ -1152,3 +1152,101 @@ def test_harter_cue_vertrag_nutzt_acht_bar_fallback_bei_phrase_unit_null():
 
   assert not _mixpoint_pair_erfuellt_harten_vertrag(48.0, 64.0, **kwargs)
   assert _mixpoint_pair_erfuellt_harten_vertrag(48.0, 80.0, **kwargs)
+
+
+class TestMixBarsRundung:
+  """D5: Cache und Anzeige rechneten dieselbe Groesse verschieden."""
+
+  @staticmethod
+  def _lauf(monkeypatch, bpm, wav, pfad):
+    """Beide Analysepfade -- die Zeilen liegen 500 Zeilen auseinander.
+
+    Ein Test nur fuer den Fast-Path ist die haeufigste Fehlerquelle dieses
+    Projekts: der Vollpfad kann still zurueckgebaut werden, ohne dass die
+    Suite es merkt.
+    """
+    from hpg_core import analysis
+
+    importer = Mock()
+    importer.get_track_data.return_value = None if pfad == "librosa_voll" else RekordboxTrackData(
+      bpm=bpm,
+      duration=90.0,
+      camelot_code="8A",
+      title="Test",
+      artist="Artist",
+    )
+    importer.get_track_signature.return_value = "rb-signature"
+    importer.get_beatgrid.return_value = []
+    importer.get_phrases.return_value = []
+    importer.get_cue_points.return_value = []
+    monkeypatch.setattr(analysis, "get_rekordbox_importer", lambda: importer)
+    monkeypatch.setattr(analysis, "get_cached_track", lambda *a, **k: None)
+    monkeypatch.setattr(analysis, "cache_track", Mock(return_value=True))
+    monkeypatch.setattr(analysis, "extract_metadata", lambda path: ("A", "T", "G"))
+    return analysis.analyze_track(wav)
+
+  @staticmethod
+  def _punkt(bpm, takte):
+    """Ein Zeitpunkt, der bei JEDER BPM denselben Bruchteil eines Takts hat."""
+    return takte * (60.0 / float(bpm)) * 4
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  def test_unbesetzte_mixpunkte_ergeben_keine_negativen_takte(
+    self, monkeypatch, long_wav, pfad
+  ):
+    """`MIX_POINT_UNSET` ist -1.0 und ergibt gerundet ab 174 BPM einen Takt -1.
+
+    174 BPM ist ein Kerntempo dieses Projekts, und
+    `caching.validate_track_dict` weist negative Takte zurueck.
+
+    Dieser Test faengt NICHT den alten `int()`-Pfad -- der lieferte hier 0 --,
+    sondern die Regression, die der Wechsel auf `round` OHNE Guard erzeugt
+    haette. Er ist ein Guard-Test, kein Beleg fuer einen Altfehler.
+    """
+    from hpg_core import analysis
+    from hpg_core.config import MIX_POINT_UNSET
+
+    monkeypatch.setattr(
+      analysis,
+      "_apply_manual_mixpoint_cues",
+      lambda *a, **k: (MIX_POINT_UNSET, MIX_POINT_UNSET),
+    )
+
+    track = self._lauf(monkeypatch, 174.0, long_wav, pfad)
+
+    assert track is not None
+    assert track.mix_in_bars == 0
+    assert track.mix_out_bars == 0
+    # Der Cache-Vertrag muss halten, sonst faellt jede Analyse aus.
+    validate_track_dict(track_to_dict(track))
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  def test_takte_folgen_derselben_rundung_wie_die_anzeige(
+    self, monkeypatch, long_wav, pfad
+  ):
+    """Die GUI rechnet ueber `seconds_to_bars` neu -- der Cache muss passen.
+
+    Die Mixpunkte werden aus der im Pfad gueltigen BPM berechnet, damit der
+    Bruchteil 0,6 betraegt -- unabhaengig davon, ob die BPM aus Rekordbox
+    kommt oder librosa sie schaetzt. Trunkiert ergaebe das 5 und 19,
+    gerundet 6 und 20.
+    """
+    from hpg_core import analysis
+    from hpg_core.models import seconds_to_bars
+
+    monkeypatch.setattr(
+      analysis,
+      "_apply_manual_mixpoint_cues",
+      lambda *a, **k: (
+        self._punkt(k["bpm"], 5.6),
+        self._punkt(k["bpm"], 19.6),
+      ),
+    )
+
+    track = self._lauf(monkeypatch, 120.0, long_wav, pfad)
+
+    assert track is not None
+    assert track.mix_in_bars == 6
+    assert track.mix_out_bars == 20
+    assert track.mix_in_bars == seconds_to_bars(track.mix_in_point, track.bpm)
+    assert track.mix_out_bars == seconds_to_bars(track.mix_out_point, track.bpm)
