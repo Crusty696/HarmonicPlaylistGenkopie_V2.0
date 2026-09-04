@@ -3388,32 +3388,6 @@ def _select_snapshot_path(
     )
 
 
-def _immutable_metrics_from_candidate(kandidat) -> ImmutableMetricsSnapshot:
-    legacy = transition_metrics_from_candidate(kandidat)
-    from .pair_candidates import CandidateSnapshot
-
-    snapshot = CandidateSnapshot.from_pair_candidate(
-        kandidat, original_ordinal=max(0, int(kandidat.rang) - 1)
-    )
-    return ImmutableMetricsSnapshot(
-        harmonic_score=legacy.harmonic_score,
-        bpm_smoothness=legacy.bpm_smoothness,
-        energy_flow=legacy.energy_flow,
-        genre_compatibility=legacy.genre_compatibility,
-        overall_score=legacy.overall_score,
-        ai_bonus=0.0,
-        groove_match=legacy.groove_match,
-        bass_continuity=legacy.bass_continuity,
-        timbre_match=legacy.timbre_match,
-        mood_match=legacy.mood_match,
-        loudness_match=legacy.loudness_match,
-        structure_match=legacy.structure_match,
-        energy_delta=legacy.energy_delta,
-        lufs_delta=legacy.lufs_delta,
-        kandidat=snapshot,
-    )
-
-
 def _immutable_metrics_for_snapshot(
     track1: Track,
     track2: Track,
@@ -3457,32 +3431,6 @@ def _immutable_metrics_for_snapshot(
         lufs_delta=metrics.lufs_delta,
         kandidat=snapshot,
     )
-
-
-def legacy_transition_metrics(
-    result: PlaylistGenerationResult,
-) -> list[TransitionMetrics]:
-    """Neue mutable Legacy-Objekte; Result-Snapshots bleiben unangetastet."""
-    return [
-        TransitionMetrics(
-            harmonic_score=item.harmonic_score,
-            bpm_smoothness=item.bpm_smoothness,
-            energy_flow=item.energy_flow,
-            genre_compatibility=item.genre_compatibility,
-            overall_score=item.overall_score,
-            ai_bonus=item.ai_bonus,
-            groove_match=item.groove_match,
-            bass_continuity=item.bass_continuity,
-            timbre_match=item.timbre_match,
-            mood_match=item.mood_match,
-            loudness_match=item.loudness_match,
-            structure_match=item.structure_match,
-            energy_delta=item.energy_delta,
-            lufs_delta=item.lufs_delta,
-            kandidat=item.kandidat.to_dict() if item.kandidat is not None else None,
-        )
-        for item in result.metrics
-    ]
 
 
 def legacy_transition_recommendations(

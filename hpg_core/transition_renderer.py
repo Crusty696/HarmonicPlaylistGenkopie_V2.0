@@ -323,11 +323,15 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         # rate = bpm_a / target_bpm_b  (B langsamer als A -> rate > 1 -> B wird beschleunigt).
         # Die Phasen-Umrechnung in known_b (phase_b / applied_stretch_rate) folgt bereits
         # dieser librosa-Semantik (t_out = t_in / rate) und bleibt unveraendert.
-        raw_rate = (
-            1.0 / float(spec.tempo_ratio)
-            if spec.tempo_ratio is not None
-            else float(spec.bpm_a / target_bpm_b)
-        )
+        # `tempo_ratio` ist der Vertragsabgleich zwischen TransitionPlan und
+        # Spec (validate_transition_clip_spec erzwingt bpm_b / bpm_a) -- KEIN
+        # Stretch-Faktor. Der Stretch-Faktor kommt aus `target_bpm_b`, weil nur
+        # dieses Half/Double kennt und `tempo_ratio` es per Definition nicht
+        # kennen darf. Solange hier `1.0 / tempo_ratio` stand, war die
+        # Half/Double-Erkennung im App-Pfad wirkungslos: 140 -> 70 BPM ergab
+        # Rate 2.0 statt 1.0, wurde auf 1.08 geklemmt und endete bei
+        # strict_beat_sync als BeatSyncError -- also gar kein Preview.
+        raw_rate = float(spec.bpm_a / target_bpm_b)
 
         # AUDIT-FIX C4 (2026-07-26): Clamp von +-15% auf +-8% gesenkt.
         # DJ-realistisch sind +-6-8% Pitchfader; +-15% ohne Key-Lock waren
@@ -350,9 +354,19 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
             # seg_b ist (frames, 2) → transponieren auf (2, frames), stretchen,
             # zurueck transponieren. (Das frueher genutzte axis=-Kwarg existiert
             # in dieser librosa-Version nicht und wuerde an stft() durchgereicht.)
-            seg_b = librosa.effects.time_stretch(seg_b.T, rate=rate).T
-            applied_stretch_rate = rate
-            logger.info(f"BPM Time-Stretching angewendet: Track B ({spec.bpm_b:.1f} BPM -> {target_bpm_b:.1f} BPM) auf Track A ({spec.bpm_a:.1f} BPM) angepasst (Rate={rate:.4f})")
+            if abs(rate - 1.0) < 1e-9:
+                # Half/Double: das virtuelle Zieltempo trifft Track A bereits.
+                # Der Aufruf bliebe nicht folgenlos -- time_stretch ist ein
+                # voller Phase-Vocoder-Roundtrip (STFT/ISTFT) und hinterliesse
+                # Rekonstruktionsartefakte auf Material, das unveraendert
+                # bleiben soll. Dieser Pfad ist ueberhaupt erst erreichbar,
+                # seit die Rate nicht mehr aus tempo_ratio kommt.
+                applied_stretch_rate = 1.0
+                logger.info(f"Kein Time-Stretching noetig: Track B ({spec.bpm_b:.1f} BPM) trifft ueber das virtuelle Zieltempo {target_bpm_b:.1f} BPM bereits Track A ({spec.bpm_a:.1f} BPM)")
+            else:
+                seg_b = librosa.effects.time_stretch(seg_b.T, rate=rate).T
+                applied_stretch_rate = rate
+                logger.info(f"BPM Time-Stretching angewendet: Track B ({spec.bpm_b:.1f} BPM -> {target_bpm_b:.1f} BPM) auf Track A ({spec.bpm_a:.1f} BPM) angepasst (Rate={rate:.4f})")
         except Exception as ts_err:
             if isinstance(ts_err, BeatSyncError):
                 raise
@@ -397,6 +411,12 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                 )
                 bar_sec_a = (60.0 / spec.bpm_a) * METER
                 known_a = (spec.first_downbeat_a - spec.mix_out_sec) % bar_sec_a
+                # OFFEN bei Half/Double: B's Phase wird modulo eines
+                # 70-BPM-Takts gemessen, ausgerichtet wird unten aber auf A's
+                # 140-BPM-Takt. B's Takt 1 kann damit auf A's Takt 3 landen.
+                # Dieser Fall ist erst erreichbar, seit die Rate nicht mehr
+                # aus tempo_ratio kommt; dass der Preview ENTSTEHT, heisst
+                # nicht, dass er im Takt sitzt. Nicht gemessen, nicht behoben.
                 bar_sec_b = (
                     (60.0 / spec.bpm_b) * METER if spec.bpm_b > 0 else bar_sec_a
                 )

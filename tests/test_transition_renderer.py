@@ -1587,3 +1587,74 @@ class TestRenderTransitionClipMitNormalisierung:
         data, _ = sf.read(out_path, dtype='float32')
         peak = float(np.max(np.abs(data)))
         assert peak <= 1.0, f"Clipping nach Normalisierung: Peak = {peak:.3f}"
+
+
+class TestHalfDoubleRate:
+    """Half/Double im App-Pfad: `tempo_ratio` ist gesetzt, `strict_beat_sync` an."""
+
+    @staticmethod
+    def _mock_audio(monkeypatch):
+        segment = np.zeros((8000, 2), dtype=np.float32)
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._load_segment",
+            lambda *_args, **_kwargs: segment.copy(),
+        )
+
+    def _gemessene_rate(self, monkeypatch, spec) -> float:
+        self._mock_audio(monkeypatch)
+        gesehen = {}
+
+        def _stretch(daten, rate):
+            gesehen["rate"] = rate
+            return daten
+
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer.librosa.effects.time_stretch", _stretch
+        )
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", Mock())
+        try:
+            render_transition_clip(spec, "unused.wav")
+        except BeatSyncError as fehler:
+            if "Stretch-Bereichs" in str(fehler):
+                raise
+            # Spaetere Kick-Synchronisation auf Nullsegmenten -- nicht Gegenstand
+            # dieses Tests. Entscheidend ist die Rate, die vorher gemessen wurde.
+        return gesehen.get("rate", float("nan"))
+
+    def test_halftime_wird_gar_nicht_erst_gestreckt(self, monkeypatch, caplog):
+        """140 -> 70 BPM ist ein vom Scoring unterstuetztes Paar.
+
+        Solange die Rate aus `tempo_ratio` kam, ergab sich 2.0, wurde auf 1.08
+        geklemmt und endete als BeatSyncError -- die App konnte diesen
+        Uebergang gar nicht als Preview rendern, das Hoertest-Werkzeug schon.
+
+        Bei Rate 1.0 wird `time_stretch` jetzt uebersprungen: der Aufruf waere
+        ein voller Phase-Vocoder-Roundtrip und hinterliesse
+        Rekonstruktionsartefakte auf Material, das unveraendert bleiben soll.
+
+        Anmerkung: `BPM_HALF_DOUBLE_ENABLED` steuert das SCORING. Der Renderer
+        hat mit `bpm_a * 0.04` seine eigene Half/Double-Erkennung und liest die
+        Konstante nicht -- dieser Test wird von ihr nicht beeinflusst.
+        """
+        import logging
+        import math
+
+        spec = _strict_spec(bpm_a=140.0, bpm_b=70.0, tempo_ratio=0.5)
+
+        with caplog.at_level(logging.INFO, logger="hpg_core.transition_renderer"):
+            rate = self._gemessene_rate(monkeypatch, spec)
+
+        # Kein Aufruf von time_stretch ...
+        assert math.isnan(rate)
+        # ... und der Beleg, dass der Zweig ueberhaupt erreicht wurde. Ohne
+        # ihn waere der Test auch dann gruen, wenn der Render vorher abbricht.
+        assert "Kein Time-Stretching noetig" in caplog.text
+        # "geclamped" steht wirklich im Log; der Fehlertext dagegen nur in
+        # der Exception -- darauf zu pruefen waere eine wirkungslose Zusicherung.
+        assert "geclamped" not in caplog.text
+
+    def test_normales_paar_bleibt_unveraendert(self, monkeypatch):
+        """Ohne Half/Double muss die Rate exakt bleiben, was sie vorher war."""
+        spec = _strict_spec(bpm_a=128.0, bpm_b=124.0, tempo_ratio=124.0 / 128.0)
+
+        assert self._gemessene_rate(monkeypatch, spec) == pytest.approx(128.0 / 124.0)

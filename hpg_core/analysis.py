@@ -582,8 +582,10 @@ def calculate_lufs(y: np.ndarray, sr: int) -> float:
     """Integrated Loudness nach ITU-R BS.1770-4 / EBU R128 in LUFS.
 
     LUFS-Feature 2026-07-17: pyloudnorm mit "DeMan"-Filterklasse (laut
-    Paper voll BS.1770-konform bei jeder Samplerate). Referenz fuer
-    Gain-Matching ist LUFS_REFERENCE (config, -18 = ReplayGain 2.0).
+    Paper voll BS.1770-konform bei jeder Samplerate). Die Gain-Angleichung
+    arbeitet rein relativ zwischen zwei Tracks (dj_brain._gain_advice gegen
+    GAIN_DIFF_SHOW_DB und GAIN_DIFF_WARN_DB); einen absoluten Referenzpegel
+    gibt es nicht.
 
     Returns:
         Integrated LUFS (negativ, z.B. -9.5) oder 0.0 als Sentinel

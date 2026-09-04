@@ -51,9 +51,6 @@ DEFAULT_SECTION_ENERGY = 50.0
 LOOKAHEAD_TOP_K = 8
 
 # === Loudness / Gain-Matching (2026-07-17, EBU R128) ===
-# Referenz-Loudness fuer Gain-Angleichung: -18 LUFS = ReplayGain-2.0-Standard
-# (Mixxx-kompatibel, genug Headroom fuer EDM; rekordbox-Zielwert unbekannt)
-LUFS_REFERENCE = -18.0
 # Anzeige-Schwelle: Differenzen >= 1 dB sind hoerbar (JND)
 GAIN_DIFF_SHOW_DB = 1.0
 # Warn-Schwelle: >= 3 dB gilt als korrekturbeduerftig

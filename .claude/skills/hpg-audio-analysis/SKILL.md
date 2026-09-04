@@ -136,7 +136,7 @@ BPM-Wert nutzergepflegt und verlaesslicher als die Messung.
 | `mix_in_point` / `mix_out_point` | `-1.0` (`MIX_POINT_UNSET`) | `0.0` ist gueltig |
 | `first_phrase` | `-1.0` | Phase `0.0` ist gueltig |
 | `key_confidence` | `0.0` | `1.0` = Rekordbox-Key |
-| `lufs` | `0.0` + `lufs_status` | EBU R128, Referenz `LUFS_REFERENCE = -18.0` |
+| `lufs` | `0.0` + `lufs_status` | EBU R128, Angleichung nur relativ |
 
 `lufs_status` kennt `complete`, `invalid` und `error`. Historie: bis 2026-08-14
 lieferte `_integrated_loudness_from_blocks` fuer 24 von 52 Tracks NaN, weil die
