@@ -450,10 +450,54 @@ class TestOutroOverlapLimit:
     assert (grenze / sekunden_pro_takt) % 1 == pytest.approx(0.0)
 
   def test_kurzer_kopfraum_wird_nicht_gekuerzt(self):
-    """Unter 8 Takten lieber ins Outro laufen als harter Schnitt."""
+    """Unter 8 Takten lieber ins Outro laufen als harter Schnitt.
+
+    Geprueft und BESTAETIGT am 2026-09-04: der Nutzer hat die Alternativen
+    "auf 0.0 angleichen" und "Kopfraum zurueckgeben" abgelehnt, nachdem sich
+    zeigte, dass 0.0 kein harter Schnitt waere, sondern den Uebergang ganz
+    verwirft (`compute_transition_recommendations` verlangt `0.0 < overlap`).
+    """
     track = self._track(bpm=120.0, outro_start=360.0)
     # 10 s Kopfraum = 5 Takte, unter MIN_TRANSITION_BARS
     assert _outro_overlap_limit(track, 350.0) is None
+
+  def test_divergenz_zum_kandidatenpfad_bleibt_unerreichbar(self):
+    """Nagelt fest, WARUM die Divergenz heute folgenlos ist.
+
+    `blend_bars_options` sagt beim selben Kopfraum "unmoeglich" (`[]`),
+    `_outro_overlap_limit` sagt "keine Grenze" (`None`). Gegensaetzlich --
+    aber ohne Wirkung, weil ein Kandidat per Konstruktion mindestens
+    MIN_TRANSITION_BARS Kopfraum hat und der App-Pfad `current_mix_out` aus
+    genau diesem Kandidaten nimmt.
+
+    Faellt dieser Test um, ist die Divergenz erreichbar geworden und muss
+    entschieden werden, statt still zu wirken.
+    """
+    from hpg_core.config import MIN_TRANSITION_BARS
+    from hpg_core.mix_candidates import MixCandidate
+    from hpg_core.pair_candidates import blend_bars_options
+
+    track = self._track(bpm=140.0, duration=330.0, outro_start=300.0)
+    sekunden_pro_takt = (60.0 / 140.0) * 4
+
+    for mix_out in (250.0, 270.0, 285.0, 290.0, 295.0):
+      kandidat = MixCandidate(t=mix_out, schema=["sektion"], confidence=1.0)
+      laengen = blend_bars_options(track, kandidat, "direct")
+      grenze = _outro_overlap_limit(track, mix_out)
+
+      if not laengen:
+        # Kein Kandidat -> der App-Pfad verwirft das Paar vorher. Was
+        # `_outro_overlap_limit` hier sagt, erreicht niemanden.
+        continue
+
+      # Es GIBT einen Kandidaten: dann muss auch eine Grenze existieren,
+      # sonst waere die Divergenz erreichbar.
+      assert grenze is not None, (
+        f"Kandidat bei mix_out={mix_out} vorhanden, aber keine Outro-Grenze "
+        "-- die Divergenz ist erreichbar geworden"
+      )
+      assert min(laengen) >= MIN_TRANSITION_BARS
+      assert grenze >= MIN_TRANSITION_BARS * sekunden_pro_takt - 1e-9
 
   def test_ohne_erkanntes_outro_keine_grenze(self):
     track = self._track(sections=False)

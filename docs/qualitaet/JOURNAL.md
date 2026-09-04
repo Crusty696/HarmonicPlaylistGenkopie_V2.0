@@ -371,8 +371,10 @@ Fehler durchgelassen, den der Waechter dann fand.
   commit 8ca0e21.
 - ~~**D6** Zwei Begriffe von "Genre dieses Tracks"~~ -- ERLEDIGT Runde 9,
   entschieden: dokumentieren statt angleichen.
-- **D7** `_outro_overlap_limit` gibt `None` = "keine Grenze", wo
-  `blend_bars_options` `[]` = "unmoeglich" gibt.
+- ~~**D7** `_outro_overlap_limit` gibt `None` = "keine Grenze"~~ -- ERLEDIGT
+  Runde 10: latente Divergenz, im App-Pfad unerreichbar. Entscheidung
+  2026-09-04: Verhalten unveraendert, Docstring richtiggestellt, Test nagelt
+  die Unerreichbarkeit fest.
 - **D8** Beide Analysepfade messen die Merkmale ueber verschieden lange
   Fenster (360 s gegen 600 s).
 - Half/Double: der Preview entsteht, die Taktlage ist ungemessen.
@@ -406,8 +408,10 @@ Frage nach einem CACHE_VERSION-Bump.
 
 - `blend_bars_options`: `max_bars = 5 < 8` -> `[]`, also kein Kandidat.
 - `_outro_overlap_limit`: Kopfraum unter der Mindestblende -> `None`, und
-  `None` heisst dort "KEINE Grenze". Der Legacy-Pfad klemmt dann auf
-  `min(64, 330-290) = 40 s` -- davon **30 Sekunden mitten im Outro**.
+  `None` heisst dort "KEINE Grenze". Rechnerisch klemmte der Legacy-Pfad dann
+  auf `min(64, 330-290) = 40 s`, davon 30 s im Outro.
+  **WIDERRUFEN in Runde 10**: dieser Weg ist im App-Pfad unerreichbar, die
+  Wirkung tritt nicht ein. Siehe dort.
 
 Dieselbe Frage, zwei gegensaetzliche Antworten, und die groesszuegigere
 gewinnt ausgerechnet dort, wo der andere Pfad "unmoeglich" sagt. Die Ursache
@@ -542,3 +546,58 @@ bereits die verwandte Truthy-"Unknown"-Regel.
 Der Kommentarverweis in `tests/test_scoring_contract.py` nennt jetzt die
 Gewichtsumstellung statt der geloeschten Konstante. Die Assertion darunter
 ist unveraendert.
+
+### Runde 10 — 2026-09-04 — D7 WIDERRUFEN und richtiggestellt
+
+Der Waechter hat an Tor 1 zwei Dinge gefunden, die meine D7-Darstellung
+kippen. Beide selbst nachgeprueft, beide treffen zu.
+
+**1. Die 40-Sekunden-Blende ins Outro ist im App-Pfad NICHT erreichbar.**
+Meine Behauptung in Runde 7 ("der Legacy-Pfad klemmt auf 40 s, davon 30 s im
+Outro") ist unbelegt. Der Code verwirft ein Paar schon vorher:
+`compute_transition_recommendations` (`playlist.py:2421-2426`) bricht bei
+`not kandidaten` ab -- genau der Zustand, den `blend_bars_options -> []`
+erzeugt. Und wenn Kandidaten da sind, kommt `current_mix_out` aus dem
+Kandidaten (`playlist.py:2525`), dessen Kopfraum per Konstruktion mindestens
+`MIN_TRANSITION_BARS` betraegt: `blend_bars_options` nimmt nur Laengen
+`b >= MIN_TRANSITION_BARS` und `b <= max_bars`, und `max_bars` folgt
+demselben `_outro_deckel` wie `_outro_overlap_limit`. Der abweichende Zweig
+ist damit im einzigen Produktivaufruf tot.
+
+Die Divergenz ist real, aber LATENT: sie beisst erst, wenn jemand den
+Kandidatenpfad aendert. Genau die Fehlerklasse, die ich anderen Berichten
+vorwerfe -- Wirkung behauptet, wo nur eine Moeglichkeit besteht.
+
+**2. `0.0` ergibt keinen harten Schnitt.** Ein Overlap von 0 faellt in
+`playlist.py:2576-2583` durch `not 0.0 < overlap` und der Uebergang wird per
+`continue` KOMPLETT VERWORFEN, mit `logger.error("ungueltiger Overlap")`. Es
+entstuende also keine Blende der Laenge Null, sondern gar keine Empfehlung,
+kein Plan, kein Preview fuer dieses Paar. Der Nutzer hat am 2026-09-04
+"Angleichen: harter Schnitt" gewaehlt -- auf Grundlage meiner Beschreibung
+"Du hoerst an diesen Stellen einen harten Schnitt". Diese Beschreibung war
+falsch. Die Entscheidung wird deshalb neu vorgelegt.
+
+**3. Ein bestehender Test haelt die heutige Entscheidung fest.**
+`tests/test_transition_recommendations.py` `test_kurzer_kopfraum_wird_nicht_gekuerzt`
+mit dem Docstring "Unter 8 Takten lieber ins Outro laufen als harter Schnitt".
+Und `git show 1ebaa96` (2026-08-21) nennt die Entscheidung woertlich -- aber
+OHNE eigene Messung fuer diesen Fall. Die dort zitierten Zahlen (109 von 160
+Blenden liefen ins Outro) betreffen den anderen Fall. Fuer die Haeufigkeit
+des D7-Falls gibt es nur eine indirekte Obergrenze: "Outro-Verletzungen
+109 -> 18", und diese 18 verteilen sich auf ALLE VIER `None`-Zweige.
+
+Nichts gebaut. Wartet auf die neue Entscheidung.
+
+**D7 erledigt (Entscheidung 2026-09-04: Verhalten lassen, absichern).**
+Kein Verhalten geaendert. Die Docstring von `_outro_overlap_limit` nennt jetzt
+die Divergenz, ihren Grund und warum sie heute folgenlos ist -- samt der
+Feststellung, dass `0.0` KEIN harter Schnitt waere, sondern den Uebergang
+verwirft.
+
+Neu `test_divergenz_zum_kandidatenpfad_bleibt_unerreichbar`: er prueft ueber
+fuenf Mix-Out-Werte, dass es zu JEDEM Kandidaten auch eine Outro-Grenze gibt.
+Gegenprobe gefahren -- die Mindestblende im Kandidatenpfad auf 1 Takt
+gelockert, und der Test faellt mit "Kandidat bei mix_out=290.0 vorhanden,
+aber keine Outro-Grenze -- die Divergenz ist erreichbar geworden". Damit wird
+aus einem stillen Widerspruch ein lauter, sobald jemand den Kandidatenpfad
+anfasst.

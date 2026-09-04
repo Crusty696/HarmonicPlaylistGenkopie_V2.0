@@ -1913,6 +1913,26 @@ def _outro_overlap_limit(
     Rueckgabe None heisst "keine Grenze": kein erkanntes Outro, unbrauchbare
     Werte, oder ein Kopfraum unter MIN_TRANSITION_BARS. Der letzte Fall ist
     Absicht — dort waere die Alternative ein harter Schnitt.
+
+    LATENTE DIVERGENZ (geprueft 2026-09-04, bewusst nicht behoben): fuer
+    denselben Kopfraum antwortet `pair_candidates.blend_bars_options` mit
+    `[]`, also "Kandidat unmoeglich", waehrend hier "keine Grenze" heisst.
+    Zwei gegensaetzliche Antworten auf dieselbe Frage — im heutigen App-Pfad
+    aber UNERREICHBAR, und deshalb ohne gemessene Wirkung:
+
+    * Ein Paar ohne Kandidaten verwirft `compute_transition_recommendations`
+      schon vorher (`not kandidaten`) -- genau der Zustand, den `[]` erzeugt.
+    * Liegen Kandidaten vor, stammt `current_mix_out` aus dem Kandidaten, und
+      dessen Kopfraum betraegt per Konstruktion mindestens
+      MIN_TRANSITION_BARS: `blend_bars_options` liefert nur Laengen
+      `>= MIN_TRANSITION_BARS` und `<= max_bars`, und `max_bars` folgt
+      demselben `_outro_deckel` wie diese Funktion.
+
+    `test_divergenz_zum_kandidatenpfad_bleibt_unerreichbar` nagelt das fest.
+    Wird der Kandidatenpfad geaendert, faellt dieser Test um -- dann ist die
+    Divergenz zu entscheiden, statt still wirksam zu werden. Eine Umstellung
+    auf 0.0 waere KEIN harter Schnitt: `compute_transition_recommendations`
+    verlangt `0.0 < overlap` und verwirft den Uebergang sonst vollstaendig.
     """
     sections = getattr(current, "sections", None)
     duration = float(getattr(current, "duration", 0.0) or 0.0)
