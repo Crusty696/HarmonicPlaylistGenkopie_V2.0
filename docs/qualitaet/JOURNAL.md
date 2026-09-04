@@ -330,3 +330,46 @@ Titel-Test wurde `test_nutzerkommentar_ueberlebt_ein_zitat_des_eigenen_markers`
 ERSATZLOS GELOESCHT -- er prueft die entfernte `user_comment`. Die Zusicherung
 tragen jetzt `test_text_hinter_dem_endmarker_bleibt_erhalten` und
 `test_markerzeile_im_zitat_wird_entschaerft`.
+
+### Runde 6 — 2026-09-04 — beide Saetze committet
+
+`3bdaa77` (D1/D3/D4) und `3551c04` (C2/C3). Sieben Tor-2-Durchgaenge fuer den
+Audit-Teil, jeder mit mindestens einem Befund, der bei der Nachbesserung des
+vorigen entstanden war. Die Kette lohnt es, festzuhalten:
+
+1. `BESTAETIGT` war strukturell unerreichbar (Prosa-Gleichheit).
+2. Der Sync loeschte alles ausserhalb des Nutzerkommentars.
+3. Meine Marker-Zaehlung hielt die eigene Notiz fuer doppelt erzeugt.
+4. Die Fence-Zaehlung dagegen haengte an fremdem Nutzertext.
+5. Die Entschaerfung lag nur um das Zitat, nicht um Auswirkung und Titel.
+6. Der Titel war mehrzeilig -- die Notiz waere auch ohne Marker gewachsen.
+7. Das Frontmatter blieb ganz aussen vor, und dort meldet die Erkennung
+   nicht einmal einen Konflikt.
+8. Und zuletzt: "hinter dem Ende ist Nutzerterritorium" hatte ich nur nach
+   hinten umgesetzt, nicht nach vorn.
+
+Muster: jede Korrektur, die eine Zeichenkette ZAEHLT statt sie an der Quelle
+unmoeglich zu machen, hat eine neue Luecke aufgemacht. Erst die Regel "was
+ausserhalb der Marker landet, wird einzeilig und markerfrei erzeugt" hat die
+Klasse geschlossen.
+
+Zweites Muster, das mich mehrfach erwischt hat: ein Skript, das mehrere
+Stellen aendert, bricht an einer Assertion ab, BEVOR es schreibt -- und ich
+habe der Rueckmeldung geglaubt statt dem Ergebnis. Einmal hat genau das einen
+Fehler durchgelassen, den der Waechter dann fand.
+
+## Offen, wartet auf Entscheidung oder Umsetzung
+
+- **D2** Schalter `TRANSITION_FEATURES_ENABLED` -- Entscheidung des Nutzers,
+  siehe oben.
+- **D5** Trunkierung ueberschreibt die gerundeten Mix-Takte. Cache und
+  Anzeige widersprechen sich um einen Takt. CACHE_VERSION-Frage klaeren.
+- **D6** Zwei Begriffe von "Genre dieses Tracks" -- verschiebt Scoring,
+  deshalb Vorlage statt Alleingang.
+- **D7** `_outro_overlap_limit` gibt `None` = "keine Grenze", wo
+  `blend_bars_options` `[]` = "unmoeglich" gibt.
+- **D8** Beide Analysepfade messen die Merkmale ueber verschieden lange
+  Fenster (360 s gegen 600 s).
+- Half/Double: der Preview entsteht, die Taktlage ist ungemessen.
+- Vor dem naechsten `--apply` gegen den echten Vault: Trockenlauf lesen. Der
+  neue Sync fasst jede Bestandsnotiz an.
