@@ -26,6 +26,7 @@ from .config import (
     RMS_THRESHOLD,
     DEFAULT_BPM,
     BPM_HALFTIME_MAX_RESULT,
+    FEATURE_WINDOW_DURATION,
     LIBROSA_FAST_PATH_DURATION,
     LIBROSA_MAX_DURATION,
     LIBROSA_TAIL_DURATION,
@@ -224,6 +225,69 @@ class FeatureCache:
     _hpss: tuple[np.ndarray, np.ndarray] | None = field(
         default=None, init=False, repr=False
     )
+
+    def fenster(self, max_samples: int) -> "FeatureCache":
+        """Abgeleiteter Cache ueber die ersten `max_samples` Samples.
+
+        Warum ueberhaupt: Fast-Path und Vollpfad laden verschieden lange
+        Signale und rechnen dieselben Merkmalsfunktionen darauf. Das Ergebnis
+        haengt damit daran, ob Rekordbox-Metadaten vorliegen -- und genau
+        diese Werte vergleicht das Scoring miteinander (D8).
+
+        Ist das Signal nicht laenger als das Fenster, kommt das ELTERNOBJEKT
+        selbst zurueck. Damit ist die Bitgleichheit des Fast-Path strukturell
+        erzwungen und nicht bloss behauptet.
+
+        Geschnitten wird nur, was der Elternteil schon haelt; alles uebrige
+        rechnet das Kind lazy auf dem Fenster. Andersherum waere es teurer:
+        die Merkmalsfunktionen fragen andere Cache-Schluessel ab als die
+        Strukturanalyse, deren Matrizen muessten also erst in voller Laenge
+        entstehen, um dann weggeschnitten zu werden.
+
+        Der Schnitt ist NICHT wertgleich zu einer Rechnung auf dem Fenster:
+        librosa arbeitet mit `center=True`, die letzten ein bis zwei Frames
+        entstehen hier aus echtem Folgeaudio statt aus Reflexionspadding.
+        Gemessen an 20 s Rauschen plus Sinus mit 10-s-Fenster (n=1):
+        `percussive_ratio` 5.4e-5 (unter der 3-Stellen-Rundung), `rms` im
+        Trackmittel 8.4e-4. Bei 360 s statt 10 s faellt der Anteil um rund
+        den Faktor 36.
+
+        Die Abweichung entsteht NUR IM VOLLPFAD. Weil das Fenster nie groesser
+        ist als `LIBROSA_FAST_PATH_DURATION`, bekommt der Fast-Path das
+        Elternobjekt zurueck, sobald das geladene Signal nicht laenger ist als
+        das Fenster -- der Regelfall. Ein Ein-Sample-Ueberhang aus dem
+        Resampling aendert die Frame-Zahl `1 + n // hop` nicht. Es ist also gerade die
+        Pfadasymmetrie, die D8 verkleinern soll, nur klein. Fuer `_hpss`
+        reicht der Randbereich weiter als ein bis zwei Frames, weil dort ein
+        Medianfilter ueber mehrere Frames wirkt.
+        """
+        if max_samples >= len(self.y):
+            return self
+
+        def frames(hop: int | None) -> int:
+            # Frame-Zahl EXAKT wie librosa sie bildet. `n // hop` allein
+            # verliert einen Frame und misst damit ein anderes Fenster als
+            # die Fensterrechnung.
+            return 1 + max_samples // (hop if hop is not None else 512)
+
+        kind = FeatureCache(y=self.y[:max_samples], sr=self.sr)
+        # Schluessel-Formen: `_rms` und `_centroid` tragen den Hop direkt,
+        # `_mfcc` und `_stft` als Element [1] eines Tupels, der Rest als
+        # `int | None`. Ein pauschales Aufloesen schnitte die Haelfte falsch.
+        for name in ("_mfcc", "_stft"):
+            getattr(kind, name).update({
+                schluessel: matrix[..., : frames(schluessel[1])]
+                for schluessel, matrix in getattr(self, name).items()
+            })
+        for name in ("_rms", "_chroma", "_centroid", "_flatness", "_contrast", "_onset"):
+            getattr(kind, name).update({
+                schluessel: matrix[..., : frames(schluessel)]
+                for schluessel, matrix in getattr(self, name).items()
+            })
+        if self._hpss is not None:
+            # Zeitsignale, kein Frame-Raster: hier wird in SAMPLES geschnitten.
+            kind._hpss = (self._hpss[0][:max_samples], self._hpss[1][:max_samples])
+        return kind
 
     def get_mfcc(self, n_mfcc: int = 13, hop_length: int | None = None) -> np.ndarray:
         key = (n_mfcc, hop_length)
@@ -1908,12 +1972,24 @@ def analyze_track(file_path: str) -> Track | None:
         # K2 Audit-Fix: Dauer begrenzen — BPM/Key kommt aus Rekordbox, nur Energy/Genre noetig
         try:
             y, sr = librosa.load(file_path, duration=LIBROSA_FAST_PATH_DURATION)
+            # Fensterbreite EINMAL je Pfad. Stand sie an mehreren Stellen,
+            # konnte `energy` gegen ein anderes Fenster laufen als die
+            # uebrigen sieben Merkmale, ohne dass ein Test das sieht.
+            fenster_samples = int(FEATURE_WINDOW_DURATION * sr)
             feature_cache = FeatureCache(y, sr)
+            # D8: gemeinsames Messfenster fuer die Merkmale. Bewusst EIGENE
+            # Namen -- wuerden `y` und `feature_cache` neu gebunden, wanderten
+            # auch `calculate_bass_intensity`, `classify_genre`, der
+            # MFCC-Fingerabdruck, die Sektionsschleife und die
+            # Strukturfenster still mit. Genau EINMAL gebunden, damit kein
+            # Merkmal gegen ein anderes Fenster laufen kann.
+            y_fenster = y[:fenster_samples]
+            cache_fenster = feature_cache.fenster(fenster_samples)
             # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
             duration = file_duration
 
             # Calculate energy and bass (not in Rekordbox)
-            energy = calculate_energy(y)
+            energy = calculate_energy(y_fenster)
             bass_intensity = calculate_bass_intensity(y, sr)
 
             lufs, lufs_status, lufs_coverage, lufs_channels, lufs_sample_rate = (
@@ -2073,10 +2149,10 @@ def analyze_track(file_path: str) -> Track | None:
             )
 
             # Audio Feature Extensions
-            brightness = calculate_brightness(y, sr, feature_cache)
-            vocal_instrumental = detect_vocal_instrumental(y, sr, feature_cache)
+            brightness = calculate_brightness(y_fenster, sr, cache_fenster)
+            vocal_instrumental = detect_vocal_instrumental(y_fenster, sr, cache_fenster)
             danceability = calculate_danceability(
-                y, sr, rekordbox_data.bpm, feature_cache
+                y_fenster, sr, rekordbox_data.bpm, cache_fenster
             )
             # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
             mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
@@ -2111,19 +2187,19 @@ def analyze_track(file_path: str) -> Track | None:
         # die Datei erneut in voller Laenge zu laden.
         try:
             # Timbre-Fingerprint fuer den Fast-Path-Ausschnitt
-            timbre_fp = generate_timbre_fingerprint(y, sr, feature_cache)
+            timbre_fp = generate_timbre_fingerprint(y_fenster, sr, cache_fenster)
 
             # Overall Track Averages for Advanced Features (VOR dem Sektions-Loop,
             # damit Sektionen ausserhalb des geladenen Audiofensters darauf
             # zurueckfallen koennen).
-            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr, feature_cache)
-            track_pr, track_sf = analyze_rhythm_complexity(y, sr, feature_cache)
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y_fenster, sr, cache_fenster)
+            track_pr, track_sf = analyze_rhythm_complexity(y_fenster, sr, cache_fenster)
 
             # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
             # compute_groove_fields). y/sr sind hier das Fast-Path-Audio.
             groove = compute_groove_fields(
-                y, sr, rekordbox_data.bpm, first_downbeat, downbeat_confidence,
-                feature_cache=feature_cache, sections=section_dicts,
+                y_fenster, sr, rekordbox_data.bpm, first_downbeat, downbeat_confidence,
+                feature_cache=cache_fenster, sections=section_dicts,
             )
 
             # Update each section with detailed frequency and rhythm data
@@ -2302,7 +2378,12 @@ def analyze_track(file_path: str) -> Track | None:
         # Echte Datei-Dauer zuerst bestimmen (sehr schnell), dann nur max. 10 Min laden
         duration = file_duration
         y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
+        # Siehe Fast-Path: Fensterbreite einmal je Pfad.
+        fenster_samples = int(FEATURE_WINDOW_DURATION * sr)
         feature_cache = FeatureCache(y, sr)
+        # D8: siehe Fast-Path. Eigene Namen, genau einmal gebunden.
+        y_fenster = y[:fenster_samples]
+        cache_fenster = feature_cache.fenster(fenster_samples)
 
         # --- BPM-Erkennung: ID3-Tag liefert den Wert, Audio prueft den Faktor ---
         # AUDIT-FIX 2026-08-14: Frueher stand hier "Beatport-Exporte enthalten
@@ -2439,7 +2520,7 @@ def analyze_track(file_path: str) -> Track | None:
             else:
                 camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
 
-        energy = calculate_energy(y)
+        energy = calculate_energy(y_fenster)
         bass_intensity = calculate_bass_intensity(y, sr)
 
         lufs, lufs_status, lufs_coverage, lufs_channels, lufs_sample_rate = (
@@ -2584,10 +2665,24 @@ def analyze_track(file_path: str) -> Track | None:
         mix_out_bars = seconds_to_bars(mix_out_point, bpm) if mix_out_point >= 0 else 0
 
         # Audio Feature Extensions
-        brightness = calculate_brightness(y, sr, feature_cache)
-        vocal_instrumental = detect_vocal_instrumental(y, sr, feature_cache)
+        brightness = calculate_brightness(y_fenster, sr, cache_fenster)
+        vocal_instrumental = detect_vocal_instrumental(y_fenster, sr, cache_fenster)
+        # `beat_frames` wird bewusst NICHT durchgereicht: sie stammen aus dem
+        # BPM-Block ueber das VOLLE Signal, waehrend der Fast-Path
+        # `beat_track` auf dem Fenster rechnet. Gleiche Funktion, gleiches
+        # Fenster, aber verschiedene Beat-Quelle. Preis ist ein zusaetzlicher
+        # `beat_track`-Aufruf auf dem Fenster.
+        #
+        # ACHTUNG, gemessen 2026-09-04: das gleicht `danceability` zwischen den
+        # Pfaden NICHT an. Die verbleibende Differenz (97 gegen 92 an einer
+        # 90-s-Synthetik) stammt aus der BPM, nicht aus den Beats: `bpm_bonus`
+        # ist 0.15 im Band 118-152 und 0.08 im Band 100-170 und geht als
+        # `(bpm_bonus / 0.15) * 0.10` ein -- 10.0 gegen 5.33 Punkte. Fast-Path
+        # 128.0 aus Rekordbox, Vollpfad 107.67 aus librosas Schaetzung. Bei
+        # gleicher BPM liefern beide 97. Das ist GEWOLLT: die BPM aus der
+        # Datenbank zu nehmen ist der Zweck des Fast-Path.
         danceability = calculate_danceability(
-            y, sr, bpm, feature_cache, beat_frames=beat_frames
+            y_fenster, sr, bpm, cache_fenster
         )
         # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
         mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
@@ -2600,8 +2695,9 @@ def analyze_track(file_path: str) -> Track | None:
         
         # --- Advanced Audio Analysis (Phase 2) ---
         try:
-            # We already have y and sr loaded. For detailed analysis, use full signal.
-            timbre_fp = generate_timbre_fingerprint(y, sr, feature_cache)
+            # Signal und Samplerate liegen vor; der Fingerabdruck kommt aus
+            # dem Merkmalsfenster, nicht aus dem vollen Signal (D8).
+            timbre_fp = generate_timbre_fingerprint(y_fenster, sr, cache_fenster)
             
             updated_sections = []
             for sec_dict in section_dicts:
@@ -2634,14 +2730,14 @@ def analyze_track(file_path: str) -> Track | None:
                 updated_sections.append(sec_dict)
             section_dicts = updated_sections
             
-            avg_b, avg_m, avg_h = analyze_frequency_bands(y, sr, feature_cache)
-            track_pr, track_sf = analyze_rhythm_complexity(y, sr, feature_cache)
+            avg_b, avg_m, avg_h = analyze_frequency_bands(y_fenster, sr, cache_fenster)
+            track_pr, track_sf = analyze_rhythm_complexity(y_fenster, sr, cache_fenster)
 
             # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
             # compute_groove_fields).
             groove = compute_groove_fields(
-                y, sr, bpm, first_downbeat, downbeat_confidence,
-                feature_cache=feature_cache, sections=section_dicts,
+                y_fenster, sr, bpm, first_downbeat, downbeat_confidence,
+                feature_cache=cache_fenster, sections=section_dicts,
             )
         except Exception as e:
             logger.warning(f"Librosa-Phase-2 fehlgeschlagen: {e}")

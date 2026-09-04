@@ -152,7 +152,11 @@ logger = logging.getLogger(__name__)
 # jetzt explizit ungesetzt statt auf einen Bar-Anker auszuweichen. Alte
 # v43-Zeilen koennen weiterhin solche semantisch ungueltigen Fallback-Werte
 # enthalten und duerfen den strengeren Mixpoint-Vertrag nicht maskieren.
-CACHE_VERSION = 44
+# FIX 2026-09-04: 44 -> 45. Acht Track-Merkmale werden jetzt in BEIDEN
+# Analysepfaden ueber ein gemeinsames 360-s-Fenster gemessen (D8); alte
+# v44-Zeilen enthalten Werte, die davon abhaengen, ob Rekordbox-Metadaten
+# vorlagen.
+CACHE_VERSION = 45
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

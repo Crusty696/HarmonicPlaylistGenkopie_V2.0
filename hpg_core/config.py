@@ -161,10 +161,20 @@ GENRE_WEIGHT_WITHOUT_DJ_BRAIN = 0.1
 
 # === Librosa Memory Protection (K2 Audit-Fix) ===
 # Maximale Lade-Dauer in Sekunden — begrenzt RAM-Verbrauch bei langen Tracks.
-# Rekordbox Fast-Path: BPM/Key kommt aus DB, daher reichen 120s fuer Energy/Genre.
+# Rekordbox Fast-Path: BPM/Key kommt aus DB, gebraucht wird das Signal nur
+# noch fuer Merkmale und Struktur.
 # Volle Analyse: 600s (10 Min) als Sicherheitsnetz gegen riesige Dateien.
 LIBROSA_FAST_PATH_DURATION = 360  # Sekunden (fuer Rekordbox-Pfad)
 LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
+# Gemeinsames Messfenster der Track-Merkmale (D8, 2026-09-04). Ohne es misst
+# der Fast-Path ueber 360 s und der Vollpfad ueber 600 s — dieselben
+# Funktionen, verschieden lange Fenster, und das Scoring vergleicht die
+# Ergebnisse miteinander. 360 s ist die UNTERGRENZE der Ladefenster: sinkt
+# LIBROSA_FAST_PATH_DURATION darunter, laufen die Pfade wieder auseinander.
+# Als KOPPLUNG statt als Pruefung: ein `assert` faellt unter `python -O` und
+# in einem optimierten Frozen-Build ersatzlos weg, und damit geraeuschlos die
+# einzige Absicherung gegen ein Fenster groesser als die Ladegrenze.
+FEATURE_WINDOW_DURATION = min(360, LIBROSA_FAST_PATH_DURATION)
 # Separates Endfenster verhindert, dass Outro/Mix-Out aus einem reinen
 # Track-Anfang extrapoliert werden. Die Zeitachse markiert eventuelle Luecken.
 LIBROSA_TAIL_DURATION = 180

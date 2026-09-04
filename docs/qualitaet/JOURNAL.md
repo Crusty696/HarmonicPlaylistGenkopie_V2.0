@@ -136,7 +136,8 @@ Nichts davon ist gebaut. Erst Tor 1 je Befund, dann Umsetzung.
   verwirft, behandelt der Fallback-Pfad am groesszuegigsten.
 - **D8 (mittel)** Beide Analysepfade messen die Track-Merkmale ueber
   verschieden lange Fenster: Fast-Path `librosa.load(..., duration=360)`
-  (`analysis.py:1907`), Vollpfad `duration=600` (`analysis.py:2290`), danach
+  (`analysis.py`, `librosa.load(..., duration=LIBROSA_FAST_PATH_DURATION)`),
+  Vollpfad `duration=600` (`librosa.load(..., duration=LIBROSA_MAX_DURATION)`), danach
   in beiden dieselben Aufrufe fuer `calculate_energy`,
   `analyze_frequency_bands` und `compute_groove_fields`. Ein 480 s langer
   Track bekommt damit je nach Vorhandensein von Rekordbox-Metadaten
@@ -360,6 +361,45 @@ Fehler durchgelassen, den der Waechter dann fand.
 
 ## Offen, wartet auf Entscheidung oder Umsetzung
 
+- **D15 (2026-09-04)** Kein Test sichert, dass die acht Merkmale DASSELBE
+  Fenster sehen -- jedes ist einzeln fensterabhaengig geprueft, aber keine
+  Zusicherung vergleicht sie untereinander. Heute folgenlos, weil alle aus
+  derselben Bindung stammen; wer spaeter `y_fenster` aendert und `energy`
+  vergisst, faellt durch kein Netz.
+- **D16 (2026-09-04)** `test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung`
+  prueft die FORM, nicht den WERT. Waechst die Schnittabweichung durch eine
+  librosa- oder Hop-Aenderung ueber die Ausgaberundung, bleibt die Suite
+  gruen. Bewusst so gebaut (K2), aber es ist die offene Fehlerklasse dieses
+  Umbaus.
+
+- **D14 (2026-09-04, Folge von D8)** Der Parameter `beat_frames` von
+  `calculate_danceability` hat keinen Produktivaufrufer mehr -- beide
+  Aufrufstellen uebergeben ihn seit D8 nicht. Nur noch ein Test benutzt ihn.
+  Ein toter, aber getesteter Parameter suggeriert eine unterstuetzte
+  Betriebsart und lockt zum Wiedereinbau. Entfernen waere Scope-Ausweitung.
+
+- **D13 (2026-09-04, beim Cache-Bump gefunden)**
+  `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` nennt an zwei Stellen
+  Cache-Version 44 und `hpg_cache_v44.db` als Laufzeitcache. Das Dokument
+  beschreibt den laufenden Ablauf, traegt aber ein Datum und steht nicht in
+  der Liste, die `test_living_docs_reference_current_cache_contract` prueft.
+  Bewusst NICHT im D8-Commit angefasst -- es stand nicht in den erlaubten
+  Dateien. Wer der Doku folgt, sucht den Cache am falschen Ort.
+  NAECHSTER SCHRITT, damit der Posten nicht liegen bleibt: die Datei in die
+  Liste von `test_living_docs_reference_current_cache_contract` aufnehmen --
+  dann erzwingt der naechste Bump die Korrektur, statt sie zu vergessen.
+
+- **D10 (2026-09-04, bewusst zurueckgestellt)** `classify_genre` bleibt
+  pfadabhaengig. Nutzerentscheidung zu D8: erst die uebrigen Merkmale
+  angleichen, die Genre-Erkennung nicht. Sie steuert Toleranztabelle und
+  DJ-Brain-Zweig; eine Aenderung dort verschiebt mehr als Merkmalswerte.
+- **D11 (2026-09-04, beim D8-Entwurf gefunden)** Auch die SEKTIONSwerte sind
+  pfadabhaengig: `analyze_frequency_bands`, `analyze_rhythm_complexity` und
+  `bass_kennwerte` laufen je Sektion ueber das jeweils geladene Signal --
+  Fast-Path bis 360 s, Vollpfad bis 600 s. Sie gehen ueber `sub_energy` und
+  `bass_punch` in den Nahtstellen-Vergleich und damit ins Scoring. D8 schliesst
+  diesen Teil NICHT; ohne diesen Eintrag gaelte D8 faelschlich als vollstaendig.
+
 - **D9 (neu, 2026-09-04)** `config.py` behauptet im Kommentar zur
   Ladefenster-Begrenzung "Rekordbox Fast-Path: ... daher reichen 120s fuer
   Energy/Genre", waehrend `LIBROSA_FAST_PATH_DURATION` auf 360 steht.
@@ -375,8 +415,9 @@ Fehler durchgelassen, den der Waechter dann fand.
   Runde 10: latente Divergenz, im App-Pfad unerreichbar. Entscheidung
   2026-09-04: Verhalten unveraendert, Docstring richtiggestellt, Test nagelt
   die Unerreichbarkeit fest.
-- **D8** Beide Analysepfade messen die Merkmale ueber verschieden lange
-  Fenster (360 s gegen 600 s).
+- ~~**D8** Beide Analysepfade messen die Merkmale ueber verschieden lange
+  Fenster~~ -- ACHT von elf angeglichen, Runde 11. Nicht geschlossen: siehe
+  D10 und D11.
 - Half/Double: der Preview entsteht, die Taktlage ist ungemessen.
 - Vor dem naechsten `--apply` gegen den echten Vault: Trockenlauf lesen. Der
   neue Sync fasst jede Bestandsnotiz an.
@@ -601,3 +642,196 @@ gelockert, und der Test faellt mit "Kandidat bei mix_out=290.0 vorhanden,
 aber keine Outro-Grenze -- die Divergenz ist erreichbar geworden". Damit wird
 aus einem stillen Widerspruch ein lauter, sobald jemand den Kandidatenpfad
 anfasst.
+
+### Runde 11 — 2026-09-04 — D8 und D9 gebaut, acht von elf
+
+`FEATURE_WINDOW_DURATION = 360` in `config.py`, mit `assert` gegen
+`LIBROSA_FAST_PATH_DURATION` -- in Runde 13 durch `min(...)` ersetzt, siehe
+dort: sinkt die Ladegrenze unter das Fenster, laufen
+die Pfade wieder auseinander -- und ausgerechnet der D9-Kommentar schlug
+frueher woertlich 120 s vor.
+
+Neu `FeatureCache.fenster(max_samples)`: schneidet nur, was der Elternteil
+schon haelt, rechnet alles uebrige lazy auf dem Fenster. Andersherum waere es
+TEURER -- die Merkmalsfunktionen fragen andere Cache-Schluessel ab als die
+Strukturanalyse, deren Matrizen muessten also erst in voller Laenge entstehen,
+um dann weggeschnitten zu werden. Ist das Signal nicht laenger als das
+Fenster, kommt das Elternobjekt selbst zurueck; die Bitgleichheit des
+Fast-Path ist damit strukturell erzwungen, nicht behauptet.
+
+Der Schnitt ist NICHT wertgleich zu einer Fensterrechnung: `center=True`
+laesst die letzten ein bis zwei Frames aus echtem Folgeaudio statt aus
+Reflexionspadding entstehen. Gemessen (n=1, 20 s Rauschen plus Sinus, 10-s-
+Fenster): `percussive_ratio` 5.4e-5 -- unter der 3-Stellen-Rundung --, `rms`
+im Trackmittel 8.4e-4. Bei 360 s faellt der Anteil um rund Faktor 36.
+
+Wichtig, weil ich es zuerst falsch herum aufgeschrieben hatte: die Abweichung
+besteht ZWISCHEN den Pfaden, nicht in beiden gleich. Der Fast-Path bekommt
+das Elternobjekt zurueck, seine Matrizen sind echt auf dem Fenster gerechnet;
+der Vollpfad schneidet Matrizen, die auf 600 s entstanden sind. Gemessen lag
+die Wirkung bei allen sieben uebrigen Merkmalen unter der Ausgaberundung.
+Fuer `_hpss` ist der Randbereich breiter als ein bis zwei Frames, weil dort
+ein Medianfilter ueber 31 Frames wirkt.
+
+DREI eigene Fehler, die erst die Gegenprobe gezeigt hat:
+
+1. Meine ersten Tests waren WIRKUNGSLOS. Beide Rueckbauten -- `y` und
+   `feature_cache` neu binden, und den Vollpfad zuruecknehmen -- blieben
+   gruen. Ursache: ein `any(...)` ueber vier Merkmale bleibt gruen, solange
+   ein einziges noch reagiert. Jetzt wird JEDES Merkmal einzeln geprueft.
+2. Die Fixture taugte nicht. Ein gleichfoermiger Klick-Track liefert ueber
+   jedes Fenster dieselben Mittelwerte -- gemessen reagierten nur zwei von
+   elf Merkmalen. Neu `wandel_wav`: erste Haelfte laut und bassbetont, zweite
+   leise und hell, mit Tempowechsel. Ohne den Tempowechsel blieb
+   `danceability` unbeeindruckt.
+3. Der gefaehrlichste Fehler war unsichtbar. Wuerden `y` und `feature_cache`
+   neu gebunden statt eigene Namen zu bekommen, wanderten Sektionsschleife,
+   MFCC-Fallback und Strukturfenster still mit. Kein Merkmalstest sieht das --
+   erst `test_sektionen_jenseits_des_fensters_bleiben_gemessen` faengt es.
+
+D9 miterledigt: der `config.py`-Kommentar nennt keine 120 s mehr.
+
+CACHE_VERSION 44 -> 45, samt AGENTS.md, CLAUDE.md, QUICK_START.txt,
+PRODUCTION_STATUS.md und den vier Skill-Dateien. Der harte Pin in
+`tests/test_caching.py` ist entkoppelt: geprueft wird jetzt das VERHALTEN
+(alter Marker ungueltig, aktueller gueltig) statt der Zahl -- in Runde 13
+WIDERRUFEN und wiederhergestellt, siehe dort. In
+`hpg-cache-persistence` bleibt "Stand 44" als Historie stehen und bekommt
+"Stand 45" daneben -- eine mechanische Hebung haette falsche Geschichte
+erzeugt.
+
+Suite 3841 gruen.
+
+### Runde 12 — 2026-09-04 — zurueckgewiesen, zwei eigene Fehler
+
+**Der Waechter fand einen Posten, den ich als angelegt gemeldet hatte und der
+nicht existierte.** "D12 ist als eigener Posten im Journal" -- war er nicht.
+Mein Skript hat nur "D8 markiert" ausgegeben, die zweite Ersetzung griff
+nicht, und ich habe die Ausgabe nicht gelesen. Dritter Vorfall derselben Art
+in dieser Sitzung. Der Verweis zeigte damit auf eine Aufgabe, die niemand
+finden kann.
+
+**Der zweite Befund fuehrte zu einer Diagnose, die ich korrigieren muss.**
+Gemeldet war: `danceability` bleibt pfadabhaengig (97 gegen 92), weil der
+Fast-Path `beat_track` auf dem Fenster rechnet und der Vollpfad gekappte
+`beat_frames` aus dem vollen Signal durchreicht. Ich habe die Uebergabe
+entfernt -- und der Unterschied blieb. Nachgemessen ist die Ursache eine
+ANDERE: die BPM. Fast-Path 128.0 aus Rekordbox, Vollpfad 107.67 aus librosas
+Schaetzung. Bei gleicher BPM und gleichem Fenster liefern beide 97.
+
+    danceability(y_fenster, sr, 128.00) = 97
+    danceability(y_fenster, sr, 107.67) = 92
+
+Das ist keine Fensterfrage und kein Fehler: dass der Fast-Path die BPM aus
+der Rekordbox-Datenbank nimmt statt sie zu schaetzen, ist sein Daseinszweck.
+D8 ist fuer alle acht Merkmale erfuellt; der Rest ist eine BPM-Differenz, die
+zwischen den Pfaden bestehen bleiben SOLL. Deshalb kein D12.
+
+Die Entfernung der `beat_frames`-Uebergabe bleibt trotzdem drin: die
+Beat-QUELLE war tatsaechlich verschieden, jetzt rechnen beide Pfade dieselbe
+Funktion auf demselben Fenster. Preis ist ein zusaetzlicher
+`beat_track`-Aufruf im Vollpfad.
+
+Weiter behoben: der CACHE_VERSION-Bump hatte keinen Begruendungskommentar --
+Projektregel und bei allen dreizehn Vorgaengern eingehalten; zwei
+Zeilenangaben im Journal zeigten wieder auf den Stand VOR dem Commit
+(1910/2304 statt 1965/2367); ein Altkommentar ueber dem Fingerabdruck sagte
+"use full signal", waehrend darunter das Fenster steht.
+
+Zur Testabdeckung, ehrlich statt beschoenigend: `timbre_fingerprint` und
+`percussive_ratio` sind jetzt einzeln zugesichert. `vocal_instrumental`,
+`spectral_flatness` und `groove_pattern` reagieren auf dieser synthetischen
+Fixture NICHT -- gemessen, nicht vermutet. Ihre Umstellung haengt an der
+Sichtpruefung des Diffs, nicht an einem Test. Das steht so im Testkommentar.
+
+Suite 3845 gruen -- vier Tests mehr als in Runde 11 (3841), weil
+`timbre_fingerprint` und `percussive_ratio` je Pfad dazugekommen sind.
+
+### Runde 13 — 2026-09-04 — acht Befunde, einer davon peinlich
+
+Der Waechter hat die Gegendiagnose zu `danceability` unabhaengig
+reproduziert: `bpm_bonus` ist 0.15 im Band 118-152 und 0.08 im Band 100-170
+und geht als `(bpm_bonus/0.15)*0.10` ein -- 10.0 gegen 5.33 Punkte, Differenz
+4.67, was abgeschnitten genau 97 gegen 92 ergibt. Entlastend kommt hinzu, was
+ich selbst nicht geprueft hatte: `danceability` wird von KEINEM Scoring
+gelesen, ausserhalb von `analysis.py` nur persistiert und validiert. HPG-001
+ist nicht beruehrt.
+
+**Der peinliche Befund:** die Korrektur aus Runde 12 war nur im Journal
+angekommen, nicht im Code. Der Docstring von `fenster()` trug weiter die
+widerlegte Fassung "in beiden Pfaden gleich", und der Kommentar an der
+Danceability behauptete eine Ursache, die meine eigene Messung widerlegt hat.
+Wer kuenftig nur den Code liest, haette beides geglaubt. Beide Stellen sagen
+jetzt, was gemessen ist.
+
+**Einen Stolperdraht hatte ich entfernt statt erneuert.** `assert
+CACHE_VERSION == 44` war die einzige Stelle, die jeden Bump einmal bewusst
+anfassen laesst. Mein Ersatz prueft die Konstante gegen sich selbst und kann
+strukturell nie rot werden -- ein an den Code angepasster Test. Jetzt wieder
+`== 45`, in einem eigenen Test mit der Begruendung, warum die Zahl dort
+Absicht ist.
+
+**Die Kopplung war nicht bumpfest.** `assert FEATURE_WINDOW_DURATION <=
+LIBROSA_FAST_PATH_DURATION` faellt unter `python -O` und in einem optimierten
+Frozen-Build ersatzlos weg. Jetzt `min(360, LIBROSA_FAST_PATH_DURATION)` --
+Kopplung statt Pruefung.
+
+**Zwei Merkmale waren nicht gegen Rueckbau gesichert.** `detect_vocal_instrumental`
+und `compute_groove_fields` bleiben auf der Fixture stumm. Neu ueber das
+ARGUMENT abgesichert statt ueber die Ausgabe: ein Spy prueft, dass der erste
+Aufruf genau `FEATURE_WINDOW_DURATION * sr` Samples bekommt. Dabei fiel auf,
+dass `mix_candidates` dieselben Funktionen je Kandidatenfenster ruft -- mein
+erster Spy hatte den letzten statt den ersten Aufruf gemessen und meldete
+786402 statt 661500 Samples. Gegenprobe: beide Rueckbauten werden gefangen.
+
+Dazu neu `test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung`:
+ein Off-by-one im Frame-Schnitt zeigte sich sonst nur im Vollpfad und nur in
+den letzten Frames, die Suite bliebe gruen.
+
+### Runde 14 — 2026-09-04 — vierter Vorfall derselben Art
+
+**Mein Danceability-Kommentar war nie geschrieben worden.** Das Skript aus
+Runde 13 brach an einer Assertion ab, BEVOR es speicherte; ich habe danach
+nur die erste der beiden Stellen von Hand nachgezogen und die zweite
+vergessen -- und sie trotzdem als erledigt gemeldet. Im Code stand damit
+weiter die widerlegte Ursache samt dem Satz "Ohne die Beats rechnen beide
+Pfade dasselbe", den meine eigene Messung widerlegt hatte.
+
+Das ist der VIERTE Vorfall dieser Art in dieser Sitzung. Das Muster ist immer
+dasselbe: ein Skript aendert mehrere Stellen, bricht an einer Pruefung ab,
+schreibt nichts -- und ich verlasse mich auf die Absicht statt auf das
+Ergebnis. Konsequenz ab sofort: nach jedem mehrstelligen Skript wird die
+geaenderte Stelle GELESEN, nicht die Rueckmeldung geglaubt.
+
+**Der Argument-Spy prueft jetzt beide Haelften.** Er mass nur die
+Signallaenge -- fuer `detect_vocal_instrumental` die falsche: bei gesetztem
+Cache kommen Flachheit, MFCC und Kontrast vollstaendig aus dem Cache, `y`
+dient nur als Leer-Guard. Ein Rueckbau NUR des Caches waere unsichtbar
+geblieben. Gegenprobe: `(661500, 1984500) statt (661500, 661500)`.
+
+Weiter behoben: `fenster_samples` steht jetzt genau EINMAL je Pfad, direkt
+hinter dem Ladeaufruf -- vorher stand die Fensterbreite an zwei unabhaengigen
+Stellen je Pfad, und `energy` haette gegen ein anderes Fenster laufen koennen
+als die uebrigen sieben. Der Docstring behauptet nicht mehr "immer" das
+Elternobjekt, sondern nennt die Bedingung. Die Journal-Zeilenangaben sind
+durch SYMBOLNAMEN ersetzt: sie waren zum dritten Mal verrutscht, weil jede
+Aenderung oberhalb sie verschiebt.
+
+### Runde 15 — 2026-09-04 — Befund 1 geschlossen, Suite belegt
+
+`y_fenster` und `cache_fenster` werden jetzt EINMAL je Pfad gebunden, direkt
+hinter dem `FeatureCache`. Vorher schnitt `calculate_energy` inline gegen
+`fenster_samples`, die uebrigen sieben nutzten `y_fenster` -- heute derselbe
+Wert, aber wer spaeter `y_fenster` aendert (etwa auf einen Ausschnitt ab dem
+ersten Downbeat), haette `energy` gegen ein anderes Fenster laufen lassen,
+ohne dass ein Test das sieht. Jetzt kann die Divergenz nicht mehr entstehen.
+
+Der Waechter verlangte einen BELEG statt einer Behauptung, dass die Suite
+nach den Aenderungen lief. Zeitstempel: letzte Aenderung an `analysis.py`
+22:58:50, Suite-Start 23:00:03, Ende 23:08:47, 3851 gruen. Das ist die
+richtige Forderung -- ein Lauf von vor der Aenderung belegt nichts.
+
+Zwei offene Fehlerklassen sind als D15 und D16 eingetragen, statt sie im
+Bericht zu erwaehnen und dann zu verlieren. D13 hat einen NAECHSTEN SCHRITT
+bekommen: `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` gehoert in die Liste des
+Release-Tests, dann erzwingt der naechste Bump die Korrektur.

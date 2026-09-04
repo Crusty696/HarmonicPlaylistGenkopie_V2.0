@@ -133,7 +133,7 @@ hpg_core/
   genre_classifier.py          -> regelbasierte Genre-Erkennung (kein ML)
   structure_analyzer.py        -> Intro/Breakdown/Drop/Outro
   transition_renderer.py       -> Uebergangs-Preview (Crossfade, EQ, Limiter)
-  caching.py                   -> SQLite-Cache, CACHE_VERSION 44
+  caching.py                   -> SQLite-Cache, CACHE_VERSION 45
   genres.py                    -> 9 kanonische Genres (Single Source of Truth)
   theme.py                     -> Farben und Styles der GUI
   models.py                    -> Track-Dataclass, Camelot-Map
@@ -150,7 +150,7 @@ tests/
   (eine Datei tests/test_playlist.py gibt es nicht)
 
 Der Laufzeit-Cache liegt ausserhalb des Repos:
-  %LOCALAPPDATA%\HPG\hpg_cache_v44.db
+  %LOCALAPPDATA%\HPG\hpg_cache_v45.db
   (ueberschreibbar mit HPG_CACHE_DIR bzw. HPG_CACHE_FILE)
 
 ================================================================================

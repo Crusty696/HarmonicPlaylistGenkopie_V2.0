@@ -35,8 +35,8 @@ weniger Tests als der lokale Standardlauf.
 | Worker-Cap | 4 (`PARALLEL_AUTO_MAX_WORKERS`) |
 
 Die Werte in dieser Tabelle sind historische Bestandteile des
-Volltest-Snapshots vom 2026-08-25. Der aktuelle Code steht seit 2026-08-26 auf
-`CACHE_VERSION = 44` und verwendet `hpg_cache_v44.db`.
+Volltest-Snapshots vom 2026-08-25. Der aktuelle Code steht seit 2026-09-04 auf
+`CACHE_VERSION = 45` und verwendet `hpg_cache_v45.db`.
 
 ## Belegte Doku-Widersprueche
 

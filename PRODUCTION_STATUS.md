@@ -28,7 +28,7 @@ Nutzeranweisung pausiert. Abnahmen vom 2026-07-26 sowie Messungen vom
   DJ-Praxis kalibriert (Techno 16-32 Bars, Trance 32-64, Psytrance 16er-Phrasen).
   LLM-Mixpoints sind rein advisory und schreiben keine Track-Mixpoints;
   Rekordbox-Cues werden phrase-quantisiert und gegen die framegenaue echte
-  Audiodauer geprueft. Cache-Version 44;
+  Audiodauer geprueft. Cache-Version 45;
   `-1.0` ist der Nicht-gesetzt-Sentinel, `0.0` ein gueltiger Mix-In.
   Transition-Preview mit Beat-Phase-Alignment.
 - **8 Playlist-Strategien** (Harmonic Flow, Warm-Up, Cool-Down, Peak-Time,
@@ -72,7 +72,7 @@ nachgemessen: Gate erfüllt, Suite vollständig grün.
 ## Offene Punkte
 
 - Die vollstaendige 3666-Track-Analyse ist pausiert. Ein spaeter freigegebener
-  Lauf muss mit einem neuen isolierten v44-Arbeitscache beginnen; historische
+  Lauf muss mit einem neuen isolierten v45-Arbeitscache beginnen; historische
   v37-v43-Artefakte werden nicht fortgesetzt.
 - Danach bleiben der neue 30-Paar-Kandidatensatz, der strikte PCM-/Kick-Audit
   und ein reales Render-E2E auf diesem Satz auszufuehren.

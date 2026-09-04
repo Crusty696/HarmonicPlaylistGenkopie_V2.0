@@ -680,12 +680,33 @@ class TestCacheConcurrency:
     assert record_count == (len(jobs),)
 
 
-def test_cache_version_44_invalidiert_v43_mixpoint_fallbacks():
+def test_cache_version_ist_bewusst_gesetzt():
+  """Stolperdraht: jeder Bump muss diesen Test EINMAL bewusst anfassen.
+
+  Ich hatte diese Zusicherung zwischenzeitlich entfernt und durch
+  `_cache_marker_is_current(("system", CACHE_VERSION, ...))` ersetzt -- das
+  prueft die Konstante gegen sich selbst und kann strukturell nie rot werden.
+  Damit war die einzige Stelle weg, die einen vergessenen oder versehentlich
+  zurueckgedrehten Bump bemerkt. Der Waechter hat das am 2026-09-04 als "an
+  den Code angepasster Test" beanstandet, zu Recht.
+
+  Die Zahl hier ist deshalb Absicht, kein Versehen: aendert sich der
+  Analyse-Output, wird sie zusammen mit `CACHE_VERSION` gehoben, und wer sie
+  hebt, denkt einmal darueber nach.
+  """
   from hpg_core import caching
 
-  assert caching.CACHE_VERSION == 44
+  assert caching.CACHE_VERSION == 45
+
+
+def test_alter_cache_marker_wird_invalidiert():
+  """Ein Marker aus der Zeit vor den Mixpoint-Fallbacks gilt nicht mehr."""
+  from hpg_core import caching
+
   assert not caching._cache_marker_is_current(("system", 43, "metadata"))
-  assert caching._cache_marker_is_current(("system", 44, "metadata"))
+  assert caching._cache_marker_is_current(
+      ("system", caching.CACHE_VERSION, "metadata")
+  )
   for name in ("phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates"):
     assert name in caching.TRACK_LIST_FIELDS
 

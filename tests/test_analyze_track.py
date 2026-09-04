@@ -1250,3 +1250,248 @@ class TestMixBarsRundung:
     assert track.mix_out_bars == 20
     assert track.mix_in_bars == seconds_to_bars(track.mix_in_point, track.bpm)
     assert track.mix_out_bars == seconds_to_bars(track.mix_out_point, track.bpm)
+
+
+@pytest.fixture
+def wandel_wav():
+  """WAV, dessen Klang sich ueber die Zeit AENDERT.
+
+  Ein gleichfoermiger Klick-Track taugt fuer D8 nicht: dort liefert jedes
+  Fenster dieselben Mittelwerte, und ein Test darauf ist gruen, ohne etwas
+  zu pruefen. Hier ist die erste Haelfte laut und bassbetont, die zweite
+  leise und hell -- damit reagiert jedes fensterabhaengige Merkmal.
+  """
+  import wave
+
+  sr, dauer = 22050, 90.0
+  n = int(dauer * sr)
+  t = np.linspace(0, dauer, n, endpoint=False)
+  # Puls fuer ein brauchbares Taktraster. Er WECHSELT in der zweiten Haelfte
+  # das Tempo -- sonst bleibt die Beat-Regelmaessigkeit ueber jedes Fenster
+  # gleich und `danceability` reagiert nicht.
+  puls = (np.sin(2 * np.pi * 2.133 * t) > 0.98).astype(np.float64)
+  puls_schnell = (np.sin(2 * np.pi * 3.6 * t) > 0.98).astype(np.float64)
+  signal = 0.6 * np.sin(2 * np.pi * 80 * t) + 0.3 * puls
+  zweite = n // 2
+  signal[zweite:] = (
+    0.12 * np.sin(2 * np.pi * 5000 * t[zweite:]) + 0.3 * puls_schnell[zweite:]
+  )
+  daten = np.clip(signal, -1.0, 1.0)
+
+  with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+    path = f.name
+  with wave.open(path, "w") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(sr)
+    w.writeframes((daten * 32767).astype(np.int16).tobytes())
+  yield path
+  if os.path.exists(path):
+    os.unlink(path)
+
+
+class TestMerkmalsfenster:
+  """D8: beide Analysepfade massen die Merkmale ueber verschieden lange Fenster."""
+
+  @staticmethod
+  def _lauf(monkeypatch, wav, pfad, fenster):
+    from hpg_core import analysis
+
+    # Das Fenster wird als Modul-Global gelesen, nicht als Default gebunden --
+    # nur deshalb greift der Patch. Ohne ihn braeuchte der Test eine Datei
+    # von ueber sechs Minuten.
+    monkeypatch.setattr(analysis, "FEATURE_WINDOW_DURATION", fenster)
+
+    importer = Mock()
+    importer.get_track_data.return_value = None if pfad == "librosa_voll" else (
+      RekordboxTrackData(
+        bpm=128.0, duration=90.0, camelot_code="8A", title="T", artist="A",
+      )
+    )
+    importer.get_track_signature.return_value = "rb-signature"
+    importer.get_beatgrid.return_value = []
+    importer.get_phrases.return_value = []
+    importer.get_cue_points.return_value = []
+    monkeypatch.setattr(analysis, "get_rekordbox_importer", lambda: importer)
+    monkeypatch.setattr(analysis, "get_cached_track", lambda *a, **k: None)
+    monkeypatch.setattr(analysis, "cache_track", Mock(return_value=True))
+    monkeypatch.setattr(analysis, "extract_metadata", lambda path: ("A", "T", "G"))
+    return analysis.analyze_track(wav)
+
+  # Jedes dieser Merkmale MUSS auf das Fenster reagieren. Ein `any` waere zu
+  # schwach: es bliebe gruen, solange ein einziges noch angeglichen wird --
+  # gemessen 2026-09-04, genau daran ist meine erste Fassung vorbeigelaufen.
+  #
+  # NICHT in der Liste, mit Messung statt Stillschweigen (2026-09-04, diese
+  # Fixture, Fenster 90 gegen 30): `vocal_instrumental` bleibt "unknown",
+  # `spectral_flatness` bleibt 0.0 und `groove_pattern` bleibt leer -- das
+  # synthetische Signal traegt fuer sie keine Aussage. Ihre Umstellung ist
+  # dadurch NICHT gegen Rueckbau gesichert; sie haengt an der Sichtpruefung
+  # des Diffs. Echtes Material waere hier der bessere Beleg.
+  FENSTERABHAENGIG = (
+    "energy", "brightness", "avg_bass", "avg_highs", "danceability",
+    "timbre_fingerprint", "percussive_ratio",
+  )
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  @pytest.mark.parametrize("merkmal", FENSTERABHAENGIG)
+  def test_jedes_merkmal_reagiert_auf_das_fenster(
+    self, monkeypatch, wandel_wav, pfad, merkmal
+  ):
+    """Je Merkmal EINZELN, damit ein Rueckbau nicht hinter den anderen verschwindet."""
+    voll = self._lauf(monkeypatch, wandel_wav, pfad, 90)
+    kurz = self._lauf(monkeypatch, wandel_wav, pfad, 30)
+
+    assert voll is not None and kurz is not None
+    a, b = getattr(voll, merkmal), getattr(kurz, merkmal)
+    if isinstance(a, (list, tuple)):
+      a, b = list(a), list(b)
+    assert b != a, (
+      f"{merkmal} reagiert im Pfad {pfad} nicht auf das Fenster -- "
+      "die Begrenzung greift dort nicht"
+    )
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  def test_genre_und_bass_bleiben_am_vollsignal(
+    self, monkeypatch, wandel_wav, pfad
+  ):
+    """Die Genre-Erkennung darf NICHT mitwandern.
+
+    `classify_genre` bekommt `bass_intensity` uebergeben. Beide werden vor
+    dem Merkmalsblock aus dem vollen Signal gebildet und muessen dort bleiben.
+    """
+    voll = self._lauf(monkeypatch, wandel_wav, pfad, 90)
+    kurz = self._lauf(monkeypatch, wandel_wav, pfad, 30)
+
+    assert voll is not None and kurz is not None
+    assert kurz.bass_intensity == voll.bass_intensity
+    assert kurz.detected_genre == voll.detected_genre
+    assert kurz.mfcc_fingerprint == voll.mfcc_fingerprint
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  def test_sektionen_jenseits_des_fensters_bleiben_gemessen(
+    self, monkeypatch, wandel_wav, pfad
+  ):
+    """Die Sektionsschleife muss den ELTERN-Cache behalten.
+
+    Wuerden `y` und `feature_cache` im Merkmalsblock neu gebunden statt eigene
+    Namen zu bekommen, faende die Schleife fuer Sektionen jenseits des
+    Fensters kein Audio mehr -- sie erbten dann die Trackmittel, statt selbst
+    gemessen zu werden. Kein anderer Test sieht das.
+    """
+    track = self._lauf(monkeypatch, wandel_wav, pfad, 30)
+
+    assert track is not None
+    spaet = [s for s in (track.sections or []) if s.get("start_time", 0.0) > 40.0]
+    assert spaet, "Fixture liefert keine Sektion jenseits des Fensters"
+    assert any(
+      s.get("avg_bass") is not None and s.get("avg_bass") != track.avg_bass
+      for s in spaet
+    ), (
+      "Jede spaete Sektion traegt exakt die Trackmittel -- die Schleife hat "
+      "den Eltern-Cache verloren"
+    )
+
+  def test_kurzer_track_bleibt_bitgleich(self):
+    """Unterhalb des Fensters gibt `fenster()` das Elternobjekt selbst zurueck."""
+    from hpg_core.analysis import FeatureCache
+
+    eltern = FeatureCache(y=np.zeros(1000, dtype=np.float32), sr=22050)
+    assert eltern.fenster(1000) is eltern
+    assert eltern.fenster(5000) is eltern
+    assert eltern.fenster(500) is not eltern
+
+
+class TestMerkmalsfensterArgumente:
+  """Absicherung ueber das ARGUMENT statt ueber die Ausgabe.
+
+  `detect_vocal_instrumental` und `compute_groove_fields` bleiben auf der
+  synthetischen Fixture stumm -- ihre Umstellung war dadurch nicht gegen
+  Rueckbau gesichert. Ein Spy prueft stattdessen, WAS ihnen uebergeben wird.
+  Das ist fixture-unabhaengig und deckt alle acht Merkmale gleich ab.
+  """
+
+  @pytest.mark.parametrize("pfad", ["rekordbox_fast", "librosa_voll"])
+  @pytest.mark.parametrize(
+    "funktion", ["detect_vocal_instrumental", "compute_groove_fields"]
+  )
+  def test_bekommt_das_fenster_und_den_kindcache(
+    self, monkeypatch, wandel_wav, pfad, funktion
+  ):
+    from hpg_core import analysis
+
+    fenster = 30
+    alle = []
+    original = getattr(analysis, funktion)
+
+    def spy(y_arg, sr_arg, *args, **kwargs):
+      # BEIDE Haelften erfassen. `detect_vocal_instrumental` liest bei
+      # gesetztem Cache alles aus dem Cache -- `y` dient dort nur als
+      # Leer-Guard. Ein Rueckbau NUR des Caches bliebe unsichtbar, wenn der
+      # Spy die Signallaenge allein prueft.
+      cache = kwargs.get("feature_cache")
+      if cache is None and args:
+        cache = args[-1]
+      alle.append((len(y_arg), len(cache.y) if cache is not None else None))
+      return original(y_arg, sr_arg, *args, **kwargs)
+
+    monkeypatch.setattr(analysis, funktion, spy)
+    track = TestMerkmalsfenster._lauf(monkeypatch, wandel_wav, pfad, fenster)
+
+    assert track is not None
+    assert alle, f"{funktion} wurde im Pfad {pfad} gar nicht gerufen"
+    # Der ERSTE Aufruf ist der aus dem Merkmalsblock. Spaetere stammen aus
+    # `mix_candidates`, das dieselben Funktionen je Kandidatenfenster ruft --
+    # die duerfen und sollen andere Laengen haben.
+    erwartet = int(fenster * 22050)
+    assert alle[0] == (erwartet, erwartet), (
+      f"{funktion} bekommt im Merkmalsblock (Signal, Cache) = {alle[0]} "
+      f"statt ({erwartet}, {erwartet}) -- eine der beiden Uebergaben ist "
+      "zurueckgebaut"
+    )
+
+
+def test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung():
+  """Ein Off-by-one im Frame-Schnitt saehe man sonst nirgends.
+
+  Er zeigte sich nur im Vollpfad und nur in den letzten Frames -- die Suite
+  bliebe gruen. Geprueft wird deshalb die FORM jeder Matrix gegen eine
+  frische Berechnung auf demselben Ausschnitt.
+  """
+  from hpg_core.analysis import FeatureCache
+
+  sr = 22050
+  y = np.random.default_rng(0).standard_normal(20 * sr).astype(np.float32)
+  eltern = FeatureCache(y=y, sr=sr)
+  # Elterncache fuellen, damit `fenster()` wirklich schneidet
+  eltern.get_mfcc(n_mfcc=13, hop_length=1024)
+  eltern.get_mfcc(n_mfcc=13)
+  eltern.get_rms(hop_length=1024)
+  eltern.get_stft_magnitude(hop_length=1024)
+  eltern.get_chroma()
+  eltern.get_spectral_centroid()
+  eltern.get_spectral_flatness()
+  eltern.get_spectral_contrast()
+  eltern.get_onset_strength()
+  eltern.get_hpss()
+
+  n = 10 * sr
+  kind = eltern.fenster(n)
+  frisch = FeatureCache(y=y[:n], sr=sr)
+
+  paare = (
+    ("mfcc_1024", lambda c: c.get_mfcc(n_mfcc=13, hop_length=1024)),
+    ("mfcc_default", lambda c: c.get_mfcc(n_mfcc=13)),
+    ("rms", lambda c: c.get_rms(hop_length=1024)),
+    ("stft", lambda c: c.get_stft_magnitude(hop_length=1024)),
+    ("chroma", lambda c: c.get_chroma()),
+    ("centroid", lambda c: c.get_spectral_centroid()),
+    ("flatness", lambda c: c.get_spectral_flatness()),
+    ("contrast", lambda c: c.get_spectral_contrast()),
+    ("onset", lambda c: c.get_onset_strength()),
+  )
+  for name, holen in paare:
+    assert holen(kind).shape == holen(frisch).shape, (
+      f"{name}: Schnitt und Fensterrechnung haben verschiedene Form"
+    )
+  assert len(kind.get_hpss()[0]) == len(frisch.get_hpss()[0]) == n

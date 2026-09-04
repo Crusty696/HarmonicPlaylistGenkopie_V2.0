@@ -59,7 +59,7 @@ hpg_core/                  # Core analysis modules
   downbeat.py              # Downbeat- und Phrasen-Anker
   config.py                # Alle konfigurierbaren Konstanten
   genres.py                # Single Source of Truth: 9 kanonische Genres + Drift-Validierung
-  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 44
+  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 45
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Breakdown/Drop/Outro)
@@ -137,7 +137,7 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
 
 - `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`, `*.coverage` —
   Cache-/System-Dateien. Der Laufzeit-Cache liegt ausserhalb des Repos unter
-  `%LOCALAPPDATA%\HPG\hpg_cache_v44.db` (ueberschreibbar mit `HPG_CACHE_DIR`
+  `%LOCALAPPDATA%\HPG\hpg_cache_v45.db` (ueberschreibbar mit `HPG_CACHE_DIR`
   bzw. `HPG_CACHE_FILE`).
 
 ## Analyse-Pipeline
