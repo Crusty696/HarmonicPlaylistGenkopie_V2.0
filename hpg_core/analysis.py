@@ -235,59 +235,32 @@ class FeatureCache:
         diese Werte vergleicht das Scoring miteinander (D8).
 
         Ist das Signal nicht laenger als das Fenster, kommt das ELTERNOBJEKT
-        selbst zurueck. Damit ist die Bitgleichheit des Fast-Path strukturell
-        erzwungen und nicht bloss behauptet.
+        selbst zurueck. Der Fast-Path bekommt es heute, weil
+        `FEATURE_WINDOW_DURATION` GLEICH `LIBROSA_FAST_PATH_DURATION` ist --
+        `config.py` koppelt beide ueber `min`, beide stehen auf 360. Nicht
+        "nie groesser als": der `return self`-Zweig verlangt ein Fenster, das
+        MINDESTENS so lang ist wie das geladene Signal. Stiege die Ladegrenze
+        ueber 360, entstuende auch im Fast-Path ein Kindcache. Kein Test
+        sichert diese Kopplung ab.
 
-        Geschnitten wird nur, was der Elternteil schon haelt; alles uebrige
-        rechnet das Kind lazy auf dem Fenster. Andersherum waere es teurer:
-        die Merkmalsfunktionen fragen andere Cache-Schluessel ab als die
-        Strukturanalyse, deren Matrizen muessten also erst in voller Laenge
-        entstehen, um dann weggeschnitten zu werden.
+        Sonst entsteht ein LEERER Cache auf dem Ausschnitt. Er rechnet jede
+        Matrix selbst und ist damit wertgleich zu einer Rechnung auf
+        `self.y[:max_samples]` -- nicht gemessen, sondern dadurch, dass
+        dieselbe Funktion mit denselben Parametern auf denselben Samples
+        laeuft. Ueber das Verhaeltnis der beiden PFADE zueinander sagt das
+        nichts: was Fast-Path und Vollpfad laden, entscheidet `librosa.load`.
 
-        Der Schnitt ist NICHT wertgleich zu einer Rechnung auf dem Fenster:
-        librosa arbeitet mit `center=True`, die letzten ein bis zwei Frames
-        entstehen hier aus echtem Folgeaudio statt aus Reflexionspadding.
-        Gemessen an 20 s Rauschen plus Sinus mit 10-s-Fenster (n=1):
-        `percussive_ratio` 5.4e-5 (unter der 3-Stellen-Rundung), `rms` im
-        Trackmittel 8.4e-4. Bei 360 s statt 10 s faellt der Anteil um rund
-        den Faktor 36.
-
-        Die Abweichung entsteht NUR IM VOLLPFAD. Weil das Fenster nie groesser
-        ist als `LIBROSA_FAST_PATH_DURATION`, bekommt der Fast-Path das
-        Elternobjekt zurueck, sobald das geladene Signal nicht laenger ist als
-        das Fenster -- der Regelfall. Ein Ein-Sample-Ueberhang aus dem
-        Resampling aendert die Frame-Zahl `1 + n // hop` nicht. Es ist also gerade die
-        Pfadasymmetrie, die D8 verkleinern soll, nur klein. Fuer `_hpss`
-        reicht der Randbereich weiter als ein bis zwei Frames, weil dort ein
-        Medianfilter ueber mehrere Frames wirkt.
+        Frueher wurden hier die Matrizen des Elternteils zugeschnitten. Das
+        war toter Code -- an beiden Aufrufstellen steht `fenster()` direkt
+        hinter `FeatureCache(y, sr)`, der Elterncache ist also leer, und der
+        Schnitt lief ueber leere Dicts. Er trug dafuer einen echten Fehler:
+        `chroma_stft` schaetzt `tuning` global ueber das ganze Signal, ein
+        geschnittenes Chroma haette also zu einer anderen Stimmung gehoert
+        als das Fenster (Journal 2026-09-05).
         """
         if max_samples >= len(self.y):
             return self
-
-        def frames(hop: int | None) -> int:
-            # Frame-Zahl EXAKT wie librosa sie bildet. `n // hop` allein
-            # verliert einen Frame und misst damit ein anderes Fenster als
-            # die Fensterrechnung.
-            return 1 + max_samples // (hop if hop is not None else 512)
-
-        kind = FeatureCache(y=self.y[:max_samples], sr=self.sr)
-        # Schluessel-Formen: `_rms` und `_centroid` tragen den Hop direkt,
-        # `_mfcc` und `_stft` als Element [1] eines Tupels, der Rest als
-        # `int | None`. Ein pauschales Aufloesen schnitte die Haelfte falsch.
-        for name in ("_mfcc", "_stft"):
-            getattr(kind, name).update({
-                schluessel: matrix[..., : frames(schluessel[1])]
-                for schluessel, matrix in getattr(self, name).items()
-            })
-        for name in ("_rms", "_chroma", "_centroid", "_flatness", "_contrast", "_onset"):
-            getattr(kind, name).update({
-                schluessel: matrix[..., : frames(schluessel)]
-                for schluessel, matrix in getattr(self, name).items()
-            })
-        if self._hpss is not None:
-            # Zeitsignale, kein Frame-Raster: hier wird in SAMPLES geschnitten.
-            kind._hpss = (self._hpss[0][:max_samples], self._hpss[1][:max_samples])
-        return kind
+        return FeatureCache(y=self.y[:max_samples], sr=self.sr)
 
     def get_mfcc(self, n_mfcc: int = 13, hop_length: int | None = None) -> np.ndarray:
         key = (n_mfcc, hop_length)

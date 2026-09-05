@@ -366,11 +366,12 @@ Fehler durchgelassen, den der Waechter dann fand.
   Zusicherung vergleicht sie untereinander. Heute folgenlos, weil alle aus
   derselben Bindung stammen; wer spaeter `y_fenster` aendert und `energy`
   vergisst, faellt durch kein Netz.
-- **D16 (2026-09-04)** `test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung`
-  prueft die FORM, nicht den WERT. Waechst die Schnittabweichung durch eine
-  librosa- oder Hop-Aenderung ueber die Ausgaberundung, bleibt die Suite
-  gruen. Bewusst so gebaut (K2), aber es ist die offene Fehlerklasse dieses
-  Umbaus.
+- **D16 (2026-09-04, AUFGELOEST in Runde 17)**
+  `test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung` prueft
+  die FORM, nicht den WERT. Waechst die Schnittabweichung ueber die
+  Ausgaberundung, bleibt die Suite gruen. -- Aufgeloest, aber anders als
+  gedacht: der gepruefte Schnitt war toter Code und ist entfernt. Es gibt
+  keine Schnittabweichung mehr, die wachsen koennte.
 
 - **D14 (2026-09-04, Folge von D8)** Der Parameter `beat_frames` von
   `calculate_danceability` hat keinen Produktivaufrufer mehr -- beide
@@ -659,11 +660,24 @@ um dann weggeschnitten zu werden. Ist das Signal nicht laenger als das
 Fenster, kommt das Elternobjekt selbst zurueck; die Bitgleichheit des
 Fast-Path ist damit strukturell erzwungen, nicht behauptet.
 
+> **Richtiggestellt in Runde 17 (2026-09-05):** "schneidet nur, was der
+> Elternteil schon haelt" beschreibt Code, der nie Daten sah. An beiden
+> Aufrufstellen steht `fenster()` direkt hinter `FeatureCache(y, sr)` -- der
+> Elterncache ist leer. Der Schnitt ist entfernt; das Kind rechnet alles
+> selbst. Die Begruendung "andersherum waere es teurer" war damit
+> gegenstandslos: geschnitten wurde ohnehin nichts.
+
 Der Schnitt ist NICHT wertgleich zu einer Fensterrechnung: `center=True`
 laesst die letzten ein bis zwei Frames aus echtem Folgeaudio statt aus
 Reflexionspadding entstehen. Gemessen (n=1, 20 s Rauschen plus Sinus, 10-s-
 Fenster): `percussive_ratio` 5.4e-5 -- unter der 3-Stellen-Rundung --, `rms`
 im Trackmittel 8.4e-4. Bei 360 s faellt der Anteil um rund Faktor 36.
+
+> **Richtiggestellt in Runde 17 (2026-09-05):** Diese Abweichung entstand nur,
+> weil der TEST den Elterncache vorher fuellte. Produktiv war er leer, der
+> Schnitt lief ueber leere Dicts, und das Kind rechnete von jeher frisch auf
+> dem Fenster -- also wertgleich. Die Zahlen messen einen Zustand, den nur
+> der Test herstellte.
 
 Wichtig, weil ich es zuerst falsch herum aufgeschrieben hatte: die Abweichung
 besteht ZWISCHEN den Pfaden, nicht in beiden gleich. Der Fast-Path bekommt
@@ -672,6 +686,16 @@ der Vollpfad schneidet Matrizen, die auf 600 s entstanden sind. Gemessen lag
 die Wirkung bei allen sieben uebrigen Merkmalen unter der Ausgaberundung.
 Fuer `_hpss` ist der Randbereich breiter als ein bis zwei Frames, weil dort
 ein Medianfilter ueber 31 Frames wirkt.
+
+> **Zwei Fehler, richtiggestellt in Runde 17 (2026-09-05):**
+> (a) "der Vollpfad schneidet Matrizen, die auf 600 s entstanden sind" ist
+> falsch -- der Elterncache ist beim Schnitt leer, es gab nichts zu schneiden.
+> (b) "die Wirkung lag bei allen sieben uebrigen Merkmalen unter der
+> Ausgaberundung" ist falsch -- am kuenstlich gefuellten Elterncache gemessen
+> weicht `timbre_fingerprint` in 5 von 5 Seeds ab (max 0.021), und
+> `percussive_ratio` kippte bei einem Seed die dritte Stelle (0.501/0.500).
+> Beides folgenlos, weil der Zustand produktiv nicht vorkam -- aber ich hatte
+> es als Messergebnis notiert, ohne die Voraussetzung mitzuschreiben.
 
 DREI eigene Fehler, die erst die Gegenprobe gezeigt hat:
 
@@ -788,6 +812,11 @@ Dazu neu `test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung`:
 ein Off-by-one im Frame-Schnitt zeigte sich sonst nur im Vollpfad und nur in
 den letzten Frames, die Suite bliebe gruen.
 
+> **Ersetzt in Runde 17 (2026-09-05):** Der Test sicherte einen Schnitt, den
+> es produktiv nicht gab, und fuellte den Elterncache selbst, um ueberhaupt
+> etwas zu pruefen. Nachfolger:
+> `test_fenster_gibt_leeren_cache_und_rechnet_bitgleich_zur_fensterrechnung`.
+
 ### Runde 14 — 2026-09-04 — vierter Vorfall derselben Art
 
 **Mein Danceability-Kommentar war nie geschrieben worden.** Das Skript aus
@@ -892,7 +921,11 @@ Gestrichen -- eine Offen-Liste mit erledigten Posten verliert ihren Zweck.
 Das ist Scope-Ausweitung gegenueber D13/D15 und deshalb hier getrennt genannt.
 
 Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D14 (toter
-`beat_frames`-Parameter), D16 (Formvergleich prueft keine Werte).
+`beat_frames`-Parameter), D17 (Chroma-Stimmung je Kandidatenfenster), D18
+(Kopplung `FEATURE_WINDOW_DURATION` / `LIBROSA_FAST_PATH_DURATION` ist
+ungetestet), D19 (`config.py`-Kommentar sagt Divergenz voraus, wo `min`
+Konvergenz erzwingt) -- alle drei neu in Runde 17. D16 ist in Runde 17
+aufgeloest: der gepruefte Schnitt existiert nicht mehr.
 
 **Nachtrag Runde 16 — Verfahrensfehler, offengelegt.** Die dritte und
 tatsaechlich umgesetzte Fassung des D13/D15-Vorhabens lag NIE an Tor 1. Nach
@@ -925,3 +958,149 @@ mit der Fensterlaenge EXISTIERT. Er merkt nicht, wenn zusaetzlich ein
 zweiter, falscher Aufruf desselben Merkmals ins Ergebnis geht. Das ist der
 Preis der Reihenfolgeunabhaengigkeit, die noetig war, weil die beiden Pfade
 Trackmittel und Sektionsschleife in verschiedener Reihenfolge rechnen.
+
+### Runde 17 — 2026-09-05 — D16 loest sich auf, weil der Code tot war
+
+Ziel war, D16 zu schliessen: der Formvergleich prueft keine Werte. Der
+Waechter wies an Tor 1 darauf hin (Befund 8), dass Bitgleichheit AUSSERHALB
+des Randbereichs genau den Bereich sichert, in dem ohnehin nichts passiert.
+Die Messung, die daraus folgte, hat den Auftrag umgeworfen.
+
+**Erst zwei eigene Fehlmessungen.** Mein Randmass war "letzter gleicher
+Index"; der schwankt seedabhaengig zwischen 210948 und 211029, weil einzelne
+Werte hinter der ersten Abweichung zufaellig wieder uebereinstimmen. Richtig
+ist "erster ungleicher Index", stabil bei ~210950. Und die Variantenliste war
+unvollstaendig: `_stft[(2048, 512)]` entsteht in `analyze_rhythm_complexity`
+und in `groove.compute_groove_fields`, im Test stand nur die 1024er-Variante.
+
+**Dann der Fund.** Beim Messen ueber alle Varianten fiel `chroma` heraus:
+Abweichung ueber die VOLLE Matrix, nicht am Rand. Ursache ist
+`librosa.feature.chroma_stft`, das `tuning` global ueber das ganze Signal
+schaetzt, wenn keines uebergeben wird. Eltern und Fenster bekommen
+verschiedene Werte, und dann verschiebt sich die gesamte Zuordnung:
+
+    seed 0: voll -0.330 / fenster -0.330 -> gleich, maxdiff 0.104
+    seed 1: voll +0.180 / fenster +0.080 -> maxdiff 0.101
+    seed 2: voll -0.430 / fenster +0.060 -> maxdiff 0.069
+    seed 3: voll -0.190 / fenster +0.310 -> maxdiff 0.040
+    seed 4: voll +0.140 / fenster +0.150 -> maxdiff 0.131
+
+Bei Chroma-Werten in [0,1] ist 0.13 keine Randunschaerfe.
+
+**Und dann die eigentliche Auskunft.** Bevor ich das absicherte, habe ich
+geprueft, ob der Schnitt produktiv ueberhaupt Daten sieht. Laufzeitbeleg,
+`FeatureCache.fenster` instrumentiert, `analyze_track` auf 400 s Audio:
+
+    y=8820000 fenster=7938000 geschnitten_wird=True eltern_matrizen=0 hpss=False
+
+Der Elterncache ist beim Aufruf LEER. An beiden Stellen steht `fenster()`
+direkt hinter `FeatureCache(y, sr)` (nach dieser Loeschung analysis.py:1948
+und 1956 sowie 2352 und 2355 -- gemessen wurde vorher an 1979/1987 und
+2383/2386, die Differenz von 31 Zeilen ist der geloeschte Block selbst),
+dazwischen kein Cache-Zugriff. Der gesamte Schnitt-Block lief ueber leere
+Dicts -- toter Code, der einen echten Fehler trug.
+
+David hat entschieden: loeschen. `fenster()` gibt jetzt das Elternobjekt
+zurueck oder einen leeren Cache auf dem Ausschnitt. Damit ist Wertgleichheit
+zur Fensterrechnung strukturell erzwungen statt gemessen, und der
+Chroma-Fehler ist mit dem Block verschwunden.
+
+**Was der Waechter an dieser Vorlage noch fing.** Sein Befund 1 war der
+wichtigste: mein neuer Test waere nach dem Loeschen eine TAUTOLOGIE gewesen
+-- zwei identisch konstruierte leere Objekte -- und die Gegenprobe haette
+nicht rot werden koennen, weil ein Schnitt ueber leere Dicts nichts tut. Der
+Test fuellt den Elterncache deshalb ausdruecklich vorher. Sein Befund 5 hat
+die Namensliste ersetzt: die Leerheit wird jetzt ueber
+`dataclasses.fields(FeatureCache)` abgeleitet, damit ein neuer Cache-Schluessel
+nicht wieder still durchrutscht wie `_stft[(2048, 512)]`. Sein Befund 3 hat
+verhindert, dass ich eine falsche Behauptung durch eine ungepruefte ersetze:
+der Docstring sagt jetzt "wertgleich zur Rechnung auf `self.y[:max_samples]`"
+und ausdruecklich NICHTS ueber das Verhaeltnis der beiden Pfade zueinander --
+was `librosa.load` bei 360 s und bei 600 s liefert, ist unvermessen.
+
+**Gegenprobe, getrennt protokolliert.** Schnitt testweise wieder eingebaut ->
+Test rot mit "_mfcc ist im Kind nicht leer". Danach zurueckgebaut und
+geprueft, dass `frames(` nirgends mehr vorkommt. Der ausgewiesene Suite-Lauf
+liegt NACH dem Rueckbau.
+
+**D17, neu und ungemessen.** Der Chroma-Tuning-Befund verschwindet mit dem
+toten Code, aber die Frage dahinter nicht. `mix_candidates.py:432` vergleicht
+die Chroma-Mittel ZWEIER getrennter `FeatureCache` (`fc_vor`, `fc_nach`)
+cosinus, und `:484` leitet `camelot_lokal` daraus ab -- jedes Fenster mit
+seiner eigenen, global geschaetzten Stimmung.
+
+Ich habe gemessen, wie schlimm das ist, statt es zu behaupten. An einer exakt
+gestimmten Akkordfolge ist `tuning` ueber alle Fenster stabil (-0.040), und
+die Tonartunterschiede zwischen den Fenstern stammen aus dem Akkordinhalt,
+nicht aus der Stimmung. Aufbau: Am-F-C-G-Am-F-C-G als Dreiklang-Sinus bei
+A=440, je 4 s, 32 s gesamt, sr 22050, vier Fenster zu 8 s; die Spanne ist
+max minus min der vier Fenster-`tuning`, gemittelt ueber n=3 Seeds. Erst mit
+steigendem Rauschanteil kippt es:
+
+    Rauschanteil   0.00  0.20  0.50  0.80  0.95  1.00
+    Tuning-Spanne  0.000 0.013 0.050 0.417 0.623 0.480
+
+Das relativiert meinen eigenen Befund: meine erste Messung lief auf reinem
+Rauschen, also im Worst Case. Musik hat tonalen Inhalt, dort ist die
+Schaetzung stabil. Offen bleibt, was in quasi-tonlosen Passagen geschieht --
+Noise-Sweeps, perkussive Drops --, und ob eine je Fenster eigene Stimmung
+gewollt ist oder die harmonische Distanz verfaelscht. Ungemessen an echtem
+Material, deshalb als Posten und nicht als erledigt notiert.
+
+**Drei Auflagen an Tor 2, alle textlich.** (1) Meine Docstring-Begruendung
+zeigte in die FALSCHE RICHTUNG: "`FEATURE_WINDOW_DURATION` nie groesser als
+`LIBROSA_FAST_PATH_DURATION`" traegt die Objektidentitaet nicht -- der
+`return self`-Zweig verlangt ein Fenster MINDESTENS so lang wie das geladene
+Signal. Getragen wird sie allein von der GLEICHHEIT beider Werte (beide 360).
+Bei einer Ladegrenze von 480 waere `min(360, 480) = 360 < 480` und der
+Fast-Path bekaeme einen Kindcache. Das war die vierte falsche Aussage an
+genau dieser Docstring-Stelle. (2) Meine Zeilenangaben im Laufzeitbeleg
+stammten von VOR der Loeschung, verschoben um exakt die 31 geloeschten
+Zeilen -- dieselbe Klasse "verrutschte Referenz", die dieses Journal an
+anderer Stelle selbst anprangert. (3) Die Diff-Zahlen im Pruefvertrag kamen
+aus `git diff --stat`, dessen Spalte die SUMME beider Richtungen ist, nicht
+aus `--numstat`, das nach Zugaengen und Abgaengen trennt. Die konkreten
+Zahlen stehen hier bewusst NICHT: eine Diff-Statistik, die im Diff selbst
+steht, macht sich durch ihr eigenes Hinzufuegen falsch -- was in der
+naechsten Runde prompt passierte, als ich es doch versuchte.
+
+**Ein fuenfter Irrtum, in derselben Runde.** Nach der Docstring-Korrektur
+liess ich einen Teillauf laufen mit der Begruendung, der Docstring trage
+jetzt das Literal "360" und `test_living_docs_reference_current_cache_contract`
+erzwinge Doku-Literale, eine Kommentaraenderung koenne den Test also kippen.
+Falsch. Der Test (tests/test_release_metadata.py:56-72) prueft ausschliesslich
+`CACHE_VERSION`-Literale in AGENTS.md, CLAUDE.md, docs/QUICK_START.txt,
+docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md und PRODUCTION_STATUS.md. Er liest
+weder `analysis.py` noch irgendein "360". KEIN Test im Repo bindet den
+`fenster`-Docstring. Der Lauf war eine freiwillige Absicherung und blieb
+folgenlos -- aber ich hatte dem Waechter widersprochen, der ihn fuer
+entbehrlich hielt, und mein Widerspruch beruhte auf einer erfundenen
+Testeigenschaft. Er hatte recht, ich nicht.
+
+**Muster, das sich fortsetzt.** Jede Korrektur, die eine Eigenschaft MISST
+statt sie unmoeglich zu machen, hat eine neue Luecke geoeffnet -- erst bei
+der Vault-Synchronisation, jetzt hier. Das Loeschen macht die Zusicherung zum
+ersten Mal strukturell. Und die Kette der eigenen Fehlaussagen in diesem
+Umbau ist lang genug, um sie zu benennen: "Wirkung unter der Ausgaberundung"
+(falsch), "Vollpfad schneidet 600-s-Matrizen" (falsch), "Schnitt ist nicht
+wertgleich" (falsch), Randformel `ceil((n_fft/2)/hop)` (gilt fuer `chroma`
+nicht). Alle vier stammen aus Messungen, deren VORAUSSETZUNG ich nicht
+mitgeschrieben hatte. Der fuenfte (die erfundene Testbindung) stammt aus
+einer Behauptung ueber Code, den ich nicht gelesen hatte -- dieselbe Klasse,
+gegen die dieses Journal auf dreissig Zeilen anschreibt.
+
+**D18, neu.** Dass der Fast-Path das Elternobjekt bekommt, haengt allein
+daran, dass `FEATURE_WINDOW_DURATION` und `LIBROSA_FAST_PATH_DURATION` beide
+360 sind. Kein Test sichert das: `grep -rn FEATURE_WINDOW_DURATION tests/`
+findet nur ein `monkeypatch` in test_analyze_track.py. Bewusst NICHT in
+diesem Auftrag gebaut -- das waere Scope-Ausweitung gewesen. Der Docstring
+benennt die Luecke, und hier steht sie, damit sie nicht verschwindet.
+
+**D19, neu.** `config.py:172-173` behauptet: "360 s ist die UNTERGRENZE der
+Ladefenster: sinkt `LIBROSA_FAST_PATH_DURATION` darunter, laufen die Pfade
+wieder auseinander." Das ist falsch, aber NICHT dieselbe Richtungs-
+verwechslung wie in meinem Docstring. Genau das verhindert `min` in Zeile
+177: bei `LIBROSA_FAST_PATH_DURATION = 300` wird `FEATURE_WINDOW_DURATION`
+ebenfalls 300, beide Pfade messen weiter dasselbe Fenster. Der Kommentar
+sagt Divergenz voraus, wo die Kopplung Konvergenz erzwingt. In diesem Commit
+nicht angefasst, weil `config.py` nicht im Auftrag stand.

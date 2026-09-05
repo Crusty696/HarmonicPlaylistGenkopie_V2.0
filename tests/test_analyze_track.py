@@ -1486,47 +1486,68 @@ class TestMerkmalsfensterArgumente:
         mp.undo()
 
 
-def test_fenster_schneidet_jede_matrix_formgleich_zur_fensterrechnung():
-  """Ein Off-by-one im Frame-Schnitt saehe man sonst nirgends.
+def test_fenster_gibt_leeren_cache_und_rechnet_bitgleich_zur_fensterrechnung():
+  """`fenster()` darf nichts vom Elternteil uebernehmen, sondern neu rechnen.
 
-  Er zeigte sich nur im Vollpfad und nur in den letzten Frames -- die Suite
-  bliebe gruen. Geprueft wird deshalb die FORM jeder Matrix gegen eine
-  frische Berechnung auf demselben Ausschnitt.
+  Frueher schnitt die Methode die Elternmatrizen zu. Das war toter Code --
+  an beiden Aufrufstellen ist der Elterncache leer -- und er trug einen
+  Fehler: `chroma_stft` schaetzt `tuning` global ueber das ganze Signal, ein
+  geschnittenes Chroma gehoerte also zu einer anderen Stimmung als das
+  Fenster.
+
+  Der Elterncache wird hier ABSICHTLICH vorher gefuellt. Ohne das waere der
+  Vergleich eine Tautologie -- zwei identisch konstruierte leere Objekte --
+  und bliebe auch bei wieder eingebautem Schnitt gruen.
   """
+  import dataclasses
+
   from hpg_core.analysis import FeatureCache
 
   sr = 22050
   y = np.random.default_rng(0).standard_normal(20 * sr).astype(np.float32)
   eltern = FeatureCache(y=y, sr=sr)
-  # Elterncache fuellen, damit `fenster()` wirklich schneidet
-  eltern.get_mfcc(n_mfcc=13, hop_length=1024)
-  eltern.get_mfcc(n_mfcc=13)
-  eltern.get_rms(hop_length=1024)
-  eltern.get_stft_magnitude(hop_length=1024)
-  eltern.get_chroma()
-  eltern.get_spectral_centroid()
-  eltern.get_spectral_flatness()
-  eltern.get_spectral_contrast()
-  eltern.get_onset_strength()
-  eltern.get_hpss()
 
-  n = 10 * sr
-  kind = eltern.fenster(n)
-  frisch = FeatureCache(y=y[:n], sr=sr)
-
-  paare = (
+  # Alle produktiv vorkommenden Schluessel. `_stft[(2048, 512)]` entsteht in
+  # `analyze_rhythm_complexity` und in `groove.compute_groove_fields`.
+  varianten = (
     ("mfcc_1024", lambda c: c.get_mfcc(n_mfcc=13, hop_length=1024)),
     ("mfcc_default", lambda c: c.get_mfcc(n_mfcc=13)),
-    ("rms", lambda c: c.get_rms(hop_length=1024)),
-    ("stft", lambda c: c.get_stft_magnitude(hop_length=1024)),
+    ("rms_1024", lambda c: c.get_rms(hop_length=1024)),
+    ("stft_1024", lambda c: c.get_stft_magnitude(hop_length=1024)),
+    ("stft_512", lambda c: c.get_stft_magnitude(n_fft=2048, hop_length=512)),
     ("chroma", lambda c: c.get_chroma()),
     ("centroid", lambda c: c.get_spectral_centroid()),
     ("flatness", lambda c: c.get_spectral_flatness()),
     ("contrast", lambda c: c.get_spectral_contrast()),
     ("onset", lambda c: c.get_onset_strength()),
   )
-  for name, holen in paare:
-    assert holen(kind).shape == holen(frisch).shape, (
-      f"{name}: Schnitt und Fensterrechnung haben verschiedene Form"
+  for _, holen in varianten:
+    holen(eltern)
+  eltern.get_hpss()
+
+  n = 10 * sr
+  kind = eltern.fenster(n)
+
+  # Leerheit aus den Dataclass-Feldern ABLEITEN, nicht aufzaehlen: eine
+  # Namensliste veraltet still, sobald ein Schluessel dazukommt -- genau so
+  # war `_stft[(2048, 512)]` durchgerutscht.
+  privat = [f.name for f in dataclasses.fields(FeatureCache) if f.name.startswith("_")]
+  assert privat, "FeatureCache hat keine privaten Felder mehr -- Test veraltet"
+  for name in privat:
+    wert = getattr(kind, name)
+    leer = wert is None if name == "_hpss" else len(wert) == 0
+    assert leer, (
+      f"{name} ist im Kind nicht leer -- `fenster()` uebernimmt wieder "
+      "Elterndaten. Ein geschnittenes Chroma gehoert zu einer anderen "
+      "Stimmung als das Fenster."
     )
-  assert len(kind.get_hpss()[0]) == len(frisch.get_hpss()[0]) == n
+
+  # Und was das Kind selbst rechnet, ist bitgleich zur Fensterrechnung.
+  frisch = FeatureCache(y=y[:n], sr=sr)
+  for name, holen in varianten:
+    a, b = holen(kind), holen(frisch)
+    assert a.shape == b.shape, f"{name}: verschiedene Form"
+    assert np.array_equal(a, b), f"{name}: nicht bitgleich zur Fensterrechnung"
+  for teil, (k, f) in enumerate(zip(kind.get_hpss(), frisch.get_hpss())):
+    assert np.array_equal(k, f), f"hpss[{teil}]: nicht bitgleich"
+  assert len(kind.get_hpss()[0]) == n
