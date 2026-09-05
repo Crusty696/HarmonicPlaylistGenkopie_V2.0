@@ -373,11 +373,12 @@ Fehler durchgelassen, den der Waechter dann fand.
   gedacht: der gepruefte Schnitt war toter Code und ist entfernt. Es gibt
   keine Schnittabweichung mehr, die wachsen koennte.
 
-- **D14 (2026-09-04, Folge von D8)** Der Parameter `beat_frames` von
-  `calculate_danceability` hat keinen Produktivaufrufer mehr -- beide
-  Aufrufstellen uebergeben ihn seit D8 nicht. Nur noch ein Test benutzt ihn.
-  Ein toter, aber getesteter Parameter suggeriert eine unterstuetzte
-  Betriebsart und lockt zum Wiedereinbau. Entfernen waere Scope-Ausweitung.
+- ~~**D14**~~ ERLEDIGT Runde 18 (2026-09-05) -- Der Parameter `beat_frames`
+  von `calculate_danceability` hatte keinen Produktivaufrufer mehr; nur noch
+  ein Test benutzte ihn. Die hier notierte Einschaetzung "Entfernen waere
+  Scope-Ausweitung" ist durch eine Nutzerentscheidung aufgehoben: Parameter
+  und Test sind entfernt. Ein Wiederanschluss haette nichts gebracht, siehe
+  Runde 18.
 
 - ~~**D13**~~ ERLEDIGT Runde 16 --
   `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md` nannte an FUENF Stellen auf vier Zeilen
@@ -920,11 +921,13 @@ D9 war in der Offen-Liste stehengeblieben, obwohl Runde 11 ihn erledigt hat.
 Gestrichen -- eine Offen-Liste mit erledigten Posten verliert ihren Zweck.
 Das ist Scope-Ausweitung gegenueber D13/D15 und deshalb hier getrennt genannt.
 
-Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D14 (toter
-`beat_frames`-Parameter), D17 (Chroma-Stimmung je Kandidatenfenster), D18
-(Kopplung `FEATURE_WINDOW_DURATION` / `LIBROSA_FAST_PATH_DURATION` ist
-ungetestet), D19 (`config.py`-Kommentar sagt Divergenz voraus, wo `min`
-Konvergenz erzwingt) -- alle drei neu in Runde 17. D16 ist in Runde 17
+Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D17
+(Chroma-Stimmung je Kandidatenfenster), D18 (Kopplung
+`FEATURE_WINDOW_DURATION` / `LIBROSA_FAST_PATH_DURATION` ist ungetestet),
+D19 (`config.py`-Kommentar sagt Divergenz voraus, wo `min` Konvergenz
+erzwingt) -- alle drei neu in Runde 17 --, D20 (kein Test sichert, dass beide
+`calculate_danceability`-Aufrufe `y_fenster` und nicht `y` uebergeben, neu in
+Runde 18). D14 ist in Runde 18 erledigt. D16 ist in Runde 17
 aufgeloest: der gepruefte Schnitt existiert nicht mehr.
 
 **Nachtrag Runde 16 — Verfahrensfehler, offengelegt.** Die dritte und
@@ -1104,3 +1107,73 @@ verwechslung wie in meinem Docstring. Genau das verhindert `min` in Zeile
 ebenfalls 300, beide Pfade messen weiter dasselbe Fenster. Der Kommentar
 sagt Divergenz voraus, wo die Kopplung Konvergenz erzwingt. In diesem Commit
 nicht angefasst, weil `config.py` nicht im Auftrag stand.
+
+### Runde 18 — 2026-09-05 — D14, ein toter Parameter mit eigenem Test
+
+`calculate_danceability` trug einen Parameter `beat_frames`, den seit D8 kein
+Produktivaufrufer mehr fuellt. Beide Aufrufstellen uebergeben vier Argumente
+(analysis.py:2125-2127 und :2656-2658), der Parameter war der fuenfte.
+
+**Warum ein Wiederanschluss nichts gebracht haette.** Ausserhalb von
+`calculate_danceability` entstehen Beat-Frames an vier Stellen, und KEINE
+davon liegt auf dem Merkmalsfenster:
+analysis.py:2381 und :2424 rechnen auf dem vollen `y` (dort gebraucht fuer
+`_median_seconds_per_bar`, :2569), downbeat.py:315 bekommt von allen vier
+Aufrufern ebenfalls `y`, transition_renderer.py:661 arbeitet auf einem eigenen
+Uebergangsfenster von acht Sekunden. Die fuenfte `beat_track`-Stelle des
+Repos ist analysis.py:1053 -- der Aufruf in `calculate_danceability` selbst,
+und der liegt sehr wohl auf dem Fenster. Genau deshalb heisst es oben
+"ausserhalb von `calculate_danceability`": eine Allaussage ueber ALLE fuenf
+Stellen waere falsch gewesen. Durchreichen hiesse also entweder die Fensterverwechslung,
+die D8 gerade beseitigt hat, oder eine zweite Rechnung ohne Ersparnis.
+
+**Der Test hat eine Eigenschaft gesichert, die es nicht mehr gab.** Sein
+Docstring lautete "Die Full-Analyse muss Beat-Tracking nicht fuer
+Danceability wiederholen". Seit D8 wiederholt sie es sehr wohl. Gruen war er
+nur, weil er den Parameter selbst setzte -- dieselbe Klasse wie der in Runde
+17 geloeschte `fenster`-Test: ein Test, der eine Faehigkeit prueft, die
+ausserhalb des Tests niemand nutzt. Beide Male hat erst die Frage "wer ruft
+das eigentlich?" den Befund gebracht, nicht die Frage "ist es korrekt?".
+
+**Vor dem Loeschen geprueft, ob der naechste Parameter dadurch tot wird.** Der
+`else`-Zweig setzte `tempo` aus `bpm`. Haette `bpm` sonst keine Verwendung,
+waere es durch die Loeschung tot geworden. Es hat eine: bei :1130 hat `bpm`
+Vorrang, `tempo` ist bei :1132-1133 nur der Fallback. Beide bleiben gebraucht.
+
+**Drei Auflagen des Waechters, alle berechtigt.** (1) Der Messblock am
+Vollpfad-Aufruf beginnt mit "ACHTUNG, gemessen 2026-09-04: DAS gleicht
+`danceability` zwischen den Pfaden NICHT an." Das Pronomen zeigte auf den
+Absatz darueber, den ich loeschen wollte -- ohne ihn haette es auf den
+naechststehenden Code gezeigt. Jetzt ausgeschrieben. (2) "Preis ist ein
+zusaetzlicher `beat_track`-Aufruf" braucht die Pfadangabe VOLLPFAD, weil dort
+schon der BPM-Block einen rechnet (:2381 bzw. :2424). Bewusst OHNE Ordnungs-
+zahl: der Vollpfad rechnet ueber `estimate_first_downbeat` (:2530 bzw. :2534)
+noch eine dritte Passe, "der zweite Aufruf" waere also falsch zitierbar.
+
+Meine erste Fassung dieser Auflage war selbst falsch und hat der Waechter an
+Tor 2 zurueckgewiesen: ich hatte geschrieben, der Fast-Path rechne
+`beat_track` "ohnehin nur einmal". Er rechnet ihn in der Regel ZWEIMAL --
+`estimate_first_downbeat` (analysis.py:2007 bzw. :2011) ruft ueber
+downbeat.py:315 ein volles `beat_track`, und nur bei verifiziertem
+Rekordbox-Beatgrid (:2001) entfaellt das. Mein Grep hatte im Fast-Path-Block
+nach `beat_track` gesucht und den INDIREKTEN Aufruf uebersehen. Ausgerechnet
+die Auflage, die eine unbelegte Behauptung schliessen sollte, habe ich mit
+einer neuen unbelegten Behauptung geschlossen.
+(3) D14 stand an ZWEI Journal-Stellen; mein Vertrag nannte nur die
+Offen-Liste. Der Eintragsblock haette sonst weiter behauptet "Nur noch ein
+Test benutzt ihn" und "Entfernen waere Scope-Ausweitung" -- letzteres war
+meine eigene frueherer Einschaetzung, die David aufgehoben hat.
+
+**D20, neu.** Der Waechter hat beim Pruefen eine Luecke gefunden, die dieser
+Diff weder verursacht noch schliesst: kein Test sichert, dass die beiden
+Aufrufstellen `y_fenster` uebergeben und nicht `y`.
+`tests/test_analyze_track.py:1462-1469` sucht den `FeatureCache` ueber den TYP
+in `reversed(args)` und bliebe gruen, wenn jemand das volle Signal uebergaebe.
+Die Fensterverwechslung, die D8 beseitigt hat, ist damit weiterhin nur durch
+Kommentare geschuetzt. Nicht in diesem Commit gebaut -- das waere
+Scope-Ausweitung.
+
+**Fuer die Nachwelt.** `tools/audit/runs/veritas-analysis-20260903/` behauptet
+in Zeile 527 (Befund V-016), der Vollpfad uebergebe `beat_frames`. Das war schon vor D8
+knapp und ist jetzt doppelt falsch. Das Laufprotokoll bleibt unveraendert --
+es ist datiert und haelt einen historischen Stand fest, kein Ist-Bild.

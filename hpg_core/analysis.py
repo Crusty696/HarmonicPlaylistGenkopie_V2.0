@@ -1018,7 +1018,6 @@ def calculate_danceability(
     sr: int,
     bpm: float | None = None,
     feature_cache: FeatureCache | None = None,
-    beat_frames: np.ndarray | None = None,
 ) -> int:
     """
     Berechnet die Tanzbarkeit eines Tracks (0-100).
@@ -1032,7 +1031,6 @@ def calculate_danceability(
         y: Audio-Signal (numpy array)
         sr: Sample-Rate
         bpm: Optional, bereits erkannte BPM
-        beat_frames: Optional, bereits erkannte Beat-Frames
 
     Returns:
         int: Danceability-Score 0-100
@@ -1048,11 +1046,11 @@ def calculate_danceability(
 
     try:
         # 1. Beat-Regelmässigkeit (0-1): Niedrige Varianz = regelmässiger Beat
-        if beat_frames is None:
-            tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        else:
-            tempo = np.asarray([bpm or 0.0])
-            beats = np.asarray(beat_frames).reshape(-1)
+        # Beats werden immer hier erkannt. Ein Parameter fuer vorberechnete
+        # Beat-Frames existierte bis D14, hatte aber seit D8 keinen Aufrufer:
+        # die in `analyze_track` vorhandenen Beat-Frames stammen aus dem
+        # VOLLEN Signal, waehrend hier auf dem Merkmalsfenster gerechnet wird.
+        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
         if beats.size > 2:
             beat_times = librosa.frames_to_time(beats, sr=sr)
             intervals = np.diff(beat_times)
@@ -2640,13 +2638,15 @@ def analyze_track(file_path: str) -> Track | None:
         # Audio Feature Extensions
         brightness = calculate_brightness(y_fenster, sr, cache_fenster)
         vocal_instrumental = detect_vocal_instrumental(y_fenster, sr, cache_fenster)
-        # `beat_frames` wird bewusst NICHT durchgereicht: sie stammen aus dem
-        # BPM-Block ueber das VOLLE Signal, waehrend der Fast-Path
-        # `beat_track` auf dem Fenster rechnet. Gleiche Funktion, gleiches
-        # Fenster, aber verschiedene Beat-Quelle. Preis ist ein zusaetzlicher
-        # `beat_track`-Aufruf auf dem Fenster.
+        # `calculate_danceability` erkennt die Beats selbst, auf dem Fenster.
+        # Die Beat-Frames aus dem BPM-Block gehoeren zum VOLLEN Signal und
+        # waeren hier das falsche Fenster; der Parameter dafuer ist mit D14
+        # entfallen. Preis ist ein `beat_track`-Aufruf zusaetzlich zu dem im
+        # BPM-Block; der Vollpfad rechnet ausserdem einen in
+        # `estimate_first_downbeat`, eine Gesamtzahl behauptet das hier nicht.
         #
-        # ACHTUNG, gemessen 2026-09-04: das gleicht `danceability` zwischen den
+        # ACHTUNG, gemessen 2026-09-04: dass beide Pfade dieselbe Funktion auf
+        # demselben Fenster rechnen, gleicht `danceability` zwischen den
         # Pfaden NICHT an. Die verbleibende Differenz (97 gegen 92 an einer
         # 90-s-Synthetik) stammt aus der BPM, nicht aus den Beats: `bpm_bonus`
         # ist 0.15 im Band 118-152 und 0.08 im Band 100-170 und geht als
