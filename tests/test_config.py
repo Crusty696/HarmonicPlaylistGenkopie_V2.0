@@ -162,3 +162,60 @@ class TestMerkmalsfensterKopplung:
     from hpg_core import config
 
     assert config.LIBROSA_FAST_PATH_DURATION <= config.LIBROSA_MAX_DURATION
+
+  def test_kopplung_steht_im_quelltext(self):
+    """D22: dass die Invariante aus der KOPPLUNG folgt, sieht kein Wertvergleich.
+
+    Gemessen in Runde 19: ersetzt man `min(360, LIBROSA_FAST_PATH_DURATION)`
+    durch das Literal `360`, ist die Kopplung weg und beide Werttests oben
+    bleiben gruen, weil die Zahlen weiter zusammenpassen. Rot wuerde es erst
+    beim naechsten Senken der Ladegrenze -- also wenn der Fehler wirkt, nicht
+    wenn er entsteht.
+
+    Deshalb hier eine Quelltextpruefung, in der Bauform von
+    `test_analyse_nutzt_id3_genre_erst_hinter_dem_rekordbox_fastpath`
+    (tests/test_id3_bpm_factor.py). Ueber `ast`, nicht ueber eine Textsuche:
+    eine Umformatierung soll den Test nicht zerbrechen. `inspect.getsource`
+    statt Datei-Lesen, weil `config.py` Nicht-ASCII-Zeichen enthaelt und ein
+    `read_text()` ohne `encoding` unter Windows gegen cp1252 liefe.
+
+    Die Reihenfolge der `min`-Argumente wird bewusst NICHT geprueft: `min`
+    ist kommutativ, die Kopplung besteht in beiden Schreibweisen.
+    """
+    import ast
+    import inspect
+
+    from hpg_core import config
+
+    tree = ast.parse(inspect.getsource(config))
+    zuweisungen = [
+      node
+      for node in ast.walk(tree)
+      if isinstance(node, ast.Assign)
+      and any(
+        isinstance(ziel, ast.Name) and ziel.id == "FEATURE_WINDOW_DURATION"
+        for ziel in node.targets
+      )
+    ]
+    assert len(zuweisungen) == 1, (
+      f"FEATURE_WINDOW_DURATION wird {len(zuweisungen)}-mal zugewiesen; "
+      "diese Pruefung erwartet genau eine Definition."
+    )
+
+    wert = zuweisungen[0].value
+    assert isinstance(wert, ast.Call) and isinstance(wert.func, ast.Name), (
+      "FEATURE_WINDOW_DURATION ist kein Funktionsaufruf mehr -- die Kopplung "
+      "wurde durch einen festen Wert ersetzt. Die Werttests oben merken das "
+      "erst, wenn die Ladegrenze faellt."
+    )
+    assert wert.func.id == "min", (
+      f"FEATURE_WINDOW_DURATION entsteht aus `{wert.func.id}`, nicht aus "
+      "`min`. Damit ist nicht mehr gesichert, dass das Fenster der "
+      "Ladegrenze folgt."
+    )
+    namen = [arg.id for arg in wert.args if isinstance(arg, ast.Name)]
+    assert "LIBROSA_FAST_PATH_DURATION" in namen, (
+      "Das `min` bezieht LIBROSA_FAST_PATH_DURATION nicht mehr ein "
+      f"(Argumente: {namen}). Sinkt die Ladegrenze, zieht das Fenster dann "
+      "nicht mehr mit."
+    )

@@ -1551,3 +1551,78 @@ def test_fenster_gibt_leeren_cache_und_rechnet_bitgleich_zur_fensterrechnung():
   for teil, (k, f) in enumerate(zip(kind.get_hpss(), frisch.get_hpss())):
     assert np.array_equal(k, f), f"hpss[{teil}]: nicht bitgleich"
   assert len(kind.get_hpss()[0]) == n
+
+
+class TestLadegrenzenWerdenBenutzt:
+  """D21: dass die Ladestellen die Ladekonstanten noch benutzen, sah kein Test.
+
+  `TestMerkmalsfensterKopplung` in tests/test_config.py prueft das VERHAELTNIS
+  von `FEATURE_WINDOW_DURATION` zu `LIBROSA_FAST_PATH_DURATION`. Ersetzte
+  jemand `duration=LIBROSA_FAST_PATH_DURATION` an der Ladestelle durch ein
+  Literal, liefen die Pfade wieder auseinander und jene Zusicherung bliebe
+  gruen -- sie kennt die Aufrufstelle nicht.
+
+  Moeglich ist der Test nur, weil die Konstanten Modul-Globals sind
+  (`from .config import ...`), der Patch also die Bindung zur Laufzeit
+  trifft. Dasselbe nutzt `TestMerkmalsfenster` fuer das Fenster.
+  """
+
+  # Zwei VERSCHIEDENE Werte, beide ungleich 360 und 600. Gleiche Werte
+  # wuerden ein Vertauschen der Konstanten durchgehen lassen:
+  # `duration=LIBROSA_MAX_DURATION` im Fast-Path waere dann nicht von der
+  # richtigen Bindung zu unterscheiden. Dass sie unter der Fixture-Dauer
+  # liegen, haelt nur die Laufzeit klein -- erkannt wird ueber das
+  # `duration`-ARGUMENT, nicht ueber die Menge des geladenen Audios.
+  FAST = 40.0
+  VOLL = 55.0
+
+  @pytest.mark.parametrize(
+    "pfad,konstante,erwartet",
+    [
+      ("rekordbox_fast", "LIBROSA_FAST_PATH_DURATION", FAST),
+      ("librosa_voll", "LIBROSA_MAX_DURATION", VOLL),
+    ],
+  )
+  def test_ladestelle_nutzt_die_konstante(self, wandel_wav, pfad, konstante, erwartet):
+    from hpg_core import analysis, config
+
+    mp = pytest.MonkeyPatch()
+    try:
+      gesehen = []
+      original = analysis.librosa.load
+
+      def spy(*args, **kwargs):
+        # Die uebrigen Ladestellen tragen alle `offset=`: Beatgrid-Fenster
+        # (analysis.py:172), Tail (:1608) und die Kandidatenfenster
+        # (mix_candidates.py:337). Nur die beiden Einstiegsladungen kommen
+        # ohne -- daran wird unterschieden, nicht an der Reihenfolge.
+        if "offset" not in kwargs:
+          gesehen.append(kwargs.get("duration"))
+        return original(*args, **kwargs)
+
+      mp.setattr(analysis.librosa, "load", spy)
+      mp.setattr(analysis, konstante, erwartet)
+      # Mit dem GELTENDEN Fenster fahren, nicht mit einem Testwert: sonst
+      # haengt diese Zusicherung an einer fremden Testkonstante.
+      track = TestMerkmalsfenster._lauf(
+        mp, wandel_wav, pfad, config.FEATURE_WINDOW_DURATION
+      )
+
+      assert track is not None
+      # Ohne diese Zusicherung waere der Test bei LEERER Liste gruen -- ein
+      # Rueckbau, der die Ladestelle entfernt oder auf `offset=0.0`
+      # umstellt, liefe durch.
+      assert len(gesehen) == 1, (
+        f"Im Pfad {pfad} wurde nicht genau EINE Ladung ohne `offset` "
+        f"beobachtet, sondern {len(gesehen)}: {gesehen}. Entweder ist die "
+        "Einstiegsladung weg, oder eine weitere Ladestelle kommt ohne "
+        "`offset` aus -- dann trennt dieser Spy nicht mehr sauber."
+      )
+      assert gesehen[0] == erwartet, (
+        f"Die Ladestelle im Pfad {pfad} laedt {gesehen[0]} s statt "
+        f"{erwartet} s. `{konstante}` wurde gepatcht, der Aufruf hat den "
+        "Patch aber nicht gesehen -- dort steht ein Literal oder eine "
+        "andere Konstante."
+      )
+    finally:
+      mp.undo()

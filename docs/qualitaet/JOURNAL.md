@@ -922,13 +922,11 @@ Gestrichen -- eine Offen-Liste mit erledigten Posten verliert ihren Zweck.
 Das ist Scope-Ausweitung gegenueber D13/D15 und deshalb hier getrennt genannt.
 
 Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D17
-(Chroma-Stimmung je Kandidatenfenster), D21 (kein Test sieht, ob die
-Ladestellen die Ladekonstanten ueberhaupt noch benutzen, neu in Runde 19).
-D22 (die Kopplung selbst kann still durch ein Literal ersetzt werden; kein
-Test sieht das, solange die Werte zusammenpassen -- neu in Runde 19).
-D14 ist in Runde 18 erledigt, D18 und D19 in Runde 19; D20 ist in Runde 19
-WIDERLEGT -- die Luecke gab es nie. D16 ist in Runde 17
-aufgeloest: der gepruefte Schnitt existiert nicht mehr.
+(Chroma-Stimmung je Kandidatenfenster).
+
+Erledigt: D14 in Runde 18; D18 und D19 in Runde 19; D21 und D22 in Runde 20.
+D16 ist in Runde 17 aufgeloest -- der gepruefte Schnitt existiert nicht mehr.
+D20 ist in Runde 19 WIDERLEGT -- die Luecke gab es nie.
 
 **Nachtrag Runde 16 — Verfahrensfehler, offengelegt.** Die dritte und
 tatsaechlich umgesetzte Fassung des D13/D15-Vorhabens lag NIE an Tor 1. Nach
@@ -1334,3 +1332,78 @@ kuenftige Regel festschreibt, ist bei seiner eigenen Erstellung unterblieben.
 Konsequenz: Texte nur noch ueber eine Datei schreiben, nie ueber einen
 Shell-Einzeiler mit eingebetteten Backticks, und den geschriebenen Bereich
 danach gegenlesen.
+
+### Runde 20 — 2026-09-06 — D21 und D22, die letzten beiden aus der Kette
+
+Beide stammen aus Waechter-Befunden der Vorrunde, beide betreffen dieselbe
+Kette: das Merkmalsfenster haengt an einer Kopplung, die Kopplung an zwei
+Konstanten, die Konstanten an zwei Ladestellen. `TestMerkmalsfensterKopplung`
+sicherte bis hierhin nur das mittlere Glied.
+
+**D21 war leichter als gedacht -- meine eigene Einschaetzung war falsch.** In
+Runde 19 hatte ich notiert, ein Test dafuer braeuchte "eine Datei ueber sechs
+Minuten oder das Patchen beider Ladekonstanten". Das Patchen genuegt: die
+Konstanten sind Modul-Globals (`from .config import ...`, analysis.py:30-31),
+der Patch trifft also die Bindung zur Laufzeit. Genau das nutzt der
+Fenstertest seit Commit 34290ec (2026-09-04), und ich hatte es beim
+Formulieren des Postens uebersehen.
+
+`TestLadegrenzenWerdenBenutzt` spiegelt `librosa.load`, patcht je Pfad eine
+Ladekonstante und prueft, dass der Aufruf genau diesen Wert als `duration`
+bekommt. Drei Dinge daran gehen auf Waechter-Auflagen zurueck:
+
+1. **Der Spy trennt ueber das FEHLEN von `offset`, nicht ueber die
+   Reihenfolge.** Die uebrigen Ladestellen -- Beatgrid (analysis.py:172),
+   Tail (:1608), Kandidatenfenster (mix_candidates.py:337) -- tragen alle
+   `offset=`.
+2. **`assert len(gesehen) == 1` VOR dem Wertvergleich.** Ohne das waere der
+   Test bei leerer Liste gruen: ein Rueckbau, der die Ladestelle entfernt
+   oder auf `offset=0.0` umstellt, liefe durch. Dieselbe Vakuum-Gruen-Klasse
+   wie beim in Runde 19 geloeschten dritten Kopplungstest.
+3. **Zwei VERSCHIEDENE Testwerte (40 und 55).** Bei gleichen Werten bliebe
+   ein Vertauschen der Konstanten unentdeckt -- `duration=LIBROSA_MAX_DURATION`
+   im Fast-Path waere dann nicht von der richtigen Bindung zu unterscheiden.
+
+Eine Begruendung im Vertrag war dabei schlicht falsch: ich hatte geschrieben,
+die Testwerte muessten unter der Fixture-Dauer liegen, "damit ein Literal an
+der Ladestelle sichtbar abweicht". Der Spy liest das `duration`-ARGUMENT, das
+geladene Audio spielt keine Rolle; die kleinen Werte halten nur die Laufzeit
+klein. Der Waechter hat es gefangen mit dem Hinweis, eine falsche Begruendung
+im Kriterium werde spaeter zur falschen Begruendung im Test.
+
+**D22 brauchte eine Quelltextpruefung -- und die gibt es hier schon.** Ich
+hatte an Tor 1 behauptet, es gebe im Projekt keinen zweiten solchen Test.
+Falsch: `test_analyse_nutzt_id3_genre_erst_hinter_dem_rekordbox_fastpath`
+(tests/test_id3_bpm_factor.py:77-92) parst `analyze_track` per
+`inspect.getsource` + `ast.parse` und prueft Argumentnamen als `ast.Name`.
+Der neue Test folgt dieser Bauform statt eine zweite zu erfinden.
+`inspect.getsource` loest zugleich ein Encoding-Problem, das mir nicht
+aufgefallen waere: `config.py` enthaelt 50 Nicht-ASCII-Bytes, ein
+`read_text()` ohne `encoding` liefe unter Windows gegen cp1252.
+
+Nicht geprueft wird die Reihenfolge der `min`-Argumente -- `min` ist
+kommutativ, die Kopplung besteht in beiden Schreibweisen. Ebenfalls NICHT
+gebaut, obwohl naheliegend: eine Pruefung, dass der Deckel positiv ist.
+`min(0, LIBROSA_FAST_PATH_DURATION)` waere gruen und fachlich unsinnig. Der
+Waechter hat das benannt und zugleich davon abgeraten, es hier dazuzubauen.
+
+**Drei Gegenproben, einzeln gemessen.** Die Auflage lautete ausdruecklich, an
+BEIDEN Ladestellen zu proben, nicht an einer -- ein Test, der nie rot war, ist
+keine Zusicherung, und Aenderungen an nur einem der beiden Pfade sind die
+haeufigste Fehlerquelle dieses Projekts:
+
+    Fast-Path-Ladestelle -> Literal 360   :  1 failed, 1 passed
+    Vollpfad-Ladestelle  -> Literal 600   :  1 failed, 1 passed
+    Kopplung             -> Literal 360   :  1 failed, 2 passed
+
+Die dritte Zeile ist der eigentliche Beleg fuer D22: die beiden WERTtests
+bleiben gruen, nur der Quelltexttest faengt die Entkopplung. Genau die
+Fehlerklasse, die der Posten benannt hat.
+
+**Was offen bleibt**, vom Waechter benannt und hier nicht gebaut: ein
+fachlich sinnloser, aber invariantentreuer Fensterwert (0) wird von keinem
+Test gefangen; und `vocal_instrumental`, `spectral_flatness` sowie
+`groove_pattern` sind laut tests/test_analyze_track.py:1322-1330 weiterhin
+nicht gegen Rueckbau gesichert, weil das synthetische Signal fuer sie keine
+Aussage traegt. Letzteres braucht echtes Material -- dieselbe Voraussetzung
+wie D17.
