@@ -129,7 +129,8 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   durch den damaligen 3568er Beleg ersetzt.
 - Neuester Standard-Abschlusslauf vom 2026-08-31 mit explizitem isoliertem
   Windows-Basetemp: 3537 bestanden, Coverage 85,85 Prozent, Exitcode 0.
-- Aktueller Code-Iststand vom 2026-08-27: `CACHE_VERSION = 44`. Der historische
+- Code-Iststand vom 2026-08-27: `CACHE_VERSION = 44`; seit 2026-09-04 steht
+  der Code auf `CACHE_VERSION = 45` (D8/D9). Der historische
   Bump von 36 auf 37 erzwang die korrigierte `None`-Semantik; 37 auf 38
   invalidierte alte Analysezeilen fuer BPM-lose Rekordbox-Metadaten. Version 39
   erzwingt den strikten Vertrag aus 60 Track- und je 28 Kandidatenfeldern,
@@ -241,8 +242,8 @@ pruefen. Keine Rekordbox-Datei, Musikdatei oder Benutzer-Cache-Datei aendern.
   wurde. Seine DB und Logs bleiben unveraenderte historische Artefakte. Erst
   Die historischen v42- und v43-Laeufe werden nicht fortgesetzt. Ein spaeter
   ausdruecklich freigegebener Bibliothekslauf muss mit einem neuen isolierten
-  v44-Arbeitscache beginnen. Erfolgsschwelle bleibt 3661, weil fuenf bekannte
-  Continuous-Mix-Dateien das 500-MB-Limit ueberschreiten. Ein v44-Endergebnis
+  v45-Arbeitscache beginnen. Erfolgsschwelle bleibt 3661, weil fuenf bekannte
+  Continuous-Mix-Dateien das 500-MB-Limit ueberschreiten. Ein v45-Endergebnis
   oder Exitcode ist noch nicht belegt.
 - Ein realer, isolierter E2E-Lauf analysierte 12 echte Psytrance-Tracks und
   endete korrekt mit Exitcode 3: innerhalb dieses kleinen deterministischen
@@ -293,7 +294,7 @@ weder committed noch gepusht.
 1. Die auftragsbezogenen Code- und Dokumentaenderungen mit aktuellem
    Volltest- und Waechterbeleg committen und pushen.
 2. Die Bibliotheksanalyse bleibt auf ausdrueckliche Nutzeranweisung pausiert.
-   Ein spaeterer Lauf muss einen neuen getrennten v44-Arbeitscache verwenden;
+   Ein spaeterer Lauf muss einen neuen getrennten v45-Arbeitscache verwenden;
    Benutzer-Cache, Rekordbox und Musik bleiben read-only.
 3. Neuen Ausgabeordner anlegen und 30 neue Psytrance-Paare aus der vollstaendig
    erreichbaren Library rendern, maximal fuenf lokale Versionen je Paar.
@@ -314,6 +315,6 @@ Ein frischer Codex-Agent hat diese Datei und den damaligen Worktree read-only
 geprueft und die Arbeit als Ausgangsstand uebernommen. Die historischen v37-,
 v39-, v40-, partiellen v41-, v42- und v43-Laeufe werden nicht weiterverwendet.
 Die Bibliotheksanalyse ist auf Nutzeranweisung pausiert. Vor einem spaeteren
-v44-Lauf bleiben der neue Render-/Audioaudit und ein echter Render-E2E-Beleg
+v45-Lauf bleiben der neue Render-/Audioaudit und ein echter Render-E2E-Beleg
 offen; fuer den Code-Abschluss sind aktueller Volllauf und Abschlusswaechter
 verbindlich.

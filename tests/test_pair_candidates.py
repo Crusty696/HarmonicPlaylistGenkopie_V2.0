@@ -531,7 +531,7 @@ def test_score_struktur_und_mood():
                                                                 "flatness": 0.1, "key_mode": "Major"}), 16)
     assert t2["mood"] == pytest.approx(1.0 - 0.15 - 0.10)
 
-from hpg_core.pair_candidates import begruendung_aus_teilwerten, build_pair_candidates
+from hpg_core.pair_candidates import begruendung_aus_teilwerten
 
 
 def _track_mit_kandidaten(name, bpm=140.0, outs=(), ins=()):

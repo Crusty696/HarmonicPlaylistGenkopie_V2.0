@@ -6,6 +6,7 @@ Verstoessen lesbare Fehlermeldungen.
 """
 
 import pytest
+from types import SimpleNamespace
 
 from hpg_core.genres import (
   CANONICAL_GENRES,
@@ -14,6 +15,7 @@ from hpg_core.genres import (
   GENRE_COMPATIBILITY,
   ID3_GENRE_MAP,
   DEFAULT_MIX_PROFILE,
+  resolve_track_genre,
   _validate_genre_tables,
 )
 
@@ -24,6 +26,22 @@ class TestKanonischeGenres:
 
   def test_keine_duplikate(self):
     assert len(set(CANONICAL_GENRES)) == len(CANONICAL_GENRES)
+
+
+@pytest.mark.parametrize(
+  "detected, raw, expected",
+  [
+    (" Psytrance ", "Techno", "Psytrance"),
+    (" unknown ", " Trance ", "Trance"),
+    ("", " UNKNOWN ", "Unknown"),
+  ],
+)
+def test_resolve_track_genre_normalisiert_prioritaet_und_fallback(
+  detected, raw, expected
+):
+  track = SimpleNamespace(detected_genre=detected, genre=raw)
+
+  assert resolve_track_genre(track) == expected
 
 
 class TestTabellenKonsistenz:

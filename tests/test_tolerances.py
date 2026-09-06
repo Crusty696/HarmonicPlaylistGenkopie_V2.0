@@ -806,7 +806,6 @@ def test_delete_belaesst_kaputtes_json_bytegleich(tmp_path, monkeypatch):
 def test_zwei_spawn_prozesse_verlieren_keine_unabhaengigen_gewichtskreise(
     tmp_path, monkeypatch
 ):
-    from hpg_core import tolerances
 
     datei = tmp_path / "transition_tolerances.json"
     monkeypatch.setenv("HPG_TOLERANCES_FILE", str(datei))

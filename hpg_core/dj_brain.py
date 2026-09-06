@@ -32,6 +32,7 @@ from .genres import (
   GenreMixProfile,
   _GENRE_COMPATIBILITY_NORMALIZED,
   _MIX_PROFILES_NORMALIZED,
+  resolve_track_genre,
 )
 from .models import (
   QUANTIZE_TOLERANCE_SEC,
@@ -507,8 +508,8 @@ def generate_dj_recommendation(
   Returns:
     DJRecommendation mit allen Mix-Details
   """
-  genre_a = track_a.detected_genre or "Unknown"
-  genre_b = track_b.detected_genre or "Unknown"
+  genre_a = resolve_track_genre(track_a)
+  genre_b = resolve_track_genre(track_b)
 
   # Genre-Kompatibilitaet
   compat = get_genre_compatibility(genre_a, genre_b)
@@ -739,7 +740,7 @@ def calculate_paired_mix_points(
       round(max(track_b.mix_in_point, 0.0), 2),
     )
 
-  profile_b = get_mix_profile(track_b.detected_genre or "Unknown")
+  profile_b = get_mix_profile(resolve_track_genre(track_b))
 
   # --- Intro-Dauer von Track B ---
   intro_end_b = _get_intro_end(track_b)  # Sekunden (absoluter Zeitpunkt)
@@ -801,7 +802,7 @@ def calculate_paired_mix_points(
     adjusted_mix_in_b = max(0.0, track_b.mix_in_point)
 
   # --- Guard: Mix-Out A NIEMALS im Outro ---
-  profile_a = get_mix_profile(track_a.detected_genre or "Unknown")
+  profile_a = get_mix_profile(resolve_track_genre(track_a))
   outro_start_sections_a = _get_outro_start_from_sections(
     track_a.sections or [], track_a.duration
   )

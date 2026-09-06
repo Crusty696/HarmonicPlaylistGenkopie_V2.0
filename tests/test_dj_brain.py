@@ -10,6 +10,8 @@ Prueft:
 """
 
 import pytest
+from unittest.mock import Mock
+import hpg_core.dj_brain as dj_brain_mod
 from hpg_core.dj_brain import (
   get_genre_compatibility,
   get_mix_profile,
@@ -420,6 +422,23 @@ class TestDJRecommendation:
     assert rec.transition_bars > 0
     assert rec.mix_technique != ""
     assert rec.eq_advice != ""
+
+  def test_id3_genre_fallback_steuert_empfehlung_und_mixprofile(self, monkeypatch):
+    a = _make_track(genre="Unknown", bpm=140.0)
+    b = _make_track(genre="Unknown", bpm=140.0)
+    a.genre = "Psytrance"
+    b.genre = "Trance"
+
+    rec = generate_dj_recommendation(a, b)
+
+    assert rec.genre_pair == "Psytrance -> Trance"
+
+    real_get_mix_profile = dj_brain_mod.get_mix_profile
+    profile_lookup = Mock(side_effect=real_get_mix_profile)
+    monkeypatch.setattr(dj_brain_mod, "get_mix_profile", profile_lookup)
+    calculate_paired_mix_points(a, b)
+    assert profile_lookup.call_args_list[0].args == ("Trance",)
+    assert profile_lookup.call_args_list[-1].args == ("Psytrance",)
 
   def test_cross_genre_recommendation(self):
     a = _make_track(genre="Tech House", bpm=126.0, energy=70)

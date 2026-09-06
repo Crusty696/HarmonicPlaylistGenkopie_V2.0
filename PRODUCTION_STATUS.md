@@ -1,7 +1,9 @@
 # HPG — Produktionsstatus
 
 Aktueller technischer Arbeitsstand: 2026-08-31, verifizierter uncommitteter
-Code-Stand auf Commit `3c59dc8` von `origin/main`. Der lokale Code-Gate ist
+Code-Stand: Merge von `origin/main` (69dd5e8) in den lokalen Zweig,
+2026-09-06. `3c59dc8` ist nur noch die Merge-Basis.
+Der lokale Code-Gate ist
 gruen; Installer- und CI-Gates sind erst nach dem naechsten Push erneut zu
 verifizieren. Die vollstaendige
 Bibliotheksanalyse und der neue 30-Paar-Hoertestsatz bleiben auf
@@ -12,7 +14,10 @@ Nutzeranweisung pausiert. Abnahmen vom 2026-07-26 sowie Messungen vom
 
 - **Python 3.12** zwingend (numba braucht <3.13). Projekt-venv: `venv312\`
 - Abschluss-Gate: `& '.\venv312\Scripts\python.exe' -m pytest tests/ --tb=short -q`
-- Lokaler Standard-Abschlusslauf: **3537 Tests gruen**, **85,85 % Coverage**
+- Lokaler Standard-Abschlusslauf auf dem Merge-Stand: **3910 Tests gruen**,
+  Exitcode 0 (2026-09-06). Die Coverage wurde in diesem Lauf nicht
+  protokolliert; das 70-%-Gate aus `pytest.ini` hielt, sonst waere der Lauf
+  rot gewesen. Vorheriger Snapshot: **3537 Tests**, **85,85 % Coverage**
   (2026-08-31, isolierter Windows-Basetemp)
 - GitHub Actions Lauf 33113355362 auf `3c59dc8`: **3522 Tests gruen**, 46
   Slow-Tests abgewählt, **85,77 % Coverage**; Installer-Smoke ebenfalls gruen

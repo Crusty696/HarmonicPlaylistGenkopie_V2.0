@@ -9,6 +9,7 @@ from hpg_core.playlist import (
   STRATEGIES,
   _sort_context_flow,
   _sort_genre_flow,
+  _sort_harmonic_flow,
   generate_playlist,
 )
 from tests.fixtures.track_factories import make_track
@@ -128,18 +129,22 @@ class TestContextFlowStrategy:
     assert [track.title for track in result] == ["T1", "T2", "R"]
 
   def test_genre_flow_weight_blends_transition_and_genre_scores(self):
-    genres = ["Techno", "Trance", "Minimal", "Tech House", "Deep House", "Psytrance"]
+    tracks = [
+      _mk(128, 50, genre="Techno", title="T1"),
+      _mk(128, 50, genre="Trance", title="R"),
+      _mk(128, 50, genre="Techno", title="T2"),
+    ]
+    harmonic = _sort_harmonic_flow(tracks, bpm_tolerance=3.0)
     transition_first = _sort_genre_flow(
-      [_mk(128, 50, genre=genre, title=genre) for genre in genres],
+      tracks,
       bpm_tolerance=3.0,
       genre_weight=0.0,
     )
     genre_first = _sort_genre_flow(
-      [_mk(128, 50, genre=genre, title=genre) for genre in genres],
+      tracks,
       bpm_tolerance=3.0,
       genre_weight=1.0,
     )
 
-    assert [track.detected_genre for track in transition_first] != [
-      track.detected_genre for track in genre_first
-    ]
+    assert transition_first == harmonic
+    assert [track.title for track in genre_first] == ["T1", "T2", "R"]

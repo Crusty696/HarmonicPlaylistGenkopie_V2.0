@@ -11,7 +11,6 @@ from .models import (
 )
 from typing import TYPE_CHECKING
 from .dj_brain import (
-    _get_intro_end_from_sections,
     _get_outro_start_from_sections,
     get_genre_compatibility,
     generate_dj_recommendation,
@@ -30,7 +29,7 @@ from .config import (
     MIN_TRANSITION_BARS,
     PAAR_BPM_MAX,
 )
-from .genres import CANONICAL_GENRES
+from .genres import CANONICAL_GENRES, resolve_track_genre
 from .transition_features import (
     bass_continuity,
     groove_match,
@@ -55,6 +54,14 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+
+class _FrozenMapping(tuple):
+    """Markiert eingefrorene Mappings, auch wenn sie leer sind."""
+
+
+class _FrozenSequence(tuple):
+    """Markiert eingefrorene Sequenzen, auch wenn sie leer sind."""
+
 # AUDIT-FIX D6/F28 (2026-07-24): vormals hartkodierte Scoring-Konstanten
 # (Magic Numbers) zentralisiert. Bei Bedarf spaeter nach config.py heben.
 SMOOTHING_ENERGY_DISRUPTION_MAX = 20  # max. Energiesprung fuer harmonischen Swap
@@ -76,7 +83,7 @@ def _freeze_immutable(value):
     if isinstance(value, Enum):
         return _freeze_immutable(value.value)
     if isinstance(value, Mapping):
-        return tuple(
+        return _FrozenMapping(
             (
                 unicodedata.normalize("NFC", str(key)),
                 _freeze_immutable(item),
@@ -84,15 +91,19 @@ def _freeze_immutable(value):
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         )
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_immutable(item) for item in value)
+        return _FrozenSequence(_freeze_immutable(item) for item in value)
     if isinstance(value, (set, frozenset)):
         frozen = [_freeze_immutable(item) for item in value]
-        return tuple(sorted(frozen, key=repr))
+        return _FrozenSequence(sorted(frozen, key=repr))
     raise ValueError(f"Result-Werttyp nicht unterstuetzt: {type(value).__name__}")
 
 
 def _thaw_immutable(value):
     """Defensive Legacy-Kopie einer eingefrorenen Result-Struktur."""
+    if isinstance(value, _FrozenMapping):
+        return {key: _thaw_immutable(item) for key, item in value}
+    if isinstance(value, _FrozenSequence):
+        return [_thaw_immutable(item) for item in value]
     if isinstance(value, dict):
         return {key: _thaw_immutable(item) for key, item in value.items()}
     if isinstance(value, tuple):
@@ -144,7 +155,6 @@ class StrategyConfig:
     genre_mixing: bool = True
     genre_weight: float = 0.3
     target_energy: Optional[float] = None
-    overlap: float = 16.0
 
     @classmethod
     def from_mapping(cls, values: Optional[Mapping]) -> "StrategyConfig":
@@ -157,7 +167,7 @@ class StrategyConfig:
         allowed = {
             "energy_direction", "peak_position", "harmonic_strictness",
             "allow_experimental", "genre_mixing", "genre_weight",
-            "target_energy", "overlap",
+            "target_energy",
         }
         unknown = sorted(set(source) - allowed, key=repr)
         if unknown:
@@ -213,7 +223,6 @@ class StrategyConfig:
             target_energy=finite_real(
                 "target_energy", None, 0.0, 100.0, allow_none=True
             ),
-            overlap=finite_real("overlap", 16.0, 4.0, 64.0),
         )
 
     def effective_kwargs(self, strategy: str) -> Dict:
@@ -226,7 +235,6 @@ class StrategyConfig:
             "genre_mixing": self.genre_mixing,
             "genre_weight": self.genre_weight,
             "target_energy": self.target_energy,
-            "overlap": self.overlap,
         }
         return {key: value for key, value in values.items() if key in supported}
 
@@ -618,10 +626,7 @@ def _resolve_track_genre(track: Track) -> str:
     aufloesen — vorher dreimal identisch lokal definiert (enhanced
     compatibility, predict_transition_type, Context Flow).
     """
-    detected = getattr(track, "detected_genre", "") or ""
-    if detected and detected != "Unknown":
-        return detected
-    return track.genre if (track.genre and track.genre != "Unknown") else "Unknown"
+    return resolve_track_genre(track)
 
 
 def _kandidaten_fuer_paar(
@@ -885,10 +890,10 @@ def _calculate_track_edge_metrics(
         "bpm": bpm_smoothness,
         "energy": energy_flow,
         "genre": get_genre_compatibility(genre_a, genre_b),
-        "groove": groove_match(track1, track2, genre_a),
-        "bass": bass_continuity(track1, track2, genre_a),
+        "groove": groove_match(track1, track2, genre_a, profile),
+        "bass": bass_continuity(track1, track2, genre_a, profile),
         "timbre": timbre_match(track1, track2, genre_a),
-        "mood": mood_match(track1, track2, genre_a),
+        "mood": mood_match(track1, track2, genre_a, profile),
     }
     overall_score = combine_weighted(components, weights)
     if bpm_diff > bpm_tolerance or bpm_unbrauchbar:
@@ -1673,6 +1678,9 @@ def _sort_genre_flow(
 
         return _small_pool_order(tracks, small_score, cancel_check)
 
+    if not genre_mixing_enabled or genre_weight <= 0.0:
+        return _sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
+
     # Group tracks by genre (bevorzuge eine echte Klassifikation, sonst ID3)
     genre_groups = {}
     for track in tracks:
@@ -2259,18 +2267,8 @@ def _process_dj_brain_recommendations(
     notes_parts = []
     overlap = None
 
-    # Bewusst NUR `detected_genre`, ohne den ID3-Fallback aus
-    # `_resolve_track_genre`: `generate_dj_recommendation` loest das Genre
-    # intern genauso auf (dj_brain.py `genre_a = track_a.detected_genre or
-    # "Unknown"`). Dieses Gate spiegelt also seinen Aufgerufenen. Wer es
-    # allein hier auf `_resolve_track_genre` umstellt, laesst DJ-Brain mit dem
-    # "Unknown"-Profil laufen -- das Ergebnis waere schlechter als heute.
-    # Folge, bewusst so belassen (D6, Entscheidung 2026-09-04): ein Track mit
-    # `detected_genre = "Unknown"` und ID3 "Deep House" wird von der
-    # Kandidatenbewertung mit Deep-House-Toleranzen behandelt, waehrend dieser
-    # Zweig ihn ueberspringt.
-    current_genre = getattr(current, "detected_genre", "Unknown") or "Unknown"
-    upcoming_genre = getattr(upcoming, "detected_genre", "Unknown") or "Unknown"
+    current_genre = _resolve_track_genre(current)
+    upcoming_genre = _resolve_track_genre(upcoming)
     has_dj_data = current_genre != "Unknown" and upcoming_genre != "Unknown"
 
     if has_dj_data:
@@ -2328,6 +2326,10 @@ def compute_adjacent_transition_metrics(
 ) -> List[TransitionMetrics]:
     """Berechnet alle sichtbaren Werte aus der wirklich aktiven lokalen Kette."""
     ctx = dict(scoring_context or {})
+    if "overlap" in ctx:
+        raise ValueError(
+            "scoring_context enthaelt unbekannten Schluessel: 'overlap'"
+        )
     if len(playlist) < 2:
         return []
     energy_direction = ctx.get("energy_direction")
@@ -2399,10 +2401,13 @@ def compute_transition_recommendations(
     faellt die Bewertung auf die Defaults zurueck — dann muessen aber auch
     Sortierung und Anzeige denselben Default nutzen.
     """
+    ctx = dict(scoring_context or {})
+    if "overlap" in ctx:
+        raise ValueError(
+            "scoring_context enthaelt unbekannten Schluessel: 'overlap'"
+        )
     if len(playlist) < 2:
         return []
-
-    ctx = dict(scoring_context or {})
     metrics_by_pair = (
         list(transition_metrics)
         if transition_metrics is not None
@@ -2410,7 +2415,7 @@ def compute_transition_recommendations(
     )
     if len(metrics_by_pair) != len(playlist) - 1:
         raise ValueError("transition_metrics muss genau ein Element pro Nachbarpaar enthalten")
-    configured_overlap = ctx.get("overlap", default_overlap)
+    configured_overlap = default_overlap
     try:
         configured_overlap = float(configured_overlap)
     except (TypeError, ValueError):
@@ -2998,7 +3003,6 @@ SUPPORTED_STRATEGY_PARAMETERS = {
         "genre_mixing",
         "genre_weight",
         "target_energy",
-        "overlap",
     },
 }
 
@@ -3029,7 +3033,7 @@ def resolve_scoring_context(
     return {
         key: value
         for key, value in effective.items()
-        if key in SCORING_PARAMETERS or key in {"target_energy", "overlap"}
+        if key in SCORING_PARAMETERS or key == "target_energy"
     }
 
 
@@ -3127,15 +3131,38 @@ def _validate_candidate_tolerance_profile(profile, path: str) -> dict:
     return normalized
 
 
+def _has_complete_run_profile_snapshot(scoring_context: Mapping) -> bool:
+    """Erkennt den vollstaendigen GUI-Laufstart-Snapshot ohne Live-Zugriff."""
+    from .tolerances import ERLAUBTE_TOLERANZ_SCHLUESSEL
+
+    profile_keys = (
+        "track_tolerances_by_genre",
+        "candidate_tolerances_by_genre",
+    )
+    schema_key = "candidate_schema_ranks_by_genre"
+    allowed_genres = frozenset(CANONICAL_GENRES) | {"Unknown"}
+    for key in profile_keys:
+        profiles = scoring_context.get(key)
+        if not isinstance(profiles, Mapping) or set(profiles) != allowed_genres:
+            return False
+        if any(
+            not isinstance(profile, Mapping)
+            or set(profile) != ERLAUBTE_TOLERANZ_SCHLUESSEL
+            for profile in profiles.values()
+        ):
+            return False
+    schemas = scoring_context.get(schema_key)
+    return isinstance(schemas, Mapping) and set(schemas) == allowed_genres
+
+
 def _complete_run_scoring_context(
     mode: str,
     advanced_params: Optional[Dict],
     scoring_context: Optional[Dict],
 ) -> Dict:
     """Ergaenzt alte/partielle Kontexte um den vollstaendigen Laufvertrag."""
-    context = resolve_run_scoring_context(mode, advanced_params)
     if scoring_context is None:
-        return context
+        return resolve_run_scoring_context(mode, advanced_params)
     if not isinstance(scoring_context, Mapping):
         raise ValueError("scoring_context muss ein Mapping sein")
 
@@ -3143,8 +3170,19 @@ def _complete_run_scoring_context(
     tolerance_key = "candidate_tolerances_by_genre"
     track_tolerance_key = "track_tolerances_by_genre"
     schema_key = "candidate_schema_ranks_by_genre"
+    if _has_complete_run_profile_snapshot(supplied):
+        # Ein Laufstart-Snapshot ist bereits die Wahrheit dieses Laufs. Ein
+        # erneuter Datei-/Lock-Zugriff koennte spaetere Aenderungen einmischen
+        # oder einen gueltigen Lauf unnoetig scheitern lassen.
+        context = deepcopy(resolve_scoring_context(mode, advanced_params))
+        allowed_genres = tuple(CANONICAL_GENRES) + ("Unknown",)
+        context[track_tolerance_key] = {genre: {} for genre in allowed_genres}
+        context[tolerance_key] = {genre: {} for genre in allowed_genres}
+        context[schema_key] = {genre: [] for genre in allowed_genres}
+    else:
+        context = resolve_run_scoring_context(mode, advanced_params)
     allowed_keys = SCORING_PARAMETERS | {
-        "target_energy", "overlap", tolerance_key, track_tolerance_key, schema_key,
+        "target_energy", tolerance_key, track_tolerance_key, schema_key,
     }
     unknown_keys = sorted(set(supplied) - allowed_keys, key=repr)
     if unknown_keys:
@@ -3152,7 +3190,7 @@ def _complete_run_scoring_context(
             "scoring_context enthaelt unbekannte Schluessel: "
             + ", ".join(repr(key) for key in unknown_keys)
         )
-    scalar_keys = SCORING_PARAMETERS | {"target_energy", "overlap"}
+    scalar_keys = SCORING_PARAMETERS | {"target_energy"}
     supported_scalars = (
         SUPPORTED_STRATEGY_PARAMETERS.get(STRATEGY_ALIASES.get(mode, mode), set())
         & scalar_keys
@@ -3181,10 +3219,7 @@ def _complete_run_scoring_context(
             )
     if "allow_experimental" in supplied and type(supplied["allow_experimental"]) is not bool:
         raise ValueError("scoring_context.allow_experimental muss boolesch sein")
-    for key, minimum, maximum in (
-        ("target_energy", 0.0, 100.0),
-        ("overlap", 4.0, 64.0),
-    ):
+    for key, minimum, maximum in (("target_energy", 0.0, 100.0),):
         if key not in supplied or (
             key == "target_energy" and supplied[key] is None
         ):

@@ -41,7 +41,7 @@ import tempfile
 import threading
 import time
 from copy import deepcopy
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
@@ -140,6 +140,7 @@ from hpg_core.theme import (
 )
 from hpg_core.error_reporter import get_error_reporter
 from hpg_core.resource_limits import sanitize_playlist as apply_resource_limits
+from hpg_core.genres import resolve_track_genre
 # AUDIT-FIX F1 (2026-07-24): hpg_config war nur lokal in init_ui importiert;
 # refresh_ai_providers() referenzierte es als Global -> NameError beim Aktivieren
 # der KI-Checkbox (Button blieb dauerhaft deaktiviert). Import jetzt auf Modulebene.
@@ -375,7 +376,7 @@ class AIAnalysisWorker(QThread):
         Wird nur aufgerufen wenn der Detect-Worker beim Start nichts geliefert hat
         (z.B. Server war aus) oder der Endpoint inzwischen weggefallen ist.
         """
-        if self.base_url:
+        if self.base_url and self.provider and self.model:
             return True
         try:
             from hpg_core import ai_launcher
@@ -612,6 +613,7 @@ class AIPullWorker(QThread):
 
     def __init__(self, model: str, parent=None):
         super().__init__(parent)
+        self.provider = "Ollama"
         self.model = model
 
     def run(self):
@@ -691,18 +693,9 @@ class AnalysisWorker(QThread):
     analysis_issues = pyqtSignal(object)  # tuple[AnalysisIssue, ...]
     rekordbox_coverage = pyqtSignal(object)  # RekordboxCoverage
 
-    def __init__(
-        self,
-        folder_path,
-        mode="Harmonic Flow",
-        bpm_tolerance=2.0,
-        advanced_params=None,
-    ):
+    def __init__(self, folder_path):
         super().__init__()
         self.folder_path = folder_path
-        self.mode = mode
-        self.bpm_tolerance = bpm_tolerance
-        self.advanced_params = advanced_params or {}
         self.supported_formats = hpg_config.SUPPORTED_AUDIO_EXTENSIONS
         self._should_cancel = False
 
@@ -858,7 +851,7 @@ class AnalysisWorker(QThread):
                 for track in analyzed_tracks
                 if getattr(track, "analysis_mode", "") not in VALID_ANALYSIS_MODES
             ]
-            issues = tuple(
+            issues = [
                 AnalysisIssue(
                     (
                         "rekordbox_decode_degraded"
@@ -879,7 +872,7 @@ class AnalysisWorker(QThread):
                     ),
                 )
                 for track in invalid_analysis_tracks
-            )
+            ]
             if issues:
                 for issue in issues:
                     logger.error(
@@ -891,23 +884,41 @@ class AnalysisWorker(QThread):
                     for track in analyzed_tracks
                     if getattr(track, "analysis_mode", "") in VALID_ANALYSIS_MODES
                 ]
-            try:
-                self.analysis_issues.emit(issues)
-            except Exception as exc:
-                # Der Diagnosekanal darf den sicherheitsrelevanten Filter nie
-                # rueckgaengig machen oder den restlichen Lauf abbrechen.
-                logger.error("Analysebefunde konnten nicht gemeldet werden: %s", exc)
-
             # Ressourcenfilter: defekte Eintraege und Tracks ueber den Limits
             # (Dateigroesse/Dauer) entfernen, Playlist-Groesse deckeln
+            tracks_before_resource_filter = list(analyzed_tracks)
             pre_count = len(analyzed_tracks)
             analyzed_tracks = apply_resource_limits(analyzed_tracks)
+            retained_by_identity = Counter(id(track) for track in analyzed_tracks)
+            resource_excluded = []
+            for track in tracks_before_resource_filter:
+                track_identity = id(track)
+                if retained_by_identity[track_identity]:
+                    retained_by_identity[track_identity] -= 1
+                else:
+                    resource_excluded.append(track)
+            issues.extend(
+                AnalysisIssue(
+                    "resource_limit_excluded",
+                    str(getattr(track, "filePath", "") or ""),
+                    "Track wurde durch den Ressourcenfilter ausgeschlossen "
+                    "(defekt oder ueber Limits).",
+                )
+                for track in resource_excluded
+            )
             if len(analyzed_tracks) < pre_count:
                 removed = pre_count - len(analyzed_tracks)
                 self.status_update.emit(
                     f"WARNING: {removed} Track(s) durch Ressourcenfilter entfernt (defekt oder ueber Limits)."
                 )
                 logger.warning(f"Ressourcenfilter entfernte {removed} von {pre_count} Tracks.")
+
+            try:
+                self.analysis_issues.emit(tuple(issues))
+            except Exception as exc:
+                # Der Diagnosekanal darf den sicherheitsrelevanten Filter nie
+                # rueckgaengig machen oder den restlichen Lauf abbrechen.
+                logger.error("Analysebefunde konnten nicht gemeldet werden: %s", exc)
 
             if not analyzed_tracks:
                 self.phase_changed.emit(1, "inactive")
@@ -2053,6 +2064,13 @@ class AdvancedParametersWidget(QWidget):
         for control in self._ai_controls:
             control.setEnabled(enabled)
         if not enabled:
+            for worker in (
+                self._ai_detect_worker,
+                self._test_worker,
+                self._pull_worker,
+            ):
+                if worker and worker.isRunning():
+                    worker.requestInterruption()
             self._set_ai_hint(False)
             self.test_ai_btn.setEnabled(False)
             self.ai_status_label.setText("KI deaktiviert (deterministischer Kernlauf)")
@@ -2135,13 +2153,29 @@ class AdvancedParametersWidget(QWidget):
         if not self.ai_enabled_checkbox.isChecked():
             return
         preferred = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        provider_changed = (
+            self.detected_provider is not None
+            and self.detected_provider != preferred
+        )
         if self.detected_provider != preferred:
             # Ein Endpoint gehoert immer zum Provider, der ihn geliefert hat.
             # Bis die neue Erkennung abgeschlossen ist, darf der naechste Lauf
             # deshalb weder Provider noch URL der vorherigen Auswahl verwenden.
             self.detected_provider = None
             self.detected_base_url = None
-        preferred_model = self.model_combo.currentText().strip() or hpg_config.AI_MODEL
+        if provider_changed:
+            # Modellnamen sind ebenfalls providerspezifisch. Ein fremder Name
+            # wuerde beim Zielprovider als automatischer Downloadauftrag gelten.
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.setPlaceholderText("KI erkennen, um Modelle zu laden")
+            self.model_combo.blockSignals(False)
+            self.detected_active_model = None
+        preferred_model = (
+            None
+            if provider_changed
+            else self.model_combo.currentText().strip() or hpg_config.AI_MODEL
+        )
         if self._ai_detect_worker and self._ai_detect_worker.isRunning():
             if (
                 self._ai_detect_worker.preferred == preferred
@@ -2176,6 +2210,8 @@ class AdvancedParametersWidget(QWidget):
             source_worker is not None
             and source_worker is not self._ai_detect_worker
         ):
+            return
+        if not self.ai_enabled_checkbox.isChecked():
             return
         self.ai_refresh_btn.setEnabled(True)
 
@@ -2293,6 +2329,36 @@ class AdvancedParametersWidget(QWidget):
             and source_worker is not self._test_worker
         ):
             return
+        if not self.ai_enabled_checkbox.isChecked():
+            return
+        if source_worker is not None:
+            selected_provider = (
+                "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+            )
+            current_snapshot = (
+                selected_provider,
+                self.model_combo.currentText().strip(),
+                self.detected_base_url,
+            )
+            worker_snapshot = (
+                source_worker.provider,
+                source_worker.model,
+                source_worker.base_url,
+            )
+            if worker_snapshot != current_snapshot:
+                detect_running = (
+                    self._ai_detect_worker is not None
+                    and self._ai_detect_worker.isRunning()
+                )
+                if not detect_running:
+                    self.ai_refresh_btn.setEnabled(True)
+                    self.test_ai_btn.setEnabled(
+                        self.ai_enabled_checkbox.isChecked()
+                        and bool(current_snapshot[1])
+                        and bool(self.detected_base_url)
+                        and self.detected_provider == selected_provider
+                    )
+                return
         self.test_ai_btn.setEnabled(True)
         self.ai_refresh_btn.setEnabled(True)
 
@@ -2380,6 +2446,30 @@ class AdvancedParametersWidget(QWidget):
             and source_worker is not self._pull_worker
         ):
             return
+        if source_worker is not None:
+            selected_provider = (
+                "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+            )
+            stale_result = (
+                not self.ai_enabled_checkbox.isChecked()
+                or source_worker.provider != selected_provider
+                or source_worker.model != self.model_combo.currentText().strip()
+            )
+            if stale_result:
+                if not self.ai_enabled_checkbox.isChecked():
+                    return
+                detect_running = (
+                    self._ai_detect_worker is not None
+                    and self._ai_detect_worker.isRunning()
+                )
+                if not detect_running:
+                    self.ai_refresh_btn.setEnabled(True)
+                    self.test_ai_btn.setEnabled(
+                        bool(self.model_combo.currentText().strip())
+                        and bool(self.detected_base_url)
+                        and self.detected_provider == selected_provider
+                    )
+                return
         self.test_ai_btn.setEnabled(True)
         self.ai_refresh_btn.setEnabled(True)
         model_name = getattr(
@@ -3726,8 +3816,19 @@ class PlaylistPanel(QWidget):
                     transition_score = int(rec.compatibility_score)
                     compatibility = self._result_metrics_for_row(i)
 
-            detected_genre = getattr(track, "detected_genre", "Unknown") or "Unknown"
-            genre_confidence = getattr(track, "genre_confidence", 0.0) or 0.0
+            detected_genre = (
+                getattr(track, "detected_genre", "") or ""
+            ).strip()
+            effective_genre = resolve_track_genre(track)
+            has_detected_genre = (
+                bool(detected_genre)
+                and detected_genre.casefold() != "unknown"
+            )
+            genre_confidence = (
+                (getattr(track, "genre_confidence", 0.0) or 0.0)
+                if has_detected_genre
+                else 0.0
+            )
 
             items = [
                 QTableWidgetItem(str(i + 1)),
@@ -3749,8 +3850,8 @@ class PlaylistPanel(QWidget):
                 self.table.setItem(i, col, item)
 
             # Genre-Badge
-            genre_item = QTableWidgetItem(detected_genre)
-            fg_color, bg_color = GENRE_COLORS.get(detected_genre, GENRE_DEFAULT)
+            genre_item = QTableWidgetItem(effective_genre)
+            fg_color, bg_color = GENRE_COLORS.get(effective_genre, GENRE_DEFAULT)
             genre_item.setForeground(QColor(fg_color))
             genre_item.setBackground(QColor(bg_color))
             self.table.setItem(i, 8, genre_item)
@@ -4165,8 +4266,8 @@ class MixTipsPanel(QWidget):
             card_layout.setSpacing(6)
 
             # Titel
-            from_genre = getattr(rec.from_track, "detected_genre", "") or ""
-            to_genre = getattr(rec.to_track, "detected_genre", "") or ""
+            from_genre = resolve_track_genre(rec.from_track)
+            to_genre = resolve_track_genre(rec.to_track)
             title_text = (
                 f"{rec.index + 1}. {rec.from_track.fileName} -> {rec.to_track.fileName}"
             )
@@ -4717,7 +4818,9 @@ class TimelinePanel(QWidget):
         self.text_edit.setReadOnly(True)
         layout.addWidget(self.text_edit)
 
-    def set_timeline(self, playlist, transition_recommendations=None):
+    def set_timeline(
+        self, playlist, transition_recommendations=None, scoring_context=None
+    ):
         """Timeline aus Playlist berechnen und als HTML rendern."""
         if not playlist:
             self.text_edit.setHtml("<p>Keine Playlist vorhanden.</p>")
@@ -4727,7 +4830,23 @@ class TimelinePanel(QWidget):
             playlist, transition_recommendations
         )
         try:
-            timeline = compute_set_timeline(playlist, transition_plans=plans)
+            peak_position_pct = 0.65
+            if scoring_context is not None:
+                if not isinstance(scoring_context, Mapping):
+                    raise ValueError("scoring_context muss ein Mapping sein")
+                if "peak_position" in scoring_context:
+                    peak_position = scoring_context["peak_position"]
+                    if type(peak_position) is not int or not 40 <= peak_position <= 80:
+                        raise ValueError(
+                            "scoring_context.peak_position muss eine Ganzzahl "
+                            "von 40 bis 80 sein"
+                        )
+                    peak_position_pct = peak_position / 100.0
+            timeline = compute_set_timeline(
+                playlist,
+                transition_plans=plans,
+                peak_position_pct=peak_position_pct,
+            )
         except ValueError as exc:
             get_error_reporter().log_error(
                 "timeline",
@@ -5671,12 +5790,7 @@ class MainWindow(QMainWindow):
         # Worker erstellen und starten
         self._run_id += 1
         self._set_run_state(RunState.AUDIO)
-        self.worker = AnalysisWorker(
-            folder_path=settings["folder"],
-            mode=settings["strategy"],
-            bpm_tolerance=settings["bpm_tolerance"],
-            advanced_params=deepcopy(settings["advanced_params"]),
-        )
+        self.worker = AnalysisWorker(folder_path=settings["folder"])
 
         # Worker-Signale an StatusBar & progress_widget (skaliert auf 80%)
         self.worker.progress.connect(self._on_audio_progress)
@@ -5720,6 +5834,12 @@ class MainWindow(QMainWindow):
     def _degraded_analysis_count(self) -> int:
         return sum(
             issue.code == "rekordbox_decode_degraded"
+            for issue in self._analysis_issues
+        )
+
+    def _resource_limit_excluded_count(self) -> int:
+        return sum(
+            issue.code == "resource_limit_excluded"
             for issue in self._analysis_issues
         )
 
@@ -5886,8 +6006,23 @@ class MainWindow(QMainWindow):
             return
         if self.run_state in {RunState.CANCELLING, RunState.CANCELLED}:
             return
+        invalid_bpm_excluded = getattr(
+            getattr(neues_result, "graph_stats", None),
+            "invalid_bpm_excluded",
+            0,
+        )
         if not neues_result.tracks:
-            self._finish_run(RunState.ERROR, "ERROR: Playlist generation returned empty result.")
+            if invalid_bpm_excluded:
+                self._finish_run(
+                    RunState.ERROR,
+                    f"ERROR: {invalid_bpm_excluded} Track(s) wegen ungültiger "
+                    "BPM ausgeschlossen; kein Track für die Playlist übrig.",
+                )
+            else:
+                self._finish_run(
+                    RunState.ERROR,
+                    "ERROR: Playlist generation returned empty result.",
+                )
             return
 
         self.library_panel.progress_widget.set_step_status(2, "completed")
@@ -5931,10 +6066,20 @@ class MainWindow(QMainWindow):
         if finalize:
             partial_reasons = []
             degraded_count = self._degraded_analysis_count()
+            resource_excluded_count = self._resource_limit_excluded_count()
             if degraded_count:
                 partial_reasons.append(
                     f"{degraded_count} Track(s) wegen Audio-Decodefehler ausgeschlossen "
                     "(Details im Analyse-Log)"
+                )
+            if resource_excluded_count:
+                partial_reasons.append(
+                    f"{resource_excluded_count} Track(s) durch Ressourcenfilter "
+                    "ausgeschlossen"
+                )
+            if invalid_bpm_excluded:
+                partial_reasons.append(
+                    f"{invalid_bpm_excluded} Track(s) wegen ungültiger BPM ausgeschlossen"
                 )
             if ai_failure:
                 partial_reasons.append(f"KI-Anreicherung unvollstaendig: {ai_failure}")
@@ -6032,12 +6177,29 @@ class MainWindow(QMainWindow):
         if not playlist:
             self.library_panel.progress_widget.reset_steps()
             degraded_count = self._degraded_analysis_count()
-            if degraded_count:
+            resource_excluded_count = self._resource_limit_excluded_count()
+            if degraded_count and not resource_excluded_count:
                 self._finish_run(
                     RunState.ERROR,
                     "ERROR: Alle "
                     f"{degraded_count} Tracks wegen Audio-Decodefehler ausgeschlossen. "
                     "Details stehen im Analyse-Log.",
+                )
+            elif degraded_count or resource_excluded_count:
+                reasons = []
+                if degraded_count:
+                    reasons.append(
+                        f"{degraded_count} Track(s) wegen Audio-Decodefehler"
+                    )
+                if resource_excluded_count:
+                    reasons.append(
+                        f"{resource_excluded_count} Track(s) durch Ressourcenfilter"
+                    )
+                self._finish_run(
+                    RunState.ERROR,
+                    "ERROR: Kein Track fuer die Playlist uebrig; ausgeschlossen: "
+                    + "; ".join(reasons)
+                    + ".",
                 )
             else:
                 self._finish_run(RunState.ERROR, "Analysis returned no results.")
@@ -6181,7 +6343,9 @@ class MainWindow(QMainWindow):
             )
             mix_tips_panel.set_recommendations(transition_plan, playlist)
             mix_tips_panel.setup_transition_previews(transition_plan)
-            timeline_panel.set_timeline(playlist, transition_plan)
+            timeline_panel.set_timeline(
+                playlist, transition_plan, scoring_context
+            )
             analytics_panel.set_analytics(
                 quality_metrics, playlist, bpm_tolerance,
                 transition_plan, scoring_context,

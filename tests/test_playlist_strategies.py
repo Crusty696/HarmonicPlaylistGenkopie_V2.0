@@ -3,11 +3,15 @@ Tests fuer alle 10 Playlist-Sortierstrategien.
 Prueft ob jede Strategie korrekt sortiert und keine Tracks verliert.
 """
 import pytest
+from types import SimpleNamespace
+from unittest.mock import Mock
+import hpg_core.playlist as playlist_mod
 from hpg_core.playlist import (
   calculate_enhanced_compatibility, generate_playlist, STRATEGIES,
   STRATEGY_ALIASES, _sort_context_flow, _sort_genre_flow,
   _sort_harmonic_flow, _sort_peak_time,
   _sort_energy_wave, _remove_track, ENERGY_WAVE_FENSTER,
+  _process_dj_brain_recommendations,
 )
 from hpg_core.models import effective_bpm_diff
 from tests.fixtures.track_factories import (
@@ -81,6 +85,52 @@ class TestStrategyBasicProperties:
     """Ergebnis ist nicht leer."""
     result = generate_playlist(mixed_set[:], strategy, bpm_tolerance=6.0)
     assert len(result) > 0
+
+
+  def test_genre_flow_nutzt_gemeinsame_genre_aufloesung(self, monkeypatch):
+    tracks = [
+      make_track(title="Fallback Psy", detected_genre=" unknown ", genre="Psytrance"),
+      make_track(title="Detected Psy", detected_genre="Psytrance", genre="Techno"),
+      make_track(title="Trance", detected_genre="Trance", genre="Trance"),
+    ]
+    monkeypatch.setattr(
+      playlist_mod,
+      "get_genre_compatibility",
+      lambda _left, right: 1.0 if right == "Trance" else 0.0,
+    )
+
+    result = _sort_genre_flow(tracks, 2.0, genre_weight=1.0)
+
+    assert {track.title for track in result[:2]} == {
+      "Fallback Psy", "Detected Psy"
+    }
+    assert result[2].title == "Trance"
+
+  def test_dj_brain_dispatch_nutzt_id3_genre_fallback(self, monkeypatch):
+    current = make_track(detected_genre="Unknown", genre="Psytrance")
+    upcoming = make_track(detected_genre="Unknown", genre="Trance")
+    recommendation = SimpleNamespace(
+      mix_technique="Blend",
+      eq_advice="EQ",
+      transition_bars=16,
+      structure_note="",
+      genre_pair="Psytrance -> Trance",
+      risk_notes=[],
+      bpm_advice="",
+      key_advice="",
+      energy_advice="",
+      gain_advice="",
+      overlap_seconds=0.0,
+    )
+    generate = Mock(return_value=recommendation)
+    monkeypatch.setattr(playlist_mod, "generate_dj_recommendation", generate)
+
+    result, _notes, _overlap = _process_dj_brain_recommendations(
+      current, upcoming
+    )
+
+    assert result is recommendation
+    generate.assert_called_once_with(current, upcoming)
 
   @pytest.mark.parametrize("strategy", list(STRATEGIES.keys()))
   def test_no_duplicates(self, mixed_set, strategy):
@@ -373,6 +423,84 @@ class TestSmallPoolStrategyContracts:
       assert [track.title for track in transition_first] == ["A", "B"]
       assert [track.title for track in genre_first] == ["B", "A"]
 
+  def test_genre_flow_mehrtrack_ohne_genre_mixing_delegiert_harmonic(self, monkeypatch):
+    tracks = [
+      _small_track("A", genre="Techno"),
+      _small_track("B", genre="Trance"),
+      _small_track("C", genre="House"),
+    ]
+    expected = list(reversed(tracks))
+    calls = []
+    cancel_check = lambda: None
+
+    def harmonic(received_tracks, tolerance, **kwargs):
+      calls.append((received_tracks, tolerance, kwargs))
+      return expected
+
+    monkeypatch.setattr("hpg_core.playlist._sort_harmonic_flow", harmonic)
+
+    result = _sort_genre_flow(
+      tracks,
+      1.75,
+      genre_mixing=False,
+      genre_weight=1.0,
+      harmonic_strictness=9,
+      allow_experimental=False,
+      cancel_check=cancel_check,
+    )
+
+    assert result is expected
+    assert len(calls) == 1
+    received_tracks, tolerance, kwargs = calls[0]
+    assert received_tracks is tracks
+    assert tolerance == 1.75
+    assert kwargs == {
+      "genre_mixing": False,
+      "genre_weight": 1.0,
+      "harmonic_strictness": 9,
+      "allow_experimental": False,
+      "cancel_check": cancel_check,
+    }
+
+  def test_genre_flow_mehrtrack_mit_nullgewicht_delegiert_harmonic(self, monkeypatch):
+    tracks = [
+      _small_track("A", genre="Techno"),
+      _small_track("B", genre="Trance"),
+      _small_track("C", genre="House"),
+    ]
+    expected = list(reversed(tracks))
+    calls = []
+    cancel_check = lambda: None
+
+    def harmonic(received_tracks, tolerance, **kwargs):
+      calls.append((received_tracks, tolerance, kwargs))
+      return expected
+
+    monkeypatch.setattr("hpg_core.playlist._sort_harmonic_flow", harmonic)
+
+    result = _sort_genre_flow(
+      tracks,
+      1.75,
+      genre_mixing=True,
+      genre_weight=0.0,
+      harmonic_strictness=9,
+      allow_experimental=False,
+      cancel_check=cancel_check,
+    )
+
+    assert result is expected
+    assert len(calls) == 1
+    received_tracks, tolerance, kwargs = calls[0]
+    assert received_tracks is tracks
+    assert tolerance == 1.75
+    assert kwargs == {
+      "genre_mixing": True,
+      "genre_weight": 0.0,
+      "harmonic_strictness": 9,
+      "allow_experimental": False,
+      "cancel_check": cancel_check,
+    }
+
 
 class TestEdgeCases:
   """Edge Cases fuer alle Strategien."""
@@ -519,12 +647,11 @@ def test_strategy_config_filtert_gueltige_sichtbare_parameter():
   from hpg_core.playlist import StrategyConfig
 
   config = StrategyConfig.from_mapping(
-    {"peak_position": 80, "genre_weight": 0.0, "overlap": 64.0}
+    {"peak_position": 80, "genre_weight": 0.0}
   )
 
   assert config.peak_position == 80
   assert config.genre_weight == 0.0
-  assert config.overlap == 64.0
   assert set(config.effective_kwargs("Peak-Time")) == {
     "peak_position", "harmonic_strictness", "allow_experimental"
   }
@@ -535,7 +662,6 @@ def test_strategy_config_filtert_gueltige_sichtbare_parameter():
   [
     {"peak_position": 999},
     {"genre_weight": -2},
-    {"overlap": 500},
   ],
 )
 def test_strategy_config_verwirft_statt_zu_clampen(params):
@@ -543,6 +669,13 @@ def test_strategy_config_verwirft_statt_zu_clampen(params):
 
   with pytest.raises(ValueError, match="advanced_params"):
     StrategyConfig.from_mapping(params)
+
+
+def test_strategy_config_verwirft_wirkungslosen_overlap_parameter():
+  from hpg_core.playlist import StrategyConfig
+
+  with pytest.raises(ValueError, match="unbekannte Schluessel.*overlap"):
+    StrategyConfig.from_mapping({"overlap": 16})
 
 
 class TestDuplicateTrackReferences:

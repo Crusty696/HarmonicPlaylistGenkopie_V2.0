@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import math
 import json
 import hashlib
-import pathlib
 import sqlite3
 import csv
 from dataclasses import replace as dataclass_replace
@@ -1004,11 +1003,8 @@ def test_sammle_kandidaten_bpm_index_rankt_nur_lokale_paare(monkeypatch):
 # ===========================================================================
 # Kandidatenmodus (Spec 2026-08-21 Abschnitt 3, Plan Teil 3)
 # ===========================================================================
-import json
 from pathlib import Path
-from types import SimpleNamespace
 
-import numpy as np
 
 from tools.rate_transitions import (
     BEWERTUNG_KANDIDATEN_SPALTEN, MERKMALE_KANDIDATEN_SPALTEN, clip_id_fuer,

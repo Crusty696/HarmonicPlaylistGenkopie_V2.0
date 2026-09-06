@@ -47,7 +47,7 @@ from .downbeat import (
     estimate_first_phrase,
     validate_beatgrid_windows,
 )
-from .genre_classifier import GenreClassification, classify_genre, match_id3_genre
+from .genre_classifier import classify_genre, match_id3_genre
 from .genres import GENRE_PROFILES
 from .groove import (
     BASS_KENNWERTE_MIN_SEC,
