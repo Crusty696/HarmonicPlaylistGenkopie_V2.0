@@ -240,3 +240,92 @@ def test_median_ibi_reuse_returns_bar_length():
 
   assert bar_length is not None
   assert abs(bar_length - 4.0) < 0.05
+
+
+def test_ladefenster_entscheidet_ueber_die_zerlegung(monkeypatch):
+  """D11: bei gleicher Trackdauer zerlegen die beiden Analysepfade verschieden.
+
+  Der Fast-Path laedt `LIBROSA_FAST_PATH_DURATION` (360 s), der Vollpfad
+  `LIBROSA_MAX_DURATION` (600 s). Bei einem 420-s-Track heisst das:
+
+    Fast-Path : head_duration 360, `420 > 361` -> Head + Tail. Im Head wird
+                `outro` zu `main` degradiert (AUDIT-FIX N1), weil das Fenster
+                nicht am Trackende endet.
+    Vollpfad  : head_duration 420, `420 <= 421` -> ein Durchgang, `outro`
+                bleibt.
+
+  Geprueft wird die FOLGE, nicht die Bedingung: bei identischem
+  `fake_structure` und identischer `duration` unterscheiden sich Labelfolge,
+  Sektionszahl und `coverage`. Die Bedingung selbst ist bereits durch
+  `test_complete_head_fractional_duration_is_cache_valid` abgedeckt; sie hier
+  noch einmal nachzuspielen waere eine Spiegelung des `if`.
+
+  Der Test behauptet NICHT, dass eine der beiden Zerlegungen richtig ist. Er
+  haelt die Divergenz fest, damit sie nicht unbemerkt waechst (wie D7).
+  """
+  from hpg_core import analysis
+
+  sr = 10
+  dauer = 420.0
+
+  def fake_structure(audio, sample_rate, bpm, genre, **kwargs):
+    # `**kwargs` faengt `anchor`, das `analyze_structure_windows` immer setzt
+    # (analysis.py:1579). `seconds_per_bar` und `phrase_unit` kaemen dazu,
+    # sobald ein Aufruf sie mitgibt -- dieser Test gibt sie NICHT mit, er
+    # isoliert die Zerlegung. Der Rasterunterschied ist D23.
+    laenge = len(audio) / sample_rate
+    return TrackStructure(
+      sections=[
+        TrackSection("main", 0.0, laenge / 2, 0, 32, 70.0),
+        TrackSection("outro", laenge / 2, laenge, 32, 64, 30.0),
+      ],
+      total_bars=64,
+      phrase_unit=8,
+    )
+
+  monkeypatch.setattr(analysis, "analyze_structure", fake_structure)
+  monkeypatch.setattr(
+    analysis.librosa, "load",
+    lambda *a, **k: (np.zeros(int(60 * sr), dtype=np.float32), sr),
+  )
+
+  # Fast-Path: 360 s geladen, Track 420 s lang.
+  kurz, cov_kurz, _ = analyze_structure_windows(
+    "t.wav", np.zeros(int(360 * sr), dtype=np.float32), sr, 128.0, "Techno", dauer
+  )
+  # Vollpfad: 420 s geladen, derselbe Track.
+  lang, cov_lang, _ = analyze_structure_windows(
+    "t.wav", np.zeros(int(dauer * sr), dtype=np.float32), sr, 128.0, "Techno", dauer
+  )
+
+  labels_kurz = [s.label for s in kurz.sections]
+  labels_lang = [s.label for s in lang.sections]
+
+  assert labels_kurz != labels_lang, (
+    "Beide Ladefenster liefern dieselbe Labelfolge -- die in D11 "
+    "beschriebene Pfadabhaengigkeit besteht nicht mehr. Das ist keine "
+    "Verschlechterung, aber dieser Test beschreibt dann den Code nicht mehr "
+    "und gehoert ueberarbeitet."
+  )
+  # Der Vollpfad behaelt sein Outro, der Fast-Path degradiert es im Head.
+  assert "outro" in labels_lang
+  # Ueber die ZEIT, nicht ueber einen Index-Slice: sobald das Double eine
+  # Sektion mehr liefert, traefe ein Slice halb ins Tail-Fenster und die
+  # Meldung beschriebe nicht mehr, was geprueft wurde.
+  outro_im_head = [
+    s for s in kurz.sections if s.label == "outro" and s.start_time < 360.0
+  ]
+  assert not outro_im_head, (
+    "Im Head des Fast-Path steht noch ein `outro` -- AUDIT-FIX N1 "
+    "(analysis.py:1602-1604) greift nicht mehr."
+  )
+  assert len(kurz.sections) > len(lang.sections), (
+    f"Fast-Path {len(kurz.sections)} Sektionen, Vollpfad "
+    f"{len(lang.sections)} -- der Fast-Path setzt Head und Tail zusammen und "
+    "sollte deshalb mehr Sektionen liefern."
+  )
+  # Und nur der zerlegte Lauf traegt ein zweites Coverage-Fenster. Ohne diese
+  # Zusicherung behauptete der Docstring etwas, das der Test nicht prueft.
+  assert len(cov_kurz) == 2 and len(cov_lang) == 1, (
+    f"Coverage-Fenster: Fast-Path {cov_kurz}, Vollpfad {cov_lang}"
+  )

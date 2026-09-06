@@ -395,12 +395,18 @@ Fehler durchgelassen, den der Waechter dann fand.
   pfadabhaengig. Nutzerentscheidung zu D8: erst die uebrigen Merkmale
   angleichen, die Genre-Erkennung nicht. Sie steuert Toleranztabelle und
   DJ-Brain-Zweig; eine Aenderung dort verschiebt mehr als Merkmalswerte.
-- **D11 (2026-09-04, beim D8-Entwurf gefunden)** Auch die SEKTIONSwerte sind
-  pfadabhaengig: `analyze_frequency_bands`, `analyze_rhythm_complexity` und
-  `bass_kennwerte` laufen je Sektion ueber das jeweils geladene Signal --
-  Fast-Path bis 360 s, Vollpfad bis 600 s. Sie gehen ueber `sub_energy` und
-  `bass_punch` in den Nahtstellen-Vergleich und damit ins Scoring. D8 schliesst
-  diesen Teil NICHT; ohne diesen Eintrag gaelte D8 faelschlich als vollstaendig.
+- **D11 (2026-09-04, beim D8-Entwurf gefunden; in Runde 21 ERWEITERT)** Die
+  SEKTIONSwerte sind pfadabhaengig: `analyze_frequency_bands`,
+  `analyze_rhythm_complexity` und `bass_kennwerte` laufen je Sektion ueber das
+  jeweils geladene Signal -- Fast-Path bis 360 s, Vollpfad bis 600 s. Sie gehen
+  ueber `sub_energy` und `bass_punch` in den Nahtstellen-Vergleich und damit ins
+  Scoring. D8 schliesst diesen Teil NICHT.
+
+  Runde 21 hat eine ZWEITE, staerkere Ursache gefunden: schon die ZERLEGUNG
+  unterscheidet sich (analysis.py:1594). Beide bestehen nebeneinander, siehe
+  dort. Ursache A (Zerlegung) ist in Runde 21 durch einen Test festgehalten,
+  Ursache B (Segmentfenster an analysis.py:2186-2188 und :2682-2684) bleibt
+  offen.
 
 - ~~**D9**~~ ERLEDIGT Runde 11 (Kommentar nennt keine 120 s mehr). `config.py` behauptete im Kommentar zur
   Ladefenster-Begrenzung "Rekordbox Fast-Path: ... daher reichen 120s fuer
@@ -921,8 +927,15 @@ D9 war in der Offen-Liste stehengeblieben, obwohl Runde 11 ihn erledigt hat.
 Gestrichen -- eine Offen-Liste mit erledigten Posten verliert ihren Zweck.
 Das ist Scope-Ausweitung gegenueber D13/D15 und deshalb hier getrennt genannt.
 
-Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D17
-(Chroma-Stimmung je Kandidatenfenster).
+Offen bleiben: D10 (Genre pfadabhaengig), D11 Ursache B (Sektionswerte aus
+verschieden langen Signalen), D17 (Chroma-Stimmung je Kandidatenfenster),
+D23 (`seconds_per_bar` nur im Vollpfad -- unabhaengig von der Trackdauer,
+aber datenabhaengig: bei weniger als acht Beat-Frames faellt auch der
+Vollpfad zurueck, analysis.py:794; entspricht V-015 aus dem Lauf
+`veritas-analysis-20260903`, NICHT den gleichnamigen Befunden der Laeufe
+`veritas-playlist-20260903` und `veritas-mixanalysis`), D24 (die magische `1.0` an
+analysis.py:1594, :1620 und :1679 ohne Konstante und ohne Begruendung).
+D11 Ursache A ist in Runde 21 festgehalten.
 
 Erledigt: D14 in Runde 18; D18 und D19 in Runde 19; D21 und D22 in Runde 20.
 D16 ist in Runde 17 aufgeloest -- der gepruefte Schnitt existiert nicht mehr.
@@ -1407,3 +1420,98 @@ Test gefangen; und `vocal_instrumental`, `spectral_flatness` sowie
 nicht gegen Rueckbau gesichert, weil das synthetische Signal fuer sie keine
 Aussage traegt. Letzteres braucht echtes Material -- dieselbe Voraussetzung
 wie D17.
+
+### Runde 21 — 2026-09-06 — D11: die Ursache war eine andere als notiert
+
+D11 stand seit dem D8-Entwurf in der Liste: die Sektionswerte seien
+pfadabhaengig, weil sie je Sektion ueber das geladene Signal laufen. Das
+stimmt -- aber es ist nicht die staerkste Ursache.
+
+**Erste Messung, und sie war falsch ausgewertet.** Ein synthetischer 420-s-Track
+durch beide Pfade ergab 15 gegen 11 Sektionen. Ich habe daraufhin per `zip()`
+Sektion i gegen Sektion i verglichen und "45 abweichende Felder" notiert. Bei
+verschiedener Sektionszahl standen damit verschiedene Zeitspannen nebeneinander
+-- die Zahl war wertlos. Zweite Messung, nach Zeitspanne ausgerichtet: von 15
+bzw. 11 Sektionen stimmte KEINE EINZIGE Zeitspanne ueberein.
+
+**Die Ursache steht in einer Zeile.** `analyze_structure_windows`
+(analysis.py:1594):
+
+    if duration <= head_duration + 1.0:
+        return head, coverage, True
+
+Bei einem 420-s-Track sieht der Vollpfad `head_duration` 420 und steigt sofort
+aus -- ein Durchgang, `outro` bleibt. Der Fast-Path sieht 360, laeuft weiter,
+degradiert `outro` zu `main` (AUDIT-FIX N1, :1602-1604) und setzt ein
+Tail-Fenster an (:1606), in dem `intro` zu `main` wird (AUDIT-FIX B7,
+:1655-1657). Beide Degradierungen sind bewusste Fixes gegen Fenster-Artefakte;
+der Fehler ist nicht die Degradierung, sondern dass sie nur einen Pfad trifft.
+
+Betroffen ist `361.0 < duration <= 601.0` -- die `+1.0` aus :1594 verschiebt
+beide Grenzen um eine Sekunde gegenueber den nackten 360/600. Unterhalb zerlegt
+keiner, oberhalb zerlegen beide.
+
+**Der BPM-Verdacht ist widerlegt.** `structure_analyzer.py:491` bildet das
+Raster aus der BPM, und die Pfade koennen verschiedene BPM haben. Gemessen:
+Fast-Path 128.0 (aus Rekordbox), Vollpfad 129.2 (geschaetzt) -- und mit auf
+128.0 erzwungener BPM liefert der Vollpfad WEITER 11 Sektionen mit denselben
+Labels. Die Zerlegung, nicht die BPM.
+
+**Dabei ist eine dritte Ursache aufgefallen (D23).** Der Vollpfad uebergibt
+`seconds_per_bar=median_bar_length` (:2575-2586), der Fast-Path uebergibt
+nichts (:2045-2055) und faellt auf `(60/bpm)*METER` zurueck. Gemessen 1.8576
+gegen 1.875 -- 0.9 %, ueber 420 s rund zwei Takte Versatz. Anders als die
+Zerlegung haengt das nicht an der Trackdauer -- wohl aber an den Daten:
+`_median_seconds_per_bar` liefert bei weniger als acht Beat-Frames `None`
+(analysis.py:794), dann faellt auch der Vollpfad auf `(60/bpm)*METER` zurueck
+und die Pfade stimmen ueberein. Der Verifikator des Fremdlaufs hat genau das
+angemerkt; meine erste Fassung "trifft JEDE Trackdauer" war zu stark. Die Klasse ist als V-015 im Lauf
+`veritas-analysis-20260903` dokumentiert (findings.json:1579, Report :508,
+[P3] [Pfad-Divergenz]), bekam aber nie einen Posten in der Offen-Liste -- ein
+angefangener und liegengebliebener Fund. Der dortige Verifikator hat sie
+bereits nachgemessen: 1.6718 s gegen 1.7143 s an 60 s 140-BPM-Synthetik, also
+2.5 % Rasterunterschied.
+
+ACHTUNG bei dieser Referenz: die Befund-IDs sind PRO LAUF vergeben, und vom
+03.09. gibt es drei Laeufe. `V-015` heisst in `veritas-playlist-20260903` ein
+TypeError-Robustheitsproblem und in `veritas-mixanalysis` ein
+Holdout-Befund. Der Waechter hat an Tor 2 im falschen Lauf nachgeschlagen und
+die Referenz deshalb fuer erfunden gehalten; ich habe sie gegen alle drei
+Laeufe geprueft und praezisiert, statt sie zu streichen.
+
+**Was der Waechter an meinem Vorhaben korrigiert hat**, und der erste Punkt
+haette echten Schaden angerichtet:
+
+1. Ich wollte D11 "richtigstellen" -- die Ursache sei die Zerlegung, "nicht die
+   Sektionswerte". Falsch: die urspruengliche Behauptung ist im Code belegt
+   (`y_seg = y[start_sample:end_sample]`, :2186-2188 und :2682-2684). Haette
+   ich sie ersetzt statt ergaenzt, waere ein unvollstaendiger Eintrag durch
+   einen falschen ersetzt worden und Ursache B aus der Offen-Liste
+   verschwunden, ohne geschlossen zu sein. Jetzt stehen beide.
+2. "360 s < Dauer <= 600 s" war um je eine Sekunde daneben; richtig ist
+   361/601, und der Grund ist die `+1.0` an :1594.
+3. "Kein `outro` im Fast-Path" war eine Eigenschaft meines Testsignals, nicht
+   des Codes: im Zerlegungsfall stammt die letzte Sektion aus dem Tail, und
+   dort wird nur `intro` degradiert. Der Bestandstest
+   `test_structure_windows_include_real_tail_and_mark_gap` haelt genau ein
+   `outro` als letzte Sektion fest.
+4. Mein erster Testentwurf haette die `if`-Bedingung gespiegelt -- und der
+   Frueh-Ausstieg ist bereits durch
+   `test_complete_head_fractional_duration_is_cache_valid` abgedeckt. Der Test
+   prueft jetzt die FOLGE: bei identischem `fake_structure` und identischer
+   `duration` unterscheiden sich Labelfolge und Sektionszahl.
+5. Das `fake_structure`-Double braucht `**kwargs` fuer `anchor`, das
+   `analyze_structure_windows` immer setzt (:1579). Meine erste Begruendung
+   nannte `seconds_per_bar` -- das reicht dieser Test gar nicht durch; der
+   Waechter hat es an Tor 2 gefangen. Wer spaeter D23 schliesst und
+   `seconds_per_bar` anfasst, darf sich also nicht auf diesen Test berufen.
+
+**Nicht geaendert wurde das Verhalten.** Eine Angleichung verschoebe die
+Outro-Erkennung und damit die Mixpunkte; das ist hoerbar und keine Entscheidung,
+die nebenbei faellt. Wie bei D7: absichern, nicht angleichen.
+
+**D24, neu.** Die `1.0` aus :1594 steht ausserdem an :1620 und :1679, dreimal
+als nackte Zahl ohne Konstante und ohne Begruendung. Bei
+`duration = head_duration + 0.5` entfaellt die Tail-Analyse fuer eine halbe
+Sekunde Audio, und `outro_covered` meldet trotzdem `True`. Gemeldet, nicht
+gefixt -- das waere Scope-Ausweitung in eine verbotene Datei.
