@@ -922,12 +922,12 @@ Gestrichen -- eine Offen-Liste mit erledigten Posten verliert ihren Zweck.
 Das ist Scope-Ausweitung gegenueber D13/D15 und deshalb hier getrennt genannt.
 
 Offen bleiben: D10 (Genre pfadabhaengig), D11 (Sektionswerte), D17
-(Chroma-Stimmung je Kandidatenfenster), D18 (Kopplung
-`FEATURE_WINDOW_DURATION` / `LIBROSA_FAST_PATH_DURATION` ist ungetestet),
-D19 (`config.py`-Kommentar sagt Divergenz voraus, wo `min` Konvergenz
-erzwingt) -- alle drei neu in Runde 17 --, D20 (kein Test sichert, dass beide
-`calculate_danceability`-Aufrufe `y_fenster` und nicht `y` uebergeben, neu in
-Runde 18). D14 ist in Runde 18 erledigt. D16 ist in Runde 17
+(Chroma-Stimmung je Kandidatenfenster), D21 (kein Test sieht, ob die
+Ladestellen die Ladekonstanten ueberhaupt noch benutzen, neu in Runde 19).
+D22 (die Kopplung selbst kann still durch ein Literal ersetzt werden; kein
+Test sieht das, solange die Werte zusammenpassen -- neu in Runde 19).
+D14 ist in Runde 18 erledigt, D18 und D19 in Runde 19; D20 ist in Runde 19
+WIDERLEGT -- die Luecke gab es nie. D16 ist in Runde 17
 aufgeloest: der gepruefte Schnitt existiert nicht mehr.
 
 **Nachtrag Runde 16 — Verfahrensfehler, offengelegt.** Die dritte und
@@ -1092,7 +1092,12 @@ mitgeschrieben hatte. Der fuenfte (die erfundene Testbindung) stammt aus
 einer Behauptung ueber Code, den ich nicht gelesen hatte -- dieselbe Klasse,
 gegen die dieses Journal auf dreissig Zeilen anschreibt.
 
-**D18, neu.** Dass der Fast-Path das Elternobjekt bekommt, haengt allein
+**D18, neu.** [ERLEDIGT Runde 19 -- der Test steht in
+`tests/test_config.py::TestMerkmalsfensterKopplung`. Der GANZE folgende
+Absatz beschreibt den Stand von Runde 18 und bleibt als Beleg stehen:
+weder "Kein Test sichert das" noch "Der Docstring benennt die Luecke"
+gilt noch -- der Docstring nennt seit Runde 19 den Test.]
+Dass der Fast-Path das Elternobjekt bekommt, haengt allein
 daran, dass `FEATURE_WINDOW_DURATION` und `LIBROSA_FAST_PATH_DURATION` beide
 360 sind. Kein Test sichert das: `grep -rn FEATURE_WINDOW_DURATION tests/`
 findet nur ein `monkeypatch` in test_analyze_track.py. Bewusst NICHT in
@@ -1107,6 +1112,8 @@ verwechslung wie in meinem Docstring. Genau das verhindert `min` in Zeile
 ebenfalls 300, beide Pfade messen weiter dasselbe Fenster. Der Kommentar
 sagt Divergenz voraus, wo die Kopplung Konvergenz erzwingt. In diesem Commit
 nicht angefasst, weil `config.py` nicht im Auftrag stand.
+[ERLEDIGT Runde 19 -- Kommentar richtiggestellt. Nur der Kausalsatz war
+falsch; "360 s ist die kleinere der beiden Ladegrenzen" stimmt und blieb.]
 
 ### Runde 18 — 2026-09-05 — D14, ein toter Parameter mit eigenem Test
 
@@ -1164,7 +1171,9 @@ Offen-Liste. Der Eintragsblock haette sonst weiter behauptet "Nur noch ein
 Test benutzt ihn" und "Entfernen waere Scope-Ausweitung" -- letzteres war
 meine eigene frueherer Einschaetzung, die David aufgehoben hat.
 
-**D20, neu.** Der Waechter hat beim Pruefen eine Luecke gefunden, die dieser
+**D20, neu.** [WIDERLEGT in Runde 19 -- die Luecke gab es nie. Der Absatz
+bleibt als Beleg stehen, wie sie entstanden ist.]
+Der Waechter hat beim Pruefen eine Luecke gefunden, die dieser
 Diff weder verursacht noch schliesst: kein Test sichert, dass die beiden
 Aufrufstellen `y_fenster` uebergeben und nicht `y`.
 `tests/test_analyze_track.py:1462-1469` sucht den `FeatureCache` ueber den TYP
@@ -1177,3 +1186,101 @@ Scope-Ausweitung.
 in Zeile 527 (Befund V-016), der Vollpfad uebergebe `beat_frames`. Das war schon vor D8
 knapp und ist jetzt doppelt falsch. Das Laufprotokoll bleibt unveraendert --
 es ist datiert und haelt einen historischen Stand fest, kein Ist-Bild.
+
+### Runde 19 — 2026-09-06 — D18 und D19 erledigt, D20 widerlegt
+
+**D20 gab es nie.** Der Waechter hatte an Tor 2 von D14 notiert, kein Test
+sichere, dass die beiden `calculate_danceability`-Aufrufe `y_fenster` statt
+`y` uebergeben: `tests/test_analyze_track.py` suche den `FeatureCache` ueber
+den TYP und bliebe deshalb gruen. Ich habe das ins Journal uebernommen, ohne
+es zu pruefen -- gegen die Projektregel, dass Subagentenberichte Hypothesen
+sind, auch seine.
+
+Gemessen, je einmal pro Pfad, mit temporaerer Aenderung und Rueckbau:
+
+    Vollpfad   y_fenster -> y :  FAILED [calculate_danceability-librosa_voll]
+    Fast-Path  y_fenster -> y :  FAILED [calculate_danceability-rekordbox_fast]
+    nach Rueckbau            :  2 passed, git status sauber gegen 7f3b173
+
+Der Test wird in BEIDEN Pfaden rot. Uebersehen hatte die Analyse, dass
+derselbe Spy nicht nur den Cache, sondern auch `len(args[0])` protokolliert
+und `TestMerkmalsfensterArgumente` auf das Tupel `(fenster, fenster)` prueft.
+Die Cache-Suche ueber den Typ ist nur die halbe Zusicherung. Der Waechter hat
+den Irrtum an Tor 1 dieser Runde selbst eingeraeumt.
+
+Das ist die Kehrseite der Lehre aus Runde 17: dort hatte ich einem Kommentar
+geglaubt, hier einem Pruefbericht. Ein behaupteter FEHLENDER Test ist dabei
+die gefaehrlichste Sorte, weil man ihn durch Lesen nie widerlegt -- nur durch
+den Versuch, ihn rot zu bekommen.
+
+**D18 geschlossen.** Die Invariante lautet
+`FEATURE_WINDOW_DURATION <= LIBROSA_FAST_PATH_DURATION`, nicht Gleichheit.
+Fachlich zaehlt nur, dass beide Pfade dasselbe Fenster MESSEN: der Fast-Path
+misst `min(FENSTER, FAST_PATH)`, der Vollpfad `min(FENSTER, MAX)`. Bei
+`FENSTER < FAST_PATH` bekaeme der Fast-Path einen Kindcache auf demselben
+Ausschnitt, der ihn frisch rechnet -- gleiches Ergebnis. Objektidentitaet ist
+kein Selbstzweck; der Waechter wies sogar darauf hin, dass ausgerechnet bei
+GLEICHHEIT die von `librosa.load` gelieferte Sample-Zahl entscheidet, ob
+`return self` oder ein Schnitt greift.
+
+Zwei Zusicherungen in `TestMerkmalsfensterKopplung`: die Invariante selbst
+und `FAST_PATH <= MAX` (sonst waere die Kopplung sinnlos).
+
+**Ein dritter Test war gebaut und ist wieder weg.** Er sollte zusichern,
+dass die Invariante AUS DER KOPPLUNG folgt statt aus zufaellig passenden
+Zahlen: `FEATURE_WINDOW_DURATION == min(360, LIBROSA_FAST_PATH_DURATION)`.
+Der Waechter bezweifelte an Tor 2, dass ein Wertvergleich das leisten kann.
+Gemessen, in beide Richtungen:
+
+    Deckel bewusst auf 300 (Invariante haelt, 300 <= 360)  -> 1 failed
+    Kopplung entfernt, `= 360` hart bei Ladegrenze 360     -> 3 passed
+
+Falsch-rot bei der legitimen Aenderung, falsch-gruen beim echten Fehler --
+also genau verkehrt herum. Er haette die naechste bewusste Deckelaenderung
+blockiert und die stille Entkopplung durchgewinkt. Entfernt; die Luecke
+steht als D22.
+
+Der Waechter hat das an Tor 2 noch schaerfer begruendet, als ich es gemessen
+hatte: der dritte Test hatte KEINEN einzigen wahren Positivfall. Sein Rot
+bedeutete stets `FW != min(360, FP)`. Im Fall `FW > FP` faellt ohnehin die
+erste Zusicherung, im Fall `FW < min(360, FP)` liegt gar kein Fehler vor.
+Er konnte also ausschliesslich falsch-rot werden -- ein Test, der nur
+Reibung erzeugt und nie etwas faengt.
+
+Bemerkenswert: mein Klassen-Docstring behauptete "ein bewusster Wechsel
+beider Werte soll gruen bleiben", und meine eigene Gegenprobe schien das zu
+belegen -- ich hatte aber die LADEGRENZE gesenkt, nicht den DECKEL. Die
+Messung traf den Fall nicht, den der Satz versprach. Dieselbe Klasse wie in
+Runde 17: eine Messung, deren Voraussetzung nicht mitgeschrieben war.
+
+**D19 geschlossen, aber kleiner als geplant.** Ich wollte den ganzen Satz
+ersetzen. Der Waechter hat aufgeteilt: falsch ist nur die kausale Haelfte
+("sinkt `LIBROSA_FAST_PATH_DURATION` darunter, laufen die Pfade wieder
+auseinander"). Die Feststellung "360 s ist die kleinere der beiden
+Ladegrenzen" ist wahr. Haette ich sie miterschlagen, waere die vierte Fassung
+dieser Passage wieder nicht die letzte gewesen.
+
+**Zwei Folgeaussagen, die der Commit selbst falsch gemacht haette.** Der
+Waechter fand beide, und beide standen in Dateien, die ich selbst auf die
+Verbotsliste gesetzt hatte:
+1. `FeatureCache.fenster` schloss mit "Kein Test sichert diese Kopplung ab."
+   Genau das erledigt D18. Der Docstring nennt jetzt den Test -- und die
+   Invariante `<=` ZUSAETZLICH zu der Gleichheit, die den heutigen
+   `return self`-Zweig erklaert. Die Gleichheitsaussage blieb stehen, sie
+   ist richtig; ergaenzt wurde, worauf es fachlich ankommt.
+2. Der `config.py`-Block sagte, die Kopplung sei "die einzige Absicherung".
+   Jetzt: die einzige Absicherung ZUR LAUFZEIT; zur Bauzeit sichert sie der
+   neue Test.
+Ein Auftrag, der eine Aussage wahr macht, muss die Stellen mitnehmen, die
+das Gegenteil behaupten -- auch wenn sie ausserhalb seines Zuschnitts liegen.
+Sonst produziert genau die Korrektur den naechsten falschen Satz.
+
+**D21, neu.** Die neuen Tests pruefen nur das Verhaeltnis zweier Konstanten. Sie
+sehen nicht, ob die Ladestellen sie ueberhaupt noch benutzen: ersetzte jemand
+`duration=LIBROSA_FAST_PATH_DURATION` (analysis.py:1948, im Vollpfad
+entsprechend `LIBROSA_MAX_DURATION` an :2354) durch ein Literal,
+liefen die Pfade wieder auseinander und alles bliebe gruen. Die vorhandene
+Fensterzusicherung patcht `FEATURE_WINDOW_DURATION` und arbeitet auf einer
+90-s-Fixture -- kuerzer als jede Ladegrenze, die Ladedauern werden also in
+keinem Test wirksam. Ein Test dafuer braeuchte eine Datei ueber sechs Minuten
+oder das Patchen beider Ladekonstanten; das ist ein eigener Posten.

@@ -169,11 +169,16 @@ LIBROSA_MAX_DURATION = 600  # Sekunden (fuer volle Analyse, Safety-Net)
 # Gemeinsames Messfenster der Track-Merkmale (D8, 2026-09-04). Ohne es misst
 # der Fast-Path ueber 360 s und der Vollpfad ueber 600 s — dieselben
 # Funktionen, verschieden lange Fenster, und das Scoring vergleicht die
-# Ergebnisse miteinander. 360 s ist die UNTERGRENZE der Ladefenster: sinkt
-# LIBROSA_FAST_PATH_DURATION darunter, laufen die Pfade wieder auseinander.
+# Ergebnisse miteinander. 360 s ist die kleinere der beiden Ladegrenzen.
+# Die Gefahr ist ein Fenster GROESSER als die Fast-Path-Ladegrenze: dann
+# maesse der Fast-Path nur seine Ladegrenze, der Vollpfad das volle Fenster.
+# Genau das schliesst `min` aus -- sinkt LIBROSA_FAST_PATH_DURATION, zieht
+# das Fenster mit, und beide Pfade messen weiter dasselbe.
 # Als KOPPLUNG statt als Pruefung: ein `assert` faellt unter `python -O` und
 # in einem optimierten Frozen-Build ersatzlos weg, und damit geraeuschlos die
-# einzige Absicherung gegen ein Fenster groesser als die Ladegrenze.
+# einzige Absicherung ZUR LAUFZEIT gegen ein Fenster groesser als die
+# Ladegrenze. Zur Bauzeit sichert sie
+# `TestMerkmalsfensterKopplung` in tests/test_config.py.
 FEATURE_WINDOW_DURATION = min(360, LIBROSA_FAST_PATH_DURATION)
 # Separates Endfenster verhindert, dass Outro/Mix-Out aus einem reinen
 # Track-Anfang extrapoliert werden. Die Zeitachse markiert eventuelle Luecken.

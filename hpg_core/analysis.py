@@ -240,8 +240,11 @@ class FeatureCache:
         `config.py` koppelt beide ueber `min`, beide stehen auf 360. Nicht
         "nie groesser als": der `return self`-Zweig verlangt ein Fenster, das
         MINDESTENS so lang ist wie das geladene Signal. Stiege die Ladegrenze
-        ueber 360, entstuende auch im Fast-Path ein Kindcache. Kein Test
-        sichert diese Kopplung ab.
+        ueber 360, entstuende auch im Fast-Path ein Kindcache -- fachlich
+        folgenlos, weil das Kind denselben Ausschnitt frisch rechnet. Was
+        wirklich zaehlt, ist `FEATURE_WINDOW_DURATION <= `
+        `LIBROSA_FAST_PATH_DURATION`; das sichert
+        `TestMerkmalsfensterKopplung` in tests/test_config.py.
 
         Sonst entsteht ein LEERER Cache auf dem Ausschnitt. Er rechnet jede
         Matrix selbst und ist damit wertgleich zu einer Rechnung auf

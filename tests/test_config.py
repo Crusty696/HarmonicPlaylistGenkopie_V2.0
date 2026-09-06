@@ -120,3 +120,45 @@ class TestKandidatenKonstanten:
     assert config.ENERGIE_TREND_WIDERSPRUCH == 0.8
     assert config.STRUKTUR_LABEL_BONUS == 0.10
     assert 0.0 < config.PERCUSSIVE_NIEDRIG < config.PERCUSSIVE_HOCH < 1.0
+
+
+class TestMerkmalsfensterKopplung:
+  """Beide Analysepfade muessen dasselbe Merkmalsfenster messen (D8, D18).
+
+  Der Fast-Path laedt `LIBROSA_FAST_PATH_DURATION` Sekunden und misst davon
+  `min(FEATURE_WINDOW_DURATION, LIBROSA_FAST_PATH_DURATION)`. Der Vollpfad
+  laedt `LIBROSA_MAX_DURATION` und misst
+  `min(FEATURE_WINDOW_DURATION, LIBROSA_MAX_DURATION)`. Gleich sind beide nur,
+  solange das Fenster die kleinere Ladegrenze nicht ueberschreitet. Waere es
+  groesser, maesse der Fast-Path seine Ladegrenze und der Vollpfad das volle
+  Fenster -- genau die Pfaddivergenz, die D8 beseitigt hat, und sie wuerde
+  sich als abweichende Merkmalswerte im Scoring zeigen, nicht als Fehler.
+
+  Geprueft wird das VERHAELTNIS, nicht die Zahl 360: ein bewusster Wechsel der
+  Werte bleibt gruen, ein Fenster ueber der Ladegrenze wird rot.
+
+  Was diese Tests NICHT sehen: ob die Invariante aus der Kopplung
+  (`min(360, LIBROSA_FAST_PATH_DURATION)`) folgt oder aus zufaellig passenden
+  Zahlen. Wer die Kopplung durch ein Literal ersetzt, bleibt gruen, solange
+  die Werte zusammenpassen -- rot wird es erst beim naechsten Senken der
+  Ladegrenze, also wenn der Fehler wirkt, nicht wenn er entsteht (D22).
+  Ein dritter Test hatte das zugesichert und konnte es nicht: er wurde rot,
+  wenn jemand den DECKEL bewusst senkte (Invariante gewahrt), und blieb gruen,
+  wenn jemand die Kopplung ganz entfernte. Beides gemessen, dann entfernt --
+  ein Test, der in beide Richtungen falsch liegt, ist schlechter als keiner.
+  """
+
+  def test_fenster_ueberschreitet_die_fast_path_ladegrenze_nicht(self):
+    from hpg_core import config
+
+    assert config.FEATURE_WINDOW_DURATION <= config.LIBROSA_FAST_PATH_DURATION, (
+      "Das Merkmalsfenster ist laenger als das, was der Fast-Path ueberhaupt "
+      "laedt. Dann misst der Fast-Path seine Ladegrenze und der Vollpfad das "
+      "Fenster -- die Pfade laufen auseinander (D8)."
+    )
+
+  def test_fast_path_laedt_nicht_mehr_als_der_vollpfad(self):
+    """Sonst waere der Fast-Path der langsamere Pfad und die Kopplung sinnlos."""
+    from hpg_core import config
+
+    assert config.LIBROSA_FAST_PATH_DURATION <= config.LIBROSA_MAX_DURATION
