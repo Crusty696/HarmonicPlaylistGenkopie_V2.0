@@ -16,9 +16,45 @@ from hpg_core.models import Track
 from hpg_core.pair_candidates import PairCandidate
 from tools import audit_candidate_set as audit
 from tools.rate_transitions import (
+    BEWERTUNG_DREINOTEN_SPALTEN,
     BEWERTUNG_KANDIDATEN_SPALTEN,
     MERKMALE_KANDIDATEN_SPALTEN,
 )
+
+
+def test_audit_bindet_dreinoten_schema_an_manifest(candidate_set):
+    set_dir, _, _, bewertung = candidate_set
+    manifest = _manifest(set_dir)
+    manifest["format_version"] = 2
+    manifest["rating_schema"] = "three_notes_v1"
+    _write_manifest(set_dir, manifest)
+    dreinoten = [{
+        "pair_id": row["pair_id"], "clip_id": row["clip_id"],
+        "track_note": "", "technik_note": "", "gesamt_note": "",
+        "gewaehlt": row["gewaehlt"], "zeit": row["zeit"],
+    } for row in bewertung]
+    _write_csv(set_dir / "bewertung.csv", BEWERTUNG_DREINOTEN_SPALTEN, dreinoten)
+    _, _, _, parsed_manifest = audit._parse_set(set_dir)
+    assert parsed_manifest["rating_schema"] == "three_notes_v1"
+
+
+def test_audit_lehnt_dreinoten_csv_mit_alter_manifestversion_ab(candidate_set):
+    set_dir, _, _, bewertung = candidate_set
+    dreinoten = [{
+        "pair_id": row["pair_id"], "clip_id": row["clip_id"],
+        "track_note": "", "technik_note": "", "gesamt_note": "",
+        "gewaehlt": row["gewaehlt"], "zeit": row["zeit"],
+    } for row in bewertung]
+    _write_csv(set_dir / "bewertung.csv", BEWERTUNG_DREINOTEN_SPALTEN, dreinoten)
+    with pytest.raises(audit.AuditError, match="Falsche Spalten"):
+        audit._parse_set(set_dir)
+
+
+def test_audit_lehnt_manifest_ohne_objektwurzel_kontrolliert_ab(candidate_set):
+    set_dir, _, _, _ = candidate_set
+    (set_dir / "kandidaten_manifest.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="Manifest muss ein Objekt sein"):
+        audit._parse_set(set_dir)
 
 
 def _write_csv(path, fields, rows):

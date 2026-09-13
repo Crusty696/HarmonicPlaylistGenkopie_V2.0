@@ -28,7 +28,9 @@ from hpg_core.pair_candidates import FAKTOREN, rank_pair_candidates
 from hpg_core.tolerances import KANDIDATEN_GEWICHT_SCHLUESSEL, NICHT_GEWICHT_SCHLUESSEL
 from hpg_core import transition_renderer
 from tools.rate_transitions import (
+    BEWERTUNG_DREINOTEN_SPALTEN,
     BEWERTUNG_KANDIDATEN_SPALTEN,
+    DREINOTEN_MANIFEST_VERSION,
     KANDIDATEN_MANIFEST_NAME,
     ALGORITHM_BUILD_SCHEME,
     HARMONIC_GATE_SCOPE,
@@ -248,9 +250,15 @@ def _load_manifest(path: Path, cache: Path | None = None) -> dict:
         )
     except (OSError, json.JSONDecodeError, UnicodeError) as exc:
         raise AuditError(f"{KANDIDATEN_MANIFEST_NAME} ist unlesbar: {exc}") from exc
-    _exact_dict(manifest, ROOT_KEYS, "Manifest")
-    if _strict_int(manifest["format_version"], "format_version") != 1:
-        raise AuditError("format_version ist nicht 1")
+    if type(manifest) is not dict:
+        raise AuditError("Manifest muss ein Objekt sein")
+    version = _strict_int(manifest.get("format_version"), "format_version")
+    root_keys = ROOT_KEYS | ({"rating_schema"} if version == DREINOTEN_MANIFEST_VERSION else set())
+    _exact_dict(manifest, root_keys, "Manifest")
+    if version not in {1, DREINOTEN_MANIFEST_VERSION}:
+        raise AuditError("format_version ist nicht unterstuetzt")
+    if version == DREINOTEN_MANIFEST_VERSION and manifest.get("rating_schema") != "three_notes_v1":
+        raise AuditError("Dreinoten-Manifest kennzeichnet das Bewertungsschema nicht korrekt")
     if manifest["app_version"] != APP_VERSION:
         raise AuditError("app_version stimmt nicht mit dem lokalen Build")
     algorithm_build = _exact_dict(
@@ -380,12 +388,17 @@ def _parse_set(set_dir: Path, cache: Path | None = None) -> tuple[list[dict], di
     if any(not path.is_file() for name, path in required.items() if name != "clips"):
         raise AuditError("Satzwurzel enthaelt einen ungueltigen Pflichtdateityp")
     merkmale = _read_csv(required["merkmale.csv"], MERKMALE_KANDIDATEN_SPALTEN)
-    bewertung = _read_csv(required["bewertung.csv"], BEWERTUNG_KANDIDATEN_SPALTEN)
     try:
         order = json.loads(required["reihenfolge.json"].read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise AuditError(f"reihenfolge.json ist unlesbar: {exc}") from exc
     manifest = _load_manifest(required[KANDIDATEN_MANIFEST_NAME], cache)
+    bewertung_spalten = (
+        BEWERTUNG_DREINOTEN_SPALTEN
+        if manifest.get("rating_schema") == "three_notes_v1"
+        else BEWERTUNG_KANDIDATEN_SPALTEN
+    )
+    bewertung = _read_csv(required["bewertung.csv"], bewertung_spalten)
     pair_ids = tuple(
         f"{n:03d}" for n in range(1, manifest["render_args"]["anzahl"] + 1)
     )
@@ -460,6 +473,16 @@ def _parse_set(set_dir: Path, cache: Path | None = None) -> tuple[list[dict], di
             raise AuditError(f"Doppelte clip_id in bewertung.csv: {cid}")
         if cid not in by_id or row["pair_id"] != by_id[cid]["pair_id"]:
             raise AuditError(f"bewertung.csv verweist inkonsistent auf {cid!r}")
+        notenfelder = (
+            ("note",) if bewertung_spalten == BEWERTUNG_KANDIDATEN_SPALTEN
+            else ("track_note", "technik_note", "gesamt_note")
+        )
+        for feld in notenfelder:
+            note = str(row.get(feld, "")).strip()
+            if note and note not in {"1", "2", "3", "4", "5"}:
+                raise AuditError(f"bewertung.csv: {feld} fuer {cid} ist ungueltig")
+        if str(row.get("gewaehlt", "")).strip() not in {"", "0", "1"}:
+            raise AuditError(f"bewertung.csv: gewaehlt fuer {cid} ist ungueltig")
         rating_ids.add(cid)
     if rating_ids != set(by_id):
         raise AuditError("bewertung.csv und merkmale.csv sind nicht 1:1")

@@ -16,6 +16,7 @@ import pytest
 from tools.hoertest_server import (
   BEWERTUNG_SPALTEN,
   HoertestHandler,
+  SEITE_KANDIDATEN,
   _port,
   lade_track_infos,
   lade_uebersicht,
@@ -24,6 +25,50 @@ from tools.hoertest_server import (
   schreibe_csv,
   sichere_clip_datei,
 )
+
+
+def test_kandidaten_browser_nutzt_robuste_wahl_und_dreinoten_fertigstatus():
+  assert "box.querySelector('button.wahl')" in SEITE_KANDIDATEN
+  assert "if (wahl) wahl.classList.toggle('aktiv', ist);" in SEITE_KANDIDATEN
+  assert "const clipFertig = DREINOTEN" in SEITE_KANDIDATEN
+  note_block = SEITE_KANDIDATEN.split("async function setzeNote", 1)[1].split(
+    "async function setzeBester", 1
+  )[0]
+  assert "zeichne();" not in note_block
+  assert "reihe.dataset.dimension = feld;" in SEITE_KANDIDATEN
+  assert "zaehleFuss();" in note_block
+
+
+def test_dreinoten_post_aendert_genau_eine_dimension_atomar(hoertest_server):
+  server, ordner = hoertest_server
+  spalten = ("pair_id", "clip_id", "track_note", "technik_note", "gesamt_note", "gewaehlt", "zeit")
+  schreibe_csv(ordner / "bewertung.csv", spalten, [{
+    "pair_id": "001", "clip_id": "001_k1", "track_note": "2",
+    "technik_note": "3", "gesamt_note": "4", "gewaehlt": "", "zeit": "alt",
+  }])
+  assert _server_post(server, "/note", {
+    "pair_id": "001", "clip_id": "001_k1", "dimension": "technik_note", "note": 5,
+  }) == 200
+  with (ordner / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+    row = next(csv.DictReader(handle))
+  assert row["track_note"] == "2"
+  assert row["technik_note"] == "5"
+  assert row["gesamt_note"] == "4"
+  assert row["zeit"] != "alt"
+
+
+def test_dreinoten_post_verwirft_unbekannte_dimension_bytegleich(hoertest_server):
+  server, ordner = hoertest_server
+  spalten = ("pair_id", "clip_id", "track_note", "technik_note", "gesamt_note", "gewaehlt", "zeit")
+  schreibe_csv(ordner / "bewertung.csv", spalten, [{
+    "pair_id": "001", "clip_id": "001_k1", "track_note": "", "technik_note": "",
+    "gesamt_note": "", "gewaehlt": "", "zeit": "",
+  }])
+  vorher = (ordner / "bewertung.csv").read_bytes()
+  assert _server_post(server, "/note", {
+    "pair_id": "001", "clip_id": "001_k1", "dimension": "note", "note": 5,
+  }) == 400
+  assert (ordner / "bewertung.csv").read_bytes() == vorher
 
 
 # --- sichere_clip_datei ----------------------------------------------------

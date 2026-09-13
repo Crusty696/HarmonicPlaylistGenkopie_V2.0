@@ -88,6 +88,17 @@ def test_maximin_leere_eingabe():
     assert maximin_auswahl([], anzahl=5, seed=1) == []
 
 
+def test_dreinoten_vollstaendigkeit_braucht_alle_drei_noten_aber_keinen_gewinner():
+    zeile = {
+        "pair_id": "001", "clip_id": "001_k1", "track_note": "4",
+        "technik_note": "5", "gesamt_note": "3", "gewaehlt": "", "zeit": "",
+    }
+    rate_transitions.validiere_vollstaendige_dreinotenbewertung([zeile])
+    zeile["technik_note"] = ""
+    with pytest.raises(ValueError, match="technik_note"):
+        rate_transitions.validiere_vollstaendige_dreinotenbewertung([zeile])
+
+
 # ---------------------------------------------------------------------------
 # CSV-Verbinden
 # ---------------------------------------------------------------------------
@@ -1588,6 +1599,38 @@ def test_fit_kandidaten_all_fail_laesst_override_byteidentisch(monkeypatch, tmp_
     assert override.read_bytes() == vorher
     entwurf = json.loads((tmp_path / "candidate_preferences_entwurf.json").read_text(encoding="utf-8"))
     assert set(entwurf) == {"_diagnose"}
+
+
+def test_dreinoten_fit_schreibt_nur_deskriptiven_bericht(monkeypatch, tmp_path):
+    from hpg_core import candidate_preferences as cp
+    from tools import rate_transitions as rt
+
+    bewertung = [{
+        "pair_id": "001", "clip_id": "001_k1", "track_note": "4",
+        "technik_note": "3", "gesamt_note": "5", "gewaehlt": "", "zeit": "t",
+    }]
+    _stubbe_fit_binding_io(monkeypatch, rt, [], bewertung)
+    monkeypatch.setattr(rt, "validiere_kandidaten_csvs", lambda *_args: None)
+    manifest = _manifest_mit_fit_snapshot(rt) | {
+        "format_version": rt.DREINOTEN_MANIFEST_VERSION,
+        "rating_schema": "three_notes_v1",
+    }
+    monkeypatch.setattr(rt, "_validiere_fit_bindung", lambda *_args: manifest)
+    monkeypatch.setattr(
+        cp, "merge_user_preferences_atomically",
+        lambda *_args, **_kwargs: pytest.fail("Dreinoten-Pilot darf keine Preferences aktivieren"),
+    )
+    monkeypatch.setattr(
+        rt, "_fit_kandidaten_genre",
+        lambda *_args, **_kwargs: pytest.fail("Dreinoten-Pilot darf kein Modell fitten"),
+    )
+    assert rt.befehl_fit_kandidaten(SimpleNamespace(
+        dir=tmp_path, cache="cache.db", audit_report="audit.json", seed=1,
+    )) == 0
+    bericht = json.loads((tmp_path / "dreinoten_pilot_bericht.json").read_text(encoding="utf-8"))
+    assert bericht["aktiviert_candidate_preferences"] is False
+    assert bericht["stichprobe"] == {"clips": 1, "paare": 1}
+    assert not (tmp_path / "candidate_preferences_entwurf.json").exists()
 
 
 def test_prepare_kandidaten_ruft_das_zentrale_ranking(monkeypatch, tmp_path):

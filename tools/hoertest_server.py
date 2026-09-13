@@ -174,9 +174,17 @@ def lade_uebersicht(
 # ===========================================================================
 
 BEWERTUNG_KANDIDATEN_SPALTEN = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+BEWERTUNG_DREINOTEN_SPALTEN = (
+  "pair_id", "clip_id", "track_note", "technik_note", "gesamt_note",
+  "gewaehlt", "zeit",
+)
 # Felder, die /daten je Clip liefert — absichtlich ohne score, schema, Teilwerte
 # (verdeckte Bewertung). lade_uebersicht_kandidaten baut die Clip-Dicts daraus.
 KANDIDAT_ANZEIGE_FELDER = ("clip_id", "clip", "note", "gewaehlt", "crossfade_sek")
+DREINOTEN_ANZEIGE_FELDER = (
+  "clip_id", "clip", "track_note", "technik_note", "gesamt_note",
+  "gewaehlt", "crossfade_sek",
+)
 
 
 def ist_kandidatensatz(bewertung_zeilen: list[dict]) -> bool:
@@ -184,9 +192,14 @@ def ist_kandidatensatz(bewertung_zeilen: list[dict]) -> bool:
     return bool(bewertung_zeilen) and "clip_id" in bewertung_zeilen[0]
 
 
+def ist_dreinotensatz(bewertung_zeilen: list[dict]) -> bool:
+  return bool(bewertung_zeilen) and tuple(bewertung_zeilen[0]) == BEWERTUNG_DREINOTEN_SPALTEN
+
+
 def merge_kandidaten_bewertung(zeilen: list[dict], *, pair_id: str, clip_id: str,
                                note=None, bester: bool = False,
-                               kein_bester: bool = False, zeit: str = "") -> list[dict]:
+                               kein_bester: bool = False, zeit: str = "",
+                               dimension: str = "note") -> list[dict]:
     """Traegt Note (None = loeschen) bzw. die exklusive Wahl 'bester' eines
     Clips ein; `zeit` wird nur auf dem beruehrten Clip gesetzt."""
     neu = []
@@ -199,8 +212,8 @@ def merge_kandidaten_bewertung(zeilen: list[dict], *, pair_id: str, clip_id: str
                 k["gewaehlt"] = "1" if k.get("clip_id") == clip_id else ""
             if k.get("clip_id") == clip_id:
                 if not bester:
-                    k["note"] = "" if note in (None, "") else str(int(note))
-                    if k.get("gewaehlt") == "1" and note in (None, "", 1, "1"):
+                    k[dimension] = "" if note in (None, "") else str(int(note))
+                    if dimension == "note" and k.get("gewaehlt") == "1" and note in (None, "", 1, "1"):
                         k["gewaehlt"] = ""
                 k["zeit"] = zeit
         neu.append(k)
@@ -232,10 +245,13 @@ def lade_uebersicht_kandidaten(merkmale_zeilen, bewertung_zeilen, reihenfolge: d
         werte = {
             "clip_id": z.get("clip_id", ""), "clip": str(m.get("clip", "")),
             "note": str(z.get("note", "")).strip(), "gewaehlt": str(z.get("gewaehlt", "")).strip(),
+            "track_note": str(z.get("track_note", "")).strip(),
+            "technik_note": str(z.get("technik_note", "")).strip(),
+            "gesamt_note": str(z.get("gesamt_note", "")).strip(),
             "crossfade_sek": str(m.get("crossfade_sek", "")).strip(),
         }
-        # Verdeckung: genau die Felder aus KANDIDAT_ANZEIGE_FELDER, nichts sonst.
-        gruppen[pid]["clips"].append({k: werte[k] for k in KANDIDAT_ANZEIGE_FELDER})
+        felder = DREINOTEN_ANZEIGE_FELDER if ist_dreinotensatz(bewertung_zeilen) else KANDIDAT_ANZEIGE_FELDER
+        gruppen[pid]["clips"].append({k: werte[k] for k in felder})
     for pid, g in gruppen.items():
         folge = reihenfolge.get(pid, {}).get("clips")
         if folge:
@@ -281,6 +297,11 @@ def lies_csv(pfad: Path) -> list[dict]:
         return []
     with pfad.open(encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def bewertungsschema(pfad: Path) -> tuple[str, ...]:
+  with pfad.open("r", encoding="utf-8-sig", newline="") as handle:
+    return tuple(csv.DictReader(handle).fieldnames or ())
 
 
 def schreibe_csv(pfad: Path, spalten, zeilen) -> None:
@@ -615,9 +636,15 @@ SEITE_KANDIDATEN = """<!doctype html>
   .meta { color:#8b93a7; font-size:13px; }
   .spur { position:relative; height:26px; margin:2px 0 4px; border-radius:5px;
           background:#10182a; border:1px solid #2c3855; cursor:pointer; overflow:hidden; }
-  .mix { position:absolute; top:0; bottom:0;
-         background:linear-gradient(90deg,#c8a02e33,#c8a02e66,#c8a02e33);
-         border-left:2px solid #c8a02e; border-right:2px solid #c8a02e; }
+  .mix { position:absolute; top:0; bottom:0; display:grid;
+         grid-template-columns:repeat(3,1fr); overflow:hidden;
+         border-left:2px solid #38bdf8; border-right:2px solid #f472b6; }
+  .mixphase { display:flex; align-items:center; justify-content:center;
+              color:#08111d; font-size:10px; font-weight:800;
+              text-shadow:0 1px 1px #ffffff55; }
+  .mixanfang { background:#38bdf8; }
+  .mixmitte { background:#facc15; }
+  .mixende { background:#f472b6; }
   .marke-a, .marke-b { position:absolute; top:0; bottom:0; display:flex;
                        align-items:center; padding:0 7px; font-size:11px;
                        font-weight:700; color:#8b93a7; }
@@ -639,14 +666,13 @@ SEITE_KANDIDATEN = """<!doctype html>
 </head>
 <body>
 <h1>HPG Hoertest — Kandidaten</h1>
-<p class="hinweis">Gleiches Paar, andere Mixpunkte. Jeden Clip mit <b>1</b>&ndash;<b>5</b>
-benoten <b>und</b> den besten waehlen (Taste <b>B</b>). <b>Pfeil hoch/runter</b> wechselt den Clip,
-<b>Leertaste</b> spielt, <b>Bild auf/ab</b> wechselt das Paar. Alles wird sofort gespeichert.</p>
+<p class="hinweis">__ANLEITUNG__</p>
 <div class="kopf" id="kopf"></div>
 <div id="liste"></div>
 <div class="fuss" id="fuss">lade ...</div>
 <script>
 const NACHLAUF = __NACHLAUF__;  // Sekunden Track B hinter der Blende
+const DREINOTEN = __DREINOTEN__;
 let paare = [];     // Gruppen vom Server, Clips bereits in gespeicherter Reihenfolge
 let pi = 0;         // Index des angezeigten Paars
 let aktuell = 0;    // Index des aktiven Clips im Paar
@@ -658,7 +684,9 @@ function paarAusUrl() {
 }
 
 function fertig(p) {
-  const notenFertig = p.clips.every(c => c.note);
+  const notenFertig = p.clips.every(c => DREINOTEN
+    ? c.track_note && c.technik_note && c.gesamt_note : c.note);
+  if (DREINOTEN) return notenFertig;
   if (p.clips.length === 1) return notenFertig;
   return notenFertig && (p.clips.some(c => c.gewaehlt === '1') ||
                          p.clips.some(c => c.gewaehlt === '0'));
@@ -699,7 +727,9 @@ function zeichne() {
   liste.innerHTML = '';
   p.clips.forEach((c, i) => {
     const box = document.createElement('div');
-    box.className = 'clip' + (c.note ? ' fertig' : '') + (c.gewaehlt === '1' ? ' bester' : '')
+    const clipFertig = DREINOTEN
+      ? c.track_note && c.technik_note && c.gesamt_note : c.note;
+    box.className = 'clip' + (clipFertig ? ' fertig' : '') + (c.gewaehlt === '1' ? ' bester' : '')
                            + (i === aktuell ? ' aktiv' : '');
     const dauer = c.crossfade_sek ? c.crossfade_sek + ' s Blende' : '';
     box.innerHTML =
@@ -707,7 +737,10 @@ function zeichne() {
       '<span class="meta">' + dauer + '</span></div>' +
       '<audio controls preload="metadata" src="/' + c.clip + '"></audio>' +
       '<div class="spur" title="Klicken springt an die Stelle">' +
-        '<div class="mix"></div><div class="marke-a">A</div><div class="marke-b">B</div>' +
+        '<div class="mix"><span class="mixphase mixanfang">ANFANG</span>' +
+          '<span class="mixphase mixmitte">MITTE</span>' +
+          '<span class="mixphase mixende">ENDE</span></div>' +
+        '<div class="marke-a">A</div><div class="marke-b">B</div>' +
         '<div class="nadel"></div></div>' +
       '<div class="spurtext"></div>';
     const audio = box.querySelector('audio');
@@ -724,21 +757,30 @@ function zeichne() {
       audio.currentTime = audio.duration * (ev.clientX - kasten.left) / kasten.width;
     });
     const noten = document.createElement('div');
-    noten.className = 'noten';
-    for (const n of [1,2,3,4,5]) {
-      const b = document.createElement('button');
-      b.textContent = n;
-      if (String(c.note) === String(n)) b.className = 'aktiv';
-      b.onclick = () => setzeNote(p.pair_id, c.clip_id, n);
-      noten.appendChild(b);
-    }
+    noten.className = 'notenblock';
+    const dimensionen = DREINOTEN
+      ? [['track_note', 'Track passt'], ['technik_note', 'Technik'], ['gesamt_note', 'Gesamt']]
+      : [['note', 'Note']];
+    dimensionen.forEach(([feld, label]) => {
+      const reihe = document.createElement('div'); reihe.className = 'noten';
+      reihe.dataset.dimension = feld;
+      const titel = document.createElement('span'); titel.textContent = label; titel.className = 'meta';
+      reihe.appendChild(titel);
+      for (const n of [1,2,3,4,5]) {
+        const b = document.createElement('button'); b.textContent = n;
+        if (String(c[feld]) === String(n)) b.className = 'aktiv';
+        b.onclick = () => setzeNote(p.pair_id, c.clip_id, n, feld);
+        reihe.appendChild(b);
+      }
+      noten.appendChild(reihe);
+    });
     if (p.clips.length > 1) {
       const w = document.createElement('button');
       w.textContent = 'bester';
       w.className = 'wahl' + (c.gewaehlt === '1' ? ' aktiv' : '');
-      w.disabled = Number(c.note || 0) < 2;
+      w.disabled = !DREINOTEN && Number(c.note || 0) < 2;
       w.onclick = () => setzeBester(p.pair_id, c.clip_id);
-      noten.appendChild(w);
+      noten.lastElementChild.appendChild(w);
     }
     box.appendChild(noten);
     box.onclick = () => { aktuell = i; markiere(); };
@@ -756,8 +798,9 @@ function zeichne() {
 
 function zaehleFuss() {
   const p = paare[pi];
-  const noten = p.clips.filter(c => c.note).length;
-  const wahl = p.clips.length === 1 ? 'kein Vergleich erforderlich' :
+  const noten = p.clips.filter(c => DREINOTEN
+    ? c.track_note && c.technik_note && c.gesamt_note : c.note).length;
+  const wahl = DREINOTEN ? 'Gewinnerwahl optional' : p.clips.length === 1 ? 'kein Vergleich erforderlich' :
     (p.clips.some(c => c.gewaehlt === '1') ? 'bester gewaehlt' :
      (p.clips.some(c => c.gewaehlt === '0') ? 'kein bester' : 'Entscheidung fehlt'));
   document.getElementById('fuss').textContent =
@@ -805,7 +848,7 @@ function wechsle(schritt) {
 document.addEventListener('keydown', e => {
   const p = paare[pi];
   if (!p) return;
-  if (e.key >= '1' && e.key <= '5' && p.clips[aktuell]) {
+  if (!DREINOTEN && e.key >= '1' && e.key <= '5' && p.clips[aktuell]) {
     setzeNote(p.pair_id, p.clips[aktuell].clip_id, Number(e.key)); e.preventDefault();
   } else if ((e.key === 'b' || e.key === 'B') && p.clips[aktuell]) {
     setzeBester(p.pair_id, p.clips[aktuell].clip_id); e.preventDefault();
@@ -832,32 +875,47 @@ async function sende(pfad, koerper) {
   return true;
 }
 
-async function setzeNote(pairId, clipId, note) {
-  if (!await sende('/note', {pair_id: pairId, clip_id: clipId, note: note})) return;
+async function setzeNote(pairId, clipId, note, dimension='note') {
+  if (!await sende('/note', {pair_id: pairId, clip_id: clipId, dimension: dimension, note: note})) return;
   const p = paare[pi];
   const i = p.clips.findIndex(c => c.clip_id === clipId);
   if (i < 0) return;
-  p.clips[i].note = String(note);
-  if (p.clips[i].gewaehlt === '1' && note === 1) {
+  p.clips[i][dimension] = String(note);
+  if (!DREINOTEN && p.clips[i].gewaehlt === '1' && note === 1) {
     p.clips.forEach(c => { c.gewaehlt = ''; });
   }
   // Nur die Karte anfassen — ein Neuaufbau wuerde das <audio> ersetzen.
   const box = document.querySelectorAll('.clip')[i];
-  box.classList.add('fertig');
-  box.querySelectorAll('.noten button:not(.wahl)').forEach((b, k) => b.classList.toggle('aktiv', k + 1 === note));
-  zeichne();
+  box.classList.toggle('fertig', DREINOTEN
+    ? Boolean(p.clips[i].track_note && p.clips[i].technik_note && p.clips[i].gesamt_note)
+    : Boolean(p.clips[i].note));
+  const reihe = Array.from(box.querySelectorAll('.noten'))
+    .find(element => element.dataset.dimension === dimension);
+  if (reihe) {
+    reihe.querySelectorAll('button:not(.wahl)').forEach((button, index) => {
+      button.classList.toggle('aktiv', index + 1 === note);
+    });
+  }
+  const wahl = box.querySelector('button.wahl');
+  if (wahl && !DREINOTEN) wahl.disabled = note < 2;
+  if (!DREINOTEN && note === 1) {
+    document.querySelectorAll('.clip').forEach(element => element.classList.remove('bester'));
+    document.querySelectorAll('button.wahl').forEach(button => button.classList.remove('aktiv'));
+  }
+  zaehleFuss();
 }
 
 async function setzeBester(pairId, clipId) {
   const p = paare[pi];
   const clip = p.clips.find(c => c.clip_id === clipId);
-  if (!clip || Number(clip.note || 0) < 2) return;
+  if (!clip || (!DREINOTEN && Number(clip.note || 0) < 2)) return;
   if (!await sende('/bester', {pair_id: pairId, clip_id: clipId})) return;
   p.clips.forEach(c => { c.gewaehlt = (c.clip_id === clipId) ? '1' : ''; });
   document.querySelectorAll('.clip').forEach((box, k) => {
     const ist = p.clips[k].clip_id === clipId;
     box.classList.toggle('bester', ist);
-    box.querySelector('.noten button.wahl').classList.toggle('aktiv', ist);
+    const wahl = box.querySelector('button.wahl');
+    if (wahl) wahl.classList.toggle('aktiv', ist);
   });
   zeichneKopf(); zaehleFuss();
 }
@@ -937,12 +995,30 @@ class HoertestHandler(BaseHTTPRequestHandler):
         pfad = self.path.split("?", 1)[0]
         if pfad in ("/", "/index.html"):
             try:
-                kandidatenmodus = self._kandidatenmodus()
+                bewertung = lies_csv(self._bewertung_pfad())
+                kandidatenmodus = ist_kandidatensatz(bewertung)
             except (OSError, csv.Error):
                 self._sende(500, "text/plain; charset=utf-8", b"CSV-Lesen fehlgeschlagen")
                 return
             vorlage = SEITE_KANDIDATEN if kandidatenmodus else SEITE
             seite = vorlage.replace("__NACHLAUF__", repr(float(NACHLAUF_SEK)))
+            dreinoten = ist_dreinotensatz(bewertung)
+            seite = seite.replace("__DREINOTEN__", "true" if dreinoten else "false")
+            if dreinoten:
+                anleitung = (
+                    "Jeden Clip getrennt mit <b>1–5</b> bewerten: "
+                    "<b>Track-Passung</b>, <b>Übergangstechnik</b> und "
+                    "<b>Gesamteindruck</b>. <b>Leertaste</b> spielt, "
+                    "<b>Bild auf/ab</b> wechselt das Paar. Alles wird sofort gespeichert."
+                )
+            else:
+                anleitung = (
+                    "Gleiches Paar, andere Mixpunkte. Jeden Clip mit <b>1–5</b> "
+                    "benoten <b>und</b> den besten wählen (Taste <b>B</b>). "
+                    "<b>Pfeil hoch/runter</b> wechselt den Clip, <b>Leertaste</b> spielt, "
+                    "<b>Bild auf/ab</b> wechselt das Paar. Alles wird sofort gespeichert."
+                )
+            seite = seite.replace("__ANLEITUNG__", anleitung)
             self._sende(200, "text/html; charset=utf-8", seite.encode("utf-8"))
             return
         if pfad == "/reihenfolge":
@@ -1102,8 +1178,10 @@ class HoertestHandler(BaseHTTPRequestHandler):
                 note = daten["note"]
                 if note is not None and (type(note) is not int or note not in NOTEN):
                     raise ValueError("Note muss 1 bis 5 sein")
+                dimension = str(daten.get("dimension", "note"))
             else:
                 note = None
+                dimension = "note"
         except (ValueError, TypeError, AttributeError):
             self._sende(400, "text/plain; charset=utf-8", b"ungueltige Eingabe")
             return
@@ -1111,13 +1189,21 @@ class HoertestHandler(BaseHTTPRequestHandler):
         try:
             with CSV_SCHREIB_LOCK:
                 zeilen = lies_csv(self._bewertung_pfad())
+                dreinoten = ist_dreinotensatz(zeilen)
+                erlaubte_dimensionen = (
+                    {"track_note", "technik_note", "gesamt_note"}
+                    if dreinoten else {"note"}
+                )
+                if pfad == "/note" and dimension not in erlaubte_dimensionen:
+                    self._sende(400, "text/plain; charset=utf-8", b"ungueltige Dimension")
+                    return
                 paar_zeilen = [z for z in zeilen if z.get("pair_id") == pair_id]
                 ziel = next((z for z in paar_zeilen if z.get("clip_id") == clip_id), None)
                 if not paar_zeilen or (clip_id and ziel is None):
                     self._sende(404, "text/plain; charset=utf-8", b"Paar oder Clip unbekannt")
                     return
                 if pfad == "/bester":
-                    if clip_id:
+                    if clip_id and not dreinoten:
                         try:
                             bestehende_note = int(ziel.get("note") or 0)
                         except (TypeError, ValueError):
@@ -1133,9 +1219,10 @@ class HoertestHandler(BaseHTTPRequestHandler):
                 else:
                     neu = merge_kandidaten_bewertung(
                         zeilen, pair_id=pair_id, clip_id=clip_id,
-                        note=note, zeit=zeit,
+                        note=note, zeit=zeit, dimension=dimension,
                     )
-                schreibe_csv(self._bewertung_pfad(), BEWERTUNG_KANDIDATEN_SPALTEN, neu)
+                spalten = BEWERTUNG_DREINOTEN_SPALTEN if dreinoten else BEWERTUNG_KANDIDATEN_SPALTEN
+                schreibe_csv(self._bewertung_pfad(), spalten, neu)
         except (OSError, csv.Error):
             self._sende(500, "text/plain; charset=utf-8", b"Speichern fehlgeschlagen")
             return
@@ -1177,10 +1264,17 @@ def main(argv=None) -> int:
         return 2
     try:
         bewertung_zeilen = lies_csv(ordner / "bewertung.csv")
+        schema = bewertungsschema(ordner / "bewertung.csv")
     except (OSError, csv.Error) as exc:
         print(f"bewertung.csv ist nicht lesbar: {exc}")
         return 2
-    if ist_kandidatensatz(bewertung_zeilen):
+    erlaubte_schemata = {
+        BEWERTUNG_SPALTEN, BEWERTUNG_KANDIDATEN_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN,
+    }
+    if schema not in erlaubte_schemata:
+        print(f"bewertung.csv hat ein unbekanntes Schema: {schema}")
+        return 2
+    if schema in {BEWERTUNG_KANDIDATEN_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN}:
         print("Kandidatenmodus erkannt (Spalte clip_id): Seite je Paar, Note + bester.")
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), HoertestHandler)

@@ -117,6 +117,10 @@ PLAN_AUDIT_SPALTEN: tuple[str, ...] = (
 # --- Kandidatenmodus (Spec 2026-08-21 Abschnitt 3) -------------------------
 # bewertung.csv je Clip eines Paars: Note 1-5 und exklusive Wahl "bester".
 BEWERTUNG_KANDIDATEN_SPALTEN: tuple[str, ...] = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+BEWERTUNG_DREINOTEN_SPALTEN: tuple[str, ...] = (
+    "pair_id", "clip_id", "track_note", "technik_note", "gesamt_note",
+    "gewaehlt", "zeit",
+)
 # merkmale.csv je Clip: die zehn Teilwerte aus pair_candidates.score_pair, der
 # Score (nie angezeigt), Schema/Provenienz/Confidence je Seite, Blende und
 # Anzeige-Kontext (bpm/genre/key — kein Score, kein Schema).
@@ -201,6 +205,7 @@ STANDARD_ANZAHL = 100
 STANDARD_MAX_VERSIONEN_PRO_PAAR = 5
 MAX_ANZAHL = SECURITY_MAX_PLAYLIST_SIZE
 KANDIDATEN_MANIFEST_VERSION = 1
+DREINOTEN_MANIFEST_VERSION = 2
 KANDIDATEN_MANIFEST_NAME = "kandidaten_manifest.json"
 ALGORITHM_BUILD_SCHEME = "sha256-path-bytes-v1"
 # Windows-Virenscanner koennen einen gerade fertig geschriebenen Staging-
@@ -1382,6 +1387,7 @@ def kandidaten_zeilen(
     energy_direction: str | None = None,
     rendered_transition_types: list[str] | None = None,
     transition_type_mode: str = "kontrolliert",
+    dreinoten_pilot: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Zeilen fuer bewertung.csv und merkmale.csv je PairCandidate (Index n ab 1).
     Teilwerte None -> leere Zelle (Fit: Zeile faellt fuer das Merkmal heraus).
@@ -1410,7 +1416,12 @@ def kandidaten_zeilen(
             )
         )
         cid = clip_id_fuer(pair_id, n)
-        bewertung.append({"pair_id": pair_id, "clip_id": cid, "note": "", "gewaehlt": "", "zeit": ""})
+        if dreinoten_pilot:
+            bewertung.append({field: "" for field in BEWERTUNG_DREINOTEN_SPALTEN} | {
+                "pair_id": pair_id, "clip_id": cid,
+            })
+        else:
+            bewertung.append({"pair_id": pair_id, "clip_id": cid, "note": "", "gewaehlt": "", "zeit": ""})
         zeile = {"pair_id": pair_id, "clip_id": cid, "clip": clip}
         for name in KANDIDATEN_TEILWERTE:
             wert = pc.teilwerte.get(name)
@@ -1623,6 +1634,7 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             continue
         finally:
             shutil.rmtree(pair_temp, ignore_errors=True)
+        dreinoten_pilot = bool(getattr(args, "dreinoten_pilot", False))
         bew, merk = kandidaten_zeilen(
             pair_id,
             pcs,
@@ -1635,6 +1647,7 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             transition_type_mode=getattr(
                 args, "transition_type_mode", "kontrolliert"
             ),
+            dreinoten_pilot=dreinoten_pilot,
         )
         bewertung_zeilen += bew
         merkmal_zeilen += merk
@@ -1663,10 +1676,24 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             "konnten vollstaendig vorbereitet werden; nichts veroeffentlicht."
         )
         return 1
-    schreibe_csv(out / "bewertung.csv", BEWERTUNG_KANDIDATEN_SPALTEN, bewertung_zeilen)
+    bewertung_spalten = (
+        BEWERTUNG_DREINOTEN_SPALTEN
+        if bool(getattr(args, "dreinoten_pilot", False))
+        else BEWERTUNG_KANDIDATEN_SPALTEN
+    )
+    schreibe_csv(out / "bewertung.csv", bewertung_spalten, bewertung_zeilen)
     schreibe_csv(out / "merkmale.csv", MERKMALE_KANDIDATEN_SPALTEN, merkmal_zeilen)
     _schreibe_json_atomar(out / "reihenfolge.json", reihenfolge)
-    (out / "LIESMICH-kandidaten.txt").write_text(LIESMICH_KANDIDATEN, encoding="utf-8")
+    liesmich = LIESMICH_KANDIDATEN
+    if bool(getattr(args, "dreinoten_pilot", False)):
+        liesmich = liesmich.replace(
+            "jeden Clip mit 1-5 benoten UND den besten\nwaehlen",
+            "jeden Clip getrennt fuer Track-Passung, Technik und Gesamtwirkung\nmit 1-5 benoten; die Gewinnerwahl ist optional",
+        ).replace(
+            "note, gewaehlt, zeit",
+            "track_note, technik_note, gesamt_note, gewaehlt, zeit",
+        )
+    (out / "LIESMICH-kandidaten.txt").write_text(liesmich, encoding="utf-8")
     _reject_pending_wal(cache)
     if _fingerprint_cache(cache) != cache_fingerprint:
         raise RuntimeError("Cache wurde waehrend der Kandidatenvorbereitung veraendert")
@@ -1675,7 +1702,11 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             "Algorithmus-/Build-Dateien wurden waehrend der Vorbereitung veraendert"
         )
     manifest = {
-        "format_version": KANDIDATEN_MANIFEST_VERSION,
+        "format_version": (
+            DREINOTEN_MANIFEST_VERSION
+            if bool(getattr(args, "dreinoten_pilot", False))
+            else KANDIDATEN_MANIFEST_VERSION
+        ),
         "app_version": APP_VERSION,
         "algorithm_build": algorithm_build,
         "hearing_test_contract": {
@@ -1702,6 +1733,8 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
         "scoring_snapshot": scoring_snapshot,
         "pairs": manifest_paare,
     }
+    if bool(getattr(args, "dreinoten_pilot", False)):
+        manifest["rating_schema"] = "three_notes_v1"
     _schreibe_json_atomar(out / KANDIDATEN_MANIFEST_NAME, manifest)
     print(f"Paare: {paare_fertig}   Clips: {len(merkmal_zeilen)}   uebersprungen: {uebersprungen}")
     print(f"Jetzt bewerten: python tools/hoertest_server.py --dir {anzeige_out} --port 8767")
@@ -2074,6 +2107,9 @@ def validiere_kandidaten_csvs(
     merkmale_zeilen: list[dict], bewertung_zeilen: list[dict]
 ) -> None:
     """Erzwingt den unverfaelschten 1:1-Vertrag des Kandidatensatzes."""
+    if not bewertung_zeilen:
+        raise ValueError("bewertung.csv ist leer")
+    dreinoten = "track_note" in bewertung_zeilen[0]
     def indexiere(zeilen: list[dict], quelle: str) -> dict[tuple[str, str], dict]:
         index: dict[tuple[str, str], dict] = {}
         clip_ids: set[str] = set()
@@ -2101,9 +2137,16 @@ def validiere_kandidaten_csvs(
 
     gewinner_je_paar: dict[str, int] = {}
     for schluessel, zeile in bew_index.items():
-        note = str(zeile.get("note", "")).strip()
-        if note and (not note.isdecimal() or not BEWERTUNG_MIN <= int(note) <= BEWERTUNG_MAX):
-            raise ValueError(f"bewertung.csv: Note fuer {schluessel[1]} muss eine Ganzzahl 1..5 sein")
+        notenfelder = (
+            ("note",) if not dreinoten
+            else ("track_note", "technik_note", "gesamt_note")
+        )
+        for notenfeld in notenfelder:
+            note = str(zeile.get(notenfeld, "")).strip()
+            if note and (not note.isdecimal() or not BEWERTUNG_MIN <= int(note) <= BEWERTUNG_MAX):
+                raise ValueError(
+                    f"bewertung.csv: {notenfeld} fuer {schluessel[1]} muss eine Ganzzahl 1..5 sein"
+                )
         gewaehlt = str(zeile.get("gewaehlt", "")).strip()
         if gewaehlt not in {"", "0", "1"}:
             raise ValueError(f"bewertung.csv: gewaehlt fuer {schluessel[1]} muss leer, 0 oder 1 sein")
@@ -2164,6 +2207,19 @@ def validiere_vollstaendige_kandidatenbewertung(
             f"bewertung.csv: Paar {pair_id} braucht exakt einen Gewinner oder "
             "explizit Keine-Beste (alle gewaehlt=0)"
         )
+
+
+def validiere_vollstaendige_dreinotenbewertung(
+    bewertung_zeilen: list[dict],
+) -> None:
+    """Der Pilot verlangt drei Noten je Clip; eine Gewinnerwahl ist optional."""
+    for zeile in bewertung_zeilen:
+        clip_id = str(zeile.get("clip_id", "")).strip()
+        for feld in ("track_note", "technik_note", "gesamt_note"):
+            if str(zeile.get(feld, "")).strip() not in {"1", "2", "3", "4", "5"}:
+                raise ValueError(
+                    f"bewertung.csv: vollstaendige {feld} 1..5 fehlt fuer {clip_id}"
+                )
 
 
 def _lade_json_strikt(path: Path, label: str) -> dict:
@@ -2372,14 +2428,20 @@ def _validiere_fit_bindung(ordner: Path, cache_arg, audit_report_arg) -> dict:
     cache = _cache_pfad(str(cache_arg))
     manifest_path = (set_dir / KANDIDATEN_MANIFEST_NAME).resolve(strict=True)
     manifest = _lade_json_strikt(manifest_path, KANDIDATEN_MANIFEST_NAME)
-    if set(manifest) != {
+    version = manifest.get("format_version")
+    erwartete_manifest_spalten = {
         "format_version", "app_version", "algorithm_build",
         "hearing_test_contract", "cache", "render_args", "scoring_snapshot",
         "pairs",
-    }:
+    }
+    if version == DREINOTEN_MANIFEST_VERSION:
+        erwartete_manifest_spalten.add("rating_schema")
+    if set(manifest) != erwartete_manifest_spalten:
         raise ValueError("kandidaten_manifest.json hat kein exaktes Schema")
-    if manifest.get("format_version") != KANDIDATEN_MANIFEST_VERSION:
+    if version not in {KANDIDATEN_MANIFEST_VERSION, DREINOTEN_MANIFEST_VERSION}:
         raise ValueError("Manifest-Version stimmt nicht")
+    if version == DREINOTEN_MANIFEST_VERSION and manifest.get("rating_schema") != "three_notes_v1":
+        raise ValueError("Manifest kennzeichnet das Dreinoten-Schema nicht korrekt")
     if manifest.get("app_version") != APP_VERSION:
         raise ValueError("Manifest-App-Version stimmt nicht")
     build = _algorithm_build_fingerprint()
@@ -2883,10 +2945,48 @@ def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
         )
         _bestaetige_fit_binding(start_binding, ordner, audit_arg)
         validiere_kandidaten_csvs(merkmale_roh, bewertung_roh)
-        validiere_vollstaendige_kandidatenbewertung(bewertung_roh)
+        dreinoten_pilot = manifest.get("rating_schema") == "three_notes_v1"
+        if dreinoten_pilot:
+            validiere_vollstaendige_dreinotenbewertung(bewertung_roh)
+        else:
+            validiere_vollstaendige_kandidatenbewertung(bewertung_roh)
     except ValueError as exc:
         print(f"Kandidatensatz ungueltig: {exc}")
         return 1
+    if dreinoten_pilot:
+        noten = {
+            feld: [int(zeile[feld]) for zeile in bewertung_roh]
+            for feld in ("track_note", "technik_note", "gesamt_note")
+        }
+        bericht = {
+            "format_version": 1,
+            "typ": "dreinoten_pilot_deskriptiv",
+            "aktiviert_candidate_preferences": False,
+            "stichprobe": {
+                "clips": len(bewertung_roh),
+                "paare": len({zeile["pair_id"] for zeile in bewertung_roh}),
+            },
+            "noten": {
+                feld: {
+                    "mittelwert": round(float(np.mean(werte)), 4),
+                    "median": float(np.median(werte)),
+                    "verteilung": {
+                        str(note): werte.count(note)
+                        for note in range(BEWERTUNG_MIN, BEWERTUNG_MAX + 1)
+                    },
+                }
+                for feld, werte in noten.items()
+            },
+            "hinweis": (
+                "Rein deskriptiver Pilot ohne Konfidenzintervall oder Modellfit; "
+                "die Zahlen erlauben keine Aktivierung von candidate_preferences."
+            ),
+        }
+        _bestaetige_fit_binding(start_binding, ordner, audit_arg)
+        ziel = ordner / "dreinoten_pilot_bericht.json"
+        _schreibe_json_atomar(ziel, bericht)
+        print(f"Dreinoten-Pilot rein deskriptiv ausgewertet; keine Aktivierung. Bericht: {ziel}")
+        return 0
     genres_je_pfad = _genre_von_pfad(
         lade_tracks_aus_cache(getattr(args, "cache", None))
     )
@@ -3041,6 +3141,11 @@ def main(argv=None) -> int:
         type=_ganzzahl_im_bereich("max-versionen-pro-paar", 1, 5),
         default=STANDARD_MAX_VERSIONEN_PRO_PAAR,
         help="Kandidatenmodus: hoechstens so viele gerankte Clips je Paar (Standard: 5)",
+    )
+    p.add_argument(
+        "--dreinoten-pilot",
+        action="store_true",
+        help="Kandidatenmodus: getrennte Track-, Technik- und Gesamtnote erfassen",
     )
     p.add_argument(
         "--transition-type-modus",
