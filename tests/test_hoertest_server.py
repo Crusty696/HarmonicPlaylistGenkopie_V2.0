@@ -4,9 +4,11 @@ Geprueft werden die reinen Teile: Pfad-Sanitizing der Clip-Auslieferung und
 das Zusammenfuehren der Noten in bewertung.csv. Kein Netzwerk, kein Audio.
 """
 import csv
+import hashlib
 import http.client
 import json
 import threading
+from dataclasses import asdict
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,16 +17,22 @@ import pytest
 
 from tools.hoertest_server import (
   BEWERTUNG_SPALTEN,
+  BEWERTUNG_DREINOTEN_SPALTEN,
+  DRAMATURGIE_BEWERTUNG_SPALTEN,
+  DRAMATURGIE_STRATEGIEN,
   HoertestHandler,
+  SEITE_DRAMATURGIE,
   SEITE_KANDIDATEN,
   _port,
   lade_track_infos,
   lade_uebersicht,
   lies_range,
   merge_bewertungen,
+  validiere_dramaturgie_satz,
   schreibe_csv,
   sichere_clip_datei,
 )
+from hpg_core.playlist import TransitionPlan
 
 
 def test_kandidaten_browser_nutzt_robuste_wahl_und_dreinoten_fertigstatus():
@@ -37,6 +45,88 @@ def test_kandidaten_browser_nutzt_robuste_wahl_und_dreinoten_fertigstatus():
   assert "zeichne();" not in note_block
   assert "reihe.dataset.dimension = feld;" in SEITE_KANDIDATEN
   assert "zaehleFuss();" in note_block
+
+
+def _dramaturgie_satz(ordner: Path) -> dict:
+  clips = ordner / "clips"
+  clips.mkdir(parents=True)
+  pool = ["a" * 64, "b" * 64]
+  pool_hash = hashlib.sha256(json.dumps(
+    pool, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+  ).encode()).hexdigest()
+  plan = asdict(TransitionPlan(
+    mix_out_a=100.0, mix_in_b=10.0, fade_out_start=100.0,
+    fade_out_end=116.0, overlap=16.0, transition_type="smooth_blend",
+  ))
+  variants = []
+  transition_rows = []
+  dramaturgie_rows = []
+  for nummer, strategie in enumerate(DRAMATURGIE_STRATEGIEN, start=1):
+    variant_id = f"v{nummer:02d}"
+    transition_id = f"{variant_id}__t001"
+    clip = clips / variant_id / f"{transition_id}.wav"
+    clip.parent.mkdir()
+    clip.write_bytes(b"RIFF-test-" + bytes([nummer]))
+    variants.append({
+      "variant_id": variant_id,
+      "canonical_strategy": strategie,
+      "variant_label": "Default",
+      "requested_parameters": {},
+      "effective_strategy_parameters": {},
+      "overridden_parameters": [],
+      "scoring_context": {},
+      "pool_hash": pool_hash,
+      "ordered_track_ids": pool,
+      "transitions": [{
+        "transition_id": transition_id, "index": 0,
+        "from_track_id": pool[0], "to_track_id": pool[1],
+        "plan": plan,
+        "clip": {
+          "path": clip.relative_to(ordner).as_posix(),
+          "sha256": hashlib.sha256(clip.read_bytes()).hexdigest(),
+          "size_bytes": clip.stat().st_size,
+        },
+      }],
+    })
+    transition_rows.append({field: "" for field in BEWERTUNG_DREINOTEN_SPALTEN} | {
+      "pair_id": transition_id, "clip_id": transition_id,
+    })
+    dramaturgie_rows.append({field: "" for field in DRAMATURGIE_BEWERTUNG_SPALTEN} | {
+      "variant_id": variant_id,
+    })
+  manifest = {
+    "format_version": 1,
+    "contract": "strategy_dramaturgy_and_transition_v1",
+    "app_version": "test",
+    "algorithm_build": {"scheme": "test", "files": 1, "sha256": "c" * 64},
+    "cache": {"version": 45, "size": 1, "sha256": "d" * 64},
+    "pool_hash": pool_hash,
+    "ordered_pool_track_ids": pool,
+    "candidate_choice_hash": "e" * 64,
+    "variants": variants,
+  }
+  (ordner / "dramaturgie_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+  schreibe_csv(ordner / "bewertung.csv", BEWERTUNG_DREINOTEN_SPALTEN, transition_rows)
+  schreibe_csv(ordner / "dramaturgie_bewertung.csv", DRAMATURGIE_BEWERTUNG_SPALTEN, dramaturgie_rows)
+  return manifest
+
+
+def test_dramaturgie_satz_bindet_manifest_clips_und_beide_bewertungen(tmp_path):
+  manifest = _dramaturgie_satz(tmp_path)
+  assert validiere_dramaturgie_satz(tmp_path) == manifest
+
+  clip = next((tmp_path / "clips").rglob("*.wav"))
+  clip.write_bytes(b"manipuliert")
+  with pytest.raises(ValueError, match="Groesse|Hash"):
+    validiere_dramaturgie_satz(tmp_path)
+
+
+def test_dramaturgie_seite_spielt_manifestreihenfolge_automatisch():
+  assert "v.transitions.forEach" in SEITE_DRAMATURGIE
+  assert "spielIndex++" in SEITE_DRAMATURGIE
+  assert "a.onended" in SEITE_DRAMATURGIE
+  assert "/dramaturgie-note" in SEITE_DRAMATURGIE
+  assert "/transition-note" in SEITE_DRAMATURGIE
 
 
 def test_dreinoten_post_aendert_genau_eine_dimension_atomar(hoertest_server):
@@ -260,6 +350,59 @@ def hoertest_server(tmp_path: Path):
     server.shutdown()
     server.server_close()
     thread.join(timeout=5)
+
+
+@pytest.fixture
+def dramaturgie_server(tmp_path: Path):
+  ordner = tmp_path / "dramaturgie"
+  ordner.mkdir()
+  manifest = _dramaturgie_satz(ordner)
+  handler = type("TestDramaturgieHandler", (HoertestHandler,), {})
+  handler.ordner = ordner
+  handler.track_infos = {}
+  handler.reihenfolge = {}
+  handler.dramaturgie_manifest = manifest
+  server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+  thread = threading.Thread(target=server.serve_forever, daemon=True)
+  thread.start()
+  try:
+    yield server, ordner, manifest
+  finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+
+
+def test_dramaturgie_server_liefert_reihenfolge_und_speichert_urteile_getrennt(
+  dramaturgie_server,
+):
+  server, ordner, manifest = dramaturgie_server
+  verbindung = http.client.HTTPConnection(*server.server_address, timeout=5)
+  verbindung.request("GET", "/daten-dramaturgie")
+  antwort = verbindung.getresponse()
+  daten = json.loads(antwort.read())
+  verbindung.close()
+  assert antwort.status == 200
+  assert [v["variant_id"] for v in daten] == [v["variant_id"] for v in manifest["variants"]]
+  assert daten[0]["transitions"][0]["transition_id"] == manifest["variants"][0]["transitions"][0]["transition_id"]
+
+  variant_id = manifest["variants"][0]["variant_id"]
+  transition_id = manifest["variants"][0]["transitions"][0]["transition_id"]
+  assert _server_post(server, "/dramaturgie-note", {
+    "variant_id": variant_id, "dimension": "energieverlauf", "note": 5,
+  }) == 200
+  assert _server_post(server, "/transition-note", {
+    "transition_id": transition_id, "dimension": "technik_note", "note": 2,
+  }) == 200
+  seq = {r["variant_id"]: r for r in csv.DictReader(
+    (ordner / "dramaturgie_bewertung.csv").open(encoding="utf-8", newline="")
+  )}
+  trans = {r["pair_id"]: r for r in csv.DictReader(
+    (ordner / "bewertung.csv").open(encoding="utf-8", newline="")
+  )}
+  assert seq[variant_id]["energieverlauf"] == "5"
+  assert trans[transition_id]["technik_note"] == "2"
+  assert trans[transition_id]["track_note"] == ""
 
 
 def test_post_unbekanntes_paar_ist_keine_falsche_erfolgsmeldung(hoertest_server):

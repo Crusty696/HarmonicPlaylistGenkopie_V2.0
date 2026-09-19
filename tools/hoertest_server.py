@@ -23,12 +23,14 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime
+import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
 import threading
+from dataclasses import fields
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -178,6 +180,26 @@ BEWERTUNG_DREINOTEN_SPALTEN = (
   "pair_id", "clip_id", "track_note", "technik_note", "gesamt_note",
   "gewaehlt", "zeit",
 )
+DRAMATURGIE_MANIFEST_NAME = "dramaturgie_manifest.json"
+DRAMATURGIE_CONTRACT = "strategy_dramaturgy_and_transition_v1"
+DRAMATURGIE_MANIFEST_VERSION = 1
+DRAMATURGIE_BEWERTUNG_SPALTEN = (
+  "variant_id", "dramaturgie_gesamt", "energieverlauf",
+  "peak_platzierung", "kohaerenz", "zeit",
+)
+DRAMATURGIE_STRATEGIEN = (
+  "Harmonic Flow", "Warm-Up", "Cool-Down", "Peak-Time",
+  "Energy Wave", "Genre Flow", "Consistent", "Context Flow",
+)
+DRAMATURGIE_VARIANT_KEYS = {
+  "variant_id", "canonical_strategy", "variant_label",
+  "requested_parameters", "effective_strategy_parameters",
+  "overridden_parameters", "scoring_context", "pool_hash",
+  "ordered_track_ids", "transitions",
+}
+DRAMATURGIE_TRANSITION_KEYS = {
+  "transition_id", "index", "from_track_id", "to_track_id", "plan", "clip",
+}
 # Felder, die /daten je Clip liefert — absichtlich ohne score, schema, Teilwerte
 # (verdeckte Bewertung). lade_uebersicht_kandidaten baut die Clip-Dicts daraus.
 KANDIDAT_ANZEIGE_FELDER = ("clip_id", "clip", "note", "gewaehlt", "crossfade_sek")
@@ -327,6 +349,218 @@ def schreibe_csv(pfad: Path, spalten, zeilen) -> None:
                 temp_pfad.unlink()
             except FileNotFoundError:
                 pass
+
+
+def _bewertungswert_gueltig(value: object) -> bool:
+    text = str(value or "").strip()
+    return text == "" or text in {"1", "2", "3", "4", "5"}
+
+
+def _sicherer_dramaturgie_clip(ordner: Path, relativer_pfad: object) -> Path:
+    if not isinstance(relativer_pfad, str):
+        raise ValueError("Clip-Pfad muss Text sein")
+    pfad = Path(relativer_pfad)
+    if (
+        pfad.is_absolute() or pfad.suffix.casefold() != ".wav"
+        or not pfad.parts or pfad.parts[0] != "clips"
+        or any(teil in {"", ".", ".."} for teil in pfad.parts)
+    ):
+        raise ValueError("Dramaturgie-Clip-Pfad ist unsicher")
+    ziel = (ordner / pfad).resolve()
+    wurzel = (ordner / "clips").resolve()
+    if wurzel not in ziel.parents:
+        raise ValueError("Dramaturgie-Clip liegt ausserhalb des Satzes")
+    return ziel
+
+
+def validiere_dramaturgie_satz(ordner: Path, *, pruefe_dateien: bool = True) -> dict:
+    """Prueft Manifest, beide CSVs und ihre Referenzen fail-closed."""
+    manifest_pfad = ordner / DRAMATURGIE_MANIFEST_NAME
+    try:
+        manifest = json.loads(manifest_pfad.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Dramaturgie-Manifest ist nicht lesbar") from exc
+    top_keys = {
+        "format_version", "contract", "app_version", "algorithm_build",
+        "cache", "pool_hash", "ordered_pool_track_ids",
+        "candidate_choice_hash", "variants",
+    }
+    if not isinstance(manifest, dict) or set(manifest) != top_keys:
+        raise ValueError("Dramaturgie-Manifest hat kein exaktes Top-Level-Schema")
+    if manifest["format_version"] != DRAMATURGIE_MANIFEST_VERSION:
+        raise ValueError("Dramaturgie-Manifestversion stimmt nicht")
+    if manifest["contract"] != DRAMATURGIE_CONTRACT:
+        raise ValueError("Dramaturgie-Vertrag stimmt nicht")
+    if not isinstance(manifest["app_version"], str) or not manifest["app_version"]:
+        raise ValueError("App-Version fehlt")
+    build = manifest["algorithm_build"]
+    cache = manifest["cache"]
+    if not isinstance(build, dict) or set(build) != {"scheme", "files", "sha256"}:
+        raise ValueError("Algorithmus-Bindung hat kein exaktes Schema")
+    if not isinstance(cache, dict) or set(cache) != {"version", "size", "sha256"}:
+        raise ValueError("Cache-Bindung hat kein exaktes Schema")
+    for digest in (build.get("sha256"), cache.get("sha256"), manifest["pool_hash"], manifest["candidate_choice_hash"]):
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError("Dramaturgie-Bindung enthaelt keinen SHA-256")
+    pool = manifest["ordered_pool_track_ids"]
+    if (
+        not isinstance(pool, list) or len(pool) < 2 or len(pool) != len(set(pool))
+        or any(not isinstance(track_id, str) or re.fullmatch(r"[0-9a-f]{64}", track_id) is None for track_id in pool)
+    ):
+        raise ValueError("Dramaturgie-Pool ist ungueltig")
+    pool_hash = hashlib.sha256(json.dumps(
+        pool, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    if pool_hash != manifest["pool_hash"]:
+        raise ValueError("Dramaturgie-Poolhash stimmt nicht")
+
+    try:
+        from hpg_core.playlist import TransitionPlan
+        plan_keys = {feld.name for feld in fields(TransitionPlan)}
+    except Exception as exc:  # noqa: BLE001 - ohne Produktionsschema kein Start
+        raise ValueError("TransitionPlan-Schema ist nicht verfuegbar") from exc
+
+    variants = manifest["variants"]
+    if not isinstance(variants, list) or not variants:
+        raise ValueError("Dramaturgie-Varianten fehlen")
+    variant_ids: list[str] = []
+    transition_ids: list[str] = []
+    clip_pfade: list[str] = []
+    strategien = set()
+    for variante in variants:
+        if not isinstance(variante, dict) or set(variante) != DRAMATURGIE_VARIANT_KEYS:
+            raise ValueError("Dramaturgie-Variante hat kein exaktes Schema")
+        variant_id = variante["variant_id"]
+        if not isinstance(variant_id, str) or not variant_id:
+            raise ValueError("Varianten-ID fehlt")
+        variant_ids.append(variant_id)
+        strategie = variante["canonical_strategy"]
+        if strategie not in DRAMATURGIE_STRATEGIEN:
+            raise ValueError("Unbekannte Dramaturgie-Strategie")
+        strategien.add(strategie)
+        if not isinstance(variante["variant_label"], str):
+            raise ValueError("Variantenlabel ist ungueltig")
+        for name in ("requested_parameters", "effective_strategy_parameters", "scoring_context"):
+            if not isinstance(variante[name], dict):
+                raise ValueError(f"{name} muss ein Objekt sein")
+        if not isinstance(variante["overridden_parameters"], list):
+            raise ValueError("overridden_parameters muss eine Liste sein")
+        if variante["pool_hash"] != manifest["pool_hash"]:
+            raise ValueError("Varianten-Poolhash weicht ab")
+        ordered = variante["ordered_track_ids"]
+        if not isinstance(ordered, list) or sorted(ordered) != sorted(pool):
+            raise ValueError("Varianten-Playlist ist keine Pool-Permutation")
+        transitions = variante["transitions"]
+        if not isinstance(transitions, list) or not transitions:
+            raise ValueError("Variante enthaelt keine Uebergaenge")
+        vorige_index = -1
+        for transition in transitions:
+            if not isinstance(transition, dict) or set(transition) != DRAMATURGIE_TRANSITION_KEYS:
+                raise ValueError("Dramaturgie-Uebergang hat kein exaktes Schema")
+            transition_id = transition["transition_id"]
+            index = transition["index"]
+            if not isinstance(transition_id, str) or not transition_id:
+                raise ValueError("Transition-ID fehlt")
+            if type(index) is not int or index <= vorige_index or not 0 <= index < len(ordered) - 1:
+                raise ValueError("Transition-Reihenfolge ist ungueltig")
+            vorige_index = index
+            if transition["from_track_id"] != ordered[index] or transition["to_track_id"] != ordered[index + 1]:
+                raise ValueError("Transition-Trackreferenz stimmt nicht")
+            if not isinstance(transition["plan"], dict) or set(transition["plan"]) != plan_keys:
+                raise ValueError("TransitionPlan-Schema stimmt nicht")
+            clip = transition["clip"]
+            if not isinstance(clip, dict) or set(clip) != {"path", "sha256", "size_bytes"}:
+                raise ValueError("Clip-Bindung hat kein exaktes Schema")
+            ziel = _sicherer_dramaturgie_clip(ordner, clip["path"])
+            if type(clip["size_bytes"]) is not int or clip["size_bytes"] <= 0:
+                raise ValueError("Clip-Groesse ist ungueltig")
+            if not isinstance(clip["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", clip["sha256"]) is None:
+                raise ValueError("Clip-Hash ist ungueltig")
+            if pruefe_dateien:
+                if not ziel.is_file() or ziel.stat().st_size != clip["size_bytes"]:
+                    raise ValueError("Dramaturgie-Clip fehlt oder hat falsche Groesse")
+                if hashlib.sha256(ziel.read_bytes()).hexdigest() != clip["sha256"]:
+                    raise ValueError("Dramaturgie-Clip-Hash stimmt nicht")
+            transition_ids.append(transition_id)
+            clip_pfade.append(clip["path"])
+    if len(variant_ids) != len(set(variant_ids)) or len(transition_ids) != len(set(transition_ids)):
+        raise ValueError("Dramaturgie-IDs sind nicht eindeutig")
+    if strategien != set(DRAMATURGIE_STRATEGIEN):
+        raise ValueError("Dramaturgie-Satz deckt nicht alle acht Strategien ab")
+
+    if bewertungsschema(ordner / "bewertung.csv") != BEWERTUNG_DREINOTEN_SPALTEN:
+        raise ValueError("Uebergangs-Bewertung hat falsches Schema")
+    transition_rows = lies_csv(ordner / "bewertung.csv")
+    if [row.get("pair_id") for row in transition_rows] != transition_ids:
+        raise ValueError("Uebergangs-Bewertung ist nicht an das Manifest gebunden")
+    if any(row.get("clip_id") != row.get("pair_id") for row in transition_rows):
+        raise ValueError("pair_id und clip_id muessen transition_id entsprechen")
+    for row in transition_rows:
+        if set(row) != set(BEWERTUNG_DREINOTEN_SPALTEN):
+            raise ValueError("Uebergangs-Bewertungszeile hat falsche Spalten")
+        if any(not _bewertungswert_gueltig(row.get(name)) for name in ("track_note", "technik_note", "gesamt_note")):
+            raise ValueError("Uebergangsnote ist ungueltig")
+        if str(row.get("gewaehlt") or "") not in {"", "0", "1"}:
+            raise ValueError("Gewinnerwert ist ungueltig")
+
+    if bewertungsschema(ordner / "dramaturgie_bewertung.csv") != DRAMATURGIE_BEWERTUNG_SPALTEN:
+        raise ValueError("Dramaturgie-Bewertung hat falsches Schema")
+    dramaturgie_rows = lies_csv(ordner / "dramaturgie_bewertung.csv")
+    if [row.get("variant_id") for row in dramaturgie_rows] != variant_ids:
+        raise ValueError("Dramaturgie-Bewertung ist nicht an das Manifest gebunden")
+    for row in dramaturgie_rows:
+        if set(row) != set(DRAMATURGIE_BEWERTUNG_SPALTEN):
+            raise ValueError("Dramaturgie-Bewertungszeile hat falsche Spalten")
+        if any(not _bewertungswert_gueltig(row.get(name)) for name in (
+            "dramaturgie_gesamt", "energieverlauf", "peak_platzierung", "kohaerenz"
+        )):
+            raise ValueError("Dramaturgienote ist ungueltig")
+
+    if pruefe_dateien:
+        vorhanden = sorted(
+            path.relative_to(ordner).as_posix()
+            for path in (ordner / "clips").rglob("*.wav")
+        )
+        if vorhanden != sorted(clip_pfade):
+            raise ValueError("Clip-Verzeichnis stimmt nicht exakt mit Manifest")
+    return manifest
+
+
+def lade_dramaturgie_daten(ordner: Path, manifest: dict) -> list[dict]:
+    transition_rows = {
+        row["pair_id"]: row for row in lies_csv(ordner / "bewertung.csv")
+    }
+    dramaturgie_rows = {
+        row["variant_id"]: row for row in lies_csv(ordner / "dramaturgie_bewertung.csv")
+    }
+    result = []
+    for variante in manifest["variants"]:
+        sequence_rating = dramaturgie_rows[variante["variant_id"]]
+        transitions = []
+        for transition in variante["transitions"]:
+            rating = transition_rows[transition["transition_id"]]
+            transitions.append({
+                "transition_id": transition["transition_id"],
+                "index": transition["index"],
+                "clip": "/" + transition["clip"]["path"],
+                "transition_type": transition["plan"].get("transition_type", ""),
+                "overlap": transition["plan"].get("overlap", ""),
+                "track_note": rating["track_note"],
+                "technik_note": rating["technik_note"],
+                "gesamt_note": rating["gesamt_note"],
+            })
+        result.append({
+            "variant_id": variante["variant_id"],
+            "strategy": variante["canonical_strategy"],
+            "label": variante["variant_label"],
+            "parameters": variante["effective_strategy_parameters"],
+            "overridden_parameters": variante["overridden_parameters"],
+            "ratings": {name: sequence_rating[name] for name in (
+                "dramaturgie_gesamt", "energieverlauf", "peak_platzierung", "kohaerenz"
+            )},
+            "transitions": transitions,
+        })
+    return result
 
 
 # ===========================================================================
@@ -939,6 +1173,34 @@ laden();
 """
 
 
+SEITE_DRAMATURGIE = """<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HPG Dramaturgie-Hörtest</title><style>
+:root{color-scheme:dark}body{font:16px system-ui;background:#0d1422;color:#edf3ff;margin:0;padding:18px;max-width:1050px}button{color:#fff;background:#1b2945;border:1px solid #40547a;border-radius:9px;padding:9px 14px;margin:3px}.aktiv{background:#146b48;border-color:#42e09a}.kopf{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.karte{border:2px solid #d6a917;border-radius:14px;padding:16px;margin:14px 0;background:#111a2c}.transition{border-top:1px solid #34425d;padding:14px 0}.transition audio{width:100%}.noten{display:grid;grid-template-columns:150px repeat(5,1fr);align-items:center;gap:4px}.parameter{font-family:ui-monospace,monospace;color:#b7c7e6;white-space:pre-wrap}.fortschritt{margin-left:auto;color:#b7c7e6}.sequenz{background:#9d6d00;border-color:#ffc928;font-weight:700}@media(max-width:650px){.noten{grid-template-columns:90px repeat(5,1fr)}button{padding:8px}.fortschritt{width:100%}}
+</style></head><body>
+<h1>HPG Hörtest — Playlist und Übergänge</h1>
+<p>Oben bewertest du die ganze Playlist-Dramaturgie. Darunter bewertest du jeden Übergang getrennt. „Sequenz abspielen“ spielt die Ausschnitte exakt in Playlist-Reihenfolge.</p>
+<div class="kopf"><button onclick="wechsel(-1)">← Variante</button><button onclick="wechsel(1)">Variante →</button><button class="sequenz" onclick="sequenzStart()">▶ Sequenz abspielen</button><span id="status" class="fortschritt"></span></div>
+<div id="inhalt"></div>
+<script>
+let varianten=[],vi=0,spielIndex=-1;
+const dimensionen=[['dramaturgie_gesamt','Dramaturgie gesamt'],['energieverlauf','Energieverlauf'],['peak_platzierung','Peak-Platzierung'],['kohaerenz','Kohärenz']];
+const transitionDims=[['track_note','Track-Passung'],['technik_note','Technik'],['gesamt_note','Gesamt']];
+function esc(x){return String(x).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function notenZeile(label,wert,fn){let s='<div>'+esc(label)+'</div>';for(let n=1;n<=5;n++)s+=`<button class="${String(wert)===String(n)?'aktiv':''}" onclick="${fn}(${n})">${n}</button>`;return s;}
+function zeichne(){const v=varianten[vi];if(!v)return;history.replaceState(null,'','?variant='+(vi+1));document.getElementById('status').textContent=`Variante ${vi+1} von ${varianten.length}`;let html=`<section class="karte"><h2>${esc(v.strategy)} — ${esc(v.label)}</h2><div class="parameter">${esc(JSON.stringify(v.parameters,null,2))}</div><h3>Ganze Playlist bewerten</h3><div class="noten">`;for(const [d,l] of dimensionen)html+=notenZeile(l,v.ratings[d],`sequenzNote.bind(null,'${d}')`);html+='</div>';
+v.transitions.forEach((t,i)=>{html+=`<div class="transition"><b>Übergang ${i+1}</b> · Playlist-Kante ${t.index+1} · ${esc(t.transition_type)} · ${esc(t.overlap)} s Blende<audio id="audio-${i}" controls preload="metadata" src="${esc(t.clip)}"></audio><div class="noten">`;for(const [d,l] of transitionDims)html+=notenZeile(l,t[d],`transitionNote.bind(null,'${esc(t.transition_id)}','${d}')`);html+='</div></div>';});html+='</section>';document.getElementById('inhalt').innerHTML=html;}
+async function sende(url,payload){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok){alert(await r.text());return false}return true;}
+async function sequenzNote(d,n){const v=varianten[vi];if(await sende('/dramaturgie-note',{variant_id:v.variant_id,dimension:d,note:n})){v.ratings[d]=String(n);zeichne();}}
+async function transitionNote(id,d,n){const v=varianten[vi],t=v.transitions.find(x=>x.transition_id===id);if(await sende('/transition-note',{transition_id:id,dimension:d,note:n})){t[d]=String(n);zeichne();}}
+function wechsel(delta){vi=Math.max(0,Math.min(varianten.length-1,vi+delta));spielIndex=-1;zeichne();}
+function sequenzStart(){spielIndex=0;spieleNaechsten();}
+function spieleNaechsten(){const v=varianten[vi];if(spielIndex<0||spielIndex>=v.transitions.length){spielIndex=-1;return}const a=document.getElementById('audio-'+spielIndex);a.onended=()=>{spielIndex++;spieleNaechsten()};a.play();}
+async function laden(){varianten=await (await fetch('/daten-dramaturgie')).json();const q=Number(new URLSearchParams(location.search).get('variant')||1);vi=Math.max(0,Math.min(varianten.length-1,q-1));zeichne();}
+document.addEventListener('keydown',e=>{if(e.key==='PageDown')wechsel(1);if(e.key==='PageUp')wechsel(-1);});laden();
+</script></body></html>"""
+
+
 class HoertestHandler(BaseHTTPRequestHandler):
     """Bedient die Routen /, /noten, /daten, /reihenfolge, /clips/<name> (GET) und
     /note, /bester (POST). Alles andere ist 404."""
@@ -946,6 +1208,7 @@ class HoertestHandler(BaseHTTPRequestHandler):
     ordner: Path = Path(".")
     track_infos: dict = {}
     reihenfolge: dict = {}
+    dramaturgie_manifest: dict | None = None
 
     server_version = "HPG-Hoertest"
 
@@ -966,6 +1229,9 @@ class HoertestHandler(BaseHTTPRequestHandler):
 
     def _kandidatenmodus(self) -> bool:
         return ist_kandidatensatz(lies_csv(self._bewertung_pfad()))
+
+    def _dramaturgiemodus(self) -> bool:
+        return self.dramaturgie_manifest is not None
 
     def _lies_json(self) -> dict | None:
         """Liest eine kleine JSON-Nutzlast oder sendet eine kontrollierte Antwort."""
@@ -994,6 +1260,12 @@ class HoertestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - Name der Basisklasse
         pfad = self.path.split("?", 1)[0]
         if pfad in ("/", "/index.html"):
+            if self._dramaturgiemodus():
+                self._sende(
+                    200, "text/html; charset=utf-8",
+                    SEITE_DRAMATURGIE.encode("utf-8"),
+                )
+                return
             try:
                 bewertung = lies_csv(self._bewertung_pfad())
                 kandidatenmodus = ist_kandidatensatz(bewertung)
@@ -1060,8 +1332,24 @@ class HoertestHandler(BaseHTTPRequestHandler):
             koerper = json.dumps(uebersicht, ensure_ascii=False).encode("utf-8")
             self._sende(200, "application/json; charset=utf-8", koerper)
             return
+        if pfad == "/daten-dramaturgie" and self._dramaturgiemodus():
+            try:
+                manifest = validiere_dramaturgie_satz(
+                    self.ordner, pruefe_dateien=False
+                )
+                uebersicht = lade_dramaturgie_daten(self.ordner, manifest)
+            except (OSError, csv.Error, ValueError):
+                self._sende(500, "text/plain; charset=utf-8", b"Dramaturgie-Satz ungueltig")
+                return
+            koerper = json.dumps(uebersicht, ensure_ascii=False).encode("utf-8")
+            self._sende(200, "application/json; charset=utf-8", koerper)
+            return
         if pfad.startswith("/clips/"):
-            self._sende_clip(pfad[len("/clips/"):])
+            name = pfad[len("/clips/"):]
+            if self._dramaturgiemodus() and "/" in name:
+                self._sende_dramaturgie_clip("clips/" + name)
+            else:
+                self._sende_clip(name)
             return
         self._sende(404, "text/plain; charset=utf-8", b"nicht gefunden")
 
@@ -1114,8 +1402,55 @@ class HoertestHandler(BaseHTTPRequestHandler):
             # Normalfall beim Spulen oder Clipwechsel — kein Fehler des Servers.
             pass
 
+    def _sende_dramaturgie_clip(self, relativer_pfad: str) -> None:
+        try:
+            manifest = self.dramaturgie_manifest or {}
+            erlaubt = {
+                transition["clip"]["path"]
+                for variante in manifest.get("variants", [])
+                for transition in variante.get("transitions", [])
+            }
+            if relativer_pfad not in erlaubt:
+                raise ValueError("Clip ist nicht im Manifest")
+            datei = _sicherer_dramaturgie_clip(self.ordner, relativer_pfad)
+        except (KeyError, TypeError, ValueError):
+            self._sende(400, "text/plain; charset=utf-8", b"unerlaubter Clip")
+            return
+        if not datei.is_file():
+            self._sende(404, "text/plain; charset=utf-8", b"Clip fehlt")
+            return
+        try:
+            groesse = datei.stat().st_size
+            start, ende = lies_range(self.headers.get("Range"), groesse)
+            laenge = ende - start + 1
+            self.send_response(206 if start or ende != groesse - 1 else 200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(laenge))
+            if start or ende != groesse - 1:
+                self.send_header("Content-Range", f"bytes {start}-{ende}/{groesse}")
+            self.end_headers()
+            with datei.open("rb") as handle:
+                handle.seek(start)
+                rest = laenge
+                while rest > 0:
+                    block = handle.read(min(BLOCK, rest))
+                    if not block:
+                        break
+                    self.wfile.write(block)
+                    rest -= len(block)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+        except OSError:
+            self._sende(500, "text/plain; charset=utf-8", b"Clip nicht lesbar")
+
     def do_POST(self) -> None:  # noqa: N802 - Name der Basisklasse
         pfad = self.path.split("?", 1)[0]
+        if self._dramaturgiemodus() and pfad in (
+            "/transition-note", "/dramaturgie-note"
+        ):
+            self._post_dramaturgie(pfad)
+            return
         try:
             kandidatenmodus = self._kandidatenmodus()
         except (OSError, csv.Error):
@@ -1157,6 +1492,71 @@ class HoertestHandler(BaseHTTPRequestHandler):
                 )
         except (OSError, csv.Error):
             self._sende(500, "text/plain; charset=utf-8", b"Speichern fehlgeschlagen")
+            return
+        self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
+
+    def _post_dramaturgie(self, pfad: str) -> None:
+        daten = self._lies_json()
+        if daten is None:
+            return
+        if set(daten) != (
+            {"transition_id", "dimension", "note"}
+            if pfad == "/transition-note"
+            else {"variant_id", "dimension", "note"}
+        ):
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Schluessel")
+            return
+        dimension = daten.get("dimension")
+        note = daten.get("note")
+        erlaubt = (
+            {"track_note", "technik_note", "gesamt_note"}
+            if pfad == "/transition-note"
+            else {"dramaturgie_gesamt", "energieverlauf", "peak_platzierung", "kohaerenz"}
+        )
+        if dimension not in erlaubt or type(note) is not int or note not in NOTEN:
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Note")
+            return
+        id_feld = "transition_id" if pfad == "/transition-note" else "variant_id"
+        ziel_id = daten.get(id_feld)
+        if not isinstance(ziel_id, str) or not ziel_id:
+            self._sende(400, "text/plain; charset=utf-8", b"ungueltige ID")
+            return
+        try:
+            with CSV_SCHREIB_LOCK:
+                manifest = validiere_dramaturgie_satz(
+                    self.ordner, pruefe_dateien=False
+                )
+                if pfad == "/transition-note":
+                    gueltige_ids = {
+                        transition["transition_id"]
+                        for variante in manifest["variants"]
+                        for transition in variante["transitions"]
+                    }
+                    datei = self.ordner / "bewertung.csv"
+                    spalten = BEWERTUNG_DREINOTEN_SPALTEN
+                    zeilen = lies_csv(datei)
+                    row_id = "pair_id"
+                else:
+                    gueltige_ids = {v["variant_id"] for v in manifest["variants"]}
+                    datei = self.ordner / "dramaturgie_bewertung.csv"
+                    spalten = DRAMATURGIE_BEWERTUNG_SPALTEN
+                    zeilen = lies_csv(datei)
+                    row_id = "variant_id"
+                if ziel_id not in gueltige_ids:
+                    self._sende(404, "text/plain; charset=utf-8", b"ID unbekannt")
+                    return
+                zeit = datetime.datetime.now().isoformat(timespec="seconds")
+                neu = []
+                for row in zeilen:
+                    kopie = dict(row)
+                    if kopie.get(row_id) == ziel_id:
+                        kopie[dimension] = str(note)
+                        kopie["zeit"] = zeit
+                    neu.append(kopie)
+                schreibe_csv(datei, spalten, neu)
+                validiere_dramaturgie_satz(self.ordner, pruefe_dateien=False)
+        except (OSError, csv.Error, ValueError):
+            self._sende(500, "text/plain; charset=utf-8", b"Speichern oder Bindung fehlgeschlagen")
             return
         self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
 
@@ -1251,8 +1651,20 @@ def main(argv=None) -> int:
         print(f"Keine bewertung.csv in {ordner} — erst `prepare` laufen lassen.")
         return 2
 
+    dramaturgie = (ordner / DRAMATURGIE_MANIFEST_NAME).is_file()
+    if dramaturgie:
+        try:
+            HoertestHandler.dramaturgie_manifest = validiere_dramaturgie_satz(
+                ordner, pruefe_dateien=True
+            )
+        except (OSError, csv.Error, ValueError) as exc:
+            print(f"Dramaturgie-Satz ist ungueltig: {exc}")
+            return 2
+    else:
+        HoertestHandler.dramaturgie_manifest = None
+
     HoertestHandler.ordner = ordner
-    HoertestHandler.track_infos = lade_track_infos(args.cache)
+    HoertestHandler.track_infos = {} if dramaturgie else lade_track_infos(args.cache)
     reihenfolge_pfad = ordner / "reihenfolge.json"
     try:
         HoertestHandler.reihenfolge = (
@@ -1275,7 +1687,10 @@ def main(argv=None) -> int:
         print(f"bewertung.csv hat ein unbekanntes Schema: {schema}")
         return 2
     if schema in {BEWERTUNG_KANDIDATEN_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN}:
-        print("Kandidatenmodus erkannt (Spalte clip_id): Seite je Paar, Note + bester.")
+        if dramaturgie:
+            print("Dramaturgiemodus erkannt: Playlist-Sequenznoten + getrennte Uebergangsnoten.")
+        else:
+            print("Kandidatenmodus erkannt (Spalte clip_id): Seite je Paar, Note + bester.")
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), HoertestHandler)
     except OSError as exc:

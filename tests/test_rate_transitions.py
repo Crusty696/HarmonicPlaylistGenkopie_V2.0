@@ -41,6 +41,7 @@ from tools.rate_transitions import (
     bootstrap_intervalle,
     datenlage_urteil,
     filtere_nach_genre,
+    filtere_track_disjunkte_reihenfolge,
     fit_logistic,
     leite_gewichte_ab,
     maximin_auswahl,
@@ -76,6 +77,26 @@ def test_maximin_deterministisch_bei_gleichem_seed():
     erste = maximin_auswahl(punkte, anzahl=10, seed=123)
     zweite = maximin_auswahl(punkte, anzahl=10, seed=123)
     assert erste == zweite
+
+
+def test_track_disjunkte_reihenfolge_verwendet_jeden_track_nur_einmal():
+    def kandidat(a, b):
+        return {
+            "track_a": SimpleNamespace(filePath=a),
+            "track_b": SimpleNamespace(filePath=b),
+        }
+
+    kandidaten = [
+        kandidat("A.wav", "B.wav"),
+        kandidat("A.wav", "C.wav"),
+        kandidat("D.wav", "E.wav"),
+        kandidat("F.wav", "F.wav"),
+        kandidat("F.wav", "G.wav"),
+    ]
+
+    assert filtere_track_disjunkte_reihenfolge(
+        kandidaten, [0, 1, 2, 3, 4], anzahl=3
+    ) == [0, 2, 4]
 
 
 def test_maximin_liefert_keine_doppelten_und_nicht_mehr_als_vorhanden():
@@ -1601,7 +1622,75 @@ def test_fit_kandidaten_all_fail_laesst_override_byteidentisch(monkeypatch, tmp_
     assert set(entwurf) == {"_diagnose"}
 
 
-def test_dreinoten_fit_schreibt_nur_deskriptiven_bericht(monkeypatch, tmp_path):
+def test_dreinoten_aggregiert_ungerichtete_wiederholungen():
+    from tools import rate_transitions as rt
+
+    def zeile(a, b, note, faktor):
+        return {
+            "tracks": (a, b), "genre": "Psytrance",
+            "track_note": note, "technik_note": note - 1, "gesamt_note": note,
+            "merkmale": {name: faktor for name in rt.KANDIDATEN_TEILWERTE},
+        }
+
+    ergebnis = rt.aggregiere_dreinoten_trackpaare([
+        zeile("A.wav", "B.wav", 5, 0.8),
+        zeile("b.WAV", "a.WAV", 3, 0.4),
+    ])
+
+    assert len(ergebnis) == 1
+    assert ergebnis[0]["wiederholungen"] == 2
+    assert ergebnis[0]["track_note"] == 4.0
+    assert ergebnis[0]["merkmale"]["harmonic"] == pytest.approx(0.6)
+
+
+def test_dreinoten_komponenten_folds_sind_track_disjunkt():
+    from tools import rate_transitions as rt
+
+    zeilen = [
+        {"tracks": ("a", "b")}, {"tracks": ("b", "c")},
+        {"tracks": ("d", "e")}, {"tracks": ("f", "g")},
+        {"tracks": ("h", "i")}, {"tracks": ("j", "k")},
+    ]
+    folds = rt.komponenten_folds(zeilen, seed=7)
+    trackmengen = [
+        {track for i in fold for track in zeilen[i]["tracks"]}
+        for fold in folds
+    ]
+
+    assert len(folds) == 5
+    assert all(not (a & b) for i, a in enumerate(trackmengen) for b in trackmengen[i + 1:])
+
+
+def test_dreinoten_gate_bleibt_bei_einem_schwachen_ziel_geschlossen(monkeypatch):
+    from tools import rate_transitions as rt
+
+    zeilen = []
+    for i in range(30):
+        zeilen.append({
+            "tracks": (f"a{i}", f"b{i}"), "genre": "Psytrance",
+            "track_note": 5 if i % 2 else 2,
+            "technik_note": 5 if i % 2 else 2,
+            "gesamt_note": 5 if i % 2 else 2,
+            "merkmale": {name: i / 30 for name in rt.KANDIDATEN_TEILWERTE},
+        })
+    aufrufe = 0
+    def messung(_zeilen, _folds, feld, _seed):
+        nonlocal aufrufe
+        aufrufe += 1
+        return {"auc": 0.8, "auc_unten_95": 0.49 if feld == "technik_note" else 0.6,
+                "mindestklasse_train": 10}
+    monkeypatch.setattr(rt, "_dreinoten_oof", messung)
+    monkeypatch.setattr(rt, "_dreinoten_gewichte", lambda *_a: pytest.fail("Gate muss vorher stoppen"))
+
+    gewichte, diagnose = rt.fit_dreinoten_genre(
+        zeilen, 1, {f"kandidaten_{n}_weight": 0.1 for n in rt.KANDIDATEN_TEILWERTE}
+    )
+    assert gewichte is None
+    assert aufrufe == 3
+    assert "technik_note" in diagnose["grund"]
+
+
+def test_dreinoten_fit_uebergibt_bestandene_gewichte_atomar(monkeypatch, tmp_path):
     from hpg_core import candidate_preferences as cp
     from tools import rate_transitions as rt
 
@@ -1616,21 +1705,24 @@ def test_dreinoten_fit_schreibt_nur_deskriptiven_bericht(monkeypatch, tmp_path):
         "rating_schema": "three_notes_v1",
     }
     monkeypatch.setattr(rt, "_validiere_fit_bindung", lambda *_args: manifest)
-    monkeypatch.setattr(
-        cp, "merge_user_preferences_atomically",
-        lambda *_args, **_kwargs: pytest.fail("Dreinoten-Pilot darf keine Preferences aktivieren"),
-    )
-    monkeypatch.setattr(
-        rt, "_fit_kandidaten_genre",
-        lambda *_args, **_kwargs: pytest.fail("Dreinoten-Pilot darf kein Modell fitten"),
-    )
+    zeilen = [{"genre": "Psytrance", "tracks": ("a", "b")}]
+    monkeypatch.setattr(rt, "lade_tracks_aus_cache", lambda _pfad: [])
+    monkeypatch.setattr(rt, "verbinde_bewertungen_kandidaten", lambda *_a, **_k: (zeilen, 0, 0))
+    monkeypatch.setattr(rt, "filtere_reine_kandidatenpaare", lambda z: (z, {}))
+    gewichte = {name: 0.1 for name in rt.KANDIDATEN_TEILWERTE}
+    monkeypatch.setattr(rt, "fit_dreinoten_genre", lambda *_a: (gewichte, {
+        "uebernommen": True, "grund": "alle Gates bestanden",
+    }))
+    gesehen = {}
+    monkeypatch.setattr(cp, "merge_user_preferences_atomically", lambda updates, diagnose=None:
+                        gesehen.update(updates=updates, diagnose=diagnose) or tmp_path / "override.json")
     assert rt.befehl_fit_kandidaten(SimpleNamespace(
         dir=tmp_path, cache="cache.db", audit_report="audit.json", seed=1,
     )) == 0
-    bericht = json.loads((tmp_path / "dreinoten_pilot_bericht.json").read_text(encoding="utf-8"))
-    assert bericht["aktiviert_candidate_preferences"] is False
-    assert bericht["stichprobe"] == {"clips": 1, "paare": 1}
-    assert not (tmp_path / "candidate_preferences_entwurf.json").exists()
+    bericht = json.loads((tmp_path / "dreinoten_fit_bericht.json").read_text(encoding="utf-8"))
+    assert bericht["aktiviert_candidate_preferences"] is True
+    assert set(gesehen["updates"]) == {"Psytrance"}
+    assert gesehen["updates"]["Psytrance"]["kandidaten_harmonic_weight"] == 0.1
 
 
 def test_prepare_kandidaten_ruft_das_zentrale_ranking(monkeypatch, tmp_path):
@@ -3273,3 +3365,279 @@ def test_atomare_json_schreibgrenze_verwirft_nan_ohne_rest(tmp_path):
         rate_transitions._schreibe_json_atomar(ziel, {"wert": float("nan")})
     assert not ziel.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# Dramaturgiemodus
+# ---------------------------------------------------------------------------
+
+def test_dramaturgie_matrix_ist_exakt_aus_strategies_und_parameteralternativen():
+    rt = rate_transitions
+    varianten = rt.dramaturgie_varianten()
+    gruppen = {
+        strategie: [v for v in varianten if v["canonical_strategy"] == strategie]
+        for strategie in rt.STRATEGIES
+    }
+
+    assert list(gruppen) == list(rt.STRATEGIES)
+    assert len(varianten) == 35
+    assert {strategie: len(gruppe) for strategie, gruppe in gruppen.items()} == {
+        "Harmonic Flow": 4,
+        "Warm-Up": 1,
+        "Cool-Down": 1,
+        "Peak-Time": 6,
+        "Energy Wave": 1,
+        "Genre Flow": 4,
+        "Consistent": 4,
+        "Context Flow": 14,
+    }
+    assert len({v["variant_id"] for v in varianten}) == len(varianten)
+
+    erwartete_werte = {
+        "energy_direction": {"Auto", "Build Up", "Cool Down", "Maintain"},
+        "peak_position": {40, 70, 80},
+        "harmonic_strictness": {2, 7, 10},
+        "allow_experimental": {True, False},
+        "genre_mixing": {True, False},
+        "genre_weight": {0.0, 0.3, 1.0},
+        "target_energy": {None, 35, 70},
+    }
+    for strategie, gruppe in gruppen.items():
+        defaults = [v for v in gruppe if v["variant_label"] == "Default"]
+        assert len(defaults) == 1
+        default = defaults[0]["requested_parameters"]
+        assert set(default) == rt.SUPPORTED_STRATEGY_PARAMETERS[strategie]
+        for parameter in rt.SUPPORTED_STRATEGY_PARAMETERS[strategie]:
+            assert {v["requested_parameters"][parameter] for v in gruppe} == erwartete_werte[parameter]
+        for variante in gruppe:
+            assert set(variante["effective_strategy_parameters"]) == set(default)
+            unterschiede = {
+                key for key in default
+                if variante["requested_parameters"][key] != default[key]
+            }
+            assert len(unterschiede) <= 1
+
+    context = gruppen["Context Flow"]
+    fest = [v for v in context if v["requested_parameters"]["target_energy"] is not None]
+    assert len(fest) == 2
+    assert all(v["overridden_parameters"] == ["energy_direction", "peak_position"] for v in fest)
+    assert all(v["requested_parameters"]["energy_direction"] == "Auto" for v in fest)
+    assert all(v["requested_parameters"]["peak_position"] == 70 for v in fest)
+    assert all(
+        v["overridden_parameters"] == []
+        for v in context if v not in fest
+    )
+
+
+def test_dramaturgie_uebergangsauswahl_deckt_anfang_mitte_peak_und_ende():
+    tracks = tuple(
+        SimpleNamespace(energy=100.0 if index == 8 else float(index))
+        for index in range(12)
+    )
+    indizes = rate_transitions._dramaturgie_uebergangsindizes(tracks, 5)
+    assert len(indizes) == len(set(indizes)) == 5
+    assert {0, 5, 8, 10} <= set(indizes)
+    assert indizes == sorted(indizes)
+
+
+def test_dramaturgie_uebergangsauswahl_nimmt_naechste_renderbare_plaene():
+    tracks = tuple(
+        SimpleNamespace(energy=100.0 if index == 8 else float(index))
+        for index in range(12)
+    )
+    recommendations = tuple(
+        SimpleNamespace(index=index, plan=object() if index in {1, 4, 7, 9, 10} else None)
+        for index in range(11)
+    )
+    assert rate_transitions._dramaturgie_uebergangsindizes(
+        tracks, 4, recommendations
+    ) == [1, 4, 7, 10]
+
+
+def test_dramaturgie_versuchsreihenfolge_wechselt_zwischen_vier_phasen():
+    tracks = tuple(
+        SimpleNamespace(energy=100.0 if index == 8 else float(index))
+        for index in range(12)
+    )
+    recommendations = tuple(
+        SimpleNamespace(index=index, plan=object()) for index in range(11)
+    )
+    reihenfolge = rate_transitions._dramaturgie_versuchsindizes(
+        tracks, recommendations
+    )
+    assert reihenfolge[:4] == [0, 5, 8, 10]
+    assert sorted(reihenfolge) == list(range(11))
+
+
+def _dramaturgie_mocklauf(monkeypatch, tmp_path):
+    rt = rate_transitions
+    cache = tmp_path / "cache.db"
+    cache.write_bytes(b"dramaturgie-cache")
+    tracks = [
+        SimpleNamespace(
+            filePath=str(tmp_path / f"track-{index:02d}.wav"),
+            energy=float(index * 7 % 100),
+        )
+        for index in reversed(range(12))
+    ]
+    monkeypatch.setattr(rt, "lade_tracks_aus_cache", lambda _cache: tracks)
+    build = {"scheme": rt.ALGORITHM_BUILD_SCHEME, "files": 2, "sha256": "a" * 64}
+    monkeypatch.setattr(rt, "_algorithm_build_fingerprint", lambda: build)
+
+    kontext_aufrufe = []
+    generate_aufrufe = []
+    snapshot_ids = []
+    pool_objekt_ids = []
+
+    def resolve(strategie, params):
+        context = {"strategie": strategie, "params": params}
+        kontext_aufrufe.append(json.loads(json.dumps(context)))
+        return context
+
+    def generate(pool, strategie, *, bpm_tolerance, advanced_params,
+                 scoring_context, candidate_choice_snapshot):
+        assert bpm_tolerance == 2.0
+        assert candidate_choice_snapshot == {}
+        snapshot_ids.append(id(candidate_choice_snapshot))
+        pool_objekt_ids.append(tuple(id(track) for track in pool))
+        generate_aufrufe.append((strategie, advanced_params, scoring_context))
+        result_tracks = tuple(pool)
+        occurrences = tuple(
+            SimpleNamespace(occurrence_id=(strategie, index))
+            for index in range(len(result_tracks))
+        )
+        recommendations = tuple(
+            SimpleNamespace(
+                index=index,
+                from_occurrence_id=occurrences[index].occurrence_id,
+                to_occurrence_id=occurrences[index + 1].occurrence_id,
+                plan=TransitionPlan(
+                    mix_out_a=100.0 + index,
+                    mix_in_b=20.0 + index,
+                    fade_out_start=100.0 + index,
+                    fade_out_end=116.0 + index,
+                    overlap=16.0,
+                    transition_type="smooth_blend",
+                ),
+            )
+            for index in range(len(result_tracks) - 1)
+        )
+        return SimpleNamespace(
+            tracks=result_tracks,
+            occurrences=occurrences,
+            recommendations=recommendations,
+            scoring_context_dict=lambda: json.loads(json.dumps(scoring_context)),
+            candidate_choice_snapshot_dict=lambda: {},
+        )
+
+    monkeypatch.setattr(rt, "resolve_run_scoring_context", resolve)
+    monkeypatch.setattr(rt, "generate_playlist_result", generate)
+    from_plan_aufrufe = []
+
+    def from_plan(plan, a, b):
+        spec = SimpleNamespace(plan=plan, a=a, b=b)
+        from_plan_aufrufe.append(spec)
+        return spec
+
+    monkeypatch.setattr(rt.TransitionClipSpec, "from_plan", from_plan)
+    render_specs = []
+
+    def render(spec, ziel):
+        render_specs.append(spec)
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        ziel.write_bytes(f"clip-{len(render_specs)}".encode())
+
+    monkeypatch.setattr(rt, "_rendere_atomar", render)
+    args = SimpleNamespace(
+        out=tmp_path / "satz",
+        cache=str(cache),
+        sequenz_tracks=12,
+        uebergaenge_pro_variante=5,
+        bpm_toleranz=2.0,
+    )
+    beobachtung = SimpleNamespace(
+        kontext_aufrufe=kontext_aufrufe,
+        generate_aufrufe=generate_aufrufe,
+        snapshot_ids=snapshot_ids,
+        pool_objekt_ids=pool_objekt_ids,
+        from_plan_aufrufe=from_plan_aufrufe,
+        render_specs=render_specs,
+    )
+    return rt, args, beobachtung
+
+
+def test_prepare_dramaturgie_bindet_snapshot_context_plan_manifest_und_csv(
+    monkeypatch, tmp_path,
+):
+    rt, args, gesehen = _dramaturgie_mocklauf(monkeypatch, tmp_path)
+    assert rt.befehl_prepare_dramaturgie(args) == 0
+
+    varianten = rt.dramaturgie_varianten()
+    assert len(gesehen.generate_aufrufe) == len(varianten)
+    assert len(set(gesehen.snapshot_ids)) == len(varianten)
+    assert len({ids for ids in gesehen.pool_objekt_ids}) == len(varianten)
+    assert all(
+        aufruf[1] == variante["effective_strategy_parameters"]
+        for aufruf, variante in zip(gesehen.generate_aufrufe, varianten)
+    )
+    assert [aufruf[2] for aufruf in gesehen.generate_aufrufe] == gesehen.kontext_aufrufe
+    assert gesehen.render_specs == gesehen.from_plan_aufrufe
+    assert len(gesehen.render_specs) == len(varianten) * 5
+
+    manifest = json.loads(
+        (args.out / rt.DRAMATURGIE_MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    assert set(manifest) == {
+        "format_version", "contract", "app_version", "algorithm_build",
+        "cache", "pool_hash", "ordered_pool_track_ids",
+        "candidate_choice_hash", "variants",
+    }
+    assert manifest["format_version"] == 1
+    assert manifest["contract"] == "strategy_dramaturgy_and_transition_v1"
+    assert manifest["candidate_choice_hash"] == rt._kanonischer_json_hash({})
+    assert len(manifest["ordered_pool_track_ids"]) == 12
+    assert all(v["pool_hash"] == manifest["pool_hash"] for v in manifest["variants"])
+    assert all(len(v["transitions"]) == 5 for v in manifest["variants"])
+    for variante in manifest["variants"]:
+        assert set(variante) == {
+            "variant_id", "canonical_strategy", "variant_label",
+            "requested_parameters", "effective_strategy_parameters",
+            "overridden_parameters", "scoring_context", "pool_hash",
+            "ordered_track_ids", "transitions",
+        }
+        for transition in variante["transitions"]:
+            assert set(transition) == {
+                "transition_id", "index", "from_track_id", "to_track_id", "plan", "clip"
+            }
+            assert set(transition["plan"]) == {field.name for field in __import__("dataclasses").fields(TransitionPlan)}
+            assert set(transition["clip"]) == {"path", "sha256", "size_bytes"}
+            clip = args.out / transition["clip"]["path"]
+            assert transition["clip"]["sha256"] == hashlib.sha256(clip.read_bytes()).hexdigest()
+            assert transition["clip"]["size_bytes"] == clip.stat().st_size
+
+    with (args.out / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+        bewertung = list(csv.DictReader(handle))
+        assert tuple(bewertung[0]) == rt.BEWERTUNG_DREINOTEN_SPALTEN
+    transitions = [t for v in manifest["variants"] for t in v["transitions"]]
+    assert [row["pair_id"] for row in bewertung] == [t["transition_id"] for t in transitions]
+    with (args.out / "dramaturgie_bewertung.csv").open(encoding="utf-8", newline="") as handle:
+        dramaturgie = list(csv.DictReader(handle))
+        assert tuple(dramaturgie[0]) == rt.DRAMATURGIE_BEWERTUNG_SPALTEN
+    assert [row["variant_id"] for row in dramaturgie] == [v["variant_id"] for v in manifest["variants"]]
+    readme = (args.out / "README.md").read_text(encoding="utf-8")
+    assert "strikt in ihrer angegebenen Reihenfolge" in readme
+    assert "Autoplay" in readme
+    assert "veraendern keine Strategie-Defaults" in readme
+
+
+def test_prepare_dramaturgie_finale_pruefung_bleibt_fail_closed(monkeypatch, tmp_path):
+    rt, args, _gesehen = _dramaturgie_mocklauf(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        rt,
+        "_validiere_dramaturgie_satz",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("Bindung kaputt")),
+    )
+    with pytest.raises(ValueError, match="Bindung kaputt"):
+        rt.befehl_prepare_dramaturgie(args)
+    assert not args.out.exists()
+    assert list(tmp_path.glob(".satz.staging-*")) == []

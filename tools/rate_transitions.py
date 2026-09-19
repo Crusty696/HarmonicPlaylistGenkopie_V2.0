@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import argparse
 from bisect import bisect_left, bisect_right
+from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 import csv
-from dataclasses import replace
+from dataclasses import fields, replace
 import hashlib
 import io
 import json
@@ -85,13 +86,19 @@ from hpg_core.pair_candidates import (
     FAKTOREN as KANDIDATEN_TEILWERTE, PairCandidate, rank_pair_candidates,
 )
 from hpg_core.playlist import (
+    STRATEGIES,
+    SUPPORTED_STRATEGY_PARAMETERS,
+    StrategyConfig,
+    TransitionPlan,
     compute_transition_recommendations,
+    generate_playlist_result,
     predict_transition_type,
+    resolve_run_scoring_context,
     transition_type_for_candidate,
     transition_metrics_from_candidate,
 )
 from hpg_core.transition_renderer import (
-    KICK_SYNC_MAX_ERROR_SECONDS,
+    BeatSyncError, KICK_SYNC_MAX_ERROR_SECONDS,
     SUPPORTED_TRANSITION_TYPES,
     TransitionClipSpec,
     render_transition_clip,
@@ -207,6 +214,17 @@ MAX_ANZAHL = SECURITY_MAX_PLAYLIST_SIZE
 KANDIDATEN_MANIFEST_VERSION = 1
 DREINOTEN_MANIFEST_VERSION = 2
 KANDIDATEN_MANIFEST_NAME = "kandidaten_manifest.json"
+DRAMATURGIE_MANIFEST_VERSION = 1
+DRAMATURGIE_MANIFEST_NAME = "dramaturgie_manifest.json"
+DRAMATURGIE_CONTRACT = "strategy_dramaturgy_and_transition_v1"
+STANDARD_SEQUENZ_TRACKS = 16
+STANDARD_UEBERGAENGE_PRO_VARIANTE = 5
+MIN_SEQUENZ_TRACKS = 12
+MIN_DRAMATURGIE_UEBERGAENGE = 4
+DRAMATURGIE_BEWERTUNG_SPALTEN: tuple[str, ...] = (
+    "variant_id", "dramaturgie_gesamt", "energieverlauf",
+    "peak_platzierung", "kohaerenz", "zeit",
+)
 ALGORITHM_BUILD_SCHEME = "sha256-path-bytes-v1"
 # Windows-Virenscanner koennen einen gerade fertig geschriebenen Staging-
 # Ordner fuer wenige Millisekunden blockieren. Genau dieser eine Fehler darf
@@ -291,6 +309,30 @@ def maximin_auswahl(
             min_abstand, np.linalg.norm(punkte - punkte[naechster], axis=1)
         )
         min_abstand[naechster] = -1.0
+    return gewaehlt
+
+
+def track_pfad_schluessel(track: Track) -> str:
+    """Vergleichsschluessel fuer die Einmal-pro-Durchgang-Regel."""
+    return os.path.normcase(os.path.abspath(str(track.filePath)))
+
+
+def filtere_track_disjunkte_reihenfolge(
+    kandidaten: list[dict], reihenfolge: list[int], anzahl: int
+) -> list[int]:
+    """Waehlt hoechstens ``anzahl`` Paare, ohne einen Track zu wiederholen."""
+    gewaehlt: list[int] = []
+    verwendete_tracks: set[str] = set()
+    for index in reihenfolge:
+        kandidat = kandidaten[index]
+        a = track_pfad_schluessel(kandidat["track_a"])
+        b = track_pfad_schluessel(kandidat["track_b"])
+        if a == b or a in verwendete_tracks or b in verwendete_tracks:
+            continue
+        gewaehlt.append(index)
+        verwendete_tracks.update((a, b))
+        if len(gewaehlt) >= anzahl:
+            break
     return gewaehlt
 
 
@@ -991,6 +1033,7 @@ def sammle_kandidaten(
     tracks: list[Track], bpm_toleranz: float = STANDARD_BPM_TOLERANZ,
     energy_direction: str | None = None,
     *, scoring_snapshot: dict | None = None,
+    a_indizes=None,
 ) -> list[dict]:
     """Bildet Kandidatenpaare, die die App mit allen Regeln als mixbar ansieht.
 
@@ -1012,7 +1055,10 @@ def sammle_kandidaten(
     )
     bpm_werte = [bpm for bpm, _index in bpm_index]
 
-    for a_index, a in enumerate(tracks):
+    if a_indizes is None:
+        a_indizes = range(len(tracks))
+    for a_index in a_indizes:
+        a = tracks[a_index]
         a_bpm = normalisierte_bpm[a_index]
         if a_bpm is None:
             continue
@@ -1082,6 +1128,90 @@ def sammle_kandidaten(
                 }
             )
     return kandidaten
+
+
+def _sammle_kandidaten_chunk(auftrag) -> list[dict]:
+    tracks, indizes, bpm_toleranz, energy_direction, scoring_snapshot = auftrag
+    return sammle_kandidaten(
+        tracks,
+        bpm_toleranz,
+        energy_direction,
+        scoring_snapshot=scoring_snapshot,
+        a_indizes=indizes,
+    )
+
+
+def sammle_kandidaten_parallel(
+    tracks: list[Track], bpm_toleranz: float, energy_direction: str | None,
+    *, scoring_snapshot: dict, workers: int,
+) -> list[dict]:
+    """Teilt nur die unabhaengigen A-Tracks auf hoechstens vier Prozesse."""
+    workers = max(1, min(4, int(workers), len(tracks)))
+    if workers == 1:
+        return sammle_kandidaten(
+            tracks, bpm_toleranz, energy_direction,
+            scoring_snapshot=scoring_snapshot,
+        )
+    chunks = [list(range(i, len(tracks), workers)) for i in range(workers)]
+    auftraege = [
+        (tracks, chunk, bpm_toleranz, energy_direction, scoring_snapshot)
+        for chunk in chunks if chunk
+    ]
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        teile = list(pool.map(_sammle_kandidaten_chunk, auftraege))
+    return [kandidat for teil in teile for kandidat in teil]
+
+
+def _paar_schluessel(a: Track, b: Track) -> tuple[str, str]:
+    return tuple(sorted((track_pfad_schluessel(a), track_pfad_schluessel(b))))
+
+
+def wende_auswahlprofil_an(kandidaten: list[dict], profil_pfad: Path) -> tuple[list[dict], int]:
+    """Nutzt alte Noten nur fuer die Auswahl; App-Gewichte bleiben unberuehrt."""
+    profil = json.loads(profil_pfad.read_text(encoding="utf-8"))
+    if profil.get("purpose") != "selection_only" or profil.get("product_weights_changed") is not False:
+        raise ValueError("Auswahlprofil ist nicht als rein auswahlbezogen gekennzeichnet")
+    merkmale = list(profil["features"])
+    mittel = profil["feature_mean"]
+    streuung_profil = profil["feature_std"]
+    modelle = profil["models"]
+    ausgeschlossene = {
+        tuple(sorted(map(str, paar))) for paar in profil["excluded_undirected_pairs"]
+    }
+    alte_tracks = set(map(str, profil["historical_track_counts"]))
+
+    gefiltert: list[dict] = []
+    for kandidat in kandidaten:
+        if _paar_schluessel(kandidat["track_a"], kandidat["track_b"]) in ausgeschlossene:
+            continue
+        z = {
+            name: (float(kandidat["merkmale"][name]) - float(mittel[name]))
+            / max(float(streuung_profil[name]), 1e-9)
+            for name in merkmale
+        }
+        vorhersagen = {}
+        for ziel, modell in modelle.items():
+            vorhersagen[ziel] = float(modell["intercept"]) + sum(
+                float(modell["coefficients"][name]) * z[name] for name in merkmale
+            )
+        kandidat = dict(kandidat)
+        kandidat["historische_prognose"] = (
+            0.25 * vorhersagen["track_note"]
+            + 0.35 * vorhersagen["technik_note"]
+            + 0.40 * vorhersagen["gesamt_note"]
+        )
+        kandidat["historische_tracks"] = sum(
+            track_pfad_schluessel(track) in alte_tracks
+            for track in (kandidat["track_a"], kandidat["track_b"])
+        )
+        gefiltert.append(kandidat)
+    if not gefiltert:
+        raise ValueError("Auswahlprofil schliesst alle Kandidaten aus")
+    bester = max(
+        range(len(gefiltert)),
+        key=lambda i: (-gefiltert[i]["historische_tracks"], gefiltert[i]["historische_prognose"]),
+    )
+    return gefiltert, bester
 
 
 def filtere_nach_genre(kandidaten: list[dict], genre: str) -> list[dict]:
@@ -1363,6 +1493,582 @@ def _prepare_atomar(args: argparse.Namespace, funktion) -> int:
 
 
 # ===========================================================================
+# Dramaturgiemodus: Produktionsstrategien als ganze Playlistsequenzen
+# ===========================================================================
+
+_DRAMATURGIE_PARAMETERWERTE = {
+    "energy_direction": ("Auto", "Build Up", "Cool Down", "Maintain"),
+    "peak_position": (70, 40, 80),
+    "harmonic_strictness": (7, 2, 10),
+    "allow_experimental": (True, False),
+    "genre_mixing": (True, False),
+    "genre_weight": (0.3, 0.0, 1.0),
+    "target_energy": (None, 35, 70),
+}
+_DRAMATURGIE_PARAMETERREIHENFOLGE = tuple(_DRAMATURGIE_PARAMETERWERTE)
+
+
+def _dramaturgie_slug(value: object) -> str:
+    text = str(value).strip().casefold()
+    result = "-".join("".join(
+        char if char.isalnum() else " " for char in text
+    ).split())
+    if not result:
+        raise ValueError("Dramaturgie-ID kann nicht leer sein")
+    return result
+
+
+def _dramaturgie_werttext(value: object) -> str:
+    if value is None:
+        return "auto"
+    if type(value) is bool:
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return format(value, "g")
+    return str(value)
+
+
+def dramaturgie_varianten() -> list[dict]:
+    """Baut genau eine kontrollierte Matrix aus dem Produktionsregister."""
+    unbekannt = set().union(*SUPPORTED_STRATEGY_PARAMETERS.values()) - set(
+        _DRAMATURGIE_PARAMETERWERTE
+    )
+    if unbekannt:
+        raise ValueError(
+            "Dramaturgiematrix kennt Strategieparameter nicht: "
+            + ", ".join(sorted(unbekannt))
+        )
+
+    varianten: list[dict] = []
+    for strategie in STRATEGIES:
+        unterstuetzt = SUPPORTED_STRATEGY_PARAMETERS.get(strategie)
+        if unterstuetzt is None:
+            raise ValueError(f"Strategie ohne Parametervertrag: {strategie!r}")
+        basis = StrategyConfig.from_mapping(None).effective_kwargs(strategie)
+        strategie_slug = _dramaturgie_slug(strategie)
+
+        def hinzufuegen(label: str, requested: dict, parameter: str | None = None):
+            config = StrategyConfig.from_mapping(requested)
+            effective = config.effective_kwargs(strategie)
+            if set(effective) != set(unterstuetzt):
+                raise ValueError(
+                    f"Dramaturgieparameter fuer {strategie!r} decken den Vertrag nicht exakt"
+                )
+            suffix = "default" if parameter is None else (
+                f"{_dramaturgie_slug(parameter)}-{_dramaturgie_slug(_dramaturgie_werttext(requested[parameter]))}"
+            )
+            overridden = (
+                ["energy_direction", "peak_position"]
+                if strategie == "Context Flow"
+                and requested.get("target_energy") is not None
+                else []
+            )
+            varianten.append({
+                "variant_id": f"{strategie_slug}__{suffix}",
+                "canonical_strategy": strategie,
+                "variant_label": label,
+                "requested_parameters": _json_roundtrip_strikt(requested),
+                "effective_strategy_parameters": _json_roundtrip_strikt(effective),
+                "overridden_parameters": overridden,
+            })
+
+        hinzufuegen("Default", dict(basis))
+        for parameter in _DRAMATURGIE_PARAMETERREIHENFOLGE:
+            if parameter not in unterstuetzt:
+                continue
+            for wert in _DRAMATURGIE_PARAMETERWERTE[parameter][1:]:
+                requested = dict(basis)
+                requested[parameter] = wert
+                hinzufuegen(
+                    f"{parameter} = {_dramaturgie_werttext(wert)}",
+                    requested,
+                    parameter,
+                )
+
+    ids = [variante["variant_id"] for variante in varianten]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Dramaturgiematrix enthaelt doppelte Varianten-IDs")
+    if {variante["canonical_strategy"] for variante in varianten} != set(STRATEGIES):
+        raise ValueError("Dramaturgiematrix deckt STRATEGIES nicht exakt ab")
+    return varianten
+
+
+def _kanonischer_json_hash(value: object) -> str:
+    payload = json.dumps(
+        _json_plain(value),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _dramaturgie_pool(
+    tracks: list[Track], anzahl: int, bpm_tolerance: float = 2.0
+) -> tuple[list[Track], list[str], str]:
+    if len(tracks) < anzahl:
+        raise ValueError(
+            f"Dramaturgiemodus braucht {anzahl} Tracks; Cache enthaelt nur {len(tracks)}"
+        )
+    sortiert = sorted(tracks, key=lambda track: _windows_pfadschluessel(track.filePath))
+    schluessel = [_windows_pfadschluessel(track.filePath) for track in sortiert]
+    if len(schluessel) != len(set(schluessel)):
+        raise ValueError("Dramaturgiepool enthaelt doppelte normalisierte Trackpfade")
+    bpm_brauchbar = [
+        track for track in sortiert
+        if math.isfinite(float(getattr(track, "bpm", 0.0) or 0.0))
+        and float(getattr(track, "bpm", 0.0) or 0.0) > 0.0
+        and (not hasattr(track, "mix_in_candidates") or bool(track.mix_in_candidates))
+        and (not hasattr(track, "mix_out_candidates") or bool(track.mix_out_candidates))
+    ]
+    phasen_brauchbar = [
+        track for track in bpm_brauchbar
+        if float(getattr(track, "downbeat_confidence", 0.0) or 0.0)
+        >= DOWNBEAT_RELIABLE_MIN
+    ]
+    if len(phasen_brauchbar) >= anzahl:
+        bpm_brauchbar = phasen_brauchbar
+    if len(bpm_brauchbar) >= anzahl:
+        fenster = []
+        for start in sorted({float(track.bpm) for track in bpm_brauchbar}):
+            subset = [
+                track for track in bpm_brauchbar
+                if start <= float(track.bpm) <= start + float(bpm_tolerance)
+            ]
+            if len(subset) >= anzahl:
+                genre_anzahl = len({loese_genre_auf(track) for track in subset})
+                fenster.append((genre_anzahl, len(subset), -start, subset))
+        if fenster:
+            sortiert = max(fenster, key=lambda item: item[:3])[3]
+
+    gruppen: dict[str, list[Track]] = {}
+    for track in sortiert:
+        gruppen.setdefault(loese_genre_auf(track), []).append(track)
+
+    def gestreut(gruppe: list[Track], count: int) -> list[Track]:
+        geordnet = sorted(gruppe, key=lambda track: (
+            float(getattr(track, "energy", 0.0) or 0.0),
+            float(getattr(track, "bpm", 0.0) or 0.0),
+            _windows_pfadschluessel(track.filePath),
+        ))
+        if count >= len(geordnet):
+            return geordnet
+        if count == 1:
+            return [geordnet[len(geordnet) // 2]]
+        indizes = [round(i * (len(geordnet) - 1) / (count - 1)) for i in range(count)]
+        return [geordnet[index] for index in indizes]
+
+    hauptgenre = max(gruppen, key=lambda genre: (len(gruppen[genre]), genre))
+    nebengenres = sorted(
+        (genre for genre in gruppen if genre != hauptgenre),
+        key=lambda genre: (-len(gruppen[genre]), genre),
+    )
+    neben_slots = min(len(nebengenres), max(0, anzahl // 4))
+    gewaehlt = [gestreut(gruppen[genre], 1)[0] for genre in nebengenres[:neben_slots]]
+    gewaehlt.extend(gestreut(gruppen[hauptgenre], anzahl - len(gewaehlt)))
+    if len(gewaehlt) < anzahl:
+        verwendet = {_windows_pfadschluessel(track.filePath) for track in gewaehlt}
+        rest = [track for track in sortiert if _windows_pfadschluessel(track.filePath) not in verwendet]
+        gewaehlt.extend(gestreut(rest, anzahl - len(gewaehlt)))
+    pool = sorted(gewaehlt, key=lambda track: _windows_pfadschluessel(track.filePath))
+    pool_schluessel = [_windows_pfadschluessel(track.filePath) for track in pool]
+    track_ids = [hashlib.sha256(key.encode("utf-8")).hexdigest() for key in pool_schluessel]
+    return pool, track_ids, _kanonischer_json_hash(track_ids)
+
+
+def _dramaturgie_uebergangsindizes(
+    tracks: tuple[Track, ...],
+    anzahl: int,
+    recommendations: tuple[object, ...] | None = None,
+) -> list[int]:
+    verfuegbar = len(tracks) - 1
+    if anzahl > verfuegbar:
+        raise ValueError(
+            f"{anzahl} Uebergaenge verlangt, aber Playlist hat nur {verfuegbar}"
+        )
+    if anzahl < MIN_DRAMATURGIE_UEBERGAENGE:
+        raise ValueError(
+            f"Dramaturgiemodus braucht mindestens {MIN_DRAMATURGIE_UEBERGAENGE} Uebergaenge"
+        )
+    if recommendations is None:
+        renderbar = list(range(verfuegbar))
+    else:
+        if len(recommendations) != verfuegbar:
+            raise ValueError("Recommendation-Anzahl passt nicht zur Playlist")
+        renderbar = [
+            index for index, recommendation in enumerate(recommendations)
+            if getattr(recommendation, "index", None) == index
+            and getattr(recommendation, "plan", None) is not None
+        ]
+    if len(renderbar) < anzahl:
+        raise ValueError(
+            f"Nur {len(renderbar)} renderbare Uebergaenge fuer {anzahl} Hoerproben"
+        )
+
+    peak_track = max(
+        range(len(tracks)),
+        key=lambda index: (float(getattr(tracks[index], "energy", 0.0) or 0.0), -index),
+    )
+    peak_transition = min(max(peak_track, 0), verfuegbar - 1)
+    anker = (0, (verfuegbar - 1) // 2, peak_transition, verfuegbar - 1)
+    gewaehlt: set[int] = set()
+    for ziel in anker:
+        frei = [index for index in renderbar if index not in gewaehlt]
+        if not frei:
+            break
+        gewaehlt.add(min(frei, key=lambda index: (abs(index - ziel), index)))
+    while len(gewaehlt) < anzahl:
+        frei = [index for index in renderbar if index not in gewaehlt]
+        gewaehlt.add(max(
+            frei,
+            key=lambda index: (min(abs(index - alt) for alt in gewaehlt), -index),
+        ))
+    if len(gewaehlt) != anzahl:
+        raise ValueError("Dramaturgie-Uebergangsauswahl konnte Sollzahl nicht bilden")
+    return sorted(gewaehlt)
+
+
+def _dramaturgie_versuchsindizes(
+    tracks: tuple[Track, ...], recommendations: tuple[object, ...]
+) -> list[int]:
+    """Priorisiert Anfang, Mitte, Energiehoehepunkt und Ende abwechselnd."""
+    verfuegbar = len(tracks) - 1
+    renderbar = [
+        index for index, recommendation in enumerate(recommendations)
+        if getattr(recommendation, "index", None) == index
+        and getattr(recommendation, "plan", None) is not None
+    ]
+    peak_track = max(
+        range(len(tracks)),
+        key=lambda index: (float(getattr(tracks[index], "energy", 0.0) or 0.0), -index),
+    )
+    anker = (
+        0,
+        (verfuegbar - 1) // 2,
+        min(max(peak_track, 0), verfuegbar - 1),
+        verfuegbar - 1,
+    )
+    reihenfolge: list[int] = []
+    rest = set(renderbar)
+    while rest:
+        for ziel in anker:
+            if not rest:
+                break
+            index = min(rest, key=lambda wert: (abs(wert - ziel), wert))
+            reihenfolge.append(index)
+            rest.remove(index)
+    return reihenfolge
+
+
+def _transition_plan_dict(plan: TransitionPlan) -> dict:
+    if not isinstance(plan, TransitionPlan):
+        raise ValueError("Empfehlung enthaelt keinen Produktions-TransitionPlan")
+    return _json_roundtrip_strikt({
+        feld.name: getattr(plan, feld.name) for feld in fields(TransitionPlan)
+    })
+
+
+def _datei_metadaten(root: Path, pfad: Path) -> dict:
+    inhalt = pfad.read_bytes()
+    return {
+        "path": pfad.relative_to(root).as_posix(),
+        "sha256": hashlib.sha256(inhalt).hexdigest(),
+        "size_bytes": len(inhalt),
+    }
+
+
+def _validiere_dramaturgie_satz(
+    out: Path,
+    manifest: dict,
+    erwartete_varianten: list[dict],
+    erwartete_kontexte: dict[str, dict],
+    bewertung_zeilen: list[dict],
+    dramaturgie_zeilen: list[dict],
+    uebergaenge_pro_variante: int,
+) -> None:
+    if set(manifest) != {
+        "format_version", "contract", "app_version", "algorithm_build",
+        "cache", "pool_hash", "ordered_pool_track_ids",
+        "candidate_choice_hash", "variants",
+    }:
+        raise ValueError("dramaturgie_manifest.json hat kein exaktes Top-Level-Schema")
+    if manifest["format_version"] != DRAMATURGIE_MANIFEST_VERSION:
+        raise ValueError("Dramaturgie-Manifestversion stimmt nicht")
+    if manifest["contract"] != DRAMATURGIE_CONTRACT:
+        raise ValueError("Dramaturgie-Vertrag stimmt nicht")
+    if manifest["candidate_choice_hash"] != _kanonischer_json_hash({}):
+        raise ValueError("Kandidatenwahl-Snapshot ist nicht exakt leer gebunden")
+    if len(manifest["ordered_pool_track_ids"]) != len(set(manifest["ordered_pool_track_ids"])):
+        raise ValueError("Dramaturgiepool enthaelt doppelte Track-IDs")
+    if manifest["pool_hash"] != _kanonischer_json_hash(manifest["ordered_pool_track_ids"]):
+        raise ValueError("Dramaturgie-Poolhash stimmt nicht")
+
+    soll_ids = [variante["variant_id"] for variante in erwartete_varianten]
+    ist_ids = [variante.get("variant_id") for variante in manifest["variants"]]
+    if ist_ids != soll_ids:
+        raise ValueError("Dramaturgiematrix ist unvollstaendig oder anders geordnet")
+    transition_ids: list[str] = []
+    clip_pfade: list[str] = []
+    plan_felder = {feld.name for feld in fields(TransitionPlan)}
+    for variante, erwartet in zip(manifest["variants"], erwartete_varianten):
+        if set(variante) != {
+            "variant_id", "canonical_strategy", "variant_label",
+            "requested_parameters", "effective_strategy_parameters",
+            "overridden_parameters", "scoring_context", "pool_hash",
+            "ordered_track_ids", "transitions",
+        }:
+            raise ValueError(f"Variante {variante.get('variant_id')!r} hat kein exaktes Schema")
+        for key in (
+            "variant_id", "canonical_strategy", "variant_label",
+            "requested_parameters", "effective_strategy_parameters",
+            "overridden_parameters",
+        ):
+            if variante[key] != erwartet[key]:
+                raise ValueError(f"Variante {variante['variant_id']!r}: {key} stimmt nicht")
+        if variante["pool_hash"] != manifest["pool_hash"]:
+            raise ValueError("Varianten-Poolhash weicht vom gemeinsamen Pool ab")
+        if sorted(variante["ordered_track_ids"]) != sorted(manifest["ordered_pool_track_ids"]):
+            raise ValueError("Varianten-Playlist ist keine Permutation des gemeinsamen Pools")
+        if variante["scoring_context"] != erwartete_kontexte[variante["variant_id"]]:
+            raise ValueError("Varianten-Scoring-Kontext stimmt nicht mit dem Laufvertrag")
+        if len(variante["transitions"]) != uebergaenge_pro_variante:
+            raise ValueError("Variante enthaelt nicht exakt die verlangte Zahl Uebergaenge")
+        for transition in variante["transitions"]:
+            if set(transition) != {
+                "transition_id", "index", "from_track_id", "to_track_id", "plan", "clip"
+            }:
+                raise ValueError("Dramaturgie-Transition hat kein exaktes Schema")
+            index = transition["index"]
+            if type(index) is not int or not 0 <= index < len(variante["ordered_track_ids"]) - 1:
+                raise ValueError("Dramaturgie-Transition hat ungueltigen Index")
+            if transition["from_track_id"] != variante["ordered_track_ids"][index]:
+                raise ValueError("Dramaturgie-Transition verweist auf falschen Starttrack")
+            if transition["to_track_id"] != variante["ordered_track_ids"][index + 1]:
+                raise ValueError("Dramaturgie-Transition verweist auf falschen Zieltrack")
+            if set(transition["plan"]) != plan_felder:
+                raise ValueError("Dramaturgie-TransitionPlan-Felder sind nicht exakt")
+            clip = transition["clip"]
+            if set(clip) != {"path", "sha256", "size_bytes"}:
+                raise ValueError("Dramaturgie-Clip hat kein exaktes Schema")
+            clip_path = out / Path(clip["path"])
+            if not clip_path.is_file() or _datei_metadaten(out, clip_path) != clip:
+                raise ValueError("Dramaturgie-Clip fehlt oder Dateibindung stimmt nicht")
+            transition_ids.append(transition["transition_id"])
+            clip_pfade.append(clip["path"])
+
+    if len(transition_ids) != len(set(transition_ids)):
+        raise ValueError("Dramaturgie-Transition-IDs sind nicht eindeutig")
+    if [zeile["pair_id"] for zeile in bewertung_zeilen] != transition_ids:
+        raise ValueError("bewertung.csv ist nicht exakt an die Transition-IDs gebunden")
+    if [zeile["clip_id"] for zeile in bewertung_zeilen] != transition_ids:
+        raise ValueError("bewertung.csv clip_id ist nicht exakt an transition_id gebunden")
+    if [zeile["variant_id"] for zeile in dramaturgie_zeilen] != soll_ids:
+        raise ValueError("dramaturgie_bewertung.csv ist nicht exakt an die Varianten gebunden")
+    vorhandene_clips = sorted(
+        path.relative_to(out).as_posix() for path in (out / "clips").rglob("*")
+        if path.is_file()
+    )
+    if vorhandene_clips != sorted(clip_pfade):
+        raise ValueError("Clip-Verzeichnis enthaelt fehlende oder zusaetzliche Dateien")
+    with (out / "bewertung.csv").open(encoding="utf-8", newline="") as handle:
+        geschriebene_bewertung = list(csv.DictReader(handle))
+    if geschriebene_bewertung != bewertung_zeilen:
+        raise ValueError("bewertung.csv stimmt nach dem Schreiben nicht byte-semantisch")
+    with (out / "dramaturgie_bewertung.csv").open(encoding="utf-8", newline="") as handle:
+        geschriebene_dramaturgie = list(csv.DictReader(handle))
+    if geschriebene_dramaturgie != dramaturgie_zeilen:
+        raise ValueError("dramaturgie_bewertung.csv stimmt nach dem Schreiben nicht byte-semantisch")
+    if _lade_json_strikt(out / DRAMATURGIE_MANIFEST_NAME, DRAMATURGIE_MANIFEST_NAME) != manifest:
+        raise ValueError("dramaturgie_manifest.json stimmt nach dem Schreiben nicht")
+
+
+LIESMICH_DRAMATURGIE = """# HPG-Dramaturgie-Hoertest
+
+Playlistsequenzen werden im UI strikt in ihrer angegebenen Reihenfolge und per Autoplay gehoert.
+Bewerte in `dramaturgie_bewertung.csv` die Wirkung der ganzen Variante. Die Drei-Noten-Bewertungen
+in `bewertung.csv` gelten jeweils fuer einen einzelnen Uebergang.
+
+Die Sequenznoten sind diagnostisch. Sie veraendern keine Strategie-Defaults und werden von `fit`
+nicht als Gewichte oder Konfiguration in die Produktion geschrieben.
+"""
+
+
+def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    clips_dir = out / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+    cache = _cache_pfad(args.cache)
+    _reject_pending_wal(cache)
+    cache_fingerprint = _fingerprint_cache(cache)
+    algorithm_build = _algorithm_build_fingerprint()
+    tracks = lade_tracks_aus_cache(str(cache))
+    pool, pool_track_ids, pool_hash = _dramaturgie_pool(
+        tracks, int(args.sequenz_tracks), float(args.bpm_toleranz)
+    )
+    track_id_by_path = {
+        _windows_pfadschluessel(track.filePath): track_id
+        for track, track_id in zip(pool, pool_track_ids)
+    }
+    varianten_vertrag = dramaturgie_varianten()
+    candidate_choice_snapshot: dict = {}
+    candidate_choice_hash = _kanonischer_json_hash(candidate_choice_snapshot)
+    manifest_varianten: list[dict] = []
+    erwartete_kontexte: dict[str, dict] = {}
+    bewertung_zeilen: list[dict] = []
+    dramaturgie_zeilen: list[dict] = []
+
+    for variant_nummer, variante in enumerate(varianten_vertrag, start=1):
+        strategie = variante["canonical_strategy"]
+        requested = deepcopy(variante["requested_parameters"])
+        config = StrategyConfig.from_mapping(requested)
+        effective = config.effective_kwargs(strategie)
+        if _json_roundtrip_strikt(effective) != variante["effective_strategy_parameters"]:
+            raise ValueError("Dramaturgiematrix und StrategyConfig widersprechen sich")
+        scoring_context = _json_roundtrip_strikt(
+            resolve_run_scoring_context(strategie, deepcopy(effective))
+        )
+        result = generate_playlist_result(
+            deepcopy(pool),
+            strategie,
+            bpm_tolerance=float(args.bpm_toleranz),
+            advanced_params=deepcopy(effective),
+            scoring_context=deepcopy(scoring_context),
+            candidate_choice_snapshot=deepcopy(candidate_choice_snapshot),
+        )
+        result_context = _json_roundtrip_strikt(result.scoring_context_dict())
+        if result_context != scoring_context:
+            raise ValueError("PlaylistResult-Scoring-Kontext weicht vom Laufvertrag ab")
+        if result.candidate_choice_snapshot_dict() != candidate_choice_snapshot:
+            raise ValueError("PlaylistResult hat den leeren Kandidatenwahl-Snapshot veraendert")
+        ordered_ids = [
+            track_id_by_path[_windows_pfadschluessel(track.filePath)]
+            for track in result.tracks
+        ]
+        if len(ordered_ids) != len(pool_track_ids) or sorted(ordered_ids) != sorted(pool_track_ids):
+            raise ValueError("PlaylistResult enthaelt nicht exakt den gemeinsamen Trackpool")
+        if len(result.recommendations) != len(result.tracks) - 1:
+            raise ValueError("PlaylistResult enthaelt nicht exakt einen Uebergang je Nachbarpaar")
+        _dramaturgie_uebergangsindizes(
+            result.tracks,
+            int(args.uebergaenge_pro_variante),
+            result.recommendations,
+        )
+        transitions: list[dict] = []
+        for index in _dramaturgie_versuchsindizes(
+            result.tracks, result.recommendations
+        ):
+            recommendation = result.recommendations[index]
+            if recommendation.index != index:
+                raise ValueError("Recommendation-Index stimmt nicht mit Playlist-Reihenfolge")
+            if (
+                recommendation.from_occurrence_id != result.occurrences[index].occurrence_id
+                or recommendation.to_occurrence_id != result.occurrences[index + 1].occurrence_id
+            ):
+                raise ValueError("Recommendation-Referenzen stimmen nicht mit Playlist-Reihenfolge")
+            plan = recommendation.plan
+            if plan is None:
+                raise ValueError("Recommendation enthaelt keinen TransitionPlan")
+            a, b = result.tracks[index], result.tracks[index + 1]
+            spec = TransitionClipSpec.from_plan(plan, a, b)
+            transition_id = f"{variante['variant_id']}__t{index + 1:03d}"
+            clip_path = clips_dir / variante["variant_id"] / f"{transition_id}.wav"
+            clip_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                _rendere_atomar(spec, clip_path)
+            except BeatSyncError as exc:
+                logger.info(
+                    "Uebergang %s fuer %s uebersprungen: %s",
+                    index + 1,
+                    variante["variant_id"],
+                    exc,
+                )
+                continue
+            transitions.append({
+                "transition_id": transition_id,
+                "index": index,
+                "from_track_id": ordered_ids[index],
+                "to_track_id": ordered_ids[index + 1],
+                "plan": _transition_plan_dict(plan),
+                "clip": _datei_metadaten(out, clip_path),
+            })
+            if len(transitions) == int(args.uebergaenge_pro_variante):
+                break
+        if len(transitions) != int(args.uebergaenge_pro_variante):
+            raise ValueError(
+                f"{variante['variant_id']} hat nur {len(transitions)} streng "
+                "renderbare Uebergaenge"
+            )
+        transitions.sort(key=lambda transition: transition["index"])
+        bewertung_zeilen.extend(
+            {
+                field: "" for field in BEWERTUNG_DREINOTEN_SPALTEN
+            } | {
+                "pair_id": transition["transition_id"],
+                "clip_id": transition["transition_id"],
+            }
+            for transition in transitions
+        )
+
+        manifest_varianten.append({
+            **deepcopy(variante),
+            "scoring_context": result_context,
+            "pool_hash": pool_hash,
+            "ordered_track_ids": ordered_ids,
+            "transitions": transitions,
+        })
+        erwartete_kontexte[variante["variant_id"]] = scoring_context
+        dramaturgie_zeilen.append({
+            field: "" for field in DRAMATURGIE_BEWERTUNG_SPALTEN
+        } | {"variant_id": variante["variant_id"]})
+        print(
+            f"[{variant_nummer}/{len(varianten_vertrag)}] "
+            f"{variante['variant_id']}: {len(transitions)} Uebergaenge"
+        )
+
+    schreibe_csv(out / "bewertung.csv", BEWERTUNG_DREINOTEN_SPALTEN, bewertung_zeilen)
+    schreibe_csv(
+        out / "dramaturgie_bewertung.csv",
+        DRAMATURGIE_BEWERTUNG_SPALTEN,
+        dramaturgie_zeilen,
+    )
+    (out / "README.md").write_text(LIESMICH_DRAMATURGIE, encoding="utf-8")
+    _reject_pending_wal(cache)
+    if _fingerprint_cache(cache) != cache_fingerprint:
+        raise RuntimeError("Cache wurde waehrend der Dramaturgievorbereitung veraendert")
+    if _algorithm_build_fingerprint() != algorithm_build:
+        raise RuntimeError(
+            "Algorithmus-/Build-Dateien wurden waehrend der Vorbereitung veraendert"
+        )
+    manifest = {
+        "format_version": DRAMATURGIE_MANIFEST_VERSION,
+        "contract": DRAMATURGIE_CONTRACT,
+        "app_version": APP_VERSION,
+        "algorithm_build": algorithm_build,
+        "cache": {"version": CACHE_VERSION, **cache_fingerprint},
+        "pool_hash": pool_hash,
+        "ordered_pool_track_ids": pool_track_ids,
+        "candidate_choice_hash": candidate_choice_hash,
+        "variants": manifest_varianten,
+    }
+    _schreibe_json_atomar(out / DRAMATURGIE_MANIFEST_NAME, manifest)
+    _validiere_dramaturgie_satz(
+        out,
+        manifest,
+        varianten_vertrag,
+        erwartete_kontexte,
+        bewertung_zeilen,
+        dramaturgie_zeilen,
+        int(args.uebergaenge_pro_variante),
+    )
+    return 0
+
+
+def befehl_prepare_dramaturgie(args: argparse.Namespace) -> int:
+    return _prepare_atomar(args, _befehl_prepare_dramaturgie_intern)
+
+
+# ===========================================================================
 # Kandidatenmodus (Spec 2026-08-21 Abschnitt 3): prepare --modus kandidaten
 # ===========================================================================
 
@@ -1546,14 +2252,20 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     print(f"Analysierte Tracks im Cache: {len(tracks)}")
     energy_direction = getattr(args, "energy_direction", None)
     scoring_snapshot = _baue_scoring_snapshot(args)
-    kandidaten = sammle_kandidaten(
+    kandidaten = sammle_kandidaten_parallel(
         tracks,
         args.bpm_toleranz,
         energy_direction,
         scoring_snapshot=scoring_snapshot,
+        workers=getattr(args, "workers", 1),
     )
     if getattr(args, "nur_genre", None):
         kandidaten = filtere_nach_genre(kandidaten, args.nur_genre)
+    profil_start = None
+    if getattr(args, "auswahlprofil", None):
+        kandidaten, profil_start = wende_auswahlprofil_an(
+            kandidaten, Path(args.auswahlprofil)
+        )
     print(f"Paare nach Gates: {len(kandidaten)}")
     if not kandidaten:
         print("Keine Paare — nichts zu rendern.")
@@ -1569,17 +2281,46 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     # komplette Kandidatenmenge teuer in eine Maximin-Reihenfolge zu bringen.
     reserve = maximin_auswahl(
         vektoren,
-        min(len(kandidaten), args.anzahl * RESERVE_FAKTOR * 2),
+        (
+            len(kandidaten)
+            if getattr(args, "tracks_einmalig", False)
+            else min(len(kandidaten), args.anzahl * RESERVE_FAKTOR * 2)
+        ),
         seed=args.seed,
+        start=profil_start,
     )
+    if getattr(args, "auswahlprofil", None):
+        # Zuerst neue Tracks und die vom alten Hoertest besser prognostizierten
+        # Paare. Grobe Qualitaetsklassen erhalten die Maximin-Variation; eine
+        # exakte Prognose-Sortierung wuerde frueh wertvolle Tracks blockieren.
+        prognosen = np.asarray([
+            kandidaten[i].get("historische_prognose", 0.0) for i in reserve
+        ], dtype=float)
+        grenzen = np.quantile(prognosen, (0.25, 0.5, 0.75))
+        reserve.sort(key=lambda i: (
+            kandidaten[i].get("historische_tracks", 0),
+            -int(np.searchsorted(
+                grenzen,
+                kandidaten[i].get("historische_prognose", 0.0),
+                side="right",
+            )),
+        ))
     bewertung_zeilen, merkmal_zeilen, reihenfolge = [], [], {}
     manifest_paare: list[dict] = []
     paare_fertig, uebersprungen = 0, 0
+    verwendete_tracks: set[str] = set()
     for index in reserve:
         if paare_fertig >= args.anzahl:
             break
         k = kandidaten[index]
         a, b = k["track_a"], k["track_b"]
+        track_schluessel = {track_pfad_schluessel(a), track_pfad_schluessel(b)}
+        if len(track_schluessel) != 2:
+            continue
+        if getattr(args, "tracks_einmalig", False) and (
+            track_schluessel & verwendete_tracks
+        ):
+            continue
         pcs = list(k.get("pair_candidates") or _rank_pair_mit_snapshot(
             a,
             b,
@@ -1634,6 +2375,7 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             continue
         finally:
             shutil.rmtree(pair_temp, ignore_errors=True)
+        verwendete_tracks.update(track_schluessel)
         dreinoten_pilot = bool(getattr(args, "dreinoten_pilot", False))
         bew, merk = kandidaten_zeilen(
             pair_id,
@@ -1675,6 +2417,8 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             f"Satz unvollstaendig: {paare_fertig} von {args.anzahl} Paaren "
             "konnten vollstaendig vorbereitet werden; nichts veroeffentlicht."
         )
+        if getattr(args, "tracks_einmalig", False):
+            print("Track-Einmalregel blieb aktiv; kein Track wurde fuer ein Ersatzpaar doppelt benutzt.")
         return 1
     bewertung_spalten = (
         BEWERTUNG_DREINOTEN_SPALTEN
@@ -2062,8 +2806,190 @@ def verbinde_bewertungen_kandidaten(merkmale_zeilen, bewertung_zeilen, merkmale=
             "schema_out": roh.get("schema_out", ""), "schema_in": roh.get("schema_in", ""),
             "schemata_out": [s for s in str(roh.get("schemata_out", "")).split("|") if s],
             "schemata_in": [s for s in str(roh.get("schemata_in", "")).split("|") if s],
+            **{
+                feld: (
+                    int(str(b.get(feld, "")).strip())
+                    if str(b.get(feld, "")).strip() in {"1", "2", "3", "4", "5"}
+                    else None
+                )
+                for feld in ("track_note", "technik_note", "gesamt_note")
+            },
         })
     return zeilen, ohne, verworfen
+
+
+def _ungerichteter_trackschluessel(tracks) -> tuple[str, str]:
+    return tuple(sorted(ntpath.normcase(ntpath.normpath(str(p))) for p in tracks))
+
+
+def aggregiere_dreinoten_trackpaare(zeilen: list[dict]) -> list[dict]:
+    """Macht aus wiederholten Varianten genau eine Beobachtung je Trackpaar."""
+    gruppen: dict[tuple[str, str], list[dict]] = {}
+    for zeile in zeilen:
+        schluessel = _ungerichteter_trackschluessel(zeile["tracks"])
+        if not all(schluessel) or schluessel[0] == schluessel[1]:
+            raise ValueError("Dreinoten-Fit enthaelt ein leeres oder identisches Trackpaar")
+        gruppen.setdefault(schluessel, []).append(zeile)
+
+    ergebnis = []
+    for nummer, (tracks, gruppe) in enumerate(sorted(gruppen.items()), start=1):
+        genres = {str(z.get("genre", "")) for z in gruppe}
+        if len(genres) != 1 or not next(iter(genres)):
+            raise ValueError(f"Dreinoten-Fit: Genre fuer Trackpaar {tracks!r} ist inkonsistent")
+        if any(z.get(feld) is None for z in gruppe for feld in
+               ("track_note", "technik_note", "gesamt_note")):
+            raise ValueError(f"Dreinoten-Fit: unvollstaendige Noten fuer Trackpaar {tracks!r}")
+        ergebnis.append({
+            "pair_id": f"trackpaar-{nummer:04d}",
+            "tracks": tracks,
+            "genre": next(iter(genres)),
+            "wiederholungen": len(gruppe),
+            "merkmale": {
+                name: float(np.mean([z["merkmale"][name] for z in gruppe]))
+                for name in KANDIDATEN_TEILWERTE
+            },
+            **{
+                feld: float(np.mean([z[feld] for z in gruppe]))
+                for feld in ("track_note", "technik_note", "gesamt_note")
+            },
+        })
+    return ergebnis
+
+
+def _komponenten_zeilenindizes(zeilen: list[dict]) -> list[list[int]]:
+    """Liefert jede Zusammenhangskomponente als eigene Zeilengruppe."""
+    nachbar: dict[str, set[str]] = {}
+    for zeile in zeilen:
+        a, b = zeile["tracks"]
+        nachbar.setdefault(a, set()).add(b)
+        nachbar.setdefault(b, set()).add(a)
+    komponenten: list[set[str]] = []
+    offen = set(nachbar)
+    while offen:
+        start = min(offen)
+        stapel, komponente = [start], set()
+        while stapel:
+            track = stapel.pop()
+            if track in komponente:
+                continue
+            komponente.add(track)
+            stapel.extend(nachbar[track] - komponente)
+        offen.difference_update(komponente)
+        komponenten.append(komponente)
+    return [
+        [i for i, zeile in enumerate(zeilen) if set(zeile["tracks"]) <= komponente]
+        for komponente in komponenten
+    ]
+
+
+def komponenten_folds(zeilen: list[dict], seed: int, max_folds: int = 5) -> list[list[int]]:
+    """Gruppiert den Trackgraphen, sodass kein Track zwischen Folds leckt."""
+    komponenten = _komponenten_zeilenindizes(zeilen)
+    if len(komponenten) < max_folds:
+        return []
+    rng = random.Random(seed)
+    rng.shuffle(komponenten)
+    komponenten.sort(key=lambda k: -len(k))
+    folds = [[] for _ in range(max_folds)]
+    for komponente in komponenten:
+        ziel = min(range(len(folds)), key=lambda i: len(folds[i]))
+        folds[ziel].extend(komponente)
+    return [sorted(fold) for fold in folds]
+
+
+def _auc_bootstrap_untere_grenze(y, scores, gruppen, seed: int) -> float | None:
+    ids = sorted(set(gruppen))
+    index = {g: [i for i, wert in enumerate(gruppen) if wert == g] for g in ids}
+    rng = random.Random(seed)
+    werte = []
+    for _ in range(BOOTSTRAP_ZIEHUNGEN):
+        zug = [i for g in rng.choices(ids, k=len(ids)) for i in index[g]]
+        wert = auc(np.asarray(y)[zug], np.asarray(scores)[zug])
+        if wert is not None:
+            werte.append(wert)
+    return float(np.percentile(werte, 2.5)) if werte else None
+
+
+def _dreinoten_oof(
+    zeilen: list[dict], folds: list[list[int]], feld: str, seed: int
+) -> dict:
+    X = np.asarray([[z["merkmale"][n] for n in KANDIDATEN_TEILWERTE] for z in zeilen])
+    y = np.asarray([1.0 if z[feld] >= GUT_AB else 0.0 for z in zeilen])
+    scores = np.full(len(zeilen), np.nan)
+    mindestklasse = math.inf
+    alle = set(range(len(zeilen)))
+    for hold in folds:
+        train = sorted(alle - set(hold))
+        klassen = np.bincount(y[train].astype(int), minlength=2)
+        mindestklasse = min(mindestklasse, int(klassen.min()))
+        if klassen.min() == 0:
+            continue
+        mittel, streuung = _kennzahlen(X[train])
+        beta = _fit_standardisiert(_standardisiere_mit(X[train], mittel, streuung), y[train], L2_STAERKE)
+        scores[hold] = beta[0] + _standardisiere_mit(X[hold], mittel, streuung) @ beta[1:]
+    if np.isnan(scores).any():
+        return {"auc": None, "auc_unten_95": None, "mindestklasse_train": int(mindestklasse)}
+    gruppen = []
+    for index, komponente in enumerate(_komponenten_zeilenindizes(zeilen)):
+        gruppen.extend((i, index) for i in komponente)
+    gruppen = [g for _i, g in sorted(gruppen)]
+    return {
+        "auc": auc(y, scores),
+        "auc_unten_95": _auc_bootstrap_untere_grenze(y, scores, gruppen, seed),
+        "mindestklasse_train": int(mindestklasse),
+    }
+
+
+def _dreinoten_gewichte(zeilen: list[dict], startgewichte: dict, seed: int) -> dict:
+    X = np.asarray([[z["merkmale"][n] for n in KANDIDATEN_TEILWERTE] for z in zeilen])
+    y = np.asarray([1.0 if z["track_note"] >= GUT_AB else 0.0 for z in zeilen])
+    gruppen = _komponenten_zeilenindizes(zeilen)
+    rng = random.Random(seed)
+    koeffizienten = []
+    for _ in range(BOOTSTRAP_ZIEHUNGEN):
+        zug_folds = rng.choices(gruppen, k=len(gruppen))
+        zug = [i for fold in zug_folds for i in fold]
+        if len(set(y[zug])) < 2:
+            continue
+        koeffizienten.append(fit_logistic(X[zug], y[zug], L2_STAERKE)[1:])
+    if not koeffizienten:
+        return {}
+    unten = np.percentile(np.vstack(koeffizienten), 2.5, axis=0)
+    positiv = {n: max(0.0, float(v)) for n, v in zip(KANDIDATEN_TEILWERTE, unten)}
+    if sum(positiv.values()) <= 0.0:
+        return {}
+    gelernt = {n: positiv[n] / sum(positiv.values()) for n in KANDIDATEN_TEILWERTE}
+    alt = {n: float(startgewichte[f"kandidaten_{n}_weight"]) for n in KANDIDATEN_TEILWERTE}
+    return {n: (1.0 - BUDGET_MAX) * alt[n] + BUDGET_MAX * gelernt[n]
+            for n in KANDIDATEN_TEILWERTE}
+
+
+def fit_dreinoten_genre(zeilen: list[dict], seed: int, startgewichte: dict):
+    aggregiert = aggregiere_dreinoten_trackpaare(zeilen)
+    folds = komponenten_folds(aggregiert, seed)
+    diagnose = {
+        "clips": len(zeilen), "unabhaengige_trackpaare": len(aggregiert),
+        "zusammenhangskomponenten": len(_komponenten_zeilenindizes(aggregiert)),
+        "folds": len(folds), "ziele": {}, "uebernommen": False,
+    }
+    if len(aggregiert) < 30 or len(folds) != 5:
+        diagnose["grund"] = "zu wenige unabhaengige Trackpaare oder Zusammenhangskomponenten fuer 5 Folds"
+        return None, diagnose
+    for feld in ("track_note", "technik_note", "gesamt_note"):
+        diagnose["ziele"][feld] = _dreinoten_oof(aggregiert, folds, feld, seed)
+    for feld, messung in diagnose["ziele"].items():
+        if messung["mindestklasse_train"] < MIN_EREIGNISSE_JE_MERKMAL:
+            diagnose["grund"] = f"{feld}: weniger als {MIN_EREIGNISSE_JE_MERKMAL} Faelle einer Klasse im Train"
+            return None, diagnose
+        if messung["auc_unten_95"] is None or messung["auc_unten_95"] <= 0.5:
+            diagnose["grund"] = f"{feld}: 95-%-AUC-Untergrenze nicht ueber Zufall"
+            return None, diagnose
+    gewichte = _dreinoten_gewichte(aggregiert, startgewichte, seed)
+    if not gewichte:
+        diagnose["grund"] = "Track-Passung: kein gesichert positiver Faktor"
+        return None, diagnose
+    diagnose.update({"uebernommen": True, "grund": "alle drei trackgetrennten Gates bestanden"})
+    return gewichte, diagnose
 
 
 def filtere_reine_kandidatenpaare(zeilen: list[dict]) -> tuple[list[dict], dict[str, int]]:
@@ -2953,40 +3879,6 @@ def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"Kandidatensatz ungueltig: {exc}")
         return 1
-    if dreinoten_pilot:
-        noten = {
-            feld: [int(zeile[feld]) for zeile in bewertung_roh]
-            for feld in ("track_note", "technik_note", "gesamt_note")
-        }
-        bericht = {
-            "format_version": 1,
-            "typ": "dreinoten_pilot_deskriptiv",
-            "aktiviert_candidate_preferences": False,
-            "stichprobe": {
-                "clips": len(bewertung_roh),
-                "paare": len({zeile["pair_id"] for zeile in bewertung_roh}),
-            },
-            "noten": {
-                feld: {
-                    "mittelwert": round(float(np.mean(werte)), 4),
-                    "median": float(np.median(werte)),
-                    "verteilung": {
-                        str(note): werte.count(note)
-                        for note in range(BEWERTUNG_MIN, BEWERTUNG_MAX + 1)
-                    },
-                }
-                for feld, werte in noten.items()
-            },
-            "hinweis": (
-                "Rein deskriptiver Pilot ohne Konfidenzintervall oder Modellfit; "
-                "die Zahlen erlauben keine Aktivierung von candidate_preferences."
-            ),
-        }
-        _bestaetige_fit_binding(start_binding, ordner, audit_arg)
-        ziel = ordner / "dreinoten_pilot_bericht.json"
-        _schreibe_json_atomar(ziel, bericht)
-        print(f"Dreinoten-Pilot rein deskriptiv ausgewertet; keine Aktivierung. Bericht: {ziel}")
-        return 0
     genres_je_pfad = _genre_von_pfad(
         lade_tracks_aus_cache(getattr(args, "cache", None))
     )
@@ -2999,6 +3891,67 @@ def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
         f"Clips mit Merkmalen: {len(zeilen)}   genre-rein: {len(reine_zeilen)}   "
         f"ohne Note: {ohne}   verworfen: {verworfen}"
     )
+
+    if dreinoten_pilot:
+        diagnose = {
+            "quelle": "tools/rate_transitions.py fit --modus kandidaten -- three_notes_v1",
+            "rating_schema": "three_notes_v1",
+            "seed": args.seed,
+            "genres": {},
+            "ausgeschlossen": ausschluss,
+            "hinweis_technik": (
+                "Techniknoten sind ein Freigabegate fuer Kandidatengewichte; "
+                "sie veraendern weder Renderer noch EQ-Parameter."
+            ),
+        }
+        gewichte_je_genre = {}
+        for genre in CANONICAL_GENRES:
+            genre_zeilen = [z for z in reine_zeilen if z["genre"] == genre]
+            if not genre_zeilen:
+                continue
+            gewichte, genre_diagnose = fit_dreinoten_genre(
+                genre_zeilen, args.seed, manifest_gewichte[genre]
+            )
+            diagnose["genres"][genre] = genre_diagnose
+            if gewichte is not None:
+                gewichte_je_genre[genre] = gewichte
+
+        _bestaetige_fit_binding(start_binding, ordner, audit_arg)
+        bericht = {
+            "format_version": 2,
+            "typ": "dreinoten_kandidaten_fit",
+            "aktiviert_candidate_preferences": bool(gewichte_je_genre),
+            "diagnose": diagnose,
+        }
+        ziel_bericht = ordner / "dreinoten_fit_bericht.json"
+        if not gewichte_je_genre:
+            _schreibe_json_atomar(ziel_bericht, bericht)
+            print(f"Dreinoten-Gates nicht bestanden; Nutzer-Override unveraendert. Bericht: {ziel_bericht}")
+            return 0
+        from hpg_core import candidate_preferences as cp
+        updates = {
+            genre: {f"kandidaten_{name}_weight": wert for name, wert in gewichte.items()}
+            for genre, gewichte in gewichte_je_genre.items()
+        }
+        merkmale_vor_write = _lies_fit_csv_gebunden(
+            ordner / "merkmale.csv", start_binding, "merkmale_sha256"
+        )
+        bewertung_vor_write = _lies_fit_csv_gebunden(
+            ordner / "bewertung.csv", start_binding, "bewertung_sha256"
+        )
+        validiere_kandidaten_csvs(merkmale_vor_write, bewertung_vor_write)
+        validiere_vollstaendige_dreinotenbewertung(bewertung_vor_write)
+        _validiere_fit_bindung(ordner, cache_arg, audit_arg)
+        _bestaetige_fit_binding(start_binding, ordner, audit_arg)
+        try:
+            override = cp.merge_user_preferences_atomically(updates, diagnose=diagnose)
+        except Exception:
+            bericht["aktiviert_candidate_preferences"] = False
+            _schreibe_json_atomar(ziel_bericht, bericht)
+            raise
+        _schreibe_json_atomar(ziel_bericht, bericht)
+        print(f"Dreinoten-Gewichte atomar uebernommen nach {override}. Bericht: {ziel_bericht}")
+        return 0
 
     diagnose: dict = {
         "quelle": "tools/rate_transitions.py fit --modus kandidaten",
@@ -3083,8 +4036,11 @@ def _fit(args: argparse.Namespace) -> int:
 
 def _prepare(args: argparse.Namespace) -> int:
     """Weiche nach --modus (set_defaults kann nur eine Funktion tragen)."""
-    if getattr(args, "modus", "einzel") == "kandidaten":
+    modus = getattr(args, "modus", "einzel")
+    if modus == "kandidaten":
         return befehl_prepare_kandidaten(args)
+    if modus == "dramaturgie":
+        return befehl_prepare_dramaturgie(args)
     return befehl_prepare(args)
 
 
@@ -3133,9 +4089,24 @@ def main(argv=None) -> int:
     p.add_argument("--nur-genre", dest="nur_genre", default=None,
                    choices=list(CANONICAL_GENRES),
                    help="Nur Paare, bei denen beide Tracks dieses Genre tragen")
-    p.add_argument("--modus", choices=("einzel", "kandidaten"), default="einzel",
+    p.add_argument("--modus", choices=("einzel", "kandidaten", "dramaturgie"), default="einzel",
                    help="einzel = ein Clip je Paar; kandidaten = die bestbewerteten "
-                        "PairCandidates bis zur Versionsgrenze")
+                        "PairCandidates bis zur Versionsgrenze; dramaturgie = "
+                        "Produktionsstrategien als Playlistsequenzen")
+    p.add_argument(
+        "--sequenz-tracks",
+        type=_ganzzahl_im_bereich("sequenz-tracks", MIN_SEQUENZ_TRACKS, MAX_ANZAHL),
+        default=STANDARD_SEQUENZ_TRACKS,
+        help="Dramaturgiemodus: Tracks im gemeinsamen Pool (Standard: 16)",
+    )
+    p.add_argument(
+        "--uebergaenge-pro-variante",
+        type=_ganzzahl_im_bereich(
+            "uebergaenge-pro-variante", MIN_DRAMATURGIE_UEBERGAENGE, MAX_ANZAHL
+        ),
+        default=STANDARD_UEBERGAENGE_PRO_VARIANTE,
+        help="Dramaturgiemodus: gerenderte Uebergaenge je Variante (Standard: 5)",
+    )
     p.add_argument(
         "--max-versionen-pro-paar",
         type=_ganzzahl_im_bereich("max-versionen-pro-paar", 1, 5),
@@ -3146,6 +4117,22 @@ def main(argv=None) -> int:
         "--dreinoten-pilot",
         action="store_true",
         help="Kandidatenmodus: getrennte Track-, Technik- und Gesamtnote erfassen",
+    )
+    p.add_argument(
+        "--tracks-einmalig",
+        action="store_true",
+        help="Jeden Audio-Track innerhalb dieses Hoertest-Durchgangs nur einmal verwenden",
+    )
+    p.add_argument(
+        "--auswahlprofil",
+        type=Path,
+        help="Rein lokales Auswahlprofil aus frueheren Hoertests; aendert keine App-Gewichte",
+    )
+    p.add_argument(
+        "--workers",
+        type=_ganzzahl_im_bereich("workers", 1, 4),
+        default=1,
+        help="Parallele Prozesse fuer die Kandidatensuche (1-4)",
     )
     p.add_argument(
         "--transition-type-modus",
