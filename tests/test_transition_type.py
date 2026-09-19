@@ -244,6 +244,17 @@ class TestGoodHarmony:
     result = predict_transition_type(t1, t2)
     assert result == "bass_swap"
 
+  def test_psytrance_immer_pro_eq_swap(self):
+    """Benutzerentscheidung David (2026-09-19): Psytrance nutzt ausnahmslos pro_eq_swap."""
+    t1 = _make_track(bpm=138.0, camelot="8A", energy=80, genre="Psytrance")
+    t2 = _make_track(bpm=138.0, camelot="8A", energy=80, genre="Psytrance")
+    assert predict_transition_type(t1, t2) == "pro_eq_swap"
+
+    # Moderate/Schwierige Harmonie (frueher filter_ride oder echo_out)
+    t3 = _make_track(bpm=138.0, camelot="12B", energy=70, genre="Psytrance")
+    t4 = _make_track(bpm=138.0, camelot="4A", energy=75, genre="Psytrance")
+    assert predict_transition_type(t3, t4) == "pro_eq_swap"
+
 
 # === Regel 7 & 8: Moderate/Schlechte Harmonie ===
 

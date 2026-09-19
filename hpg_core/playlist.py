@@ -2095,6 +2095,13 @@ def predict_transition_type(
     if bpm_relation in ("half", "double") and eff_diff <= bpm_tolerance:
         return "halftime_switch"
 
+    # --- Regel 1b: Psytrance — Benutzerentscheidung (David, 2026-09-19) ---
+    # Fuer Psytrance ausschliesslich harmonischer 3-Band-EQ-Swap (pro_eq_swap).
+    # Keine Filter-Rides (800-Hz-Bass-Cut) oder Echo-Outs (Lautstaerkeeinbruch).
+    if (genre_a == "Psytrance" or genre_b == "Psytrance") and eff_diff <= bpm_tolerance:
+        return "pro_eq_swap"
+
+
     # --- Regel 2: BPM ausserhalb Toleranz ---
     if eff_diff > bpm_tolerance:
         # Die normale Kompatibilitaet ist hier wegen ihres BPM-Hard-Gates

@@ -705,3 +705,36 @@ def test_lade_uebersicht_kandidaten_gruppiert_verdeckt_und_in_reihenfolge():
   # ganz ohne Cache: Kontext kommt vollstaendig aus merkmale.csv
   p2 = lade_uebersicht_kandidaten(merk, bew, {}, {})[0]
   assert p2["bpm_a"] == "140.0" and p2["genre_a"] == "Psytrance" and p2["key_a"] == "8A"
+
+
+def test_sende_clip_setzt_cache_control_headers(tmp_path):
+  clips = tmp_path / "clips"
+  clips.mkdir()
+  test_wav = clips / "001_k1.wav"
+  test_wav.write_bytes(b"RIFF" + b"\x00" * 40)
+
+  class MockHandler(HoertestHandler):
+    def __init__(self, ordner):
+      self.ordner = ordner
+      self.headers = {}
+      self.sent_headers = {}
+      self.status = None
+      self.dramaturgie_manifest = None
+
+    def send_response(self, code):
+      self.status = code
+
+    def send_header(self, keyword, value):
+      self.sent_headers[keyword] = value
+
+    def end_headers(self):
+      pass
+
+  handler = MockHandler(tmp_path)
+  # Mock out wfile to avoid actual socket write
+  from io import BytesIO
+  handler.wfile = BytesIO()
+  handler._sende_clip("001_k1.wav")
+  assert handler.sent_headers.get("Cache-Control") == "no-cache, no-store, must-revalidate"
+  assert handler.sent_headers.get("Pragma") == "no-cache"
+  assert handler.sent_headers.get("Expires") == "0"

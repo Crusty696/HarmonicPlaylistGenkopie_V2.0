@@ -1264,6 +1264,8 @@ def _strict_render_fields(a: Track, b: Track) -> dict:
         "analysis_mode_a": getattr(a, "analysis_mode", "unknown"),
         "analysis_mode_b": getattr(b, "analysis_mode", "unknown"),
         "strict_beat_sync": True,
+        "lufs_a": float(getattr(a, "lufs", 0.0) or 0.0),
+        "lufs_b": float(getattr(b, "lufs", 0.0) or 0.0),
     }
 
 
@@ -2284,7 +2286,7 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
         (
             len(kandidaten)
             if getattr(args, "tracks_einmalig", False)
-            else min(len(kandidaten), args.anzahl * RESERVE_FAKTOR * 2)
+            else min(len(kandidaten), args.anzahl * RESERVE_FAKTOR * 6)
         ),
         seed=args.seed,
         start=profil_start,

@@ -1588,6 +1588,46 @@ class TestRenderTransitionClipMitNormalisierung:
         peak = float(np.max(np.abs(data)))
         assert peak <= 1.0, f"Clipping nach Normalisierung: Peak = {peak:.3f}"
 
+    def test_level_mix_loudness_konstante_lautstaerke(self):
+        """Befund 1 & Anforderung David: Der Leveler haelt das Signal konstant auf target_db
+        und verhindert Lautstaerkespruenge zwischen Vorlauf, Blende und Nachlauf."""
+        from hpg_core.transition_renderer import _level_mix_loudness
+        sr = 44100
+        dur = 20.0
+        t = np.linspace(0, dur, int(sr * dur), endpoint=False, dtype=np.float32)
+        # 0..6s: Amp 0.20, 6..14s: +4.8 dB Sprung (Amp 0.35), 14..20s: Amp 0.20
+        env = np.where((t >= 6.0) & (t <= 14.0), 0.35, 0.20).astype(np.float32)
+        signal = (np.sin(2 * np.pi * 440 * t) * env)[:, np.newaxis]
+        stereo = np.repeat(signal, 2, axis=1)
+
+        leveled = _level_mix_loudness(stereo, sr, target_db=-14.0)
+        assert leveled.shape == stereo.shape
+        assert leveled.dtype == np.float32
+
+        # RMS in den drei Regionen messen
+        pre_rms = 20.0 * np.log10(np.sqrt(np.mean(leveled[:int(5 * sr)] ** 2)))
+        mid_rms = 20.0 * np.log10(np.sqrt(np.mean(leveled[int(7 * sr):int(13 * sr)] ** 2)))
+        post_rms = 20.0 * np.log10(np.sqrt(np.mean(leveled[int(15 * sr):] ** 2)))
+
+        # Vorher betrug der Sprung im Signal 20*log10(0.35/0.2) = +4.86 dB
+        # Nach dem Leveler muss der Unterschied < 1.0 dB sein
+        assert abs(mid_rms - pre_rms) < 1.0
+        assert abs(post_rms - pre_rms) < 1.0
+
+    def test_level_mix_loudness_silence_gate(self):
+        """Befund 1: Passagen unter -32 dBFS (Stille/Breakdown) duerfen nicht hochgepumpt werden."""
+        from hpg_core.transition_renderer import _level_mix_loudness
+        sr = 44100
+        # Signal mit extrem niedrigem Pegel (-50 dBFS, Amplitude ~0.003)
+        t = np.linspace(0, 10.0, int(sr * 10.0), endpoint=False, dtype=np.float32)
+        silent_signal = (np.sin(2 * np.pi * 440 * t) * 0.003)[:, np.newaxis]
+        stereo = np.repeat(silent_signal, 2, axis=1)
+
+        leveled = _level_mix_loudness(stereo, sr, target_db=-14.0)
+        # Amplitude darf nicht auf ~0.2 (-14 dB) aufgeblasen werden
+        peak = np.max(np.abs(leveled))
+        assert peak < 0.01
+
 
 class TestHalfDoubleRate:
     """Half/Double im App-Pfad: `tempo_ratio` ist gesetzt, `strict_beat_sync` an."""

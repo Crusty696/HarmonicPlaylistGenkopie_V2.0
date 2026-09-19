@@ -469,28 +469,16 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Beat-Alignment, wo die Solo-Teile bekannt sind (Alignment ist
     # pegelunabhaengig: onset-basiert, relativ).
     if spec.normalize_rms:
-        # -14 dB ist ein RMS-Ziel, kein LUFS-Ziel. Die gemessenen LUFS duerfen
-        # danach nur noch den relativen A/B-Unterschied korrigieren; so bleibt
-        # die Preview-Semantik unabhaengig davon, ob Track-LUFS vorhanden ist.
-        seg_a = _rms_normalize(seg_a, spec.normalize_target_db,
-                               reference=seg_a[:pre_frames])
-        seg_b = _rms_normalize(seg_b, spec.normalize_target_db,
-                               reference=seg_b[cf_frames:])
-        # AUDIT-FIX 2026-08-14: Hier stand vorher spec.lufs_a/spec.lufs_b — die
-        # Lautheit der GANZEN Tracks, gemessen VOR dieser Normalisierung. Da
-        # _rms_normalize die beiden Segmente aber bereits angeglichen hat
-        # (gemessen: Restdifferenz 0.62 dB), zog das Delta sie anschliessend
-        # wieder auseinander statt sie zusammenzufuehren: 6.62 dB Ueber-
-        # korrektur, im fertigen Clip 9.83 dB Pegelsprung zwischen den Tracks.
-        # Korrigiert wird jetzt die RESTdifferenz der normalisierten Segmente —
-        # gemessen auf den Solo-Teilen, angewendet auf die ganzen Segmente.
-        # spec.lufs_a/lufs_b bleiben als Analyse-Metadaten erhalten (dj_brain
-        # nutzt sie fuer gain_advice), steuern hier aber nichts mehr.
+        # Benutzerentscheidung David (2026-09-19): Der ganze Mix ueber die volle Laenge
+        # muss gemessen und analysiert werden. Normalisierung von Seg A und Seg B nicht
+        # an einem kurzen 8s-Schnipsel (Intro/Breakdown), sondern am gesamten aktiven Segment.
+        seg_a = _rms_normalize(seg_a, spec.normalize_target_db)
+        seg_b = _rms_normalize(seg_b, spec.normalize_target_db)
         seg_a, seg_b = _apply_lufs_delta(
             seg_a,
             seg_b,
-            _measure_segment_loudness(seg_a[:pre_frames], sr),
-            _measure_segment_loudness(seg_b[cf_frames:], sr)
+            _measure_segment_loudness(seg_a, sr),
+            _measure_segment_loudness(seg_b, sr)
         )
 
     # Clip zusammenbauen
@@ -510,6 +498,14 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
 
     # Zusammenfuegen
     mixed = np.concatenate([part_pre, part_cf, part_post], axis=0)
+
+    # AUDIT-FIX (2026-09-19): Konstante Lautheitsglaettung ueber den gesamten Mix (EBU R128).
+    # Verhindert Lautstaerkespruenge (+dB) und Loecher (-dB) zwischen Vorlauf, Blende und Nachlauf.
+    # Befund 2: Nur ausfuehren wenn normalize_rms aktiv ist.
+    if spec.normalize_rms and mixed.size:
+        mixed = _level_mix_loudness(
+            mixed, sr, target_db=float(spec.normalize_target_db)
+        )
 
     # Optionaler Compressor (pedalboard) fuer gleichmaessigere Lautheit im Mix
     # Glaettet residuale Schwankungen die RMS-Norm nicht vollstaendig behebt
@@ -982,6 +978,64 @@ def _apply_lufs_delta(
     )
 
 
+def _level_mix_loudness(
+    audio: np.ndarray,
+    sr: int,
+    target_db: float = -14.0,
+) -> np.ndarray:
+    """Glaettet Lautheitssprünge und -löcher kontinuierlich ueber den gesamten Mix.
+
+    Befund 1: Silence-/Noise-Gate bei -32 dBFS (kein Pumping auf Breakdowns).
+              Gain-Hub geklemmt auf +-8.0 dB.
+              Strikte Stereo-Kanalkopplung (skalare Gain-Kurve).
+    Befund 2: Nur bei aktivem normalize_rms aufgerufen.
+    """
+    if audio is None or len(audio) == 0 or sr <= 0:
+        return audio
+
+    win_len = int(2.5 * sr)
+    hop = int(0.25 * sr)
+    n_frames = len(audio)
+
+    if n_frames < win_len:
+        rms, _ = _active_rms(audio)
+        if rms > 1e-4:
+            curr_db = 20.0 * np.log10(rms)
+            if curr_db > -32.0:
+                diff_db = float(np.clip(target_db - curr_db, -8.0, 8.0))
+                gain = float(10.0 ** (diff_db / 20.0))
+                return (audio * gain).astype(np.float32)
+        return audio
+
+    envelope = np.zeros(n_frames, dtype=np.float32)
+    weights = np.zeros(n_frames, dtype=np.float32)
+    w = np.hanning(win_len).astype(np.float32)
+
+    for start in range(0, n_frames - win_len + 1, hop):
+        end = start + win_len
+        chunk = audio[start:end]
+
+        rms, _ = _active_rms(chunk)
+        if rms > 1e-4:
+            curr_db = float(20.0 * np.log10(rms))
+        else:
+            curr_db = -70.0
+
+        # Silence-Gate: Passagen unter -32 dBFS nicht pumpen
+        if curr_db > -32.0:
+            diff_db = float(np.clip(target_db - curr_db, -8.0, 8.0))
+            gain = float(10.0 ** (diff_db / 20.0))
+        else:
+            gain = 1.0
+
+        envelope[start:end] += gain * w
+        weights[start:end] += w
+
+    weights = np.maximum(weights, 1e-6)
+    gain_curve = (envelope / weights)[:, np.newaxis]
+    return (audio * gain_curve).astype(np.float32)
+
+
 def _apply_soft_limiter(
     mixed: np.ndarray, threshold: float = 0.95
 ) -> np.ndarray:
@@ -1090,19 +1144,30 @@ def _apply_eq_crossfade(
         # wurde — reine Verschwendung, entfernt.
 
         # M6-Fix: echter Bass-Handover — harter Swap am Crossfade-Mittelpunkt
-        # mit kurzer 50ms-Rampe gegen Klicks. Vorher ueberlappten beide Baesse
-        # (A~0.75 / B~0.25 am Mittelpunkt) — doppelter Sub-Bass.
+        # mit kurzer 50ms-Rampe gegen Klicks.
         half = config.cf_frames // 2
         ramp = max(1, int(0.05 * config.sr))
         ramp_end = min(half + ramp, config.cf_frames)
         n_ramp = ramp_end - half
         bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
         bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+
+        # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
+        rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
+        rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
+        target_bass_gain = 1.0
+        if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
+            target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
+
         if n_ramp > 0:
             bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
-            bass_b_env[half:ramp_end] = np.linspace(0.0, 1.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+            bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
         bass_a_env[ramp_end:] = 0.0
-        bass_b_env[ramp_end:] = 1.0
+        tail_len = config.cf_frames - ramp_end
+        if tail_len > 0:
+            bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
+        else:
+            bass_b_env[ramp_end:] = 1.0
         mixed = bass_a * bass_a_env + bass_b * bass_b_env + highs_a * fo + highs_b * fi
 
     elif t_type == "pro_eq_swap":
@@ -1134,44 +1199,40 @@ def _apply_eq_crossfade(
 
         bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
         bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+
+        # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
+        rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
+        rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
+        target_bass_gain = 1.0
+        if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
+            target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
+
         if n_ramp > 0:
             bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
-            bass_b_env[half:ramp_end] = np.linspace(0.0, 1.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+            bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
         bass_a_env[ramp_end:] = 0.0
-        bass_b_env[ramp_end:] = 1.0
+        tail_len = config.cf_frames - ramp_end
+        if tail_len > 0:
+            bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
+        else:
+            bass_b_env[ramp_end:] = 1.0
 
-        # Mids: Equal-Power (cos/sin) ueber den gesamten Crossfade.
-        # AUDIT-FIX N-01 (2026-07-26): vorher amplituden-komplementaere
-        # LINEARE Envelopes ("-6 dB Rule": 1.0 -> 0.5 -> 0.0). Bei nicht
-        # korrelierten Signalen ergibt das am Mittelpunkt eine Summenleistung
-        # von 0.5^2 + 0.5^2 = 0.5 = -3.01 dB — genau das Energie-Loch, das
-        # C3 im Fallback-Crossfade beseitigt hatte, hier im Default-Modus
-        # fuer Techno/Psy/Tech-House (Hauptpfad). cos/sin haelt
-        # fo^2 + fi^2 == 1 konstant (0 dB am Mittelpunkt). Der harte
-        # Bass-Swap oben bleibt unveraendert hart.
-        # 2026-08-20 geprueft und VERWORFEN: eine Mitten-Mulde (Bandgain
-        # ueber der Blendkurve) wurde gebaut und wieder zurueckgebaut. In
-        # echten DJ-Mixen liegt das Mittenband waehrend eines Uebergangs
-        # tiefer als davor und danach (275 Uebergaenge aus 13 Mixen,
-        # geclustert nach Mix: AUC 0.655 [0.601, 0.715]) — aber als
-        # gleichmaessige Absenkung, nicht als Mulde. Die Tiefe der MULDE
-        # (Differenz Blendenmitte gegen Blendenrand) enthaelt in allen
-        # Laengengruppen die Null: kurz +0.015 [-0.022, +0.049], mittel
-        # +0.022 [-0.007, +0.073], lang +0.066 [-0.015, +0.134].
-        # Eine fruehere Messung ergab fuer lange Blenden +0.151 [+0.090,
-        # +0.205] — sie mass aber 250-2500 Hz, waehrend der Renderer hier bei
-        # fc1 = 120 Hz trennt. Die Oktave 120-250 Hz traegt keine Mulde und
-        # halbiert den Effekt. Reproduzierbar: tools/eq_verlauf_messen.py.
+        # Mids: Equal-Power (cos/sin) ueber den gesamten Crossfade mit Pegel-Angleichung
+        rms_mids_a = float(np.sqrt(np.mean(mids_a[:half] ** 2))) if half > 0 else 0.0
+        rms_mids_b = float(np.sqrt(np.mean(mids_b[half:] ** 2))) if half < config.cf_frames else 0.0
+        target_mids_gain = 1.0
+        if rms_mids_a > 1e-4 and rms_mids_b > 1e-4:
+            target_mids_gain = float(np.clip(rms_mids_a / rms_mids_b, 0.63, 1.58))
         mids_a_env = fo
-        mids_b_env = fi
+        mids_b_env = fi * np.linspace(target_mids_gain, 1.0, config.cf_frames, dtype=np.float32)[:, np.newaxis]
 
-        # Highs (Asymmetrischer Tausch: A voll bis 1/4, B voll ab 3/4).
-        # AUDIT-FIX R-02 (2026-07-24): kein a+b > 1 mehr (vorher Summe 2.0
-        # am 3/4-Punkt -> +6 dB, Limiter, harsches Uebergangsdrittel).
-        # AUDIT-FIX N-01 (2026-07-26): Equal-Power (cos/sin) statt linear-
-        # komplementaer — a + b == 1 fixierte zwar die +6-dB-Spitze, erzeugte
-        # aber dasselbe -3.01-dB-Leistungsloch am Fenster-Mittelpunkt wie bei
-        # den Mids. Jetzt gilt a^2 + b^2 == 1 im gesamten Fade-Fenster.
+        # Highs (Asymmetrischer Tausch: A voll bis 1/4, B voll ab 3/4 mit Pegel-Angleichung)
+        rms_highs_a = float(np.sqrt(np.mean(highs_a[:half] ** 2))) if half > 0 else 0.0
+        rms_highs_b = float(np.sqrt(np.mean(highs_b[half:] ** 2))) if half < config.cf_frames else 0.0
+        target_highs_gain = 1.0
+        if rms_highs_a > 1e-4 and rms_highs_b > 1e-4:
+            target_highs_gain = float(np.clip(rms_highs_a / rms_highs_b, 0.63, 1.58))
+
         quarter = config.cf_frames // 4
         three_quarters = 3 * quarter
         len_in = max(1, three_quarters - quarter)
@@ -1182,7 +1243,9 @@ def _apply_eq_crossfade(
         highs_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
         highs_a_env[quarter:three_quarters] = np.cos(prog * (np.pi / 2.0))
         highs_a_env[three_quarters:] = 0.0
-        highs_b_env[quarter:three_quarters] = np.sin(prog * (np.pi / 2.0))
+        highs_b_env[quarter:three_quarters] = (
+            np.sin(prog * (np.pi / 2.0)) * np.linspace(target_highs_gain, 1.0, len_in, dtype=np.float32)[:, np.newaxis]
+        )
         highs_b_env[three_quarters:] = 1.0
 
         # Rekonstruktion

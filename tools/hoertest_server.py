@@ -1384,6 +1384,9 @@ class HoertestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "audio/wav")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(laenge))
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         if start or ende != groesse - 1:
             self.send_header("Content-Range", f"bytes {start}-{ende}/{groesse}")
         self.end_headers()
@@ -1427,6 +1430,9 @@ class HoertestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(laenge))
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             if start or ende != groesse - 1:
                 self.send_header("Content-Range", f"bytes {start}-{ende}/{groesse}")
             self.end_headers()
