@@ -960,6 +960,10 @@ def calculate_transition_objective(
     metrics = calculate_enhanced_compatibility(
         track1, track2, bpm_tolerance, **kwargs
     )
+    # Eine Kante ohne lokalen Mixpunkt-Kandidaten kann keinen TransitionPlan
+    # erzeugen. Sie darf deshalb auch die Playlist-Sortierung nicht gewinnen.
+    if metrics.kandidat is None:
+        return 0
     return int(round(metrics.overall_score * 100))
 
 

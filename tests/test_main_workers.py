@@ -3567,6 +3567,8 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   first.library_panel.bpm_tolerance_slider.setValue(1)
   ap.energy_direction.setCurrentText("Build Up")
   ap.peak_position_slider.setValue(63)
+  ap.target_energy_slider.setValue(76)
+  ap.target_energy_enabled.setChecked(True)
   ap.harmonic_strictness.setValue(9)
   ap.allow_experimental.setChecked(False)
   ap.genre_mixing.setChecked(False)
@@ -3589,6 +3591,7 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
     "ai_enabled": False,
     "energy_direction": "Build Up",
     "peak_position": 63,
+    "target_energy": 76,
     "harmonic_strictness": 9,
     "allow_experimental": False,
     "genre_mixing": False,
@@ -3622,10 +3625,29 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   assert second._run_settings["ai_enabled"] is False
   assert second._run_settings["ai_provider"] == "LM Studio"
   assert second._run_settings["ai_model"] == "local-model"
+  assert second._run_settings["advanced_params"]["target_energy"] == 76
   assert "candidate_tolerances_by_genre" in second._run_settings["scoring_context"]
   assert "Unknown" in second._run_settings["scoring_context"]["candidate_tolerances_by_genre"]
   second.library_panel.advanced_params.harmonic_strictness.setValue(1)
   assert second._run_settings["advanced_params"]["harmonic_strictness"] == 9
+
+
+def test_gui_state_target_energy_validiert_bool_und_bereich():
+  state = main.MainWindow._validated_ui_state({
+    "version": main.GUI_SETTINGS_SCHEMA_VERSION,
+    "target_energy_enabled": True,
+    "target_energy": 81,
+  })
+  assert state["target_energy_enabled"] is True
+  assert state["target_energy"] == 81
+
+  invalid = main.MainWindow._validated_ui_state({
+    "version": main.GUI_SETTINGS_SCHEMA_VERSION,
+    "target_energy_enabled": "ja",
+    "target_energy": 101,
+  })
+  assert "target_energy_enabled" not in invalid
+  assert "target_energy" not in invalid
 
 
 def test_laufsnapshot_verwirft_erkannten_endpoint_des_vorherigen_providers(

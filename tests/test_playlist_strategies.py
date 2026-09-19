@@ -7,12 +7,29 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import hpg_core.playlist as playlist_mod
 from hpg_core.playlist import (
-  calculate_enhanced_compatibility, generate_playlist, STRATEGIES,
+  calculate_enhanced_compatibility, calculate_transition_objective,
+  generate_playlist, STRATEGIES,
   STRATEGY_ALIASES, _sort_context_flow, _sort_genre_flow,
   _sort_harmonic_flow, _sort_peak_time,
   _sort_energy_wave, _remove_track, ENERGY_WAVE_FENSTER,
   _process_dj_brain_recommendations,
 )
+
+
+def test_sortierziel_verwirft_kante_ohne_ausfuehrbaren_mixpunkt(monkeypatch):
+  monkeypatch.setattr(
+    playlist_mod,
+    "calculate_enhanced_compatibility",
+    lambda *_args, **_kwargs: SimpleNamespace(kandidat=None, overall_score=0.99),
+  )
+  assert calculate_transition_objective(object(), object(), 2.0) == 0
+
+  monkeypatch.setattr(
+    playlist_mod,
+    "calculate_enhanced_compatibility",
+    lambda *_args, **_kwargs: SimpleNamespace(kandidat=object(), overall_score=0.73),
+  )
+  assert calculate_transition_objective(object(), object(), 2.0) == 73
 from hpg_core.models import effective_bpm_diff
 from tests.fixtures.track_factories import (
   make_track, make_house_track, make_dj_set,

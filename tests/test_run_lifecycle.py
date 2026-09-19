@@ -561,6 +561,32 @@ def test_strategy_ui_disables_parameters_that_are_not_consumed(qtbot):
   assert "#00E676" in widget.harmony_group.styleSheet()
 
 
+def test_context_flow_target_energy_auto_oder_fest_steuert_echte_parameter(qtbot):
+  widget = AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+
+  widget.apply_strategy_support("Context Flow")
+  assert widget.target_energy_enabled.isEnabled()
+  assert not widget.target_energy_slider.isEnabled()
+  assert widget.energy_direction.isEnabled()
+  assert widget.peak_position_slider.isEnabled()
+  assert widget.get_parameters()["target_energy"] is None
+
+  widget.target_energy_slider.setValue(76)
+  widget.target_energy_enabled.setChecked(True)
+  assert widget.target_energy_slider.isEnabled()
+  assert not widget.energy_direction.isEnabled()
+  assert not widget.peak_position_slider.isEnabled()
+  assert widget.get_parameters()["target_energy"] == 76
+  assert "ersetzt" in widget.energy_strategy_hint.text()
+
+  widget.apply_strategy_support("Peak-Time")
+  assert not widget.target_energy_enabled.isEnabled()
+  assert not widget.target_energy_slider.isEnabled()
+  assert widget.peak_position_slider.isEnabled()
+  assert widget.get_parameters()["target_energy"] is None
+
+
 def test_bass_header_tooltip_beschreibt_anzeige_und_eq_sektionskontext(qtbot):
   panel = PlaylistPanel()
   qtbot.addWidget(panel)

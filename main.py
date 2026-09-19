@@ -1653,6 +1653,33 @@ class AdvancedParametersWidget(QWidget):
         energy_layout.addWidget(self.peak_position_label)
         energy_layout.addWidget(self.peak_position_slider)
 
+        self.target_energy_enabled = QCheckBox("Feste Zielenergie verwenden")
+        self.target_energy_enabled.setChecked(False)
+        self.target_energy_enabled.setToolTip(
+            "Aus: Der Verlauf und die Peak-Position steuern die Energie.\n"
+            "An: Context Flow richtet jeden Playlist-Abschnitt auf dieselbe "
+            "Zielenergie aus; Verlauf und Peak-Position sind dann wirkungslos."
+        )
+        energy_layout.addWidget(self.target_energy_enabled)
+
+        self.target_energy_slider = QSlider(Qt.Orientation.Horizontal)
+        self.target_energy_slider.setRange(0, 100)
+        self.target_energy_slider.setValue(70)
+        self.target_energy_slider.setToolTip(
+            "Konstantes Energie-Ziel fuer Context Flow: 0 = ruhig, 100 = maximal."
+        )
+        self.target_energy_label = QLabel("Feste Zielenergie: 70/100")
+        self.target_energy_slider.valueChanged.connect(
+            lambda v: self.target_energy_label.setText(
+                f"Feste Zielenergie: {v}/100"
+            )
+        )
+        self.target_energy_enabled.toggled.connect(
+            lambda _checked: self._target_energy_mode_changed()
+        )
+        energy_layout.addWidget(self.target_energy_label)
+        energy_layout.addWidget(self.target_energy_slider)
+
         self.energy_strategy_hint = QLabel()
         self.energy_strategy_hint.setWordWrap(True)
         energy_layout.addWidget(self.energy_strategy_hint)
@@ -2503,6 +2530,14 @@ class AdvancedParametersWidget(QWidget):
             "ai_enabled": self.ai_enabled_checkbox.isChecked(),
             "energy_direction": self.energy_direction.currentText(),
             "peak_position": self.peak_position_slider.value(),
+            "target_energy": (
+                self.target_energy_slider.value()
+                if (
+                    self.target_energy_enabled.isEnabled()
+                    and self.target_energy_enabled.isChecked()
+                )
+                else None
+            ),
             "harmonic_strictness": self.harmonic_strictness.value(),
             "allow_experimental": self.allow_experimental.isChecked(),
             "genre_mixing": self.genre_mixing.isChecked(),
@@ -2511,21 +2546,32 @@ class AdvancedParametersWidget(QWidget):
 
     def apply_strategy_support(self, strategy):
         """Zeigt eindeutig, welche Einstellungen die Strategie auswertet."""
+        self._active_strategy = strategy
         supported = SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
-        direction_enabled = "energy_direction" in supported
-        peak_enabled = "peak_position" in supported
-        self.energy_direction.setEnabled(direction_enabled)
-        self.peak_position_slider.setEnabled(peak_enabled)
-        self.peak_position_label.setEnabled(peak_enabled)
+        self._refresh_energy_control_state()
+        fixed_target = (
+            "target_energy" in supported
+            and self.target_energy_enabled.isChecked()
+        )
+        direction_enabled = "energy_direction" in supported and not fixed_target
+        peak_enabled = "peak_position" in supported and not fixed_target
         aktive_parameter = []
         if direction_enabled:
             aktive_parameter.append("Energy Flow Direction")
         if peak_enabled:
             aktive_parameter.append("Peak Position")
+        if "target_energy" in supported:
+            aktive_parameter.append(
+                "Feste Zielenergie" if fixed_target else "Zielenergie: Auto"
+            )
         if aktive_parameter:
             self.energy_strategy_hint.setText(
                 "<span style='color: #00E676;'>● AKTIV</span> "
                 f"<b>{strategy}</b> verwendet: {', '.join(aktive_parameter)}."
+                + (
+                    " Verlauf und Peak-Position werden durch das konstante Ziel ersetzt."
+                    if fixed_target else ""
+                )
             )
             self.energy_group.setStyleSheet(
                 "QGroupBox { border: 1px solid #00E676; background: #0a2e1a; }"
@@ -2559,6 +2605,29 @@ class AdvancedParametersWidget(QWidget):
             "genre_mixing",
             strategy,
         )
+
+    def _refresh_energy_control_state(self):
+        """Bildet die echte target_energy-Wechselwirkung in der UI ab."""
+        strategy = getattr(self, "_active_strategy", "")
+        supported = SUPPORTED_STRATEGY_PARAMETERS.get(strategy, set())
+        target_supported = "target_energy" in supported
+        fixed_target = target_supported and self.target_energy_enabled.isChecked()
+        self.target_energy_enabled.setEnabled(target_supported)
+        self.target_energy_slider.setEnabled(fixed_target)
+        self.target_energy_label.setEnabled(fixed_target)
+        self.energy_direction.setEnabled(
+            "energy_direction" in supported and not fixed_target
+        )
+        peak_enabled = "peak_position" in supported and not fixed_target
+        self.peak_position_slider.setEnabled(peak_enabled)
+        self.peak_position_label.setEnabled(peak_enabled)
+
+    def _target_energy_mode_changed(self):
+        strategy = getattr(self, "_active_strategy", "")
+        if strategy:
+            self.apply_strategy_support(strategy)
+        else:
+            self._refresh_energy_control_state()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -5304,11 +5373,15 @@ class MainWindow(QMainWindow):
             # den realen lokalen Paarvertrag klemmen.
             state["bpm_tolerance"] = min(2, int(float(bpm_value)))
         finite_number("peak_position", 40, 80, integer=True)
+        finite_number("target_energy", 0, 100, integer=True)
         finite_number("harmonic_strictness", 1, 10, integer=True)
         finite_number("genre_weight", 0, 100, integer=True)
         if raw.get("energy_direction") in {"Auto", "Build Up", "Cool Down", "Maintain"}:
             state["energy_direction"] = raw["energy_direction"]
-        for name in ("allow_experimental", "genre_mixing", "ai_enabled"):
+        for name in (
+            "allow_experimental", "genre_mixing", "ai_enabled",
+            "target_energy_enabled",
+        ):
             if isinstance(raw.get(name), bool):
                 state[name] = raw[name]
         if raw.get("ai_provider") in {"Ollama", "LM Studio"}:
@@ -5334,6 +5407,7 @@ class MainWindow(QMainWindow):
             advanced.energy_direction.setCurrentText(state["energy_direction"])
         for name, control in (
             ("peak_position", advanced.peak_position_slider),
+            ("target_energy", advanced.target_energy_slider),
             ("harmonic_strictness", advanced.harmonic_strictness),
             ("genre_weight", advanced.genre_weight),
         ):
@@ -5342,6 +5416,7 @@ class MainWindow(QMainWindow):
         for name, control in (
             ("allow_experimental", advanced.allow_experimental),
             ("genre_mixing", advanced.genre_mixing),
+            ("target_energy_enabled", advanced.target_energy_enabled),
         ):
             if name in state:
                 control.setChecked(state[name])
@@ -5374,6 +5449,8 @@ class MainWindow(QMainWindow):
             panel.bpm_tolerance_slider.valueChanged,
             advanced.energy_direction.currentTextChanged,
             advanced.peak_position_slider.valueChanged,
+            advanced.target_energy_enabled.toggled,
+            advanced.target_energy_slider.valueChanged,
             advanced.harmonic_strictness.valueChanged,
             advanced.allow_experimental.toggled,
             advanced.genre_mixing.toggled,
@@ -5398,6 +5475,8 @@ class MainWindow(QMainWindow):
             "bpm_tolerance": panel.bpm_tolerance_slider.value(),
             "energy_direction": advanced.energy_direction.currentText(),
             "peak_position": advanced.peak_position_slider.value(),
+            "target_energy_enabled": advanced.target_energy_enabled.isChecked(),
+            "target_energy": advanced.target_energy_slider.value(),
             "harmonic_strictness": advanced.harmonic_strictness.value(),
             "allow_experimental": advanced.allow_experimental.isChecked(),
             "genre_mixing": advanced.genre_mixing.isChecked(),
