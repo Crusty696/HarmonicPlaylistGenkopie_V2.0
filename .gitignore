@@ -35,6 +35,8 @@ hpg_debug_*.txt
 # Basetemp-Ordner paralleler Testlaeufe (pytest --basetemp=.pytest-*)
 .pytest-*/
 .pytest_tmp/
+# Historische GUI-Source-Guard-Baselines (regenerierbare Pytest-Artefakte)
+.pytest_tmp_gui_source_guard_*/
 .coverage
 .coverage.*
 htmlcov/
