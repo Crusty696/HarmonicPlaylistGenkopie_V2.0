@@ -85,13 +85,14 @@ tools/audit/runs/
 .blender-toolkit/
 
 # Audio/Media Files
-*.mp3
-*.wav
-*.flac
-*.m4a
-*.aac
-*.ogg
-*.aiff
+*.[mM][pP]3
+*.[wW][aA][vV]
+*.[fF][lL][aA][cC]
+*.[mM]4[aA]
+*.[aA][aA][cC]
+*.[oO][gG][gG]
+*.[aA][iI][fF]
+*.[aA][iI][fF][fF]
 
 # Playlist Export Files (generierte Outputs)
 *.m3u
