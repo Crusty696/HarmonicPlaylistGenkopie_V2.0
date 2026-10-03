@@ -1209,6 +1209,7 @@ class HoertestHandler(BaseHTTPRequestHandler):
     track_infos: dict = {}
     reihenfolge: dict = {}
     dramaturgie_manifest: dict | None = None
+    launch_token: str | None = None
 
     server_version = "HPG-Hoertest"
 
@@ -1221,6 +1222,8 @@ class HoertestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", typ)
         self.send_header("Content-Length", str(len(koerper)))
+        if self.launch_token is not None:
+            self.send_header("X-HPG-Launch-Token", self.launch_token)
         self.end_headers()
         self.wfile.write(koerper)
 
@@ -1649,10 +1652,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", required=True, help="Hoertest-Ordner von prepare")
     parser.add_argument("--port", type=_port, default=8765)
+    parser.add_argument("--launch-token", help="Optionale Startkennung des Launchers")
     parser.add_argument("--cache", help="Explizite Cache-Datenbank (nur lesend)")
     args = parser.parse_args(argv)
 
     ordner = Path(args.dir)
+    HoertestHandler.launch_token = args.launch_token
     if not (ordner / "bewertung.csv").exists():
         print(f"Keine bewertung.csv in {ordner} — erst `prepare` laufen lassen.")
         return 2

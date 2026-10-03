@@ -121,6 +121,40 @@ def test_dramaturgie_satz_bindet_manifest_clips_und_beide_bewertungen(tmp_path):
     validiere_dramaturgie_satz(tmp_path)
 
 
+def test_launcher_fortschritt_nutzt_gueltigen_dramaturgie_vertrag(tmp_path):
+  from tools import hoertest_launcher
+
+  _dramaturgie_satz(tmp_path)
+  assert hoertest_launcher.lese_fortschritt(tmp_path) == (0, 16, "Dramaturgie")
+  with (tmp_path / "bewertung.csv").open(encoding="utf-8", newline="") as f:
+    transitions = list(csv.DictReader(f))
+  with (tmp_path / "dramaturgie_bewertung.csv").open(encoding="utf-8", newline="") as f:
+    varianten = list(csv.DictReader(f))
+  for row in transitions:
+    row.update(track_note="4", technik_note="5", gesamt_note="3")
+  schreibe_csv(tmp_path / "bewertung.csv", BEWERTUNG_DREINOTEN_SPALTEN, transitions)
+  assert hoertest_launcher.lese_fortschritt(tmp_path) == (8, 16, "Dramaturgie")
+  for row in varianten:
+    row.update(dramaturgie_gesamt="4", energieverlauf="5", peak_platzierung="3", kohaerenz="4")
+  schreibe_csv(tmp_path / "dramaturgie_bewertung.csv", DRAMATURGIE_BEWERTUNG_SPALTEN, varianten)
+  assert hoertest_launcher.lese_fortschritt(tmp_path) == (16, 16, "Dramaturgie")
+
+  text = (tmp_path / "dramaturgie_bewertung.csv").read_text(encoding="utf-8")
+  (tmp_path / "dramaturgie_bewertung.csv").write_text(text, encoding="utf-8-sig")
+  assert hoertest_launcher.lese_fortschritt(tmp_path) == (16, 16, "Dramaturgie")
+
+  zeilen = text.splitlines()
+  zeilen[1] = zeilen[1].removesuffix(",")
+  (tmp_path / "dramaturgie_bewertung.csv").write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+  assert hoertest_launcher.lese_fortschritt(tmp_path) == (0, 0, "fehler")
+
+  # Zusätzliche Zelle darf nicht als vollständige Zeile durchgehen.
+  zeilen = text.splitlines()
+  zeilen[1] += ",ueberschuss"
+  (tmp_path / "dramaturgie_bewertung.csv").write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+  assert hoertest_launcher.lese_fortschritt(tmp_path) == (0, 0, "fehler")
+
+
 def test_dramaturgie_seite_spielt_manifestreihenfolge_automatisch():
   assert "v.transitions.forEach" in SEITE_DRAMATURGIE
   assert "spielIndex++" in SEITE_DRAMATURGIE
@@ -352,6 +386,17 @@ def hoertest_server(tmp_path: Path):
     thread.join(timeout=5)
 
 
+def test_startkennung_bindet_launcher_an_eigenen_server(hoertest_server):
+  from tools import hoertest_launcher
+
+  server, _ = hoertest_server
+  port = server.server_address[1]
+  assert not hoertest_launcher._server_bereit(port, "richtig")
+  server.RequestHandlerClass.launch_token = "richtig"
+  assert not hoertest_launcher._server_bereit(port, "falsch")
+  assert hoertest_launcher._server_bereit(port, "richtig")
+
+
 @pytest.fixture
 def dramaturgie_server(tmp_path: Path):
   ordner = tmp_path / "dramaturgie"
@@ -371,6 +416,14 @@ def dramaturgie_server(tmp_path: Path):
     server.shutdown()
     server.server_close()
     thread.join(timeout=5)
+
+
+def test_startkennung_auch_fuer_dramaturgie_server(dramaturgie_server):
+  from tools import hoertest_launcher
+
+  server, _, _ = dramaturgie_server
+  server.RequestHandlerClass.launch_token = "dramaturgie-start"
+  assert hoertest_launcher._server_bereit(server.server_address[1], "dramaturgie-start")
 
 
 def test_dramaturgie_server_liefert_reihenfolge_und_speichert_urteile_getrennt(
