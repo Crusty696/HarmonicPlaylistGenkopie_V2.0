@@ -6543,7 +6543,8 @@ class MainWindow(QMainWindow):
             from hpg_core.hearing_panel import HearingRatingDialog
             from hpg_core.hearing_ratings import save_rating
             dialog = HearingRatingDialog(
-                session, save=lambda route, payload: save_rating(folder, route, payload), parent=self,
+                session, save=lambda route, payload: save_rating(folder, route, payload),
+                parent=self, read_only=read_only,
             )
             if read_only:
                 for control in [*dialog.rating_boxes.values(), *dialog.sequence_boxes.values(),

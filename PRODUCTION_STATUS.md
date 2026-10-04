@@ -27,6 +27,8 @@ Sammlungsdialog sind inzwischen implementiert und gezielt getestet. Der
 vollstaendige Originalmusik-Hoertest samt menschlicher Bewertung und die
 Abnahme der weiteren Planpakete stehen weiter aus. Ein isolierter Pilot mit
 zwei unveraenderten Originaltracks erzeugte einen Satz mit fuenf Varianten;
-zwei waren im RAM abspielbar, drei scheiterten an der Kickphasenpruefung.
-Diese Varianten koennen derzeit noch faelschlich bewertet werden. Der
+zwei lieferten WAV-Bytes im RAM, drei scheiterten an der Kickphasenpruefung.
+Neue Noten fuer RAM-Clips sind im nativen Dialog nun an erfolgreiches
+Rendern gebunden. Alte Noten sind dadurch aber nicht aus dem Fit entfernt;
+die abgewiesenen Varianten bleiben technisch unhoerbar. Der
 Sammlungs-Einstieg ist daher kein zuverlaessig voll nutzbarer Trainingsablauf.

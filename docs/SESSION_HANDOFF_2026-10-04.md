@@ -388,11 +388,59 @@ Quellenreferenzen, keine gespeicherten Clip-Audiodateien. SHA-256 und Groesse
 beider Quelltracks waren vor und nach dem Pilot identisch. Das ist ein
 Originalquellen-Pipelinebeleg, aber kein UI-Klick- oder EXE-Beleg.
 
-Beim echten RAM-Rendering der fuenf Clips waren Variante 2 und 3 abspielbar
-(je 43.042 s WAV im Speicher); Variante 1, 4 und 5 scheiterten an
+Beim echten RAM-Rendering der fuenf Clips lieferten Variante 2 und 3
+WAV-Bytes im Speicher; Variante 1, 4 und 5 scheiterten an
 `BeatSyncError: Kickphase nicht in Anfang, Mitte und Ende messbar`. Der
 Sicherheitsgrenzwert wurde nicht gelockert. Der Bewertungsdialog zeigt den
-Renderfehler an, verhindert fuer eine solche Variante aber noch keine
-Bewertung. Daher ist der erzeugte Satz **nicht** als zuverlaessig vollstaendig
-bewertbarer Hoertest oder als Trainingsfreigabe zu deklarieren. Das ist ein
-konkret offener Produktfehler; keine menschliche Hoerqualitaet wurde geprueft.
+Renderfehler in diesem Checkpoint nur an; neue Noten sind noch moeglich.
+Die damals berichtete gleiche WAV-Dauer von 43.042 s fuer beide Varianten
+ist **nicht** als gebundener Dauerbeleg verwendbar: Variante 2 hat laut
+gespeichertem Manifest 54.085 s Crossfade plus Vor- und Nachlauf. Der
+fruehere Pilot-Output muss erst exakt den Clip-IDs zugeordnet werden; kein
+erneuter Audio-Lauf allein zur Klärung dieser Dokumentationsabweichung.
+Der Satz ist **nicht** als vollstaendig anhoerbarer Hoertest oder als
+Trainingsfreigabe zu deklarieren. Keine menschliche Hoerqualitaet wurde
+geprueft.
+
+### Fortsetzung: Bewertungsschutz bei RAM-Hoerproben
+
+Der native Bewertungsdialog sperrt jetzt neue Noten fuer einen `spec`-Clip,
+bis derselbe Clip in der aktuellen Ansicht erfolgreich im RAM gerendert wurde.
+Ein aktueller Renderfehler sperrt wieder; veraltete Worker-/Generationssignale
+haben keine Wirkung. Bestwahl und Sequenznoten setzen erfolgreiche Renderings
+aller Varianten der Gruppe voraus. Diese strengere Gruppenregel ist bewusst:
+"beste" oder "keine beste" ist ohne technisch beurteilbare Alternativen
+nicht belastbar. Vorhandene Noten bleiben sichtbar und
+unveraendert; Legacy-Clips ohne `spec` behalten das bisherige Verhalten.
+Auch ein `spec`-Clip mit einem `path` darf den RAM-Renderer nicht umgehen.
+Die reine Hoeransicht besitzt nun einen Dialog-internen `read_only`-Guard.
+Weder Render-Refresh noch direkter Handleraufruf darf dort Noten schreiben.
+
+Das ist nur ein Schutz gegen **neue** falsche Bewertungen in diesem Dialog.
+Alte Noten koennen weiterhin gespeichert sein und vom Fit gelesen werden;
+technische Nichtbeurteilbarkeit ist noch kein persistierter Fit-Ausschluss.
+Ein erfolgreiches Rendering belegt weder Audioausgabe am Benutzergeraet noch
+menschliches Anhoeren oder musikalische Qualitaet. Die drei BeatSyncError
+bleiben offen; an Renderer-Grenzwerten wurde nichts geaendert.
+
+Gezielte Qt-Regression: zwei neue Schutztests waren vor dem Fix rot, danach
+23 Dialogtests bestanden. Der erste angrenzende Integrationslauf meldete vier
+Fehler, weil die alten Testablaeufe ohne Rendering bewerteten. Sie wurden auf
+synthetische RAM-Erfolgssignale vor der Bewertung umgestellt; kein Produkt-Gate
+wurde gelockert. Der erneute Viermodus-Nachtest bestand mit 4/4; die zwei
+Schutztests nach der letzten Guard-Anpassung mit 2/2. Danach bestand ein
+gezielter Siebenerlauf mit 3 Dialog-Schutztests einschliesslich `read_only`
+und 4 nativen Integrationsmodi; ein weiterer gezielter Viererlauf pruefte
+zusaetzlich den `spec`-plus-`path`-Bypass. Die dabei verwendete
+Stille-WAV ist ausschliesslich RAM-Testnutzlast und kein Musik- oder
+Audioqualitaetsbeleg. Kein erneuter Originalmusiklauf, kein Gesamttest und
+keine EXE-Abnahme in dieser Fortsetzung.
+Ein weiterer gezielter Test bestaetigte 1/1: Erst nach zwei erfolgreichen
+Renderereignissen ist eine Bestwahl schreibbar; ein nachfolgender aktueller
+Renderfehler sperrt neue Noten und die Gruppenentscheidung wieder. Bereits
+gespeicherte Noten oder Sieger werden dadurch nicht still geloescht.
+Der vorhandene Lauf benutzte
+`.\venv312\Scripts\python.exe -B -m pytest tests/test_hearing_panel.py -k group_best_choice_requires_all_rendered_and_error_revokes_it --noconftest -n 0 --no-cov -p no:cacheprovider --tb=short -q --color=no -o log_cli=false`;
+Exitcode 0, `1 passed, 25 deselected in 0.23s`. SHA-256 der getesteten
+`tests/test_hearing_panel.py`:
+`358d914fc87f409f1adea32b9513e4696f6df8cd843019ebb75d1b6d8f357c65`.

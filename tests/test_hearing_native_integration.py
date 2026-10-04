@@ -140,28 +140,42 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
                 assert all(not control.isEnabled() for control in controls)
                 assert "Nur Höransicht" in self.status_label.text()
             else:
-                assert all(control.isEnabled() for control in self.rating_boxes.values())
                 if len(dialogs) == 1:
                     assert first.currentIndex() == 0
-                    first.setCurrentIndex(4)
-                    assert self._clip()["ratings"][dimensions[0]] == "4"
-                    assert self.status_label.text() == "Bewertung gespeichert."
-                    if mode == "dramaturgie":
-                        self.sequence_boxes["dramaturgie_gesamt"].setCurrentIndex(4)
-                        assert self._group()["ratings"]["dramaturgie_gesamt"] == "4"
-                    # Echte QBuffer-/QMediaPlayer-Verkabelung, ohne DSP oder Ton.
+                    assert not first.isEnabled()
+                    # Synthetisches RAM-Erfolgssignal pro zu bewertendem Clip;
+                    # dieser Test belegt Verkabelung/Persistenz, keinen DSP-Erfolg.
                     monkeypatch.setattr(self.player, "play", lambda: None)
+                    data = _silence_wav()
+                    if mode == "dramaturgie":
+                        for index in range(len(self._group()["clips"])):
+                            self.clip_index = index
+                            self._show_clip()
+                            source = object()
+                            self._audio_worker = source
+                            self._render_ready(data, source, self._render_generation)
+                            self._audio_worker = None
+                        self.clip_index = 0
+                        self._show_clip()
                     source = object()
                     self._audio_worker = source
-                    data = _silence_wav()
                     self._render_ready(data, source, self._render_generation)
                     assert isinstance(self._audio_buffer, QBuffer)
                     assert self._audio_buffer.isOpen()
                     assert bytes(self._audio_buffer.data()) == data
                     assert self.player.sourceDevice() is self._audio_buffer
+                    assert first.isEnabled()
+                    first.setCurrentIndex(4)
+                    assert self._clip()["ratings"][dimensions[0]] == "4"
+                    assert self.status_label.text() == "Bewertung gespeichert."
+                    if mode == "dramaturgie":
+                        assert self.sequence_boxes["dramaturgie_gesamt"].isEnabled()
+                        self.sequence_boxes["dramaturgie_gesamt"].setCurrentIndex(4)
+                        assert self._group()["ratings"]["dramaturgie_gesamt"] == "4"
                     self._audio_worker = None
                 else:
                     assert first.currentIndex() == 4
+                    assert not first.isEnabled()
                     if mode == "dramaturgie":
                         assert self.sequence_boxes["dramaturgie_gesamt"].currentIndex() == 4
             self.reject()

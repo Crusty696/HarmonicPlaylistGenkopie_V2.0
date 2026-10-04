@@ -242,3 +242,171 @@ def test_rating_refresh_does_not_reset_sequence_media(qtbot):
     dialog.sequence_boxes["energieverlauf"].setCurrentIndex(4)
     assert dialog._render_generation == generation
     assert dialog._sequence_playing
+
+
+def test_native_spec_rating_requires_current_successful_render(qtbot):
+    import io
+    import numpy as np
+    import soundfile as sf
+    from hpg_core.hearing_panel import HearingRatingDialog
+
+    session = {"mode": "kandidaten", "groups": [{"id": "p1", "ratings": {}, "clips": [
+        {"pair_id": "p1", "clip_id": f"c{i}", "path": None,
+         "spec": {"test": i}, "ratings": {"note": ""}, "gewaehlt": ""}
+        for i in (1, 2)
+    ]}]}
+    saved = []
+    dialog = HearingRatingDialog(session, save=lambda route, data: saved.append((route, data)))
+    qtbot.addWidget(dialog)
+    assert not dialog.rating_boxes["note"].isEnabled()
+    assert not dialog.best_button.isEnabled()
+    assert not dialog.no_best_button.isEnabled()
+    dialog.rating_boxes["note"].setEnabled(True)
+    dialog.rating_boxes["note"].setCurrentIndex(5)
+    assert dialog.rating_boxes["note"].currentIndex() == 0
+    assert not dialog.rating_boxes["note"].isEnabled()
+    dialog._rate("note", 5)
+    dialog._choose(True)
+    dialog._choose(False)
+    assert saved == []
+
+    data = io.BytesIO()
+    sf.write(data, np.zeros((16000, 2)), 8000, format="WAV", subtype="PCM_16")
+    worker = object()
+    dialog._audio_worker = worker
+    token = dialog._render_generation
+    dialog._render_ready(data.getvalue(), worker, token)
+    assert dialog.rating_boxes["note"].isEnabled()
+    dialog._rate("note", 4)
+    assert saved == [("/note", {"pair_id": "p1", "clip_id": "c1", "dimension": "note", "note": 4})]
+    dialog._audio_worker = None
+    dialog._move_clip(1)
+    assert not dialog.rating_boxes["note"].isEnabled()
+    dialog._render_ready(data.getvalue(), worker, token)
+    assert not dialog.rating_boxes["note"].isEnabled()
+    dialog._rate("note", 5)
+    dialog._choose(False)
+    assert len(saved) == 1
+    dialog._move_clip(-1)
+    assert not dialog.rating_boxes["note"].isEnabled()
+    assert not dialog.no_best_button.isEnabled()
+    dialog._rate("note", 5)
+    assert len(saved) == 1
+
+
+def test_native_spec_render_error_never_writes_negative_rating(qtbot):
+    from hpg_core.hearing_panel import HearingRatingDialog
+
+    session = {"mode": "kandidaten", "groups": [{"id": "p1", "ratings": {}, "clips": [{
+        "pair_id": "p1", "clip_id": "c1", "path": None, "spec": {"test": True},
+        "ratings": {"note": "3"}, "gewaehlt": "",
+    }]}]}
+    saved = []
+    dialog = HearingRatingDialog(session, save=lambda route, data: saved.append((route, data)))
+    qtbot.addWidget(dialog)
+    worker = object()
+    dialog._audio_worker = worker
+    token = dialog._render_generation
+    dialog._render_error("BeatSyncError", worker, token - 1)
+    assert "BeatSyncError" not in dialog.status_label.text()
+    dialog._render_error("BeatSyncError", worker, token)
+    assert "BeatSyncError" in dialog.status_label.text()
+    assert not dialog.best_button.isEnabled()
+    assert not dialog.no_best_button.isEnabled()
+    dialog._rate("note", 1)
+    dialog._choose(True)
+    dialog._choose(False)
+    assert saved == []
+    assert session["groups"][0]["clips"][0]["ratings"]["note"] == "3"
+    dialog._audio_worker = None
+
+
+def test_read_only_rating_stays_locked_after_successful_render(qtbot):
+    import io
+    import numpy as np
+    import soundfile as sf
+    from hpg_core.hearing_panel import HearingRatingDialog
+
+    session = {"mode": "kandidaten", "groups": [{"id": "p1", "ratings": {}, "clips": [{
+        "pair_id": "p1", "clip_id": "c1", "path": None, "spec": {"test": True},
+        "ratings": {"note": "3"}, "gewaehlt": "",
+    }]}]}
+    saved = []
+    dialog = HearingRatingDialog(session, save=lambda route, data: saved.append((route, data)), read_only=True)
+    qtbot.addWidget(dialog)
+    data = io.BytesIO()
+    sf.write(data, np.zeros((16000, 2)), 8000, format="WAV", subtype="PCM_16")
+    source = object()
+    dialog._audio_worker = source
+    dialog._render_ready(data.getvalue(), source, dialog._render_generation)
+    assert not dialog.rating_boxes["note"].isEnabled()
+    assert not dialog.best_button.isEnabled()
+    assert not dialog.no_best_button.isEnabled()
+    dialog._rate("note", 5)
+    dialog._choose(True)
+    dialog._choose(False)
+    assert saved == []
+    assert session["groups"][0]["clips"][0]["ratings"]["note"] == "3"
+    dialog._audio_worker = None
+
+
+def test_spec_path_cannot_bypass_ram_render(qtbot, monkeypatch):
+    from hpg_core.hearing_panel import HearingRatingDialog
+
+    session = {"mode": "einzel", "groups": [{"id": "p1", "ratings": {}, "clips": [{
+        "pair_id": "p1", "clip_id": "c1", "path": "C:/existing.wav",
+        "spec": {"test": True}, "ratings": {"bewertung": ""},
+    }]}]}
+    dialog = HearingRatingDialog(session, save=lambda *_args: None)
+    qtbot.addWidget(dialog)
+    called = []
+    monkeypatch.setattr(dialog, "_start_render", lambda: called.append(True))
+    assert dialog.player.source().isEmpty()
+    assert not dialog.rating_boxes["bewertung"].isEnabled()
+    dialog._toggle_playback()
+    assert called == [True]
+
+
+def test_group_best_choice_requires_all_rendered_and_error_revokes_it(qtbot):
+    import io
+    import numpy as np
+    import soundfile as sf
+    from hpg_core.hearing_panel import HearingRatingDialog
+
+    session = {"mode": "kandidaten", "groups": [{"id": "p1", "ratings": {}, "clips": [
+        {"pair_id": "p1", "clip_id": f"c{i}", "path": None,
+         "spec": {"test": i}, "ratings": {"note": "3"}, "gewaehlt": ""}
+        for i in (1, 2)
+    ]}]}
+    saved = []
+    dialog = HearingRatingDialog(session, save=lambda route, data: saved.append((route, data)))
+    qtbot.addWidget(dialog)
+    data = io.BytesIO()
+    sf.write(data, np.zeros((16000, 2)), 8000, format="WAV", subtype="PCM_16")
+    worker = object()
+    dialog._audio_worker = worker
+    dialog._render_ready(data.getvalue(), worker, dialog._render_generation)
+    assert dialog.rating_boxes["note"].isEnabled()
+    assert not dialog.best_button.isEnabled()
+    assert not dialog.no_best_button.isEnabled()
+    dialog._choose(True)
+    assert saved == []
+
+    dialog._audio_worker = None
+    dialog._move_clip(1)
+    worker = object()
+    dialog._audio_worker = worker
+    dialog._render_ready(data.getvalue(), worker, dialog._render_generation)
+    assert dialog.best_button.isEnabled()
+    assert dialog.no_best_button.isEnabled()
+    dialog._choose(True)
+    assert saved == [("/bester", {"pair_id": "p1", "clip_id": "c2"})]
+    dialog._render_error("BeatSyncError", worker, dialog._render_generation)
+    assert not dialog.rating_boxes["note"].isEnabled()
+    assert not dialog.best_button.isEnabled()
+    assert not dialog.no_best_button.isEnabled()
+    dialog._rate("note", 1)
+    dialog._choose(False)
+    assert len(saved) == 1
+    assert session["groups"][0]["clips"][1]["ratings"]["note"] == "3"
+    dialog._audio_worker = None
