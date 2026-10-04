@@ -5,116 +5,37 @@ description: Use when auditing, reviewing, cleaning up or optimizing the HPG cod
 
 # HPG Audit & Optimize
 
-## Regel Null
+## Quellen und Scope
 
-**Statusdokumente sind Hypothesen, der Code ist die Wahrheit.** Dieses Repo
-enthaelt sechs Audit-/Fixlog-Markdowns, deren Befunde grossteils erledigt
-sind. Wer sie als offene Punkte behandelt, auditiert die Vergangenheit.
+Vor Facharbeit hpg-orientation laden. Aktuellen Auftrag, git status und den
+betroffenen Code lesen. docs/PROJECT_KNOWLEDGE.md enthaelt erhaltene Regeln
+und offene Fragen. Historische Audits sind keine aktuelle Fehlerliste.
 
-Vor jedem Audit: `git log --oneline -10`, `git status --short`, dann die
-Behauptung im Code pruefen.
+## Vorgehen
 
-## Testlauf selbst messen
+1. Behauptung und Akzeptanzkriterium festlegen; konkrete Quelle lesen.
+2. Vorhandene Nachweise auf relevante Hashes, Eingaben und Umgebung pruefen.
+   Wiederholung nur mit dokumentiertem Grund und kleinstem passenden Umfang.
+3. Verbraucher und Referenzen vor Entfernen pruefen. Fehlende lokale
+   Referenzen allein beweisen nicht, dass ein Werkzeug unbenutzt ist.
+4. Vor Umsetzung unabhaengigen hpg-waechter mit genauem Dateivertrag einsetzen.
+5. Reproduzierbaren Fehler vor Korrektur nachweisen und denselben Test danach
+   bestehen lassen. Nicht reproduzierbare Diagnose klar begrenzen.
+6. Bei Produktaenderungen Fachinvarianten und Testvertrag anwenden. Fuer reine
+   Dokumentation kein neuer Volltest, Build oder Audioanalyselauf (AGENTS.md).
+7. Vor Commit Diff und genaue Stagingliste unabhaengig pruefen lassen.
 
-Testanzahl und Coverage stehen bewusst nicht mehr hier — sie veralten mit
-jedem Commit. Aktuellen Stand selbst messen:
-`.\venv312\Scripts\python.exe -m pytest tests/ -q`.
+## Bereinigung
 
-GitHub Actions waehlt Slow-Tests ausdruecklich ab und laeuft deshalb mit
-weniger Tests als der lokale Standardlauf.
+Erst haltbare Erkenntnisse und offene Fragen extrahieren, dann sichern und
+entfernen. Historische Fehler nicht automatisch als behoben markieren.
+Originalmusik, Datenbanken, Lock-/Coverage-Dateien und geschuetzte
+Benutzerartefakte bleiben unangetastet. Keine Wiederherstellung veralteter
+Statuskopien als aktuelle Wahrheit. Beide Skill-Spiegel konsistent halten.
 
-## Historischer Volltest-Snapshot (2026-08-25)
+## Beweisgrenzen
 
-| Fakt | Wert |
-|---|---|
-| Version | 3.7.2 |
-| `CACHE_VERSION` (damals) | 37, `hpg_cache_v37.db` |
-| Strategien | **8** (`STRATEGIES`) |
-| Kanonische Genres | **9** |
-| Python | 3.12.10 in `venv312` |
-| Worker-Cap | 4 (`PARALLEL_AUTO_MAX_WORKERS`) |
-
-Die Werte in dieser Tabelle sind historische Bestandteile des
-Volltest-Snapshots vom 2026-08-25. Der aktuelle Code steht seit 2026-09-04 auf
-`CACHE_VERSION = 45` und verwendet `hpg_cache_v45.db`.
-
-## Belegte Doku-Widersprueche
-
-| Fruehere Behauptung | Ehemaliger Fundort | Status 2026-08-25 |
-|---|---|---|
-| feste Zeilenzahl fuer `main.py` | Statusdokus/Skills | korrigiert; volatile Zeilenzahl wird nicht mehr festgeschrieben |
-| 10-11 Strategien, alte Namen | `docs/QUICK_START.txt` | korrigiert; 8, Aliase bleiben gueltig |
-| `ui/main_window.py`, `GUI/`-Ordner | `docs/QUICK_START.txt` | korrigiert; alles in `main.py` |
-| veraltete Testzahlen | alte Handoffs/Fixlogs | historische Snapshots; aktuellen Stand selbst messen |
-| "Build blockiert", `security.py`-Duplikat | alte Audit-Berichte | erledigt, Datei existiert nicht mehr |
-
-`docs/archive/AUDIT_SKILL-TEAM_2026-07-24.md`,
-`docs/archive/FULLSTACK_AUDIT_HPG_2026-07-20.md` und die
-`FIXLOG_*`-Dateien sind ausdruecklich **Snapshots**.
-
-## Wo Fehler in diesem Projekt real entstehen
-
-Nach Auswertung beider Voll-Audits, in dieser Reihenfolge:
-
-1. **Qt-Worker-Lebenszyklus** — `finished` ueberschrieben, Cleanup am falschen
-   Signal, verwaiste Worker ohne Source-Guard. Skill `hpg-qt-gui`.
-2. **Ein Anker, ein Gitter** — Mixpoints und Sektionen auf verschiedenen
-   Rastern, Off-Grid-Werte aus Fallback-Pfaden. Skill
-   `hpg-mixpoint-engineering`.
-3. **Cache maskiert Fixes** — `CACHE_VERSION` nicht gebumpt. Skill
-   `hpg-cache-persistence`.
-4. **Zwei Pfade, ein Fix** — Fast-Path und Voll-Path divergieren. Skill
-   `hpg-audio-analysis`.
-5. **UI verspricht, was der Code nicht liefert** — Parameter, die validiert,
-   aber nie zugestellt werden.
-6. **Skript meldet Erfolg ohne Wirkung** — Batch-Wrapper. Skill
-   `hpg-release-build`.
-
-## Worktree-Hinweis
-
-**Historischer Snapshot 2026-08-14:** `main.py`, `hpg_core/theme.py`,
-`tests/test_run_lifecycle.py`, `tests/test_theme.py`, `Start.bat`,
-`build_installer.bat`, `requirements.txt`. Die Doku behauptet einen sauberen
-Abschlusszustand — das stimmt nicht. Suite ist mit diesen Aenderungen gruen.
-
-**Aktuell 2026-08-25:** Der gemessene Stand ist eine uncommittete
-Arbeitskopie. Vor Freigabe oder Commit deshalb `git status --short` neu lesen.
-
-**Erledigt 2026-08-14:** die verwaisten `theme.RISK_*`-Konstanten wurden
-entfernt, ebenso `caching._quarantine_cache_row`, `caching._is_confirmed_corrupt`,
-`ErrorReporter.clear_errors` und `RekordboxImporter._time_to_seconds`. Die
-doppelte Versionsquelle ist konsolidiert: `hpg_core/__init__.py` leitet
-`__version__` aus `app_metadata.APP_VERSION` ab, ein Test haelt beides synchron.
-
-## Audit-Vorgehen
-
-1. Ist-Stand messen: Suite laufen lassen, `CACHE_VERSION` lesen, `git status`.
-2. Behauptung waehlen, Code-Stelle zitieren, **ausfuehren** wo moeglich.
-   Scoring- und Playlist-Befunde lassen sich direkt mit einem kleinen
-   Python-Aufruf belegen statt vermuten.
-3. Toten Code per Grep gegen **alle** Konsumenten pruefen, `tests/`
-   eingeschlossen — ein Symbol, das nur Tests nutzen, ist tot, aber sein Test
-   auch.
-4. Doppelten Code nicht "reparieren", sondern konsolidieren: es gibt zentrale
-   Helfer (`models.seconds_per_bar`, `quantize_to_grid`, `effective_bpm_diff`,
-   `get_camelot_components`, `resolve_transition_mix_points`,
-   `resolve_scoring_context`, `theme.COLORS`). Neue Inline-Kopie = Befund.
-5. Fix, dann Volllauf plus die passende Verify-Suite. Bei geaendertem
-   Analyse-Output `CACHE_VERSION` bumpen.
-6. Findings mit Schweregrad, Codestelle und **reproduzierbarem** Fehlfall
-   melden. "Sieht falsch aus" ist kein Finding.
-
-## Grenzen ehrlich benennen
-
-Gruene Tests beweisen **keine** musikalische Qualitaet. Interne Scores sind
-keine Ground Truth. Aussagen ueber Uebergangsqualitaet brauchen den
-Blindtest-Pfad (`tools/prepare_dj_blind_test.py`) oder eine Hoersession —
-das steht so auch im `docs/DATA_AND_VALIDATION_CONTRACT.md`.
-
-## Common Mistakes
-
-- Alte Audit-Markdowns als To-do-Liste lesen.
-- Toten Code entfernen und die zugehoerigen Tests stehen lassen.
-- Optimieren ohne Messung (`tests/performance_fixtures.py`,
-  `benchmark_rekordbox.py`, `tools/validation_run.py`).
-- Mehrere kritische Module in einem Rutsch aendern.
+Implementierung, automatische Tests, Originaltrack-App-Ablauf und musikalische
+Bewertung getrennt berichten. Interne Scores sind keine Ground Truth.
+Cache-Erfolg beweist keinen frischen Erstlauf. Eine Quellenbereinigung ist
+keine Produktabnahme.

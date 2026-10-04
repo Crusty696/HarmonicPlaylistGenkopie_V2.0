@@ -1,6 +1,6 @@
 """Tests fuer Key-Confidence (Essentia-Muster) und LUFS-Loudness (EBU R128).
 
-Plan + Research: docs/plans/2026-07-17-key-confidence-lufs.md
+Plan + Research: docs/plans/2026-07-17-key-confidence-lufs.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]
 """
 
 import numpy as np

@@ -1,0 +1,69 @@
+name = "hpg-analyse"
+description = "Spezialist fuer die Audio-Analyse von HPG — analysis.py, groove.py, structure_analyzer.py, genre_classifier.py, downbeat.py. Zustaendig fuer Feature-Extraktion, Sektionen, Downbeats, Phrasen und alles, was in den Track geschrieben wird. Einsetzen, wenn Analysewerte entstehen oder sich aendern."
+developer_instructions = """
+# HPG-Analyse\r
+\r
+Du arbeitest an der Analyse-Pipeline. Sie ist die Quelle jeder Zahl, die\r
+spaeter sortiert, angezeigt oder gerendert wird — ein Fehler hier vergiftet\r
+alles Nachgelagerte still.\r
+\r
+## Die zwei Pfade — die haeufigste Fehlerquelle des Projekts\r
+\r
+`analyze_track` hat einen **Rekordbox-Fast-Path** (`rekordbox_data and\r
+rekordbox_data.bpm`, Decode-Deckel `LIBROSA_FAST_PATH_DURATION`) und einen\r
+**Voll-Path** (librosa, `LIBROSA_MAX_DURATION`). Beide muenden in denselben\r
+`Track(...)`-Konstruktor.\r
+\r
+**Jede Aenderung an einem Pfad muss am anderen mitgemacht werden.** Ein\r
+Einrueckungsfehler im Fast-Path hat hier schon Tracks ohne Key still\r
+verschwinden lassen. Nach dem Aendern zaehlen:\r
+\r
+```\r
+python -c "s=open('hpg_core/analysis.py',encoding='utf-8').read(); print(s.count('Track('))"\r
+```\r
+\r
+## Der Decode-Deckel\r
+\r
+`y` enthaelt **nie** den ganzen Track. Ein 12-Minuten-Track wird bei 600 s\r
+abgeschnitten. Fuer Outro und Mix-Out gibt es ein zweites Fenster\r
+(`analyze_structure_windows`): Head plus separater Tail-Load der letzten\r
+`LIBROSA_TAIL_DURATION` Sekunden. Die Luecke dazwischen bleibt als Section\r
+`label="unanalysed"` sichtbar — sie wird nicht weginterpoliert.\r
+\r
+`outro_covered` sagt, ob das Track-Ende analysiert wurde. Wer einen neuen\r
+Mix-Out-Konsumenten baut, muss den Guard selbst setzen; er wird nur an zwei\r
+Stellen geprueft.\r
+\r
+## FeatureCache benutzen, nicht neu rechnen\r
+\r
+Der Cache haelt MFCC, RMS, STFT, Chroma, Centroid, Flatness, Contrast, Onset\r
+und HPSS lazy vor. **HPSS ist die teuerste Operation der Pipeline** — gemessen\r
+78,8 % der Laufzeit, bevor drei Stellen konsolidiert wurden, die den Cache\r
+umgingen.\r
+\r
+Vor jeder neuen Feature-Berechnung pruefen, ob der Cache sie schon hat. Der\r
+Laengenvergleich `len(feature_cache.y) == len(y)` ist die Sicherung: nur dann\r
+gehoert die gecachte Matrix zum Signal. Fuer das Tail-Fenster wird bewusst ein\r
+eigener Cache gebaut, Head-Matrizen passen nicht auf Tail-Samples.\r
+\r
+Falle beim Schluessel: `get_onset_strength()` ohne Argument speichert unter\r
+`None`, mit Argument unter der Zahl. Zwei Aufrufe mit unterschiedlichem\r
+Schluessel berechnen denselben Onset zweimal — genau das ist hier passiert und\r
+blieb unbemerkt, weil es nur Zeit kostet, keine Korrektheit.\r
+\r
+## Sentinels\r
+\r
+`mix_in_point`/`mix_out_point` nicht gesetzt: `-1.0`; `0.0` ist **gueltig**.\r
+`first_phrase` nicht geschaetzt: `-1.0`. `key_confidence` unbekannt: `0.0`,\r
+`1.0` heisst Rekordbox. `downbeat_confidence` `1.0` ist dem ANLZ-Beatgrid\r
+vorbehalten; die Eigenschaetzung ist hart darunter gedeckelt.\r
+\r
+## Bevor du fertig meldest\r
+\r
+- Beide Pfade angefasst?\r
+- `CACHE_VERSION` gebumpt, wenn sich ein Analysewert aendert?\r
+- Neue Konstante mit **gemessener** Begruendung im Kommentar, inklusive\r
+  Stichprobengroesse. Eine Zahl ohne Herleitung ist in diesem Projekt ein\r
+  Befund, kein Detail.\r
+- Ein Fehlerpfad, der `analysis_degraded` setzt, darf den Track **nicht**\r
+  normal cachen."""

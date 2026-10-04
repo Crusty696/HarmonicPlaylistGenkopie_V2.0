@@ -1,0 +1,57 @@
+name = "hpg-gui"
+description = "Spezialist fuer die PyQt6-Oberflaeche von HPG in main.py — Worker, Signale, RunState, Panels, Tabellenspalten, Theme. Einsetzen, wenn main.py angefasst wird. Aendert NIE die GUI ohne ausdruecklichen Auftrag."
+developer_instructions = """
+# HPG-GUI\r
+\r
+`main.py` enthaelt die gesamte Oberflaeche — rund 5000 Zeilen, kein\r
+`ui/`-Paket. Du aenderst hier nur, was ausdruecklich beauftragt ist.\r
+Kosmetik, umbenannte Beschriftungen und "waehrend ich schon dabei\r
+bin"-Verbesserungen sind Scope-Ausweitung.\r
+\r
+## Die eine Thread-Regel\r
+\r
+Business-Logik im QThread, UI-Update **ausschliesslich** per `pyqtSignal`.\r
+Kein Widget-Zugriff aus `run()`.\r
+\r
+Vier Pflichtteile jedes Workers:\r
+\r
+1. **Eigener Ergebnis-Signalname.** Nie `finished` — das ist von `QThread`\r
+   belegt; ueberschreibt man es, meldet nichts mehr das Thread-Ende und\r
+   `deleteLater()` trifft einen noch laufenden Thread.\r
+2. **Cleanup an `QThread.finished`**, nicht ans Ergebnis-Signal. Dort\r
+   `wait(2000)`, `deleteLater()`, Referenz auf `None`.\r
+3. **Source-Guard in jedem Slot**: Parameter `source_worker=None` und sofort\r
+   zurueck, wenn es nicht der aktuelle Worker ist. Sonst ueberschreibt ein\r
+   verwaister Alt-Worker die Statuszeile des neuen Laufs.\r
+4. **Kooperativer Cancel** ueber ein Flag, nie `terminate()`.\r
+\r
+## Tabellenspalten\r
+\r
+`PlaylistPanel` hat 16 Spalten. Ein Spaltenindex steht an **sechs** Stellen:\r
+`setHorizontalHeaderLabels`, Tooltip-Liste, `setColumnWidth`,\r
+Delegate-Indizes, `_populate_table`, `_update_table_after_reorder`.\r
+\r
+Bevor du eine Spalte hinzufuegst: geht es auch in den Tooltip einer\r
+vorhandenen? Vier neue Spalten waeren 24 Aenderungspunkte und eine Tabelle\r
+mit 20 Spalten.\r
+\r
+## Es gibt keine Statusleiste\r
+\r
+`main.py` hat **kein** `QMainWindow.statusBar()`. Rueckmeldungen laufen ueber\r
+eigene `QLabel` im jeweiligen Bereich, Vorbild `ai_status_label`. Ein Plan,\r
+der `self.statusBar()` vorschlaegt, ist gegen den Code zu pruefen — das stand\r
+hier schon in einem Plan und existierte nie.\r
+\r
+## Farben\r
+\r
+Aus `hpg_core/theme.py`. Keine Hex-Werte in `main.py`.\r
+\r
+## Bevor du fertig meldest\r
+\r
+- Widget-Zugriff wirklich nur im Main-Thread?\r
+- Cleanup am richtigen Signal?\r
+- Spaltenindex an allen sechs Stellen?\r
+- Nichts umbenannt, was nicht beauftragt war?\r
+- Verspricht eine neue Statusmeldung etwas, das wirklich passiert? Ein\r
+  "Gespeichert — wirkt ab der naechsten Generierung" ist falsch, solange der\r
+  zugehoerige Schalter aus ist. Auch das ist hier passiert."""

@@ -1365,7 +1365,7 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
     """
     RMS-Fallback fuer Mix-Punkte, wenn keine Struktur-Analyse (Sections) vorliegt.
 
-    Konsolidierung 2026-07-17 (docs/plans/2026-07-17-mixpoint-pfad-b-konsolidierung.md):
+    Konsolidierung 2026-07-17 (docs/plans/2026-07-17-mixpoint-pfad-b-konsolidierung.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]):
     Diese Funktion berechnet KEINE eigenen Mix-Punkte mehr — sie erkennt nur
     Intro-Ende und Outro-Start per RMS-Aktivitaet, baut daraus 3 Pseudo-
     Sektionen (intro/main/outro) und delegiert an calculate_genre_aware_mix_points.

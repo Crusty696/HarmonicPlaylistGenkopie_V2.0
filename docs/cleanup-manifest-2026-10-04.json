@@ -1,0 +1,1498 @@
+{
+  "date": "2026-10-04",
+  "recovery_root": "E:\\AI\\HPG-cleanup-recovery\\2026-10-04-project-cleanup",
+  "knowledge": "docs/PROJECT_KNOWLEDGE.md",
+  "entries": [
+    {
+      "path": ".agents/skills/hpg-audit-optimize/SKILL.md",
+      "action": "update",
+      "sha256": "cf6dea584d0461f4cc2b283d39126fe366187926eae18953f10a038bb69e2d7d",
+      "bytes": 5510,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".agents/skills/hpg-mixpoint-engineering/SKILL.md",
+      "action": "update-reference-only",
+      "sha256": "cab425383d2fa8544f99ac25088b38de8c8522ee159aebd1ea3cbe69fe906e57",
+      "bytes": 14013,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".agents/skills/hpg-orientation/SKILL.md",
+      "action": "update",
+      "sha256": "ab8aaf68d9566995eb2c80036e240a858e13d14061323fc4e23ac664d8a723fe",
+      "bytes": 4964,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".agents/skills/hpg-playlist-scoring/SKILL.md",
+      "action": "update-reference-only",
+      "sha256": "3f9598947b7a938046fa93e12f7edad050ca180dd062a62d72c1681bcd809e83",
+      "bytes": 10592,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".agents/skills/hpg-testing-verification/SKILL.md",
+      "action": "update",
+      "sha256": "dff93ee0f06d9436ff31e7ae94448bd3759c59cfd0bb8a26ee803b8c6a22681b",
+      "bytes": 7652,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".claude/skills/hpg-audit-optimize/SKILL.md",
+      "action": "update",
+      "sha256": "cf6dea584d0461f4cc2b283d39126fe366187926eae18953f10a038bb69e2d7d",
+      "bytes": 5510,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".claude/skills/hpg-mixpoint-engineering/SKILL.md",
+      "action": "update-reference-only",
+      "sha256": "cab425383d2fa8544f99ac25088b38de8c8522ee159aebd1ea3cbe69fe906e57",
+      "bytes": 14013,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".claude/skills/hpg-orientation/SKILL.md",
+      "action": "update",
+      "sha256": "ab8aaf68d9566995eb2c80036e240a858e13d14061323fc4e23ac664d8a723fe",
+      "bytes": 4964,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".claude/skills/hpg-playlist-scoring/SKILL.md",
+      "action": "update-reference-only",
+      "sha256": "3f9598947b7a938046fa93e12f7edad050ca180dd062a62d72c1681bcd809e83",
+      "bytes": 10592,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".claude/skills/hpg-testing-verification/SKILL.md",
+      "action": "update",
+      "sha256": "dff93ee0f06d9436ff31e7ae94448bd3759c59cfd0bb8a26ee803b8c6a22681b",
+      "bytes": 7652,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-analyse.toml",
+      "action": "include-existing",
+      "sha256": "2029f233a2ba634e4990a8ada5b3f3b52cc64bacf49cd5a913a2683d238ff01e",
+      "bytes": 3401,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-cache.toml",
+      "action": "include-existing",
+      "sha256": "1af04d9492714e66c4af495f0449d0fb0a587096bcdee3e464f49357cc9449a5",
+      "bytes": 2564,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-gui.toml",
+      "action": "include-existing",
+      "sha256": "f438e6611f61da754072da45c112c28eb8eeb7279c5e4bdb431c392d16423de4",
+      "bytes": 2578,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-mixpoints.toml",
+      "action": "include-existing",
+      "sha256": "622527fbfab2bc575a704bbcf150635edfb6adf0cef1a8271ec560e71710f6f2",
+      "bytes": 3432,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-rekordbox.toml",
+      "action": "include-existing",
+      "sha256": "2dd3fb6ef365da0d60cc40e4d759c7b73ef95f94b6c5272fd90837cfd4acc24c",
+      "bytes": 2760,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-render.toml",
+      "action": "include-existing",
+      "sha256": "94bb2aa5d1a6eedb0ea54af980def7773cead00ee214978bb11901a6051694f7",
+      "bytes": 2836,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-scoring.toml",
+      "action": "include-existing",
+      "sha256": "8221845a3ccaa52618b3c39972b199d9c7fb1ac4fea3c5e1b3ac3a140304b9df",
+      "bytes": 3755,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-statistik.toml",
+      "action": "include-existing",
+      "sha256": "ae9b59b8a69c8ef2eeec5324f01279dd4e6b4385441eb8f8bb417a6c01cf9866",
+      "bytes": 3303,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-tests.toml",
+      "action": "include-existing",
+      "sha256": "24d1e91d8bf9fe459e38dea93a9c9132be1320c83d46a60d68037222e645541d",
+      "bytes": 3863,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/hpg-waechter.toml",
+      "action": "update",
+      "sha256": "069aeecc751fcc4e55467a915e9fbde342faf6e199b1ff96afcc865beeb38b33",
+      "bytes": 9856,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/veritas-knowledge.toml",
+      "action": "include-existing",
+      "sha256": "18bed786e68b8724878ae5c9747028a354bea29a174f95bd7ad486a79cd89a0a",
+      "bytes": 754,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/veritas-orchestrator.toml",
+      "action": "include-existing",
+      "sha256": "6c098d0524fec149ba2d9675c90204635cc648b460c90397a7636cbd06aeb808",
+      "bytes": 932,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".codex/agents/veritas-verifier.toml",
+      "action": "include-existing",
+      "sha256": "7cd7816db8229ab265264a106aa6edb05a221a73af47845caf02f97a290c491d",
+      "bytes": 742,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".gitignore",
+      "action": "update",
+      "sha256": "ba6264aa52c50d14d1f3bf0f1caca6f4cdc49cdaaef64f2f96c9b64b9497b090",
+      "bytes": 2054,
+      "encoding": "utf-8"
+    },
+    {
+      "path": ".qwen/HPG_SKILLS_README.md",
+      "action": "remove",
+      "sha256": "dfdfff4188289dd018e3c8ca9d206a97bd0a313bc7ab30a501cab664e647d6a0",
+      "bytes": 7930,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "AGENTS.md",
+      "action": "update",
+      "sha256": "b918e3b26f84913206eed42540d33edf4d8a813ff09571b99a58bd3972f1f4bb",
+      "bytes": 11319,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "AI_README.md",
+      "action": "update",
+      "sha256": "301b7ce01d57ec589aad37a916f553af8ef464c8e96f7f02487deda7be7fdbc5",
+      "bytes": 4674,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "APP-TEST-CWINDOWSsystem32cmd.exe",
+      "action": "remove",
+      "sha256": "02065a5734a60a674f45da30c755e8899dca0d5420e1f864e99494c02143608a",
+      "bytes": 28897,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "CLAUDE.md",
+      "action": "update",
+      "sha256": "30ced4fc693460740df53bdbe5328241139cbdd1edcf95b2530d3596c359bdd1",
+      "bytes": 8415,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "DREAMS.md",
+      "action": "remove",
+      "sha256": "b3219386658f9de471b15d629dabf52e6965c8ef53114b3d5c6f2b0f782d9fe4",
+      "bytes": 5981,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "MEMORY.md",
+      "action": "update",
+      "sha256": "964ebc131258dc3cdb6b05fbf94cbec3f252da42e82bc7006f2676a68a766190",
+      "bytes": 14582,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "PRODUCTION_README.md",
+      "action": "update",
+      "sha256": "c7cec2e1c74645c12653bb4a0ff1447829e3311bbcc5f05ce9f2a5ef4b932451",
+      "bytes": 1211,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "PRODUCTION_STATUS.md",
+      "action": "update",
+      "sha256": "673a0d8df3c8e9709d2b4a0e147d1d2718178a03e18df569c169a398f55ec04b",
+      "bytes": 6352,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "QWEN.md",
+      "action": "remove",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "README.md",
+      "action": "update",
+      "sha256": "a852a156766dc81f282476a4f652a99649ba585cd6b459848ca8cfa51155b91a",
+      "bytes": 5877,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "STATUS_BERICHT.md",
+      "action": "remove",
+      "sha256": "1c8615005a9ab3403f0e6e457005285c7512c050523eddf229ce7dc24ce2fda5",
+      "bytes": 8985,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "Test-test-CWINDOWSsystem32cmd.exe",
+      "action": "remove",
+      "sha256": "fdb78692eef96a254012f6f2aeea9be30118f5fc64cb367b2f1f80e76c1cd5c9",
+      "bytes": 53946,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "Textdokument (neu).txt",
+      "action": "remove",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "__pycache__/Textdokument (neu).txt",
+      "action": "remove",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/AGENT_HANDOFF.md",
+      "action": "remove",
+      "sha256": "82c8d5a5e4ecce22ed6182a7dd43d81a6da8ae8ddaf697472e7b9f179d0ddcaa",
+      "bytes": 3930,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/ALTLASTEN_AUDIT_2026-07-17.md",
+      "action": "remove",
+      "sha256": "08b13a38ed4439d912efd9ee8355cac09fe9a496a728732bab6acd64eb915a16",
+      "bytes": 11446,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/AUDIT_BERICHT_2026-07-17.md",
+      "action": "remove",
+      "sha256": "672574e595cdadd44baf5abcbfa239d52bf806c6f5e247929181eebaf66cec24",
+      "bytes": 17795,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/DATA_AND_VALIDATION_CONTRACT.md",
+      "action": "update",
+      "sha256": "07446a9ed03d216ec6007fb5b597a7d470c0869f0c186331c16233b48feb91b9",
+      "bytes": 1576,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-20-groove-scoring.md",
+      "action": "remove",
+      "sha256": "8a326ee7466c758128a0faae39e90d1a1160465f216144e082688e163802a289",
+      "bytes": 10691,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-21-blende-und-hoertest.md",
+      "action": "remove",
+      "sha256": "c94f1a8c28cb5c88d8939146d89daa5917c2544af981e8aa9324f07972f373e2",
+      "bytes": 6538,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-21-fixes-und-hoertest-mobil.md",
+      "action": "remove",
+      "sha256": "2a7063b7a784e49688a7be51078e0887a70eb80240c0f37d3c3a124ceedac81e",
+      "bytes": 5437,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-21-kandidaten-design.md",
+      "action": "remove",
+      "sha256": "ca676e00a1536ead149c5acc4ecf11b22a0d3aaf7c21f9e306a4d26e1fc3b314",
+      "bytes": 1546,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-21-scoring-an.md",
+      "action": "remove",
+      "sha256": "5d4152a7644db6552f368a8be2c30705fb6d0eaea6857a2d8652ee8cfb3ab21a",
+      "bytes": 8600,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-22-kandidaten-teil1.md",
+      "action": "remove",
+      "sha256": "c3bcc848ba796270312cae463dde58adbea79adc3d3237cb18e18e1a06a0ce3a",
+      "bytes": 4037,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-22-kandidaten-teil2.md",
+      "action": "remove",
+      "sha256": "67d28624fbe76fbd1a682734d1f3a7f184d3c73442512f7829e0bc2ef50a52e4",
+      "bytes": 5569,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-22-kandidaten-teil3.md",
+      "action": "remove",
+      "sha256": "d2f323297e8fbf31e9945a89707e20d6e6b0f7b68403cb23b490ab450688fcdf",
+      "bytes": 8220,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-22-kandidaten-teil4.md",
+      "action": "remove",
+      "sha256": "f32f63d693ac09a7d3bbba7892a4938eed3e12f333ec0e7d0802f4e30a95785d",
+      "bytes": 14355,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-22-stand-fuer-neuen-agenten.md",
+      "action": "remove",
+      "sha256": "5eedca4b5e63ad4208938cef127491528bc71f5eea2364a95370f062e3103f34",
+      "bytes": 7816,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/HANDOFF-2026-08-25-LOKALER-PAARVERTRAG.md",
+      "action": "remove",
+      "sha256": "a41284cbe3ca5d398e7b0221f4c9fe2819a73f3155bd404138647a1922e4237b",
+      "bytes": 19717,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/OPTIMIZATION_SUMMARY.md",
+      "action": "remove",
+      "sha256": "78d3d5b4ba30deaeab777b5dc307b1a07e7d7fad088a58b9ce53b2f338bccbba",
+      "bytes": 6572,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/PERFORMANCE_OPTIMIZATION.md",
+      "action": "remove",
+      "sha256": "acfea2b735585a9cbd130c315acb0ebe6f2309a7e20b43f1acdc4018414c31b7",
+      "bytes": 6803,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/QUICK_START.txt",
+      "action": "update",
+      "sha256": "a1873367fa2ee2a65da30f1a38f9a822a433e581e7255f8f5ec38eda4dff8a42",
+      "bytes": 10063,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/STATUS_AUFNAHME_2026-09-21.md",
+      "action": "remove",
+      "sha256": "d48d2ee4d224d3128939b04cc8eb75e44eb5d07d6d98fb38c4b6aa255c4811b0",
+      "bytes": 2613,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/MEMORY.md",
+      "action": "remove",
+      "sha256": "8e9fc8a888ff091cb236f6d854b0572a8f03ef16df07a8de9e4509b7bacc8d2c",
+      "bytes": 2872,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-audit-2026-07-17.md",
+      "action": "remove",
+      "sha256": "d73433a7393bcb606adbd7e35dab3f0c78675ef07d867be38b6fb69da84babcd",
+      "bytes": 2675,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-bughunt-2026-07-22.md",
+      "action": "remove",
+      "sha256": "f0b5522c1f0a1eb15fb911ed0fc29921686119ddd3c10a4ac339f713270cff7f",
+      "bytes": 3141,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-chirurgie-audit-2026-07-21.md",
+      "action": "remove",
+      "sha256": "6e2b9da834537b2a6720728a4c42f65d8d5786e04cb4d96c6a4aaa896d3d98b9",
+      "bytes": 3222,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-fullstack-audit-2026-07-20.md",
+      "action": "remove",
+      "sha256": "5f32a4ae0d4d0523a79fee18c83d1a6431eb5b6abdc5dd2f4d56eba0effe07e2",
+      "bytes": 3117,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-groove-scoring-2026-08-20.md",
+      "action": "remove",
+      "sha256": "7c8bf8866e6b74ec2575649ac6e2690c1f540e0f3fedbd16d5182592f774c65c",
+      "bytes": 1549,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-kandidaten-design-vollstaendig-bauen.md",
+      "action": "remove",
+      "sha256": "4b638ae4a837109680cdbfa891326a50f2ff9314b6691a0cdf573a09b8dad61e",
+      "bytes": 1776,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-mixpoint-rundungsfehler.md",
+      "action": "remove",
+      "sha256": "848062dc0d7f6a38cd942a7832b682a61172e6017be133ad556cb9b98e5a9968",
+      "bytes": 2102,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-mixpunkte-individuell-cues-phrasen.md",
+      "action": "remove",
+      "sha256": "825c12e01b2f136368f2c493218580ede8ce5f895db5067d67736cac5fa76cae",
+      "bytes": 2340,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-praezision-vor-einfachheit.md",
+      "action": "remove",
+      "sha256": "7379bf1e171ba08db768146234911bc7b98d2648fae298a5545145b40e795e4b",
+      "bytes": 2451,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-rekordbox-doppelte-pfade.md",
+      "action": "remove",
+      "sha256": "ffe81ab029c102814b68e32fc767ab7278e7315a1baf32845d0063e2ad465edc",
+      "bytes": 1421,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-scoring-an-2026-08-21.md",
+      "action": "remove",
+      "sha256": "281ff74a2b9a907ad16d42684b92e71bd0dc4831ad6d517fd4fd2f3f897ebb27",
+      "bytes": 1523,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-skill-team.md",
+      "action": "remove",
+      "sha256": "4d596f01383db632cfea9702b4512ec8acdf04e3303312617cdd3cf7c7bcc51a",
+      "bytes": 1375,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-stand-2026-08-22-teil1-gemerged.md",
+      "action": "remove",
+      "sha256": "e38374ef4bb4bda4cba562e04d1f01afba096b44f05972e871d64110aac5ea6c",
+      "bytes": 2456,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-status-2026-09-21.md",
+      "action": "remove",
+      "sha256": "88b712bb162921d5031e6db97543876f85b6fd952b4685b88424a6b936b34689",
+      "bytes": 814,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-ui-redesign-2026-07-22.md",
+      "action": "remove",
+      "sha256": "9cb93a0ca0a9c615efa4e804ebce029f60d75d77ff3765a8f6e4411b0a3b4233",
+      "bytes": 2639,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-venv312-environment.md",
+      "action": "remove",
+      "sha256": "3617200d06eaa4614ae3e10aa582c62d3701f4e30ac14d635b596a3e7f17b5ad",
+      "bytes": 970,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/hpg-waechter-und-agententeam.md",
+      "action": "remove",
+      "sha256": "6749551bc030f2d416331a5ac13928a2abaf5fd9a13e4a038ead287cfac87942",
+      "bytes": 1717,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/agent-memory/user-smiley-am-ende.md",
+      "action": "remove",
+      "sha256": "e292ceab9f4a4e093c7d9ef6d1e6164b3a5e1adab77896bf6ec4647933f60c45",
+      "bytes": 485,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/ACT.md",
+      "action": "remove",
+      "sha256": "a2dd5ec3ed2c27362103d237e06671e47e14511290a839c247e2c4f89128a251",
+      "bytes": 674,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/ARBEITSPLAN_2026-07-26.md",
+      "action": "remove",
+      "sha256": "cb5c00e866afa10599730c5a88205377cede88f639bdbb665379a5685f29f9c7",
+      "bytes": 14163,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/AUDIT_REPORT_2026-07-26_FULLSTACK.md",
+      "action": "remove",
+      "sha256": "0045d53077cbb9aae63d532c35ae867ef90419cfd4edec50440c6387a6b0e198",
+      "bytes": 13559,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/AUDIT_SKILL-TEAM_2026-07-24.md",
+      "action": "remove",
+      "sha256": "e989f63257af0241ae2ffd5fb29949715ebb35450d552d49f6e0a8bd0960be51",
+      "bytes": 14272,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/FIXLOG_2026-07-24.md",
+      "action": "remove",
+      "sha256": "d964155b9704c2b4bfbee7418be2189371f29266a96112b55897b167377f6c3d",
+      "bytes": 3687,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/FIXLOG_A1-FINAL_2026-07-26.md",
+      "action": "remove",
+      "sha256": "2a881b01cc118726dc0709d342c18d218a66b49d185eee9d92fbc808d3506d24",
+      "bytes": 3351,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/FIXLOG_WELLE2-4_2026-07-24.md",
+      "action": "remove",
+      "sha256": "e7d9569c7a524cc9ad2b6433440468aa827ae24a80c463efb64f517bd62a4466",
+      "bytes": 6699,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/FULLSTACK_AUDIT_HPG_2026-07-20.md",
+      "action": "remove",
+      "sha256": "dab92536d787cb10a35fa8ad967a5a2652deab32aa84b71bf462c34154d44245",
+      "bytes": 12150,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/PLAN.md",
+      "action": "remove",
+      "sha256": "b2baf89701fbefb5fd6e085ef5d984fb452c2862606b99eefd6a807f56f6c03a",
+      "bytes": 892,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/README.md",
+      "action": "remove",
+      "sha256": "a4fb5cedeefa9ffb01b40e12bba32e74f26b2cdb88c3c15b0d4e71e980875f7c",
+      "bytes": 433,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/TODO.md",
+      "action": "remove",
+      "sha256": "3dac982df4a35959cd64a0900923082ff148fdb796c3ec87418b251bee78dcb1",
+      "bytes": 1857,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/VALIDIERUNG_2026-07-17.md",
+      "action": "remove",
+      "sha256": "5c6f71225b633563af841fa31538f08ab6e1cb8cd97a48aa1a16303547f8f7db",
+      "bytes": 6960,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/docs-plans/2026-02-28-rekordbox-coverage.md",
+      "action": "remove",
+      "sha256": "6962f18eb5b37b5fba5bd7943b2176af8daa3687c54ca1ec5ef833e2f8c93532",
+      "bytes": 30525,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/plans-root/2026-05-19-llm-integration.md",
+      "action": "remove",
+      "sha256": "715f69faad5f22f69ac21534aeb487b9f4fb71a74ffc55334ac737fac2d35f13",
+      "bytes": 3639,
+      "encoding": "cp1252"
+    },
+    {
+      "path": "docs/archive/plans-root/advanced-audio-analysis.md",
+      "action": "remove",
+      "sha256": "b2baf89701fbefb5fd6e085ef5d984fb452c2862606b99eefd6a807f56f6c03a",
+      "bytes": 892,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/plans-root/feat-transition-audio-preview.md",
+      "action": "remove",
+      "sha256": "e967aa42909f693b809c982e42183276f794dfbceb4da82fc0867fcf114776b8",
+      "bytes": 25275,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/archive/plans-root/research-audio-enhancement.md",
+      "action": "remove",
+      "sha256": "f26ba8fdb9f4c943368c80479ab7d1d67a6d811217d838f2bbb6e1d7e0bbb31c",
+      "bytes": 9016,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/plans/2026-07-17-downbeat-erkennung.md",
+      "action": "remove",
+      "sha256": "caddbdbce12395abd4371edfc19cd4bf814e0ceaa608f02a7ce236671eb66f43",
+      "bytes": 4393,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/plans/2026-07-17-key-confidence-lufs.md",
+      "action": "remove",
+      "sha256": "49765f94cfe153e4c04656a5f9bbb6f88df3327f8c1737464cf210f0649641bf",
+      "bytes": 3221,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/plans/2026-07-17-mixpoint-pfad-b-konsolidierung.md",
+      "action": "remove",
+      "sha256": "9f1fd0843fe9f49dabd23c7572af83c80d22fff22be8a1c6fbbbfbf8e8f5f0f3",
+      "bytes": 5267,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/qualitaet/JOURNAL.md",
+      "action": "update",
+      "sha256": "941b1f7943d7a207729f9664cce5c5f62f7a4641fa69c495561387538bef16ac",
+      "bytes": 89216,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-03-11-mix-point-intro-outro-guard.md",
+      "action": "remove",
+      "sha256": "8a20385998c260486c7b4b6e1f1fec783e75bbfa588e2e2ee5542131f9701368",
+      "bytes": 37952,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-19-groove-scoring-teil1-features-und-scoring.md",
+      "action": "remove",
+      "sha256": "b3d7f3d6ca2317f97130bdac9fcfb9903601f828b0f5c44f112f1f3cf4d66e24",
+      "bytes": 68271,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-19-groove-scoring-teil2-kalibrierung.md",
+      "action": "remove",
+      "sha256": "e0c7d7538709b08c1e53f78ebf7fcd38d82c97a14071482f7bdc0f87c62f4e57",
+      "bytes": 28175,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-21-mixpunkt-kandidaten-teil1-datenmodell.md",
+      "action": "remove",
+      "sha256": "06fc9fedcc7abc303dc2d88380b0745211ce96e70c4c956c0bf7f80a9c3275c6",
+      "bytes": 81557,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-entwurfsnotizen-kandidaten-teil2.md",
+      "action": "remove",
+      "sha256": "9280974cf48ed2a1f23fcf6a77e74b60a1ac74b2e96ea9265490280fd1f94661",
+      "bytes": 10708,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-faktenblatt-kandidaten-teil2.md",
+      "action": "remove",
+      "sha256": "8146a61494b74b699b632461bd4670d5a3612ec9db3b3b0c69ee57a7c5e2b520",
+      "bytes": 15473,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-faktenblatt-kandidaten-teil3.md",
+      "action": "remove",
+      "sha256": "d4441deeb6fb44d77506c983bd122508f3cb9920d647337df991d3c1e69f2820",
+      "bytes": 7159,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-faktenblatt-kandidaten-teil4.md",
+      "action": "remove",
+      "sha256": "b5805f359548d48a96d05aa0e0e4eb7b0d2de5fceaca738c8a88c494adc63bdc",
+      "bytes": 10067,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil2-paarung.md",
+      "action": "remove",
+      "sha256": "820c2c311a5d0eed094314e42916ebc4273641e3bb1080ad4998b88374e14c52",
+      "bytes": 71530,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil3-hoertest.md",
+      "action": "remove",
+      "sha256": "ec6e3eceec148265bd3e01d01d28279784059e0f6738783593597b8b10e593a5",
+      "bytes": 71257,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md",
+      "action": "remove",
+      "sha256": "0b50b7d6481d1498122b9a64dc5bfb131974c39de82666fc8cbb7914cc730db6",
+      "bytes": 64555,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-03-hoertest-paritaetsmatrix.md",
+      "action": "remove",
+      "sha256": "d18ef4a6d57b05fbe515d77d8ccaece7422223ae5223c449b6ad8d2b458d042a",
+      "bytes": 18304,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "hpg_core/analysis.py",
+      "action": "update-reference-only",
+      "sha256": "36ae126bf86fbf7b1334ff78852056f403f577f1036231b555b5deabb94b48be",
+      "bytes": 118812,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "hpg_core/config.py",
+      "action": "update",
+      "sha256": "d51ba996ff2183d6d24c1a8ceaf3c5648fd0e9df627d4274c7e7d8b7adec3c2a",
+      "bytes": 15345,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "hpg_core/downbeat.py",
+      "action": "update-reference-only",
+      "sha256": "bdb0f80c2562318a6ca63a614f5a0fc0398a3f82d27364626c4c238c78b1550e",
+      "bytes": 33953,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/events.jsonl",
+      "action": "untrack-local-preserved",
+      "sha256": "1b319cbf00ae1f1c50507922d5edc7632f8216c8c7086c347ebf123e7fb7be7f",
+      "bytes": 84960,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-08-23.txt",
+      "action": "remove",
+      "sha256": "6e8d5360640604c973b59c1e528951de8443ef76ebbb444f6816c9b687699f18",
+      "bytes": 787,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-08-24.txt",
+      "action": "remove",
+      "sha256": "a63171af3e4d71204c3fec71d1b1b868b0c94630371aa5daa6a1e763230181ca",
+      "bytes": 6025,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-08-25.txt",
+      "action": "remove",
+      "sha256": "4aa33da134b229102e132853424ed376eee11e785c93ae1bba4f1ae447098125",
+      "bytes": 45473,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-08-26.txt",
+      "action": "remove",
+      "sha256": "a8d749f4c6999e9b46b7ea0c981c77af8ad37cd4baf9b5b7f82b2283cba043d6",
+      "bytes": 629,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-08-30.txt",
+      "action": "remove",
+      "sha256": "4bc57b9f30618ab542cfb38d29e0290e6a6ce9f1b332916cfb63a9dcae4abd7e",
+      "bytes": 658,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-09-05.txt",
+      "action": "remove",
+      "sha256": "e9f2fb32d059d9e2e7a1040047be1454b159a02605dd29b9241744e5669f6962",
+      "bytes": 693,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-09-06.txt",
+      "action": "remove",
+      "sha256": "06bc9e1c39ae426206d0bbbc37854d88cc5f678e557f48812563134dadc361cc",
+      "bytes": 692,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-09-07.txt",
+      "action": "remove",
+      "sha256": "7a1908c28dd0bbdb2b9bdaa8370297e22e09b6a4d0a798ebb450792ff5252236",
+      "bytes": 694,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-09-09.txt",
+      "action": "remove",
+      "sha256": "abde2091b48c9f52f46d72922a7289b7529007d66dbe1c10314dee5bb0f50cfd",
+      "bytes": 600,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-09-13.txt",
+      "action": "remove",
+      "sha256": "b388767b345b5d4e6714c404b7897e97ae895abbf192530d3d773cbac6677a68",
+      "bytes": 562,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/.dreams/session-corpus/2026-09-14.txt",
+      "action": "remove",
+      "sha256": "4862c8301c01b4b657a19798d7684d4038efa995cf26a1c272993ebb41315cce",
+      "bytes": 548,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/2026-09-19.md",
+      "action": "include-existing",
+      "sha256": "8682c8188febd9530ceaa8000b7918bebd69c6772003eb6e4f1a6dc4b8c2cd9f",
+      "bytes": 2480,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-25.md",
+      "action": "remove",
+      "sha256": "18a09def6ec01155a274182903abf0c52f5176bce53efa9181511ff6c664fed4",
+      "bytes": 154,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-26.md",
+      "action": "remove",
+      "sha256": "18b000d8667439fda2f61abd379c00905f798a41bc02ef930a8bf3348a20b1e5",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-27.md",
+      "action": "remove",
+      "sha256": "18a09def6ec01155a274182903abf0c52f5176bce53efa9181511ff6c664fed4",
+      "bytes": 154,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-28.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-29.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-30.md",
+      "action": "remove",
+      "sha256": "953171ed9e39d3e1beb0fc840bb812439e093bdd4cd69ae77cb2878a04cbfabe",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-08-31.md",
+      "action": "remove",
+      "sha256": "9c5056c46373bb74cd2591ee80d68a7ef4a35449f8c826cc59f48e08ac21557e",
+      "bytes": 105,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-01.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-02.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-03.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-04.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-05.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-06.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-07.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-08.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-09.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-10.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-11.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-12.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-13.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-14.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-15.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-16.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-17.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-18.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-19.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-20.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/deep/2026-09-21.md",
+      "action": "remove",
+      "sha256": "e5342ad4e9b40f097926d0cb318eddf2eeef0bb89db0aa29bf54e175aaa95f66",
+      "bytes": 103,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-25.md",
+      "action": "remove",
+      "sha256": "90388b2d592c4f8b72038ed1aa1fa67c2e083b965fea458cd4ebf24091c9a854",
+      "bytes": 3969,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-26.md",
+      "action": "remove",
+      "sha256": "1e9fddc48520f9bee8a528548e0a0d2bd1a966e6328b6728e5d5c1298a787a1f",
+      "bytes": 10119,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-27.md",
+      "action": "remove",
+      "sha256": "10d9019923b3cbeed9d4a1056986751cfc45ade7fd117ac3af7c2551f97e858b",
+      "bytes": 3248,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-28.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-29.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-30.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-08-31.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-01.md",
+      "action": "remove",
+      "sha256": "a86b07fc9ba8b7553d58ac7c92644823c16f14fa1bc72ae0ae4e028ec0ef1e6a",
+      "bytes": 1182,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-02.md",
+      "action": "remove",
+      "sha256": "69b4ebd99206dcd20413aaee9a1a406879668f46987c7e9f995e241e0cf11b52",
+      "bytes": 2356,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-03.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-04.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-05.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-06.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-07.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-08.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-09.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-10.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-11.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-12.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-13.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-14.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-15.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-16.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-17.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-18.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-19.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-20.md",
+      "action": "remove",
+      "sha256": "f7823a1e7ebd7e8686448a474a0a6ed7de1ce4fc46bcdc9b7e5d3ce4d5099f50",
+      "bytes": 1953,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/light/2026-09-21.md",
+      "action": "remove",
+      "sha256": "fe5e977b66af3a181361edcf48e4524914014aafb07e4e35d00b80dcb56aeabf",
+      "bytes": 37,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-25.md",
+      "action": "remove",
+      "sha256": "94728b1eb9e605ef03618b10a24e0f9d4440f7a36fc76e5a19081452fa4c5a2b",
+      "bytes": 2522,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-26.md",
+      "action": "remove",
+      "sha256": "e6c67207061a4e705e50b9c5d8d6e7edb92aa0e2fe11020e5cc6206c212417bd",
+      "bytes": 2354,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-27.md",
+      "action": "remove",
+      "sha256": "8edaa7823cbd15ed15601ad6b20e197f2a693d8183ae4e0b80a188b330030a94",
+      "bytes": 2491,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-28.md",
+      "action": "remove",
+      "sha256": "7e60264a2528c53ff4383c20a12bab8c42ae5d20b2403c170e2c46ba0c1942b1",
+      "bytes": 2358,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-29.md",
+      "action": "remove",
+      "sha256": "7e60264a2528c53ff4383c20a12bab8c42ae5d20b2403c170e2c46ba0c1942b1",
+      "bytes": 2358,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-30.md",
+      "action": "remove",
+      "sha256": "7e60264a2528c53ff4383c20a12bab8c42ae5d20b2403c170e2c46ba0c1942b1",
+      "bytes": 2358,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-08-31.md",
+      "action": "remove",
+      "sha256": "7e60264a2528c53ff4383c20a12bab8c42ae5d20b2403c170e2c46ba0c1942b1",
+      "bytes": 2358,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-01.md",
+      "action": "remove",
+      "sha256": "cd2de16634f3a96ba77b5092ad90e5efe8d9e15f91466e5f71ba0740e4aae660",
+      "bytes": 256,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-02.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-03.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-04.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-05.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-06.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-07.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-08.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-09.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-10.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-11.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-12.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-13.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-14.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-15.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-16.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-17.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-18.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-19.md",
+      "action": "remove",
+      "sha256": "7ef1bfc83a2611747e23daf2e786dc608ce00eb3b185fd8fe02163baa2277a18",
+      "bytes": 128,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-20.md",
+      "action": "remove",
+      "sha256": "f3fd4b052a4c898c4570d8c1afc4756629960fdde951451af80cbacfd4026ef3",
+      "bytes": 855,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "memory/dreaming/rem/2026-09-21.md",
+      "action": "remove",
+      "sha256": "148216657c06e51b291f15a0d326ca1f776ec034898eecf31a0828a225a9f9e7",
+      "bytes": 1586,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "specs/llm-integration/analysis-report.md",
+      "action": "remove",
+      "sha256": "35a89894c5f2567247b8fae44c720815712dec08c0cf84fbad3ea1e6ed4ed0e7",
+      "bytes": 2304,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_downbeat.py",
+      "action": "update",
+      "sha256": "7b27b94a0d0bf61769bf8cb779a7c8e5be3b7501b91429b75ad5d9c769f6b6a8",
+      "bytes": 28061,
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_key_confidence_lufs.py",
+      "action": "update",
+      "sha256": "d73bef3bee82ba95e28d97d1171ca814e6ee75b02856da5bf51c5c321d2e4c59",
+      "bytes": 4135,
+      "encoding": "utf-8"
+    }
+  ]
+}

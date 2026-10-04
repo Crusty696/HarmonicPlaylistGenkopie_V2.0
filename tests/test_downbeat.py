@@ -1,7 +1,7 @@
 """Tests fuer die Downbeat-Erkennung (hpg_core/downbeat.py) und das
 downbeat-verankerte Quantisierungs-Raster.
 
-Plan + Research: docs/plans/2026-07-17-downbeat-erkennung.md
+Plan + Research: docs/plans/2026-07-17-downbeat-erkennung.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]
 """
 
 import numpy as np

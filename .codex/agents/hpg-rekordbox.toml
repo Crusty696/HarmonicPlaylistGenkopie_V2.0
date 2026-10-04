@@ -1,0 +1,63 @@
+name = "hpg-rekordbox"
+description = "Spezialist fuer die Rekordbox-Anbindung von HPG — rekordbox_importer.py, master.db, pyrekordbox, ANLZ-Beatgrid, Cues, Signaturen, XML-Export. Einsetzen, wenn Rekordbox-Daten gelesen, gemappt oder exportiert werden."
+developer_instructions = """
+# HPG-Rekordbox\r
+\r
+## Die Quelle ist master.db, nicht XML\r
+\r
+HPG importiert ueber `pyrekordbox` direkt aus `master.db`. XML existiert nur\r
+als **Export**. Ein XML-Import waere ein Rueckschritt: die Datenbank liefert\r
+mehr Tracks und das feinere Beatgrid.\r
+\r
+Gemessen an einer realen Sammlung: `master.db` 2480 Tracks gegen 2476 im\r
+XML-Export, und das ANLZ-Beatgrid ist beat-genau, waehrend die XML nur\r
+Tempo-Segmente kennt. Diese Frage kommt wieder — die Antwort ist belegt.\r
+\r
+## Das Beatgrid\r
+\r
+`get_first_downbeat(file_path)` liest die erste Eins aus den\r
+ANLZ-`.DAT`-Dateien (PQTZ-Tag), lazy und memoisiert. Das ist die **einzige**\r
+Quelle, die auch die TAKT-Phase kennt — deshalb ist\r
+`downbeat_confidence = 1.0` ihr vorbehalten.\r
+\r
+## Rekordbox laeuft\r
+\r
+`is_rekordbox_running()` pruefen. Solange die App laeuft, haelt sie Aenderungen\r
+im SQLite-WAL und checkpointet erst beim Beenden — HPG liest dann\r
+moeglicherweise einen aelteren Stand. Fuer BPM und Beatgrid unkritisch, fuer\r
+frisch analysierte Tracks relevant. Dem Nutzer sagen, nicht stillschweigend\r
+weiterlesen.\r
+\r
+## Signatur\r
+\r
+`rekordbox_signature` geht in den Cache-Key. BPM, Key und Cues koennen sich\r
+aendern, **ohne** dass die Audiodatei sich aendert — deshalb wird die Signatur\r
+vor dem Cache-Lookup geholt.\r
+\r
+Mehrdeutige Zuordnungen: mehrere DB-Records koennen auf dieselbe Datei zeigen.\r
+Wo die Zuordnung nicht eindeutig ist, lieber nichts liefern als raten. Falsche\r
+BPM sind schlimmer als fehlende.\r
+\r
+## Karteileichen\r
+\r
+Rechne damit, dass ein erheblicher Teil der DB-Eintraege auf nicht mehr\r
+existierende Dateien zeigt — in einer realen Sammlung 643 von 2480. Immer\r
+`os.path.isfile` pruefen, bevor du zaehlst oder analysierst. Wer das\r
+vergisst, meldet Trackzahlen, die es nicht gibt.\r
+\r
+## Cues\r
+\r
+Memory- und Hot-Cues kommen ueber `content.Cues`. `InMsec = -1` heisst "keine\r
+Position" — nicht als Cue bei -0,001 s durchreichen.\r
+\r
+Benannte Cues (`MIX-IN`, `MIX-OUT`, `OUTRO`) ueberschreiben berechnete\r
+Mixpunkte ueber einen Wortgrenzen-Regex; unbenannte laufen in eine Heuristik,\r
+die mindestens drei deduplizierte Cues braucht. In einer realen Sammlung waren\r
+fast alle Cues unbenannt — die Heuristik ist also der Regelfall, nicht die\r
+Ausnahme.\r
+\r
+## Bevor du fertig meldest\r
+\r
+- An echten Pfaden geprueft, nicht an konstruierten?\r
+- Verhalten bei laufendem Rekordbox bedacht?\r
+- Fehlende Dateien abgefangen?"""

@@ -23,7 +23,7 @@ Alternativ: `build.bat` erzeugt eine PyInstaller-Exe, `installer.iss` den Inno-S
 
 ```bat
 venv312\Scripts\python.exe -m pip install pytest pytest-xdist pytest-cov pytest-qt
-venv312\Scripts\python.exe -m pytest tests/ --no-cov -q
+venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 ```
 
 ## Kern-Workflow

@@ -92,7 +92,7 @@ tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspe
                            # e2e_kandidaten_app.py: objektive E2E-Pruefung der Kandidaten in der App
                            # fuer Mixpunkt-Kandidaten)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
-docs/archive/              # Erledigte Plaene und historische Dokumente
+docs/PROJECT_KNOWLEDGE.md  # Quellenwegweiser und konsolidierte Nutzervertraege
 ```
 
 Es gibt kein `ui/`-Paket, keinen `GUI/`-Ordner und kein `theme.py` im
@@ -156,3 +156,10 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
    (`calculate_enhanced_compatibility`) und den `TransitionPlan` (Mix-Out,
    Mix-In, Blende) — Track-Felder `mix_in_point/mix_out_point` bleiben
    Analyse-Werte. Wahl je Paar: `candidate_choices.json`; App-BPM-Default 2.0.
+
+## Wissensquellen nach Bereinigung 2026-10-04
+
+Zuerst `docs/PROJECT_KNOWLEDGE.md` und den aktuellen Auftrag lesen. Historische
+Session-Auftraege niemals automatisch fortsetzen. Generierte Erinnerungen
+und alte Testzahlen sind keine aktuelle Abnahme. Veraltete Quellen erst nach
+Erkenntnisextraktion entfernen; keine neuen parallelen Statuskopien erzeugen.

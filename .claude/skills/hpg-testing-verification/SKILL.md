@@ -20,25 +20,14 @@ Volllauf mit Coverage (langsamer, aber das ist das echte Gate):
 .\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 ```
 
-## Letzter Volltest-Snapshot
+## Nachweise wiederverwenden
 
-Der Abschlusslauf vom 2026-08-25 war gruen vor den
-nachfolgenden GUI-/E2E-/Kandidatensatz-Auditor-Aenderungen gemessen mit:
-
-```bat
-.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
-```
-
-Diese Zahlen sind keine aktuelle Baseline und kein Abschlussbeleg fuer den
-jetzigen Worktree. Immer neu messen.
-
-**Historischer Snapshot 2026-08-15:** Lauf gruen mit 26 Warnungen und dem
-damaligen Testbestand. Kein Beleg fuer den jetzigen Worktree.
-
-Aeltere Zahlen im Repo sind datierte Snapshots, keine Widersprueche:
-`docs/AGENT_HANDOFF.md` nennt 1313, der historische Abschnitt in
-`PRODUCTION_STATUS.md` nennt 1384. **Immer selbst zaehlen**, nie eine Zahl aus
-einem Markdown uebernehmen — auch nicht aus diesem Skill.
+Keine feste historische Testzahl als aktuellen Stand uebernehmen. Vor einem
+neuen Lauf vorhandene Ergebnisse und deren Hash-/Eingabebindung pruefen.
+AGENTS.md hat Vorrang: reine Dokumentationsaenderungen brauchen keinen neuen
+Build, Volltest oder Audioanalyselauf. Isolierte Erwartungskorrekturen und
+gezielte Nachtests getrennt vom vorherigen Gesamtlauf dokumentieren.
+Quellenwegweiser: docs/PROJECT_KNOWLEDGE.md.
 
 ## Was pytest.ini erzwingt
 
@@ -96,7 +85,7 @@ Hilfsskripte aus `tools/` muessen den Parent-Pfad zu `sys.path` haengen.
 
 ## Hoertest Kandidatenmodus (Teil 3, gebaut 2026-08-22)
 
-Spec Abschnitt 3; Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil3-hoertest.md`.
+Spec Abschnitt 3; Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.
 - `tools/rate_transitions.py prepare --modus kandidaten --anzahl N --out <Satz>`:
   je Paar (Gates wie heute) alle `PairCandidate`s als Clip `<pair_id>_k<n>.wav`
   (`rendere_kandidat`: Zeitpunkte + Blende des Kandidaten, `pro_eq_swap`, 8 s

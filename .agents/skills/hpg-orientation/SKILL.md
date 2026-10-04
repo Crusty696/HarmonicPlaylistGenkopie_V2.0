@@ -82,18 +82,11 @@ PLAYLIST · MIX TIPS · TIMELINE · QUALITY, Umschalten per Ctrl+1..5.
 | Audit, tote/doppelte Strukturen | `hpg-audit-optimize` |
 | Voll-/Delta-/Release-Audit mit Evidenzpflicht | `hpg-veritas` |
 
-## Doku ist NICHT die Wahrheit
+## Quellen vor Statuskopien
 
-Dieses Repo hat massive Doku-Drift. Diese Aussagen sind **falsch**, immer im
-Code nachsehen:
-
-- `CLAUDE.md` / `AGENTS.md` enthielten frueher stark veraltete Groessenangaben.
-  Zeilenzahlen, Testanzahl und Coverage stehen bewusst nirgends mehr in den
-  Skills — sie veralten mit jedem Commit. Vor Gebrauch selbst messen.
-- `docs/QUICK_START.txt` nannte frueher 10 Strategien, `ui/main_window.py` und
-  eine laengst ueberholte Testzahl. Korrigiert: 8 Strategien, kein `ui/`-Paket.
-- `docs/archive/AUDIT_SKILL-TEAM_2026-07-24.md` und `docs/archive/FULLSTACK_AUDIT_*`
-  sind **Snapshots**;
-  ihre Befunde sind grossteils gefixt. Nicht als offene Punkte behandeln.
-
-Regel: Statusdokumente liefern Hypothesen, der Code liefert Fakten.
+`docs/PROJECT_KNOWLEDGE.md` enthaelt den Quellenwegweiser, erhaltene
+Nutzervertraege und offene historische Fragen. Alte Status-, Handoff- und
+Auditkopien wurden nach Wissensextraktion aus dem Workspace entfernt.
+Markdown liefert Hinweise; Code und passende ausgefuehrte Tests liefern
+Belege. Historische Auftraege nicht erneut ausfuehren. Vor Testwiederholungen
+AGENTS.md beachten: vorhandene gueltige Nachweise wiederverwenden.

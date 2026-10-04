@@ -181,11 +181,11 @@ DOKUMENTATION
 docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md
   -> Detaillierte Erklaerung, WIE der Algorithmus entscheidet (deutsch)
 
-docs/PERFORMANCE_OPTIMIZATION.md
-  -> Wie man Tests schneller macht, pytest-xdist & Cached Fixtures
+docs/PROJECT_KNOWLEDGE.md
+  -> Quellen, erhaltene Vertraege und Beweisgrenzen
 
-docs/OPTIMIZATION_SUMMARY.md
-  -> Historischer Snapshot einer Optimierungs-Session
+docs/PROJECT_KNOWLEDGE.md
+  -> Historische Quellen wurden nach Wissensextraktion ausgelagert
 
 Projekt-Skills mit dem verifizierten Ist-Stand, zuerst laden:
   .claude/skills/  (Claude Code)   bzw.   .agents/skills/  (Codex)

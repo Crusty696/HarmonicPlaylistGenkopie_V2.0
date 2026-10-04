@@ -132,7 +132,7 @@ oder ausserhalb [0, 1] liegt.
 
 ## Kandidatenpfad in der App (Teil 4, gebaut 2026-08-22)
 
-Plan `docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil4-app.md`.
+Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.
 - `calculate_enhanced_compatibility`: tragen beide Tracks Kandidaten und liegt
   das Paar im BPM-Gate, liefert `_kandidaten_fuer_paar` (Modul-Cache
   `_PAIR_CANDIDATE_CACHE`, dauerhaft; `reset_pair_candidate_cache()` wird von

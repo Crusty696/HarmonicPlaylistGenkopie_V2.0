@@ -123,3 +123,15 @@ tmp_*.py
 tmp_*.ps1
 _tmp_*.py
 manual_test_logs/
+
+# Lokale Berechtigungen und generierte Erinnerungs-/Validierungsartefakte
+.qwen/settings.json
+.zcode/config.json
+DREAMS.md
+memory/.dreams/
+memory/dreaming/
+validation/preview-proposal-20260927/
+validation/recovered-hearing-data/
+# Historische lokale Rohberichte bleiben erhalten, sind kein aktueller Status
+docs/status_audit_2026-08-27/
+docs/audit/veritas-mixanalysis-2026-09-03/

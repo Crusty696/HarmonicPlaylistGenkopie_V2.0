@@ -20,7 +20,7 @@ leichtgewichtige Eigenimplementierung ohne neue Dependencies:
    tiefpassgefilterten Huellkurve (D-03): das Voting bestimmt WELCHER Beat
    die "1" ist, die Faltung WO im Beat sie genau liegt.
 
-Plan + Quellen: docs/plans/2026-07-17-downbeat-erkennung.md
+Plan + Quellen: docs/plans/2026-07-17-downbeat-erkennung.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]
 """
 
 from __future__ import annotations

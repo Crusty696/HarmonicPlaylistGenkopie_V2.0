@@ -172,8 +172,8 @@ den aktuellen Wert traegt `CACHE_VERSION` [hpg_core/caching.py].
 
 ## Kandidaten Teil 2 (gebaut 2026-08-22) — Paarung und Bewertung
 
-Modul `hpg_core/pair_candidates.py`, Plan
-`docs/superpowers/plans/2026-08-22-mixpunkt-kandidaten-teil2-paarung.md`.
+Modul `hpg_core/pair_candidates.py`, erhaltene Anforderungen:
+`docs/PROJECT_KNOWLEDGE.md`.
 `build_pair_candidates(track_a, track_b, *, energy_direction=None,
 harmonic_strictness=7, allow_experimental=True, tolerances=None)` liefert
 sortierte `PairCandidate`s (`out_a`, `in_b`, `blend_bars`, `overlap_sec`,

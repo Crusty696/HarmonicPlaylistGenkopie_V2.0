@@ -58,7 +58,7 @@ GAIN_DIFF_WARN_DB = 3.0
 
 # Key-Confidence: unterhalb dieser Schwelle gilt die Tonart als unsicher
 # (Schwellwerte heuristisch — offiziell publiziert ist keiner, siehe
-# docs/plans/2026-07-17-key-confidence-lufs.md)
+# docs/plans/2026-07-17-key-confidence-lufs.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json])
 KEY_CONFIDENCE_UNCERTAIN = 0.5
 
 # === Mixpunkt-Kandidaten (Spec 2026-08-21, Abschnitt 1) ===
@@ -99,7 +99,7 @@ PAAR_MIN_LOCAL_GROOVE = 0.50
 # Teilwerte. Spec-Werte: PAAR_BPM_SKALA, LUFS_DELTA_MAX_DB, PERCUSSIVE_HOCH/NIEDRIG.
 # BASS_RMS/SYNCOPATION/MIDS_HIGHS sind gemessene p90-Spannen (Normierung, keine
 # Gewichte): 231 Tracks, 3664 Kandidaten, Stichprobe 20 000 zufaellige
-# Out/In-Paare innerhalb 2 BPM (docs/HANDOFF-2026-08-22-kandidaten-teil1.md). Alle uebrigen sind STARTWERTE, nicht gemessen —
+# Out/In-Paare innerhalb 2 BPM (docs/HANDOFF-2026-08-22-kandidaten-teil1.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]). Alle uebrigen sind STARTWERTE, nicht gemessen —
 # der Hoertest (Teil 3) ersetzt sie.
 PAAR_BPM_SKALA = 1.0               # exp(-diff / Skala), Spec-Wert
 # Lautheit: 0 dB -> 1.0, >= 3 dB -> 0 (Spec-Wert). Dieselbe 3-dB-Toleranz wie

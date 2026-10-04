@@ -4,7 +4,10 @@
 [![Python 3.12.1+](https://img.shields.io/badge/python-3.12.1+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)]()
 
-> **Professional DJ Tool for Harmonically Perfect Playlists**
+> **DJ tool for harmonic playlist preparation**
+
+Aktueller Quellenwegweiser: [Projektwissen](docs/PROJECT_KNOWLEDGE.md).
+Datierte Tests sind keine automatische Freigabe spaeterer Builds.
 
 ---
 
@@ -51,9 +54,7 @@
 Ollama or LM Studio can optionally add validated Mood/Subgenre metadata after the deterministic playlist is ready. This feature is disabled by default, does not analyze audio, and is not required for playlist generation.
 
 ### Performance
-- **4-12x faster** audio analysis with smart multi-core scaling
 - **Scales automatically** with CPU capabilities (up to 50% of cores, capped at 4 worker processes — `config.PARALLEL_AUTO_MAX_WORKERS`)
-- **12x faster** when using Rekordbox import
 - Thread-safe caching with file-locking for parallel processing
 
 ### Export

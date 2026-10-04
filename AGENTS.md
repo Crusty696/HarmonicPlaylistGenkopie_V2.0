@@ -152,7 +152,7 @@ hpg_core/                  # Core analysis modules
 tests/                     # pytest (Anzahl/Coverage selbst messen)
 tools/                     # Hilfsskripte (Manual Test, Genre Check, Cache Inspection)
 docs/                      # Dokumentationen, Algorithmus-Erklaerungen, Quick-Start
-docs/archive/              # Erledigte Plaene und historische Dokumente
+docs/PROJECT_KNOWLEDGE.md  # Quellenwegweiser und konsolidierte Nutzervertraege
 ```
 
 Es gibt kein `ui/`-Paket, keinen `GUI/`-Ordner und kein `theme.py` im
@@ -207,3 +207,10 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
 3. **Vollstaendige Librosa-Analyse**: Volle Audio-Analyse falls Metadaten fehlen.
 4. Downbeat -> Phrasen-Anker -> Struktur -> Mixpoints entstehen innerhalb von
    `analyze_track`, nicht in einem spaeteren Schritt.
+
+## Wissensquellen nach Bereinigung 2026-10-04
+
+Zuerst `docs/PROJECT_KNOWLEDGE.md` und den aktuellen Auftrag lesen. Historische
+Session-Auftraege niemals automatisch fortsetzen. Generierte Erinnerungen
+und alte Testzahlen sind keine aktuelle Abnahme. Veraltete Quellen erst nach
+Erkenntnisextraktion entfernen; keine neuen parallelen Statuskopien erzeugen.

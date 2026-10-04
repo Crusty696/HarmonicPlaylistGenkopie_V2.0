@@ -1,5 +1,10 @@
 # Qualitaets-Journal
 
+Historisches Journal, keine aktuelle Aufgabenliste oder Produktabnahme.
+Entfernte Originalquellen sind als extern archiviert gekennzeichnet; ihre
+Herkunft bleibt erhalten. Fuer Wiederaufnahme aktuelle Belege pruefen.
+AGENTS.md hat Vorrang vor historischen Test- und Schleifenregeln unten.
+
 Fortlaufende Schleife: Fehler, toten Code, doppelten Code und gebrochene
 Zusammenhaenge finden, belegen, beheben, beweisen. Ein Eintrag je Runde.
 
@@ -486,7 +491,7 @@ zwaenge die gesamte Bibliothek zur Neuanalyse, ohne dass ein Wert sichtbar
 falsch werden koennte. Die Projektregel "Analysewerte aendern sich -> Bump"
 wird hier bewusst und begruendet nicht angewendet.
 
-VERWORFEN: `docs/archive/ARBEITSPLAN_2026-07-26.md:44` (R8/B8) forderte
+VERWORFEN: `docs/archive/ARBEITSPLAN_2026-07-26.md:44 [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]` (R8/B8) forderte
 `seconds_to_bars(..., floor)` UEBERALL. Nie umgesetzt -- beide lebenden
 Aufrufer nutzen `round`. Projektsemantik fuer Mix-Takte ist ab jetzt
 ausdruecklich `round`: die Mixpunkte sind phrasenquantisiert, und ein
@@ -572,7 +577,7 @@ Schaden angerichtet haette:
    Kommentare an den Definitionen selbst behaupteten dagegen Absolutwerte und
    waren falsch. Ein blosses Loeschen haette richtige Doku entfernt und
    falsche stehen lassen. Der Text ist jetzt an die Definitionen verschoben.
-2. `docs/agent-memory/` ist laut `docs/AGENT_HANDOFF.md` nur eine KOPIE. Das
+2. `docs/agent-memory/` ist laut `docs/AGENT_HANDOFF.md [extern archiviert, kein aktiver Link; Manifest: docs/cleanup-manifest-2026-10-04.json]` nur eine KOPIE. Das
    Gedaechtnis, das ein Agent tatsaechlich laedt, liegt ausserhalb des
    Repositorys und trug dieselben drei falschen Aussagen. Beide Orte sind
    nachgezogen; ein Abgleichskript existiert nicht.
