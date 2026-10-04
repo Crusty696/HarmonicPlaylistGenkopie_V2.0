@@ -104,6 +104,16 @@ def managed_config(folder, **options) -> PrepareConfig:
                          source_roots=(root,), **options)
 
 
+def managed_config_from_roots(roots, **options) -> PrepareConfig:
+    """Mehrere Quellordner an einen neuen privaten Satz binden."""
+    from .hearing_sources import normalize_source_roots
+
+    source_roots = normalize_source_roots(tuple(roots))
+    private = managed_root() / str(uuid.uuid4())
+    return PrepareConfig(cache=private / "analysis.sqlite", output_dir=private / "set",
+                         source_roots=source_roots, **options)
+
+
 def _private_directory(config) -> Path:
     private = config.cache.parent
     root = managed_root()
@@ -118,9 +128,7 @@ def _private_directory(config) -> Path:
 def write_snapshot(config, snapshots, *, cancel=None):
     """Neue DB exklusiv erstellen; keine vorhandene DB oeffnen oder veraendern."""
     private = _private_directory(config)
-    if len(config.source_roots) != 1:
-        raise ValueError("Genau ein Musikordner erforderlich")
-    source = config.source_roots[0].resolve(strict=True)
+    roots = _validated_roots(config.source_roots)
     rows, seen = [], set()
     for raw in snapshots:
         if cancel:
@@ -129,7 +137,7 @@ def write_snapshot(config, snapshots, *, cancel=None):
         data = validate_track_dict(data)
         path = Path(data["filePath"]).resolve()
         key = str(path).casefold()
-        if not path.is_relative_to(source) or key in seen:
+        if not any(path.is_relative_to(root) for root in roots) or key in seen:
             raise ValueError("Snapshot enthaelt fremde oder doppelte Tracks")
         seen.add(key)
         rows.append((hashlib.sha256(key.encode()).hexdigest(), data["filePath"], CACHE_VERSION,
@@ -162,6 +170,8 @@ def write_snapshot(config, snapshots, *, cancel=None):
             connection.close()
         _require_owner(owner)
         _require_identity(config.cache, owner.file_identity)
+        if cancel:
+            cancel.checkpoint()
         return owner
     except Exception as original:
         try:
@@ -203,6 +213,48 @@ def _sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _validated_roots(roots):
+    """Quellroots ausschliesslich per Verzeichnis-Metadaten pruefen."""
+    from .hearing_sources import normalize_source_roots
+
+    if type(roots) is not tuple or not roots or any(not isinstance(root, Path) for root in roots):
+        raise ValueError("Ungueltige Quellordner")
+    normalized = normalize_source_roots(roots)
+    if normalized != roots:
+        raise ValueError("Quellordner sind nicht kanonisch oder doppelt")
+    return normalized
+
+
+def _stored_roots(values):
+    """Gespeicherte Wurzeln niemals still normalisieren oder neu ordnen."""
+    if type(values) is not list or not values or any(type(value) is not str or not value
+                                                  or "\0" in value for value in values):
+        raise ValueError("Ungueltige Quellordner in der Zuordnung")
+    roots = []
+    for value in values:
+        path = Path(value)
+        if not path.is_absolute() or str(path) != value or path == Path(path.anchor):
+            raise ValueError("Ungueltiger Quellordner in der Zuordnung")
+        try:
+            if path.resolve(strict=True) != path or not path.is_dir():
+                raise ValueError("Quellordner nicht kanonisch")
+        except (OSError, RuntimeError) as exc:
+            raise ValueError("Quellordner nicht verfuegbar") from exc
+        if path in roots:
+            raise ValueError("Doppelter Quellordner")
+        roots.append(path)
+    return tuple(roots)
+
+
+def _manifest_roots(path):
+    from .hearing_sources import strict_json_bytes
+
+    data = strict_json_bytes(path.read_bytes())
+    if type(data) is not dict or "source_roots" not in data:
+        raise ValueError("Quellordner fehlen im Hoertest-Manifest")
+    return _stored_roots(data["source_roots"])
+
+
 def bind_set(config, *, ownership=None):
     """Zuordnung ausserhalb des streng inventarisierten Satzes speichern."""
     private = _private_directory(config)
@@ -215,10 +267,17 @@ def bind_set(config, *, ownership=None):
         raise ValueError("Association gehoert nicht zum Snapshot")
     if ownership is not None:
         _require_identity(config.cache, ownership.file_identity)
-    association = {"format": "hpg-hearing-association-v1", "cache_version": CACHE_VERSION,
-                   "cache": "analysis.sqlite", "set": "set", "source_folder": str(config.source_roots[0]),
+    roots = _validated_roots(config.source_roots)
+    if len(roots) > 1 and _manifest_roots(config.output_dir / "hearing_source_manifest.json") != roots:
+        raise ValueError("Quellordner des Manifests stimmen nicht ueberein")
+    association = {"format": "hpg-hearing-association-v2" if len(roots) > 1 else "hpg-hearing-association-v1",
+                   "cache_version": CACHE_VERSION, "cache": "analysis.sqlite", "set": "set",
                    "cache_sha256": _sha(config.cache),
                    "manifest_sha256": _sha(config.output_dir / "hearing_source_manifest.json")}
+    if len(roots) > 1:
+        association["source_roots"] = [str(root) for root in roots]
+    else:
+        association["source_folder"] = str(roots[0])
     temporary = private / (".association-" + uuid.uuid4().hex + ".tmp")
     bound = False
     warning = ""
@@ -268,12 +327,23 @@ def resolve_association(folder) -> Path | None:
     if association.is_symlink() or association.resolve().parent != directory.parent:
         raise ValueError("Ungueltiger Zuordnungspfad")
     data = strict_json_bytes(association.read_bytes())
-    keys = {"format", "cache_version", "cache", "set", "source_folder", "cache_sha256", "manifest_sha256"}
-    if (type(data) is not dict or set(data) != keys or data["format"] != "hpg-hearing-association-v1"
-            or data["cache_version"] != CACHE_VERSION or data["cache"] != "analysis.sqlite" or data["set"] != "set"):
+    common = {"format", "cache_version", "cache", "set", "cache_sha256", "manifest_sha256"}
+    if (type(data) is not dict or data.get("format") not in
+            ("hpg-hearing-association-v1", "hpg-hearing-association-v2")
+            or set(data) != common | ({"source_folder"} if data["format"].endswith("v1")
+                                     else {"source_roots"})
+            or type(data["cache_version"]) is not int or data["cache_version"] != CACHE_VERSION
+            or data["cache"] != "analysis.sqlite" or data["set"] != "set"
+            or any(type(data[key]) is not str for key in ("cache_sha256", "manifest_sha256"))):
         raise ValueError("Ungueltige Hoertest-Zuordnung")
+    if data["format"].endswith("v2"):
+        roots = _stored_roots(data["source_roots"])
+        if len(roots) < 2 or _manifest_roots(directory / "hearing_source_manifest.json") != roots:
+            raise ValueError("Quellordner stimmen nicht mit dem Manifest ueberein")
+    else:
+        roots = _stored_roots([data["source_folder"]])
     config = PrepareConfig("einzel", directory, directory.parent / "analysis.sqlite",
-                           source_roots=(Path(data["source_folder"]),))
+                           source_roots=roots)
     _private_directory(config)
     if association.is_symlink() or association.resolve().parent != directory.parent:
         raise ValueError("Ungueltiger Zuordnungspfad")

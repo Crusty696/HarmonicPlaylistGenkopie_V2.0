@@ -316,3 +316,28 @@ unterstellen. Git/Dateistand und nachfolgende Nachtraege haben Vorrang.
   Main pruefte die Syntax von 59 geaenderten/neuen Pythondateien und den
   staged Whitespace-Diff; beide bestanden. Vier eng definierte Secret-Muster
   fanden keinen Treffer, das ist keine vollstaendige Sicherheitspruefung.
+
+## Fortsetzung nach dem ersten Checkpoint
+
+Der Nutzer bestaetigte die Fortsetzung. Der erste Push wurde erneut direkt
+gegen `origin/main` geprueft: lokaler und entfernter HEAD waren identisch
+(`3f75422b07c4a2992467da8a2f76679d8ec30878`). Danach wurde das offene
+Mehrordner-Persistenzpaket in `hpg_core/hearing_managed.py` umgesetzt:
+`managed_config_from_roots`, private Snapshots ueber mehrere Quellroots,
+Association-v2 mit strikter Manifestbindung und Abbruch nach geschlossenem
+SQLite-Handle. Einordner-Saetze bleiben v1. Keine Quellmediendateien wurden
+fuer diesen Pakettest geoeffnet oder geschrieben.
+
+Erster gezielter Lauf: 40 fehlgeschlagen, weil eine neue Typpruefung konkrete
+`WindowsPath`-Objekte ausschloss. Die Pruefung wurde auf `isinstance` korrigiert;
+keine Testerwartung geaendert. Danach `tests/test_hearing_managed.py`:
+47 bestanden/2.06 s. Angrenzend `test_hearing_jobs.py`,
+`test_hearing_workflow.py`, `test_hearing_sources.py` und
+`test_hearing_native_integration.py`: 92 bestanden/23.58 s. Beides sind
+gezielte Laeufe mit `--noconftest -n 0 --no-cov`, keine Gesamtabnahme.
+Unabhaengige TOR1- und TOR2-Pruefung: jeweils MIT AUFLAGEN. TOR2 fand keinen
+konkreten Produktcodefehler; Vorbehalt betrifft die nicht unabhaengig
+nachgelesenen Testausgaben und weiterhin fehlende Gesamt-/Original-/EXE-Probe.
+Die Mehrordner-Persistenz ist damit implementiert, aber noch nicht mit dem
+nativen Collection-Training-Dialog verbunden. Die weiteren Planpakete bleiben
+offen; alte 23-RED-Belege sind historisch und durch den 47er-Nachtest ersetzt.
