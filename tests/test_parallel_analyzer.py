@@ -17,6 +17,270 @@ from hpg_core.parallel_analyzer import (
 from hpg_core.models import Track
 
 
+def _jit_cache_probe(marker_dir):
+  # Echte Spawn-/JIT-Probe, nur synthetische Zahlen und eigene Temp-Dateien.
+  from pathlib import Path
+  import time
+  import numba
+  @numba.njit(cache=True)
+  def increment(value):
+    return value + 1
+  result = increment(41)
+  marker = Path(marker_dir) / str(os.getpid())
+  marker.write_text("ready")
+  deadline = time.monotonic() + 20
+  while len(list(Path(marker_dir).iterdir())) < 2:
+    if time.monotonic() >= deadline:
+      raise TimeoutError("Zweiter synthetischer Worker fehlt")
+    time.sleep(.02)
+  return os.getpid(), os.environ["NUMBA_CACHE_DIR"], numba.config.CACHE_DIR, result
+
+
+def test_worker_initializer_sets_unique_cache_before_warmup_and_reloads_numba(tmp_path, monkeypatch):
+  from pathlib import Path
+  from hpg_core import parallel_analyzer as pa
+  from hpg_core import rekordbox_importer
+  import numba
+  original_env = os.environ.get("NUMBA_CACHE_DIR")
+  foreign = tmp_path / "foreign"
+  foreign.mkdir()
+  monkeypatch.setenv("NUMBA_CACHE_DIR", str(foreign))
+  numba.config.reload_config()
+  seen = []
+  def warmup():
+    cache = Path(os.environ["NUMBA_CACHE_DIR"])
+    assert cache.parent == tmp_path
+    assert str(os.getpid()) in cache.name
+    assert cache.is_dir()
+    assert numba.config.CACHE_DIR == str(cache)
+    seen.append(cache)
+  monkeypatch.setattr(rekordbox_importer, "get_rekordbox_importer", warmup)
+  try:
+    pa._worker_init(str(tmp_path))
+    pa._worker_init(str(tmp_path))
+    assert len(seen) == 2 and seen[0] != seen[1]
+  finally:
+    if original_env is None:
+      monkeypatch.delenv("NUMBA_CACHE_DIR", raising=False)
+    else:
+      monkeypatch.setenv("NUMBA_CACHE_DIR", original_env)
+    numba.config.reload_config()
+
+
+def test_worker_initializer_does_not_swallow_numba_reload_failure(tmp_path, monkeypatch):
+  from hpg_core import parallel_analyzer as pa
+  import numba
+  monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "foreign"))
+  original = RuntimeError("synthetic reload failure")
+  monkeypatch.setattr(numba.config, "reload_config", Mock(side_effect=original))
+  with pytest.raises(RuntimeError) as caught:
+    pa._worker_init(str(tmp_path))
+  assert caught.value is original
+
+
+class _LifecycleProcess:
+  def __init__(self, events, *, alive=True, stubborn=False, unknown=False):
+    self.events, self.alive = events, alive
+    self.stubborn, self.unknown = stubborn, unknown
+  def join(self, timeout=None):
+    assert timeout is not None and 0 <= timeout <= 2
+    self.events.append("join")
+  def is_alive(self):
+    self.events.append("status")
+    if self.unknown:
+      raise RuntimeError("synthetic unknown process end")
+    return self.alive
+  def terminate(self):
+    self.events.append("terminate")
+  def kill(self):
+    self.events.append("kill")
+    if not self.stubborn:
+      self.alive = False
+
+
+@pytest.mark.parametrize("unsafe", [False, "alive", "unknown", "replaced_root"])
+def test_owned_cache_cleanup_requires_reaped_workers_and_same_root(tmp_path, monkeypatch, caplog, unsafe):
+  from pathlib import Path
+  from hpg_core import parallel_analyzer as pa
+  events = []
+  process = _LifecycleProcess(events, stubborn=unsafe == "alive", unknown=unsafe == "unknown")
+  class Executor:
+    def __init__(self, **kwargs):
+      self._processes = {1: process}
+      self.kwargs = kwargs
+    def shutdown(self, wait=True, cancel_futures=False):
+      assert wait is False and cancel_futures is True
+      events.append("shutdown")
+      self._processes = None  # Refs muessen vorher gesichert sein.
+  monkeypatch.setattr(pa, "ProcessPoolExecutor", Executor)
+  executor = pa._create_executor(1)
+  root = executor._hpg_cache_root
+  foreign = tmp_path / "foreign-cache"
+  foreign.mkdir()
+  (foreign / "valuable").write_bytes(b"foreign")
+  if unsafe == "replaced_root":
+    root.rename(root.with_name(root.name + "-original"))
+    root.mkdir()
+    (root / "foreign").write_bytes(b"replacement")
+  pa._terminate_executor_processes(executor)
+  assert events.index("shutdown") < events.index("join") < events.index("terminate") < events.index("kill")
+  assert events[-1] == "status"
+  assert root.exists() is bool(unsafe)
+  assert (foreign / "valuable").read_bytes() == b"foreign"
+  if unsafe:
+    assert "Cache" in caplog.text
+  # Hinterbliebene Test-Wurzeln gehoeren ausschliesslich dieser Fixture.
+  import shutil
+  if root.exists():
+    shutil.rmtree(root)
+  old_root = root.with_name(root.name + "-original")
+  if old_root.exists():
+    shutil.rmtree(old_root)
+
+
+def test_executor_constructor_failure_cleans_only_fresh_owned_root(monkeypatch):
+  from pathlib import Path
+  from hpg_core import parallel_analyzer as pa
+  roots = []
+  def fail(**kwargs):
+    roots.append(Path(kwargs["initargs"][0]))
+    assert roots[-1].is_dir()
+    raise RuntimeError("synthetic constructor failure")
+  monkeypatch.setattr(pa, "ProcessPoolExecutor", fail)
+  with pytest.raises(RuntimeError, match="constructor failure"):
+    pa._create_executor(1)
+  assert roots and not roots[0].exists()
+
+
+def test_actual_spawn_workers_use_distinct_owned_jit_caches_and_preserve_parent(tmp_path, monkeypatch):
+  from pathlib import Path
+  from hpg_core import parallel_analyzer as pa
+  foreign = tmp_path / "foreign"
+  foreign.mkdir()
+  (foreign / "valuable").write_bytes(b"foreign cache bytes")
+  monkeypatch.setenv("NUMBA_CACHE_DIR", str(foreign))
+  marker_dir = tmp_path / "markers"
+  marker_dir.mkdir()
+  executor = pa._create_executor(2)
+  root = executor._hpg_cache_root
+  try:
+    futures = [executor.submit(_jit_cache_probe, str(marker_dir)) for _ in range(2)]
+    results = [future.result(timeout=40) for future in futures]
+    assert len({pid for pid, *_ in results}) == 2
+    assert len({path for _, path, *_ in results}) == 2
+    for pid, env_path, config_path, result in results:
+      assert result == 42 and env_path == config_path
+      assert Path(env_path).parent == root
+      assert str(pid) in Path(env_path).name
+      assert list(Path(env_path).rglob("*.nbc"))
+    assert os.environ["NUMBA_CACHE_DIR"] == str(foreign)
+  finally:
+    pa._shutdown_executor(executor)
+  assert not root.exists()
+  assert (foreign / "valuable").read_bytes() == b"foreign cache bytes"
+  assert set(foreign.iterdir()) == {foreign / "valuable"}
+
+
+def test_default_timeout_keeps_106_second_future_alive(monkeypatch):
+  from hpg_core import parallel_analyzer as pa
+  assert pa.config.PARALLEL_ANALYSIS_TIMEOUT == 180
+  now = [0.]
+  class Future:
+    def result(self, timeout=None):
+      return None
+    def cancel(self):
+      return True
+  class Executor:
+    def __init__(self, **kwargs):
+      self._processes = {}
+    def submit(self, *args):
+      return Future()
+    def shutdown(self, **kwargs):
+      pass
+  waits = []
+  def wait_once(futures, **kwargs):
+    now[0] = 106.
+    waits.append(True)
+    return (set(), set()) if len(waits) == 1 else (set(futures), set())
+  monkeypatch.setattr(pa.time, "monotonic", lambda: now[0])
+  monkeypatch.setattr(pa, "ProcessPoolExecutor", Executor)
+  monkeypatch.setattr(pa, "wait", wait_once)
+  progress = []
+  pa.ParallelAnalyzer(max_workers=1).analyze_files(["synthetic.wav"], progress_callback=lambda *args: progress.append(args[-1]))
+  assert not any("TIMEOUT" in status for status in progress)
+  assert len(waits) == 2
+
+
+@pytest.mark.parametrize("boundary", ["normal", "submit", "cancel", "exception", "interrupt", "recovery"])
+def test_pool_roots_reaped_across_analysis_boundaries(monkeypatch, boundary):
+  from concurrent.futures.process import BrokenProcessPool
+  from hpg_core import parallel_analyzer as pa
+  created = []
+  class Future:
+    def result(self, timeout=None):
+      if boundary == "recovery" and len(created) == 1:
+        raise BrokenProcessPool("synthetic broken main pool")
+      return None
+    def cancel(self):
+      return True
+  class Executor:
+    def __init__(self, **kwargs):
+      self.events = []
+      self.process = _LifecycleProcess(self.events)
+      self._processes = {1: self.process}
+      created.append(self)
+    def submit(self, *args):
+      if boundary == "submit":
+        raise RuntimeError("synthetic submit failure")
+      return Future()
+    def shutdown(self, **kwargs):
+      assert kwargs == {"wait": False, "cancel_futures": True}
+      self.events.append("shutdown")
+      self._processes = None
+  def wait(futures, **kwargs):
+    if boundary == "interrupt":
+      raise KeyboardInterrupt("synthetic interrupt")
+    if boundary == "exception":
+      raise ValueError("synthetic wait failure")
+    return set(futures), set()
+  def cancelled():
+    return boundary == "cancel" and bool(created)
+  monkeypatch.setattr(pa, "ProcessPoolExecutor", Executor)
+  monkeypatch.setattr(pa, "wait", wait)
+  expected = InterruptedError if boundary == "cancel" else KeyboardInterrupt if boundary == "interrupt" else None
+  if expected:
+    with pytest.raises(expected):
+      pa.ParallelAnalyzer(max_workers=1).analyze_files(["synthetic.wav"], cancel_callback=cancelled)
+  else:
+    pa.ParallelAnalyzer(max_workers=1).analyze_files(["synthetic.wav"])
+  assert created
+  for executor in created:
+    assert not executor._hpg_cache_root.exists()
+    assert executor.events.index("shutdown") < executor.events.index("join")
+    assert executor.events.index("join") < executor.events.index("terminate") < executor.events.index("kill")
+    assert executor.events[-1] == "status" and executor.process.alive is False
+  if boundary == "recovery":
+    assert len(created) == 2
+    assert created[0]._hpg_cache_root != created[1]._hpg_cache_root
+
+
+def test_unknown_process_inventory_retains_owned_cache(monkeypatch, caplog):
+  from hpg_core import parallel_analyzer as pa
+  class Executor:
+    def __init__(self, **kwargs):
+      self._processes = None
+    def shutdown(self, **kwargs):
+      pass
+  monkeypatch.setattr(pa, "ProcessPoolExecutor", Executor)
+  executor = pa._create_executor(1)
+  pa._terminate_executor_processes(executor)
+  root = executor._hpg_cache_root
+  assert root.is_dir() and "Worker-Ende unbestaetigt" in caplog.text
+  # Keine echten Worker in dieser Fixture; nur die eigene Test-Wurzel entfernen.
+  import shutil
+  shutil.rmtree(root)
+
+
 # ============================================================
 # Hilfsfunktionen
 # ============================================================
@@ -239,12 +503,12 @@ def test_terminate_executor_isolates_each_child_and_shutdown_error():
 
 
 def test_keyboard_interrupt_from_normal_shutdown_survives_cleanup_errors(monkeypatch):
-  """shutdown(wait=True)-Interrupt bleibt trotz fehlerhaftem Cleanup original."""
+  """Begrenzter Shutdown-Interrupt bleibt trotz fehlerhaftem Cleanup original."""
   from hpg_core import parallel_analyzer
 
   original = KeyboardInterrupt("stop now")
   process = MagicMock()
-  process.is_alive.return_value = True
+  process.is_alive.side_effect = [True, False, False]
   created = []
 
   class ShutdownInterruptExecutor:
@@ -258,7 +522,8 @@ def test_keyboard_interrupt_from_normal_shutdown_survives_cleanup_errors(monkeyp
 
     def shutdown(self, wait=True, cancel_futures=False):
       self.shutdown_calls.append((wait, cancel_futures))
-      if wait:
+      assert wait is False and cancel_futures is True
+      if len(self.shutdown_calls) == 1:
         raise original
       raise RuntimeError("cleanup shutdown failed")
 
@@ -276,7 +541,9 @@ def test_keyboard_interrupt_from_normal_shutdown_survives_cleanup_errors(monkeyp
 
   assert caught.value is original
   process.terminate.assert_called_once_with()
-  assert created[0].shutdown_calls == [(True, False), (False, True)]
+  assert created[0].shutdown_calls == [(False, True), (False, True)]
+  assert all(call.kwargs == {"timeout": 1.0} for call in process.join.call_args_list)
+  assert not created[0]._hpg_cache_root.exists()
 
 
 def test_recovery_shutdown_interrupt_survives_best_effort_cleanup(monkeypatch):
@@ -286,7 +553,7 @@ def test_recovery_shutdown_interrupt_survives_best_effort_cleanup(monkeypatch):
 
   original = KeyboardInterrupt("recovery shutdown interrupted")
   recovery_process = MagicMock()
-  recovery_process.is_alive.return_value = True
+  recovery_process.is_alive.side_effect = [True, False, False]
   created = []
 
   class BrokenFuture:
@@ -331,6 +598,7 @@ def test_recovery_shutdown_interrupt_survives_best_effort_cleanup(monkeypatch):
   assert caught.value is original
   recovery_process.terminate.assert_called_once_with()
   assert created[1].shutdown_calls == [(False, True), (False, True)]
+  assert not created[1]._hpg_cache_root.exists()
 
 
 def test_keyboard_interrupt_terminates_pool_without_wait_true(monkeypatch):
@@ -339,6 +607,7 @@ def test_keyboard_interrupt_terminates_pool_without_wait_true(monkeypatch):
 
   process = MagicMock()
   process.is_alive.return_value = True
+  process.kill.side_effect = lambda: setattr(process.is_alive, "return_value", False)
   created = []
 
   class InterruptExecutor:
@@ -660,6 +929,7 @@ class TestRecoveryExecutorReuse:
 
     recovery_process = MagicMock()
     recovery_process.is_alive.return_value = True
+    recovery_process.kill.side_effect = lambda: setattr(recovery_process.is_alive, "return_value", False)
     created = []
 
     class CrashFuture:

@@ -85,6 +85,130 @@ def test_pyinstaller_bundles_hpg_core_data_json():
   assert vorhanden == ["candidate_preferences.json", "transition_tolerances.json"]
 
 
+def test_pyinstaller_source_fingerprint_mapping_is_exact_and_recursive():
+  import ast
+  source = (ROOT / "HPG.spec").read_text(encoding="utf-8")
+  tree = ast.parse(source)
+  function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_hpg_source_datas")
+  namespace = {"Path": Path}
+  exec(compile(ast.Module(body=[function], type_ignores=[]), "HPG.spec", "exec"), namespace)
+  mapped = namespace["_hpg_source_datas"](ROOT)
+  expected = [(str(path), path.relative_to(ROOT).parent.as_posix()) for path in sorted(
+    [ROOT / "tools/rate_transitions.py", *ROOT.glob("hpg_core/**/*.py")],
+    key=lambda path: path.relative_to(ROOT).as_posix(),
+  )]
+  assert mapped == expected
+  assert len(mapped) > 1
+  assert all(Path(path).suffix == ".py" for path, _destination in mapped)
+  assert any(destination != "hpg_core" and destination.startswith("hpg_core/") for _, destination in mapped)
+  assert "datas += _hpg_source_datas(SPECPATH)" in source
+
+
+def _build_path_helper():
+  # Fuehrt den echten Spec-Helper aus, ohne einen PyInstaller-Build zu starten.
+  import ast
+  import os
+  tree = ast.parse((ROOT / "HPG.spec").read_text(encoding="utf-8"))
+  functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+               and node.name == "_hpg_build_path"]
+  assert len(functions) == 1, "Deterministische Build-PATH-Allowlist fehlt"
+  namespace = {"Path": Path, "os": os}
+  exec(compile(ast.Module(body=functions, type_ignores=[]), "HPG.spec", "exec"), namespace)
+  return namespace["_hpg_build_path"]
+
+
+@pytest.fixture
+def build_path_fixture(tmp_path):
+  windows = tmp_path / "Windows"
+  interpreter = tmp_path / "venv" / "Scripts" / "python.exe"
+  base = tmp_path / "Python312"
+  qt = tmp_path / "venv" / "Lib" / "site-packages" / "PyQt6" / "Qt6" / "bin"
+  for directory in (windows / "System32", interpreter.parent, base / "DLLs", qt):
+    directory.mkdir(parents=True)
+  interpreter.write_bytes(b"synthetic interpreter identity")
+  return windows, interpreter, base, qt
+
+
+def test_build_path_has_only_validated_allowlist_and_ignores_inherited_path(build_path_fixture, monkeypatch):
+  import os
+  windows, interpreter, base, qt = build_path_fixture
+  inherited = r"E:\AI\foreign\poppler;E:\AI\foreign\libheif;.;;relative"
+  monkeypatch.setenv("PATH", inherited)
+  actual = _build_path_helper()(windows, interpreter, base, qt)
+  assert actual.split(os.pathsep) == [str(windows / "System32"), str(windows),
+    str(interpreter.parent), str(base), str(base / "DLLs"), str(qt)]
+  assert os.environ["PATH"] == inherited  # Der Helper mutiert weder Prozess noch System.
+
+
+@pytest.mark.parametrize("argument", [0, 1, 2, 3])
+@pytest.mark.parametrize("invalid", ["relative", "missing", "file", "separator"])
+def test_build_path_rejects_invalid_trusted_inputs(build_path_fixture, tmp_path, argument, invalid):
+  import os
+  inputs = list(build_path_fixture)
+  if invalid == "relative":
+    inputs[argument] = Path("relative")
+  elif invalid == "missing":
+    inputs[argument] = tmp_path / "missing"
+  elif invalid == "separator":
+    inputs[argument] = str(inputs[argument]) + os.pathsep + str(tmp_path)
+  else:
+    wrong = tmp_path / "wrong-type"
+    if argument == 1:
+      wrong.mkdir()
+    else:
+      wrong.write_bytes(b"not a directory")
+    inputs[argument] = wrong
+  with pytest.raises(ValueError):
+    _build_path_helper()(*inputs)
+
+
+def test_build_path_deduplicates_in_first_occurrence_order(build_path_fixture):
+  import os
+  windows, interpreter, base, qt = build_path_fixture
+  actual = _build_path_helper()(windows, interpreter, base, base / "DLLs")
+  assert actual.split(os.pathsep) == [str(windows / "System32"), str(windows),
+    str(interpreter.parent), str(base), str(base / "DLLs")]
+
+
+def test_build_path_requires_system32_and_base_dll_directory(build_path_fixture):
+  windows, interpreter, base, qt = build_path_fixture
+  (windows / "System32").rmdir()
+  with pytest.raises(ValueError):
+    _build_path_helper()(windows, interpreter, base, qt)
+  (windows / "System32").mkdir()
+  (base / "DLLs").rmdir()
+  with pytest.raises(ValueError):
+    _build_path_helper()(windows, interpreter, base, qt)
+
+
+def test_spec_sanitizes_process_path_before_any_collection(build_path_fixture, monkeypatch):
+  import ast
+  import os
+  import sys
+  from types import SimpleNamespace
+  windows, interpreter, base, qt = build_path_fixture
+  monkeypatch.setenv("SystemRoot", str(windows))
+  monkeypatch.setenv("PATH", "foreign-native-runtime")
+  monkeypatch.setattr(sys, "executable", str(interpreter))
+  monkeypatch.setattr(sys, "base_prefix", str(base))
+  import importlib.util
+  original_find_spec = importlib.util.find_spec
+  monkeypatch.setattr(importlib.util, "find_spec", lambda name, *args, **kwargs:
+    SimpleNamespace(submodule_search_locations=[str(qt.parents[1])]) if name == "PyQt6"
+    else original_find_spec(name, *args, **kwargs))
+  # Echte Top-Level-Ausfuehrung bis zum ersten Collector; an dieser Grenze
+  # muss die Umgebungs-Aenderung bereits wirksam sein.
+  tree = ast.parse((ROOT / "HPG.spec").read_text(encoding="utf-8"))
+  prefix = []
+  for node in tree.body:
+    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "binaries" for t in node.targets):
+      break
+    prefix.append(node)
+  exec(compile(ast.Module(body=prefix, type_ignores=[]), "HPG.spec", "exec"), {})
+  assert os.environ["PATH"].split(os.pathsep) == [str(windows / "System32"), str(windows),
+    str(interpreter.parent), str(base), str(base / "DLLs"), str(qt)]
+
+
 def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
   build = (ROOT / "build.bat").read_text(encoding="utf-8")

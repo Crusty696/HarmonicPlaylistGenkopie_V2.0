@@ -375,8 +375,6 @@ def pair_quality_reasons(
                 and isinstance(a.traegt_allein, bool)
                 and isinstance(b.traegt_allein, bool)
             ),
-            "vocals": isinstance(a.vocal_aktiv_lokal, bool)
-                      and isinstance(b.vocal_aktiv_lokal, bool),
         }
         for faktor, gueltig in raw_ok.items():
             if not gueltig:

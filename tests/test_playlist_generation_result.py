@@ -1009,7 +1009,8 @@ def test_boundary_ranking_bricht_vor_naechstem_teilergebnis_ab(monkeypatch):
     assert ranking_calls == 1
 
 
-def test_dp_zaehlt_exakt_144_links_und_behaelt_geplante_inkonsistenz():
+def test_dp_zaehlt_exakt_144_links_und_verwirft_physisch_unspielbare_kette():
+    """Nutzervertrag: unspielbare Ketten werden UNGEPLANT, nicht nur markiert."""
     tracks = (_track("a.wav"), _track("b.wav"), _track("c.wav"))
     occurrences = tuple(
         pl.TrackOccurrence("run", index, track)
@@ -1034,12 +1035,92 @@ def test_dp_zaehlt_exakt_144_links_und_behaelt_geplante_inkonsistenz():
         (first, second), occurrences
     )
 
-    assert all(item is not None for item in selected)
+    assert selected[0] is not None
+    assert selected[1] is None
     assert consistent == (True, False)
     assert checks == 144
     assert passed == 0
     assert states == 26
     assert checks <= 144 * (2 - 1)
+
+
+@pytest.mark.parametrize(
+    "names,bpms,durations,incoming,outgoing,analysis_in,analysis_out",
+    [
+        (("Umbral", "Dance", "Hallucination"), (142, 142, 142),
+         (370.1409, 447.0423, 542.5351), 189.311, 54.100,
+         108.1847, 405.6495),
+        (("Dance", "Hallucination", "Flowstate"), (142, 142, 140),
+         (447.0423, 542.5351, 576.087), 380.289, 380.289,
+         82.82386, 515.4999),
+        (("Flowstate", "Telemetry", "Terra"), (140, 140, 142),
+         (576.087, 459.428571, 588.46154), 109.742, 54.885,
+         109.742286, 438.885143),
+    ],
+    ids=["dance-backwards", "hallucination-equal", "telemetry-backwards"],
+)
+def test_dp_reale_dreier_timing_metadaten_bleiben_unveraendert(
+    names, bpms, durations, incoming, outgoing, analysis_in, analysis_out,
+):
+    """Report-Timingregression, keine Audio-/Analyse- oder Qualitaetspruefung.
+
+    Die Zeiten stammen aus dem privaten 26-Track-Main-Chain-Report;
+    Kandidatenfaktoren sind isolierte Transportfixtures, kein Auditbeweis.
+    """
+    from copy import deepcopy
+
+    tracks = tuple(_track(name, bpm) for name, bpm in zip(names, bpms))
+    for track, duration in zip(tracks, durations):
+        track.duration = duration
+    tracks[1].mix_in_point = analysis_in
+    tracks[1].mix_out_point = analysis_out
+    before = deepcopy([vars(track) for track in tracks])
+    occurrences = tuple(
+        pl.TrackOccurrence("report-timing", index, track)
+        for index, track in enumerate(tracks)
+    )
+    first = pc.CandidateSnapshot.from_pair_candidate(
+        _candidate(81.144, incoming, score=0.9), original_ordinal=0,
+    )
+    second = pc.CandidateSnapshot.from_pair_candidate(
+        _candidate(outgoing, 70.0, score=0.8), original_ordinal=0,
+    )
+
+    selected, consistent, checks, links, states = pl._select_snapshot_path(
+        ((first,), (second,)), occurrences,
+    )
+
+    assert selected == (first, None)
+    assert consistent == (True, False)
+    assert (checks, links, states) == (1, 0, 4)
+    assert [vars(track) for track in tracks] == before
+
+
+def test_dp_sichere_alternative_schlaegt_unspielbare_gespeicherte_wahl():
+    """Physische Ausfuehrbarkeit vor gespeicherter Wahl und Kandidatenscore."""
+    tracks = (_track("a.wav"), _track("b.wav"), _track("c.wav"))
+    occurrences = tuple(
+        pl.TrackOccurrence("run", index, track)
+        for index, track in enumerate(tracks)
+    )
+    bad = pc.CandidateSnapshot.from_pair_candidate(
+        _candidate(120.0, 189.311, score=0.99, saved=True),
+        original_ordinal=0,
+    )
+    safe = pc.CandidateSnapshot.from_pair_candidate(
+        _candidate(120.0, 70.0, score=0.5), original_ordinal=1,
+    )
+    following = pc.CandidateSnapshot.from_pair_candidate(
+        _candidate(150.0, 80.0, score=0.8), original_ordinal=0,
+    )
+
+    selected, consistent, checks, links, states = pl._select_snapshot_path(
+        ((bad, safe), (following,)), occurrences,
+    )
+
+    assert selected == (safe, following)
+    assert consistent == (True, True)
+    assert (checks, links, states) == (2, 1, 5)
 
 
 def test_dp_trennt_dag_link_checks_von_links_des_gewinnerpfads():

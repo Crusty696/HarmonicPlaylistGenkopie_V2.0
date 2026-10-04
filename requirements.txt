@@ -5,9 +5,9 @@
 
 # Audio-Analyse (librosa-Stack - die vier Pins haengen voneinander ab)
 librosa==0.11.0
-numpy==1.26.4      # <2.0 erzwungen durch numba 0.59.1 (NICHT einzeln anheben)
-numba==0.59.1      # Constraint-Pin fuer librosa (nicht direkt importiert)
-llvmlite==0.42.0   # Constraint-Pin fuer numba (nicht direkt importiert)
+numpy==1.26.4      # Getesteter NumPy-Pin fuer den librosa-Stack
+numba==0.67.0      # Constraint-Pin fuer librosa (nicht direkt importiert)
+llvmlite==0.49.0   # Constraint-Pin fuer numba (nicht direkt importiert)
 
 # Audio I/O
 soundfile==0.14.0  # Direkt importiert in main.py, transition_renderer.py, analysis.py

@@ -1,5 +1,71 @@
 # AGENTS.md
 
+## Verbindliche Erfolgsnachweise (Nutzerauftrag 2026-10-04)
+
+Diese Regeln verhindern unbelegte Erfolgszusagen. Sie beschreiben Pflichten,
+nicht bereits erfuellte Nachweise. Bestehende Sicherheits- und Pruefregeln
+bleiben wirksam.
+
+1. Nutzeranforderungen in pruefbare Akzeptanzkriterien und geeignete
+   Regressionstests uebertragen. Unbekannte Vocals duerfen allein kein Paar
+   sperren. Originalmusik nur am Quellort lesend analysieren und abspielen:
+   niemals kopieren, verschieben, umbenennen, loeschen oder in Projekt, Git
+   bzw. Sicherungen aufnehmen.
+2. Den betroffenen nativen Benutzerablauf nachweisen: Originaltracks
+   auswaehlen, frisch analysieren, Paare bewerten, Playlist erstellen und
+   Ergebnisse direkt in der App verwenden. Einzelne Werkzeug-, DSP- und
+   Mock-Tests ersetzen diesen Nachweis nicht. Fehlende Schritte offen nennen.
+3. Frische Analyse mit isoliertem Testzustand und Cache-Wiederverwendung
+   getrennt pruefen und berichten. Produktivcache nicht fuer Tests loeschen
+   oder veraendern. Ein Cache-Erfolg beweist keinen erfolgreichen Erstlauf.
+4. Genau die auszuliefernde bzw. gestartete Version pruefen. Eine EXE durch
+   absoluten Pfad und SHA-256 dem geprueften Build zuordnen. Quellcode-Test,
+   Build-Erfolg und erfolgreicher EXE-Lauf sind getrennte Nachweise.
+5. Status getrennt melden: implementiert; automatisch getestet; mit
+   Originaltracks im vollstaendigen Ablauf geprueft; musikalisch bewertet.
+   Kein Status impliziert den naechsten. Absicht, Laufzeitbeobachtung und
+   ausgefuehrten Nachweis unterscheiden. Historische Tests sind keine aktuelle
+   Abnahme. Ohne erforderliche Nachweise kein pauschales "alles funktioniert".
+6. Reproduzierbare Fehler durch Regression absichern: Fehler vor Korrektur
+   nachweisen, denselben Test nach Korrektur bestehen lassen. Erwartungen
+   nicht abschwaechen, ausser bei ausdruecklich geaendertem Nutzervertrag mit
+   dokumentierter Begruendung. Wo automatisierte Reproduktion nicht moeglich
+   ist, Einschraenkung und konkreten Diagnosebeleg nennen; kein RED/GREEN
+   erfinden.
+
+Bereits autorisierte sichere Schritte autonom ausfuehren, ohne zusaetzliche
+routinemaessige Nutzerfreigaberunden. Dies hebt notwendige Sicherheits- und
+Scope-Rueckfragen sowie unabhaengige Pruefungen nicht auf. Keine absolute
+Fehlerfreiheit und keine ungepruefte musikalische Optimalitaet versprechen.
+
+## Keine unnoetigen Wiederholungen (Nutzerauftrag 2026-10-04)
+
+Bereits korrekt erledigte Arbeit und gueltige bestandene Pruefungen werden
+weiterverwendet. Kosten, Tokens und Zeit sind bei der Arbeitsplanung zu
+beruecksichtigen. Vor jedem erneuten Lauf vorhandene Ergebnisse lesen und
+deren Geltungsbereich pruefen: relevante Quell-, Test- und Build-Hashes,
+Eingaben, Umgebung, Befehl, Ergebnis und bekannte Einschraenkungen.
+
+- Jeder erneute Lauf braucht einen konkreten Grund: relevante Aenderung,
+  beobachteter Fehler oder fehlender Nachweis. Grund und kleinsten geeigneten
+  Pruefumfang vor Start festhalten. Kein Wiederholen allein wegen einer
+  Zusammenfassung, eines Agentenwechsels oder eines neuen Statusberichts.
+- Ein verantwortlicher Agent koordiniert jeden teuren Lauf. Waehrend eines
+  codegebundenen Langtests werden dessen relevante Dateien nicht geaendert.
+  Parallel nur unabhaengige Arbeit; keine doppelten Test-/Build-Auftraege.
+- Testerwartungen vor teuren Laeufen gegen den vereinbarten Vertrag pruefen.
+  Ein neuberechneter Score erzwingt beispielsweise keinen Reihenfolgewechsel.
+- Reine Dokumentationsaenderungen erfordern keinen neuen Build, Volltest oder
+  Audioanalyselauf. Nur betroffene Nachweise bei relevanter Aenderung erneuern.
+- Bei ausschliesslich begruendeten Korrekturen veralteter Testerwartungen und
+  unveraendertem Produktcode, Abhaengigkeiten sowie relevanter Testumgebung
+  genuegen die betroffenen Nachtests. Bestandene unveraenderte Faelle bleiben
+  als Nachweise erhalten. Test-/Fixture-Aenderungen mit weiteren Auswirkungen
+  erfordern entsprechend breitere Nachtests.
+- Einen fehlgeschlagenen Volllauf stets als solchen dokumentieren, danach
+  gezielte Nachtests separat nennen. Daraus keinen gruenen Volllauf erfinden.
+  Quellcode-, Build-, App-Ablauf- und musikalische Nachweise bleiben getrennt.
+
 ## OpenClaw-Hochpraezisionsmodus
 
 Dieser Ordner ist der Workspace des OpenClaw-Agenten `hpg`. Arbeite nur an
@@ -25,6 +91,11 @@ Testvorbereitung. Starte nie zwei volle pytest-Laeufe gleichzeitig: `pytest`
 nutzt bereits `-n auto`. Fuer Abschlussbelege immer
 `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` verwenden;
 `--no-cov` ist nur fuer den lokalen Entwicklungszyklus erlaubt.
+Die oben genannte direkte Nutzerregel praezisiert diese Vorgabe: Ein bereits
+vorliegender Volllauf wird fuer reine Dokumentationsaenderungen oder die dort
+beschriebenen isolierten Erwartungskorrekturen nicht wiederholt. Gezielt mit
+`--no-cov` nachgepruefte Faelle werden getrennt vom vorhandenen Volllauf und
+dessen Coverage ausgewiesen.
 
 Bei Analyse-, Mixpoint-, Cache-, Genre- oder GUI-Aenderungen die in den
 Fach-Skills definierten Invarianten explizit pruefen. Kein Abschluss ohne

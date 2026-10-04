@@ -417,19 +417,74 @@ def test_struktur_braucht_alle_vier_gerichteten_rohmessungen(seite, feld):
     assert "quellmessung_fehlt:structure" in pair_quality_reasons(score, teil, kandidat)
 
 
-@pytest.mark.parametrize("feld", ["kick_aktiv", "vocal_aktiv_lokal"])
-def test_unbekannte_boolesche_rohmessung_sperrt_paar(feld):
+def test_unbekannte_kick_rohmessung_sperrt_paar():
     a, b = _track(), _track("b.mp3")
     out, inn = _voll(160.0, kick_aktiv=False), _voll(80.0, kick_aktiv=False)
-    setattr(out, feld, None)
+    out.kick_aktiv = None
 
     score, teil, flags = score_pair(a, b, out, inn, 16)
     kandidat = PairCandidate(out, inn, 16, 16.0, score, teil, flags)
 
-    assert any(
-        grund in pair_quality_reasons(score, teil, kandidat)
-        for grund in ("quellmessung_fehlt:bass", "quellmessung_fehlt:vocals")
+    assert "quellmessung_fehlt:bass" in pair_quality_reasons(score, teil, kandidat)
+
+
+@pytest.mark.parametrize("vocals_out,vocals_in", [
+    (None, None), (None, False), (False, None), (None, True), (True, None),
+])
+def test_unbekannte_vocals_blockieren_ranking_nicht_und_bleiben_unbekannt(vocals_out, vocals_in):
+    import copy
+    # Explizite Nutzerpolicy 2026-10-04: Vocals sind optionale Registerinfo,
+    # keine Pflichtmessung. None bedeutet unbekannt, niemals "keine Vocals".
+    g = _grid()
+    out = _voll(round(5 * g, 3), vocal_aktiv_lokal=vocals_out, kick_aktiv=False)
+    inn = _voll(round(3 * g, 3), vocal_aktiv_lokal=vocals_in, kick_aktiv=False)
+    a = _track_mit_kandidaten("a.mp3", outs=[out])
+    b = _track_mit_kandidaten("b.mp3", ins=[inn])
+    before_tracks = copy.deepcopy((vars(a), vars(b)))
+    before_candidates = copy.deepcopy((out.to_dict(), inn.to_dict()))
+
+    ranked = rank_pair_candidates(a, b, wahl={})
+
+    assert ranked
+    for candidate in ranked:
+        assert pair_quality_reasons(candidate.score, candidate.teilwerte, candidate) == []
+        assert len(candidate.teilwerte) == 10
+        assert all(value is not None and math.isfinite(value) for value in candidate.teilwerte.values())
+        assert candidate.out_a.vocal_aktiv_lokal is vocals_out
+        assert candidate.in_b.vocal_aktiv_lokal is vocals_in
+    assert (vars(a), vars(b)) == before_tracks
+    assert (out.to_dict(), inn.to_dict()) == before_candidates
+
+
+@pytest.mark.parametrize("missing", [
+    {"camelot_lokal": None}, {"key_confidence_lokal": None},
+    {"energy_lokal": None}, {"groove_pattern_lokal": None, "bass_pattern_lokal": None},
+    {"sub_energy": None, "bass_punch": None}, {"kick_aktiv": None},
+    {"timbre_fingerprint_lokal": None},
+    {"mood": {}, "brightness_lokal": None, "flatness_lokal": None},
+    {"lufs_lokal": None}, {"neuheit": None}, {"traegt_allein": None},
+])
+def test_optionale_vocals_lockern_keine_andere_rohmessung_im_ranking(missing):
+    g = _grid()
+    out = _voll(round(5 * g, 3), vocal_aktiv_lokal=None, **missing)
+    inn = _voll(round(3 * g, 3), vocal_aktiv_lokal=None)
+    a = _track_mit_kandidaten("a.mp3", outs=[out])
+    b = _track_mit_kandidaten("b.mp3", ins=[inn])
+    assert rank_pair_candidates(a, b, wahl={}) == []
+
+
+@pytest.mark.parametrize("vocals_out,vocals_in,penalty", [
+    (None, None, 0.0), (None, True, 0.0), (True, None, 0.0),
+    (False, True, 0.0), (True, False, 0.0), (True, True, 0.06),
+])
+def test_vocal_clash_nur_bei_beiden_bekannt_true_unveraendert(vocals_out, vocals_in, penalty):
+    a, b = _track(), _track("b.mp3")
+    baseline, _, _ = score_pair(a, b, _voll(160., kick_aktiv=False), _voll(80., kick_aktiv=False), 16)
+    actual, _, _ = score_pair(
+        a, b, _voll(160., kick_aktiv=False, vocal_aktiv_lokal=vocals_out),
+        _voll(80., kick_aktiv=False, vocal_aktiv_lokal=vocals_in), 16,
     )
+    assert actual == pytest.approx(baseline - penalty)
 
 
 def test_unbekanntes_genre_ist_nicht_lokal_bewertbar():

@@ -184,7 +184,7 @@ FEATURE_WINDOW_DURATION = min(360, LIBROSA_FAST_PATH_DURATION)
 # Track-Anfang extrapoliert werden. Die Zeitachse markiert eventuelle Luecken.
 LIBROSA_TAIL_DURATION = 180
 # === Parallel Analysis ===
-PARALLEL_ANALYSIS_TIMEOUT = 60  # Sekunden pro Track (schuetzt gegen korrupte Dateien)
+PARALLEL_ANALYSIS_TIMEOUT = 180  # Sekunden pro Track, inklusive kaltem Worker-JIT
 PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder feste Zahl
 # Native Audio-Decoder und Librosa benoetigen pro Worker deutlich RAM. Auf
 # Windows fuehren mehr als vier parallele Decoder bei grossen AIFF/WAV-Dateien

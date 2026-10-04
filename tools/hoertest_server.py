@@ -1455,187 +1455,33 @@ class HoertestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - Name der Basisklasse
         pfad = self.path.split("?", 1)[0]
-        if self._dramaturgiemodus() and pfad in (
-            "/transition-note", "/dramaturgie-note"
-        ):
-            self._post_dramaturgie(pfad)
-            return
-        try:
-            kandidatenmodus = self._kandidatenmodus()
-        except (OSError, csv.Error):
-            self._sende(500, "text/plain; charset=utf-8", b"CSV-Lesen fehlgeschlagen")
-            return
-        if kandidatenmodus and pfad in ("/note", "/bester"):
-            self._post_kandidaten(pfad)
-            return
-        # Pfad und Nutzlast wie beim Vorlaeufer: {"pair_id": ..., "note": 1..5},
-        # note=null loescht die Note wieder.
-        if pfad != "/note":
+        self._save_rating_request(pfad)
+
+    def _save_rating_request(self, pfad: str) -> None:
+        if pfad not in ("/note", "/bester", "/transition-note", "/dramaturgie-note"):
             self._sende(404, "text/plain; charset=utf-8", b"nicht gefunden")
             return
         daten = self._lies_json()
         if daten is None:
             return
+        from hpg_core.hearing_ratings import RatingError, save_rating
         try:
-            pair_id = str(daten.get("pair_id", "")).strip()
-            if "note" not in daten:
-                raise ValueError("note fehlt")
-            note = daten["note"]
-            if not pair_id or (
-                note is not None and (type(note) is not int or note not in NOTEN)
-            ):
-                raise ValueError("Note muss 1 bis 5 sein")
-            noten = {pair_id: note}
-        except (ValueError, TypeError, AttributeError):
-            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Note")
+            save_rating(self.ordner, pfad, daten)
+        except RatingError as exc:
+            self._sende(exc.status, "text/plain; charset=utf-8", str(exc).encode("utf-8"))
             return
-        try:
-            with CSV_SCHREIB_LOCK:
-                zeilen = lies_csv(self._bewertung_pfad())
-                if not any(str(z.get("pair_id", "")).strip() == pair_id for z in zeilen):
-                    self._sende(404, "text/plain; charset=utf-8", b"Paar unbekannt")
-                    return
-                schreibe_csv(
-                    self._bewertung_pfad(), BEWERTUNG_SPALTEN,
-                    merge_bewertungen(zeilen, noten),
-                )
-        except (OSError, csv.Error):
-            self._sende(500, "text/plain; charset=utf-8", b"Speichern fehlgeschlagen")
+        except (OSError, csv.Error, UnicodeError):
+            self._sende(500, "text/plain; charset=utf-8", b"Speichern oder CSV-Lesen fehlgeschlagen")
             return
         self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
 
     def _post_dramaturgie(self, pfad: str) -> None:
-        daten = self._lies_json()
-        if daten is None:
-            return
-        if set(daten) != (
-            {"transition_id", "dimension", "note"}
-            if pfad == "/transition-note"
-            else {"variant_id", "dimension", "note"}
-        ):
-            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Schluessel")
-            return
-        dimension = daten.get("dimension")
-        note = daten.get("note")
-        erlaubt = (
-            {"track_note", "technik_note", "gesamt_note"}
-            if pfad == "/transition-note"
-            else {"dramaturgie_gesamt", "energieverlauf", "peak_platzierung", "kohaerenz"}
-        )
-        if dimension not in erlaubt or type(note) is not int or note not in NOTEN:
-            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Note")
-            return
-        id_feld = "transition_id" if pfad == "/transition-note" else "variant_id"
-        ziel_id = daten.get(id_feld)
-        if not isinstance(ziel_id, str) or not ziel_id:
-            self._sende(400, "text/plain; charset=utf-8", b"ungueltige ID")
-            return
-        try:
-            with CSV_SCHREIB_LOCK:
-                manifest = validiere_dramaturgie_satz(
-                    self.ordner, pruefe_dateien=False
-                )
-                if pfad == "/transition-note":
-                    gueltige_ids = {
-                        transition["transition_id"]
-                        for variante in manifest["variants"]
-                        for transition in variante["transitions"]
-                    }
-                    datei = self.ordner / "bewertung.csv"
-                    spalten = BEWERTUNG_DREINOTEN_SPALTEN
-                    zeilen = lies_csv(datei)
-                    row_id = "pair_id"
-                else:
-                    gueltige_ids = {v["variant_id"] for v in manifest["variants"]}
-                    datei = self.ordner / "dramaturgie_bewertung.csv"
-                    spalten = DRAMATURGIE_BEWERTUNG_SPALTEN
-                    zeilen = lies_csv(datei)
-                    row_id = "variant_id"
-                if ziel_id not in gueltige_ids:
-                    self._sende(404, "text/plain; charset=utf-8", b"ID unbekannt")
-                    return
-                zeit = datetime.datetime.now().isoformat(timespec="seconds")
-                neu = []
-                for row in zeilen:
-                    kopie = dict(row)
-                    if kopie.get(row_id) == ziel_id:
-                        kopie[dimension] = str(note)
-                        kopie["zeit"] = zeit
-                    neu.append(kopie)
-                schreibe_csv(datei, spalten, neu)
-                validiere_dramaturgie_satz(self.ordner, pruefe_dateien=False)
-        except (OSError, csv.Error, ValueError):
-            self._sende(500, "text/plain; charset=utf-8", b"Speichern oder Bindung fehlgeschlagen")
-            return
-        self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
-
+        """Kompatibler Transporteinstieg; keine eigene Bewertungslogik."""
+        self._save_rating_request(pfad)
 
     def _post_kandidaten(self, pfad: str) -> None:
-        """Kandidatenmodus: /note {pair_id, clip_id, note|null}, /bester
-        {pair_id, clip_id}; beides mit Zeitstempel in bewertung.csv."""
-        daten = self._lies_json()
-        if daten is None:
-            return
-        try:
-            pair_id = str(daten.get("pair_id", "")).strip()
-            clip_id = str(daten.get("clip_id", "")).strip()
-            if not pair_id or (pfad == "/note" and not clip_id):
-                raise ValueError("pair_id und fuer Noten clip_id noetig")
-            if pfad == "/note":
-                if "note" not in daten:
-                    raise ValueError("note fehlt")
-                note = daten["note"]
-                if note is not None and (type(note) is not int or note not in NOTEN):
-                    raise ValueError("Note muss 1 bis 5 sein")
-                dimension = str(daten.get("dimension", "note"))
-            else:
-                note = None
-                dimension = "note"
-        except (ValueError, TypeError, AttributeError):
-            self._sende(400, "text/plain; charset=utf-8", b"ungueltige Eingabe")
-            return
-        zeit = datetime.datetime.now().isoformat(timespec="seconds")
-        try:
-            with CSV_SCHREIB_LOCK:
-                zeilen = lies_csv(self._bewertung_pfad())
-                dreinoten = ist_dreinotensatz(zeilen)
-                erlaubte_dimensionen = (
-                    {"track_note", "technik_note", "gesamt_note"}
-                    if dreinoten else {"note"}
-                )
-                if pfad == "/note" and dimension not in erlaubte_dimensionen:
-                    self._sende(400, "text/plain; charset=utf-8", b"ungueltige Dimension")
-                    return
-                paar_zeilen = [z for z in zeilen if z.get("pair_id") == pair_id]
-                ziel = next((z for z in paar_zeilen if z.get("clip_id") == clip_id), None)
-                if not paar_zeilen or (clip_id and ziel is None):
-                    self._sende(404, "text/plain; charset=utf-8", b"Paar oder Clip unbekannt")
-                    return
-                if pfad == "/bester":
-                    if clip_id and not dreinoten:
-                        try:
-                            bestehende_note = int(ziel.get("note") or 0)
-                        except (TypeError, ValueError):
-                            self._sende(400, "text/plain; charset=utf-8", b"Bestehende Note ungueltig")
-                            return
-                        if bestehende_note < 2:
-                            self._sende(400, "text/plain; charset=utf-8", b"Note 1 kann nicht bester sein")
-                            return
-                    neu = merge_kandidaten_bewertung(
-                        zeilen, pair_id=pair_id, clip_id=clip_id,
-                        bester=bool(clip_id), kein_bester=not bool(clip_id), zeit=zeit,
-                    )
-                else:
-                    neu = merge_kandidaten_bewertung(
-                        zeilen, pair_id=pair_id, clip_id=clip_id,
-                        note=note, zeit=zeit, dimension=dimension,
-                    )
-                spalten = BEWERTUNG_DREINOTEN_SPALTEN if dreinoten else BEWERTUNG_KANDIDATEN_SPALTEN
-                schreibe_csv(self._bewertung_pfad(), spalten, neu)
-        except (OSError, csv.Error):
-            self._sende(500, "text/plain; charset=utf-8", b"Speichern fehlgeschlagen")
-            return
-        self._sende(200, "application/json; charset=utf-8", b'{"ok":true}')
+        """Kompatibler Transporteinstieg; keine eigene Bewertungslogik."""
+        self._save_rating_request(pfad)
 
 
 def _port(value: str) -> int:
@@ -1677,12 +1523,16 @@ def main(argv=None) -> int:
     HoertestHandler.ordner = ordner
     HoertestHandler.track_infos = {} if dramaturgie else lade_track_infos(args.cache)
     reihenfolge_pfad = ordner / "reihenfolge.json"
+    from hpg_core.hearing_ratings import _unique_json_object
     try:
         HoertestHandler.reihenfolge = (
-            json.loads(reihenfolge_pfad.read_text(encoding="utf-8"))
+            json.loads(
+                reihenfolge_pfad.read_text(encoding="utf-8"),
+                object_pairs_hook=_unique_json_object,
+            )
             if reihenfolge_pfad.is_file() else {}
         )
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         print(f"reihenfolge.json ist nicht lesbar: {exc}")
         return 2
     try:

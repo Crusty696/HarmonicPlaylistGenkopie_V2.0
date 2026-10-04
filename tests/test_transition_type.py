@@ -250,6 +250,10 @@ class TestGoodHarmony:
     t2 = _make_track(bpm=138.0, camelot="8A", energy=80, genre="Psytrance")
     assert predict_transition_type(t1, t2) == "pro_eq_swap"
 
+    # Auch bei Half/Double-Time hat Psytrance Vorrang vor dem generischen Wechsel.
+    t_half = _make_track(bpm=69.0, camelot="8A", energy=80, genre="Psytrance")
+    assert predict_transition_type(t1, t_half) == "pro_eq_swap"
+
     # Moderate/Schwierige Harmonie (frueher filter_ride oder echo_out)
     t3 = _make_track(bpm=138.0, camelot="12B", energy=70, genre="Psytrance")
     t4 = _make_track(bpm=138.0, camelot="4A", energy=75, genre="Psytrance")

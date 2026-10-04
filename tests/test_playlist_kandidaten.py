@@ -231,9 +231,22 @@ def test_bass_swap_pflicht_waehlt_bass_swap():
     g = (60.0 / 140.0) * 4 * 16
     a = _track("a.mp3", outs=[_voll(round(5 * g, 3), kick_aktiv=True)])
     b = _track("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=True)])
+    a.detected_genre = "Techno"
+    b.detected_genre = "Techno"
     r = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)[0]
     assert r.kandidaten[0]["flags"]["bass_swap_pflicht"] is True
     assert r.transition_type == "bass_swap" and r.plan.transition_type == "bass_swap"
+
+
+def test_psytrance_kick_konflikt_nutzt_pro_eq_swap():
+    g = (60.0 / 140.0) * 4 * 16
+    a = _track("a.mp3", outs=[_voll(round(5 * g, 3), kick_aktiv=True)])
+    b = _track("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=True)])
+    r = pl.compute_transition_recommendations([a, b], bpm_tolerance=2.0)[0]
+
+    assert r.kandidaten[0]["flags"]["bass_swap_pflicht"] is True
+    assert r.transition_type == "pro_eq_swap"
+    assert r.plan.transition_type == "pro_eq_swap"
 
 
 
@@ -258,13 +271,25 @@ def test_recommendations_waehlen_kandidaten_sequentiell_konsistent():
     assert recs[1].plan.mix_out_a >= recs[0].plan.mix_in_b + 2 * g - 0.05
 
 
-def test_recommendations_ohne_konsistenten_kandidaten_rang1_und_flag():
+def test_recommendations_lassen_inkonsistente_zweite_kante_aus():
+    """Nutzervertrag: physisch unspielbare Kanten sind keine aktiven Empfehlungen.
+
+    Die historische Rang-1/False-Erwartung erlaubte Mix-Out vor Mix-In.
+    Fixture und Paar-Gates bleiben unveraendert; die sichere erste Kante bleibt.
+    """
     g = (60.0 / 140.0) * 4 * 16
     a = _track("a.mp3", outs=[_voll(round(5 * g, 3))])
     b = _track("b.mp3", ins=[_voll(round(6 * g, 3))], outs=[_voll(round(5 * g, 3))])   # Out vor In, kein anderer
     c = _track("c.mp3", ins=[_voll(round(3 * g, 3))])
     recs = pl.compute_transition_recommendations([a, b, c], bpm_tolerance=2.0)
-    assert recs[1].kandidat_aktiv == 1 and recs[1].kandidat_konsistent is False
+    assert len(recs) == 1
+    first = recs[0]
+    assert first.index == 0 and first.from_track is a and first.to_track is b
+    assert first.plan is not None
+    assert first.plan.mix_out_a == pytest.approx(5 * g, abs=0.01)
+    assert first.plan.mix_in_b == pytest.approx(6 * g, abs=0.01)
+    assert first.kandidat_aktiv > 0 and first.kandidat_konsistent is True
+    assert first.compatibility_score > 0
 
 
 

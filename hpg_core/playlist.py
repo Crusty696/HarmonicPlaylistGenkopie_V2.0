@@ -2091,18 +2091,18 @@ def predict_transition_type(
     genre_a = _resolve_track_genre(from_track)
     genre_b = _resolve_track_genre(to_track)
 
-    # --- Regel 1: Half/Double-Time Wechsel ---
-    if bpm_relation in ("half", "double") and eff_diff <= bpm_tolerance:
-        return "halftime_switch"
-
-    # --- Regel 1b: Psytrance — Benutzerentscheidung (David, 2026-09-19) ---
+    # --- Regel 1: Psytrance — Benutzerentscheidung (David, 2026-09-19) ---
     # Fuer Psytrance ausschliesslich harmonischer 3-Band-EQ-Swap (pro_eq_swap).
     # Keine Filter-Rides (800-Hz-Bass-Cut) oder Echo-Outs (Lautstaerkeeinbruch).
     if (genre_a == "Psytrance" or genre_b == "Psytrance") and eff_diff <= bpm_tolerance:
         return "pro_eq_swap"
 
+    # --- Regel 2: Half/Double-Time Wechsel ---
+    if bpm_relation in ("half", "double") and eff_diff <= bpm_tolerance:
+        return "halftime_switch"
 
-    # --- Regel 2: BPM ausserhalb Toleranz ---
+
+    # --- Regel 3: BPM ausserhalb Toleranz ---
     if eff_diff > bpm_tolerance:
         # Die normale Kompatibilitaet ist hier wegen ihres BPM-Hard-Gates
         # definitionsgemaess 0. Fuer die Breakdown-Entscheidung die reine
@@ -2171,7 +2171,15 @@ def transition_type_for_candidate(
     scoring_context: Optional[Dict] = None,
 ) -> str:
     """Eine gemeinsame Typentscheidung fuer App und produktionsnahen Hoertest."""
-    if kandidat is not None and kandidat.flags.get("bass_swap_pflicht"):
+    psytrance = (
+        _resolve_track_genre(from_track) == "Psytrance"
+        or _resolve_track_genre(to_track) == "Psytrance"
+    )
+    if (
+        kandidat is not None
+        and kandidat.flags.get("bass_swap_pflicht")
+        and not psytrance
+    ):
         return "bass_swap"
     return predict_transition_type(
         from_track,
@@ -3429,6 +3437,9 @@ def _select_snapshot_path(
                     link_ok = _candidate_link_consistent(
                         previous, option, occurrences[index].track
                     )
+                    # Physisch unspielbare Kombinationen erzeugen keinen Zustand.
+                    if not link_ok:
+                        continue
                     consistent = link_ok
                 planned = predecessor.planned + (option is not None)
                 honored = predecessor.saved_honored + int(

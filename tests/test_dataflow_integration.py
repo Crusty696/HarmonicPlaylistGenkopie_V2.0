@@ -316,7 +316,8 @@ def test_config_imports():
 
     from hpg_core.config import PARALLEL_ANALYSIS_TIMEOUT
     check("PARALLEL_ANALYSIS_TIMEOUT importierbar", True)
-    check("PARALLEL_ANALYSIS_TIMEOUT = 60", PARALLEL_ANALYSIS_TIMEOUT == 60,
+    # Genehmigtes Budget schliesst kalten Worker-Start und JIT-Kompilierung ein.
+    check("PARALLEL_ANALYSIS_TIMEOUT = 180", PARALLEL_ANALYSIS_TIMEOUT == 180,
           f"got {PARALLEL_ANALYSIS_TIMEOUT}")
 
     from hpg_core.parallel_analyzer import ParallelAnalyzer

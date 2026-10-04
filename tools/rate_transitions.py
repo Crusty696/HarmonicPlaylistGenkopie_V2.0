@@ -26,6 +26,7 @@ Trennung von reiner Logik und Aussenwelt (Testbarkeit):
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from bisect import bisect_left, bisect_right
 from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
@@ -1304,6 +1305,8 @@ def rendere_paar(
     clips_dir: Path,
     bpm_toleranz: float = STANDARD_BPM_TOLERANZ,
     energy_direction: str | None = None,
+    *,
+    render_sink: Callable[[TransitionClipSpec, Path], None] | None = None,
 ) -> tuple[str, object, dict]:
     """Rendert einen Uebergangs-Clip.
 
@@ -1414,7 +1417,7 @@ def rendere_paar(
         strict_beat_sync=True,
     )
     ziel = clips_dir / f"{pair_id}.wav"
-    _rendere_atomar(spec, ziel)
+    (render_sink if render_sink is not None else _rendere_atomar)(spec, ziel)
     return f"clips/{pair_id}.wav", plan, aktiver_kandidat
 
 
@@ -1467,8 +1470,43 @@ def _publiziere_staging(staging: Path, ziel: Path) -> None:
             time.sleep(PUBLISH_PERMISSION_BACKOFF_SECONDS[versuch])
 
 
+def _producer_checkpoint(args: argparse.Namespace) -> None:
+    """Kooperativer Abbruch; ohne Dienst-Token bleibt die CLI unveraendert."""
+    cancel = getattr(args, "hpg_cancel", None)
+    if cancel is not None:
+        cancel.checkpoint()
+
+
+LIESMICH_QUELLREFERENZEN = """HPG-Hoertest: Quellreferenzen
+
+Die Clip-Pfade sind logische Referenzen, keine erzeugten WAV-Dateien.
+Der Service erstellt ein separates Quellmanifest (Formatversion 1) mit
+representation source_reference_v1 und validiert es vor der Publikation.
+Die Produzenten pruefen weder Audio-Renderbarkeit noch den WAV-Auditvertrag.
+"""
+
+
+def _producer_sink(args: argparse.Namespace) -> Callable[[TransitionClipSpec, Path], None] | None:
+    sink = getattr(args, "hpg_render_sink", None)
+    if sink is not None and not callable(sink):
+        raise TypeError("hpg_render_sink muss aufrufbar sein")
+    return sink
+
+
+def _producer_progress(args: argparse.Namespace, phase: str, completed: int, total: int) -> None:
+    _producer_checkpoint(args)
+    progress = getattr(args, "hpg_progress", None)
+    if progress is not None:
+        progress(phase, completed, total)
+    _producer_checkpoint(args)
+
+
 def _prepare_atomar(args: argparse.Namespace, funktion) -> int:
     """Baut den ganzen Satz im Geschwisterordner und publiziert ihn einmalig."""
+    if _producer_sink(args) is not None:
+        # Quellsaetze brauchen den neuen Dienst-Validator vor der Publikation.
+        raise ValueError("Quellreferenzen muessen vom Service validiert und publiziert werden")
+    _producer_checkpoint(args)
     ziel = Path(args.out)
     if ziel.exists():
         print(f"Ausgabeziel existiert bereits; aus Sicherheitsgruenden abgelehnt: {ziel}")
@@ -1482,6 +1520,7 @@ def _prepare_atomar(args: argparse.Namespace, funktion) -> int:
         status = int(funktion(intern))
         if status != 0:
             return status
+        _producer_checkpoint(args)
         try:
             _publiziere_staging(staging, ziel)
         except (FileExistsError, PermissionError) as exc:
@@ -1897,6 +1936,8 @@ nicht als Gewichte oder Konfiguration in die Produktion geschrieben.
 
 
 def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
+    _producer_checkpoint(args)
+    render_sink = _producer_sink(args)
     out = Path(args.out)
     clips_dir = out / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
@@ -1913,6 +1954,7 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
         for track, track_id in zip(pool, pool_track_ids)
     }
     varianten_vertrag = dramaturgie_varianten()
+    _producer_progress(args, "dramaturgie", 0, len(varianten_vertrag))
     candidate_choice_snapshot: dict = {}
     candidate_choice_hash = _kanonischer_json_hash(candidate_choice_snapshot)
     manifest_varianten: list[dict] = []
@@ -1921,6 +1963,7 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
     dramaturgie_zeilen: list[dict] = []
 
     for variant_nummer, variante in enumerate(varianten_vertrag, start=1):
+        _producer_checkpoint(args)
         strategie = variante["canonical_strategy"]
         requested = deepcopy(variante["requested_parameters"])
         config = StrategyConfig.from_mapping(requested)
@@ -1960,6 +2003,7 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
         for index in _dramaturgie_versuchsindizes(
             result.tracks, result.recommendations
         ):
+            _producer_checkpoint(args)
             recommendation = result.recommendations[index]
             if recommendation.index != index:
                 raise ValueError("Recommendation-Index stimmt nicht mit Playlist-Reihenfolge")
@@ -1977,8 +2021,13 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
             clip_path = clips_dir / variante["variant_id"] / f"{transition_id}.wav"
             clip_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                _rendere_atomar(spec, clip_path)
+                (render_sink if render_sink is not None else _rendere_atomar)(spec, clip_path)
+                _producer_checkpoint(args)
+            except InterruptedError:
+                raise
             except BeatSyncError as exc:
+                if render_sink is not None:
+                    raise
                 logger.info(
                     "Uebergang %s fuer %s uebersprungen: %s",
                     index + 1,
@@ -1992,14 +2041,18 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
                 "from_track_id": ordered_ids[index],
                 "to_track_id": ordered_ids[index + 1],
                 "plan": _transition_plan_dict(plan),
-                "clip": _datei_metadaten(out, clip_path),
+                "clip": (
+                    {"path": clip_path.relative_to(out).as_posix(),
+                     "representation": "source_reference_v1"}
+                    if render_sink is not None else _datei_metadaten(out, clip_path)
+                ),
             })
             if len(transitions) == int(args.uebergaenge_pro_variante):
                 break
         if len(transitions) != int(args.uebergaenge_pro_variante):
             raise ValueError(
                 f"{variante['variant_id']} hat nur {len(transitions)} streng "
-                "renderbare Uebergaenge"
+                + ("referenzierte Uebergaenge" if render_sink is not None else "renderbare Uebergaenge")
             )
         transitions.sort(key=lambda transition: transition["index"])
         bewertung_zeilen.extend(
@@ -2023,6 +2076,7 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
         dramaturgie_zeilen.append({
             field: "" for field in DRAMATURGIE_BEWERTUNG_SPALTEN
         } | {"variant_id": variante["variant_id"]})
+        _producer_progress(args, "dramaturgie", variant_nummer, len(varianten_vertrag))
         print(
             f"[{variant_nummer}/{len(varianten_vertrag)}] "
             f"{variante['variant_id']}: {len(transitions)} Uebergaenge"
@@ -2034,7 +2088,10 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
         DRAMATURGIE_BEWERTUNG_SPALTEN,
         dramaturgie_zeilen,
     )
-    (out / "README.md").write_text(LIESMICH_DRAMATURGIE, encoding="utf-8")
+    (out / "README.md").write_text(
+        LIESMICH_QUELLREFERENZEN if render_sink is not None else LIESMICH_DRAMATURGIE,
+        encoding="utf-8",
+    )
     _reject_pending_wal(cache)
     if _fingerprint_cache(cache) != cache_fingerprint:
         raise RuntimeError("Cache wurde waehrend der Dramaturgievorbereitung veraendert")
@@ -2054,15 +2111,18 @@ def _befehl_prepare_dramaturgie_intern(args: argparse.Namespace) -> int:
         "variants": manifest_varianten,
     }
     _schreibe_json_atomar(out / DRAMATURGIE_MANIFEST_NAME, manifest)
-    _validiere_dramaturgie_satz(
-        out,
-        manifest,
-        varianten_vertrag,
-        erwartete_kontexte,
-        bewertung_zeilen,
-        dramaturgie_zeilen,
-        int(args.uebergaenge_pro_variante),
-    )
+    if render_sink is None:
+        _validiere_dramaturgie_satz(
+            out,
+            manifest,
+            varianten_vertrag,
+            erwartete_kontexte,
+            bewertung_zeilen,
+            dramaturgie_zeilen,
+            int(args.uebergaenge_pro_variante),
+        )
+    # Im Quellmodus prueft der Service sein separates Format-1-Manifest.
+    _producer_checkpoint(args)
     return 0
 
 
@@ -2178,6 +2238,7 @@ def rendere_kandidat(
     bpm_toleranz: float = STANDARD_BPM_TOLERANZ,
     energy_direction: str | None = None,
     transition_type_override: str | None = None,
+    render_sink: Callable[[TransitionClipSpec, Path], None] | None = None,
 ) -> tuple[str, str]:
     """Rendert einen PairCandidate-Clip (Zeitpunkte und Blende des Kandidaten,
     sonst identisch zu rendere_paar). Wirft ValueError, wenn die Blende nicht
@@ -2217,7 +2278,7 @@ def rendere_kandidat(
         **_strict_render_fields(a, b),
     )
     ziel = clips_dir / f"{clip_id_fuer(pair_id, n)}.wav"
-    _rendere_atomar(spec, ziel)
+    (render_sink if render_sink is not None else _rendere_atomar)(spec, ziel)
     return f"clips/{clip_id_fuer(pair_id, n)}.wav", transition_type
 
 
@@ -2242,6 +2303,8 @@ Algorithmus-/Build-Digest sichern den lokal verwendeten Python-Code ab.
 
 
 def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
+    _producer_checkpoint(args)
+    render_sink = _producer_sink(args)
     out = Path(args.out)
     anzeige_out = Path(getattr(args, "anzeige_out", out))
     clips_dir = out / "clips"
@@ -2310,8 +2373,10 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     bewertung_zeilen, merkmal_zeilen, reihenfolge = [], [], {}
     manifest_paare: list[dict] = []
     paare_fertig, uebersprungen = 0, 0
+    _producer_progress(args, "kandidaten", 0, int(args.anzahl))
     verwendete_tracks: set[str] = set()
     for index in reserve:
+        _producer_checkpoint(args)
         if paare_fertig >= args.anzahl:
             break
         k = kandidaten[index]
@@ -2341,42 +2406,55 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             raise ValueError("Kandidaten sind kein exakter Top-N-Rangprefix")
         pair_id = f"{paare_fertig + 1:03d}"
         print(f"[{paare_fertig + 1}/{args.anzahl}] Paar {pair_id}: {len(pcs)} Kandidaten ...", flush=True)
-        pair_temp = Path(tempfile.mkdtemp(prefix=f".{pair_id}-", dir=clips_dir))
+        pair_temp = (
+            Path(tempfile.mkdtemp(prefix=f".{pair_id}-", dir=clips_dir))
+            if render_sink is None else None
+        )
         clips: list[str] = []
         gerenderte_typen: list[str] = []
         verschoben: list[Path] = []
         try:
             for n, pc in enumerate(pcs, start=1):
+                _producer_checkpoint(args)
                 clip, gerenderter_typ = rendere_kandidat(
                     a,
                     b,
                     pc,
                     pair_id,
                     n,
-                    pair_temp,
+                    pair_temp if pair_temp is not None else clips_dir,
                     transition_type_mode=getattr(
                         args, "transition_type_mode", "kontrolliert"
                     ),
                     bpm_toleranz=args.bpm_toleranz,
                     energy_direction=energy_direction,
+                    **({"render_sink": render_sink} if render_sink is not None else {}),
                 )
+                _producer_checkpoint(args)
                 clips.append(clip)
                 gerenderte_typen.append(_validiere_transition_type(gerenderter_typ))
-            for n in range(1, len(pcs) + 1):
-                quelle = pair_temp / f"{pair_id}_k{n}.wav"
-                ziel = clips_dir / quelle.name
-                if not quelle.is_file():
-                    raise RuntimeError(f"Kandidatenclip fehlt nach Render: {quelle.name}")
-                os.replace(quelle, ziel)
-                verschoben.append(ziel)
+            if render_sink is None:
+                for n in range(1, len(pcs) + 1):
+                    quelle = pair_temp / f"{pair_id}_k{n}.wav"
+                    ziel = clips_dir / quelle.name
+                    if not quelle.is_file():
+                        raise RuntimeError(f"Kandidatenclip fehlt nach Render: {quelle.name}")
+                    os.replace(quelle, ziel)
+                    verschoben.append(ziel)
+        except InterruptedError:
+            raise
         except Exception as exc:  # noqa: BLE001 — Reservepaar statt Teilsatz
+            if render_sink is not None:
+                # Der Sink kann schon Referenzen besitzen: ganzen Dienstlauf abbrechen.
+                raise
             for pfad in verschoben:
                 pfad.unlink(missing_ok=True)
             logger.warning("Paar %s vollstaendig verworfen: %s", pair_id, exc)
             uebersprungen += 1
             continue
         finally:
-            shutil.rmtree(pair_temp, ignore_errors=True)
+            if pair_temp is not None:
+                shutil.rmtree(pair_temp, ignore_errors=True)
         verwendete_tracks.update(track_schluessel)
         dreinoten_pilot = bool(getattr(args, "dreinoten_pilot", False))
         bew, merk = kandidaten_zeilen(
@@ -2414,6 +2492,7 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             ],
         })
         paare_fertig += 1
+        _producer_progress(args, "kandidaten", paare_fertig, int(args.anzahl))
     if paare_fertig != args.anzahl:
         print(
             f"Satz unvollstaendig: {paare_fertig} von {args.anzahl} Paaren "
@@ -2430,7 +2509,7 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     schreibe_csv(out / "bewertung.csv", bewertung_spalten, bewertung_zeilen)
     schreibe_csv(out / "merkmale.csv", MERKMALE_KANDIDATEN_SPALTEN, merkmal_zeilen)
     _schreibe_json_atomar(out / "reihenfolge.json", reihenfolge)
-    liesmich = LIESMICH_KANDIDATEN
+    liesmich = LIESMICH_QUELLREFERENZEN if render_sink is not None else LIESMICH_KANDIDATEN
     if bool(getattr(args, "dreinoten_pilot", False)):
         liesmich = liesmich.replace(
             "jeden Clip mit 1-5 benoten UND den besten\nwaehlen",
@@ -2482,8 +2561,10 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     if bool(getattr(args, "dreinoten_pilot", False)):
         manifest["rating_schema"] = "three_notes_v1"
     _schreibe_json_atomar(out / KANDIDATEN_MANIFEST_NAME, manifest)
+    _producer_checkpoint(args)
     print(f"Paare: {paare_fertig}   Clips: {len(merkmal_zeilen)}   uebersprungen: {uebersprungen}")
-    print(f"Jetzt bewerten: python tools/hoertest_server.py --dir {anzeige_out} --port 8767")
+    if render_sink is None:
+        print(f"Jetzt bewerten: python tools/hoertest_server.py --dir {anzeige_out} --port 8767")
     return 0
 
 
@@ -2496,6 +2577,8 @@ def befehl_prepare_kandidaten(args: argparse.Namespace) -> int:
 # ===========================================================================
 
 def _befehl_prepare_intern(args: argparse.Namespace) -> int:
+    _producer_checkpoint(args)
+    render_sink = _producer_sink(args)
     out = Path(args.out)
     anzeige_out = Path(getattr(args, "anzeige_out", out))
     clips_dir = out / "clips"
@@ -2527,13 +2610,16 @@ def _befehl_prepare_intern(args: argparse.Namespace) -> int:
     bewertung_zeilen: list[dict] = []
     merkmal_zeilen: list[dict] = []
     fehlgeschlagen = 0
+    _producer_progress(args, "einzel", 0, int(args.anzahl))
     for index in reserve:
+        _producer_checkpoint(args)
         if len(merkmal_zeilen) >= args.anzahl:
             break
         kandidat = kandidaten[index]
         nummer = len(merkmal_zeilen) + 1
         pair_id = f"{nummer:03d}"
-        print(f"[{nummer}/{args.anzahl}] rendere {pair_id} ...", flush=True)
+        aktion = "referenziere" if render_sink is not None else "rendere"
+        print(f"[{nummer}/{args.anzahl}] {aktion} {pair_id} ...", flush=True)
         try:
             clip, plan, aktiver_kandidat_dict = rendere_paar(
                 kandidat,
@@ -2541,13 +2627,19 @@ def _befehl_prepare_intern(args: argparse.Namespace) -> int:
                 clips_dir,
                 bpm_toleranz=args.bpm_toleranz,
                 energy_direction=energy_direction,
+                **({"render_sink": render_sink} if render_sink is not None else {}),
             )
+            _producer_checkpoint(args)
             aktiver_kandidat = PairCandidate.from_dict(aktiver_kandidat_dict)
             aktive_faktoren = _faktoren_vollstaendig(aktiver_kandidat)
             if aktive_faktoren is None:
                 raise ValueError("aktiver PairCandidate hat unvollstaendige Faktoren")
             aktive_metriken = transition_metrics_from_candidate(aktiver_kandidat)
+        except InterruptedError:
+            raise
         except Exception as exc:  # noqa: BLE001 — ein defekter Clip darf den Lauf nicht abbrechen
+            if render_sink is not None:
+                raise
             fehlgeschlagen += 1
             logger.warning("Paar %s uebersprungen: %s", pair_id, exc)
             print(f"    uebersprungen: {exc}")
@@ -2582,6 +2674,7 @@ def _befehl_prepare_intern(args: argparse.Namespace) -> int:
         zeile["track_a"] = kandidat["track_a"].filePath
         zeile["track_b"] = kandidat["track_b"].filePath
         merkmal_zeilen.append(zeile)
+        _producer_progress(args, "einzel", len(merkmal_zeilen), int(args.anzahl))
 
     if len(merkmal_zeilen) != args.anzahl:
         print(
@@ -2600,6 +2693,10 @@ def _befehl_prepare_intern(args: argparse.Namespace) -> int:
         merkmal_zeilen,
     )
 
+    _producer_checkpoint(args)
+    if render_sink is not None:
+        print(f"Quellreferenzen vorbereitet: {len(merkmal_zeilen)}; Service-Validierung steht aus.")
+        return 0
     print()
     print(f"Kandidaten: {len(kandidaten)}   gewuenscht: {args.anzahl}   "
           f"gerendert: {len(merkmal_zeilen)}   uebersprungen: {fehlgeschlagen}")

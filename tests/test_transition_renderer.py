@@ -893,6 +893,35 @@ class TestAlignBeatPhaseGridWidth:
             assert (2000 - idx - raw) % 500 == 0
             assert 0 <= idx < 500
 
+    @pytest.mark.parametrize(
+        ("bpm_a", "bpm_b"), ((140.0, 70.0), (70.0, 140.0))
+    )
+    def test_half_double_downbeats_teilen_den_gemeinsamen_langsamen_takt(
+        self, bpm_a, bpm_b
+    ):
+        """Verifizierte Downbeats muessen im gemeinsamen langsamen Takt liegen."""
+        common_bar_sec = max(60.0 / bpm_a * 4, 60.0 / bpm_b * 4)
+        lead_frames = int(round(common_bar_sec * self.SR))
+        seg_b = np.repeat(
+            np.arange(10000, dtype=np.float32)[:, np.newaxis], 2, axis=1
+        )
+        out = _align_beat_phase(
+            self._ref(),
+            seg_b,
+            bpm_a,
+            self.SR,
+            known_first_beat_a=0.5,
+            known_first_beat_b=0.6,
+            lead_frames=lead_frames,
+            bar_aligned=True,
+            bar_grid_frames=lead_frames,
+        )
+
+        cut_sec = float(out[0, 0]) / self.SR
+        remaining_phase = ((0.6 - cut_sec) - 0.5) % common_bar_sec
+        phase_error = min(remaining_phase, common_bar_sec - remaining_phase)
+        assert phase_error < 0.002
+
 
 # ---------------------------------------------------------------------------
 # Tests: _load_segment
@@ -960,6 +989,51 @@ class TestLoadSegment:
 # ---------------------------------------------------------------------------
 
 class TestRenderTransitionClip:
+    @pytest.mark.parametrize(
+        ("bpm_a", "bpm_b"), ((140.0, 70.0), (70.0, 140.0))
+    )
+    def test_half_double_verwendet_gemeinsamen_takt_fuer_vorlauf_und_alignment(
+        self, monkeypatch, tmp_path, bpm_a, bpm_b
+    ):
+        sr = 1000
+        common_bar_frames = int(round(max(60 / bpm_a * 4, 60 / bpm_b * 4) * sr))
+        loads = []
+        alignment = {}
+
+        def load(_path, start, duration, target_sr):
+            loads.append((start, duration, target_sr))
+            return np.zeros((int(round(duration * target_sr)), 2), dtype=np.float32)
+
+        def align(_a, b, _bpm, _sr, **kwargs):
+            alignment.update(kwargs)
+            return b[kwargs["lead_frames"]:]
+
+        monkeypatch.setattr("hpg_core.transition_renderer._load_segment", load)
+        monkeypatch.setattr("hpg_core.transition_renderer._align_beat_phase", align)
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._synchronize_and_verify_kicks",
+            lambda _a, b, *_args: b,
+        )
+        spec = _strict_spec(
+            mix_in_sec=10.0,
+            bpm_a=bpm_a,
+            bpm_b=bpm_b,
+            first_downbeat_a=0.25,
+            first_downbeat_b=0.5,
+            downbeat_reliable_a=True,
+            downbeat_reliable_b=True,
+            bar_phase_reliable_a=True,
+            bar_phase_reliable_b=True,
+        )
+
+        render_transition_clip(spec, str(tmp_path / "half-double.wav"))
+
+        assert loads[1][0] == pytest.approx(
+            10.0 - common_bar_frames / sr, abs=0.001
+        )
+        assert alignment["lead_frames"] == common_bar_frames
+        assert alignment["bar_grid_frames"] == common_bar_frames
+
     def test_grundlegender_render_erstellt_wav(self, tmp_path):
         """Einfachster Fall: zwei synthetische WAVs → Clip."""
         path_a = str(tmp_path / "track_a.wav")
@@ -1627,6 +1701,139 @@ class TestRenderTransitionClipMitNormalisierung:
         # Amplitude darf nicht auf ~0.2 (-14 dB) aufgeblasen werden
         peak = np.max(np.abs(leveled))
         assert peak < 0.01
+
+    def test_level_mix_loudness_deckt_nicht_ausgerichteten_clip_schwanz_ab(self):
+        """Der Rest nach dem letzten vollen Fenster darf nicht stumm werden."""
+        from hpg_core.transition_renderer import _level_mix_loudness
+
+        sr = 8000
+        n_frames = 81040  # 10,13 s: Fenster-/Hop-Laenge laesst 1040 Frames Rest.
+        t = np.arange(n_frames, dtype=np.float32) / sr
+        mono = (0.2 * np.sin(2.0 * np.pi * 440.0 * t)).astype(np.float32)
+        stereo = np.repeat(mono[:, np.newaxis], 2, axis=1)
+
+        leveled = _level_mix_loudness(stereo, sr, target_db=-14.0)
+
+        tail_rms = float(np.sqrt(np.mean(leveled[-100:] ** 2)))
+        assert tail_rms > 0.1
+
+
+class TestTor1GridRegression:
+    """Ausgabephase nach Stretch; Quellvorlauf bleibt in Quellsekunden."""
+
+    @pytest.mark.parametrize("bpm_a,bpm_b,factor,rate", [
+        (140.0, 71.0, 2.0, 140.0 / 142.0),
+        (71.0, 140.0, 1.0, 71.0 / 70.0),
+    ])
+    @pytest.mark.parametrize("mix_in", [0.0, 0.2, 10.0])
+    @pytest.mark.parametrize("reliable,bar_reliable", [
+        (True, True), (True, False), (False, True),
+    ])
+    def test_stretched_source_and_output_phase_grids(
+        self, monkeypatch, bpm_a, bpm_b, factor, rate, mix_in,
+        reliable, bar_reliable,
+    ):
+        loads = []
+        seen = {}
+
+        def load(_path, start, duration, sr):
+            loads.append((start, duration))
+            return np.ones((int(round(duration * sr)), 2), dtype=np.float32)
+
+        def align(a, b, bpm, sr, **kwargs):
+            seen.update(kwargs)
+            return b[kwargs["lead_frames"]:]
+
+        stretch = Mock(side_effect=lambda audio, **_kwargs: audio)
+        monkeypatch.setattr("hpg_core.transition_renderer._load_segment", load)
+        monkeypatch.setattr("hpg_core.transition_renderer._align_beat_phase", align)
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer.librosa.effects.time_stretch", stretch
+        )
+        monkeypatch.setattr(
+            "hpg_core.transition_renderer._synchronize_and_verify_kicks",
+            lambda _a, b, *_args: b,
+        )
+        monkeypatch.setattr("hpg_core.transition_renderer.sf.write", Mock())
+        output_grid = 240.0 / bpm_a * factor
+        source_grid = output_grid * rate
+        spec = _strict_spec(
+            bpm_a=bpm_a, bpm_b=bpm_b, tempo_ratio=bpm_b / bpm_a,
+            mix_out_sec=0.2, pre_roll_sec=1.0, mix_in_sec=mix_in,
+            first_downbeat_a=0.0, first_downbeat_b=0.7,
+            downbeat_reliable_a=reliable, downbeat_reliable_b=reliable,
+            bar_phase_reliable_a=bar_reliable,
+            bar_phase_reliable_b=bar_reliable,
+        )
+
+        render_transition_clip(spec, "unused.wav")
+
+        # Ladefenster bleibt das maximale ORIGINAL-Taktfenster, auch am Anfang.
+        source_lead = min(mix_in, max(240.0 / bpm_a, 240.0 / bpm_b))
+        source_start = mix_in - source_lead
+        assert loads[0][0] == 0.0
+        assert loads[1] == pytest.approx((source_start, source_lead + 3.0))
+        assert stretch.call_args.kwargs["rate"] == pytest.approx(rate)
+        assert seen["lead_frames"] == round(source_lead / rate * 1000)
+        assert seen["bar_grid_frames"] == round(output_grid * 1000)
+        assert seen["bar_aligned"] is (reliable and bar_reliable)
+        if reliable:
+            assert seen["known_first_beat_a"] == pytest.approx(
+                output_grid - 0.2
+            )
+            assert seen["known_first_beat_b"] == pytest.approx(
+                ((0.7 - source_start) % source_grid) / rate
+            )
+        else:
+            assert seen["known_first_beat_a"] is None
+            assert seen["known_first_beat_b"] is None
+
+    @pytest.mark.parametrize("bpm,grid_seconds", [
+        (140.0, 240.0 / 140.0 * 2), (71.0, 240.0 / 71.0),
+    ])
+    def test_signed_cut_padding_preserves_entry(self, bpm, grid_seconds):
+        """Kurzer Vorlauf braucht negativen Cut; Einsatz und Stereobild bleiben."""
+        sr = 1000
+        lead = 200
+        grid = round(grid_seconds * sr)
+        b = np.zeros((6000, 2), dtype=np.float32)
+        b[lead] = (0.8, 0.4)
+        out = _align_beat_phase(
+            np.zeros((3000, 2), dtype=np.float32), b, bpm, sr,
+            known_first_beat_a=0.0, known_first_beat_b=0.7,
+            lead_frames=lead, bar_aligned=True, bar_grid_frames=grid,
+        )
+        padding = grid - 700
+        assert len(out) == len(b) + padding
+        assert not np.any(out[:padding])
+        np.testing.assert_array_equal(out[padding:], b)
+
+
+class TestTor1LoudnessEdges:
+    """Konstanter Stereogain inklusive Rand und Randumgebung."""
+
+    @pytest.mark.parametrize("frames", [19999, 20000, 20001, 81040])
+    @pytest.mark.parametrize("amplitude", [0.0, 0.003, 0.05, 0.2, 0.8])
+    def test_constant_stereo_first_last_and_neighborhood(self, frames, amplitude):
+        from hpg_core.transition_renderer import _level_mix_loudness
+
+        stereo = np.tile(np.array([amplitude, -amplitude / 2], np.float32), (frames, 1))
+        rms = amplitude * np.sqrt(0.625)
+        gain = 1.0
+        if rms > 10 ** (-32.0 / 20.0):
+            gain = 10 ** (np.clip(-14.0 - 20 * np.log10(rms), -8, 8) / 20)
+        expected = stereo * gain
+
+        out = _level_mix_loudness(stereo, 8000, target_db=-14.0)
+
+        assert out.dtype == np.float32
+        assert out.shape == stereo.shape
+        assert np.all(np.isfinite(out))
+        # Einzelne Samples verhindern, dass ein RMS-Mittel den Randfehler verdeckt.
+        np.testing.assert_allclose(out[[0, -1]], expected[[0, -1]], rtol=2e-6, atol=1e-8)
+        np.testing.assert_allclose(out[:100], expected[:100], rtol=2e-6, atol=1e-8)
+        np.testing.assert_allclose(out[-100:], expected[-100:], rtol=2e-6, atol=1e-8)
+        np.testing.assert_allclose(out, expected, rtol=2e-6, atol=1e-8)
 
 
 class TestHalfDoubleRate:

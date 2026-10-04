@@ -1,9 +1,62 @@
 import html as html_mod
+import csv
 import importlib
 import json
 import logging
 import math
 import multiprocessing
+
+# Diagnose-Isolation muss vor HPG-Imports stehen, die Cachepfade einfrieren.
+import sys as _bootstrap_sys
+if __name__ == "__main__" and len(_bootstrap_sys.argv) > 1 and _bootstrap_sys.argv[1] == "--hpg-native-smoke":
+    import os as _bootstrap_os
+    from pathlib import Path as _BootstrapPath
+    try:
+        if len(_bootstrap_sys.argv) != 3 or not _bootstrap_os.environ.get("HPG_SMOKE_ROOT"):
+            raise ValueError("Native-Smoke verlangt einen frischen Report und HPG_SMOKE_ROOT")
+        _smoke_requested_root = _BootstrapPath(_bootstrap_os.environ["HPG_SMOKE_ROOT"])
+        if not _smoke_requested_root.is_absolute() or any(
+                p.is_symlink() or p.is_junction() for p in (_smoke_requested_root, *_smoke_requested_root.parents)):
+            raise ValueError("Native-Smoke-Root muss absolut und ohne Links sein")
+        _smoke_root = _smoke_requested_root.resolve(strict=True)
+        _smoke_report = _BootstrapPath(_bootstrap_sys.argv[2])
+        _smoke_repo = _BootstrapPath(__file__).resolve().parent
+        if (not _smoke_root.is_dir() or _smoke_root == _BootstrapPath(_smoke_root.anchor)
+                or _smoke_root == _smoke_repo or _smoke_repo in _smoke_root.parents or any(_smoke_root.iterdir())
+                or _smoke_report.exists() or _smoke_report.is_symlink()
+                or not _smoke_report.is_absolute() or _smoke_report.parent != _smoke_root):
+            raise ValueError("Native-Smoke-Ziel ist nicht frisch oder nicht isoliert")
+    except (OSError, ValueError) as _smoke_input_error:
+        if _bootstrap_sys.stderr is not None:
+            print(str(_smoke_input_error), file=_bootstrap_sys.stderr)
+        raise SystemExit(2)
+    _smoke_state = _smoke_root / "state"
+    if _smoke_state.is_symlink() or _smoke_state.is_junction():
+        raise SystemExit(2)
+    _smoke_state.mkdir(exist_ok=True)
+    for _smoke_env, _smoke_name in (
+        ("HPG_CACHE_FILE", "cache.db"), ("HPG_CANDIDATE_PREFERENCES_FILE", "preferences.json"),
+        ("HPG_TOLERANCES_FILE", "tolerances.json"), ("HPG_CANDIDATE_CHOICES_FILE", "choices.json"),
+    ):
+        _bootstrap_os.environ[_smoke_env] = str(_smoke_state / _smoke_name)
+    _bootstrap_os.environ["HPG_CACHE_DIR"] = str(_smoke_state)
+    _bootstrap_os.environ["TMP"] = _bootstrap_os.environ["TEMP"] = str(_smoke_root)
+    _bootstrap_os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+    def _smoke_startup_exception(exception_type, exception, trace):
+        # Ausschliesslich frischer Diagnosebericht; Fehler beim Schreiben bleibt Fehler.
+        import traceback as _smoke_traceback
+        try:
+            with _smoke_report.open("x", encoding="utf-8") as _smoke_handle:
+                json.dump({"format": "hpg_native_smoke", "version": 1, "ok": False, "checks": {},
+                           "phase": "startup_import", "error": f"{exception_type.__name__}: {exception}",
+                           "traceback": "".join(_smoke_traceback.format_exception(exception_type, exception, trace))},
+                          _smoke_handle, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    _smoke_previous_hook = _bootstrap_sys.excepthook
+    _bootstrap_sys.excepthook = _smoke_startup_exception
 
 # Windowed Frozen-Build (console=False): sys.stdout/stderr sind None. Der
 # multiprocessing-Fehlerhandler schreibt dorthin und crasht sonst mit
@@ -36,15 +89,19 @@ multiprocessing.freeze_support()
 
 import os
 import re
+import socket
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+import uuid
 from copy import deepcopy
 from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import NamedTuple
 
 from PyQt6.QtWidgets import (
@@ -75,6 +132,9 @@ from PyQt6.QtWidgets import (
     QStyle,
     QRadioButton,
     QToolTip,
+    QSpinBox,
+    QInputDialog,
+    QDialog,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -89,7 +149,9 @@ from PyQt6.QtCore import (
     QSettings,
     QObject,
     QEvent,
+    QProcess,
 )
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt6.QtGui import (
     QColor,
     QKeySequence,
@@ -100,10 +162,13 @@ from PyQt6.QtGui import (
     QPen,
     QBrush,
     QFont,
+    QDesktopServices,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-from hpg_core.transition_renderer import TransitionClipSpec, _render_clip_subprocess_wrapper
+from hpg_core.transition_renderer import (
+    BeatSyncError, TransitionClipSpec, _render_clip_subprocess_wrapper,
+)
 from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.models import get_camelot_components, seconds_to_bars
 from hpg_core.playlist import (
@@ -678,6 +743,148 @@ class DependencyCheckWorker(QThread):
             self.checked.emit(pedalboard_installed, ai_online, rekordbox_running)
 
 
+class HearingWorkflowWorker(QThread):
+    """Fuehrt bestehende Hoertest-CLI/Audit-Schritte ohne GUI-Blockade aus."""
+
+    status_update = pyqtSignal(str)
+    completed = pyqtSignal(object)
+
+    def __init__(self, repo_root, cache_path, output_path, count, *, fit=False, parent=None):
+        super().__init__(parent)
+        self.repo_root = os.path.abspath(repo_root)
+        self.cache_path = os.path.abspath(cache_path)
+        self.output_path = os.path.abspath(output_path)
+        self.count = int(count)
+        self.fit = bool(fit)
+
+    def _run_command(self, label, args):
+        self.status_update.emit(label)
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--hpg-tool", *args]
+        else:
+            command = [sys.executable, *args]
+        completed = subprocess.run(
+            command,
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        output = (completed.stdout or "") + (completed.stderr or "")
+        if completed.returncode:
+            raise RuntimeError(output.strip() or f"Befehl endete mit Code {completed.returncode}")
+        return output.strip()
+
+    def run(self):
+        result = {"ok": False, "output": "", "set_path": self.output_path, "report_path": "", "cache_path": self.cache_path}
+        stage = None
+        try:
+            if self.fit:
+                report = self.output_path + ".audit.json"
+                if not os.path.isfile(report):
+                    raise FileNotFoundError(f"Audit-Report fehlt: {report}")
+                from tools.rate_transitions import (
+                    lies_csv,
+                    validiere_vollstaendige_dreinotenbewertung,
+                    validiere_vollstaendige_kandidatenbewertung,
+                )
+                from tools.hoertest_server import bewertungsschema
+
+                ratings_path = Path(self.output_path) / "bewertung.csv"
+                rows = lies_csv(ratings_path)
+                schema = bewertungsschema(ratings_path)
+                if "track_note" in schema:
+                    validiere_vollstaendige_dreinotenbewertung(rows)
+                else:
+                    validiere_vollstaendige_kandidatenbewertung(rows)
+                from hpg_core.candidate_preferences import override_path
+
+                preference_file = override_path()
+                try:
+                    before_preference = preference_file.stat().st_mtime_ns
+                except OSError:
+                    before_preference = None
+                output = self._run_command(
+                    "Fit auswerten und Freigabe-Gates pruefen...",
+                    ["tools/rate_transitions.py", "fit", "--modus", "kandidaten",
+                     "--dir", self.output_path, "--cache", self.cache_path,
+                     "--audit-report", report],
+                )
+                if not output:
+                    try:
+                        after_preference = preference_file.stat().st_mtime_ns
+                    except OSError:
+                        after_preference = None
+                    if after_preference is not None and after_preference != before_preference:
+                        output = f"Bestandene Gewichte wurden in den lokalen Override übernommen: {preference_file}"
+                    else:
+                        fit_report = Path(self.output_path) / "dreinoten_fit_bericht.json"
+                        try:
+                            fit_data = json.loads(fit_report.read_text(encoding="utf-8"))
+                        except (OSError, ValueError):
+                            fit_data = {}
+                        output = (
+                            "Fit abgeschlossen; keine Gewichte übernommen. Entwurf/Diagnose liegt im Hörtest-Satz."
+                            if not fit_data.get("aktiviert_candidate_preferences", False)
+                            else "Fit-Bericht meldet übernommene Gewichte."
+                        )
+                result.update(ok=True, output=output, report_path=report)
+                self.completed.emit(result)
+                return
+
+            if os.path.exists(self.output_path):
+                raise FileExistsError(f"Ziel existiert bereits: {self.output_path}")
+            parent = os.path.dirname(self.output_path)
+            if not os.path.isdir(parent):
+                raise FileNotFoundError(f"Zielordner fehlt: {parent}")
+            stage = os.path.join(
+                parent, f".{os.path.basename(self.output_path)}.{uuid.uuid4().hex}.staging"
+            )
+            os.mkdir(stage)
+            output = self._run_command(
+                "Hörtest-Satz in isoliertem Staging erzeugen...",
+                ["tools/rate_transitions.py", "prepare", "--modus", "kandidaten",
+                 "--anzahl", str(self.count), "--out", stage, "--cache", self.cache_path],
+            )
+            stage_report = stage + ".audit.json"
+            output += "\n" + self._run_command(
+                "Staging-Datensatz prüfen...",
+                ["tools/audit_candidate_set.py", "--set-dir", stage,
+                 "--cache", self.cache_path, "--report", stage_report],
+            )
+            final_report = self.output_path + ".audit.json"
+            if os.path.exists(final_report):
+                raise FileExistsError(f"Audit-Ziel existiert bereits: {final_report}")
+            if os.path.exists(self.output_path):
+                raise FileExistsError(f"Ziel entstand während des Laufs: {self.output_path}")
+            os.rename(stage, self.output_path)
+            stage = None
+            try:
+                output += "\n" + self._run_command(
+                    "Veröffentlichten Datensatz am endgültigen Pfad prüfen...",
+                    ["tools/audit_candidate_set.py", "--set-dir", self.output_path,
+                     "--cache", self.cache_path, "--report", final_report],
+                )
+            except Exception:
+                if os.path.isdir(self.output_path) and not os.path.exists(stage or ""):
+                    stage = os.path.join(
+                        parent, f".{os.path.basename(self.output_path)}.{uuid.uuid4().hex}.staging"
+                    )
+                    os.rename(self.output_path, stage)
+                raise
+            result.update(ok=True, output=output, report_path=final_report)
+            try:
+                os.unlink(stage_report)
+            except OSError:
+                logger.warning("Temporärer Staging-Audit blieb erhalten: %s", stage_report)
+        except Exception as exc:
+            result["output"] = f"{exc}\nStaging bleibt zur Prüfung erhalten: {stage}" if stage else str(exc)
+            result["staging_path"] = stage
+        self.completed.emit(result)
+
+
 class AnalysisWorker(QThread):
     """Worker thread for running the analysis in the background."""
 
@@ -1107,6 +1314,14 @@ class TransitionRenderWorker(QThread):
                     # Timeout grosszuegig fuer lange Trance/Progressive-Blends (bis 64s Crossfade)
                     future.result(timeout=60.0)
                     render_success = True
+                except BeatSyncError as sync_err:
+                    if self._should_cancel:
+                        break
+                    logger.info("Preview wegen Beat-Synchronitaet abgelehnt: %s", sync_err)
+                    get_error_reporter().log_error(
+                        "transition_render_rejected", str(sync_err), {"clip": i}
+                    )
+                    self.clip_error.emit(i, f"Vorschau abgelehnt: {sync_err}")
                 except (BrokenProcessPool, RuntimeError) as pool_err:
                     if self._should_cancel:
                         # Terminate durch request_cancel — kein echter Absturz
@@ -4216,6 +4431,10 @@ class MixTipsPanel(QWidget):
         self._preview_buttons: dict[int, QPushButton] = {}
         self._preview_transitions = {}
         self._preview_queue = deque(maxlen=8)
+        self._preview_batch_active = False
+        self._preview_batch_cancelled = False
+        self._preview_batch_successes = 0
+        self._preview_batch_failures = 0
         self._preview_cache = OrderedDict()
         self._preview_cache_limit = 8
         self._preview_temp_dirs: set[str] = set()
@@ -4654,6 +4873,10 @@ class MixTipsPanel(QWidget):
             return
         if getattr(self._preview_transitions[index], "plan", None) is None:
             return
+        if self._preview_batch_cancelled and self._render_workers:
+            return
+        if index == self._active_preview_index or index in self._preview_queue:
+            return
         if index not in self._preview_widgets:
             widget = TransitionPreviewWidget(
                 index, self._preview_transitions[index], self
@@ -4676,6 +4899,12 @@ class MixTipsPanel(QWidget):
             self._preview_cache[index] = path
             self._on_clip_ready(index, path)
             return
+        # Cache-Treffer oben gehoeren nicht zu einem neuen Render-Batch.
+        if not self._preview_batch_active:
+            self._preview_batch_active = True
+            self._preview_batch_cancelled = False
+            self._preview_batch_successes = 0
+            self._preview_batch_failures = 0
         if index != self._active_preview_index and index not in self._preview_queue:
             if len(self._preview_queue) >= self._preview_queue.maxlen:
                 self._on_clip_error(index, "Render-Warteschlange ist voll")
@@ -4707,6 +4936,8 @@ class MixTipsPanel(QWidget):
 
     def cancel_previews(self) -> None:
         """Bricht den aktiven Render ab und setzt alle wartenden Karten zurueck."""
+        self._preview_batch_cancelled = True
+        self._preview_batch_active = False
         betroffene = list(self._preview_queue)
         self._preview_queue.clear()
         if self._active_preview_index is not None:
@@ -4765,6 +4996,7 @@ class MixTipsPanel(QWidget):
             and not self._render_workers
             and not self._preview_queue
         ):
+            self._preview_batch_active = False
             self.preview_state_changed.emit(False)
 
     def _remove_preview_dir(self, directory: str) -> None:
@@ -4792,6 +5024,8 @@ class MixTipsPanel(QWidget):
 
     def _cleanup_existing_previews(self):
         """Laufenden Worker stoppen, Widgets entfernen, Temp-Dateien loeschen."""
+        self._preview_batch_cancelled = True
+        self._preview_batch_active = False
         if self._render_worker is not None:
             old_worker = self._render_worker
             old_worker.request_cancel()
@@ -4826,9 +5060,14 @@ class MixTipsPanel(QWidget):
         self, index: int, wav_path: str, source_worker=None
     ):
         """Aufgerufen wenn ein Clip fertig gerendert ist."""
-        if source_worker is not None and source_worker is not self._render_worker:
+        if source_worker is not None and (
+            source_worker is not self._render_worker
+            or self._preview_batch_cancelled
+        ):
             self._remove_preview_path(wav_path)
             return
+        if source_worker is not None and self._preview_batch_active:
+            self._preview_batch_successes += 1
         self._preview_cache[index] = wav_path
         while len(self._preview_cache) > self._preview_cache_limit:
             stale_index, stale_path = self._preview_cache.popitem(last=False)
@@ -4856,8 +5095,13 @@ class MixTipsPanel(QWidget):
         entsorgt zu werden) — so ist sichtbar, WELCHER Uebergang gescheitert
         ist. Ein Retry ueber den Karten-Button nutzt dasselbe Widget weiter.
         """
-        if source_worker is not None and source_worker is not self._render_worker:
+        if source_worker is not None and (
+            source_worker is not self._render_worker
+            or self._preview_batch_cancelled
+        ):
             return
+        if self._preview_batch_active and not self._preview_batch_cancelled:
+            self._preview_batch_failures += 1
         widget = self._preview_widgets.get(index)
         if widget is not None:
             try:
@@ -5210,6 +5454,19 @@ class CamelotWheelWidget(QWidget):
 class AnalyticsPanel(QWidget):
     """Quality Analysis — Camelot-Rad + HTML Bericht."""
 
+    hearing_prepare_requested = pyqtSignal()
+    hearing_open_requested = pyqtSignal()
+    hearing_preview_requested = pyqtSignal()
+    hearing_rating_requested = pyqtSignal()
+    hearing_fit_requested = pyqtSignal()
+    hearing_csv_fit_requested = pyqtSignal()
+    hearing_server_requested = pyqtSignal()
+    hearing_audit_requested = pyqtSignal()
+    hearing_cancel_requested = pyqtSignal()
+    hearing_discovery_requested = pyqtSignal()
+    hearing_blind_requested = pyqtSignal()
+    hearing_blind_check_requested = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.init_ui()
@@ -5227,6 +5484,55 @@ class AnalyticsPanel(QWidget):
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         layout.addWidget(self.text_edit, 1)
+
+        hearing_box = QGroupBox("Hörtest-Kalibrierung")
+        hearing_layout = QVBoxLayout(hearing_box)
+        self.hearing_prepare_button = QPushButton("Hörtest erstellen")
+        self.hearing_open_button = QPushButton("Satz öffnen")
+        self.hearing_discovery_button = QPushButton("Sätze / Fortschritt")
+        self.hearing_blind_button = QPushButton("A/B-Blindsatz vorbereiten")
+        self.hearing_blind_check_button = QPushButton("A/B-Integrität prüfen")
+        self.hearing_blind_check_button.setToolTip("Bestehende Referenz-JSON und getrennten Schlüssel nur prüfen. Keine Bewertung, Statistik oder Audiokopie.")
+        self.hearing_preview_button = QPushButton("Höransicht")
+        self.hearing_rating_button = QPushButton("In der App bewerten")
+        self.hearing_rating_button.setEnabled(False)
+        self.hearing_server_button = QPushButton("Bewerten im Browser")
+        self.hearing_fit_button = QPushButton("Bewertungen auswerten")
+        self.hearing_csv_fit_button = QPushButton("Einzel-CSV auswerten")
+        self.hearing_csv_fit_button.setToolTip("Separaten Einzel-CSV-Ordner auswerten, ohne den geöffneten Satz zu wechseln. Kein Audio-Fallback für Laden oder Bewerten.")
+        self.hearing_audit_button = QPushButton("Kandidaten-Replay prüfen")
+        self.hearing_cancel_button = QPushButton("Vorgang abbrechen")
+        self.hearing_cancel_button.setEnabled(False)
+        self.hearing_audit_button.setEnabled(False)
+        self.hearing_server_button.setEnabled(False)
+        self.hearing_preview_button.setEnabled(False)
+        self.hearing_fit_button.setEnabled(False)
+        self.hearing_prepare_button.clicked.connect(self.hearing_prepare_requested)
+        self.hearing_open_button.clicked.connect(self.hearing_open_requested)
+        self.hearing_discovery_button.clicked.connect(self.hearing_discovery_requested)
+        self.hearing_blind_button.clicked.connect(self.hearing_blind_requested)
+        self.hearing_blind_check_button.clicked.connect(self.hearing_blind_check_requested)
+        self.hearing_preview_button.clicked.connect(self.hearing_preview_requested)
+        self.hearing_rating_button.clicked.connect(self.hearing_rating_requested)
+        self.hearing_server_button.clicked.connect(self.hearing_server_requested)
+        self.hearing_fit_button.clicked.connect(self.hearing_fit_requested)
+        self.hearing_csv_fit_button.clicked.connect(self.hearing_csv_fit_requested)
+        self.hearing_audit_button.clicked.connect(self.hearing_audit_requested)
+        self.hearing_cancel_button.clicked.connect(self.hearing_cancel_requested)
+        for buttons in (
+            (self.hearing_prepare_button, self.hearing_open_button, self.hearing_discovery_button),
+            (self.hearing_preview_button, self.hearing_rating_button, self.hearing_server_button),
+            (self.hearing_fit_button, self.hearing_audit_button, self.hearing_blind_button, self.hearing_cancel_button),
+            (self.hearing_csv_fit_button, self.hearing_blind_check_button),
+        ):
+            row = QHBoxLayout()
+            for button in buttons:
+                row.addWidget(button)
+            hearing_layout.addLayout(row)
+        layout.addWidget(hearing_box)
+        self.hearing_status = QLabel("Hörtests vorbereiten, in der App anhören/bewerten und getrennt prüfen/auswerten.")
+        self.hearing_status.setWordWrap(True)
+        layout.addWidget(self.hearing_status)
 
     def set_analytics(
         self, quality_metrics, playlist=None, bpm_tolerance=6.0,
@@ -5324,6 +5630,19 @@ class MainWindow(QMainWindow):
         self._run_id = 0
         self._close_pending = False
         self._retired_mix_tips_panels = set()
+        self._hearing_worker = None
+        self._hearing_pending_rating = None
+        self._hearing_pending_proposal = None
+        self._hearing_refresh_pending = False
+        self._hearing_pending_discovery = None
+        self._hearing_refresh_worker = None
+        self._hearing_set_path = ""
+        self._hearing_cache_path = ""
+        self._hearing_process = None
+        self._hearing_port_attempts = 0
+        self._hearing_server_stop_requested = False
+        self._hearing_native_active = False
+        self._hearing_network = QNetworkAccessManager(self)
         self._settings = (
             settings
             if settings is not None
@@ -5652,6 +5971,632 @@ class MainWindow(QMainWindow):
         # StatusBar
         self.status_bar.cancel_clicked.connect(self.cancel_analysis)
 
+        self.analytics_panel.hearing_prepare_requested.connect(
+            self._prepare_hearing_set
+        )
+        self.analytics_panel.hearing_open_requested.connect(self._open_hearing_set)
+        self.analytics_panel.hearing_discovery_requested.connect(self._discover_hearing_sets)
+        self.analytics_panel.hearing_blind_requested.connect(self._prepare_hearing_blind)
+        self.analytics_panel.hearing_blind_check_requested.connect(self._check_hearing_blind)
+        self.analytics_panel.hearing_preview_requested.connect(self._open_hearing_preview)
+        self.analytics_panel.hearing_rating_requested.connect(self._open_hearing_rating)
+        self.analytics_panel.hearing_fit_requested.connect(self._fit_hearing_set)
+        self.analytics_panel.hearing_csv_fit_requested.connect(self._fit_hearing_csv_set)
+        self.analytics_panel.hearing_audit_requested.connect(lambda: self._fit_hearing_set(audit_only=True))
+        self.analytics_panel.hearing_cancel_requested.connect(self._cancel_hearing_work)
+        self.analytics_panel.hearing_server_requested.connect(
+            self._start_hearing_server
+        )
+
+    def _start_hearing_worker(self, worker, action):
+        if self._close_pending or self._hearing_worker is not None:
+            return False
+        self._hearing_worker = worker
+        panel = self.analytics_panel
+        for button in (
+            panel.hearing_prepare_button,
+            panel.hearing_open_button,
+            panel.hearing_discovery_button,
+            panel.hearing_blind_button,
+            panel.hearing_blind_check_button,
+            panel.hearing_preview_button,
+            panel.hearing_rating_button,
+            panel.hearing_fit_button,
+            panel.hearing_csv_fit_button,
+            panel.hearing_server_button,
+            panel.hearing_audit_button,
+        ):
+            button.setEnabled(False)
+        panel.hearing_cancel_button.setEnabled(callable(getattr(worker, "request_cancel", None)))
+        worker.status_update.connect(
+            lambda message, source=worker: self._hearing_status(message, source)
+        )
+        worker.completed.connect(
+            lambda result, source=worker, kind=action:
+            self._hearing_completed(result, kind, source)
+        )
+        worker.finished.connect(
+            lambda source=worker: self._cleanup_hearing_worker(source)
+        )
+        worker.start()
+        return True
+
+    def _hearing_status(self, message, source_worker=None):
+        if self._close_pending or source_worker is not self._hearing_worker:
+            return
+        self.analytics_panel.hearing_status.setText(str(message))
+
+    def _cleanup_hearing_worker(self, worker):
+        if self._hearing_worker is not worker:
+            return
+        self._hearing_worker = None
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
+        self._update_hearing_buttons()
+
+        discovered = self._hearing_pending_discovery
+        self._hearing_pending_discovery = None
+        if discovered is not None and not self._close_pending:
+            self._show_hearing_discovery(discovered)
+        pending = self._hearing_pending_rating
+        self._hearing_pending_rating = None
+        if pending is not None and not self._close_pending:
+            self._show_hearing_rating(*pending)
+        proposal = self._hearing_pending_proposal
+        self._hearing_pending_proposal = None
+        if proposal is not None and not self._close_pending:
+            self._show_hearing_proposal(*proposal)
+        if self._hearing_refresh_pending and not self._close_pending:
+            self._hearing_refresh_pending = False
+            self._refresh_hearing_ranking()
+
+    def _cancel_hearing_work(self):
+        worker = self._hearing_worker
+        if worker is not None and callable(getattr(worker, "request_cancel", None)):
+            accepted = worker.request_cancel()
+            self.analytics_panel.hearing_status.setText(
+                "Publikation bereits begonnen; Abbruch nicht angenommen. Warte auf das Ergebnis …"
+                if accepted is False else
+                "Abbruch angefordert; warte auf das Ende der eigenen Hintergrundarbeit …"
+            )
+
+    def _update_hearing_buttons(self):
+        panel = getattr(self, "analytics_panel", None)
+        if panel is None:
+            return
+        busy = self._close_pending or self._hearing_worker is not None
+        panel.hearing_cancel_button.setEnabled(busy and callable(getattr(self._hearing_worker, "request_cancel", None)))
+        remote_active = self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning
+        selectable = not busy and not remote_active and not self._hearing_native_active
+        panel.hearing_csv_fit_button.setEnabled(selectable and not self._run_is_active())
+        panel.hearing_blind_check_button.setEnabled(selectable and not self._run_is_active())
+        for button in (panel.hearing_prepare_button, panel.hearing_open_button, panel.hearing_discovery_button, panel.hearing_blind_button):
+            button.setEnabled(selectable)
+        panel.hearing_rating_button.setEnabled(
+            not busy and not remote_active and not self._hearing_native_active
+            and bool(self._hearing_set_path) and os.path.isdir(self._hearing_set_path)
+        )
+        panel.hearing_preview_button.setEnabled(
+            not busy and not self._hearing_native_active and bool(self._hearing_set_path)
+            and os.path.isdir(self._hearing_set_path)
+        )
+        panel.hearing_server_button.setEnabled(
+            not busy and not self._hearing_native_active and bool(self._hearing_set_path)
+            and os.path.isdir(self._hearing_set_path)
+        )
+        single = False
+        try:
+            from tools.hoertest_server import BEWERTUNG_SPALTEN, bewertungsschema
+            single = bewertungsschema(Path(self._hearing_set_path) / "bewertung.csv") == BEWERTUNG_SPALTEN
+        except (OSError, ValueError, csv.Error, UnicodeError):
+            pass
+        drama = os.path.isfile(os.path.join(self._hearing_set_path, "dramaturgie_manifest.json"))
+        editable = not busy and not remote_active and not self._hearing_native_active and bool(self._hearing_set_path)
+        panel.hearing_fit_button.setEnabled(editable and not drama and (single or self._hearing_ratings_complete()))
+        panel.hearing_audit_button.setEnabled(editable and not drama and not single)
+
+    def _hearing_ratings_complete(self):
+        ratings = os.path.join(self._hearing_set_path, "bewertung.csv")
+        try:
+            from tools.hoertest_server import (
+                BEWERTUNG_DREINOTEN_SPALTEN,
+                BEWERTUNG_KANDIDATEN_SPALTEN,
+            )
+            from tools.rate_transitions import (
+                validiere_vollstaendige_dreinotenbewertung,
+                validiere_vollstaendige_kandidatenbewertung,
+            )
+
+            with open(ratings, newline="", encoding="utf-8-sig") as handle:
+                reader = csv.DictReader(handle)
+                schema = tuple(reader.fieldnames or ())
+                rows = list(reader)
+            if not rows or schema not in (
+                BEWERTUNG_KANDIDATEN_SPALTEN,
+                BEWERTUNG_DREINOTEN_SPALTEN,
+            ):
+                return False
+            if any(
+                None in row
+                or not str(row.get("pair_id") or "").strip()
+                or not str(row.get("clip_id") or "").strip()
+                or str(row.get("gewaehlt") or "").strip() not in {"", "0", "1"}
+                for row in rows
+            ):
+                return False
+            if schema == BEWERTUNG_DREINOTEN_SPALTEN:
+                validiere_vollstaendige_dreinotenbewertung(rows)
+            else:
+                validiere_vollstaendige_kandidatenbewertung(rows)
+            return True
+        except (OSError, csv.Error, UnicodeError, ValueError):
+            return False
+
+    def _hearing_completed(self, result, action, source_worker=None):
+        if self._close_pending or source_worker is not self._hearing_worker:
+            return
+        if not result.get("ok"):
+            message = result.get("output", "Hörtest-Ablauf fehlgeschlagen.")
+            if result.get("orphan_key"):
+                message = "Privater Schlüssel blieb erhalten; keine fremde Datei gelöscht.\n" + message
+            if result.get("cleanup_warning"):
+                message += "\n" + result["cleanup_warning"]
+            self.analytics_panel.hearing_status.setText(message)
+            if not result.get("cancelled"):
+                QMessageBox.warning(self, "Hörtest", message)
+            return
+        if action == "discover":
+            self._hearing_pending_discovery = result["summaries"]
+            return
+        if action == "blind_check":
+            self.analytics_panel.hearing_status.setText(
+                f"A/B-Integrität geprüft: {result['pair_count']} Paare. Referenzen und getrennter Schlüssel passen zu den aktuellen Quellen.\n"
+                "Keine Bewertung oder Statistik. Nicht metadatenblind oder portabel. Keine Dateien verändert."
+            )
+            return
+        if action == "blind":
+            self.analytics_panel.hearing_status.setText(
+                "LOCAL UI BLIND vorbereitet: nur Referenzen, keine Audiokopien. Nicht metadatenblind / portabel; keine Bewertung oder Statistik.\n"
+                f"Satz: {result['public_path']}\nPrivater Schlüssel: {result['key_path']}"
+            )
+            return
+        if action in {"fit", "audit"} and "proposal" in result:
+            self._hearing_pending_proposal = (result["proposal"], result.get("cleanup_warning", ""))
+            self.analytics_panel.hearing_status.setText("Auswertung beendet. Vorschlag ist noch nicht produktiv übernommen.")
+            return
+        if action == "apply":
+            state = result["apply_state"]
+            self.analytics_panel.hearing_status.setText(
+                f"Gewichte gespeichert: {'JA' if state['persisted'] else 'NEIN'}; effektiver Reload: {'JA' if state['effective_reload'] else 'NEIN'}.\n{state['error']}"
+            )
+            self._hearing_refresh_pending = state["persisted"]
+            return
+        if action in {"open", "rate", "readonly"}:
+            session = result["session"]
+            folder = result["set_path"]
+            self._hearing_set_path = folder
+            if action == "open":
+                self._hearing_cache_path = ""
+            self.analytics_panel.hearing_status.setText(
+                f"Satz geladen ({session['mode']}). Kein Render-/Audit-Nachweis.\n{folder}"
+            )
+            if action in {"rate", "readonly"}:
+                self._hearing_pending_rating = (session, folder, action == "readonly")
+            self._update_hearing_buttons()
+            return
+        if action == "prepare":
+            self._hearing_set_path = result["set_path"]
+            self._hearing_cache_path = result["cache_path"]
+            self.analytics_panel.hearing_status.setText(
+                (f"{result.get('output', '')}\n{self._hearing_set_path}" if result.get("prepared_only")
+                 else f"Satz erstellt und am endgültigen Pfad auditiert.\n{self._hearing_set_path}")
+            )
+        else:
+            self.analytics_panel.hearing_status.setText(result.get("output", "Auswertung abgeschlossen."))
+            QMessageBox.information(
+                self,
+                "Hörtest-Auswertung",
+                result.get("output", "Auswertung abgeschlossen. Prüfe Fit-Bericht und Freigabestatus."),
+            )
+        self._update_hearing_buttons()
+
+    def _prepare_hearing_set(self):
+        if not self._hearing_selection_allowed():
+            return
+        from hpg_core.hearing_panel import HearingPrepareDialog
+        from hpg_core.hearing_jobs import HearingPrepareWorker
+
+        dialog = HearingPrepareDialog(self)
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if not accepted or not self._hearing_selection_allowed():
+            return
+        worker = HearingPrepareWorker(dialog.config, parent=self)
+        self._start_hearing_worker(worker, "prepare")
+
+    def _open_hearing_set(self):
+        if not self._hearing_selection_allowed():
+            return
+        set_path = QFileDialog.getExistingDirectory(self, "Vorhandenen Hörtest-Satz wählen")
+        if not set_path or not self._hearing_selection_allowed():
+            return
+        from hpg_core.hearing_jobs import HearingLoadWorker
+        self._start_hearing_worker(HearingLoadWorker(os.path.abspath(set_path), self), "open")
+
+    def _hearing_selection_allowed(self):
+        return not self._close_pending and self._hearing_worker is None and not self._hearing_native_active and (
+            self._hearing_process is None or self._hearing_process.state() == QProcess.ProcessState.NotRunning)
+
+    def _discover_hearing_sets(self):
+        if not self._hearing_selection_allowed():
+            return
+        root = QFileDialog.getExistingDirectory(self, "Satz-Suchordner wählen – nur direkte Unterordner")
+        if root and self._hearing_selection_allowed():
+            from hpg_core.hearing_jobs import HearingDiscoveryWorker
+            self._start_hearing_worker(HearingDiscoveryWorker(root, self), "discover")
+
+    def _show_hearing_discovery(self, summaries):
+        if not self._hearing_selection_allowed():
+            return
+        from hpg_core.hearing_panel import HearingSetBrowserDialog
+        from hpg_core.hearing_jobs import HearingLoadWorker
+        dialog = HearingSetBrowserDialog(summaries, self)
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if accepted and dialog.selected_path is not None and self._hearing_selection_allowed():
+            self._start_hearing_worker(HearingLoadWorker(dialog.selected_path, self), "open")
+
+    def _prepare_hearing_blind(self):
+        if not self._hearing_selection_allowed():
+            return
+        from hpg_core.hearing_panel import HearingBlindPrepareDialog
+        from hpg_core.hearing_jobs import HearingBlindWorker
+        dialog = HearingBlindPrepareDialog(self)
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if accepted and self._hearing_selection_allowed():
+            self._start_hearing_worker(HearingBlindWorker(dialog.config, self), "blind")
+
+    def _check_hearing_blind(self):
+        if not self._hearing_selection_allowed() or self._run_is_active():
+            return
+        from hpg_core.hearing_jobs import HearingBlindCheckWorker
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            public_path, _ = QFileDialog.getOpenFileName(self, "Öffentliche A/B-Referenzdatei wählen", "", "JSON (*.json)")
+            if (not public_path or self._close_pending or self._hearing_worker is not None or self._run_is_active()
+                    or self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning):
+                return
+            key_path, _ = QFileDialog.getOpenFileName(self, "Getrennten privaten A/B-Schlüssel wählen", "", "JSON (*.json)")
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if key_path and self._hearing_selection_allowed() and not self._run_is_active():
+            self._start_hearing_worker(HearingBlindCheckWorker(public_path, key_path, self), "blind_check")
+
+    def _open_hearing_rating(self):
+        if self._close_pending or self._hearing_worker is not None or not self._hearing_set_path or self._hearing_native_active:
+            return
+        if self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.warning(self, "Hörtest", "Zuerst den Browser-Server beenden. Nur eine Bewertungsoberfläche darf diesen Satz schreiben.")
+            return
+        from hpg_core.hearing_jobs import HearingLoadWorker
+        self._start_hearing_worker(HearingLoadWorker(self._hearing_set_path, self), "rate")
+
+    def _show_hearing_rating(self, session, folder, read_only=False):
+        if self._close_pending or self._hearing_native_active or (self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning):
+            return
+        try:
+            from hpg_core.hearing_panel import HearingRatingDialog
+            from hpg_core.hearing_ratings import save_rating
+            dialog = HearingRatingDialog(
+                session, save=lambda route, payload: save_rating(folder, route, payload), parent=self,
+            )
+            if read_only:
+                for control in [*dialog.rating_boxes.values(), *dialog.sequence_boxes.values(),
+                                getattr(dialog, "best_button", None), getattr(dialog, "no_best_button", None)]:
+                    if control is not None:
+                        control.setEnabled(False)
+                dialog.status_label.setText("Nur Höransicht. Keine Bewertungen werden verändert.")
+        except (OSError, ValueError, TypeError, csv.Error, UnicodeError) as exc:
+            QMessageBox.warning(self, "Hörtest", f"Bewertung nicht verfügbar: {exc}")
+            return
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            dialog.exec()
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if not self._close_pending:
+            self.analytics_panel.hearing_status.setText("Native Bewertung beendet. Gespeicherte Noten bleiben erhalten; kein Audit-Nachweis.")
+
+    def _open_hearing_preview(self):
+        if self._close_pending or self._hearing_worker is not None or not self._hearing_set_path:
+            return
+        if os.path.isfile(os.path.join(self._hearing_set_path, "hearing_source_manifest.json")):
+            from hpg_core.hearing_jobs import HearingLoadWorker
+            self._start_hearing_worker(HearingLoadWorker(self._hearing_set_path, self), "readonly")
+            return
+        try:
+            from hpg_core.hearing_preview import HearingPreviewDialog, load_candidate_preview
+
+            pairs = load_candidate_preview(self._hearing_set_path)
+        except (OSError, ValueError, TypeError, csv.Error, UnicodeError) as exc:
+            QMessageBox.warning(self, "Höransicht", f"Kandidatensatz nicht lesbar: {exc}")
+            return
+        dialog = HearingPreviewDialog(pairs, self)
+        dialog.exec()
+        self.analytics_panel.hearing_status.setText(
+            "Höransicht beendet; keine Audit-Prüfung, keine Bewertungen gespeichert."
+        )
+
+    def _fit_hearing_csv_set(self):
+        if not self._hearing_selection_allowed() or self._run_is_active():
+            return
+        directory = QFileDialog.getExistingDirectory(self, "Einzel-CSV-Ordner auswerten – geöffneten Satz nicht wechseln")
+        if directory:
+            self._fit_hearing_set(directory=directory)
+
+    def _fit_hearing_set(self, audit_only=False, *, directory=None):
+        if self._close_pending or self._hearing_worker is not None or self._hearing_native_active or self._run_is_active():
+            return
+        if self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.warning(self, "Hörtest", "Zuerst den eigenen Browser-Server beenden, damit Ratings während der Berechnung nicht verändert werden.")
+            return
+        override = directory is not None
+        if override and audit_only:
+            QMessageBox.warning(self, "Hörtest", "Einzel-CSV-Auswertung unterstützt keinen Kandidaten-Replay-Audit.")
+            return
+        target = os.path.abspath(os.fspath(directory)) if override else self._hearing_set_path
+        if not target:
+            return
+        from hpg_core.hearing_panel import HearingFitDialog
+        from hpg_core.hearing_jobs import HearingCalibrationWorker
+        from tools.hoertest_server import BEWERTUNG_SPALTEN, bewertungsschema
+        try:
+            single = bewertungsschema(Path(target) / "bewertung.csv") == BEWERTUNG_SPALTEN
+            if override and not single:
+                raise ValueError("Einzel-CSV-Auswertung verlangt exakt pair_id,clip,bewertung.")
+        except (OSError, ValueError, UnicodeError, csv.Error) as exc:
+            QMessageBox.warning(self, "Hörtest", f"Bewertungsschema nicht lesbar: {exc}")
+            return
+        dialog = HearingFitDialog(None if override else self._hearing_cache_path, audit_only=audit_only, single=single, parent=self)
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if not accepted or not self._hearing_selection_allowed() or self._run_is_active():
+            return
+        if not override:
+            self._hearing_cache_path = "" if dialog.cache is None else str(dialog.cache)
+        worker = HearingCalibrationWorker(target, dialog.cache, fit=not audit_only,
+                                          seed=dialog.seed, genres=dialog.genres, parent=self)
+        self._start_hearing_worker(worker, "audit" if audit_only else "fit")
+
+    def _show_hearing_proposal(self, proposal, cleanup_warning=""):
+        if not self._hearing_selection_allowed():
+            return
+        from hpg_core.hearing_panel import HearingCalibrationResultDialog
+        from hpg_core.hearing_jobs import HearingApplyWorker
+        dialog = HearingCalibrationResultDialog(proposal, self, cleanup_warning=cleanup_warning)
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if accepted and self._hearing_selection_allowed() and not self._run_is_active():
+            self._start_hearing_worker(HearingApplyWorker(proposal, self), "apply")
+
+    def _refresh_hearing_ranking(self):
+        if self._close_pending or not self.analyzed_raw_tracks or self._run_is_active():
+            return
+        try:
+            from hpg_core import candidate_preferences
+            candidate_preferences.reset_cache()
+            settings = self.library_panel.get_current_settings()
+            advanced_source = settings["advanced_params"]
+            if not isinstance(advanced_source, Mapping):
+                raise ValueError("advanced_params muss ein Mapping sein")
+            advanced_params = deepcopy(dict(advanced_source))
+            ai_enabled = advanced_params.pop("ai_enabled", False)
+            if type(ai_enabled) is not bool:
+                raise ValueError("ai_enabled muss Boolean sein")
+            StrategyConfig.from_mapping(advanced_params)
+            settings["advanced_params"] = advanced_params
+            settings["ai_enabled"] = ai_enabled
+            settings["scoring_context"] = resolve_run_scoring_context(settings["strategy"], advanced_params)
+            settings["candidate_choice_snapshot"] = candidate_choices.snapshot()
+        except Exception as exc:
+            self.analytics_panel.hearing_status.setText(f"Gewichte gespeichert, aber Reload fehlgeschlagen; sichtbares Ranking ist veraltet: {exc}")
+            self.toolbar.set_export_enabled(False)
+            return
+        self._run_settings = settings
+        if self.run_state == RunState.CANCELLED:
+            self._set_run_state(RunState.IDLE)
+        self.on_ai_worker_finished(ai_completed=False)
+        if self.playlist_worker is not None:
+            self._hearing_refresh_worker = self.playlist_worker
+            self.analytics_panel.hearing_status.setText("Gewichte gespeichert. Playlist und Kandidaten-Ranking werden mit neuem Scoring-Kontext berechnet; Erfolg noch offen …")
+        else:
+            self.analytics_panel.hearing_status.setText("Gewichte gespeichert; keine Ranking-Neuberechnung gestartet. Sichtbares Ranking nicht aktualisiert.")
+
+    def _start_hearing_server(self):
+        if self._close_pending or self._hearing_native_active or self._hearing_worker is not None:
+            return
+        if self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning:
+            self._hearing_server_stop_requested = True
+            self.analytics_panel.hearing_status.setText("Beende den von HPG gestarteten Hörtest-Server...")
+            self._hearing_process.terminate()
+            QTimer.singleShot(1500, self._kill_hearing_server_if_running)
+            return
+        if not self._hearing_set_path:
+            return
+        if os.path.isfile(os.path.join(self._hearing_set_path, "hearing_source_manifest.json")):
+            QMessageBox.information(self, "Hörtest", "Quellenbasierte Sätze werden direkt in der App angehört und bewertet. Der optionale Legacy-Browser-Server erwartet vorhandene Hörclips.")
+            return
+        cache = self._hearing_cache_path
+        self._hearing_port_attempts = 0
+        self._hearing_server_stop_requested = False
+        self._launch_hearing_server_attempt(cache)
+
+    def _launch_hearing_server_attempt(self, cache):
+        if self._close_pending or self._hearing_native_active or self._hearing_worker is not None:
+            return
+        if self._hearing_port_attempts >= 4:
+            QMessageBox.warning(self, "Hörtest", "Kein freier Loopback-Port konnte gestartet werden.")
+            return
+        self._hearing_port_attempts += 1
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+        except OSError as exc:
+            QMessageBox.warning(self, "Hörtest", str(exc))
+            return
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        process._hpg_launch_token = uuid.uuid4().hex
+        server_args = ["--dir", self._hearing_set_path, "--port", str(port),
+                       "--launch-token", process._hpg_launch_token]
+        if cache:
+            server_args += ["--cache", cache]
+        if getattr(sys, "frozen", False):
+            process.setArguments(["--hpg-hearing-server", *server_args])
+        else:
+            process.setArguments([
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "hoertest_server.py"),
+                *server_args,
+            ])
+        self._hearing_process = process
+        process.started.connect(
+            lambda p=process, url=f"http://127.0.0.1:{port}":
+            self._on_hearing_server_started(p, url)
+        )
+        process.errorOccurred.connect(
+            lambda _error, p=process: self._hearing_server_failed(p)
+        )
+        process.readyReadStandardError.connect(
+            lambda p=process: self._hearing_server_log(p)
+        )
+        process.finished.connect(
+            lambda code, _status, p=process: self._hearing_server_finished(p, code)
+        )
+        process.start()
+        self._update_hearing_buttons()
+
+    def _on_hearing_server_started(self, process, url):
+        if process is not self._hearing_process:
+            return
+        self.analytics_panel.hearing_server_button.setText("Server beenden")
+        self._update_hearing_buttons()
+        self._probe_hearing_server(process, url, time.monotonic() + 30)
+
+    def _probe_hearing_server(self, process, url, deadline):
+        if process is not self._hearing_process or self._hearing_native_active or self._hearing_server_stop_requested:
+            return
+        if process.state() == QProcess.ProcessState.NotRunning:
+            return
+        if time.monotonic() >= deadline:
+            self._hearing_server_stop_requested = True
+            self.analytics_panel.hearing_status.setText("Server meldete keine bestätigte Startbereitschaft; eigener Prozess wird beendet.")
+            process.terminate()
+            QTimer.singleShot(1500, self._kill_hearing_server_if_running)
+            return
+        request = QNetworkRequest(QUrl(url))
+        request.setTransferTimeout(1000)
+        reply = self._hearing_network.get(request)
+        reply.finished.connect(lambda p=process, r=reply, u=url, end=deadline: self._hearing_server_probe_done(p, r, u, end))
+
+    def _hearing_server_probe_done(self, process, reply, url, deadline):
+        try:
+            ready = (
+                reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) == 200
+                and bytes(reply.rawHeader(b"Server")).startswith(b"HPG-Hoertest")
+                and bytes(reply.rawHeader(b"Content-Type")).split(b";", 1)[0].strip() == b"text/html"
+                and bytes(reply.rawHeader(b"X-HPG-Launch-Token")).decode("ascii", errors="replace") == process._hpg_launch_token
+            )
+        finally:
+            reply.deleteLater()
+        if process is not self._hearing_process or self._hearing_native_active or self._hearing_server_stop_requested:
+            return
+        if ready:
+            self._open_hearing_url(process, url)
+        else:
+            QTimer.singleShot(200, lambda: self._probe_hearing_server(process, url, deadline))
+
+    def _kill_hearing_server_if_running(self):
+        process = self._hearing_process
+        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+            process.kill()
+
+    def _hearing_server_log(self, process):
+        if process is not self._hearing_process:
+            return
+        try:
+            message = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
+        except RuntimeError:
+            return
+        if message:
+            self.analytics_panel.hearing_status.setText(message[-500:])
+
+    def _open_hearing_url(self, process, url):
+        if process is not self._hearing_process or process.state() == QProcess.ProcessState.NotRunning:
+            self._hearing_server_failed(process)
+            return
+        QDesktopServices.openUrl(QUrl(url))
+        self.analytics_panel.hearing_status.setText(f"Hörtest läuft lokal: {url}")
+
+    def _hearing_server_failed(self, process):
+        if process is not self._hearing_process:
+            return
+        cache = self._hearing_cache_path
+        self._hearing_process = None
+        process.deleteLater()
+        if self._hearing_port_attempts < 4:
+            QTimer.singleShot(150, lambda: self._launch_hearing_server_attempt(cache))
+        else:
+            QMessageBox.warning(self, "Hörtest", "Hörtest-Server konnte nicht gestartet werden.")
+
+    def _hearing_server_finished(self, process, exit_code=0):
+        if process is not self._hearing_process:
+            return
+        if exit_code and not self._hearing_server_stop_requested and self._hearing_port_attempts < 4:
+            cache = self._hearing_cache_path
+            self._hearing_process = None
+            process.deleteLater()
+            QTimer.singleShot(150, lambda: self._launch_hearing_server_attempt(cache))
+            return
+        self._hearing_process = None
+        process.deleteLater()
+        self._hearing_server_stop_requested = False
+        self.analytics_panel.hearing_server_button.setText("Bewerten im Browser")
+        self.analytics_panel.hearing_status.setText("Hörtest-Server beendet.")
+        self._update_hearing_buttons()
+
     def _on_nav_changed(self, index):
         self.content_stack.setCurrentIndex(index)
 
@@ -5738,6 +6683,13 @@ class MainWindow(QMainWindow):
 
     def _on_preview_state_changed(self, active: bool) -> None:
         """Spiegelt On-Demand-Rendering in RunState und Cancel-UI."""
+        # Auch alte finished-Signale duerfen den bestehenden Cancel-Drain wecken.
+        if not active and self.run_state == RunState.CANCELLING:
+            self._try_finish_cancelled_run()
+            return
+        source_panel = self.sender()
+        if source_panel is not None and source_panel is not self.mix_tips_panel:
+            return
         if active:
             if self.run_state not in {
                 RunState.AUDIO,
@@ -5750,13 +6702,38 @@ class MainWindow(QMainWindow):
                 self.status_bar.set_progress(0)
                 self.status_bar.set_status("Transition-Vorschau wird gerendert...")
             return
-        if self.run_state == RunState.CANCELLING:
-            self._try_finish_cancelled_run()
-        elif self.run_state == RunState.PREVIEW:
-            self._finish_run(RunState.SUCCESS, "Transition-Vorschau bereit.")
+        if self.run_state == RunState.PREVIEW:
+            panel = self.mix_tips_panel
+            if panel._render_worker is not None or panel._render_workers or panel._preview_queue:
+                return
+            if panel._preview_batch_cancelled:
+                self._finish_run(RunState.CANCELLED, "Transition-Vorschau abgebrochen.")
+                return
+            successes = panel._preview_batch_successes
+            failures = panel._preview_batch_failures
+            if successes and not failures:
+                self._finish_run(RunState.SUCCESS, "Transition-Vorschau bereit.")
+            elif successes:
+                self._finish_run(
+                    RunState.PARTIAL,
+                    f"Transition-Vorschau teilweise bereit: {successes} erfolgreich, "
+                    f"{failures} fehlgeschlagen.",
+                )
+            else:
+                self._finish_run(
+                    RunState.ERROR,
+                    f"Keine Transition-Vorschau erstellt: {failures} fehlgeschlagen."
+                    if failures else "Keine Transition-Vorschau erstellt.",
+                )
 
     def _finish_run(self, state: RunState, status: str) -> None:
         """Stellt die UI in jedem terminalen Pfad deterministisch wieder her."""
+        if self._hearing_refresh_worker is not None:
+            self._hearing_refresh_worker = None
+            self.analytics_panel.hearing_status.setText(
+                f"Gewichte gespeichert; Ranking-Neuberechnung nicht erfolgreich veröffentlicht ({state.value}): {status}"
+            )
+            self.toolbar.set_export_enabled(False)
         self._set_run_state(state)
         self.library_panel.start_button.setEnabled(True)
         self.toolbar.set_generate_enabled(True)
@@ -6073,6 +7050,10 @@ class MainWindow(QMainWindow):
         if self.run_state in {RunState.CANCELLING, RunState.CANCELLED}:
             return
         logger.error("Playlist generation failed: %s", message)
+        if source_worker is self._hearing_refresh_worker and source_worker is not None:
+            self._hearing_refresh_worker = None
+            self.analytics_panel.hearing_status.setText(f"Gewichte gespeichert, Ranking-Neuberechnung fehlgeschlagen: {message}")
+            self.toolbar.set_export_enabled(False)
         get_error_reporter().log_error(
             "playlist_generation", str(message),
             {"tracks": len(self.analyzed_raw_tracks)},
@@ -6123,6 +7104,9 @@ class MainWindow(QMainWindow):
             return
 
         self.library_panel.progress_widget.set_step_status(3, "completed")
+        if source_worker is self._hearing_refresh_worker and source_worker is not None:
+            self._hearing_refresh_worker = None
+            self.analytics_panel.hearing_status.setText("Gewichte gespeichert; Playlist und Kandidaten-Ranking mit neuem Scoring-Kontext berechnet und angezeigt. Kein Nachweis musikalischer Verbesserung.")
         self.library_panel.progress_widget.set_progress(100)
         self.status_bar.set_progress(100)
 
@@ -7122,6 +8106,7 @@ class MainWindow(QMainWindow):
             *advanced._ai_detect_workers,
             advanced._test_worker,
             advanced._pull_worker,
+            self._hearing_worker,
         ]
         unique = []
         seen = set()
@@ -7143,6 +8128,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Akzeptiert Close erst nach nachgewiesenem Ende aller Worker."""
         if not self._close_pending:
+            self._close_pending = True
             self._save_ui_settings()
 
         running_workers = []
@@ -7170,12 +8156,42 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, self.close)
             return
 
-        self._close_pending = False
+        process = self._hearing_process
+        self._hearing_process = None
+        if process is not None:
+            try:
+                self._hearing_server_stop_requested = True
+                if process.state() != QProcess.ProcessState.NotRunning:
+                    process.terminate()
+                    if not process.waitForFinished(1000):
+                        process.kill()
+                        process.waitForFinished(1000)
+                process.deleteLater()
+            except RuntimeError:
+                pass
         self.mix_tips_panel._cleanup_existing_previews()
         event.accept()
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--hpg-native-smoke":
+        from hpg_core.hearing_smoke import run as native_smoke
+        sys.excepthook = _smoke_previous_hook
+        raise SystemExit(native_smoke(sys.argv[2]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--hpg-tool":
+        if len(sys.argv) < 3:
+            raise SystemExit(2)
+        if sys.argv[2].replace("\\", "/").endswith("tools/rate_transitions.py"):
+            from tools.rate_transitions import main as tool_main
+        elif sys.argv[2].replace("\\", "/").endswith("tools/audit_candidate_set.py"):
+            from tools.audit_candidate_set import main as tool_main
+        else:
+            raise SystemExit("Unbekanntes HPG-Hilfswerkzeug")
+        raise SystemExit(tool_main(sys.argv[3:]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--hpg-hearing-server":
+        from tools.hoertest_server import main as server_main
+        raise SystemExit(server_main(sys.argv[2:]))
+
     # Logging initialisieren (MUSS vor allen anderen Modulen passieren)
     setup_logging(hpg_config.LOG_LEVEL)
 

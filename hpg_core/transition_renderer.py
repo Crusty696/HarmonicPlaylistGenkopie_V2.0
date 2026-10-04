@@ -289,7 +289,11 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # dabei bis zu 2 Beats vom ANFANG von seg_b verworfen: genau der Phrasen-/
     # Drop-Einsatz, auf den die Analyse den Mix-In gelegt hat. Mit Vorlauf
     # schneidet der Alignment-Cut nur in den Vorlauf, nie in den Einsatz.
-    bar_lead_sec = (60.0 / spec.bpm_b) * METER if spec.bpm_b > 0 else 0.0
+    half_double = _half_double_relation(spec.bpm_a, spec.bpm_b)
+    bar_sec_a = (60.0 / spec.bpm_a) * METER if spec.bpm_a > 0 else 0.0
+    bar_sec_b = (60.0 / spec.bpm_b) * METER if spec.bpm_b > 0 else 0.0
+    common_bar_sec = max(bar_sec_a, bar_sec_b)
+    bar_lead_sec = common_bar_sec if half_double else bar_sec_b
     b_start = max(0.0, spec.mix_in_sec - bar_lead_sec)
     b_lead_sec = spec.mix_in_sec - b_start  # tatsaechlich geladener Vorlauf
     b_dur   = b_lead_sec + cf_sec + post_roll
@@ -303,17 +307,12 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     applied_stretch_rate = 1.0  # fuer die Downbeat-Phasen-Umrechnung unten
     if spec.bpm_a > 0 and spec.bpm_b > 0 and abs(spec.bpm_a - spec.bpm_b) > 0.05:
         target_bpm_b = spec.bpm_b
-        
-        # Half/Double-Erkennung relativ zum Zieltempo: DJ-Pitchfader-Praxis
-        # erlaubt ~3-4% Anpassung, absolute 10-BPM-Fenster triggerten falsch
-        half_double_tolerance = spec.bpm_a * 0.04
-
-        # Check fuer Halftime-Switch (BPM_B ist ca. die Haelfte von BPM_A)
-        if abs(spec.bpm_b * 2.0 - spec.bpm_a) < half_double_tolerance:
+        # Half/Double-Erkennung relativ zum Zieltempo, zentral fuer Ladefenster
+        # und Phasenraster.
+        if half_double == "half":
             target_bpm_b = spec.bpm_b * 2.0
             logger.info(f"Halftime-Switch erkannt fuer Track B: Virtuelle BPM verdoppelt von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
-        # Check fuer Doubletime-Switch (BPM_B ist ca. das Doppelte von BPM_A)
-        elif abs(spec.bpm_b / 2.0 - spec.bpm_a) < half_double_tolerance:
+        elif half_double == "double":
             target_bpm_b = spec.bpm_b / 2.0
             logger.info(f"Doubletime-Switch erkannt fuer Track B: Virtuelle BPM halbiert von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
 
@@ -393,6 +392,9 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # AUDIT-FIX N-02 (2026-07-26): der geladene Vorlauf (b_lead_sec) skaliert
     # beim Time-Stretch mit 1/rate; das Alignment konsumiert ihn per Cut.
     b_lead_frames = int(round(b_lead_sec / applied_stretch_rate * sr))
+    # Ausgabe- und Quellraster getrennt halten: Stretch skaliert Zeiten mit 1/rate.
+    output_grid_sec = bar_sec_a * (2.0 if half_double == "half" else 1.0)
+    source_grid_b_sec = output_grid_sec * applied_stretch_rate
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
             known_a = known_b = None
@@ -409,28 +411,21 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                 bar_aligned = (
                     spec.bar_phase_reliable_a and spec.bar_phase_reliable_b
                 )
-                bar_sec_a = (60.0 / spec.bpm_a) * METER
-                known_a = (spec.first_downbeat_a - spec.mix_out_sec) % bar_sec_a
-                # OFFEN bei Half/Double: B's Phase wird modulo eines
-                # 70-BPM-Takts gemessen, ausgerichtet wird unten aber auf A's
-                # 140-BPM-Takt. B's Takt 1 kann damit auf A's Takt 3 landen.
-                # Dieser Fall ist erst erreichbar, seit die Rate nicht mehr
-                # aus tempo_ratio kommt; dass der Preview ENTSTEHT, heisst
-                # nicht, dass er im Takt sitzt. Nicht gemessen, nicht behoben.
-                bar_sec_b = (
-                    (60.0 / spec.bpm_b) * METER if spec.bpm_b > 0 else bar_sec_a
-                )
+                known_a = (spec.first_downbeat_a - spec.mix_out_sec) % output_grid_sec
                 # N-02: Phase relativ zum SEGMENT-Anfang (b_start, inkl.
                 # Vorlauf) — konsistent mit dem Schaetz-Pfad, der die Phase
                 # ebenfalls ab Segment-Anfang misst. Ohne Clamp ist das
                 # modulo-identisch zur alten Rechnung ab mix_in_sec.
-                phase_b = (spec.first_downbeat_b - b_start) % bar_sec_b
+                phase_b = (spec.first_downbeat_b - b_start) % source_grid_b_sec
                 # Track B wurde ggf. gestretcht: Zeitpunkte skalieren mit 1/rate
                 known_b = phase_b / applied_stretch_rate
             seg_b = _align_beat_phase(
                 seg_a[pre_frames:], seg_b, spec.bpm_a, sr,
                 known_first_beat_a=known_a, known_first_beat_b=known_b,
                 lead_frames=b_lead_frames, bar_aligned=bar_aligned,
+                bar_grid_frames=(
+                    int(round(output_grid_sec * sr)) if half_double else None
+                ),
             )
         except Exception as align_err:
             if spec.strict_beat_sync:
@@ -666,7 +661,8 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
                       known_first_beat_a: float | None = None,
                       known_first_beat_b: float | None = None,
                       lead_frames: int = 0,
-                      bar_aligned: bool = False) -> np.ndarray:
+                      bar_aligned: bool = False,
+                      bar_grid_frames: int | None = None) -> np.ndarray:
     """
     Verschiebt seg_b, sodass sein Beat-Raster auf das von ref_seg (Track A im
     Crossfade-Bereich) faellt.
@@ -714,7 +710,11 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
         # D-03: Takt-Phase nur mit beidseitigem Referenz-Beatgrid, sonst
         # Beat-Phase. Die uebergebenen Phasen sind Takt-Phasen; modulo
         # beat_len ergibt daraus korrekt die Beat-Phase.
-        grid_len = beat_len * METER if bar_aligned else beat_len
+        grid_len = (
+            int(bar_grid_frames)
+            if bar_aligned and bar_grid_frames is not None
+            else beat_len * METER if bar_aligned else beat_len
+        )
     else:
         t_a = _estimate_first_beat(ref_seg, sr, bpm)
         t_b = _estimate_first_beat(seg_b, sr, bpm)
@@ -756,6 +756,17 @@ def make_temp_output_path(index: int) -> str:
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen (intern)
 # ---------------------------------------------------------------------------
+
+def _half_double_relation(bpm_a: float, bpm_b: float) -> str | None:
+    """Liefert die erkannte Half/Double-Beziehung relativ zu Track A."""
+    if bpm_a <= 0 or bpm_b <= 0:
+        return None
+    tolerance = bpm_a * 0.04
+    if abs(bpm_b * 2.0 - bpm_a) < tolerance:
+        return "half"
+    if abs(bpm_b / 2.0 - bpm_a) < tolerance:
+        return "double"
+    return None
 
 def _load_segment(path: str, start_sec: float, duration_sec: float,
                   target_sr: int = 44100) -> np.ndarray:
@@ -1009,9 +1020,14 @@ def _level_mix_loudness(
 
     envelope = np.zeros(n_frames, dtype=np.float32)
     weights = np.zeros(n_frames, dtype=np.float32)
-    w = np.hanning(win_len).astype(np.float32)
+    # Positive Randgewichte in Zaehler UND Nenner erhalten den Gain bis zum Rand.
+    w = np.hamming(win_len).astype(np.float32)
+    window_starts = list(range(0, n_frames - win_len + 1, hop))
+    final_start = n_frames - win_len
+    if window_starts[-1] != final_start:
+        window_starts.append(final_start)
 
-    for start in range(0, n_frames - win_len + 1, hop):
+    for start in window_starts:
         end = start + win_len
         chunk = audio[start:end]
 
@@ -1031,7 +1047,6 @@ def _level_mix_loudness(
         envelope[start:end] += gain * w
         weights[start:end] += w
 
-    weights = np.maximum(weights, 1e-6)
     gain_curve = (envelope / weights)[:, np.newaxis]
     return (audio * gain_curve).astype(np.float32)
 

@@ -9,50 +9,109 @@ import logging
 import os
 import multiprocessing as mp
 import time
+import tempfile
+import shutil
+import uuid
+from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from typing import List, Callable, Optional
 from .models import Track
-from .analysis import analyze_track
-from .caching import VALID_ANALYSIS_MODES
 from . import config
 
 logger = logging.getLogger(__name__)
 
 
-def _terminate_executor_processes(executor: ProcessPoolExecutor) -> None:
-    """Best-effort-Cleanup, das niemals die urspruengliche Exception maskiert."""
-    def log_cleanup_error(message: str, error: BaseException) -> None:
-        try:
-            logger.warning(message, error)
-        except BaseException:
-            pass
-
+def _cleanup_warning(message, *args) -> None:
+    # Cleanup darf die urspruengliche Exception auch bei Logging-Fehlern nicht maskieren.
     try:
-        processes = tuple((getattr(executor, "_processes", None) or {}).values())
+        logger.warning(message, *args)
+    except BaseException:
+        pass
+
+
+def _remove_owned_cache(root: Path, identity) -> None:
+    try:
+        stat = root.lstat()
+        if (root.is_symlink() or root.is_junction() or root.resolve() != root
+                or (stat.st_dev, stat.st_ino) != identity):
+            _cleanup_warning("Cache-Wurzel ersetzt; bleibt erhalten: %s", root)
+            return
+        shutil.rmtree(root)
+    except FileNotFoundError:
+        pass
     except BaseException as error:
-        log_cleanup_error("Child-Prozessliste nicht lesbar: %s", error)
-        processes = ()
+        _cleanup_warning("Cache-Cleanup fehlgeschlagen (%s): %s", root, error)
 
-    for process in processes:
-        should_terminate = True
-        try:
-            should_terminate = process.is_alive()
-        except BaseException as error:
-            log_cleanup_error("Child-Status nicht lesbar; Terminate wird versucht: %s", error)
-        if should_terminate:
-            try:
-                process.terminate()
-            except BaseException as error:
-                log_cleanup_error("Child-Prozess konnte nicht terminiert werden: %s", error)
 
+def _create_executor(max_workers: int) -> ProcessPoolExecutor:
+    # Nur der Parent besitzt diese frische, exakte Pool-Wurzel, nicht fremde Caches.
+    root = Path(tempfile.mkdtemp(prefix="hpg-jit-pool-")).resolve()
+    stat = root.lstat()
+    identity = (stat.st_dev, stat.st_ino)
+    try:
+        executor = ProcessPoolExecutor(
+            max_workers=max_workers, initializer=_worker_init, initargs=(str(root),)
+        )
+    except BaseException:
+        # Der Executor-Konstruktor startet noch keine Worker; Submit tut dies erst.
+        _remove_owned_cache(root, identity)
+        raise
+    executor._hpg_cache_root = root
+    executor._hpg_cache_identity = identity
+    return executor
+
+
+def _shutdown_executor(executor: ProcessPoolExecutor) -> None:
+    # Refs VOR shutdown sichern: CPython setzt danach _processes auf None.
+    try:
+        inventory = getattr(executor, "_processes", None)
+        if inventory is not None:
+            executor._hpg_process_refs = tuple(inventory.values())
+        processes = getattr(executor, "_hpg_process_refs", None)
+    except BaseException as error:
+        _cleanup_warning("Child-Prozessliste nicht lesbar: %s", error)
+        processes = None
     try:
         executor.shutdown(wait=False, cancel_futures=True)
+    finally:
+        ended = processes is not None
+        for process in processes or ():
+            joined = False
+            for action in (None, "terminate", "kill"):
+                try:
+                    if action is not None:
+                        getattr(process, action)()
+                    process.join(timeout=1.0)
+                    joined = True
+                except BaseException as error:
+                    _cleanup_warning("Child-Reaping fehlgeschlagen: %s", error)
+                try:
+                    if not process.is_alive() and joined:
+                        break
+                except BaseException as error:
+                    _cleanup_warning("Child-Status nicht lesbar: %s", error)
+            else:
+                ended = False
+        root = getattr(executor, "_hpg_cache_root", None)
+        if root is not None:
+            if ended:
+                _remove_owned_cache(root, executor._hpg_cache_identity)
+            else:
+                _cleanup_warning("Cache bleibt erhalten; Worker-Ende unbestaetigt: %s", root)
+
+
+def _terminate_executor_processes(executor: ProcessPoolExecutor) -> None:
+    """Begrenztes Best-effort-Reaping, ohne die urspruengliche Exception zu maskieren."""
+    try:
+        _shutdown_executor(executor)
     except BaseException as error:
-        log_cleanup_error("Executor-Cleanup ohne Wait fehlgeschlagen: %s", error)
+        _cleanup_warning("Executor-Cleanup ohne Wait fehlgeschlagen: %s", error)
 
 
 def _is_successful_analysis_result(track: Track | None) -> bool:
     """Akzeptiert nur belastbare Track-Ergebnisse, keine Decode-Platzhalter."""
+    # caching importiert Analyse-Abhaengigkeiten: erst nach dem Worker-Initializer.
+    from .caching import VALID_ANALYSIS_MODES
     return (
         track is not None
         and getattr(track, "analysis_mode", None) in VALID_ANALYSIS_MODES
@@ -103,12 +162,18 @@ def get_optimal_worker_count(file_count: Optional[int] = None) -> int:
     return max_workers
 
 
-def _worker_init() -> None:
+def _worker_init(cache_root: str) -> None:
     """AUDIT-FIX P-01 (2026-07-24): Prozess-Initializer — waermt die
     Rekordbox-Importer-Singleton (kompletter master.db-Scan) EINMAL pro
     Worker-Prozess statt bei jedem ersten analyze_track-Aufruf. Zusammen mit
     groesseren Batches (weniger Pool-Neustarts) spart das bei grossen
     Rekordbox-Libraries einen Grossteil der Anlaufzeit."""
+    cache = tempfile.mkdtemp(
+        prefix=f"worker-{os.getpid()}-{uuid.uuid4().hex}-", dir=cache_root
+    )
+    os.environ["NUMBA_CACHE_DIR"] = cache
+    from numba import config as numba_config
+    numba_config.reload_config()
     try:
         from .rekordbox_importer import get_rekordbox_importer
         get_rekordbox_importer()
@@ -130,6 +195,7 @@ def _analyze_track_wrapper(file_path: str) -> Track | None:
         Track object or None if analysis failed
     """
     try:
+        from .analysis import analyze_track
         return analyze_track(file_path)
     except Exception as e:
         logger.error(f"Worker fehlgeschlagen fuer {os.path.basename(file_path)}: {e}")
@@ -220,9 +286,7 @@ class ParallelAnalyzer:
                 # Use ProcessPoolExecutor for true parallel processing (bypasses GIL)
                 # AUDIT-FIX P-01: initializer waermt die Rekordbox-Singleton
                 # einmal pro Worker-Prozess statt bei jedem ersten Task.
-                executor = ProcessPoolExecutor(
-                    max_workers=worker_count, initializer=_worker_init
-                )
+                executor = _create_executor(worker_count)
                 executor_stopped = False
 
                 def terminate_executor() -> None:
@@ -392,7 +456,7 @@ class ParallelAnalyzer:
                 else:
                     if not executor_stopped:
                         try:
-                            executor.shutdown(wait=True)
+                            _shutdown_executor(executor)
                         except BaseException:
                             terminate_executor()
                             raise
@@ -441,9 +505,7 @@ class ParallelAnalyzer:
                         status_msg = ""
                         try:
                             if recovery_executor is None:
-                                recovery_executor = ProcessPoolExecutor(
-                                    max_workers=1, initializer=_worker_init
-                                )
+                                recovery_executor = _create_executor(1)
                             future = recovery_executor.submit(_analyze_track_wrapper, file_path)
                             deadline = (
                                 time.monotonic() + config.PARALLEL_ANALYSIS_TIMEOUT
@@ -511,9 +573,7 @@ class ParallelAnalyzer:
                         executor_to_shutdown = recovery_executor
                         recovery_executor = None
                         try:
-                            executor_to_shutdown.shutdown(
-                                wait=False, cancel_futures=True
-                            )
+                            _shutdown_executor(executor_to_shutdown)
                         except BaseException:
                             _terminate_executor_processes(executor_to_shutdown)
                             raise

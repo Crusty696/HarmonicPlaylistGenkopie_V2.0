@@ -494,6 +494,8 @@ def test_preview_state_controls_cancel_visibility(qtbot, monkeypatch):
   assert window.run_state == RunState.PREVIEW
   assert not window.status_bar.cancel_btn.isHidden()
 
+  # Erfolgsabschluss braucht ein erfolgreiches Ergebnis des aktuellen Batches.
+  window.mix_tips_panel._preview_batch_successes = 1
   window._on_preview_state_changed(False)
   assert window.run_state == RunState.SUCCESS
   assert window.status_bar.cancel_btn.isHidden()
