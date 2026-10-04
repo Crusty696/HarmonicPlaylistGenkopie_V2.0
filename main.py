@@ -5683,6 +5683,9 @@ class MainWindow(QMainWindow):
         self._retired_mix_tips_panels = set()
         self._hearing_worker = None
         self._collection_dialog = None
+        self._collection_training_request = None
+        self._hearing_pending_cohort = None
+        self._hearing_action = None
         self._hearing_pending_rating = None
         self._hearing_pending_proposal = None
         self._hearing_refresh_pending = False
@@ -6069,16 +6072,53 @@ class MainWindow(QMainWindow):
 
         dialog = CollectionDialog(parent=self)
         self._collection_dialog = dialog
+        self._collection_training_request = None
+        dialog.training_requested.connect(
+            lambda request, current=dialog: self._queue_collection_training(request, current)
+        )
         dialog.finished.connect(lambda _result, current=dialog: self._release_collection_dialog(current))
+        request = None
         try:
-            dialog.exec()
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            if accepted:
+                request = self._collection_training_request
         finally:
+            self._collection_training_request = None
             # Der Dialog selbst verschiebt done() bis zum echten Thread-Ende.
             # Bei einem unerwarteten vorzeitigen Exit behalten wir die Referenz.
             if getattr(dialog, "worker", None) is None:
                 self._release_collection_dialog(dialog)
             else:
                 dialog.reject()
+        if request is not None:
+            self._start_collection_training(request)
+
+    def _queue_collection_training(self, request, source_dialog):
+        """Im modalen Dialog nur unveränderlichen Auftrag übernehmen."""
+        if (source_dialog is not self._collection_dialog or self._close_pending
+                or self._collection_training_request is not None
+                or type(request) is not tuple or len(request) != 5
+                or source_dialog.worker is not None or not source_dialog._mapping_ready()):
+            return
+        from hpg_core.hearing_jobs import frozen_cohort_index
+
+        try:
+            if request[0] != frozen_cohort_index(source_dialog.index):
+                return
+        except (ValueError, TypeError, AttributeError):
+            return
+        self._collection_training_request = request
+
+    def _start_collection_training(self, request):
+        if (self._close_pending or self._run_is_active()
+                or not self._hearing_selection_allowed()):
+            self.analytics_panel.hearing_status.setText("Sammlungstraining nicht gestartet: ein anderer Vorgang läuft.")
+            return
+        from hpg_core.hearing_jobs import HearingCohortWorker
+
+        index, track_count, pair_count, seed, mode = request
+        worker = HearingCohortWorker(index, track_count, pair_count, seed, mode, self)
+        self._start_hearing_worker(worker, "cohort")
 
     def _release_collection_dialog(self, dialog):
         """Nur die abgeschlossene eigene Instanz freigeben, niemals laufende Worker."""
@@ -6088,9 +6128,11 @@ class MainWindow(QMainWindow):
         dialog.deleteLater()
 
     def _start_hearing_worker(self, worker, action):
-        if self._close_pending or self._hearing_worker is not None:
+        if (self._close_pending or self._hearing_worker is not None
+                or action in {"cohort", "prepare"} and self._run_is_active()):
             return False
         self._hearing_worker = worker
+        self._hearing_action = action
         panel = self.analytics_panel
         for button in (
             panel.hearing_prepare_button,
@@ -6137,7 +6179,33 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             pass
         self._hearing_worker = None
+        self._hearing_action = None
         self._update_hearing_buttons()
+
+        pending_cohort = self._hearing_pending_cohort
+        self._hearing_pending_cohort = None
+        cancel = getattr(worker, "cancel", None)
+        was_cancelled = callable(getattr(cancel, "is_set", None)) and cancel.is_set()
+        if pending_cohort is not None and not was_cancelled and not self._close_pending:
+            if self._run_is_active():
+                self.analytics_panel.hearing_status.setText("Sammlungstraining gestoppt: anderer Analyselauf aktiv.")
+            else:
+                from hpg_core.hearing_managed import managed_config_from_roots
+                from hpg_core.hearing_jobs import HearingPrepareWorker
+
+                try:
+                    analysis = pending_cohort["analysis"]
+                    config = managed_config_from_roots(
+                        tuple(Path(root) for root in analysis.selected_roots),
+                        mode=pending_cohort["mode"], count=pending_cohort["pair_count"],
+                        seed=pending_cohort["seed"],
+                    )
+                    self._start_hearing_worker(
+                        HearingPrepareWorker(config, parent=self,
+                                             managed_metadata=analysis.track_snapshots), "prepare"
+                    )
+                except (ValueError, TypeError, OSError) as exc:
+                    self.analytics_panel.hearing_status.setText(f"Hörtest-Vorbereitung nicht gestartet: {exc}")
 
         discovered = self._hearing_pending_discovery
         self._hearing_pending_discovery = None
@@ -6256,6 +6324,12 @@ class MainWindow(QMainWindow):
             self.analytics_panel.hearing_status.setText(message)
             if not result.get("cancelled"):
                 QMessageBox.warning(self, "Hörtest", message)
+            return
+        if action == "cohort":
+            self._hearing_pending_cohort = result
+            self.analytics_panel.hearing_status.setText(
+                f"{len(result['analysis'].track_snapshots)} Tracks analysiert; warte auf Threadende vor Hörtest-Vorbereitung."
+            )
             return
         if action == "discover":
             self._hearing_pending_discovery = result["summaries"]
@@ -6785,7 +6859,7 @@ class MainWindow(QMainWindow):
         if mix_tips is not None:
             mix_tips.set_candidate_choices_enabled(state not in ACTIVE_RUN_STATES)
 
-    def _run_is_active(self) -> bool:
+    def _run_is_active(self, *, include_hearing=True) -> bool:
         """Beruecksichtigt Zustand und alle mutierenden Hauptworker."""
         worker_alive = bool(self.worker and self.worker.isRunning())
         ai_alive = bool(self.ai_worker and self.ai_worker.isRunning())
@@ -6814,6 +6888,8 @@ class MainWindow(QMainWindow):
         return (
             self.run_state in ACTIVE_RUN_STATES
             or worker_alive or ai_alive or playlist_alive or render_alive
+            or (include_hearing and self._hearing_worker is not None
+                and self._hearing_action in {"cohort", "prepare"})
         )
 
     def _try_finish_cancelled_run(self) -> bool:
@@ -7097,7 +7173,9 @@ class MainWindow(QMainWindow):
 
     def cancel_analysis(self):
         """Analyse abbrechen — cooperative shutdown."""
-        if not self._run_is_active():
+        if self._hearing_worker is not None and self._hearing_action in {"cohort", "prepare"}:
+            self._cancel_hearing_work()
+        if not self._run_is_active(include_hearing=False):
             return
         self._set_run_state(RunState.CANCELLING)
         if self.worker and self.worker.isRunning():

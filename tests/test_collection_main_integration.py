@@ -2,6 +2,8 @@
 from types import SimpleNamespace
 
 import pytest
+from PyQt6 import sip
+from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDialog
 
@@ -36,6 +38,7 @@ def test_quality_collection_button_opens_exactly_one_native_dialog(window, monke
     calls = []
 
     class Dialog(QDialog):
+        training_requested = pyqtSignal(object)
         worker = None
 
         def __init__(self, parent=None):
@@ -52,6 +55,187 @@ def test_quality_collection_button_opens_exactly_one_native_dialog(window, monke
     assert window._collection_dialog is None
     assert (window.playlist, window.current_generation_result, window.worker) == before
     assert "keine Audioanalyse" in window.analytics_panel.collection_button.toolTip()
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_collection_training_starts_only_after_modal_return(window, monkeypatch, tmp_path, accepted):
+    from hpg_core import collection_panel
+    from hpg_core.collection_index import CollectionIndex
+    from hpg_core.hearing_jobs import frozen_cohort_index
+
+    calls = []
+    index = CollectionIndex((str(tmp_path / "music"),), ())
+    request = (frozen_cohort_index(index), 20, 10, 123, "kandidaten")
+
+    class Dialog(QDialog):
+        training_requested = pyqtSignal(object)
+        worker = None
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.index = index
+
+        def _mapping_ready(self):
+            return True
+
+        def exec(self):
+            calls.append("inside-modal")
+            self.training_requested.emit(request)
+            calls.append("modal-return")
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(collection_panel, "CollectionDialog", Dialog)
+    monkeypatch.setattr(window, "_start_collection_training", lambda value: calls.append(value))
+    window._open_collection_dialog()
+    assert calls == (["inside-modal", "modal-return", request] if accepted
+                     else ["inside-modal", "modal-return"])
+    assert window._collection_training_request is None
+
+
+def test_real_collection_modal_closes_before_training_start(window, monkeypatch, tmp_path):
+    from hpg_core import collection_panel
+    from hpg_core.collection_index import CollectionIndex
+
+    root = tmp_path / "music"
+    root.mkdir()
+    dialogs, starts = [], []
+
+    class Dialog(collection_panel.CollectionDialog):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            dialogs.append(self)
+            self.roots_list.addItem(str(root))
+            self.index = CollectionIndex((str(root),), ())
+            self.training_button.setEnabled(True)
+            QTimer.singleShot(0, self.training_button.click)
+
+    monkeypatch.setattr(collection_panel, "CollectionDialog", Dialog)
+    monkeypatch.setattr(window, "_start_collection_training",
+                        lambda request: starts.append((request, dialogs[0].isVisible(),
+                                                       QThread.currentThread() is window.thread())))
+    window._open_collection_dialog()
+    assert len(starts) == 1
+    assert starts[0][1:] == (False, True)
+    assert starts[0][0][0] == dialogs[0].index
+
+
+@pytest.mark.parametrize("late_cancel", [False, True])
+def test_real_qthread_result_waits_for_finished_before_prepare(window, qtbot, tmp_path,
+                                                                monkeypatch, late_cancel):
+    from threading import Event
+
+    roots = (tmp_path / "one", tmp_path / "two")
+    for root in roots:
+        root.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "private"))
+    gate = Event()
+    analysis = SimpleNamespace(selected_roots=tuple(map(str, roots)),
+                               track_snapshots=("snapshot1", "snapshot2"))
+
+    class Worker(QThread):
+        status_update = pyqtSignal(str)
+        completed = pyqtSignal(object)
+
+        def __init__(self):
+            super().__init__(window)
+            self.cancel = Event()
+
+        def request_cancel(self):
+            self.cancel.set()
+            return True
+
+        def run(self):
+            self.completed.emit({"ok": True, "analysis": analysis, "mode": "kandidaten",
+                                 "pair_count": 1, "seed": 3})
+            gate.wait(10)
+
+    starts = []
+    original_start = window._start_hearing_worker
+
+    def observe_start(worker, action):
+        if action == "prepare":
+            starts.append((worker, QThread.currentThread() is window.thread()))
+            return True
+        return original_start(worker, action)
+
+    monkeypatch.setattr(window, "_start_hearing_worker", observe_start)
+    worker = Worker()
+    try:
+        assert window._start_hearing_worker(worker, "cohort")
+        qtbot.waitUntil(lambda: window._hearing_pending_cohort is not None, timeout=5000)
+        assert starts == [] and worker.isRunning()
+        if late_cancel:
+            window._cancel_hearing_work()
+        gate.set()
+        qtbot.waitUntil(lambda: window._hearing_worker is None, timeout=5000)
+        assert len(starts) == (0 if late_cancel else 1)
+        if starts:
+            assert starts[0][1]
+            assert starts[0][0].managed_metadata == analysis.track_snapshots
+    finally:
+        gate.set()
+        if not sip.isdeleted(worker):
+            worker.wait(5000)
+
+
+@pytest.mark.parametrize("late_cancel", [False, True])
+def test_collection_prepare_waits_for_finished_and_respects_late_cancel(window, tmp_path,
+                                                                         monkeypatch, late_cancel):
+    from threading import Event
+
+    roots = (tmp_path / "one", tmp_path / "two")
+    for root in roots:
+        root.mkdir()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "private"))
+    cancel = Event()
+    fake = SimpleNamespace(wait=lambda _ms: True, deleteLater=lambda: None, cancel=cancel)
+    window._hearing_worker = fake
+    window._hearing_action = "cohort"
+    started = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: started.append((worker, action)))
+    analysis = SimpleNamespace(selected_roots=tuple(map(str, roots)),
+                               track_snapshots=("snapshot1", "snapshot2"))
+    window._hearing_completed({"ok": True, "analysis": analysis, "mode": "kandidaten",
+                               "pair_count": 10, "seed": 3}, "cohort", fake)
+    assert started == []
+    if late_cancel:
+        cancel.set()
+    window._cleanup_hearing_worker(fake)
+    assert len(started) == (0 if late_cancel else 1)
+    if started:
+        worker, action = started[0]
+        assert action == "prepare"
+        assert worker.config.source_roots == roots
+        assert worker.managed_metadata == analysis.track_snapshots
+
+
+def test_normal_analysis_cannot_start_during_cohort_worker(window, monkeypatch):
+    sentinel = object()
+    window._hearing_worker = sentinel
+    window._hearing_action = "cohort"
+    monkeypatch.setattr(window.library_panel, "get_current_settings",
+                        lambda: pytest.fail("normal analysis started"))
+    try:
+        window.start_analysis()
+        assert window._hearing_worker is sentinel
+    finally:
+        window._hearing_worker = None
+        window._hearing_action = None
+
+
+def test_normal_cancel_routes_only_cohort_worker_without_false_run_state(window):
+    calls = []
+    fake = SimpleNamespace(request_cancel=lambda: calls.append("cohort"))
+    window._hearing_worker = fake
+    window._hearing_action = "cohort"
+    previous = window.run_state
+    try:
+        window.cancel_analysis()
+        assert calls == ["cohort"]
+        assert window.run_state == previous
+    finally:
+        window._hearing_worker = None
+        window._hearing_action = None
 
 
 def test_reentry_raises_existing_dialog_without_second_instance(window):

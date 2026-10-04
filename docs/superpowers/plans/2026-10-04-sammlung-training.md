@@ -3,6 +3,12 @@
 > Ausfuehrung: autonom in dieser Sitzung, unabhaengige Aufgaben parallel,
 > Fachreview vor und nach Produktcode. Nutzerfreigabe vom 04.10.2026.
 
+Aktueller Zwischenstand: siehe `docs/SESSION_HANDOFF_2026-10-04.md`.
+Mehrordner-Persistenz und nativer Einstieg vom Sammlungsdialog in die
+Kohortenanalyse/Hoertest-Vorbereitung sind gezielt getestet. Die folgenden
+Paket-Haken bleiben bewusst offen, bis alle Teilpflichten und die jeweils
+erforderliche Produktabnahme belegt sind.
+
 ## Ziel und Grenzen
 
 Die App verwaltet die gesamte ausgewaehlte Sammlung, verwendet die aktuelle

@@ -3,6 +3,72 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+def frozen_cohort_index(index):
+    """Validierte, von veränderbaren Aufruferlisten gelöste Inventarkopie."""
+    from .collection_index import CollectionIndex, _validated
+
+    if type(index) is not CollectionIndex or index.cancelled or index.errors:
+        raise ValueError("Vollstaendiges Inventar erforderlich")
+    raw = {"kind": "hpg_collection_index", "version": 1, "roots": list(index.roots),
+           "entries": [{"path": entry.path, "size": entry.size,
+                        "mtime_ns": entry.mtime_ns, "status": entry.status}
+                       for entry in index.entries]}
+    return _validated(raw)
+
+
+class HearingCohortWorker(QThread):
+    """Nur die gewählte Inventarkohorte mit dem vorhandenen Analyzer verarbeiten."""
+
+    status_update = pyqtSignal(str)
+    completed = pyqtSignal(object)
+
+    def __init__(self, index, track_count, pair_count, seed, mode, parent=None):
+        super().__init__(parent)
+        from threading import Event
+
+        self.index = frozen_cohort_index(index)
+        self.track_count = track_count
+        self.pair_count = pair_count
+        self.seed = seed
+        self.mode = mode
+        self.cancel = Event()
+
+    def request_cancel(self):
+        self.cancel.set()
+        return True
+
+    def run(self):
+        result = {"ok": False}
+        try:
+            from .hearing_cohorts import CohortContext, select_cohort
+            from .hearing_collection import analyze_cohort
+
+            if self.mode not in ("einzel", "kandidaten") or type(self.pair_count) is not int or self.pair_count < 1:
+                raise ValueError("Ungueltige Hoertest-Optionen")
+            context = CohortContext()
+            selected = select_cohort(self.index, count=self.track_count, seed=self.seed,
+                                     context=context)
+            if selected.shortfall or len(selected.paths) < 2:
+                raise ValueError("Zu wenige verfuegbare Tracks fuer die gewuenschte Kohorte")
+            self.status_update.emit(f"Kohorte: {len(selected.paths)} Tracks gewaehlt; Analyse startet.")
+            analysis = analyze_cohort(
+                self.index, selected, context=context, cancel=self.cancel,
+                progress=lambda current, total, message: self.status_update.emit(
+                    f"Kohorte: {current}/{total} – {message}"),
+            )
+            if self.cancel.is_set():
+                raise InterruptedError("Kohortenanalyse abgebrochen")
+            if not analysis.complete or len(analysis.track_snapshots) != len(selected.paths):
+                raise ValueError(f"Kohortenanalyse unvollstaendig: {len(analysis.issues)} Probleme; kein Hoertest erstellt")
+            result.update(ok=True, analysis=analysis, mode=self.mode,
+                          pair_count=self.pair_count, seed=self.seed)
+        except InterruptedError as exc:
+            result.update(cancelled=True, output=str(exc))
+        except Exception as exc:
+            result["output"] = str(exc)
+        self.completed.emit(result)
+
+
 class HearingPrepareWorker(QThread):
     status_update = pyqtSignal(str)
     completed = pyqtSignal(object)

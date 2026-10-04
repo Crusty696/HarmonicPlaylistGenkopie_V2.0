@@ -341,3 +341,58 @@ nachgelesenen Testausgaben und weiterhin fehlende Gesamt-/Original-/EXE-Probe.
 Die Mehrordner-Persistenz ist damit implementiert, aber noch nicht mit dem
 nativen Collection-Training-Dialog verbunden. Die weiteren Planpakete bleiben
 offen; alte 23-RED-Belege sind historisch und durch den 47er-Nachtest ersetzt.
+
+## Fortsetzung: nativer Sammlungs-Hoertest
+
+Nach Commit `53f85ea` ist der CollectionDialog mit dem internen Hoertestablauf
+verbunden. Nach geprueftem Inventar waehlt der Nutzer eine Trackanzahl (2 bis
+1000), eine getrennte Obergrenze fuer Hoertestpaare, Seed und Modus
+`kandidaten` oder `einzel`. Der Auftrag kopiert den gesamten Index in neue
+unveraenderliche Tuple-/Entry-Werte. Der Dialog schliesst zuerst; erst nach
+Rueckkehr aus `exec()` startet ein `HearingCohortWorker`.
+
+Dieser Worker nutzt `select_cohort` und `analyze_cohort` mit dem bestehenden
+ParallelAnalyzer. Veraltete oder unvollstaendige Auswahl/Analyse gibt keinen
+Teil-Satz frei. Die Analyse darf den bestehenden Cache verwenden; der Modus
+fresh versus Cachehit ist hier noch nicht separat nachgewiesen. Nach echtem
+`QThread.finished` und erneuter Cancel-/Close-Pruefung erstellt die App einen
+privaten Mehrordner-Snapshot und startet den bestehenden `HearingPrepareWorker`.
+Die normale Analyse ist gegen einen laufenden Kohorten-/Prepare-Worker gesperrt;
+ein normaler Cancel-Aufruf leitet den Hoertestabbruch weiter, ohne einen falschen
+normalen RunState zu setzen. Quellmusik bleibt am Originalort.
+
+Erster Integrationslauf: 81 bestanden, ein Fehler im alten Testdummy ohne das
+neue Signal. Der Dummy erhielt nur die neue Schnittstelle; Produkterwartungen
+blieben. Danach 108 bestanden/7.76 s. Unabhaengiges TOR2 wies zwei konkrete
+Punkte zurueck: mutable Indexeingabe und Cancel-Routing. Beide wurden im Code
+korrigiert. Ein echter Qt-Modaltest und echte QThread-Tests fuer Ergebnis vor
+`finished` und spaetes Cancel kamen hinzu. Ein Testcleanup musste nach
+`deleteLater()` ein bereits geloeschtes QObject beachten; keine Produktregel
+geweicht. Finaler gezielter Fuenfdateien-Lauf: 113 bestanden/7.45 s,
+`--noconftest -n 0 --no-cov`. Nachpruefung TOR2: MIT AUFLAGEN, beide
+Produktbefunde geschlossen. Kein voller Originalmusiklauf, keine menschliche
+Hoerbewertung, keine Gesamtsuite/Coverage- oder EXE-Abnahme fuer diesen Stand.
+Weitere Planpakete, darunter Research6, vollstaendige Ratings7, kalibrierter
+Holdout9 und Sequenzskalierung10, bleiben offen.
+
+### Originalmusik-Pilot nach diesem gezielten Testlauf
+
+Ein isolierter frischer Lauf mit zwei AIFF-Originaltracks aus
+`F:\beatport_tracks_2026-04` durch die echte `MainWindow`-Kohorten- und
+Prepare-Kette analysierte beide Tracks und schrieb einen Kandidatensatz mit
+einem Paar und fuenf Quellenreferenzen. Der Satz liegt nur im privaten
+Temp/Testprofil unter
+`C:\Users\david\AppData\Local\Temp\hpg-native-cohort-3feee0849124417a81d15ee5f03f129b\HPG\hearing_sets\8780c886-5db0-4cd4-b0e3-754ef41a1ffa\set`.
+`HearingLoadWorker` oeffnete ihn wieder: ein Paar, fuenf Clips, zwei
+Quellenreferenzen, keine gespeicherten Clip-Audiodateien. SHA-256 und Groesse
+beider Quelltracks waren vor und nach dem Pilot identisch. Das ist ein
+Originalquellen-Pipelinebeleg, aber kein UI-Klick- oder EXE-Beleg.
+
+Beim echten RAM-Rendering der fuenf Clips waren Variante 2 und 3 abspielbar
+(je 43.042 s WAV im Speicher); Variante 1, 4 und 5 scheiterten an
+`BeatSyncError: Kickphase nicht in Anfang, Mitte und Ende messbar`. Der
+Sicherheitsgrenzwert wurde nicht gelockert. Der Bewertungsdialog zeigt den
+Renderfehler an, verhindert fuer eine solche Variante aber noch keine
+Bewertung. Daher ist der erzeugte Satz **nicht** als zuverlaessig vollstaendig
+bewertbarer Hoertest oder als Trainingsfreigabe zu deklarieren. Das ist ein
+konkret offener Produktfehler; keine menschliche Hoerqualitaet wurde geprueft.

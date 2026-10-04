@@ -52,6 +52,55 @@ class Analyzer:
         return self.transform(tracks) if self.transform else tracks
 
 
+def test_native_cohort_worker_uses_bound_selection_and_existing_analyzer(request_data,
+                                                                          monkeypatch):
+    from hpg_core import parallel_analyzer
+    from hpg_core.hearing_jobs import HearingCohortWorker
+
+    index, _, _ = request_data
+    analyzer = Analyzer()
+    monkeypatch.setattr(parallel_analyzer, "ParallelAnalyzer", lambda: analyzer)
+    worker = HearingCohortWorker(index, 2, 1, 3, "kandidaten")
+    results = []
+    worker.completed.connect(results.append)
+    worker.run()
+    assert len(results) == 1 and results[0]["ok"]
+    assert tuple(analyzer.paths) == results[0]["analysis"].requested_paths
+    assert len(results[0]["analysis"].track_snapshots) == 2
+    assert results[0]["analysis"].complete
+
+
+def test_native_cohort_worker_cancel_before_analyzer(request_data, monkeypatch):
+    from hpg_core import parallel_analyzer
+    from hpg_core.hearing_jobs import HearingCohortWorker
+
+    index, _, _ = request_data
+    monkeypatch.setattr(parallel_analyzer, "ParallelAnalyzer",
+                        lambda: pytest.fail("cancelled cohort started analyzer"))
+    worker = HearingCohortWorker(index, 2, 1, 3, "kandidaten")
+    results = []
+    worker.completed.connect(results.append)
+    worker.request_cancel()
+    worker.run()
+    assert len(results) == 1 and results[0]["cancelled"] and not results[0]["ok"]
+
+
+def test_native_cohort_worker_detaches_mutable_index_lists(request_data):
+    from hpg_core.hearing_jobs import HearingCohortWorker
+
+    index, _, _ = request_data
+    roots = list(index.roots)
+    entries = list(index.entries)
+    mutable = CollectionIndex(roots, entries)
+    worker = HearingCohortWorker(mutable, 2, 1, 3, "kandidaten")
+    roots.clear()
+    entries.clear()
+    assert worker.index.roots == index.roots
+    assert worker.index.entries == index.entries
+    assert isinstance(worker.index.roots, tuple)
+    assert isinstance(worker.index.entries, tuple)
+
+
 def test_exact_selected_paths_multiroot_snapshots(request_data):
     index, context, selection = request_data
     analyzer = Analyzer(lambda tracks: tracks[::-1])

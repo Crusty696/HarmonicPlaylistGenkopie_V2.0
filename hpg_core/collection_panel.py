@@ -3,10 +3,10 @@
 import os
 
 from PyQt6 import sip
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QDialog, QFileDialog, QHBoxLayout, QLabel,
-    QListWidget, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QAbstractItemView, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
+    QListWidget, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
 from . import caching
@@ -21,6 +21,8 @@ _STATUS_LABELS = {"new": "Neu", "unchanged": "Unverändert",
 
 
 class CollectionDialog(QDialog):
+    training_requested = pyqtSignal(object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
@@ -60,6 +62,31 @@ class CollectionDialog(QDialog):
                        self.mapping_button, self.save_mapping_button, self.load_mapping_button, self.cancel_button):
             controls.addWidget(button)
         layout.addLayout(controls)
+        training = QHBoxLayout()
+        self.track_count_box = QSpinBox()
+        self.track_count_box.setRange(2, 1000)
+        self.track_count_box.setValue(20)
+        self.track_count_box.setToolTip("Anzahl Originaltracks für die Analyse-Kohorte; höchstens 1000 pro Durchgang.")
+        self.pair_count_box = QSpinBox()
+        self.pair_count_box.setRange(1, 1000)
+        self.pair_count_box.setValue(10)
+        self.pair_count_box.setToolTip("Gewünschte Obergrenze für Hörtestpaare, unabhängig von der Trackanzahl.")
+        self.seed_box = QSpinBox()
+        self.seed_box.setRange(-2147483647, 2147483647)
+        self.seed_box.setValue(20260820)
+        self.seed_box.setToolTip("Gleicher Seed mit gleichem Inventar wählt dieselbe Kohorte.")
+        self.training_mode_box = QComboBox()
+        self.training_mode_box.addItem("Kandidaten vergleichen", "kandidaten")
+        self.training_mode_box.addItem("Einzelne Übergänge", "einzel")
+        self.training_button = QPushButton("Hörtest aus Sammlung erstellen")
+        self.training_button.setEnabled(False)
+        self.training_button.setToolTip("Aus dem geprüften Inventar Tracks auswählen, analysieren und danach einen privaten Hörtest-Satz vorbereiten. Originalmusik bleibt am Quellort.")
+        for label, widget in (("Tracks", self.track_count_box), ("Paare", self.pair_count_box),
+                              ("Seed", self.seed_box), ("Satztyp", self.training_mode_box)):
+            training.addWidget(QLabel(label))
+            training.addWidget(widget)
+        training.addWidget(self.training_button)
+        layout.addLayout(training)
         self.table = QTableWidget(0, 11)
         self.table.setHorizontalHeaderLabels([
             "Dateipfad", "Größe (Bytes)", "Änderungszeit (ns)", "Inventarstatus",
@@ -86,6 +113,7 @@ class CollectionDialog(QDialog):
         self.save_mapping_button.clicked.connect(self._save_mapping)
         self.load_mapping_button.clicked.connect(self._load_mapping)
         self.cancel_button.clicked.connect(self._cancel_scan)
+        self.training_button.clicked.connect(self._request_training)
         model = self.roots_list.model()
         for signal in (model.rowsInserted, model.rowsRemoved, model.rowsMoved, model.dataChanged, model.modelReset):
             signal.connect(self._on_roots_changed)
@@ -175,6 +203,24 @@ class CollectionDialog(QDialog):
         self.mapping_button.setEnabled(self.worker is None and self._mapping_ready())
         self.save_mapping_button.setEnabled(False)
         self.load_mapping_button.setEnabled(self.worker is None and self._mapping_ready())
+        self.training_button.setEnabled(self.worker is None and self._mapping_ready())
+
+    def _request_training(self):
+        if self.worker is not None or not self._mapping_ready():
+            self.status_label.setText("Zuerst ein vollständiges passendes Inventar prüfen oder laden.")
+            return
+        # Der Empfänger puffert nur den unveränderlichen Auftrag. Analyse erst nach exec().
+        from .hearing_jobs import frozen_cohort_index
+
+        try:
+            index = frozen_cohort_index(self.index)
+        except (ValueError, TypeError, AttributeError) as exc:
+            self.status_label.setText(f"Inventar für Hörtest ungeeignet: {exc}")
+            return
+        request = (index, self.track_count_box.value(), self.pair_count_box.value(),
+                   self.seed_box.value(), self.training_mode_box.currentData())
+        self.training_requested.emit(request)
+        self.accept()
 
     def _set_busy(self, busy):
         for button in (self.add_button, self.remove_button, self.load_button, self.start_button):
@@ -183,6 +229,7 @@ class CollectionDialog(QDialog):
         self.mapping_button.setEnabled(not busy and self._mapping_ready())
         self.save_mapping_button.setEnabled(not busy and self._fresh_mapping_ready())
         self.load_mapping_button.setEnabled(not busy and self._mapping_ready())
+        self.training_button.setEnabled(not busy and self._mapping_ready())
 
     def _start_scan(self):
         if self.worker is not None:
@@ -377,6 +424,7 @@ class CollectionDialog(QDialog):
             self.status_label.setText("Inventar nicht aktualisiert; vorherige Einträge erhalten. " + " | ".join(result.errors))
             return
         self.index = result
+        self.training_button.setEnabled(self.worker is None and self._mapping_ready())
         if loaded:
             self._updating_roots = True
             try:

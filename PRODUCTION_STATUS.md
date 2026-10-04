@@ -22,3 +22,11 @@ Die fruehere Bereinigung aenderte keine Produktlogik. Die anschliessende
 Implementierung hat den Quellstand erweitert; genaue Paketbelege und offene
 Luecken stehen in der Session-Uebergabe. Keine aktuelle Gesamtabnahme oder
 neue EXE-Freigabe behauptet. Ein gespeicherter Zwischenstand ist kein Release.
+Die Mehrordner-Hoertest-Persistenz und der native Einstieg aus dem
+Sammlungsdialog sind inzwischen implementiert und gezielt getestet. Der
+vollstaendige Originalmusik-Hoertest samt menschlicher Bewertung und die
+Abnahme der weiteren Planpakete stehen weiter aus. Ein isolierter Pilot mit
+zwei unveraenderten Originaltracks erzeugte einen Satz mit fuenf Varianten;
+zwei waren im RAM abspielbar, drei scheiterten an der Kickphasenpruefung.
+Diese Varianten koennen derzeit noch faelschlich bewertet werden. Der
+Sammlungs-Einstieg ist daher kein zuverlaessig voll nutzbarer Trainingsablauf.

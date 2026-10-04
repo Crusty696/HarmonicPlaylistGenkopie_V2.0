@@ -7,7 +7,10 @@ und nachgewiesener RX-7800-XT-Betrieb). Keine Behauptung musikalischer Optimalit
 Aktueller Endstand und offene Folgepakete: `SESSION_HANDOFF_2026-10-04.md`.
 Nachfolgende Abschnitte sind datierte Verlaufseintraege, keine automatische
 Abnahme des spaeter erweiterten Quellstands. Cache46 und RAM-Receipt-v2 stehen
-im aktuellen Code; MultiRoot hat nur23 RED-Vertragstests, noch keine API.
+im aktuellen Code. Der fruehere MultiRoot-Stand mit 23 RED-Vertragstests ist
+historisch: private Mehrordner-Persistenz und der native Collection-Hoertest-
+Anschluss wurden spaeter implementiert. Aktuelle enge Belege und offene
+Originalmusik-/Gesamt-/EXE-Abnahmen stehen im Session-Handoff.
 
 ## Arbeitsvertrag und Schnittstellen
 
