@@ -617,6 +617,16 @@ def _shift_segment(segment: np.ndarray, frames: int) -> np.ndarray:
     return segment
 
 
+def _fehlende_kickregionen(lags) -> str:
+    """Benannt nur vorhandene None-Messungen, keine vermutete Ursache."""
+    if len(lags) != 3:
+        return "ungueltiges Messformat"
+    return ", ".join(
+        name for name, value in zip(("Anfang", "Mitte", "Ende"), lags)
+        if value is None
+    )
+
+
 def _synchronize_and_verify_kicks(
     ref_segment: np.ndarray,
     segment_b: np.ndarray,
@@ -627,14 +637,20 @@ def _synchronize_and_verify_kicks(
     """Korrigiert globalen Kickversatz und lehnt Restfehler/Drift hart ab."""
     before = _kick_lags_across_overlap(ref_segment, segment_b, sr, bpm, cf_frames)
     if len(before) != 3 or any(value is None for value in before):
-        raise BeatSyncError("Kickphase nicht in Anfang, Mitte und Ende messbar")
+        raise BeatSyncError(
+            "Kickphase nicht in Anfang, Mitte und Ende messbar; "
+            f"vor Korrektur: {_fehlende_kickregionen(before)}"
+        )
     measured_before = [float(value) for value in before if value is not None]
     correction_frames = int(round(float(np.median(measured_before)) * sr))
     corrected = _shift_segment(segment_b, correction_frames)
     corrected = _ensure_len(corrected, len(segment_b))
     after = _kick_lags_across_overlap(ref_segment, corrected, sr, bpm, cf_frames)
     if len(after) != 3 or any(value is None for value in after):
-        raise BeatSyncError("Kickphase nach Korrektur nicht in allen Regionen messbar")
+        raise BeatSyncError(
+            "Kickphase nach Korrektur nicht in allen Regionen messbar; "
+            f"nach Korrektur: {_fehlende_kickregionen(after)}"
+        )
     measured_after = [float(value) for value in after if value is not None]
     if max(abs(value) for value in measured_after) > KICK_SYNC_MAX_ERROR_SECONDS:
         raise BeatSyncError(

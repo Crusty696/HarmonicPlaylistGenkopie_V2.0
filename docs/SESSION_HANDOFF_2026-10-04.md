@@ -444,3 +444,22 @@ Der vorhandene Lauf benutzte
 Exitcode 0, `1 passed, 25 deselected in 0.23s`. SHA-256 der getesteten
 `tests/test_hearing_panel.py`:
 `358d914fc87f409f1adea32b9513e4696f6df8cd843019ebb75d1b6d8f357c65`.
+
+### Fortsetzung: regionale Kickphasen-Diagnose
+
+Der Renderer nennt bei einem bestehenden `BeatSyncError` nun die tatsaechlich
+fehlenden Messregionen (`Anfang`, `Mitte`, `Ende`) und unterscheidet vor/nach
+Korrektur. Bei falscher Anzahl Messwerte meldet er stattdessen ein ungueltiges
+Messformat. Grundlage sind nur die schon vorhandenen drei Messwerte; keine
+zusaetzliche Analyse, keine neue WAV und keine geaenderte Freigabeschwelle.
+Drei neue Regressionen waren vor der Textaenderung rot; danach bestanden
+die drei neuen Tests und die zwei angrenzenden Format-/Drift-Tests (5/5,
+`--noconftest -n 0 --no-cov`). Die alte Pilotmeldung enthaelt diese
+Regionsinformation noch nicht. Deshalb ist weiterhin unbekannt, welches
+Fenster der drei Originalmusik-Varianten wirklich ausfiel. Ein neuer
+Originalmusiklauf allein fuer die Meldung wurde nicht gestartet.
+Vorhandener GREEN-Lauf:
+`.\venv312\Scripts\python.exe -B -m pytest tests/test_transition_renderer.py -k 'unmessbare_region or stille_unmessbare_fenster_werden_im_strict_pfad_abgelehnt or drift_nach_korrektur_wird_abgelehnt' --noconftest -n 0 --no-cov -p no:cacheprovider --tb=short -q --color=no -o log_cli=false`;
+Exitcode 0, `5 passed, 163 deselected in 0.71s`. Getestete SHA-256:
+`transition_renderer.py` `4928436027a4e16453eb128aedc8c1a2cb81a98591069d6a32c428ff14a2bf30`,
+`test_transition_renderer.py` `32f8ce177666c8e72f3b592e49f63f2677dfdc8712b16d53f67c1d5006340015`.

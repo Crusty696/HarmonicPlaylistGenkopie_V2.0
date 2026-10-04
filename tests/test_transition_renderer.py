@@ -313,7 +313,7 @@ class TestStrictKickSynchronitaet:
             lambda *_args, **_kwargs: [],
         )
 
-        with pytest.raises(BeatSyncError, match="Anfang, Mitte und Ende"):
+        with pytest.raises(BeatSyncError, match="Anfang, Mitte und Ende") as error:
             _synchronize_and_verify_kicks(
                 np.zeros((200, 2), dtype=np.float32),
                 np.zeros((200, 2), dtype=np.float32),
@@ -321,6 +321,41 @@ class TestStrictKickSynchronitaet:
                 bpm=120.0,
                 cf_frames=150,
             )
+        assert "ungueltiges Messformat" in str(error.value)
+
+    @pytest.mark.parametrize("lags,missing", [
+        ([0.0, None, 0.0], "Mitte"),
+        ([None, 0.0, None], "Anfang, Ende"),
+    ])
+    def test_unmessbare_region_vor_korrektur_wird_genannt(self, monkeypatch, lags, missing):
+        calls = []
+        def measure(*_args):
+            calls.append(True)
+            return lags
+        monkeypatch.setattr("hpg_core.transition_renderer._kick_lags_across_overlap", measure)
+
+        with pytest.raises(BeatSyncError, match=f"vor Korrektur: {missing}"):
+            _synchronize_and_verify_kicks(
+                np.zeros((200, 2), dtype=np.float32),
+                np.zeros((200, 2), dtype=np.float32),
+                sr=1000, bpm=120.0, cf_frames=150,
+            )
+        assert len(calls) == 1
+
+    def test_unmessbare_region_nach_korrektur_wird_genannt(self, monkeypatch):
+        calls = []
+        def measure(*_args):
+            calls.append(True)
+            return [0.0, 0.0, 0.0] if len(calls) == 1 else [0.0, None, 0.0]
+        monkeypatch.setattr("hpg_core.transition_renderer._kick_lags_across_overlap", measure)
+
+        with pytest.raises(BeatSyncError, match="nach Korrektur: Mitte"):
+            _synchronize_and_verify_kicks(
+                np.zeros((200, 2), dtype=np.float32),
+                np.zeros((200, 2), dtype=np.float32),
+                sr=1000, bpm=120.0, cf_frames=150,
+            )
+        assert len(calls) == 2
 
     def test_vier_sekunden_blende_bleibt_bei_60_bpm_messbar(self):
         sr, bpm, duration = 2000, 60.0, 4.0
