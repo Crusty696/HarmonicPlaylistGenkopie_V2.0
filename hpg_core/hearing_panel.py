@@ -25,7 +25,7 @@ NOTE_LABELS = {
 class HearingPrepareDialog(QDialog):
     """Alle fachlich wirksamen Producer-Optionen ohne CLI-Eingabe."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, folder=""):
         super().__init__(parent)
         from tools import rate_transitions as rate
         from hpg_core.genres import CANONICAL_GENRES
@@ -41,16 +41,12 @@ class HearingPrepareDialog(QDialog):
         self.source_roots_edit.setPlaceholderText("Freigegebene Musikordner: ein vollständiger Pfad pro Zeile")
         self.source_roots_edit.setMaximumHeight(90)
         form.addRow("Satztyp", self.mode_box)
-        for label, edit, is_directory in (("Analyse-Cache", self.cache_edit, False), ("Neuer Zielordner", self.output_edit, True)):
-            row = QHBoxLayout()
-            row.addWidget(edit)
-            browse = QPushButton("Wählen")
-            browse.clicked.connect(lambda _checked=False, target=edit, directory=is_directory: self._browse(target, directory))
-            row.addWidget(browse)
-            form.addRow(label, row)
-        source_button = QPushButton("Musikordner hinzufügen")
+        self.folder_edit = QLineEdit(str(folder or ""))
+        self.folder_edit.setToolTip("Nur diesen Musikordner verwenden. Fehlende Analyse wird mit der vorhandenen Analyse gestartet. Originaldateien bleiben am Quellort.")
+        source_button = QPushButton("Musikordner wählen")
+        source_button.setToolTip("Einen Musikordner wählen; Analyse-Snapshot und Satzordner werden automatisch privat angelegt.")
         source_button.clicked.connect(self._add_source_root)
-        form.addRow("Original-Musikordner (nur lesen)", self.source_roots_edit)
+        form.addRow("Original-Musikordner (nur lesen)", self.folder_edit)
         form.addRow("", source_button)
         def integer(low, high, value):
             box = QSpinBox()
@@ -78,7 +74,32 @@ class HearingPrepareDialog(QDialog):
         self.transition_box.addItems(["kontrolliert", "produktion"])
         self.sequence_tracks_box = integer(rate.MIN_SEQUENZ_TRACKS, rate.MAX_ANZAHL, rate.STANDARD_SEQUENZ_TRACKS)
         self.transitions_box = integer(rate.MIN_DRAMATURGIE_UEBERGAENGE, rate.MAX_ANZAHL, rate.STANDARD_UEBERGAENGE_PRO_VARIANTE)
-        for label, widget in (
+        advanced = QWidget()
+        advanced_form = QFormLayout(advanced)
+        self.advanced_button = QPushButton("Erweiterte Optionen")
+        self.advanced_button.setCheckable(True)
+        self.advanced_button.setToolTip("Zusätzliche Auswahlparameter anzeigen. Werte gelten nur für den jeweils aktivierten Satztyp.")
+        self.advanced_button.toggled.connect(advanced.setVisible)
+        advanced.setVisible(False)
+        form.addRow(self.advanced_button)
+        form.addRow(advanced)
+        tips = (
+            "Gewünschte Anzahl gültiger Übergangspaare; nicht Anzahl Tracks.",
+            "Maximal erlaubter Tempoabstand für die Paar-Auswahl.",
+            "Gewünschter Energieverlauf; auto verwendet die Producer-Vorgabe.",
+            "Strenge der harmonischen Auswahl für Kandidaten (1 bis 10).",
+            "Zusätzliche experimentelle harmonische Beziehungen zulassen.",
+            "Reproduzierbare Zufallsauswahl bei gleichen Eingaben.",
+            "Paar-Auswahl auf das gewählte Genre beschränken; Alle deaktiviert den Filter.",
+            "Höchstens fünf bewertbare Varianten pro Paar.",
+            "Jeden Track höchstens einmal im Durchgang auswählen.",
+            "Optionales Auswahlprofil für Kandidaten; leer verwendet die Producer-Vorgabe.",
+            "Anzahl paralleler Suchprozesse für Kandidaten (1 bis 4).",
+            "Kontrollierte Übergänge oder Übergangstypen aus der Produktionslogik.",
+            "Anzahl Tracks im Dramaturgie-Pool.",
+            "Anzahl Übergänge je Dramaturgie-Variante.",
+        )
+        for index, (label, widget) in enumerate((
             ("Anzahl Übergangspaare", self.count_box), ("BPM-Toleranz", self.bpm_box),
             ("Energie-Richtung", self.energy_box), ("Harmonie-Strenge", self.harmonic_box),
             ("Experimentell", self.experimental_box), ("Zufallsseed", self.seed_box),
@@ -87,8 +108,10 @@ class HearingPrepareDialog(QDialog):
             ("Suchprozesse", self.workers_box), ("Übergangstyp-Modus", self.transition_box),
             ("Tracks im Dramaturgie-Pool", self.sequence_tracks_box),
             ("Übergänge pro Dramaturgie-Variante", self.transitions_box),
-        ):
-            form.addRow(label, widget)
+        )):
+            widget.setToolTip(tips[index])
+            advanced_form.addRow(label, widget)
+        self.mode_box.setToolTip("Einzel: eine Note; Kandidaten: Variantenvergleich; Dreinoten: drei Dimensionen; Dramaturgie: Sequenzbewertung.")
         form_widget = QWidget()
         form_widget.setLayout(form)
         scroll = QScrollArea()
@@ -119,9 +142,9 @@ class HearingPrepareDialog(QDialog):
                 edit.setText(path)
 
     def _add_source_root(self):
-        path = QFileDialog.getExistingDirectory(self, "Original-Musikordner zum Lesen freigeben")
+        path = QFileDialog.getExistingDirectory(self, "Original-Musikordner zum Lesen freigeben", self.folder_edit.text())
         if path:
-            self.source_roots_edit.appendPlainText(path)
+            self.folder_edit.setText(path)
 
     def _mode_changed(self, _index=None):
         candidate = self.mode_box.currentIndex() in (1, 2)
@@ -149,21 +172,17 @@ class HearingPrepareDialog(QDialog):
 
     def _accept_config(self):
         try:
-            from hpg_core.hearing_workflow import PrepareConfig
+            from hpg_core.hearing_managed import managed_config
             values = self.values()
             for key in ("cache", "output_dir"):
-                if not values[key]:
-                    raise ValueError("Cache und neuer Zielordner sind erforderlich")
-                values[key] = Path(values[key])
+                values.pop(key)
             if values.get("selection_profile"):
                 values["selection_profile"] = Path(values["selection_profile"])
             if values.get("energy_direction") is None:
                 values["energy_direction"] = "auto"
-            roots = tuple(Path(line.strip()) for line in self.source_roots_edit.toPlainText().splitlines() if line.strip())
-            if not roots:
-                raise ValueError("Mindestens einen Original-Musikordner ausdrücklich freigeben")
-            values["source_roots"] = roots
-            self.config = PrepareConfig(**values)
+            if not self.folder_edit.text().strip():
+                raise ValueError("Einen Original-Musikordner wählen")
+            self.config = managed_config(self.folder_edit.text().strip(), **values)
         except (OSError, ValueError, TypeError) as exc:
             self.error_label.setText(str(exc))
             return
@@ -571,23 +590,36 @@ class HearingFitDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.cache_edit = QLineEdit("" if cache is None else str(cache))
+        self.cache_edit.setToolTip("Zum Satz gehörender Analyse-Snapshot. Bei alten Sätzen manuell wählen; niemals den aktuellen Cache ersatzweise verwenden.")
         row = QHBoxLayout()
         row.addWidget(self.cache_edit)
         browse = QPushButton("Cache wählen")
+        browse.setToolTip("Nur den ursprünglichen Cache dieses alten Satzes wählen. Der Replay-Audit prüft die Bindung.")
         def choose():
             selected, _ = QFileDialog.getOpenFileName(self, "Zum Satz gehörenden Cache wählen", "", "SQLite (*.db)")
             if selected:
                 self.cache_edit.setText(selected)
         browse.clicked.connect(choose)
         row.addWidget(browse)
-        form.addRow("Analyse-Cache (Einzel: optional)" if single and not audit_only else "Analyse-Cache", row)
+        advanced = QWidget()
+        advanced_form = QFormLayout(advanced)
+        advanced_form.addRow("Analyse-Cache (Einzel: optional)" if single and not audit_only else "Analyse-Cache", row)
+        advanced.setVisible(False)
+        toggle = QPushButton("Erweiterte Optionen / ältere Sätze")
+        toggle.setCheckable(True)
+        toggle.setToolTip("Manuellen Cache und zusätzliche Fit-Optionen anzeigen.")
+        toggle.toggled.connect(advanced.setVisible)
+        form.addRow(toggle)
+        form.addRow(advanced)
         self.seed_box = QSpinBox()
         self.seed_box.setRange(-2147483647, 2147483647)
         self.seed_box.setValue(20260820)
         self.genres_edit = QLineEdit()
         self.genres_edit.setPlaceholderText("Einzel-Fit: kanonische Genres, komma-getrennt; leer = alle")
-        form.addRow("Fit-Seed", self.seed_box)
-        form.addRow("Einzel-Fit-Genres", self.genres_edit)
+        self.seed_box.setToolTip("Zufallsseed für reproduzierbaren Fit bei identischen Eingaben; im reinen Audit ohne Wirkung.")
+        self.genres_edit.setToolTip("Nur Einzel-Fit: kanonische Genres komma-getrennt; leer wertet alle aus. Kandidaten ignorieren diesen Filter.")
+        advanced_form.addRow("Fit-Seed", self.seed_box)
+        advanced_form.addRow("Einzel-Fit-Genres", self.genres_edit)
         self.seed_box.setEnabled(not audit_only)
         self.genres_edit.setEnabled(not audit_only and single)
         layout.addLayout(form)

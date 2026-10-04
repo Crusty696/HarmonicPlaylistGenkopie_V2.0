@@ -7,11 +7,12 @@ class HearingPrepareWorker(QThread):
     status_update = pyqtSignal(str)
     completed = pyqtSignal(object)
 
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, *, managed_metadata=None):
         super().__init__(parent)
         from .hearing_workflow import CancellationToken
 
         self.config = config
+        self.managed_metadata = managed_metadata
         self.cancel = CancellationToken()
 
     def request_cancel(self):
@@ -22,19 +23,41 @@ class HearingPrepareWorker(QThread):
 
         result = {"ok": False, "set_path": str(self.config.output_dir),
                   "cache_path": str(self.config.cache), "report_path": ""}
+        ownership = None
+        published = False
         try:
+            if self.managed_metadata is not None:
+                from .hearing_managed import write_snapshot
+                ownership = write_snapshot(self.config, self.managed_metadata, cancel=self.cancel)
             prepared = create_set(
                 self.config,
                 progress=lambda p: self.status_update.emit(f"{p.phase}: {p.completed}/{p.total} – {p.message}"),
                 cancel=self.cancel,
             )
+            published = True
+            if self.managed_metadata is not None:
+                from .hearing_managed import bind_set
+                warning = bind_set(self.config, ownership=ownership)
+                if warning:
+                    result["cleanup_warning"] = warning
             result.update(ok=True, prepared_only=True,
                           output=f"{prepared.pair_count} Paare, {prepared.clip_count} Quellenreferenzen vorbereitet. Nicht auditiert.",
                           warnings=list(prepared.warnings))
-        except HearingCancelledError as exc:
+        except (HearingCancelledError, InterruptedError) as exc:
             result.update(cancelled=True, output=str(exc))
         except Exception as exc:
             result["output"] = str(exc)
+            if published:
+                result.update(published_unbound=True, output=(
+                    f"Satz veröffentlicht, aber Zuordnung fehlgeschlagen: {exc}. "
+                    f"Daten erhalten unter {self.config.output_dir}. Nicht erneut vorbereiten."))
+        finally:
+            if ownership is not None and not published:
+                from .hearing_managed import discard_unpublished_snapshot
+                try:
+                    discard_unpublished_snapshot(ownership)
+                except Exception as exc:
+                    result["cleanup_warning"] = f"Snapshot erhalten; Bereinigung verweigert: {exc}"
         self.completed.emit(result)
 
 
@@ -60,9 +83,11 @@ class HearingLoadWorker(QThread):
                 raise InterruptedError("Laden abgebrochen")
             self.status_update.emit("Prüfe Satz, Originalquellen und Bewertungen …")
             session = load_session(self.folder)
+            from .hearing_managed import resolve_association
+            cache = resolve_association(self.folder)
             if self.isInterruptionRequested():
                 raise InterruptedError("Laden abgebrochen")
-            result.update(ok=True, session=session)
+            result.update(ok=True, session=session, cache_path=str(cache) if cache else "")
         except Exception as exc:
             result["output"] = str(exc)
             result["cancelled"] = isinstance(exc, InterruptedError)

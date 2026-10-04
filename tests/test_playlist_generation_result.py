@@ -944,31 +944,20 @@ def test_result_score_folgt_dp_wahl_rang_zwei_bei_getrenntem_ordering(monkeypatc
         tracks, "Warm-Up", scoring_context={}, candidate_choice_snapshot={}
     )
     context = result.scoring_context_dict()
-    ordering_score = pl._calculate_track_edge_metrics(
-        tracks[0], tracks[1], result.bpm_tolerance, None, context, rank_one
-    )
-    selected_score = pl._calculate_track_edge_metrics(
-        tracks[0], tracks[1], result.bpm_tolerance, None, context, rank_two
-    )
-
     boundary = result.boundaries[0]
     assert boundary.selected.key == boundary.snapshots[1].key
     assert boundary.recommendation.plan.mix_out_a == rank_two.out_a.t
     assert boundary.metrics.kandidat.key == boundary.selected.key
-    assert boundary.metrics.overall_score == pytest.approx(selected_score.overall_score)
-    assert boundary.metrics.overall_score != pytest.approx(ordering_score.overall_score)
-    assert boundary.recommendation.compatibility_score == round(
-        selected_score.overall_score * 100
-    )
-    assert result.quality_dict()["overall_score"] == pytest.approx(
-        round(selected_score.overall_score * 100) / 100.0
-    )
+    # Unabhaengige Erwartung aus den oben vorgegebenen lokalen Scores.
+    assert boundary.metrics.overall_score == pytest.approx(0.1)
+    assert boundary.recommendation.compatibility_score == 10
+    assert result.quality_dict()["overall_score"] == pytest.approx(0.1)
     ordering_metrics = pl.calculate_enhanced_compatibility(
         tracks[0], tracks[1], result.bpm_tolerance, **context
     )
     assert ordering_metrics.kandidat["rang"] == 1
     assert ordering_metrics.kandidat["t_out"] == rank_one.out_a.t
-    assert ordering_metrics.overall_score == pytest.approx(ordering_score.overall_score)
+    assert ordering_metrics.overall_score == pytest.approx(0.9)
 
 
 @pytest.mark.parametrize("strategy", tuple(pl.STRATEGIES.values()))

@@ -27,6 +27,7 @@ def snapshot(directory, cache, *, seed, genres):
     from tools import audit_candidate_set as audit
 
     root = Path(directory).resolve(strict=True)
+    session = None
     has_source_manifest = (root / SOURCE_MANIFEST_NAME).exists()
     if has_source_manifest:
         session = load_source_session(root)
@@ -78,15 +79,19 @@ def snapshot(directory, cache, *, seed, genres):
         metadata.discard("gewichte.json")
     if metadata != allowed_metadata:
         raise ValueError("Satz enthaelt fehlende oder unbekannte Metadaten; keine Dateien kopiert")
+    if mode == "kandidaten":
+        # Nur die exakt validierten bisherigen Kandidatenvertraege sind regulaer.
+        # Unbekannte Versionen/Research-Zusatzfelder erhalten keinen Standardzweck.
+        audit._parse_set(root, cache, source_session=session)
     return {"set_path": str(root), "cache_path": str(cache) if cache is not None else None, "mode": mode,
-            "files": files, "sources": sources,
+            "purpose": "regular", "files": files, "sources": sources,
             "cache": cache_family,
             "build": rate._algorithm_build_fingerprint(), "seed": seed, "genres": list(genres)}
 
 
 def verify_binding(binding):
     current = snapshot(binding["set_path"], binding["cache_path"], seed=binding["seed"], genres=binding["genres"])
-    if current != binding:
+    if _encoded(current) != _encoded(binding):
         raise ValueError("Satz, Bewertungen, Originalquellen, Cache oder Build wurden verändert; Vorschlag verworfen")
 
 
@@ -107,11 +112,10 @@ class _BoundedText(io.TextIOBase):
 
 
 def _materialize(binding, operation_root):
-    """Kopiert nur Metadaten; Audio wird aus Originalquellen neu berechnet."""
-    from .hearing_sources import SOURCE_MANIFEST_NAME, load_source_session
-    from .transition_renderer import TransitionClipSpec, render_transition_clip
-    from tools import rate_transitions as rate
-    from tools import audit_candidate_set as audit
+    """Legacy-Einzel-Fit kopiert nur CSV; Kandidaten bleiben im RAM-Pfad."""
+    from .hearing_sources import SOURCE_MANIFEST_NAME
+    if binding["mode"] != "einzel":
+        raise ValueError("Kandidaten duerfen nicht als WAV materialisiert werden")
 
     original = Path(binding["set_path"])
     target = Path(operation_root) / "snapshot"
@@ -126,31 +130,9 @@ def _materialize(binding, operation_root):
         (target / name).write_bytes(data)
     clips = target / "clips"
     clips.mkdir()
-    if binding["mode"] == "kandidaten" and (original / SOURCE_MANIFEST_NAME).exists():
-        source_session = load_source_session(original)
-        for relative, spec in source_session.specs.items():
-            render_transition_clip(TransitionClipSpec(**spec), target / relative)
-    elif binding["mode"] == "kandidaten":
-        manifest = audit._load_manifest(target / rate.KANDIDATEN_MANIFEST_NAME, Path(binding["cache_path"]))
-        tracks = {_key(t.filePath): t for t in audit._load_tracks_immutable(Path(binding["cache_path"]))}
-        rows = rate.lies_csv(target / "merkmale.csv")
-        for row in rows:
-            a, b = (tracks[_key(row[k])] for k in ("track_a", "track_b"))
-            pc = audit._candidate_for(row, a, b, manifest)
-            transition = next(c for p in manifest["pairs"] for c in p["clips"] if c["clip_id"] == row["clip_id"])
-            fresh, _transition_type = rate.rendere_kandidat(
-                a, b, pc, row["pair_id"], int(row["clip_id"].rsplit("_k", 1)[1]), clips,
-                transition_type_override=transition["rendered_transition_type"],
-                transition_type_mode=manifest["render_args"]["transition_type_mode"],
-            )
-            audit._compare_wav(original / row["clip"], target / fresh, row["clip_id"])
     # Einzel-Fit liest nur CSV; vorhandene Audioclips werden nicht kopiert.
     verify_binding(binding)
     return target
-
-
-def _key(path):
-    return os.path.normcase(os.path.abspath(path))
 
 
 def compute_proposal(directory, cache, *, operation_root, operation_id, fit=True, seed=20260820, genres=()):
@@ -168,36 +150,37 @@ def compute_proposal(directory, cache, *, operation_root, operation_id, fit=True
         raise ValueError("Frische Child-Praeferenzisolation fehlt")
     cp.reset_cache()
     binding = snapshot(directory, cache, seed=seed, genres=genres)
-    staged = _materialize(binding, operation_root)
-    result = {"format": "hpg_calibration_proposal", "version": 1, "operation_id": operation_id,
+    result = {"format": "hpg_calibration_proposal", "version": 2, "operation_id": operation_id,
               "binding": binding, "audit_passed": False, "audit": None, "fit_status": "not_requested",
               "gate_updates": {}, "diagnose": {}, "single_proposal": None, "live_applied": False, "output": ""}
     if binding["mode"] == "kandidaten":
-        payload = audit.audit_set(staged, Path(cache))
-        report = operation_root / "replay_audit.json"
-        audit._atomic_report(report, payload)
+        inputs = audit.prepare_candidate_inputs(directory, cache, seed=seed, genres=genres)
+        if _encoded(inputs.as_dict()["binding"]) != _encoded(binding):
+            raise ValueError("Eingaben waehrend Vorbereitung veraendert")
+        receipt = audit.audit_candidates(inputs)
+        payload = receipt.as_dict()
         result.update(audit_passed=True, audit=payload)
     elif not fit:
         raise ValueError("Einzel besitzt keinen Kandidaten-Replay-Audit")
     if fit:
         text = _BoundedText()
-        args = argparse.Namespace(dir=staged, cache=binding["cache_path"], audit_report=operation_root / "replay_audit.json",
-                                  seed=seed, genre=list(genres) or None)
         with contextlib.redirect_stdout(text), contextlib.redirect_stderr(text):
-            status = (rate.befehl_fit_kandidaten(args) if binding["mode"] == "kandidaten" else rate.befehl_fit(args))
-        result.update(fit_status="passed" if status == 0 else "rejected", output=text.getvalue())
-        if status == 0 and binding["mode"] == "kandidaten":
-            if preference_path.is_file():
-                data = strict_json_bytes(preference_path.read_bytes())
-                updates = {key: value for key, value in data.items() if not key.startswith("_")}
-                result["gate_updates"] = cp._normalisiere_updates(updates) if updates else {}
-                result["diagnose"] = data.get("_diagnose", {}).get("fit_kandidaten", {})
+            if binding["mode"] == "kandidaten":
+                try:
+                    fitted = rate.fit_candidates(inputs, receipt).as_dict()
+                except ValueError as exc:
+                    print(f"Kandidatensatz ungueltig: {exc}")
+                    status = 1
+                else:
+                    status = 0
+                    result["gate_updates"] = cp._normalisiere_updates(fitted["gate_updates"]) if fitted["gate_updates"] else {}
+                    result["diagnose"] = fitted["diagnose"]
             else:
-                for name in ("candidate_preferences_entwurf.json", "dreinoten_fit_bericht.json"):
-                    path = staged / name
-                    if path.is_file():
-                        result["diagnose"] = strict_json_bytes(path.read_bytes())
-        elif status == 0 and binding["mode"] == "einzel":
+                staged = _materialize(binding, operation_root)
+                args = argparse.Namespace(dir=staged, cache=binding["cache_path"], seed=seed, genre=list(genres) or None)
+                status = rate.befehl_fit(args)
+        result.update(fit_status="passed" if status == 0 else "rejected", output=text.getvalue())
+        if status == 0 and binding["mode"] == "einzel":
             result["single_proposal"] = strict_json_bytes((staged / "gewichte.json").read_bytes())
     verify_binding(binding)
     result["proposal_sha256"] = _digest(result)
@@ -224,7 +207,7 @@ def calibration_child(connection, directory, cache, operation_root, operation_id
 def validate_proposal(proposal, expected_operation_id=None):
     expected = {"format", "version", "operation_id", "binding", "audit_passed", "audit", "fit_status",
                 "gate_updates", "diagnose", "single_proposal", "live_applied", "output", "proposal_sha256"}
-    if type(proposal) is not dict or set(proposal) != expected or proposal["format"] != "hpg_calibration_proposal" or type(proposal["version"]) is not int or proposal["version"] != 1:
+    if type(proposal) is not dict or set(proposal) != expected or proposal["format"] != "hpg_calibration_proposal" or type(proposal["version"]) is not int or proposal["version"] != 2:
         raise ValueError("Unbekannter Kalibrierungsvorschlag")
     unsigned = {key: value for key, value in proposal.items() if key != "proposal_sha256"}
     if _digest(unsigned) != proposal["proposal_sha256"] or proposal["live_applied"] is not False:
@@ -240,9 +223,11 @@ def validate_proposal(proposal, expected_operation_id=None):
             or type(proposal["gate_updates"]) is not dict):
         raise ValueError("Vorschlagszustand oder Typ ungueltig")
     binding = proposal["binding"]
-    binding_keys = {"set_path", "cache_path", "mode", "files", "sources", "cache", "build", "seed", "genres"}
+    binding_keys = {"set_path", "cache_path", "mode", "purpose", "files", "sources", "cache", "build", "seed", "genres"}
     if type(binding) is not dict or set(binding) != binding_keys:
         raise ValueError("Binding-Schema ungueltig")
+    if type(binding["purpose"]) is not str or binding["purpose"] != "regular":
+        raise ValueError("Nur purpose=regular ist im normalen Kalibrierungspfad erlaubt")
     if (type(binding["mode"]) is not str or binding["mode"] not in {"einzel", "kandidaten"} or type(binding["seed"]) is not int
             or type(binding["genres"]) is not list or any(type(g) is not str or g not in CANONICAL_GENRES for g in binding["genres"])
             or len(binding["genres"]) != len(set(binding["genres"]))):
@@ -294,9 +279,8 @@ def validate_proposal(proposal, expected_operation_id=None):
         if binding["mode"] != "kandidaten" or proposal["fit_status"] != "passed" or not proposal["audit_passed"]:
             raise ValueError("Gate-Updates ohne bestandenen Kandidaten-Fit")
     if proposal["audit_passed"]:
-        audit = proposal["audit"]
-        if type(audit) is not dict or audit.get("ok") is not True or audit.get("status") != "passed" or audit.get("algorithm_build") != build or binding["mode"] != "kandidaten":
-            raise ValueError("Audit-Zustand ungueltig")
+        from tools.audit_candidate_set import validate_ram_receipt
+        validate_ram_receipt(proposal["audit"], binding)
     elif proposal["audit"] is not None:
         raise ValueError("Auditbericht ohne bestandenen Audit")
     if proposal["single_proposal"] is not None and (type(proposal["single_proposal"]) is not dict or binding["mode"] != "einzel" or proposal["fit_status"] != "passed"):

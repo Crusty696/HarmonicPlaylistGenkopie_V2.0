@@ -18,6 +18,262 @@ from hpg_core.rekordbox_importer import (
 )
 
 
+class TestReadStatus:
+  """Statusbelege ohne zusaetzliche Readeraufrufe oder geaenderte Nutzdaten."""
+
+  @staticmethod
+  def prepared():
+    path = os.path.join("C:/Fixture", "track.mp3")
+    imp = make_importer_with_track("C:/Fixture", "track.mp3")
+    return imp, path
+
+  def test_status_is_memo_only_and_return_copy(self):
+    imp, path = self.prepared()
+    calls = []
+    imp.db.read_anlz_files = lambda cid: calls.append(cid) or {}
+    assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+    assert calls == []
+    imp.get_track_signature(path)
+    status = imp.get_track_read_status(path)
+    assert status == {"beatgrid": "missing", "phrases": "missing"}
+    status["beatgrid"] = "corrupted"
+    assert imp.get_track_read_status(path)["beatgrid"] == "missing"
+    assert calls == ["1"]
+
+  def test_signature_payload_bit_identical_to_recorded_before_hash(self):
+    imp, path = self.prepared()
+    anlz = FakeAnlzFile(FakeBeatTag(beats=[1, 2], times=[0.0, 0.5]))
+    imp.db.read_anlz_files = lambda cid: {"DAT": anlz}
+    assert imp.get_track_signature(path) == "dcbcfe46ed6c48f0409449bf0bc8b052caaecb5a68772dc3425404a1dbd21725"
+
+  def test_partial_dat_confirms_grid_not_unread_ext(self):
+    from hpg_core.rekordbox_readonly import RekordboxAnlzReadError
+    imp, path = self.prepared()
+    calls = []
+    def all_files(cid):
+      calls.append("all")
+      raise RekordboxAnlzReadError("opaque-secret-all")
+    def dat_file(cid, kind):
+      calls.append(kind)
+      return FakeAnlzFile(FakeBeatTag(beats=[1, 2], times=[0.0, 0.5]))
+    imp.db.read_anlz_files, imp.db.read_anlz_file = all_files, dat_file
+    assert imp.get_track_signature(path)
+    assert imp.get_track_read_status(path) == {"beatgrid": "ok", "phrases": "unverified"}
+    assert imp.get_phrases(path) == []
+    assert calls == ["all", "DAT"]
+
+  def test_bad_tag_getter_not_confirmed_missing(self, caplog):
+    imp, path = self.prepared()
+    class Broken:
+      def get_tag(self, key):
+        raise RuntimeError("opaque-secret-tag")
+    imp.db.read_anlz_files = lambda cid: {"EXT": Broken()}
+    imp.get_track_signature(path)
+    assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+    assert "opaque-secret-tag" not in caplog.text
+
+  def test_bad_grid_points_not_confirmed_empty(self):
+    imp, path = self.prepared()
+    imp.db.read_anlz_files = lambda cid: {"DAT": FakeAnlzFile(FakeBeatTag(beats=[1], times=[float("nan")]))}
+    assert imp.get_beatgrid(path) == []
+    assert imp.get_track_read_status(path)["beatgrid"] == "unverified"
+
+  @pytest.mark.parametrize("field,value", [("bpm", 137.0), ("key", "Dm"),
+                                           ("cue_points", [{"position": 8.0}]), ("duration", 90.0)])
+  def test_context_change_invalidates_status(self, field, value):
+    imp, path = self.prepared()
+    imp.db.read_anlz_files = lambda cid: {}
+    imp.get_track_signature(path)
+    setattr(imp.get_track_data(path), field, value)
+    assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+
+  def test_signature_reset_clears_old_status_even_when_getters_patched(self, monkeypatch):
+    imp, path = self.prepared()
+    imp.db.read_anlz_files = lambda cid: {}
+    imp.get_track_signature(path)
+    monkeypatch.setattr(imp, "get_beatgrid", lambda path: [])
+    monkeypatch.setattr(imp, "get_phrases", lambda path: [])
+    imp.get_track_signature(path)
+    assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+
+  def test_duration_override_not_used_for_default_status(self):
+    imp, path = self.prepared()
+    imp.db.read_anlz_files = lambda cid: {}
+    imp.get_phrases(path, duration=90.0)
+    assert imp.get_track_read_status(path)["phrases"] == "unverified"
+    imp.get_phrases(path)
+    assert imp.get_track_read_status(path)["phrases"] == "missing"
+
+  def test_security_failure_closes_and_purges_status(self):
+    from hpg_core.rekordbox_readonly import ReadOnlyRekordboxError
+    imp, path = self.prepared()
+    imp.db.read_anlz_files = lambda cid: {}
+    imp.get_track_signature(path)
+    def fail(cid):
+      raise ReadOnlyRekordboxError("opaque-guard")
+    imp.db.read_anlz_files = fail
+    with pytest.raises(ReadOnlyRekordboxError):
+      imp.get_track_signature(path)
+    assert imp.db is None
+    assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+    assert not imp._read_status_cache and not imp._anlz_read_status
+
+  def test_ordinary_failure_preserves_available_importer(self):
+    imp, path = self.prepared()
+    def fail(cid):
+      raise ValueError("opaque-ordinary")
+    imp.db.read_anlz_files = fail
+    assert imp.get_beatgrid(path) == []
+    assert imp.is_available()
+    assert imp.get_track_read_status(path)["beatgrid"] == "error"
+
+  def test_phrase_helper_exception_logs_are_opaque(self, caplog):
+    imp, path = self.prepared()
+    class Tags:
+      def __contains__(self, key):
+        return key in ("PSSI", "PQTZ")
+      def get_tag(self, key):
+        return self
+      def get(self):
+        raise ValueError("opaque-sensitive-phrase-helper")
+    imp.db.read_anlz_files = lambda cid: {"EXT": Tags()}
+    assert imp.get_phrases(path) == []
+    assert imp.get_track_read_status(path)["phrases"] == "unverified"
+    assert "opaque-sensitive-phrase-helper" not in caplog.text
+
+  def test_reset_preserves_other_content_status(self):
+    imp, path = self.prepared()
+    other = RekordboxTrackData(content_id="2", duration=60.0)
+    other_path = os.path.join("C:/Fixture", "other.mp3")
+    imp.track_cache[os.path.normpath(other_path).lower()] = other
+    imp.db.read_anlz_files = lambda cid: {}
+    imp.get_track_signature(other_path)
+    imp.get_track_signature(path)
+    assert imp.get_track_read_status(other_path) == {"beatgrid": "missing", "phrases": "missing"}
+    imp.close()
+    assert not imp._read_status_cache and not imp._anlz_read_status
+
+  def test_declared_tag_without_object_is_not_missing(self):
+    imp, path = self.prepared()
+    class Inconsistent:
+      def __contains__(self, key):
+        return True
+      def get_tag(self, key):
+        return None
+    imp.db.read_anlz_files = lambda cid: {"DAT": Inconsistent()}
+    imp.get_track_signature(path)
+    assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+
+  def test_unsized_grid_iterables_preserve_legacy_list_result(self):
+    imp, path = self.prepared()
+    anlz = FakeAnlzFile(FakeBeatTag(beats=iter([1, 2]), times=iter([0.0, 0.5])))
+    imp.db.read_anlz_files = lambda cid: {"DAT": anlz}
+    assert imp.get_beatgrid(path) == [{"beat": 1, "time": 0.0}, {"beat": 2, "time": 0.5}]
+    assert imp.get_track_read_status(path)["beatgrid"] == "unverified"
+
+
+@pytest.fixture(params=[False, True], ids=["sqlite", "sqlcipher"])
+def readstatus_real_importer(tmp_path, request):
+  """Echte Reader-/Importerstrecke, nur synthetische DB und ANLZ-Dateien."""
+  import datetime
+  import struct
+  from sqlalchemy import create_engine
+  from sqlalchemy.orm import Session
+  from sqlalchemy.pool import NullPool
+  from pyrekordbox.db6.tables import Base, DjmdContent
+  from hpg_core.rekordbox_readonly import open_rekordbox_readonly
+  encrypted = request.param
+  if encrypted:
+    from sqlcipher3 import dbapi2 as driver
+  else:
+    import sqlite3 as driver
+  path = tmp_path / "synthetic.db"
+  secret = "temporary-readstatus-fixture-only"
+  def connect():
+    connection = driver.connect(str(path))
+    if encrypted:
+      connection.execute("PRAGMA key='" + secret + "'")
+    return connection
+  engine = create_engine("sqlite://", module=driver, creator=connect, poolclass=NullPool)
+  Base.metadata.create_all(engine)
+  values = {}
+  for column in DjmdContent.__table__.columns:
+    if not column.nullable and column.default is None:
+      kind = column.type.python_type
+      values[column.name] = (datetime.datetime(2020, 1, 1) if kind is datetime.datetime
+                             else 0 if kind in (int, float) else "")
+  audio_path = str(tmp_path / "never-created-or-opened.mp3")
+  values.update(ID="1", FolderPath=audio_path, FileNameL="never-created-or-opened.mp3",
+                BPM=12800, Length=240, Title="Synthetic", AnalysisDataPath="/fixture/ANLZ0000.DAT")
+  with Session(engine) as session:
+    session.add(DjmdContent(**values))
+    session.commit()
+  engine.dispose()
+  folder = tmp_path / "share" / "fixture"
+  folder.mkdir(parents=True)
+  tag = (b"PQTZ" + struct.pack(">II", 24, 40) + b"\0" * 4
+         + struct.pack(">II", 0x80000, 2)
+         + struct.pack(">HHIHHI", 1, 12800, 0, 2, 12800, 500))
+  (folder / "ANLZ0000.DAT").write_bytes(b"PMAI" + struct.pack(">II", 28, 28 + len(tag)) + b"\0" * 16 + tag)
+  reader = open_rekordbox_readonly(path, key=secret, unlock=encrypted)
+  importer = make_importer(reader)
+  assert importer.is_available()
+  try:
+    yield importer, audio_path, folder
+  finally:
+    importer.close()
+
+
+def test_readstatus_real_partial_dat_and_missing_ext(readstatus_real_importer, monkeypatch):
+  imp, path, folder = readstatus_real_importer
+  ext = folder / "ANLZ0000.EXT"
+  ext.write_bytes(b"bad EXT fixture")
+  all_reader = imp.db.read_anlz_files
+  dat_reader = imp.db.read_anlz_file
+  calls = []
+  def counted_all(cid):
+    calls.append("all")
+    return all_reader(cid)
+  def counted_dat(cid, kind):
+    calls.append(kind)
+    return dat_reader(cid, kind)
+  monkeypatch.setattr(imp.db, "read_anlz_files", counted_all)
+  monkeypatch.setattr(imp.db, "read_anlz_file", counted_dat)
+  first = imp.get_track_signature(path)
+  assert imp.get_beatgrid(path) == [{"beat": 1, "time": 0.0}, {"beat": 2, "time": 0.5}]
+  assert imp.get_phrases(path) == []
+  assert imp.get_track_read_status(path) == {"beatgrid": "ok", "phrases": "unverified"}
+  assert calls == ["all", "DAT"]
+  # Fehlendes EXT wird erst nach neuer Signatur bestaetigt.
+  ext.unlink()
+  second = imp.get_track_signature(path)
+  assert first == second
+  assert imp.get_track_read_status(path) == {"beatgrid": "ok", "phrases": "missing"}
+  assert calls == ["all", "DAT", "all"]
+  assert imp.is_available()
+
+
+def test_readstatus_real_missing_optional_keeps_importer(readstatus_real_importer):
+  imp, path, folder = readstatus_real_importer
+  (folder / "ANLZ0000.DAT").unlink()
+  imp.get_track_signature(path)
+  assert imp.get_track_read_status(path) == {"beatgrid": "missing", "phrases": "missing"}
+  assert imp.is_available()
+
+
+def test_readstatus_real_guard_purges_status(readstatus_real_importer):
+  from hpg_core.rekordbox_readonly import ReadOnlyRekordboxError
+  imp, path, folder = readstatus_real_importer
+  imp.get_track_signature(path)
+  database = folder.parent.parent / "synthetic.db"
+  with database.open("r+b"):
+    with pytest.raises(ReadOnlyRekordboxError):
+      imp.get_track_signature(path)
+  assert imp.db is None
+  assert imp.get_track_read_status(path) == {"beatgrid": "unverified", "phrases": "unverified"}
+  assert not imp._read_status_cache and not imp._anlz_read_status
+
+
 # ─── Fake-Klassen (Stubs fuer pyrekordbox) ────────────────────────────────────
 
 class FakeCue:
@@ -150,6 +406,61 @@ class TestRekordboxImporterInit:
     with patch("hpg_core.rekordbox_importer.REKORDBOX_AVAILABLE", False):
       imp = RekordboxImporter()
     assert len(imp.track_cache) == 0
+
+  def test_constructor_logs_do_not_expose_driver_secrets(self, caplog):
+    secret = "opaque-sensitive-token-14793"
+    with patch.object(rb_module, "REKORDBOX_AVAILABLE", True):
+      with patch.object(rb_module, "Rekordbox6Database", side_effect=RuntimeError(secret), create=True):
+        imp = RekordboxImporter()
+    assert imp.db is None
+    assert secret not in caplog.text
+
+  def test_security_failure_discards_partial_cache_and_closes_reader(self):
+    error_type = rb_module.ReadOnlyRekordboxError
+
+    class InterruptedDatabase(FakeDatabase):
+      closed = False
+
+      def get_content(self):
+        yield FakeContent()
+        raise error_type("unsafe source")
+
+      def close(self):
+        self.closed = True
+
+    db = InterruptedDatabase()
+    imp = make_importer(db)
+    assert db.closed
+    assert imp.db is None
+    assert not imp.track_cache
+    assert not imp.basename_cache
+    assert not imp._ambiguous_paths
+
+  @pytest.mark.parametrize("operation", ["get_beatgrid", "get_phrases", "get_first_downbeat"])
+  def test_lazy_security_failure_is_not_memoized_as_missing(self, operation):
+    error_type = rb_module.ReadOnlyRekordboxError
+
+    class UnsafeAnlzDatabase(FakeDatabase):
+      closed = False
+
+      def read_anlz_files(self, content_id):
+        raise error_type("unsafe source")
+
+      def close(self):
+        self.closed = True
+
+    content = FakeContent()
+    db = UnsafeAnlzDatabase([content])
+    imp = make_importer(db)
+    with pytest.raises(error_type):
+      getattr(imp, operation)(content.FolderPath)
+    assert db.closed
+    assert imp.db is None
+    assert not imp.track_cache
+    assert not imp._anlz_cache
+    assert not imp._beatgrid_cache
+    assert not imp._downbeat_cache
+    assert not imp._phrases_cache
 
   def test_init_mit_db_laedt_tracks(self):
     content = FakeContent(folder_path="C:\\Music", filename="track.mp3", bpm=12800)

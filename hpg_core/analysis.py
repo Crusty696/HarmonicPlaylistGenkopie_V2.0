@@ -48,6 +48,7 @@ from .downbeat import (
     validate_beatgrid_windows,
 )
 from .genre_classifier import classify_genre, match_id3_genre
+from .measurement_contract import measurement_snapshot
 from .genres import GENRE_PROFILES
 from .groove import (
     BASS_KENNWERTE_MIN_SEC,
@@ -153,8 +154,11 @@ def _validate_track_beatgrid(
     grid_points: list[dict] | None = None,
     head_audio: np.ndarray | None = None,
     head_sr: int = 0,
+    diagnostics: dict | None = None,
 ) -> BeatgridValidation:
     """Laedt bis zu drei getrennte Fenster und prueft deren reale Kickphase."""
+    if diagnostics is not None:
+        diagnostics["decode_failures"] = []
     span = min(_BEATGRID_WINDOW_SECONDS, max(1.0, float(duration)))
     raw_offsets = (
         0.0,
@@ -175,12 +179,17 @@ def _validate_track_beatgrid(
                 )
                 sample_rate = int(loaded_sr)
         except (OSError, RuntimeError, ValueError, sf.LibsndfileError) as error:
+            if diagnostics is not None:
+                diagnostics["decode_failures"].append({
+                    "offset_seconds": float(offset), "reason": "decode_error",
+                })
             logger.warning("Beatgrid-Fenster %.2fs nicht lesbar: %s", offset, error)
             continue
         windows.append((offset, np.asarray(audio)))
     grid_times = [float(point["time"]) for point in (grid_points or [])]
     return validate_beatgrid_windows(
-        windows, sample_rate, bpm, anchor=anchor, grid_times=grid_times
+        windows, sample_rate, bpm, anchor=anchor, grid_times=grid_times,
+        collect_diagnostics=True,
     )
 
 # Reverse mapping: Camelot code → (Note, Mode)
@@ -1995,29 +2004,34 @@ def analyze_track(file_path: str) -> Track | None:
                 duration=file_duration,
                 source=file_path,
             )
+            downbeat_diagnostics = {"reason": "unknown", "stage": None}
+            grid_diagnostics = {}
             if anlz_downbeat is not None:
                 beatgrid_source = "rekordbox"
                 beatgrid_validation = _validate_track_beatgrid(
                     file_path, duration, rekordbox_data.bpm, float(anlz_downbeat),
                     grid_points=rekordbox_grid, head_audio=y, head_sr=sr,
+                    diagnostics=grid_diagnostics,
                 )
                 if beatgrid_validation.status == "verified":
                     first_downbeat, downbeat_confidence = float(anlz_downbeat), 1.0
+                    downbeat_diagnostics.update(reason="reference_verified", stage="reference")
                 else:
                     # Das Rekordbox-Grid bleibt als Diagnose sichtbar, darf die
                     # musikalische Analyse aber nicht sperren. Fuer Mixpunkte
                     # wird in diesem Fall der Audio-Anker verwendet.
                     first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                        y, sr, rekordbox_data.bpm
+                        y, sr, rekordbox_data.bpm, diagnostics=downbeat_diagnostics,
                     )
             else:
                 first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                    y, sr, rekordbox_data.bpm
+                    y, sr, rekordbox_data.bpm, diagnostics=downbeat_diagnostics,
                 )
                 beatgrid_source = "audio"
                 beatgrid_validation = _validate_track_beatgrid(
                     file_path, duration, rekordbox_data.bpm, first_downbeat,
                     head_audio=y, head_sr=sr,
+                    diagnostics=grid_diagnostics,
                 )
             phrases = (
                 rekordbox_importer.get_phrases(file_path, duration=file_duration)
@@ -2300,6 +2314,10 @@ def analyze_track(file_path: str) -> Track | None:
             beatgrid_status=beatgrid_validation.status,
             beatgrid_windows_checked=beatgrid_validation.windows_checked,
             beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
+            measurement_diagnostics=measurement_snapshot(
+                downbeat_diagnostics, beatgrid_validation,
+                decode_failures=grid_diagnostics.get("decode_failures", ()),
+            ),
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
             key_confidence=key_confidence,
@@ -2520,24 +2538,31 @@ def analyze_track(file_path: str) -> Track | None:
             (point["time"] for point in rekordbox_grid if point["beat"] == 1),
             None,
         )
+        downbeat_diagnostics = {"reason": "unknown", "stage": None}
+        grid_diagnostics = {}
         if anlz_downbeat is not None:
             beatgrid_source = "rekordbox"
             beatgrid_validation = _validate_track_beatgrid(
                 file_path, duration, bpm, float(anlz_downbeat),
                 grid_points=rekordbox_grid, head_audio=y, head_sr=sr,
+                diagnostics=grid_diagnostics,
             )
             if beatgrid_validation.status == "verified":
                 first_downbeat = float(anlz_downbeat)
                 downbeat_confidence = 1.0
+                downbeat_diagnostics.update(reason="reference_verified", stage="reference")
             else:
                 first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                    y, sr, bpm
+                    y, sr, bpm, diagnostics=downbeat_diagnostics,
                 )
         else:
-            first_downbeat, downbeat_confidence = estimate_first_downbeat(y, sr, bpm)
+            first_downbeat, downbeat_confidence = estimate_first_downbeat(
+                y, sr, bpm, diagnostics=downbeat_diagnostics,
+            )
             beatgrid_source = "audio"
             beatgrid_validation = _validate_track_beatgrid(
-                file_path, duration, bpm, first_downbeat, head_audio=y, head_sr=sr
+                file_path, duration, bpm, first_downbeat, head_audio=y, head_sr=sr,
+                diagnostics=grid_diagnostics,
             )
         phrases = (
             rekordbox_importer.get_phrases(file_path, duration=file_duration)
@@ -2784,6 +2809,10 @@ def analyze_track(file_path: str) -> Track | None:
             beatgrid_status=beatgrid_validation.status,
             beatgrid_windows_checked=beatgrid_validation.windows_checked,
             beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
+            measurement_diagnostics=measurement_snapshot(
+                downbeat_diagnostics, beatgrid_validation,
+                decode_failures=grid_diagnostics.get("decode_failures", ()),
+            ),
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
             key_confidence=key_confidence,

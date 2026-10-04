@@ -171,7 +171,9 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
     monkeypatch.setattr(hearing_panel, "HearingRatingDialog", InspectRatingDialog)
 
     try:
-        window._prepare_hearing_set()
+        # Dieser Vertrag prueft den nativen Producer-/Bewertungslebenszyklus.
+        # Ordnerdialog und Analyse-Fortsetzung haben eigene Regressionen.
+        window._start_hearing_worker(hearing_jobs.HearingPrepareWorker(config, window), "prepare")
         worker, action = starts[-1]
         assert action == "prepare" and isinstance(worker, hearing_jobs.HearingPrepareWorker)
         assert not window.analytics_panel.hearing_prepare_button.isEnabled()

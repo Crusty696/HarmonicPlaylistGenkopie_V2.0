@@ -696,7 +696,8 @@ def test_cache_version_ist_bewusst_gesetzt():
   """
   from hpg_core import caching
 
-  assert caching.CACHE_VERSION == 45
+  # Neues gespeichertes Diagnosefeld invalidiert den v45-Analysevertrag.
+  assert caching.CACHE_VERSION == 46
 
 
 def test_alter_cache_marker_wird_invalidiert():
@@ -711,12 +712,12 @@ def test_alter_cache_marker_wird_invalidiert():
     assert name in caching.TRACK_LIST_FIELDS
 
 
-def test_track_pflichtsatz_ist_exakt_die_60_felder_der_dataclass():
+def test_track_pflichtsatz_ist_exakt_die_61_felder_der_dataclass():
   from dataclasses import fields
 
   dataclass_fields = {field.name for field in fields(TrackModel)}
 
-  assert len(TRACK_REQUIRED_FIELDS) == 60
+  assert len(TRACK_REQUIRED_FIELDS) == 61
   assert TRACK_REQUIRED_FIELDS == dataclass_fields
 
 

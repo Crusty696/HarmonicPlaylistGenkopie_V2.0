@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import math
 import os
 import re
 import sys
 import tempfile
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -76,6 +78,8 @@ SET_ROOT_NAMES = frozenset({
     "merkmale.csv", "bewertung.csv", "reihenfolge.json",
     KANDIDATEN_MANIFEST_NAME, "LIESMICH-kandidaten.txt", "clips",
 })
+RAM_BINDING_KEYS = {"set_path", "cache_path", "mode", "purpose", "files", "sources",
+                    "cache", "build", "seed", "genres"}
 
 
 class AuditError(ValueError):
@@ -240,10 +244,10 @@ def _choice_snapshot(value) -> dict:
     return result
 
 
-def _load_manifest(path: Path, cache: Path | None = None) -> dict:
+def _load_manifest(path: Path, cache: Path | None = None, *, text: str | None = None) -> dict:
     try:
         manifest = json.loads(
-            path.read_text(encoding="utf-8"),
+            path.read_text(encoding="utf-8") if text is None else text,
             parse_constant=lambda raw: (_ for _ in ()).throw(
                 AuditError(f"Manifest enthaelt nicht-endliche JSON-Konstante {raw}")
             ),
@@ -371,19 +375,29 @@ def _load_manifest(path: Path, cache: Path | None = None) -> dict:
     return manifest
 
 
-def _parse_set(set_dir: Path, cache: Path | None = None) -> tuple[list[dict], dict[str, dict], dict, dict]:
+def _parse_set(set_dir: Path, cache: Path | None = None, *, source_session=None) -> tuple[list[dict], dict[str, dict], dict, dict]:
     root_names = {path.name for path in set_dir.iterdir()}
-    if root_names != SET_ROOT_NAMES:
+    if source_session is not None:
+        from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME
+        if (source_session.mode != "kandidaten" or not source_session.source_contents_verified
+                or source_session.directory != set_dir.resolve(strict=True)):
+            raise AuditError("Vollstaendig gepruefte native Quellsession erforderlich")
+        expected_names = (SET_ROOT_NAMES - {"clips"}) | {SOURCE_MANIFEST_NAME}
+        if "clips" in root_names:
+            expected_names = expected_names | {"clips"}
+    else:
+        expected_names = SET_ROOT_NAMES
+    if root_names != expected_names:
         raise AuditError(
             f"Satzwurzel muss exakt {sorted(SET_ROOT_NAMES)!r} enthalten"
         )
     required = {
         name: (set_dir / name).resolve(strict=True)
-        for name in SET_ROOT_NAMES
+        for name in expected_names
     }
     if any(not _inside(path, set_dir) for path in required.values()):
         raise AuditError("Eine Satzdatei verlaesst --set-dir ueber einen Symlink")
-    if not required["clips"].is_dir():
+    if "clips" in required and not required["clips"].is_dir():
         raise AuditError("clips ist kein Verzeichnis")
     if any(not path.is_file() for name, path in required.items() if name != "clips"):
         raise AuditError("Satzwurzel enthaelt einen ungueltigen Pflichtdateityp")
@@ -450,10 +464,13 @@ def _parse_set(set_dir: Path, cache: Path | None = None) -> tuple[list[dict], di
         rel = Path(row["clip"])
         if rel.is_absolute() or rel.as_posix() != f"clips/{clip_id}.wav":
             raise AuditError(f"{clip_id}: ungueltiger Clip-Pfad {row['clip']!r}")
-        clip_real = (set_dir / rel).resolve(strict=True)
-        clips_root = required["clips"]
-        if not _inside(clip_real, clips_root) or not clip_real.is_file():
-            raise AuditError(f"{clip_id}: Clip verlaesst clips-Verzeichnis")
+        if source_session is None:
+            clip_real = (set_dir / rel).resolve(strict=True)
+            clips_root = required["clips"]
+            if not _inside(clip_real, clips_root) or not clip_real.is_file():
+                raise AuditError(f"{clip_id}: Clip verlaesst clips-Verzeichnis")
+        elif rel.as_posix() not in source_session.specs:
+            raise AuditError(f"{clip_id}: native Referenz fehlt")
         by_id[clip_id] = row
         per_pair.setdefault(pair_id, []).append(index)
 
@@ -490,7 +507,7 @@ def _parse_set(set_dir: Path, cache: Path | None = None) -> tuple[list[dict], di
     clip_files = {
         path.relative_to(required["clips"]).as_posix()
         for path in required["clips"].rglob("*") if path.is_file()
-    }
+    } if source_session is None else {Path(ref).name for ref in source_session.specs}
     expected_wavs = {f"{cid}.wav" for cid in by_id}
     if clip_files != expected_wavs:
         raise AuditError("clips/ und CSV sind nicht exakt 1:1")
@@ -627,11 +644,12 @@ def _validate_candidate_row(row: dict, track_a, track_b, pc) -> None:
         _text_matches(row, field, expected)
 
 
-def _compare_wav(actual: Path, fresh: Path, clip_id: str) -> dict:
+def _compare_wav(actual: Path | bytes, fresh: Path | bytes, clip_id: str) -> dict:
     try:
-        a_info, f_info = sf.info(actual), sf.info(fresh)
-        a_pcm, _ = sf.read(actual, dtype="int16", always_2d=True)
-        f_pcm, _ = sf.read(fresh, dtype="int16", always_2d=True)
+        source = lambda value: io.BytesIO(value) if isinstance(value, bytes) else value
+        a_info, f_info = sf.info(source(actual)), sf.info(source(fresh))
+        a_pcm, _ = sf.read(source(actual), dtype="int16", always_2d=True)
+        f_pcm, _ = sf.read(source(fresh), dtype="int16", always_2d=True)
     except Exception as exc:
         raise AuditError(f"{clip_id}: WAV unlesbar: {exc}") from exc
     shape_ok = a_pcm.shape == f_pcm.shape
@@ -657,8 +675,9 @@ def _render_with_diagnostics(
     a, b, pc, pair_id: str, n: int, out_dir: Path, *,
     rendered_transition_type: str, transition_type_mode: str,
     bpm_toleranz: float, energy_direction: str | None,
-) -> tuple[Path, list]:
+) -> tuple[bytes, list]:
     captured: list[float | None] = []
+    rendered = []
     original = transition_renderer._synchronize_and_verify_kicks
 
     def wrapped(ref_segment, segment_b, sr, bpm, cf_frames):
@@ -676,10 +695,13 @@ def _render_with_diagnostics(
             bpm_toleranz=bpm_toleranz,
             energy_direction=energy_direction,
             transition_type_override=rendered_transition_type,
+            render_sink=lambda spec, target: rendered.append(_ram_render(asdict(spec), ())[0]),
         )
     finally:
         transition_renderer._synchronize_and_verify_kicks = original
-    return out_dir / f"{pair_id}_k{n}.wav", [None if x is None else float(x) for x in captured]
+    if len(rendered) != 1:
+        raise AuditError("Producer muss exakt einen RAM-Clip liefern")
+    return rendered[0], [None if x is None else float(x) for x in captured]
 
 
 def _validate_lags(clip_id: str, lags: list) -> list[float]:
@@ -701,6 +723,59 @@ def _validate_lags(clip_id: str, lags: list) -> list[float]:
     return result
 
 
+def _replay_entries(manifest, by_id, tracks):
+    """Ein gemeinsamer Replay-Vertrag fuer Dateitransport und RAM-Transport."""
+    track_map = {_track_key(track.filePath): track for track in tracks}
+    if len(track_map) != len(tracks):
+        raise AuditError("Cache enthaelt doppelte Track-Pfade")
+    for pair in manifest["pairs"]:
+        pair_id = pair["pair_id"]
+        try:
+            a = track_map[_track_key(pair["track_a"])]
+            b = track_map[_track_key(pair["track_b"])]
+        except KeyError as exc:
+            raise AuditError(f"{pair_id}: Track nicht exakt im Cache gefunden") from exc
+        if _track_key(a.filePath) != _track_key(pair["track_a"]) or _track_key(b.filePath) != _track_key(pair["track_b"]):
+            raise AuditError(f"{pair_id}: Track-Pfad stimmt nicht exakt")
+        if not Path(a.filePath).is_file() or not Path(b.filePath).is_file():
+            raise AuditError(f"{pair_id}: Track-Audiodatei fehlt")
+        required_genre = manifest["render_args"]["nur_genre"]
+        if required_genre is not None and (loese_genre_auf(a) != required_genre or loese_genre_auf(b) != required_genre):
+            raise AuditError(f"{pair_id}: Tracks verletzen render_args.nur_genre")
+        ranked = _rank_pair_from_manifest(a, b, manifest)
+        if not ranked:
+            raise AuditError(f"{pair_id}: kein gueltiger PairCandidate im Replay")
+        metrics = transition_metrics_from_candidate(ranked[0])
+        if metrics.harmonic_score < MIN_HARMONIC_SCORE:
+            raise AuditError(f"{pair_id}: Producer-Harmonie-Gate verletzt")
+        if float(metrics.overall_score) < MIN_OVERALL_SCORE:
+            raise AuditError(f"{pair_id}: Producer-Gesamtscore-Gate verletzt")
+        groove = ranked[0].teilwerte.get("groove")
+        if groove is None or float(groove) < MIN_GROOVE:
+            raise AuditError(f"{pair_id}: Producer-Groove-Gate verletzt")
+        expected_count = min(len(ranked), manifest["render_args"]["max_versionen_pro_paar"])
+        if len(pair["clips"]) != expected_count:
+            raise AuditError(f"{pair_id}: Manifest enthaelt nicht exakt die Top-N-Kandidaten")
+        for n, (clip, pc) in enumerate(zip(pair["clips"], ranked), 1):
+            cid = clip["clip_id"]
+            row = by_id[cid]
+            _validate_candidate_row(row, a, b, pc)
+            rank_args = manifest["scoring_snapshot"]["rank_args"]
+            direction = rank_args["energy_direction"]
+            mode = manifest["render_args"]["transition_type_mode"]
+            energy_direction = None if direction == "auto" else direction
+            expected_type = _transition_type_fuer(
+                a, b, pc, modus=mode, bpm_toleranz=float(rank_args["bpm_tolerance"]),
+                energy_direction=energy_direction,
+            )
+            if clip["rendered_transition_type"] != expected_type:
+                raise AuditError(f"{cid}: Transition-Type entspricht nicht der App-Entscheidung")
+            yield row, a, b, pc, n, {
+                "transition_type_mode": mode, "bpm_toleranz": float(rank_args["bpm_tolerance"]),
+                "energy_direction": energy_direction, "transition_type_override": expected_type,
+            }
+
+
 def audit_set(
     set_dir: Path,
     cache: Path,
@@ -713,77 +788,19 @@ def audit_set(
     before_cache = _fingerprint_cache_family(cache)
     merkmale, by_id, _, manifest = _parse_set(set_dir, cache)
     tracks = _load_tracks_immutable(cache)
-    track_map = {_track_key(track.filePath): track for track in tracks}
-    if len(track_map) != len(tracks):
-        raise AuditError("Cache enthaelt doppelte Track-Pfade")
-
     results = []
     with tempfile.TemporaryDirectory(prefix="hpg-candidate-audit-") as tmp:
         temp_dir = Path(tmp)
-        for pair in manifest["pairs"]:
-            pair_id = pair["pair_id"]
-            try:
-                a = track_map[_track_key(pair["track_a"])]
-                b = track_map[_track_key(pair["track_b"])]
-            except KeyError as exc:
-                raise AuditError(f"{pair_id}: Track nicht exakt im Cache gefunden") from exc
-            if _track_key(a.filePath) != _track_key(pair["track_a"]) or _track_key(b.filePath) != _track_key(pair["track_b"]):
-                raise AuditError(f"{pair_id}: Track-Pfad stimmt nicht exakt")
-            if not Path(a.filePath).is_file() or not Path(b.filePath).is_file():
-                raise AuditError(f"{pair_id}: Track-Audiodatei fehlt")
-            required_genre = manifest["render_args"]["nur_genre"]
-            if required_genre is not None and (
-                loese_genre_auf(a) != required_genre
-                or loese_genre_auf(b) != required_genre
-            ):
-                raise AuditError(
-                    f"{pair_id}: Tracks verletzen render_args.nur_genre"
-                )
-            ranked = _rank_pair_from_manifest(a, b, manifest)
-            if not ranked:
-                raise AuditError(f"{pair_id}: kein gueltiger PairCandidate im Replay")
-            producer_metrics = transition_metrics_from_candidate(ranked[0])
-            if producer_metrics.harmonic_score < MIN_HARMONIC_SCORE:
-                raise AuditError(f"{pair_id}: Producer-Harmonie-Gate verletzt")
-            if float(producer_metrics.overall_score) < MIN_OVERALL_SCORE:
-                raise AuditError(f"{pair_id}: Producer-Gesamtscore-Gate verletzt")
-            groove = ranked[0].teilwerte.get("groove")
-            if groove is None or float(groove) < MIN_GROOVE:
-                raise AuditError(f"{pair_id}: Producer-Groove-Gate verletzt")
-            expected_count = min(
-                len(ranked), manifest["render_args"]["max_versionen_pro_paar"]
+        for row, a, b, pc, n, kwargs in _replay_entries(manifest, by_id, tracks):
+            cid = row["clip_id"]
+            fresh, lags = render(
+                a, b, pc, row["pair_id"], n, temp_dir,
+                rendered_transition_type=kwargs["transition_type_override"],
+                **{key: value for key, value in kwargs.items() if key != "transition_type_override"},
             )
-            if len(pair["clips"]) != expected_count:
-                raise AuditError(f"{pair_id}: Manifest enthaelt nicht exakt die Top-N-Kandidaten")
-            for n, (clip, pc) in enumerate(zip(pair["clips"], ranked), 1):
-                cid = clip["clip_id"]
-                row = by_id[cid]
-                _validate_candidate_row(row, a, b, pc)
-                rank_args = manifest["scoring_snapshot"]["rank_args"]
-                direction = rank_args["energy_direction"]
-                mode = manifest["render_args"]["transition_type_mode"]
-                expected_transition_type = _transition_type_fuer(
-                    a,
-                    b,
-                    pc,
-                    modus=mode,
-                    bpm_toleranz=float(rank_args["bpm_tolerance"]),
-                    energy_direction=None if direction == "auto" else direction,
-                )
-                if clip["rendered_transition_type"] != expected_transition_type:
-                    raise AuditError(
-                        f"{cid}: Transition-Type entspricht nicht der App-Entscheidung"
-                    )
-                fresh, lags = render(
-                    a, b, pc, pair_id, n, temp_dir,
-                    rendered_transition_type=clip["rendered_transition_type"],
-                    transition_type_mode=mode,
-                    bpm_toleranz=float(rank_args["bpm_tolerance"]),
-                    energy_direction=None if direction == "auto" else direction,
-                )
-                lags = _validate_lags(cid, lags)
-                wav = _compare_wav(set_dir / row["clip"], fresh, cid)
-                results.append({"clip_id": cid, "wav": wav, "kick_lag_seconds": lags})
+            lags = _validate_lags(cid, lags)
+            wav = _compare_wav(set_dir / row["clip"], fresh, cid)
+            results.append({"clip_id": cid, "wav": wav, "kick_lag_seconds": lags})
 
     if before_set != _fingerprint_tree(set_dir):
         raise AuditError("Kandidatensatz wurde waehrend des Audits veraendert")
@@ -807,6 +824,270 @@ def audit_set(
         "clips": len(results),
         "candidates": results,
     }
+
+
+def _json_bytes(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False,
+                      separators=(",", ":")).encode("utf-8")
+
+
+def _sha(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+@dataclass(frozen=True)
+class CandidateInputs:
+    payload: bytes
+
+    def as_dict(self):
+        from hpg_core.hearing_sources import strict_json_bytes
+        return strict_json_bytes(self.payload)
+
+
+@dataclass(frozen=True)
+class CandidateAuditReceipt:
+    payload: bytes
+
+    def as_dict(self):
+        from hpg_core.hearing_sources import strict_json_bytes
+        return strict_json_bytes(self.payload)
+
+
+def prepare_candidate_inputs(set_dir, cache, *, seed=20260820, genres=()):
+    """Bindet gepruefte Metadaten und Quellen, niemals materialisierte Clips."""
+    from hpg_core.hearing_calibration import snapshot, verify_binding
+    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME, load_source_session
+    if type(seed) is not int or any(type(g) is not str or g not in CANONICAL_GENRES for g in genres) or len(genres) != len(set(genres)):
+        raise AuditError("Ungueltiger Seed oder Genrefilter")
+    binding = snapshot(set_dir, cache, seed=seed, genres=genres)
+    if binding["mode"] != "kandidaten":
+        raise AuditError("RAM-Kandidaten-Audit verlangt Kandidatenmodus")
+    root = Path(binding["set_path"])
+    session = load_source_session(root) if SOURCE_MANIFEST_NAME in binding["files"] else None
+    rows, _, _, manifest = _parse_set(root, Path(binding["cache_path"]), source_session=session)
+    ratings = _read_csv(root / "bewertung.csv", BEWERTUNG_DREINOTEN_SPALTEN
+                        if manifest.get("rating_schema") == "three_notes_v1" else BEWERTUNG_KANDIDATEN_SPALTEN)
+    manifest_text = (root / KANDIDATEN_MANIFEST_NAME).read_bytes().decode("utf-8")
+    value = {"format": "hpg_candidate_inputs", "version": 2,
+             "binding": binding, "manifest": manifest, "manifest_text": manifest_text,
+             "rows": rows, "ratings": ratings, "specs": session.specs if session else {},
+             "source_manifest_text": (root / SOURCE_MANIFEST_NAME).read_bytes().decode("utf-8") if session else None,
+             "transport": "source_refs_ram" if session else "legacy_wav_ram"}
+    verify_binding(binding)
+    return CandidateInputs(_json_bytes(value))
+
+
+def verify_candidate_inputs(inputs):
+    if type(inputs) is not CandidateInputs or type(inputs.payload) is not bytes:
+        raise AuditError("Unveraenderliche CandidateInputs erforderlich")
+    data = inputs.as_dict()
+    _exact_dict(data, {"format", "version", "binding", "manifest", "manifest_text", "rows", "ratings",
+                       "specs", "source_manifest_text", "transport"}, "RAM-Eingaben")
+    if data["format"] != "hpg_candidate_inputs" or type(data["version"]) is not int or data["version"] != 2:
+        raise AuditError("Unbekannte RAM-Eingabeversion")
+    binding = data["binding"]
+    _validate_regular_binding(binding)
+    current = prepare_candidate_inputs(binding["set_path"], binding["cache_path"],
+                                       seed=binding["seed"], genres=binding["genres"])
+    if current.payload != inputs.payload:
+        raise AuditError("Audit-/Fit-Eingaben wurden veraendert")
+
+
+def _validate_regular_binding(binding):
+    _exact_dict(binding, RAM_BINDING_KEYS, "RAM-Bindung")
+    if type(binding["purpose"]) is not str or binding["purpose"] != "regular":
+        raise AuditError("Normaler RAM-Audit/Fit verlangt purpose=regular")
+
+
+def _ram_render(spec, sources, *, capture_lags=False):
+    from hpg_core.hearing_playback import render_wav_bytes
+    captured = []
+    original = transition_renderer._synchronize_and_verify_kicks
+
+    def wrapped(ref, segment_b, sr, bpm, cf_frames):
+        corrected = original(ref, segment_b, sr, bpm, cf_frames)
+        captured[:] = transition_renderer._kick_lags_across_overlap(ref, corrected, sr, bpm, cf_frames)
+        return corrected
+
+    if capture_lags:
+        transition_renderer._synchronize_and_verify_kicks = wrapped
+    try:
+        data = render_wav_bytes(spec, sources)
+    finally:
+        if capture_lags:
+            transition_renderer._synchronize_and_verify_kicks = original
+    return data, [None if x is None else float(x) for x in captured]
+
+
+def _pcm_evidence(reference, replay, clip_id):
+    """Exakter bisheriger PCM-Vergleich, unabhaengig vom Speichertransport."""
+    with sf.SoundFile(reference) as a, sf.SoundFile(io.BytesIO(replay)) as b:
+        metadata = lambda f: {"samplerate": int(f.samplerate), "channels": int(f.channels),
+                              "frames": int(f.frames), "format": f.format, "subtype": f.subtype}
+        info = metadata(a)
+        if info != metadata(b):
+            raise AuditError(f"{clip_id}: WAV-Metadaten stimmen nicht exakt")
+        _validate_pcm_metadata(info, clip_id)
+        pcm_a = a.read(dtype="int16", always_2d=True)
+        pcm_b = b.read(dtype="int16", always_2d=True)
+    if pcm_a.shape != pcm_b.shape or not np.array_equal(pcm_a, pcm_b):
+        raise AuditError(f"{clip_id}: PCM stimmt nicht exakt")
+    return info, _sha(pcm_a.astype("<i2", copy=False).tobytes()), _sha(pcm_b.astype("<i2", copy=False).tobytes())
+
+
+def _replay_pcm_evidence(replay, clip_id):
+    """Misst nur den tatsaechlichen Replay; kein behaupteter Referenzvergleich."""
+    with sf.SoundFile(io.BytesIO(replay)) as rendered:
+        info = {"samplerate": int(rendered.samplerate), "channels": int(rendered.channels),
+                "frames": int(rendered.frames), "format": rendered.format, "subtype": rendered.subtype}
+        _validate_pcm_metadata(info, clip_id)
+        pcm = rendered.read(dtype="int16", always_2d=True)
+    return info, _sha(pcm.astype("<i2", copy=False).tobytes())
+
+
+def _validate_pcm_metadata(info, clip_id):
+    _exact_dict(info, {"samplerate", "channels", "frames", "format", "subtype"}, f"{clip_id}: PCM")
+    _strict_int(info["samplerate"], "samplerate", minimum=1)
+    _strict_int(info["channels"], "channels", minimum=2, maximum=2)
+    _strict_int(info["frames"], "frames", minimum=1)
+    if info["format"] != "WAV" or info["subtype"] != "PCM_16":
+        raise AuditError(f"{clip_id}: PCM_16/Stereo erforderlich")
+    from hpg_core.hearing_playback import MAX_PLAYBACK_BYTES
+    if info["frames"] * info["channels"] * 2 > MAX_PLAYBACK_BYTES:
+        raise AuditError(f"{clip_id}: PCM ueber Playback-Limit")
+
+
+def audit_candidates(inputs):
+    verify_candidate_inputs(inputs)
+    data = inputs.as_dict()
+    binding, manifest = data["binding"], data["manifest"]
+    root = Path(binding["set_path"])
+    tracks = _load_tracks_immutable(Path(binding["cache_path"]))
+    sources = [{"path": s["path"], "root": s["root"], "size_bytes": s["size"], "sha256": s["sha256"]}
+               for s in binding["sources"].values()]
+    results = []
+    for row, a, b, pc, n, kwargs in _replay_entries(manifest, {r["clip_id"]: r for r in data["rows"]}, tracks):
+        specs = []
+        # Der vorhandene Producer baut den Spec; der Sink erfasst nur dessen Ergebnis.
+        rendere_kandidat(a, b, pc, row["pair_id"], n, root / "clips",
+                         render_sink=lambda spec, target: specs.append(asdict(spec)), **kwargs)
+        if len(specs) != 1:
+            raise AuditError("Producer muss exakt einen Replay-Spec liefern")
+        replay_spec = specs[0]
+        replay_digest = _sha(_json_bytes(replay_spec))
+        candidate = {"pair_id": row["pair_id"], "clip_id": row["clip_id"], "rank": n,
+                     "replay_spec_sha256": replay_digest}
+        if data["transport"] == "source_refs_ram":
+            source_spec = data["specs"][row["clip"]]
+            source_digest = _sha(_json_bytes(source_spec))
+            if source_digest != replay_digest:
+                raise AuditError(f"{row['clip_id']}: SourceSpec widerspricht ReplaySpec")
+            candidate["source_spec_sha256"] = source_digest
+        replay, lags = _ram_render(replay_spec, sources, capture_lags=True)
+        lags = _validate_lags(row["clip_id"], lags)
+        if data["transport"] == "source_refs_ram":
+            info, replay_pcm = _replay_pcm_evidence(replay, row["clip_id"])
+        else:
+            info, ref_pcm, replay_pcm = _pcm_evidence(root / row["clip"], replay, row["clip_id"])
+            candidate["reference_pcm_sha256"] = ref_pcm
+        candidate.update(pcm=info, replay_pcm_sha256=replay_pcm, kick_lag_seconds=lags)
+        results.append(candidate)
+        # Kein Clipbuffer bleibt fuer das naechste Paar oder fuer IPC erhalten.
+        del replay
+    verify_candidate_inputs(inputs)
+    digest = _sha(_json_bytes(binding))
+    evidence_kind = ("spec_verified_ram_replay" if data["transport"] == "source_refs_ram"
+                     else "reference_pcm_verified_replay")
+    report = {"format": "hpg_candidate_ram_audit", "version": 2, "transport": data["transport"],
+              "evidence_kind": evidence_kind, "purpose": binding["purpose"],
+              "status": "passed", "ok": True, "binding": binding,
+              "before_sha256": digest, "after_sha256": digest,
+              "manifest_text": data["manifest_text"],
+              "source_manifest_text": data["source_manifest_text"],
+              "manifest_sha256": _sha(data["manifest_text"].encode("utf-8")),
+              "pairs": len(manifest["pairs"]), "clips": len(results), "candidates": results}
+    validate_ram_receipt(report, binding)
+    return CandidateAuditReceipt(_json_bytes(report))
+
+
+def validate_ram_receipt(report, binding):
+    """Gleiche strikte Receiptpruefung fuer Fit, Vorschau, Export und Uebernahme."""
+    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME, SOURCE_FORMAT, SOURCE_VERSION
+    _validate_regular_binding(binding)
+    _exact_dict(report, {"format", "version", "transport", "evidence_kind", "purpose", "status", "ok", "binding", "before_sha256",
+                        "after_sha256", "manifest_text", "source_manifest_text", "manifest_sha256", "pairs", "clips", "candidates"}, "RAM-Audit")
+    transport = "source_refs_ram" if SOURCE_MANIFEST_NAME in binding["files"] else "legacy_wav_ram"
+    evidence_kind = "spec_verified_ram_replay" if transport == "source_refs_ram" else "reference_pcm_verified_replay"
+    if (report["format"] != "hpg_candidate_ram_audit" or type(report["version"]) is not int or report["version"] != 2
+            or type(report["purpose"]) is not str or report["purpose"] != "regular"
+            or report["evidence_kind"] != evidence_kind
+            or report["transport"] != transport or report["status"] != "passed" or report["ok"] is not True):
+        raise AuditError("RAM-Audit-Version/Transport/Zustand ungueltig")
+    digest = _sha(_json_bytes(binding))
+    if (_json_bytes(report["binding"]) != _json_bytes(binding) or report["before_sha256"] != digest
+            or report["after_sha256"] != digest or binding["mode"] != "kandidaten"):
+        raise AuditError("RAM-Audit-Bindung stimmt nicht")
+    text = report["manifest_text"]
+    if type(text) is not str or _sha(text.encode("utf-8")) != report["manifest_sha256"]:
+        raise AuditError("RAM-Audit-Manifestdigest stimmt nicht")
+    if {"size": len(text.encode("utf-8")), "sha256": report["manifest_sha256"]} != binding["files"][KANDIDATEN_MANIFEST_NAME]:
+        raise AuditError("RAM-Audit-Manifest ist nicht an Satz gebunden")
+    manifest = _load_manifest(Path(KANDIDATEN_MANIFEST_NAME), text=text)
+    main_cache = binding["cache"][""]
+    if (type(main_cache) not in (tuple, list) or len(main_cache) != 2
+            or manifest["algorithm_build"] != binding["build"] or (
+                manifest["cache"]["size"], manifest["cache"]["sha256"]) != tuple(main_cache)):
+        raise AuditError("RAM-Audit-Cache/Build stimmt nicht")
+    source_text = report["source_manifest_text"]
+    source_specs = {}
+    if transport == "source_refs_ram":
+        from hpg_core.hearing_sources import strict_json_bytes, validate_spec_v1
+        if type(source_text) is not str or {"size": len(source_text.encode("utf-8")), "sha256": _sha(source_text.encode("utf-8"))} != binding["files"][SOURCE_MANIFEST_NAME]:
+            raise AuditError("RAM-Audit-Quellmanifest ist nicht gebunden")
+        source_manifest = strict_json_bytes(source_text.encode("utf-8"))
+        _exact_dict(source_manifest, {"format", "format_version", "mode", "status", "source_roots",
+                                      "specs", "sources", "immutable_metadata"}, "Quellmanifest")
+        if (source_manifest["format"] != SOURCE_FORMAT or type(source_manifest["format_version"]) is not int
+                or source_manifest["format_version"] != SOURCE_VERSION or source_manifest["mode"] != "kandidaten"
+                or source_manifest["status"] != "prepared"):
+            raise AuditError("Kein exakt validierter regulaerer Quellmanifestvertrag")
+        if source_manifest.get("sources") != binding["sources"] or type(source_manifest.get("specs")) is not dict:
+            raise AuditError("RAM-Audit-Quellen stimmen nicht")
+        source_specs = source_manifest["specs"]
+        for spec in source_specs.values():
+            validate_spec_v1(spec)
+    elif source_text is not None:
+        raise AuditError("Legacy-Audit darf kein natives Quellmanifest vortaeuschen")
+    expected = [(p["pair_id"], c["clip_id"], c["rank"]) for p in manifest["pairs"] for c in p["clips"]]
+    if transport == "source_refs_ram" and set(source_specs) != {f"clips/{cid}.wav" for _, cid, _ in expected}:
+        raise AuditError("RAM-Audit-Quellspecs sind nicht exakt 1:1")
+    candidates = report["candidates"]
+    if (type(report["pairs"]) is not int or report["pairs"] != len(manifest["pairs"])
+            or type(report["clips"]) is not int or report["clips"] != len(expected)
+            or type(candidates) is not list or len(candidates) != len(expected)):
+        raise AuditError("RAM-Audit-Paar-/Clipanzahl stimmt nicht")
+    for candidate, identity in zip(candidates, expected):
+        keys = {"pair_id", "clip_id", "rank", "replay_spec_sha256", "pcm", "replay_pcm_sha256", "kick_lag_seconds"}
+        keys.add("source_spec_sha256" if transport == "source_refs_ram" else "reference_pcm_sha256")
+        _exact_dict(candidate, keys, "RAM-Kandidat")
+        if (candidate["pair_id"], candidate["clip_id"], candidate["rank"]) != identity or type(candidate["rank"]) is not int:
+            raise AuditError("RAM-Audit-IDs/Raenge sind nicht exakt geordnet")
+        digest_keys = ("replay_spec_sha256", "replay_pcm_sha256",
+                       "source_spec_sha256" if transport == "source_refs_ram" else "reference_pcm_sha256")
+        for key in digest_keys:
+            if type(candidate[key]) is not str or re.fullmatch(r"[0-9a-f]{64}", candidate[key]) is None:
+                raise AuditError("RAM-Audit-Digest ungueltig")
+        if (transport == "source_refs_ram" and candidate["source_spec_sha256"] != candidate["replay_spec_sha256"]
+                or transport == "legacy_wav_ram" and candidate["reference_pcm_sha256"] != candidate["replay_pcm_sha256"]):
+            raise AuditError("RAM-Audit-Referenz/Replay stimmt nicht")
+        if transport == "source_refs_ram" and candidate["source_spec_sha256"] != _sha(_json_bytes(source_specs[f"clips/{candidate['clip_id']}.wav"])):
+            raise AuditError("RAM-Audit-Specdigest gehoert nicht zur publizierten Quelle")
+        _validate_pcm_metadata(candidate["pcm"], candidate["clip_id"])
+        lags = candidate["kick_lag_seconds"]
+        if type(lags) is not list or any(type(x) not in (int, float) for x in lags):
+            raise AuditError("RAM-Audit-Kick-Lags haben falschen Typ")
+        _validate_lags(candidate["clip_id"], lags)
+    return manifest
 
 
 def _atomic_report(path: Path, payload: dict) -> None:

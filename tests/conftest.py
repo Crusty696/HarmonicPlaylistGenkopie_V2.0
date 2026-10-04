@@ -67,6 +67,14 @@ from tests.fixtures.track_factories import (  # noqa: E402
 pytest_plugins = ["tests.performance_fixtures"]
 
 
+@pytest.fixture(autouse=True)
+def isolated_ai_qualification_session(monkeypatch):
+  # Tests sind unabhaengige App-Sessions; keine Schemafehler anderer Tests erben.
+  from hpg_core import lmstudio_runtime
+  monkeypatch.setattr(lmstudio_runtime, "_QUALIFICATIONS", {})
+  monkeypatch.setattr(lmstudio_runtime, "_INSTANCE_QUALIFICATION_KEYS", {})
+
+
 # === Audio Fixtures ===
 
 @pytest.fixture

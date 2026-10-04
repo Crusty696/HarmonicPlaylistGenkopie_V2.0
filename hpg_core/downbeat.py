@@ -112,10 +112,37 @@ BEATGRID_MAX_INTERVAL_DEVIATION = 0.02
 
 
 @dataclass(frozen=True)
+class BeatgridWindowDiagnostic:
+    """Unveraenderliche Messwerte; die Phase ist lokal zum Audiofenster."""
+
+    offset_seconds: float | None
+    duration_seconds: float | None
+    phase_seconds: float | None
+    fold_lock: float | None
+    phase_error_ms: float | None
+    reason: str
+
+
+@dataclass(frozen=True)
 class BeatgridValidation:
     status: str
     windows_checked: int
     max_phase_error_ms: float
+    reason: str | None = None
+    window_diagnostics: tuple[BeatgridWindowDiagnostic, ...] = ()
+
+
+def _finite_scalar(value) -> float | None:
+    """Nur endliche numerische Skalare; bool ist kein Messwert."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        return None
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return number if np.isfinite(number) else None
 
 
 def validate_beatgrid_windows(
@@ -125,6 +152,7 @@ def validate_beatgrid_windows(
     *,
     anchor: float | None = None,
     grid_times: list[float] | None = None,
+    collect_diagnostics: bool = False,
 ) -> BeatgridValidation:
     """Prueft ein Beatgrid gegen tieffrequente Kickphasen mehrerer Fenster.
 
@@ -132,10 +160,30 @@ def validate_beatgrid_windows(
     die Phasenrechnung auch fuer Mitte und Ende des Tracks korrekt.
     Variable Rekordbox-Grids werden bewusst als technisch nicht unterstuetzt
     gesperrt, weil der Renderer nur ein konstantes Zieltempo stretchen kann.
+    ``collect_diagnostics`` ergaenzt lokale Fensterphasen und Zweiggruende,
+    ohne eine zweite Faltung auszufuehren. Fehlende Messwerte bleiben None.
     """
-    if sr <= 0 or bpm <= 0 or not windows:
-        return BeatgridValidation("unverifiable", 0, -1.0)
+    details: list[BeatgridWindowDiagnostic] = []
+
+    def result(status, checked, error, reason):
+        return BeatgridValidation(
+            status, checked, error,
+            reason if collect_diagnostics else None,
+            tuple(details) if collect_diagnostics else (),
+        )
+
+    sample_rate, tempo = _finite_scalar(sr), _finite_scalar(bpm)
+    if sample_rate is None or tempo is None or sample_rate <= 0 or tempo <= 0:
+        return result("unverifiable", 0, -1.0, "invalidinput")
+    if not windows:
+        return result("unverifiable", 0, -1.0, "nowindows")
     ibi = 60.0 / float(bpm)
+    if not np.isfinite(ibi) or ibi <= 0:
+        return result("unverifiable", 0, -1.0, "invalidinput")
+    if anchor is not None and _finite_scalar(anchor) is None:
+        return result("unverifiable", 0, -1.0, "invalidinput")
+    if grid_times is not None and any(_finite_scalar(t) is None for t in grid_times):
+        return result("unverifiable", 0, -1.0, "invalidinput")
     ticks = sorted(
         float(t) for t in (grid_times or [])
         if isinstance(t, (int, float)) and np.isfinite(t) and t >= 0.0
@@ -144,40 +192,67 @@ def validate_beatgrid_windows(
         intervals = np.diff(np.asarray(ticks, dtype=float))
         median_interval = float(np.median(intervals))
         if median_interval <= 0.0:
-            return BeatgridValidation("unsupported", 0, -1.0)
+            return result("unsupported", 0, -1.0, "duplicategrid")
         relative = np.abs(intervals - median_interval) / median_interval
+        if not np.all(np.isfinite(relative)):
+            return result("unverifiable", 0, -1.0, "invalidinput")
         if float(np.max(relative)) > BEATGRID_MAX_INTERVAL_DEVIATION:
-            return BeatgridValidation("unsupported", 0, -1.0)
+            return result("unsupported", 0, -1.0, "variablegrid")
         if abs(median_interval - ibi) / ibi > BEATGRID_MAX_INTERVAL_DEVIATION:
-            return BeatgridValidation("mismatch", 0, -1.0)
+            return result("mismatch", 0, -1.0, "tempomismatch")
     if anchor is not None and np.isfinite(anchor) and anchor >= 0.0:
         reference = float(anchor)
     elif ticks:
         reference = ticks[0]
     else:
-        return BeatgridValidation("unverifiable", 0, -1.0)
+        return result("unverifiable", 0, -1.0, "missingreference")
 
     errors: list[float] = []
     for offset, audio in windows:
-        mono = np.asarray(audio, dtype=float)
-        if mono.ndim == 2:
-            mono = np.mean(mono, axis=1)
-        phase, lock = _beat_phase_from_fold(mono, sr, ibi)
-        if phase is None or lock < BEATGRID_MIN_FOLD_LOCK:
-            continue
-        expected = (reference - float(offset)) % ibi
-        delta = abs(float(phase) - expected) % ibi
-        errors.append(min(delta, ibi - delta))
+        finite_offset = _finite_scalar(offset)
+        duration = phase_value = lock_value = error_ms = None
+        reason = "invalidinput"
+        try:
+            mono = np.asarray(audio, dtype=float)
+            if mono.ndim in (1, 2):
+                duration = _finite_scalar(len(mono) / sample_rate)
+            if (finite_offset is not None and finite_offset >= 0.0
+                    and duration is not None and mono.ndim in (1, 2)
+                    and np.all(np.isfinite(mono))):
+                if mono.ndim == 2:
+                    mono = np.mean(mono, axis=1)
+                if np.all(np.isfinite(mono)):
+                    phase, lock = _beat_phase_from_fold(mono, sr, ibi)
+                    phase_value, lock_value = _finite_scalar(phase), _finite_scalar(lock)
+                    if lock_value is not None and (phase is None or phase_value is not None):
+                        if phase is None or lock_value < BEATGRID_MIN_FOLD_LOCK:
+                            reason = "weakfold"
+                        else:
+                            expected = (reference - finite_offset) % ibi
+                            delta = abs(phase_value - expected) % ibi
+                            error = min(delta, ibi - delta)
+                            error_ms = _finite_scalar(error * 1000.0)
+                            if np.isfinite(error) and error_ms is not None:
+                                errors.append(error)
+                                reason = "measured"
+        except Exception as exc:
+            reason = "estimationerror"
+            logger.debug("Beatgrid-Fenster konnte nicht gemessen werden: %s", exc)
+        if collect_diagnostics:
+            details.append(BeatgridWindowDiagnostic(
+                finite_offset, duration, phase_value, lock_value, error_ms, reason,
+            ))
 
     if len(errors) < BEATGRID_MIN_WINDOWS:
-        return BeatgridValidation("unverifiable", len(errors), -1.0)
+        return result("unverifiable", len(errors), -1.0, "fewwindows")
     maximum = max(errors)
     status = (
         "verified"
         if maximum <= BEATGRID_MAX_PHASE_ERROR_SECONDS + 1e-12
         else "mismatch"
     )
-    return BeatgridValidation(status, len(errors), round(maximum * 1000.0, 3))
+    return result(status, len(errors), round(maximum * 1000.0, 3),
+                  "verified" if status == "verified" else "phasemismatch")
 
 
 def _grid_is_commensurate(grid_ibi: float, expected_ibi: float) -> bool:
@@ -294,7 +369,7 @@ def _znorm(values: np.ndarray) -> np.ndarray:
 
 
 def estimate_first_downbeat(
-    y: np.ndarray, sr: int, bpm: float
+    y: np.ndarray, sr: int, bpm: float, *, diagnostics: dict | None = None,
 ) -> tuple[float, float]:
     """
     Schaetzt den Zeitpunkt der ersten "1" (Downbeat) und eine Konfidenz.
@@ -303,24 +378,56 @@ def estimate_first_downbeat(
         y: Audio (mono)
         sr: Sample-Rate
         bpm: bekannte BPM (Prior fuers Beat-Tracking)
+        diagnostics: optionale Zweigdiagnose; eigene Felder werden je Aufruf ersetzt.
 
     Returns:
         (first_downbeat_seconds, confidence 0-1).
         (0.0, 0.0) bei Fehler/zu wenig Material — Verhalten wie ohne Anker.
     """
-    if y is None or bpm <= 0 or len(y) < sr * 8:
+    if diagnostics is not None:
+        diagnostics.update({
+            "reason": None, "stage": None, "beats_detected": 0, "beats_used": 0,
+            "grid_ibi_seconds": None, "bar_confidence": None, "fold_lock": None,
+            "phase_seconds": None, "loud_max": None, "error_type": None,
+        })
+
+    def record(**values):
+        if diagnostics is not None:
+            diagnostics.update(values)
+
+    def reject(reason, stage):
+        record(reason=reason, stage=stage)
         return 0.0, 0.0
 
     try:
+        sample_rate, tempo = _finite_scalar(sr), _finite_scalar(bpm)
+        if sample_rate is None or tempo is None or sample_rate <= 0 or tempo <= 0:
+            return reject("invalidinput", "input")
+        ibi = 60.0 / bpm
+        if not np.isfinite(ibi) or ibi <= 0 or not np.isfinite(ibi * METER):
+            return reject("invalidinput", "input")
+        if y is None:
+            return reject("inputshort", "input")
+        audio = np.asarray(y)
+        if audio.ndim != 1 or not np.all(np.isfinite(audio)):
+            return reject("invalidinput", "input")
+        if len(y) < sr * 8:
+            return reject("inputshort", "input")
+        record(stage="beat_tracking")
         _, beat_frames = librosa.beat.beat_track(
             y=y, sr=sr, hop_length=HOP_LENGTH, start_bpm=bpm, trim=False
         )
         beat_frames = np.atleast_1d(beat_frames)
+        if beat_frames.ndim != 1 or not np.all(np.isfinite(beat_frames)):
+            return reject("invalidinput", "beat_tracking")
+        record(beats_detected=int(beat_frames.size))
         if beat_frames.size < _MIN_BEATS:
-            return 0.0, 0.0
+            return reject("fewbeats", "beat_tracking")
         beat_times = librosa.frames_to_time(
             beat_frames, sr=sr, hop_length=HOP_LENGTH
         )
+        if not np.all(np.isfinite(beat_times)) or np.any(beat_times < 0):
+            return reject("invalidinput", "beat_tracking")
 
         # AUDIT-FIX D-02 (2026-08-14): Tempo-Konsistenz-Gate.
         # Das Phase-Voting laeuft ueber `beat_index % 4` des librosa-Rasters,
@@ -335,21 +442,27 @@ def estimate_first_downbeat(
         grid_ibi = float(
             (beat_times[-1] - beat_times[0]) / (beat_times.size - 1)
         )
+        if not np.isfinite(grid_ibi) or grid_ibi <= 0:
+            return reject("invalidinput", "beat_tracking")
+        record(grid_ibi_seconds=grid_ibi)
         if not _grid_is_commensurate(grid_ibi, 60.0 / bpm):
             logger.debug(
                 f"Downbeat verworfen: Beat-Raster {60.0 / grid_ibi:.1f} BPM "
                 f"ist inkommensurabel zu bpm={bpm:.1f}"
             )
-            return 0.0, 0.0
+            return reject("incommensurate", "beat_tracking")
 
         beat_samples = (beat_times * sr).astype(int)
 
         # --- Feature-Kurven (frame-basiert) ---
+        record(stage="features")
         # Bass-Onsets: Mel-Spektrum auf <= 160 Hz beschraenkt (Kick/Sub)
         bass_env = librosa.onset.onset_strength(
             y=y, sr=sr, hop_length=HOP_LENGTH, fmax=160, n_mels=16
         )
         chroma = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=HOP_LENGTH)
+        if not np.all(np.isfinite(bass_env)) or not np.all(np.isfinite(chroma)):
+            return reject("invalidinput", "features")
 
         n_beats = len(beat_times)
         bass_score = np.zeros(n_beats)
@@ -383,12 +496,17 @@ def estimate_first_downbeat(
                 loud_score[i] = float(np.sqrt(np.mean(seg.astype(np.float64) ** 2)))
 
         # --- Trim: leise Beats (Intro/Breakdown) nicht werten ---
+        record(stage="trim")
         loud_max = float(np.max(loud_score))
+        if not np.isfinite(loud_max):
+            return reject("invalidinput", "trim")
+        record(loud_max=loud_max)
         if loud_max < 1e-9:
-            return 0.0, 0.0
+            return reject("noactivity", "trim")
         valid = loud_score >= loud_max * _TRIM_RATIO
+        record(beats_used=int(np.sum(valid)))
         if int(np.sum(valid)) < _MIN_BEATS:
-            return 0.0, 0.0
+            return reject("fewbeats", "trim")
 
         # Loudness-AKZENT: relativ zum lokalen Umfeld (nicht absolute Lautheit)
         # AUDIT-FIX N11 (2026-07-24): mode="same" behandelt Werte ausserhalb
@@ -409,6 +527,7 @@ def estimate_first_downbeat(
         phases = (np.arange(n_beats) % 4)[valid]
 
         # --- Phase-Voting ---
+        record(stage="voting")
         votes = np.zeros(4)
         combined = (
             _WEIGHTS[0] * z_bass + _WEIGHTS[1] * z_nov + _WEIGHTS[2] * z_accent
@@ -418,10 +537,16 @@ def estimate_first_downbeat(
             if np.any(mask):
                 votes[p] = float(np.sum(combined[mask]))
 
+        if not np.all(np.isfinite(votes)):
+            return reject("invalidinput", "voting")
+
         best_phase = int(np.argmax(votes))
         # AUDIT-FIX D-03 (2026-08-14): ehrliche 0..1-Skala statt roher Margin
         # (analytisch auf 2/3 gedeckelt, siehe _bar_phase_confidence).
         bar_confidence = _bar_phase_confidence(votes)
+        if _finite_scalar(bar_confidence) is None:
+            return reject("invalidinput", "voting")
+        record(bar_confidence=float(bar_confidence))
 
         # AUDIT-FIX N10 (2026-07-24): Der Anker wurde vorher direkt aus einem
         # der ersten vier Beats gelesen (beat_times[best_phase]) — genau dem
@@ -471,12 +596,17 @@ def estimate_first_downbeat(
         # Faltung. Der frueher hier stehende Snap auf den staerksten
         # Bass-Onset-Frame war auf das 46-ms-Hop-Raster gerastert und
         # systematisch ~116 ms zu spaet (Messung an 35 ANLZ-Referenzen).
+        record(stage="fold")
         beat_phase, fold_lock = _beat_phase_from_fold(y, sr, ibi)
+        finite_phase, finite_lock = _finite_scalar(beat_phase), _finite_scalar(fold_lock)
+        record(phase_seconds=finite_phase, fold_lock=finite_lock)
+        if finite_lock is None or (beat_phase is not None and finite_phase is None):
+            return reject("invalidinput", "fold")
         if beat_phase is None:
             # Ohne belastbare Sub-Beat-Phase gibt es keinen Anker, den ein
             # Konsument ausrichten koennte — dokumentierter Vertrag.
             logger.debug("Downbeat verworfen: keine beat-synchrone Struktur")
-            return 0.0, 0.0
+            return reject("weakfold", "fold")
         # Denselben Takt behalten, nur die Beat-Phase korrigieren.
         first_downbeat = beat_phase + round((first_downbeat - beat_phase) / ibi) * ibi
         first_downbeat = float(np.mod(first_downbeat, bar_len))
@@ -490,6 +620,9 @@ def estimate_first_downbeat(
         confidence = float(
             np.clip(confidence, 0.0, SELF_ESTIMATE_CONFIDENCE_MAX)
         )
+        if not np.isfinite(first_downbeat) or not np.isfinite(confidence):
+            return reject("invalidinput", "result")
+        record(reason="voteweak" if bar_confidence == 0.0 else "ok", stage="result")
 
         logger.debug(
             f"Downbeat: Phase {best_phase}, t={first_downbeat:.3f}s, "
@@ -500,6 +633,7 @@ def estimate_first_downbeat(
 
     except Exception as e:
         logger.warning(f"Downbeat-Erkennung fehlgeschlagen: {e}")
+        record(reason="estimationerror", error_type=type(e).__name__)
         return 0.0, 0.0
 
 

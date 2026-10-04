@@ -25,6 +25,7 @@ pyloudnorm==0.2.0  # EBU R128 / ITU-R BS.1770 Loudness (LUFS)
 # GUI & HTTP
 PyQt6==6.10.2
 requests==2.34.2   # HTTP-Client fuer ai_engine/ai_launcher
+lmstudio==1.5.0    # Explizite GPU-Konfiguration eigener lokaler Modellinstanzen
 
 # Test-Toolchain - von pytest.ini vorausgesetzt (-n auto, --cov, qtbot)
 pytest==9.1.1

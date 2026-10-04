@@ -429,6 +429,7 @@ class AIAnalysisWorker(QThread):
         self.base_url = base_url  # Voller Endpoint vom ai_launcher (Port dynamisch)
         self._should_cancel = False
         self.failure_reason = ""
+        self._request_model = model
 
     def request_cancel(self):
         self._should_cancel = True
@@ -438,29 +439,50 @@ class AIAnalysisWorker(QThread):
         """
         Stellt sicher dass der Provider laeuft und ein Modell gewaehlt ist.
         Laeuft bereits im Worker-Thread → blockierend erlaubt, blockiert UI nicht.
-        Wird nur aufgerufen wenn der Detect-Worker beim Start nichts geliefert hat
-        (z.B. Server war aus) oder der Endpoint inzwischen weggefallen ist.
+        LM Studio wird auch bei vorhandenem Endpoint vor jeder Analyse geprueft.
+        Inventarerkennung allein bestaetigt weder GPU-Konfiguration noch Eignung.
         """
-        if self.base_url and self.provider and self.model:
-            return True
         try:
             from hpg_core import ai_launcher
-            status = ai_launcher.detect_and_start(
-                preferred=self.provider,
-                preferred_model=self.model,
-                cancel_check=self.isInterruptionRequested,
-            )
-            if status and status.running:
-                self.base_url = status.base_url
-                self.provider = status.name
-                if status.active_model:
-                    self.model = status.active_model
+            if not (self.base_url and self.provider and self.model):
+                if self.provider:
+                    if self.provider not in {"LM Studio", "Ollama"}:
+                        raise ValueError("Unbekannter KI-Provider")
+                    status = ai_launcher.prepare_provider(
+                        self.provider, preferred_model=self.model,
+                        cancel_check=self.isInterruptionRequested)
+                else:
+                    status = ai_launcher.detect_and_start(
+                        preferred_model=self.model,
+                        cancel_check=self.isInterruptionRequested)
+                if not status or not status.running or not status.active_model:
+                    return False
+                if self.provider and status.name != self.provider:
+                    raise ValueError("Ausgewählter KI-Provider nicht verfügbar; kein automatischer Wechsel")
+                if self.model and status.active_model != self.model:
+                    raise ValueError("Ausgewähltes Modell nicht verfügbar; kein automatischer Wechsel")
+                if status and status.running:
+                    self.base_url = status.base_url
+                    self.provider = status.name
+                    if status.active_model:
+                        self.model = status.active_model
+            if not (self.base_url and self.provider and self.model):
+                return False
+            self._request_model = self.model
+            if self.provider == "LM Studio":
+                from hpg_core.lmstudio_runtime import prepare_gpu_model
+                self._request_model = prepare_gpu_model(
+                    self.model, self.base_url,
+                    cancel_check=self.isInterruptionRequested,
+                )
         except InterruptedError:
             raise
         except Exception as exc:
             logging.getLogger("hpg_core.ai_engine").error(
                 "AI provider setup failed: %s", exc
             )
+            self.failure_reason = str(exc)
+            return False
         return bool(self.base_url and self.provider and self.model)
 
     def _fail(self, reason):
@@ -480,7 +502,7 @@ class AIAnalysisWorker(QThread):
             if self._should_cancel or self.isInterruptionRequested():
                 logger.info("AI Mood Tagging cancelled during provider setup.")
                 return
-            self._fail("Kein einsatzbereiter KI-Provider oder kein Modell verfuegbar.")
+            self._fail(self.failure_reason or "Kein einsatzbereiter KI-Provider oder kein Modell verfuegbar.")
             self.progress.emit(len(self.playlist), len(self.playlist))
             return
         logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
@@ -510,6 +532,7 @@ class AIAnalysisWorker(QThread):
                     model=self.model,
                     url=self.base_url,
                     cancel_check=self.isInterruptionRequested,
+                    **({"request_model": self._request_model} if self.provider == "LM Studio" else {}),
                 )
                 if self._should_cancel or self.isInterruptionRequested():
                     logger.info("AI Mood Tagging cancelled by user.")
@@ -643,11 +666,23 @@ class AITestWorker(QThread):
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "user", "content": "Respond with the word OK and nothing else."}
+                {"role": "system", "content": hpg_config.AI_SYSTEM_PROMPT},
+                {"role": "user", "content": "Track: Technischer Metadaten-Test. Genre: Techno. BPM: 130. Energy: 60. Duration: 300s. Intro 0-32s, Hauptteil 32-268s, Outro 268-300s. Liefere das definierte Metadatenschema. Kein Audio wurde uebertragen."}
             ]
         }
 
         try:
+            from hpg_core.ai_engine import AI_JSON_SCHEMA, validate_ai_completion
+            from hpg_core.models import Track
+            qualification_key = None
+            if self.provider == "LM Studio":
+                from hpg_core.lmstudio_runtime import prepare_gpu_model, instance_qualification_key
+                payload["model"] = prepare_gpu_model(
+                    self.model, url, cancel_check=self.isInterruptionRequested,
+                    explicit_retest=True)
+                qualification_key = instance_qualification_key(payload["model"])
+            payload.update(temperature=0, seed=0, max_tokens=hpg_config.AI_MAX_TOKENS,
+                           response_format={"type": "json_schema", "json_schema": AI_JSON_SCHEMA})
             # timeout=(connect timeout, read timeout). Modell laden kann dauern, daher 30s.
             resp = requests.post(url, json=payload, timeout=(3.0, 30.0))
             resp.raise_for_status()
@@ -657,12 +692,11 @@ class AITestWorker(QThread):
             # HPG-003: bei Abbruch (App-Close) kein Signal mehr emittieren
             if self.isInterruptionRequested():
                 return
-            if "choices" in resp_json and len(resp_json["choices"]) > 0:
-                response_content = resp_json["choices"][0]["message"]["content"].strip()
-                responded_model = resp_json.get("model", self.model)
-                self.test_finished.emit(True, response_content, responded_model, latency)
-            else:
-                self.test_finished.emit(False, "Keine 'choices' in der Antwort des Providers.", self.model, latency)
+            validate_ai_completion(
+                resp_json, Track(filePath="hpg-schema-probe", fileName="Schema-Test", duration=300.),
+                self.provider, self.model, request_model=payload["model"], url=url,
+                qualification_key=qualification_key)
+            self.test_finished.emit(True, "Metadatenschema gültig. Kein Nachweis für Audioverstehen oder musikalische Qualität.", self.model, latency)
         except Exception as e:
             latency = time.time() - start_time
             if self.isInterruptionRequested():
@@ -1976,7 +2010,7 @@ class AdvancedParametersWidget(QWidget):
         self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) fuer Mood- und Subgenre-Tags aus vorhandenen Track-Metadaten.")
         self.ollama_radio.setToolTip("Nutze Ollama als lokalen KI-Dienst. Läuft sehr stabil auf AMD-Grafikkarten unter Windows.")
         self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt fuer detaillierte Modellkonfigurationen.")
-        self.model_combo.setToolTip("Zeigt lokal verfuegbare Textmodelle. HPG sendet Metadaten, keine Audiodateien.")
+        self.model_combo.setToolTip("LM Studio: technische Vorauswahl nach Textfähigkeit und VRAM-Budget. Erst 'Modell testen' prüft eine echte Schemaantwort. HPG sendet Metadaten, keine Audiodateien; das ist kein Nachweis für Audioverstehen.")
         self.ai_refresh_btn.setToolTip("Sucht lokale KI-Instanzen und deren verfuegbare Textmodelle.")
         self.test_ai_btn.setToolTip("Fuehrt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu pruefen.")
 
@@ -2487,7 +2521,7 @@ class AdvancedParametersWidget(QWidget):
             self.detected_active_model = None
             self.test_ai_btn.setEnabled(False)
             self.ai_status_label.setText(
-                f"AI bereit — {status.name}: keine verfuegbaren Modelle."
+                f"KI-Server erreichbar — {status.name}: keine verfuegbaren Modelle."
             )
             return
 
@@ -2510,8 +2544,8 @@ class AdvancedParametersWidget(QWidget):
         if m:
             port = f" :{m.group(1)}"
         self.ai_status_label.setText(
-            f"AI bereit — {status.name}{port} · {len(status.models)} Modelle · "
-            f"aktiv: {self.detected_active_model}"
+            f"KI-Server erreichbar — {status.name}{port} · {len(status.models)} Modelle · "
+            f"ausgewählt: {self.detected_active_model}. GPU und Text-Eignung ungeprüft."
         )
 
     def _on_model_changed(self, model_name):
@@ -2528,8 +2562,8 @@ class AdvancedParametersWidget(QWidget):
         
         num_models = self.model_combo.count()
         self.ai_status_label.setText(
-            f"AI bereit — {provider}{port} · {num_models} Modelle · "
-            f"aktiv: {self.detected_active_model}"
+            f"KI-Auswahl — {provider}{port} · {num_models} Modelle · "
+            f"{self.detected_active_model}. GPU und Text-Eignung erneut prüfen."
         )
 
     def test_ai_connection(self):
@@ -2614,8 +2648,9 @@ class AdvancedParametersWidget(QWidget):
         # Statustext aktualisieren
         num_models = self.model_combo.count()
         self.ai_status_label.setText(
-            f"AI bereit — {provider}{port} · {num_models} Modelle · "
-            f"aktiv: {responded_model}"
+            (f"KI-Antwort erhalten — {provider}{port} · {responded_model}. "
+             "GPU und Musikverständnis damit nicht nachgewiesen.")
+            if success else f"KI-Prüfung fehlgeschlagen: {response_text}"
         )
 
         if success:
@@ -5466,6 +5501,8 @@ class AnalyticsPanel(QWidget):
     hearing_discovery_requested = pyqtSignal()
     hearing_blind_requested = pyqtSignal()
     hearing_blind_check_requested = pyqtSignal()
+    collection_requested = pyqtSignal()
+    measurement_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -5487,6 +5524,20 @@ class AnalyticsPanel(QWidget):
 
         hearing_box = QGroupBox("Hörtest-Kalibrierung")
         hearing_layout = QVBoxLayout(hearing_box)
+        self.collection_button = QPushButton("Sammlung verwalten")
+        self.collection_button.setToolTip(
+            "Musikordner inventarisieren und Änderungen prüfen. Liest Dateipfade, "
+            "Größen und Änderungszeiten; führt keine Audioanalyse aus."
+        )
+        self.collection_button.clicked.connect(self.collection_requested)
+        hearing_layout.addWidget(self.collection_button)
+        self.measurement_button = QPushButton("Messdiagnosen anzeigen")
+        self.measurement_button.setToolTip(
+            "Gespeicherte Messgründe und Fenster der aktuell analysierten Tracks ansehen. "
+            "Keine erneute Analyse. Fehlende Diagnosen bleiben unbekannt; dies ist kein musikalischer Qualitätsnachweis."
+        )
+        self.measurement_button.clicked.connect(self.measurement_requested)
+        hearing_layout.addWidget(self.measurement_button)
         self.hearing_prepare_button = QPushButton("Hörtest erstellen")
         self.hearing_open_button = QPushButton("Satz öffnen")
         self.hearing_discovery_button = QPushButton("Sätze / Fortschritt")
@@ -5631,6 +5682,7 @@ class MainWindow(QMainWindow):
         self._close_pending = False
         self._retired_mix_tips_panels = set()
         self._hearing_worker = None
+        self._collection_dialog = None
         self._hearing_pending_rating = None
         self._hearing_pending_proposal = None
         self._hearing_refresh_pending = False
@@ -5971,22 +6023,69 @@ class MainWindow(QMainWindow):
         # StatusBar
         self.status_bar.cancel_clicked.connect(self.cancel_analysis)
 
-        self.analytics_panel.hearing_prepare_requested.connect(
+        self._connect_analytics_signals(self.analytics_panel)
+
+    def _connect_analytics_signals(self, panel):
+        """Auch jede neu publizierte QUALITY-Ansicht muss bedienbar bleiben."""
+        panel.collection_requested.connect(self._open_collection_dialog)
+        panel.measurement_requested.connect(self._open_measurement_dialog)
+        panel.hearing_prepare_requested.connect(
             self._prepare_hearing_set
         )
-        self.analytics_panel.hearing_open_requested.connect(self._open_hearing_set)
-        self.analytics_panel.hearing_discovery_requested.connect(self._discover_hearing_sets)
-        self.analytics_panel.hearing_blind_requested.connect(self._prepare_hearing_blind)
-        self.analytics_panel.hearing_blind_check_requested.connect(self._check_hearing_blind)
-        self.analytics_panel.hearing_preview_requested.connect(self._open_hearing_preview)
-        self.analytics_panel.hearing_rating_requested.connect(self._open_hearing_rating)
-        self.analytics_panel.hearing_fit_requested.connect(self._fit_hearing_set)
-        self.analytics_panel.hearing_csv_fit_requested.connect(self._fit_hearing_csv_set)
-        self.analytics_panel.hearing_audit_requested.connect(lambda: self._fit_hearing_set(audit_only=True))
-        self.analytics_panel.hearing_cancel_requested.connect(self._cancel_hearing_work)
-        self.analytics_panel.hearing_server_requested.connect(
+        panel.hearing_open_requested.connect(self._open_hearing_set)
+        panel.hearing_discovery_requested.connect(self._discover_hearing_sets)
+        panel.hearing_blind_requested.connect(self._prepare_hearing_blind)
+        panel.hearing_blind_check_requested.connect(self._check_hearing_blind)
+        panel.hearing_preview_requested.connect(self._open_hearing_preview)
+        panel.hearing_rating_requested.connect(self._open_hearing_rating)
+        panel.hearing_fit_requested.connect(self._fit_hearing_set)
+        panel.hearing_csv_fit_requested.connect(self._fit_hearing_csv_set)
+        panel.hearing_audit_requested.connect(lambda: self._fit_hearing_set(audit_only=True))
+        panel.hearing_cancel_requested.connect(self._cancel_hearing_work)
+        panel.hearing_server_requested.connect(
             self._start_hearing_server
         )
+
+    def _open_measurement_dialog(self):
+        """Nur aktuellen Analysestand anzeigen; keine Playlist als Ersatzquelle."""
+        if self._close_pending:
+            return
+        from hpg_core.measurement_panel import MeasurementDialog
+        dialog = MeasurementDialog(tuple(self.analyzed_raw_tracks), parent=self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def _open_collection_dialog(self):
+        """Inventar separat verwalten, niemals als Audioanalyse publizieren."""
+        if self._close_pending:
+            return
+        if self._collection_dialog is not None:
+            self._collection_dialog.raise_()
+            self._collection_dialog.activateWindow()
+            return
+        from hpg_core.collection_panel import CollectionDialog
+
+        dialog = CollectionDialog(parent=self)
+        self._collection_dialog = dialog
+        dialog.finished.connect(lambda _result, current=dialog: self._release_collection_dialog(current))
+        try:
+            dialog.exec()
+        finally:
+            # Der Dialog selbst verschiebt done() bis zum echten Thread-Ende.
+            # Bei einem unerwarteten vorzeitigen Exit behalten wir die Referenz.
+            if getattr(dialog, "worker", None) is None:
+                self._release_collection_dialog(dialog)
+            else:
+                dialog.reject()
+
+    def _release_collection_dialog(self, dialog):
+        """Nur die abgeschlossene eigene Instanz freigeben, niemals laufende Worker."""
+        if self._collection_dialog is not dialog or getattr(dialog, "worker", None) is not None:
+            return
+        self._collection_dialog = None
+        dialog.deleteLater()
 
     def _start_hearing_worker(self, worker, action):
         if self._close_pending or self._hearing_worker is not None:
@@ -6026,14 +6125,18 @@ class MainWindow(QMainWindow):
             return
         self.analytics_panel.hearing_status.setText(str(message))
 
-    def _cleanup_hearing_worker(self, worker):
+    def _cleanup_hearing_worker(self, source_worker=None):
+        worker = source_worker
         if self._hearing_worker is not worker:
             return
-        self._hearing_worker = None
+        if worker is None:
+            return
         try:
+            worker.wait(2000)
             worker.deleteLater()
         except RuntimeError:
             pass
+        self._hearing_worker = None
         self._update_hearing_buttons()
 
         discovered = self._hearing_pending_discovery
@@ -6053,6 +6156,12 @@ class MainWindow(QMainWindow):
             self._refresh_hearing_ranking()
 
     def _cancel_hearing_work(self):
+        if getattr(self, "_hearing_analysis_pending", None) is not None:
+            self._hearing_analysis_pending = None
+            self.cancel_analysis()
+            self.analytics_panel.hearing_status.setText("Hörtest-Vorbereitung abgebrochen; Analyse-Abbruch angefordert.")
+            self._update_hearing_buttons()
+            return
         worker = self._hearing_worker
         if worker is not None and callable(getattr(worker, "request_cancel", None)):
             accepted = worker.request_cancel()
@@ -6066,8 +6175,9 @@ class MainWindow(QMainWindow):
         panel = getattr(self, "analytics_panel", None)
         if panel is None:
             return
-        busy = self._close_pending or self._hearing_worker is not None
-        panel.hearing_cancel_button.setEnabled(busy and callable(getattr(self._hearing_worker, "request_cancel", None)))
+        analysis_pending = getattr(self, "_hearing_analysis_pending", None) is not None
+        busy = self._close_pending or self._hearing_worker is not None or analysis_pending
+        panel.hearing_cancel_button.setEnabled(analysis_pending or busy and callable(getattr(self._hearing_worker, "request_cancel", None)))
         remote_active = self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning
         selectable = not busy and not remote_active and not self._hearing_native_active
         panel.hearing_csv_fit_button.setEnabled(selectable and not self._run_is_active())
@@ -6177,8 +6287,7 @@ class MainWindow(QMainWindow):
             session = result["session"]
             folder = result["set_path"]
             self._hearing_set_path = folder
-            if action == "open":
-                self._hearing_cache_path = ""
+            self._hearing_cache_path = result.get("cache_path", "")
             self.analytics_panel.hearing_status.setText(
                 f"Satz geladen ({session['mode']}). Kein Render-/Audit-Nachweis.\n{folder}"
             )
@@ -6192,6 +6301,7 @@ class MainWindow(QMainWindow):
             self.analytics_panel.hearing_status.setText(
                 (f"{result.get('output', '')}\n{self._hearing_set_path}" if result.get("prepared_only")
                  else f"Satz erstellt und am endgültigen Pfad auditiert.\n{self._hearing_set_path}")
+                + ("\n" + result["cleanup_warning"] if result.get("cleanup_warning") else "")
             )
         else:
             self.analytics_panel.hearing_status.setText(result.get("output", "Auswertung abgeschlossen."))
@@ -6203,12 +6313,12 @@ class MainWindow(QMainWindow):
         self._update_hearing_buttons()
 
     def _prepare_hearing_set(self):
-        if not self._hearing_selection_allowed():
+        if not self._hearing_selection_allowed() or self._run_is_active():
             return
         from hpg_core.hearing_panel import HearingPrepareDialog
         from hpg_core.hearing_jobs import HearingPrepareWorker
 
-        dialog = HearingPrepareDialog(self)
+        dialog = HearingPrepareDialog(self, folder=self.library_panel.current_folder)
         self._hearing_native_active = True
         self._update_hearing_buttons()
         try:
@@ -6216,10 +6326,61 @@ class MainWindow(QMainWindow):
         finally:
             self._hearing_native_active = False
             self._update_hearing_buttons()
-        if not accepted or not self._hearing_selection_allowed():
+        if not accepted or not self._hearing_selection_allowed() or self._run_is_active():
             return
-        worker = HearingPrepareWorker(dialog.config, parent=self)
-        self._start_hearing_worker(worker, "prepare")
+        config = dialog.config
+        folder = str(config.source_roots[0])
+        # Jeder Auftrag validiert Dateien/Cache erneut. Keine Wiederverwendung
+        # einer alten GUI-Kopie nur aufgrund eines gleichen Ordnernamens.
+        self._hearing_analysis_snapshot = None
+        self._hearing_analysis_error = ""
+        # Vorhandenen Analyselauf mit den aktuellen Bibliothekseinstellungen nutzen.
+        # Rohtracks ohne bestaetigten Ordnerbezug werden niemals uebernommen.
+        self.library_panel.set_folder_path(folder)
+        self.start_analysis()
+        if self.worker is None:
+            self.analytics_panel.hearing_status.setText("Analyse nicht gestartet; kein Hörtest vorbereitet.")
+            return
+        self._hearing_analysis_pending = (config, self.worker, self._run_id)
+        self.analytics_panel.hearing_status.setText("Musikordner wird analysiert; Hörtest folgt erst nach erfolgreichem Laufabschluss.")
+        self._update_hearing_buttons()
+
+    def _capture_hearing_analysis(self, tracks, source_worker=None):
+        if (source_worker is None or source_worker is not self.worker
+                or getattr(self, "_hearing_analysis_pending", None) is None):
+            return
+        self._hearing_analysis_snapshot = None
+        if self.run_state in {RunState.CANCELLING, RunState.CANCELLED} or not tracks:
+            return
+        from hpg_core.hearing_managed import freeze_tracks
+        try:
+            folder = str(Path(source_worker.folder_path).resolve(strict=True))
+            self._hearing_analysis_snapshot = (folder, freeze_tracks(tracks, folder), self._run_id)
+        except (ValueError, TypeError, OSError) as exc:
+            self._hearing_analysis_error = str(exc)
+            self.analytics_panel.hearing_status.setText(f"Kein gültiger Hörtest-Analyse-Snapshot: {exc}")
+
+    def _resume_hearing_analysis(self, source_worker=None):
+        pending = getattr(self, "_hearing_analysis_pending", None)
+        if pending is None or source_worker is not pending[1]:
+            return
+        config, _, run_id = pending
+        if self._close_pending or self._run_id != run_id:
+            self._hearing_analysis_pending = None
+            return
+        if self._run_is_active():
+            QTimer.singleShot(100, lambda source=source_worker: self._resume_hearing_analysis(source))
+            return
+        self._hearing_analysis_pending = None
+        captured = getattr(self, "_hearing_analysis_snapshot", None)
+        if (self.run_state != RunState.SUCCESS or captured is None
+                or captured[0] != str(config.source_roots[0]) or captured[2] != run_id):
+            detail = getattr(self, "_hearing_analysis_error", "")
+            self.analytics_panel.hearing_status.setText("Analyse nicht vollständig erfolgreich; kein Hörtest vorbereitet. " + detail)
+            self._update_hearing_buttons()
+            return
+        from hpg_core.hearing_jobs import HearingPrepareWorker
+        self._start_hearing_worker(HearingPrepareWorker(config, parent=self, managed_metadata=captured[1]), "prepare")
 
     def _open_hearing_set(self):
         if not self._hearing_selection_allowed():
@@ -6231,7 +6392,7 @@ class MainWindow(QMainWindow):
         self._start_hearing_worker(HearingLoadWorker(os.path.abspath(set_path), self), "open")
 
     def _hearing_selection_allowed(self):
-        return not self._close_pending and self._hearing_worker is None and not self._hearing_native_active and (
+        return not self._close_pending and getattr(self, "_hearing_analysis_pending", None) is None and self._hearing_worker is None and not self._hearing_native_active and (
             self._hearing_process is None or self._hearing_process.state() == QProcess.ProcessState.NotRunning)
 
     def _discover_hearing_sets(self):
@@ -6913,6 +7074,7 @@ class MainWindow(QMainWindow):
         if worker is self.worker:
             self.worker = None
         self._try_finish_cancelled_run()
+        self._resume_hearing_analysis(source_worker)
 
     def _on_audio_progress(self, percent):
         # Audio-Analyse nimmt die ersten 80% des Fortschritts ein
@@ -7216,6 +7378,7 @@ class MainWindow(QMainWindow):
             return
         if self.run_state == RunState.CANCELLED:
             return
+        self._capture_hearing_analysis(playlist, source_worker)
         # Audio-Analyse fertig -> Fortschritt steht bei 80% (Rest ist KI-Anreicherung)
         self.status_bar.set_progress(80)
         self.library_panel.progress_widget.set_progress(80)
@@ -7270,6 +7433,17 @@ class MainWindow(QMainWindow):
 
         # Speichere die analysierten Roh-Tracks
         self.analyzed_raw_tracks = playlist
+
+        pending = getattr(self, "_hearing_analysis_pending", None)
+        if pending is not None and pending[1] is source_worker and pending[2] == self._run_id:
+            # Hoertest-Vorbereitung braucht Audioanalyse, aber keinen optionalen
+            # LLM-Lauf und keine neue Playlist. Die bestehende Playlist bleibt.
+            complete = not self._analysis_issues and getattr(self, "_hearing_analysis_snapshot", None) is not None
+            self._finish_run(
+                RunState.SUCCESS if complete else RunState.ERROR,
+                "Hörtest-Analyse abgeschlossen." if complete else "Hörtest-Analyse unvollständig; keine Vorbereitung.",
+            )
+            return
 
         ap = self.library_panel.advanced_params
         run_settings = self._run_settings or self.library_panel.get_current_settings()
@@ -7396,6 +7570,15 @@ class MainWindow(QMainWindow):
             playlist_panel, mix_tips_panel, timeline_panel, analytics_panel, toolbar
         )
         try:
+            self._connect_analytics_signals(analytics_panel)
+            # Der View-Austausch darf den geoeffneten Hoertest weder vergessen
+            # noch laufende Aktionen wieder freigeben. Keine neue Geschaeftsregel.
+            for name, button in vars(self.analytics_panel).items():
+                if name.startswith("hearing_") and isinstance(button, QPushButton):
+                    getattr(analytics_panel, name).setEnabled(button.isEnabled())
+            analytics_panel.hearing_status.setText(
+                self.analytics_panel.hearing_status.text()
+            )
             playlist_panel.set_playlist_data(
                 playlist,
                 quality_metrics,
@@ -8107,6 +8290,7 @@ class MainWindow(QMainWindow):
             advanced._test_worker,
             advanced._pull_worker,
             self._hearing_worker,
+            getattr(self._collection_dialog, "worker", None),
         ]
         unique = []
         seen = set()
@@ -8127,6 +8311,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Akzeptiert Close erst nach nachgewiesenem Ende aller Worker."""
+        if self._collection_dialog is not None:
+            self._collection_dialog.reject()
         if not self._close_pending:
             self._close_pending = True
             self._save_ui_settings()

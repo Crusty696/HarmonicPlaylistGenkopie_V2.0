@@ -61,7 +61,10 @@ class TestContextFlowStrategy:
     peak = [t.energy for t in result[6:9]]
     assert sum(peak) / len(peak) > sum(warmup) / len(warmup)
 
-  def test_genre_fatigue_prefers_switch_after_streak(self):
+  def test_genre_fatigue_prefers_switch_after_streak(self, monkeypatch):
+    # Nur den Context-Zusatz isolieren: reale lokale Scores unterscheiden hier
+    # Techno/Techno=98 und Techno/TechHouse=96; der Fatigue-Vorteil ist nur 1.8.
+    monkeypatch.setattr("hpg_core.playlist.calculate_transition_objective", lambda *a, **kw: 97)
     # 5x Techno gleicher Energie + 1 Tech House Alternative:
     # nach 4er-Streak soll der Genre-Wechsel belohnt werden
     techno = [_mk(125.0, 50, genre="Techno", title=f"T{i}") for i in range(5)]
@@ -96,7 +99,11 @@ class TestContextFlowStrategy:
     late_peak = next(i for i, track in enumerate(late) if track.energy == 90)
     assert early_peak < late_peak
 
-  def test_context_genre_weight_changes_candidate_ranking(self):
+  def test_context_genre_weight_changes_candidate_ranking(self, monkeypatch):
+    # Eine gegenlaeufige lokale Praeferenz zeigt den Reglereinfluss. Gleiche
+    # Reihenfolgen auf einer einzelnen echten Fixture beweisen keinen toten Regler.
+    monkeypatch.setattr("hpg_core.playlist.calculate_transition_objective",
+                        lambda a, b, *args, **kw: 96 if b.detected_genre == "Trance" else 95)
     genres = ["Techno", "Trance", "Minimal", "Tech House", "Deep House", "Psytrance"]
     no_genre = _sort_context_flow(
       [_mk(128, 50, genre=genre, title=genre) for genre in genres],

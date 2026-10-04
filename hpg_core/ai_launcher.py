@@ -359,20 +359,25 @@ def lms_start():
 
 
 def lms_models(port):
-    """Gibt lokal installierte LM-Studio-Chatmodelle zurueck."""
+    """Technische Vorauswahl; Schemaantwort und GPU-Lauf separat pruefen."""
     ok, data = _http_json(f"http://localhost:{port}/api/v1/models")
     if not ok or not data:
         return []
     inventory = data.get("models", [])
+    from .lmstudio_runtime import model_rejection_reason, runtime_target
+    try:
+        vram = runtime_target("127.0.0.1", port)["vram_bytes"]
+    except (ValueError, OSError, TypeError) as exc:
+        logger.warning("LM-Studio-Modellauswahl gesperrt: %s", exc)
+        return []
     chat_models = [
         model.get("key", "")
         for model in inventory
-        if model.get("type") == "llm"
-        and model.get("key")
-        and not _is_embedding_model(model.get("key", ""))
+        if isinstance(model, dict) and model.get("key")
+        and not model_rejection_reason(model, vram)
     ]
     logger.info(
-        "LM Studio: %d/%d Chatmodelle verfuegbar",
+        "LM Studio: %d/%d technisch passende Textkandidaten; Schema und GPU ungeprueft",
         len(chat_models), len(inventory),
     )
     return chat_models
@@ -434,6 +439,8 @@ def lms_get(model, cancel_check=None):
 
 
 def _prepare_lmstudio(preferred_model, cancel_check=None):
+    if cancel_check and cancel_check():
+        raise InterruptedError("AI provider detection cancelled by user")
     port = lms_start()
     if not port:
         return AIProviderStatus("LM Studio", config.AI_API_URL_LMSTUDIO,
@@ -441,21 +448,11 @@ def _prepare_lmstudio(preferred_model, cancel_check=None):
 
     base = f"http://localhost:{port}/v1/chat/completions"
     models = lms_models(port)
-    preferred_match = _match_preferred_model(models, preferred_model)
-
-    # Auto-Get: gewuenschtes Modell weder geladen noch gelistet -> herunterladen
-    if preferred_model and not preferred_match:
-        if lms_get(preferred_model, cancel_check=cancel_check):
-            models = lms_models(port)
-            preferred_match = _match_preferred_model(models, preferred_model)
-        elif cancel_check and cancel_check():
-            raise InterruptedError("AI model download cancelled by user")
-
-    active = preferred_match or _pick_model(models, preferred_model)
-
-    # Modell in den Speicher laden (LM Studio bedient /v1 erst nach load)
-    if active and not lms_load(active, port):
-        active = ""
+    # Erkennung ist kein Ladeauftrag. Erst der Analyse-/Testworker bereitet
+    # eine eigene, explizit konfigurierte Instanz vor. Downloads bleiben manuell.
+    # Ein expliziter Katalogschluessel darf nicht durch einen aehnlichen Namen
+    # oder das erstbeste andere Modell ersetzt werden.
+    active = (preferred_model if preferred_model in models else "") if preferred_model else _pick_model(models, None)
 
     return AIProviderStatus("LM Studio", base, models, active, running=True)
 

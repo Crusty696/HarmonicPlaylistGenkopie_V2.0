@@ -21,12 +21,65 @@ import json
 from copy import deepcopy
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
+import threading
 from .models import CAMELOT_MAP
+from .rekordbox_readonly import ReadOnlyRekordboxError
 
 logger = logging.getLogger(__name__)
+_detail_uncertain = ContextVar("rekordbox_detail_uncertain", default=False)
+
+
+def _tag_evidence(files, keys):
+    """Tag-Abwesenheit nur bestaetigen, wenn Zugriff ohne unbekannten Fehler gelang."""
+    present = False
+    try:
+        for file in files:
+            for key in keys:
+                if hasattr(type(file), "__contains__") and key not in file:
+                    continue
+                getter = getattr(file, "get_tag", None)
+                tag = getter(key) if callable(getter) else getattr(file, key, None)
+                if callable(getter) and tag is None:
+                    return "unverified"
+                if tag is not None:
+                    present = True
+    except ReadOnlyRekordboxError:
+        raise
+    except Exception:
+        return "unverified"
+    return "present" if present else "missing"
+
+
+@contextmanager
+def _opaque_phrase_logging():
+    """Hilfsmodul darf keine fremden Exceptiontexte dieses Aufrufs protokollieren."""
+    thread_id = threading.get_ident()
+
+    class Opaque(logging.Filter):
+        def filter(self, record):
+            if record.thread == thread_id:
+                if record.levelno >= logging.WARNING:
+                    _detail_uncertain.set(True)
+                record.msg = "Rekordbox-Phrasendetail konnte nicht vollstaendig gelesen werden."
+                record.args = ()
+                record.exc_info = None
+                record.exc_text = None
+            return True
+
+    target = logging.getLogger("hpg_core.rekordbox_phrases")
+    filter_ = Opaque()
+    target.addFilter(filter_)
+    try:
+        yield
+    finally:
+        target.removeFilter(filter_)
 
 try:
-    from pyrekordbox import Rekordbox6Database
+    # Historischer Name bleibt als Mock-Einstieg erhalten; kein schreibender
+    # pyrekordbox-Konstruktor darf hier mehr aufgerufen werden.
+    from .rekordbox_readonly import open_rekordbox_readonly as Rekordbox6Database
     from pyrekordbox.db6 import tables
     from sqlalchemy.orm import joinedload
 
@@ -127,6 +180,9 @@ class RekordboxImporter:
         # Ein ANLZ-Snapshot je content_id. Signatur, Beatgrid, Downbeat und
         # Phrasen eines Analyselaufs muessen aus exakt denselben Dateien stammen.
         self._anlz_cache: Dict[str, list] = {}
+        # Nur Lesebelege, niemals Teil der bisherigen Nutzdaten/Signatur.
+        self._anlz_read_status: Dict[str, dict] = {}
+        self._read_status_cache: Dict[tuple, str] = {}
 
         # Debug-/Validierungs-Schalter (2026-07-17): erzwingt die volle
         # Librosa-Analyse, auch wenn Tracks in der Rekordbox-DB stehen
@@ -139,23 +195,33 @@ class RekordboxImporter:
                 self.db = Rekordbox6Database()
                 self._build_track_cache()
                 logger.info(f"Rekordbox-DB geladen: {len(self.track_cache)} Tracks")
-            except Exception as e:
-                # Audit-Fix 2026-07-17: die zwei haeufigsten Realfaelle
-                # differenziert melden statt nur generisch loggen
-                msg = str(e).lower()
-                if "locked" in msg or "database is locked" in msg:
-                    logger.warning(
-                        "Rekordbox-DB ist gesperrt — laeuft Rekordbox gerade? "
-                        "Bitte Rekordbox schliessen und neu analysieren."
-                    )
-                elif "cipher" in msg or "encrypted" in msg or "key" in msg or "no such table" in msg:
-                    logger.warning(
-                        "Rekordbox-DB verschluesselt / Key fehlt — pyrekordbox benoetigt "
-                        "den Datenbank-Key (siehe pyrekordbox-Doku: 'python -m pyrekordbox download-key')."
-                    )
-                else:
-                    logger.warning(f"Rekordbox-DB konnte nicht geladen werden: {e}")
-                self.db = None
+            except ReadOnlyRekordboxError:
+                self.close()
+                logger.warning("Rekordbox-Quelle konnte nicht sicher schreibgeschuetzt gelesen werden.")
+            except Exception:
+                # Treibertexte koennen SQLCipher-Schluessel enthalten.
+                self.close()
+                logger.warning("Rekordbox-Quelle konnte nicht geladen werden.")
+
+    def close(self) -> None:
+        """Reader freigeben und jeden davon abhaengigen Teilzustand verwerfen."""
+        db, self.db = self.db, None
+        self.track_cache.clear()
+        self.basename_cache.clear()
+        self._ambiguous_paths.clear()
+        self._downbeat_cache.clear()
+        self._beatgrid_cache.clear()
+        self._phrases_cache.clear()
+        self._anlz_cache.clear()
+        getattr(self, "_anlz_read_status", {}).clear()
+        getattr(self, "_read_status_cache", {}).clear()
+        if db is not None:
+            closer = getattr(db, "close", None)
+            if closer is not None:
+                try:
+                    closer()
+                except Exception:
+                    logger.warning("Rekordbox-Reader konnte nicht vollstaendig freigegeben werden.")
 
     def is_available(self) -> bool:
         """Check if Rekordbox database is available"""
@@ -221,6 +287,8 @@ class RekordboxImporter:
             for content in content_iterator:
                 try:
                     self._cache_content_record(content)
+                except ReadOnlyRekordboxError:
+                    raise
                 except Exception as error:
                     try:
                         file_name = getattr(content, "FileNameL", None) or getattr(
@@ -239,8 +307,11 @@ class RekordboxImporter:
                         error,
                     )
 
-        except Exception as e:
-            logger.warning(f"Fehler beim Aufbau des Rekordbox-Track-Cache: {e}")
+        except Exception:
+            # Auch Abfrageabbrueche duerfen keinen scheinbar gueltigen
+            # Teilimport publizieren. Der Konstruktor uebernimmt die Meldung.
+            self.close()
+            raise
 
     def _cache_content_record(self, content) -> None:
         """Validiert und uebernimmt genau einen Rekordbox-Content-Record."""
@@ -463,12 +534,30 @@ class RekordboxImporter:
         if self.db is None:
             return []
         result: List[Dict] = []
+        state = "unverified"
+        token = _detail_uncertain.set(False)
         try:
-            result = self._extract_beatgrid_from_anlz(
-                self._read_anlz_files(data.content_id)
-            )
-        except Exception as error:
-            logger.warning("ANLZ-Beatgrid nicht lesbar fuer %s: %s", file_path, error)
+            files = self._read_anlz_files(data.content_id)
+            result = self._extract_beatgrid_from_anlz(files)
+            evidence = _tag_evidence(files, ("PQTZ", "PQT2", "beat_grid", "beats"))
+            source = getattr(self, "_anlz_read_status", {}).get(data.content_id, {})
+            if evidence == "unverified" or _detail_uncertain.get():
+                state = "unverified"
+            elif result:
+                state = "ok"
+            elif evidence == "missing" and (source.get("all") or source.get("dat")):
+                state = "missing"
+            elif source.get("error") and not source.get("dat"):
+                state = "error"
+        except ReadOnlyRekordboxError:
+            self.close()
+            raise
+        except Exception:
+            state = "error"
+            logger.warning("Rekordbox-Beatgrid konnte nicht gelesen werden.")
+        finally:
+            _detail_uncertain.reset(token)
+        self._store_read_status(data, "beatgrid", None, state)
         self._beatgrid_cache[data.content_id] = deepcopy(result)
         return deepcopy(self._beatgrid_cache[data.content_id])
 
@@ -492,6 +581,7 @@ class RekordboxImporter:
         anlz_files = []
         if self.db is None:
             return anlz_files
+        status = {"all": False, "dat": False, "error": False}
         for reader, args in (
             (getattr(self.db, "read_anlz_files", None), (content_id,)),
             (getattr(self.db, "read_anlz_file", None), (content_id, "DAT")),
@@ -500,8 +590,17 @@ class RekordboxImporter:
                 continue
             try:
                 res = reader(*args)
+            except ReadOnlyRekordboxError:
+                self.close()
+                raise
             except Exception:
+                status["error"] = True
                 continue
+            # Erfolgreiches Gesamtlesen belegt auch fehlende optionale Dateien.
+            if len(args) == 1:
+                status["all"] = isinstance(res, dict)
+            else:
+                status["dat"] = True
             if res is None:
                 continue
             # read_anlz_files liefert dict {path: AnlzFile}, read_anlz_file ein Objekt
@@ -512,6 +611,7 @@ class RekordboxImporter:
             if anlz_files:
                 break
         cache[content_id] = list(anlz_files)
+        self.__dict__.setdefault("_anlz_read_status", {})[content_id] = status
         return list(anlz_files)
 
     def get_phrases(
@@ -544,13 +644,34 @@ class RekordboxImporter:
         if self.db is None:
             return []
         result: List[Dict] = []
+        state = "unverified"
+        token = _detail_uncertain.set(False)
         try:
             files = self._read_anlz_files(data.content_id)
             ext = next((f for f in files if _hat_tag(f, "PSSI")), None)
             dat = next((f for f in files if _hat_tag(f, "PQTZ")), None)
-            result = phrases_from_anlz(ext, dat, effective_duration)
-        except Exception as e:
-            logger.warning(f"PSSI-Phrasen nicht lesbar fuer {file_path}: {e}")
+            with _opaque_phrase_logging():
+                result = phrases_from_anlz(ext, dat, effective_duration)
+            pssi = _tag_evidence(files, ("PSSI",))
+            pqtz = _tag_evidence(files, ("PQTZ",))
+            source = getattr(self, "_anlz_read_status", {}).get(data.content_id, {})
+            if "unverified" in (pssi, pqtz) or _detail_uncertain.get():
+                state = "unverified"
+            elif result:
+                state = "ok"
+            elif "missing" in (pssi, pqtz) and source.get("all"):
+                state = "missing"
+            elif source.get("error") and not source.get("dat"):
+                state = "error"
+        except ReadOnlyRekordboxError:
+            self.close()
+            raise
+        except Exception:
+            state = "error"
+            logger.warning("Rekordbox-Phrasen konnten nicht gelesen werden.")
+        finally:
+            _detail_uncertain.reset(token)
+        self._store_read_status(data, "phrases", effective_duration, state)
         self._phrases_cache[cache_key] = deepcopy(result)
         return deepcopy(self._phrases_cache[cache_key])
 
@@ -587,6 +708,12 @@ class RekordboxImporter:
                 beats = getattr(tag, "beats", None)
                 times = getattr(tag, "times", None)
                 if beats is not None and times is not None:
+                    try:
+                        equal_lengths = len(beats) == len(times)
+                    except TypeError:
+                        equal_lengths = False
+                    if not equal_lengths:
+                        _detail_uncertain.set(True)
                     for beat_num, raw_time in zip(beats, times):
                         try:
                             # pyrekordbox normalisiert ``PQTZAnlzTag.times``
@@ -599,7 +726,10 @@ class RekordboxImporter:
                                 and position >= 0.0
                             ):
                                 points.append({"beat": beat, "time": position})
+                            else:
+                                _detail_uncertain.set(True)
                         except (OverflowError, TypeError, ValueError):
+                            _detail_uncertain.set(True)
                             continue
                     if points:
                         return points
@@ -616,13 +746,16 @@ class RekordboxImporter:
                                 beat = int(beat) if beat is not None else 0
                                 if 1 <= beat <= 4 and position is not None:
                                     points.append({"beat": beat, "time": position})
-                            except (AttributeError, OverflowError, TypeError, ValueError) as error:
+                                else:
+                                    _detail_uncertain.set(True)
+                            except (AttributeError, OverflowError, TypeError, ValueError):
+                                _detail_uncertain.set(True)
                                 logger.warning(
-                                    "Defekter Rekordbox-PQTZ-Eintrag verworfen: %s",
-                                    error,
+                                    "Defekter Rekordbox-PQTZ-Eintrag verworfen.",
                                 )
-                    except (TypeError, ValueError) as error:
-                        logger.warning("Rekordbox-PQTZ-Liste nicht lesbar: %s", error)
+                    except (TypeError, ValueError):
+                        _detail_uncertain.set(True)
+                        logger.warning("Rekordbox-PQTZ-Liste nicht lesbar.")
                         continue
                     if points:
                         return points
@@ -677,6 +810,32 @@ class RekordboxImporter:
 
         return None
 
+    @staticmethod
+    def _read_context(data) -> str:
+        return json.dumps(data.__dict__, sort_keys=True, default=str)
+
+    def _store_read_status(self, data, detail, duration, state):
+        self.__dict__.setdefault("_read_status_cache", {})[
+            (data.content_id, self._read_context(data), detail, duration)] = state
+
+    def get_track_read_status(self, file_path: str) -> Dict[str, str]:
+        """Nur aktuelle Match-/Statusmemos lesen, niemals ANLZ oder DB oeffnen."""
+        unknown = {"beatgrid": "unverified", "phrases": "unverified"}
+        data = self.get_track_data(file_path)
+        if data is None or not data.content_id:
+            return unknown
+        context = self._read_context(data)
+        duration = 0.0
+        try:
+            candidate = float(data.duration)
+            if math.isfinite(candidate) and candidate > 0:
+                duration = candidate
+        except (TypeError, ValueError, OverflowError):
+            pass
+        return {name: getattr(self, "_read_status_cache", {}).get(
+                    (data.content_id, context, name, value), "unverified")
+                for name, value in (("beatgrid", None), ("phrases", duration))}
+
     def get_track_signature(self, file_path: str) -> str:
         """Liefert eine stabile Signatur der importierten RB-Metadaten.
 
@@ -688,6 +847,10 @@ class RekordboxImporter:
         if data is None:
             return ""
         if data.content_id:
+            getattr(self, "_anlz_read_status", {}).pop(data.content_id, None)
+            for status_key in tuple(getattr(self, "_read_status_cache", {})):
+                if status_key[0] == data.content_id:
+                    self._read_status_cache.pop(status_key, None)
             self._anlz_cache.pop(data.content_id, None)
             self._beatgrid_cache.pop(data.content_id, None)
             self._downbeat_cache.pop(data.content_id, None)

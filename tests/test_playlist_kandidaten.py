@@ -68,7 +68,8 @@ def test_enhanced_compatibility_nutzt_kandidat_wenn_vorhanden():
     assert m.kandidat is not None and m.kandidat["rang"] == 1
     assert m.loudness_match == pytest.approx(1.0) and m.structure_match is not None
     assert m.groove_match == pytest.approx(m.kandidat["teilwerte"]["groove"])
-    assert m.overall_score != pytest.approx(m.kandidat["score"])
+    # Sortierung und Anzeige verwenden jetzt denselben lokalen Kandidatenscore.
+    assert m.overall_score == pytest.approx(m.kandidat["score"])
     assert m.ai_bonus == 0.0
 
 

@@ -254,6 +254,42 @@ def validate_ai_analysis(
         raise ValueError("KI-Ergebnis verletzt den persistierbaren Vertrag")
     return result
 
+def validate_ai_completion(response, track, provider, model, *, request_model=None, url=None, qualification_key=None):
+    """Gleicher Antwortvertrag fuer expliziten Modelltest und echte Trackanfrage.
+
+    Nur ein beobachteter Antwortfehler qualifiziert negativ. Transport, GPU-
+    Vorbereitung, Abbruch und DB-Persistenz liegen bewusst ausserhalb.
+    """
+    try:
+        if not isinstance(response, dict):
+            raise ValueError("KI-Antwort ist kein Objekt")
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("Keine 'choices' in der Antwort des Providers")
+        if request_model and response.get("model") != request_model:
+            raise ValueError("Antwort stammt nicht von der angeforderten Modellinstanz")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Leere oder nicht textuelle KI-Antwort")
+        content = content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.endswith("```"):
+            content = content[:-3]
+        selected_model = model if request_model else str(response.get("model") or model or config.AI_MODEL)
+        result = validate_ai_analysis(json.loads(content.strip()), track, provider, selected_model)
+    except (TypeError, ValueError) as exc:
+        if provider == "LM Studio" and request_model and url:
+            from .lmstudio_runtime import record_qualification
+            record_qualification(model, url, False, str(exc), qualification_key=qualification_key)
+        raise
+    if provider == "LM Studio" and request_model and url:
+        from .lmstudio_runtime import record_qualification
+        record_qualification(model, url, True, "Instanzgebundener Metadaten-Antwortvertrag bestanden", qualification_key=qualification_key)
+    return result
+
+
 def fetch_ai_analysis(
     track: Track,
     provider: str = None,
@@ -261,6 +297,7 @@ def fetch_ai_analysis(
     url: str = None,
     *,
     cancel_check: Callable[[], bool] | None = None,
+    request_model: str | None = None,
 ) -> dict:
     """
     Sendet Track-Daten an die lokale AI-Engine (Ollama oder LM Studio).
@@ -317,7 +354,7 @@ def fetch_ai_analysis(
     prompt += "Identify the optimal mix_in_time and mix_out_time in seconds. Ensure they are logically placed within the track duration and sections."
 
     payload = {
-        "model": model or config.AI_MODEL,
+        "model": request_model or model or config.AI_MODEL,
         "messages": [
             {"role": "system", "content": config.AI_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
@@ -341,6 +378,10 @@ def fetch_ai_analysis(
         "json_schema": AI_JSON_SCHEMA,
     }
     
+    qualification_key = None
+    if current_provider == "LM Studio" and request_model:
+        from .lmstudio_runtime import instance_qualification_key
+        qualification_key = instance_qualification_key(request_model)
     try:
         logger.debug(f"Sending AI request to {url} for track: {track.title}")
         request_timeout = (5.0, config.AI_TIMEOUT)
@@ -354,47 +395,13 @@ def fetch_ai_analysis(
             logger.error(f"AI API returned status code {resp.status_code}: {resp.text}")
             return {}
 
-        resp_json = resp.json()
-        
-        # Validierung der Antwortstruktur
-        if not isinstance(resp_json, dict):
-            logger.error(f"Invalid response format from AI: expected dict, got {type(resp_json)}")
-            return {}
-            
-        # CRITICAL BUGFIX: Extrahiere und parse den JSON-String aus choices[0].message.content
-        if "choices" in resp_json and len(resp_json["choices"]) > 0:
-            content_str = resp_json["choices"][0]["message"]["content"]
-            # Bereinigung falls LLM fälschlicherweise Markdown-Formatierung mitsendet
-            content_str = content_str.strip()
-            if content_str.startswith("```json"):
-                content_str = content_str[7:]
-            if content_str.endswith("```"):
-                content_str = content_str[:-3]
-            content_str = content_str.strip()
-            
-            # Sicherheitsprüfung der JSON-Struktur
-            if not content_str:
-                logger.warning(f"Empty AI response for track {track.title}")
-                return {}
-                
-            try:
-                parsed_data = json.loads(content_str)
-                selected_model = str(resp_json.get("model") or model or config.AI_MODEL)
-                parsed_data = validate_ai_analysis(
-                    parsed_data,
-                    track,
-                    current_provider,
-                    selected_model,
-                )
-                logger.info(f"AI-Analyse erfolgreich geladen fuer {track.title} ({current_provider})")
-                return parsed_data
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
-                logger.error(f"AI schema validation failed for track {track.title}: {e}")
-                logger.debug(f"Raw content: {content_str}")
-                return {}
-            
-        logger.warning(f"AI-Antwort besass kein 'choices'-Array: {resp_json}")
-        return {}
+        if cancel_check and cancel_check():
+            raise InterruptedError("KI-Analyse abgebrochen")
+        parsed_data = validate_ai_completion(
+            resp.json(), track, current_provider, model or config.AI_MODEL,
+            request_model=request_model, url=url, qualification_key=qualification_key)
+        logger.info(f"AI-Analyse erfolgreich geladen fuer {track.title} ({current_provider})")
+        return parsed_data
     except InterruptedError:
         raise
     except requests.exceptions.Timeout as e:

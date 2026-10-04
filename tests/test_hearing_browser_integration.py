@@ -417,7 +417,7 @@ def test_accepted_prepare_modal_rechecks_shutdown(qtbot, monkeypatch, tmp_path, 
     def forbidden(*args, **kwargs):
         raise AssertionError("Nach Close darf kein Prepare-Worker entstehen")
     class Form:
-        def __init__(self, parent):
+        def __init__(self, parent, *, folder=""):
             self.config = object()
         def exec(self):
             assert window._hearing_native_active

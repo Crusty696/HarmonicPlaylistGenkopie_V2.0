@@ -748,9 +748,7 @@ def calculate_enhanced_compatibility(
         )
         if paare:
             kandidat = paare[0]
-    metrics = _calculate_track_edge_metrics(
-        track1, track2, bpm_tolerance, energy_direction, kwargs, kandidat
-    )
+    metrics = transition_metrics_from_candidate(kandidat)
     if _ENHANCED_COMPAT_CACHE is not None:
         _ENHANCED_COMPAT_CACHE[cache_key] = metrics
     return metrics
@@ -1440,11 +1438,9 @@ def _sort_energy_wave(
     (137-141 BPM) trat das Problem nicht auf; es trifft, wer die Strategie
     auf einen gemischten Bestand anwendet.
 
-    Kein Hard-Gate, sondern eine Praeferenz: es wird immer der BPM-naechste
-    Kandidat des Fensters genommen, ohne Schwellenvergleich. Ein Gate wuerde
-    die Welle abbrechen lassen, sobald eine Seite erschoepft ist, und die
-    Strategie hat keine Zielfunktion, auf die sie ausweichen koennte.
-    `bpm_tolerance` bleibt deshalb ungenutzt — die Naehe entscheidet.
+    Innerhalb des Seitenfensters entscheidet zuerst die lokale Uebergangsguete,
+    danach BPM-Naehe und Energiesprung. Auch ohne planbare Kante bleiben alle
+    Tracks erhalten; die spaetere Kettenplanung kennzeichnet diese UNGEPLANT.
     """
     cancel_check = kwargs.get("cancel_check")
     _check_cancel(cancel_check)
@@ -1486,6 +1482,7 @@ def _sort_energy_wave(
         index = min(
             range(grenze),
             key=lambda i: (
+                -calculate_transition_objective(aktuell, seite[i], bpm_tolerance, **kwargs),
                 effective_bpm_diff(aktuell.bpm, seite[i].bpm)[0],
                 abs(seite[i].energy - aktuell.energy),
             ),
@@ -1657,7 +1654,7 @@ def _sort_genre_flow(
         # nicht stabil in Richtung des erwarteten Contracts ändern.
         def small_score(order) -> tuple:
             harmonic_scores = [
-                calculate_compatibility(a, b, bpm_tolerance, **kwargs)
+                calculate_transition_objective(a, b, bpm_tolerance, **kwargs)
                 for a, b in zip(order, order[1:])
             ]
             if not genre_mixing_enabled:
@@ -1737,7 +1734,7 @@ def _sort_genre_flow(
                     _check_cancel(cancel_check)
                     transition_compat = max(
                         transition_compat,
-                        calculate_compatibility(
+                        calculate_transition_objective(
                             current_track, candidate, bpm_tolerance, **kwargs
                         ),
                     )
@@ -2361,15 +2358,8 @@ def compute_adjacent_transition_metrics(
     ]
     aktive_kette = _kette_waehlen(kandidaten_je_paar, playlist)
     return [
-        _calculate_track_edge_metrics(
-            playlist[index],
-            playlist[index + 1],
-            bpm_tolerance,
-            energy_direction,
-            ctx,
-            kandidat,
-        )
-        for index, (kandidat, _konsistent) in enumerate(aktive_kette)
+        transition_metrics_from_candidate(kandidat)
+        for kandidat, _konsistent in aktive_kette
     ]
 
 
@@ -2802,8 +2792,8 @@ def _sort_context_flow(
     tracks: list[Track], bpm_tolerance: float, **kwargs
 ) -> list[Track]:
     """
-    Kontext-bewusster Greedy-Sort. Harmonische Basis ist calculate_compatibility
-    (korrektes Camelot-Wheel + BPM-Gate); darauf DJ-Kontext-Modifikatoren,
+    Kontext-bewusster Greedy-Sort. Basis ist calculate_transition_objective
+    (lokale Kandidatenwerte mit unveraenderten Gates); darauf DJ-Kontext-Modifikatoren,
     portiert aus der frueheren Intelligent-Scoring-Schicht:
       - Set-Phase mit Ziel-Energie (Warm-up 30 / Build 60 / Peak 85 / Cool-down 40)
       - Energie-Trend-Fortfuehrung (steigende Kurve nicht abwuergen)
@@ -2856,7 +2846,7 @@ def _sort_context_flow(
                 if position == 0:
                     continue
                 previous = order[position - 1]
-                base = calculate_compatibility(
+                base = calculate_transition_objective(
                     previous, track, bpm_tolerance, **kwargs
                 )
                 if base == 0:
@@ -2916,20 +2906,17 @@ def _sort_context_flow(
         highest_score = -999999.0
         for candidate in unprocessed:
             _check_cancel(cancel_check)
-            # Reine Harmonik als Basis; Energie und Genre werden unten als
-            # explizite Context-Regler addiert. So bedeutet genre_weight=0
-            # tatsaechlich, dass Genre die Reihenfolge nicht beeinflusst.
-            base = calculate_compatibility(
+            # Lokale Uebergangsguete als Basis. genre_weight=0 deaktiviert nur
+            # die zusaetzlichen Context-Boni, nicht den lokalen Genre-Teilwert.
+            base = calculate_transition_objective(
                 current, candidate, bpm_tolerance, **kwargs
             )
             if base == 0:
                 continue  # BPM-Hard-Gate beibehalten
 
             score = float(base)
-            # Kalibrierung (Audit 2026-07-17): Boni in Summe max +19 — knapp
-            # UNTER einer 20-Punkte-Camelot-Stufe. Kontext darf zwischen gleich
-            # guten Harmonik-Kandidaten entscheiden, aber keinen Diagonal-Mix
-            # (60) ueber einen Adjacent-Mix (80) heben.
+            # Kontextboni ergaenzen die lokale Basis. Harte Kandidatengates
+            # werden dadurch nicht umgangen; keine reine Camelot-Stufenlogik.
             # Phase: Naehe zur Ziel-Energie (+10 bei Treffer, faellt linear ab)
             score += 10.0 - min(30.0, abs(candidate.energy - target_energy)) / 3.0
             # Trend-Fortfuehrung: Kandidat setzt erkennbare Richtung fort
@@ -3493,14 +3480,7 @@ def _immutable_metrics_for_snapshot(
             overall_score=0.0,
         )
     mutable = mutable_by_key[snapshot.key]
-    metrics = _calculate_track_edge_metrics(
-        track1,
-        track2,
-        bpm_tolerance,
-        context.get("energy_direction"),
-        context,
-        mutable,
-    )
+    metrics = transition_metrics_from_candidate(mutable)
     return ImmutableMetricsSnapshot(
         harmonic_score=metrics.harmonic_score,
         bpm_smoothness=metrics.bpm_smoothness,
@@ -3777,6 +3757,122 @@ def legacy_transition_metrics_for_snapshot(
     )
 
 
+def _refinement_swap_allowed(order, left, right, mode):
+    """Konservative Invarianten: keine Aenderung einer vorgegebenen Kurve.
+
+    Gleiches BPM/Energie-Profil ist absichtlich enger als eine freie Suche.
+    Die Strategie-Suche davor bleibt fuer die grossraeumige Dramaturgie zustaendig.
+    """
+    a, b = order[left].track, order[right].track
+    if left == 0:
+        return False  # Von der Strategie gewaehlten Set-Einstieg erhalten.
+    if mode in {"Warm-Up", "Cool-Down"}:
+        return a.bpm == b.bpm
+    if mode == "Genre Flow":
+        return _resolve_track_genre(a) == _resolve_track_genre(b)
+    if mode == "Harmonic Flow":
+        return True
+    if mode == "Energy Wave" and (left == 0 or left % 2 != right % 2):
+        return False
+    if mode == "Context Flow":
+        # Auch Genre-Fatigue und die Klonstrafe bleiben positionsgleich.
+        return (a.energy == b.energy and a.bpm == b.bpm
+                and a.camelotCode == b.camelotCode
+                and _resolve_track_genre(a) == _resolve_track_genre(b))
+    return a.energy == b.energy and a.bpm == b.bpm
+
+
+def _refine_order_with_chain(occurrences, mode, bpm_tolerance, context,
+                             choice_snapshot, cancel_check=None):
+    """Maximal 32 lokale Tauschversuche mit festen aeusseren Mixpunkt-Ankern.
+
+    Pro Versuch hoechstens sieben Tracks. Gerichtete Paar-Rankings werden im
+    Lauf wiederverwendet. Keine globale DP je Versuch, keine Permutationsgarantie.
+    """
+    _check_cancel(cancel_check)
+    order = tuple(occurrences)
+    pair_cache = {}
+    def pair(a, b):
+        _check_cancel(cancel_check)
+        key = (id(a.track), id(b.track))
+        if key not in pair_cache:
+            snapshots, maps, saved = _rank_fixed_boundaries(
+                (a, b), bpm_tolerance, context, choice_snapshot, cancel_check)
+            pair_cache[key] = snapshots[0], maps[0], saved
+        return pair_cache[key]
+    def ranked(items):
+        data = [pair(a, b) for a, b in zip(items, items[1:])]
+        return (tuple(x[0] for x in data), tuple(x[1] for x in data), sum(x[2] for x in data))
+    current_ranked = ranked(order)
+    if len(order) < 4:
+        return order, current_ranked
+    selected = _select_snapshot_path(current_ranked[0], order, cancel_check)[0]
+    def wave_replay(trial):
+        pool = sorted(occurrences, key=lambda o: (o.track.energy, o.ordinal))
+        center = (len(pool)-1)//2
+        if trial[0].occurrence_id != pool[center].occurrence_id:
+            return False
+        lower, upper = list(reversed(pool[:center])), list(pool[center+1:])
+        high = True
+        for item in trial[1:]:
+            _check_cancel(cancel_check)
+            side = upper if high and upper else (lower if lower else upper)
+            index = next((i for i, candidate in enumerate(side[:max(1, ENERGY_WAVE_FENSTER)])
+                          if candidate.occurrence_id == item.occurrence_id), None)
+            if index is None:
+                return False
+            side.pop(index)
+            high = not high
+        return True
+    def merit(selection, items):
+        return (sum(x is not None for x in selection),
+                sum(bool(_snapshot_flag(x, "gespeicherte_wahl")) for x in selection if x is not None),
+                sum(x.score for x in selection if x is not None),
+                sum(a is not None and b is not None and _candidate_link_consistent(a, b, items[i+1].track)
+                    for i, (a, b) in enumerate(zip(selection, selection[1:]))))
+    gap_neighbors = {i for boundary, value in enumerate(selected) if value is None
+                     for i in (boundary-1, boundary, boundary+1) if 0 <= i < len(order)-1}
+    steps = (2,) if mode == "Energy Wave" else (1,)
+    proposals = [(i, i+step) for step in steps for i in range(len(order)-step)]
+    proposals.sort(key=lambda indices: (indices[0] not in gap_neighbors, indices))
+    attempts = accepted = 0
+    for left, right in proposals:
+        _check_cancel(cancel_check)
+        if attempts >= 32:
+            break
+        if not _refinement_swap_allowed(order, left, right, mode):
+            continue
+        attempts += 1
+        trial = list(order)
+        trial[left], trial[right] = trial[right], trial[left]
+        trial = tuple(trial)
+        if mode == "Energy Wave" and not wave_replay(trial):
+            continue
+        lo, hi = max(0, left-2), min(len(order)-2, right+1)
+        window = trial[lo:hi+2]
+        options = list(ranked(window)[0])
+        anchors = []
+        if lo < left-1:
+            anchors.append(0)
+        if hi > right:
+            anchors.append(hi-lo)
+        for index in anchors:
+            anchor = selected[lo+index]
+            options[index] = () if anchor is None else (anchor,)
+        proposed = _select_snapshot_path(tuple(options), window, cancel_check)[0]
+        # DP darf UNGEPLANT waehlen, aber keinen fixierten Aussenanker opfern.
+        if any(proposed[i] != selected[lo+i] for i in anchors):
+            continue
+        if merit(proposed, window) <= merit(selected[lo:hi+1], order[lo:hi+2]):
+            continue
+        order = trial
+        selected = (*selected[:lo], *proposed, *selected[hi+1:])
+        accepted += 1
+    logger.info("Kettensuche: %s lokale Versuche, %s Verbesserungen, %s Paar-Rankings; keine globale Optimalitaetsgarantie",
+                attempts, accepted, len(pair_cache))
+    return order, ranked(order)
+
+
 def _build_generation_result(
     *,
     run_id: str,
@@ -3788,10 +3884,13 @@ def _build_generation_result(
     context: dict,
     choice_snapshot: Mapping,
     cancel_check=None,
+    ranked_boundaries=None,
 ) -> PlaylistGenerationResult:
     _check_cancel(cancel_check)
-    snapshots_by_boundary, mutable_maps, saved_present = _rank_fixed_boundaries(
-        occurrences, bpm_tolerance, context, choice_snapshot, cancel_check
+    snapshots_by_boundary, mutable_maps, saved_present = (
+        ranked_boundaries if ranked_boundaries is not None else _rank_fixed_boundaries(
+            occurrences, bpm_tolerance, context, choice_snapshot, cancel_check
+        )
     )
     selected, consistencies, link_checks, passed_links, states_retained = (
         _select_snapshot_path(snapshots_by_boundary, occurrences, cancel_check)
@@ -4066,16 +4165,19 @@ def generate_playlist_result(
             "Strategie-Ergebnis hat Tracks verloren oder hinzugefuegt"
         )
 
+    refined_occurrences, ranked_boundaries = _refine_order_with_chain(
+        tuple(occurrences), mode, bpm_tolerance, run_context, choice_snapshot, cancel_check)
     generation_result = _build_generation_result(
         run_id=run_id,
         mode=mode,
-        occurrences=tuple(occurrences),
+        occurrences=refined_occurrences,
         input_tracks=input_tracks,
         invalid_bpm_excluded=input_tracks - len(valid_tracks),
         bpm_tolerance=bpm_tolerance,
         context=run_context,
         choice_snapshot=choice_snapshot,
         cancel_check=cancel_check,
+        ranked_boundaries=ranked_boundaries,
     )
     quality = generation_result.quality_dict()
     logger.info(

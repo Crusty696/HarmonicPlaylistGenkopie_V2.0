@@ -304,7 +304,8 @@ class TestSmallPoolStrategyContracts:
       )
       return 90 if preferred else 10
 
-    monkeypatch.setattr("hpg_core.playlist.calculate_compatibility", compatibility)
+    # Context Flow verwendet jetzt denselben lokalen Bewertungsvertrag.
+    monkeypatch.setattr("hpg_core.playlist.calculate_transition_objective", compatibility)
     for pool in ([a, b], [b, a]):
       strict = _sort_context_flow(
         pool, 2.0, energy_direction="Maintain",

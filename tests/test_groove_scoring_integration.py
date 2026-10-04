@@ -6,6 +6,7 @@ from hpg_core.playlist import (
     EnergyDirection,
     calculate_enhanced_compatibility,
     calculate_playlist_quality,
+    calculate_track_edge_score,
     combine_weighted,
     compute_adjacent_transition_metrics,
     reset_pair_candidate_cache,
@@ -80,7 +81,8 @@ def test_echter_rhythmuskonflikt_verwirft_nur_den_mixpunktkandidaten():
     a, b = _paar(_gerade(), _offbeat())
     metrics = calculate_enhanced_compatibility(a, b, bpm_tolerance=6.0)
     assert metrics.kandidat is None
-    assert metrics.overall_score > 0.0
+    # Ein unqualifizierter lokaler Uebergang darf keinen Ganztrack-Ersatzscore tragen.
+    assert metrics.overall_score == 0.0
 
 
 def test_fehlende_lokale_groove_daten_verwerfen_nur_den_mixpunktkandidaten():
@@ -90,7 +92,7 @@ def test_fehlende_lokale_groove_daten_verwerfen_nur_den_mixpunktkandidaten():
     reset_pair_candidate_cache()
     metrics = calculate_enhanced_compatibility(a, b, bpm_tolerance=6.0)
     assert metrics.kandidat is None
-    assert metrics.overall_score > 0.0
+    assert metrics.overall_score == 0.0
 
 
 def test_trackkante_nutzt_ganztrackwerte_ohne_mixpunktkandidaten():
@@ -100,10 +102,13 @@ def test_trackkante_nutzt_ganztrackwerte_ohne_mixpunktkandidaten():
     a.groove_pattern = b.groove_pattern = _gerade()
     a.bass_pattern = b.bass_pattern = _gerade()
     reset_pair_candidate_cache()
-    metrics = calculate_enhanced_compatibility(a, b, bpm_tolerance=6.0)
-    assert metrics.kandidat is None
-    assert metrics.groove_match == pytest.approx(1.0)
-    assert metrics.overall_score > 0.0
+    local = calculate_enhanced_compatibility(a, b, bpm_tolerance=6.0)
+    assert local.kandidat is None and local.groove_match is None
+    assert local.overall_score == 0.0
+    # Der alte Ganztrackvertrag bleibt unter seiner ausdruecklichen Legacy-API.
+    legacy = calculate_track_edge_score(a, b, bpm_tolerance=6.0)
+    assert legacy.groove_match == pytest.approx(1.0)
+    assert legacy.overall_score > 0.0
 
 
 def test_bpm_hard_gate_bleibt_wirksam():

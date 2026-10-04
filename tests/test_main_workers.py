@@ -188,11 +188,11 @@ def test_ai_analysis_worker_provider_setup_cancel_is_silent(monkeypatch):
     model="model",
   )
 
-  def detect_and_start(**_kwargs):
+  def detect_and_start(*_args, **_kwargs):
     worker.request_cancel()
     raise InterruptedError("abgebrochen")
 
-  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect_and_start)
+  monkeypatch.setattr("hpg_core.ai_launcher.prepare_provider", detect_and_start)
   failures = []
   progress = []
   worker.failed.connect(failures.append)
@@ -205,14 +205,15 @@ def test_ai_analysis_worker_provider_setup_cancel_is_silent(monkeypatch):
 
 
 def test_ai_analysis_worker_redetects_incomplete_ready_snapshot(monkeypatch):
+  monkeypatch.setattr("hpg_core.lmstudio_runtime.prepare_gpu_model", lambda *a, **k: "owned")
   status = SimpleNamespace(
     running=True,
     base_url="http://detected",
-    name="LM Studio",
+    name="Ollama",
     active_model="detected-model",
   )
   detect = Mock(return_value=status)
-  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect)
+  monkeypatch.setattr("hpg_core.ai_launcher.prepare_provider", detect)
   worker = main.AIAnalysisWorker(
     [], provider="Ollama", model="", base_url="http://stale"
   )
@@ -220,7 +221,7 @@ def test_ai_analysis_worker_redetects_incomplete_ready_snapshot(monkeypatch):
   assert worker._ensure_ready() is True
   detect.assert_called_once()
   assert worker.base_url == "http://detected"
-  assert worker.provider == "LM Studio"
+  assert worker.provider == "Ollama"  # Explizite Auswahl wird nicht mehr gewechselt.
   assert worker.model == "detected-model"
 
 
@@ -232,7 +233,7 @@ def test_ai_analysis_worker_rejects_provider_without_active_model(monkeypatch):
     active_model="",
   )
   monkeypatch.setattr(
-    "hpg_core.ai_launcher.detect_and_start", Mock(return_value=status)
+    "hpg_core.ai_launcher.prepare_provider", Mock(return_value=status)
   )
   fetch = Mock()
   monkeypatch.setattr("hpg_core.ai_engine.fetch_ai_analysis", fetch)
@@ -531,18 +532,25 @@ class _Response:
 
 
 def test_ai_test_worker_success_empty_and_error(monkeypatch):
+  import json
+  monkeypatch.setattr("hpg_core.lmstudio_runtime.prepare_gpu_model", lambda *a, **k: "owned")
   monkeypatch.setattr(
     requests,
     "post",
     lambda *args, **kwargs: _Response(
-      {"model": "actual", "choices": [{"message": {"content": " OK "}}]}
+      {"model": "requested", "choices": [{"message": {"content": json.dumps({
+        "sub_genre": "Techno", "moods": ["driving", "dark"], "description": "Metadaten-Test",
+        "mix_in_time": 0., "mix_out_time": 270.
+      })}}]}
     ),
   )
   worker = main.AITestWorker("Ollama", "requested", "http://local")
   emitted = []
   worker.test_finished.connect(lambda *args: emitted.append(args))
   worker.run()
-  assert emitted[0][0:3] == (True, "OK", "actual")
+  assert emitted[0][0] is True
+  assert "Metadatenschema" in emitted[0][1]
+  assert emitted[0][2] == "requested"
 
   monkeypatch.setattr(requests, "post", lambda *args, **kwargs: _Response({}))
   worker = main.AITestWorker("LM Studio", "model", "")
@@ -4392,7 +4400,8 @@ def test_current_ai_detect_result_while_enabled_is_applied(qtbot):
   assert widget.detected_provider == "Ollama"
   assert widget.detected_base_url == status.base_url
   assert widget.detected_active_model == "current-model"
-  assert "AI bereit" in widget.ai_status_label.text()
+  assert "erreichbar" in widget.ai_status_label.text()
+  assert "ungeprüft" in widget.ai_status_label.text()
 
 
 def test_close_erfasst_auch_superseded_ai_detect_worker(qtbot, monkeypatch):

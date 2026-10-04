@@ -6,6 +6,7 @@ import pytest
 
 from tests.test_hearing_sources import source_fixture
 from tests.test_audit_candidate_set import candidate_set
+from tests.test_hearing_ram_calibration import ram_set
 
 
 def _csv_single(tmp_path, *, rated=False):
@@ -521,33 +522,11 @@ def test_calibration_cancel_before_start_returns_no_proposal(tmp_path, qtbot):
     assert "proposal" not in signal.args[0]
 
 
-def test_real_candidate_audit_fit_red_gates_returns_no_active_updates(candidate_set, tmp_path, monkeypatch):
-    import numpy as np
-    import soundfile as sf
-    from tests.test_audit_candidate_set import _candidate, _write_csv
-    from tools import rate_transitions as rate, audit_candidate_set as audit
+def test_real_candidate_audit_fit_red_gates_returns_no_active_updates(ram_set):
+    from tools import audit_candidate_set as audit
     from hpg_core.hearing_calibration import compute_proposal, apply_proposal
-
-    root, cache, _features, ratings = candidate_set
-    for i, row in enumerate(ratings):
-        row.update(note="4" if i < 15 else "2", gewaehlt="1")
-    _write_csv(root / "bewertung.csv", rate.BEWERTUNG_KANDIDATEN_SPALTEN, ratings)
-    monkeypatch.setattr(audit, "rank_pair_candidates", lambda *_args, **_kwargs: [_candidate()])
-    signal = np.zeros((800, 2), dtype=np.float32)
-    signal[::100] = .5
-    def synthetic_render(a, b, pc, pid, n, output, **kwargs):
-        path = output / f"{pid}_k{n}.wav"
-        sf.write(path, signal, 8000, subtype="PCM_16")
-        return path
-    def producer(*args, **kwargs):
-        path = synthetic_render(*args, **kwargs)
-        return f"clips/{path.name}", "pro_eq_swap"
-    monkeypatch.setattr(rate, "rendere_kandidat", producer)
-    real_audit = audit.audit_set
-    monkeypatch.setattr(audit, "audit_set", lambda directory, db: real_audit(directory, db, render=lambda *a, **k: (synthetic_render(*a, **k), [0., 0., 0.])))
-    op = tmp_path / "operation"
-    op.mkdir()
-    monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(op / "child_preferences.json"))
+    # Gemeinsamer RAM-Service statt obsoletem Disk-Audit-Mock; echte Fit-Gates.
+    root, cache, op, calls, _ = ram_set
     before = audit._fingerprint_tree(root)
     proposal = compute_proposal(root, cache, operation_root=op, operation_id="1" * 32, seed=1)
     assert proposal["audit_passed"] is True
@@ -557,5 +536,6 @@ def test_real_candidate_audit_fit_red_gates_returns_no_active_updates(candidate_
     assert proposal["diagnose"]
     assert audit._fingerprint_tree(root) == before
     assert not (op / "child_preferences.json").exists()
+    assert len(calls) == 1
     with pytest.raises(ValueError, match="gatebestandener"):
         apply_proposal(proposal)

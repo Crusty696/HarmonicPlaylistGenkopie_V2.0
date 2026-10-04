@@ -156,7 +156,9 @@ logger = logging.getLogger(__name__)
 # Analysepfaden ueber ein gemeinsames 360-s-Fenster gemessen (D8); alte
 # v44-Zeilen enthalten Werte, die davon abhaengen, ob Rekordbox-Metadaten
 # vorlagen.
-CACHE_VERSION = 45
+# FIX 2026-10-04: 45 -> 46. Diagnosezweige und lokale Gridfenster werden
+# explizit gespeichert. Alte Records enthalten keine belegten Fehlerursachen.
+CACHE_VERSION = 46
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -216,7 +218,7 @@ TRACK_REQUIRED_FIELDS = frozenset({
     "avg_bass", "avg_mids", "avg_highs", "mix_in_point", "mix_out_point",
     "first_downbeat", "downbeat_confidence", "beatgrid_source",
     "beatgrid_status", "beatgrid_windows_checked",
-    "beatgrid_max_phase_error_ms", "first_phrase", "phrase_confidence",
+    "beatgrid_max_phase_error_ms", "measurement_diagnostics", "first_phrase", "phrase_confidence",
     "key_confidence", "lufs", "mix_in_bars", "mix_out_bars",
     "detected_genre", "genre_confidence", "genre_source", "sections",
     "phrase_unit", "brightness", "vocal_instrumental", "danceability",
@@ -233,7 +235,7 @@ TRACK_LIST_FIELDS = {
     "groove_pattern", "bass_pattern",
     "phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates",
 }
-TRACK_DICT_FIELDS = {"ai_metadata"}
+TRACK_DICT_FIELDS = {"ai_metadata", "measurement_diagnostics"}
 TRACK_CONFIDENCE_FIELDS = {
     "downbeat_confidence", "phrase_confidence", "key_confidence",
     "genre_confidence",
@@ -706,6 +708,11 @@ def validate_track_dict(data: dict) -> dict:
         raise CacheValidationError(f"Pflichtfeld {missing[0]} fehlt")
 
     filtered = {key: value for key, value in data.items() if key in TRACK_REQUIRED_FIELDS}
+    from .measurement_contract import validate_measurement_diagnostics
+    try:
+        validate_measurement_diagnostics(filtered["measurement_diagnostics"])
+    except ValueError as error:
+        raise CacheValidationError(str(error)) from error
     if filtered.get("ai_metadata"):
         from .ai_engine import validate_ai_metadata
         if not validate_ai_metadata(filtered["ai_metadata"], duration=filtered.get("duration")):
@@ -910,7 +917,7 @@ def track_to_dict(track: Track) -> dict:
 
 def dict_to_track(d: dict) -> Track:
     """Creates a Track object from a dictionary, ensuring all keys are present."""
-    d = validate_track_dict(d)
+    d = validate_track_dict(_snapshot_value(d))
     filePath = d['filePath']
     fileName = d['fileName']
     track = Track(filePath=filePath, fileName=fileName)

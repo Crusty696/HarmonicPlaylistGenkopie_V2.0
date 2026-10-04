@@ -69,6 +69,21 @@ def test_fetch_ai_analysis_enforces_schema_and_provenance(monkeypatch):
   assert payload["response_format"]["type"] == "json_schema"
 
 
+@pytest.mark.parametrize("returned", ["hpg-owned", "wrong-model", None])
+def test_instance_alias_preserves_catalog_identity_only_for_matching_response(monkeypatch, returned):
+  response = _response(_valid_data())
+  response.json.return_value["model"] = returned
+  post = Mock(return_value=response)
+  monkeypatch.setattr("hpg_core.ai_engine.requests.post", post)
+  result = fetch_ai_analysis(_track(), provider="LM Studio", model="catalog-key",
+                            request_model="hpg-owned", url="http://local/test")
+  assert post.call_args.kwargs["json"]["model"] == "hpg-owned"
+  if returned == "hpg-owned":
+    assert result["_provenance"]["model"] == "catalog-key"
+  else:
+    assert result == {}
+
+
 def test_fetch_ai_analysis_rejects_observed_typo_key(monkeypatch):
   invalid = _valid_data()
   invalid["mix_in_tme"] = invalid.pop("mix_in_time")

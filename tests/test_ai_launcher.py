@@ -206,6 +206,7 @@ def test_lms_start_cli_and_gui(monkeypatch):
 
 
 def test_lms_models_load_get_and_prepare(monkeypatch):
+  monkeypatch.setattr("hpg_core.lmstudio_runtime.runtime_target", lambda *args: {"vram_bytes": 16*1024**3})
   monkeypatch.setattr(
     launcher,
     "_http_json",
@@ -217,7 +218,8 @@ def test_lms_models_load_get_and_prepare(monkeypatch):
             "type": "llm",
             "key": "google/gemma-4-e2b",
             "architecture": "gemma4",
-            "capabilities": {"vision": True},
+            "format": "gguf", "size_bytes": 2*1024**3,
+            "capabilities": {"vision": True, "trained_for_tool_use": True},
           },
           {"type": "llm", "key": "text-only", "capabilities": {}},
           {"type": "embedding", "key": "nomic-embed"},
@@ -225,7 +227,7 @@ def test_lms_models_load_get_and_prepare(monkeypatch):
       },
     ),
   )
-  assert launcher.lms_models(1234) == ["google/gemma-4-e2b", "text-only"]
+  assert launcher.lms_models(1234) == ["google/gemma-4-e2b"]
 
   monkeypatch.setattr(launcher, "_lms_exe", lambda: "lms.exe")
   monkeypatch.setattr(launcher.os.path, "exists", lambda _path: True)
@@ -246,21 +248,21 @@ def test_lms_models_load_get_and_prepare(monkeypatch):
   monkeypatch.setattr(
     launcher, "lms_load", lambda model, port: loaded.append((model, port)) or True
   )
-  status = launcher._prepare_lmstudio("gemma")
+  status = launcher._prepare_lmstudio("google/gemma")
   assert status.running is True
   assert status.active_model == "google/gemma"
-  assert loaded == [("google/gemma", 1234)]
+  assert loaded == []  # Erkennung laedt kein Modell.
 
   monkeypatch.setattr(launcher, "lms_load", lambda model, port: False)
-  status = launcher._prepare_lmstudio("gemma")
+  status = launcher._prepare_lmstudio("google/gemma")
   assert status.running is True
-  assert status.active_model == ""
+  assert status.active_model == "google/gemma"
 
   monkeypatch.setattr(launcher, "lms_start", lambda: None)
   assert launcher._prepare_lmstudio("gemma").running is False
 
 
-def test_lms_empty_helpers_and_auto_get(monkeypatch):
+def test_lms_empty_helpers_and_no_auto_get(monkeypatch):
   monkeypatch.setattr(launcher, "_http_json", lambda _url: (False, None))
   assert launcher.lms_models(1234) == []
   monkeypatch.setattr(launcher, "_lms_exe", lambda: None)
@@ -275,7 +277,7 @@ def test_lms_empty_helpers_and_auto_get(monkeypatch):
   )
   monkeypatch.setattr(launcher, "lms_load", lambda _model, _port: True)
   status = launcher._prepare_lmstudio("model")
-  assert status.active_model == "provider/model"
+  assert status.active_model == ""
 
 
 def test_provider_dispatch_and_detection_order(monkeypatch):
@@ -356,7 +358,7 @@ def test_preferred_model_is_downloaded_even_with_installed_fallback(monkeypatch)
   assert status.active_model == "preferred:latest"
 
 
-def test_cancel_callback_is_propagated_to_lm_download(monkeypatch):
+def test_cancel_stops_lm_detection_without_download(monkeypatch):
   monkeypatch.setattr(launcher, "lms_start", lambda: 1234)
   monkeypatch.setattr(launcher, "lms_models", lambda _port: ["fallback-audio"])
   cancelled = lambda: True
@@ -370,4 +372,4 @@ def test_cancel_callback_is_propagated_to_lm_download(monkeypatch):
   with pytest.raises(InterruptedError):
     launcher._prepare_lmstudio("preferred", cancel_check=cancelled)
 
-  assert received == [cancelled]
+  assert received == []

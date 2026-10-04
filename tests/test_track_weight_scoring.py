@@ -62,13 +62,16 @@ def test_track_edge_score_uses_source_genre_weight_snapshot():
     assert groove_only.overall_score < bass_only.overall_score
 
 
-def test_candidate_score_does_not_replace_track_edge_score():
+def test_local_candidate_score_is_separate_from_legacy_track_edge_score():
     source = _track("source")
     target = _track("target")
     metrics = calculate_enhanced_compatibility(source, target, 2.0)
 
     assert metrics.kandidat is not None
-    assert metrics.overall_score != pytest.approx(metrics.kandidat["score"])
+    # Nutzervertrag 04.10.: lokale Naht bestimmt aktive Playlistbewertung.
+    assert metrics.overall_score == pytest.approx(metrics.kandidat["score"])
+    legacy = calculate_track_edge_score(source, target, 2.0)
+    assert legacy.overall_score != pytest.approx(metrics.overall_score)
 
 
 def test_run_and_rebuild_keep_frozen_track_weight_snapshot():

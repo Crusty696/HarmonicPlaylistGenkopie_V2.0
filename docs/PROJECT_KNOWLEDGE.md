@@ -12,6 +12,8 @@ gepruefte Codefakten und offene Prueffragen. Sie ist keine Produktabnahme.
    Laufzeitbehauptungen den passenden datierten Rohbeleg lesen.
 5. docs/HOERTEST_NATIVE_2026-10-04.md ist ein datierter Bericht, kein
    automatisch gueltiger Nachweis fuer jeden spaeteren Build.
+6. docs/SESSION_HANDOFF_2026-10-04.md ist der neueste Session-Zwischenstand
+   mit aktiver Aufgabenliste und Beleggrenzen; vor Fortsetzung lesen.
 
 Historische Auftraege wie Rendern, Pushen, pausierte Analysen oder /goal
 werden niemals durch Lesen einer alten Datei wieder zu aktiven Auftraegen.
@@ -63,7 +65,8 @@ Die Entscheidungen vom 19.09. und Musikquellen bleiben in MEMORY.md.
 ## Am 04.10. statisch geprueft
 
 - app_metadata.py: APP_VERSION 3.7.2, MIN_PYTHON 3.12.1.
-- caching.py: CACHE_VERSION 45. playlist.py registriert acht Strategien.
+- caching.py: CACHE_VERSION 46 nach Diagnose-Erweiterung. playlist.py
+  registriert acht Strategien. Alte Cache-45-Belege bleiben historisch.
 - transition_features.mood_match verarbeitet brightness. Lokale Kandidaten
   verwenden in pair_candidates._teil_timbre avg_mids_lokal/avg_highs_lokal
   und in _teil_mood lokale Helligkeit. Die alte pauschale Aussage, diese

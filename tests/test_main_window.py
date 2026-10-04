@@ -421,16 +421,29 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
     window = _window(qtbot, monkeypatch)
     config = PrepareConfig("einzel", tmp_path / "set", tmp_path / "cache.db", source_roots=(tmp_path / "sources",))
     class AcceptedDialog:
-        def __init__(self, _parent):
+        def __init__(self, _parent, *, folder=""):
             self.config = config
         def exec(self):
             return main.QDialog.DialogCode.Accepted
     monkeypatch.setattr(hearing_panel, "HearingPrepareDialog", AcceptedDialog)
     starts = []
     monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+    # Kein DSP in diesem Steuerungstest; Start muss eine neue Analyse binden.
+    source = SimpleNamespace(isRunning=lambda: False)
+    def start_analysis():
+        window.worker = source
+        window._run_id = "hearing-test-run"
+    monkeypatch.setattr(window, "start_analysis", start_analysis)
     window._prepare_hearing_set()
+    assert not starts
+    assert window._hearing_analysis_pending == (config, source, "hearing-test-run")
+    window.worker = None
+    window._hearing_analysis_snapshot = (str(config.source_roots[0]), ("metadata",), window._run_id)
+    window._set_run_state(main.RunState.SUCCESS)
+    window._resume_hearing_analysis(source)
     worker, action = starts[0]
     assert action == "prepare"
     assert isinstance(worker, hearing_jobs.HearingPrepareWorker)
     assert worker.config is config
+    assert worker.managed_metadata == ("metadata",)
     assert callable(worker.request_cancel)

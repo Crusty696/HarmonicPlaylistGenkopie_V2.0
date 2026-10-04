@@ -282,6 +282,8 @@ class Track:
     beatgrid_status: str = "unknown"
     beatgrid_windows_checked: int = 0
     beatgrid_max_phase_error_ms: float = -1.0
+    # Leeres Objekt bedeutet unbekannt, niemals nachtraeglich erfundene Ursache.
+    measurement_diagnostics: dict = field(default_factory=dict)
 
     # AUDIT-FEATURE A1 (2026-07-26): PHRASEN-Anker — Zeitpunkt der ersten
     # Phrasengrenze in Sekunden (liegt auf dem Bar-Raster: first_downbeat +

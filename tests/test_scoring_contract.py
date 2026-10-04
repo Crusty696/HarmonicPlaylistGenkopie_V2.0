@@ -126,7 +126,8 @@ def test_valid_ai_metadata_does_not_change_local_objective_quality_or_recommenda
   )[0]
 
   assert ai_metrics.ai_bonus == 0.0
-  assert ai_metrics.overall_score != pytest.approx(ai_metrics.kandidat["score"])
+  # Lokaler Kandidatenvertrag vom 04.10.; KI-Neutralitaet bleibt bindend.
+  assert ai_metrics.overall_score == pytest.approx(ai_metrics.kandidat["score"])
   assert ai_metrics.overall_score == pytest.approx(local_metrics.overall_score)
   assert calculate_transition_objective(
     ai_first, ai_second, 3.0

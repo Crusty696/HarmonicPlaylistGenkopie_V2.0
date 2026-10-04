@@ -31,7 +31,7 @@ from bisect import bisect_left, bisect_right
 from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 import csv
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 import hashlib
 import io
 import json
@@ -3947,6 +3947,91 @@ def _fit_kandidaten_genre(
     return (gewichte if ok else None), (rangfolge if ok else None), diagnose
 
 
+@dataclass(frozen=True)
+class CandidateFitResult:
+    payload: bytes
+
+    def as_dict(self):
+        from hpg_core.hearing_sources import strict_json_bytes
+        return strict_json_bytes(self.payload)
+
+
+def _compute_candidate_fit(merkmale_roh, bewertung_roh, manifest, genres_je_pfad, seed):
+    """Reine gemeinsame Berechnung; keine Publikation und keine Gate-Aenderung."""
+    validiere_kandidaten_csvs(merkmale_roh, bewertung_roh)
+    dreinoten = manifest.get("rating_schema") == "three_notes_v1"
+    if dreinoten:
+        validiere_vollstaendige_dreinotenbewertung(bewertung_roh)
+    else:
+        validiere_vollstaendige_kandidatenbewertung(bewertung_roh)
+    manifest_gewichte = {genre: _manifest_kandidatengewichte(manifest["scoring_snapshot"], genre)
+                        for genre in CANONICAL_GENRES}
+    zeilen, ohne, verworfen = verbinde_bewertungen_kandidaten(
+        merkmale_roh, bewertung_roh,
+        genre_von=lambda pfad: genres_je_pfad.get(str(pfad).lower(), ""),
+    )
+    reine_zeilen, ausschluss = filtere_reine_kandidatenpaare(zeilen)
+    if dreinoten:
+        diagnose = {
+            "quelle": "tools/rate_transitions.py fit --modus kandidaten -- three_notes_v1",
+            "rating_schema": "three_notes_v1", "seed": seed, "genres": {}, "ausgeschlossen": ausschluss,
+            "hinweis_technik": ("Techniknoten sind ein Freigabegate fuer Kandidatengewichte; "
+                                "sie veraendern weder Renderer noch EQ-Parameter."),
+        }
+    else:
+        diagnose = {
+            "quelle": "tools/rate_transitions.py fit --modus kandidaten",
+            "clips": len(zeilen), "genre_reine_clips": len(reine_zeilen),
+            "ohne_note": ohne, "verworfen": verworfen, "ausgeschlossen": ausschluss,
+            "l2_staerke": L2_STAERKE, "bootstrap_ziehungen": BOOTSTRAP_ZIEHUNGEN,
+            "seed": seed, "genres": {},
+        }
+    gewichte_je_genre, rangfolge = {}, {}
+    # --genre wurde im Kandidaten-Fit bisher ignoriert; dieser Vertrag bleibt bestehen.
+    for genre in CANONICAL_GENRES:
+        genre_zeilen = [z for z in reine_zeilen if z["genre"] == genre]
+        if not genre_zeilen:
+            continue
+        if dreinoten:
+            gewichte, genre_diagnose = fit_dreinoten_genre(genre_zeilen, seed, manifest_gewichte[genre])
+            schema = None
+        else:
+            gewichte, schema, genre_diagnose = _fit_kandidaten_genre(genre, genre_zeilen, seed, manifest_gewichte[genre])
+        diagnose["genres"][genre] = genre_diagnose
+        if gewichte is not None:
+            gewichte_je_genre[genre] = gewichte
+            if schema is not None:
+                rangfolge[genre] = schema
+    if dreinoten:
+        updates = {genre: {f"kandidaten_{name}_weight": wert for name, wert in weights.items()}
+                   for genre, weights in gewichte_je_genre.items()}
+        ergebnis = {"format_version": 2, "typ": "dreinoten_kandidaten_fit",
+                    "aktiviert_candidate_preferences": False, "diagnose": diagnose}
+    else:
+        ergebnis = baue_candidate_preferences(gewichte_je_genre, rangfolge, diagnose)
+        updates = {genre: dict(ergebnis[genre]) for genre in gewichte_je_genre}
+    return {"status": "passed", "gate_updates": updates, "diagnose": diagnose,
+            "dreinoten": dreinoten, "ergebnis": ergebnis,
+            "gewichte_je_genre": gewichte_je_genre, "rangfolge": rangfolge,
+            "counts": {"clips": len(zeilen), "reine": len(reine_zeilen), "ohne": ohne, "verworfen": verworfen}}
+
+
+def fit_candidates(inputs, receipt):
+    """Gebundener RAM-Fit ohne CLI-Publisher oder Praeferenzschreibzugriff."""
+    from tools import audit_candidate_set as audit
+    if type(receipt) is not audit.CandidateAuditReceipt or type(receipt.payload) is not bytes:
+        raise ValueError("Unveraenderliches RAM-Audit-Receipt erforderlich")
+    audit.verify_candidate_inputs(inputs)
+    data = inputs.as_dict()
+    audit.validate_ram_receipt(receipt.as_dict(), data["binding"])
+    tracks = audit._load_tracks_immutable(Path(data["binding"]["cache_path"]))
+    result = _compute_candidate_fit(data["rows"], data["ratings"], data["manifest"],
+                                    _genre_von_pfad(tracks), data["binding"]["seed"])
+    audit.verify_candidate_inputs(inputs)
+    audit.validate_ram_receipt(receipt.as_dict(), data["binding"])
+    return CandidateFitResult(audit._json_bytes(result))
+
+
 def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
     ordner = Path(args.dir)
     try:
@@ -3956,11 +4041,9 @@ def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
             raise ValueError("fit --modus kandidaten verlangt explizites --cache")
         start_binding = _fit_binding_token(ordner, audit_arg)
         manifest = _validiere_fit_bindung(ordner, cache_arg, audit_arg)
-        scoring_snapshot = manifest.get("scoring_snapshot")
-        manifest_gewichte = {
-            genre: _manifest_kandidatengewichte(scoring_snapshot, genre)
-            for genre in CANONICAL_GENRES
-        }
+        # Fruehe Validierung bleibt vor Cache-/Fit-Arbeit; die Berechnung ist geteilt.
+        for genre in CANONICAL_GENRES:
+            _manifest_kandidatengewichte(manifest.get("scoring_snapshot"), genre)
         _bestaetige_fit_binding(start_binding, ordner, audit_arg)
         merkmale_roh = _lies_fit_csv_gebunden(
             ordner / "merkmale.csv", start_binding, "merkmale_sha256"
@@ -3981,47 +4064,20 @@ def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
     genres_je_pfad = _genre_von_pfad(
         lade_tracks_aus_cache(getattr(args, "cache", None))
     )
-    zeilen, ohne, verworfen = verbinde_bewertungen_kandidaten(
-        merkmale_roh, bewertung_roh,
-        genre_von=lambda pfad: genres_je_pfad.get(str(pfad).lower(), ""),
-    )
-    reine_zeilen, ausschluss = filtere_reine_kandidatenpaare(zeilen)
+    calculated = _compute_candidate_fit(merkmale_roh, bewertung_roh, manifest, genres_je_pfad, args.seed)
+    counts = calculated["counts"]
+    diagnose = calculated["diagnose"]
+    gewichte_je_genre = calculated["gewichte_je_genre"]
+    rangfolge = calculated["rangfolge"]
+    ergebnis = calculated["ergebnis"]
     print(
-        f"Clips mit Merkmalen: {len(zeilen)}   genre-rein: {len(reine_zeilen)}   "
-        f"ohne Note: {ohne}   verworfen: {verworfen}"
+        f"Clips mit Merkmalen: {counts['clips']}   genre-rein: {counts['reine']}   "
+        f"ohne Note: {counts['ohne']}   verworfen: {counts['verworfen']}"
     )
 
     if dreinoten_pilot:
-        diagnose = {
-            "quelle": "tools/rate_transitions.py fit --modus kandidaten -- three_notes_v1",
-            "rating_schema": "three_notes_v1",
-            "seed": args.seed,
-            "genres": {},
-            "ausgeschlossen": ausschluss,
-            "hinweis_technik": (
-                "Techniknoten sind ein Freigabegate fuer Kandidatengewichte; "
-                "sie veraendern weder Renderer noch EQ-Parameter."
-            ),
-        }
-        gewichte_je_genre = {}
-        for genre in CANONICAL_GENRES:
-            genre_zeilen = [z for z in reine_zeilen if z["genre"] == genre]
-            if not genre_zeilen:
-                continue
-            gewichte, genre_diagnose = fit_dreinoten_genre(
-                genre_zeilen, args.seed, manifest_gewichte[genre]
-            )
-            diagnose["genres"][genre] = genre_diagnose
-            if gewichte is not None:
-                gewichte_je_genre[genre] = gewichte
-
         _bestaetige_fit_binding(start_binding, ordner, audit_arg)
-        bericht = {
-            "format_version": 2,
-            "typ": "dreinoten_kandidaten_fit",
-            "aktiviert_candidate_preferences": bool(gewichte_je_genre),
-            "diagnose": diagnose,
-        }
+        bericht = ergebnis
         ziel_bericht = ordner / "dreinoten_fit_bericht.json"
         if not gewichte_je_genre:
             _schreibe_json_atomar(ziel_bericht, bericht)
@@ -4048,36 +4104,14 @@ def befehl_fit_kandidaten(args: argparse.Namespace) -> int:
             bericht["aktiviert_candidate_preferences"] = False
             _schreibe_json_atomar(ziel_bericht, bericht)
             raise
+        bericht["aktiviert_candidate_preferences"] = True
         _schreibe_json_atomar(ziel_bericht, bericht)
         print(f"Dreinoten-Gewichte atomar uebernommen nach {override}. Bericht: {ziel_bericht}")
         return 0
 
-    diagnose: dict = {
-        "quelle": "tools/rate_transitions.py fit --modus kandidaten",
-        "clips": len(zeilen), "genre_reine_clips": len(reine_zeilen),
-        "ohne_note": ohne, "verworfen": verworfen, "ausgeschlossen": ausschluss,
-        "l2_staerke": L2_STAERKE, "bootstrap_ziehungen": BOOTSTRAP_ZIEHUNGEN,
-        "seed": args.seed, "genres": {},
-    }
-    gewichte_je_genre: dict[str, dict[str, float]] = {}
-    rangfolge: dict[str, list[str]] = {}
-    for genre in CANONICAL_GENRES:
-        genre_zeilen = [z for z in reine_zeilen if z["genre"] == genre]
-        if not genre_zeilen:
-            continue
-        gewichte, schema, genre_diagnose = _fit_kandidaten_genre(
-            genre,
-            genre_zeilen,
-            args.seed,
-            manifest_gewichte[genre],
-        )
-        diagnose["genres"][genre] = genre_diagnose
-        if gewichte is not None:
-            gewichte_je_genre[genre] = gewichte
-            if schema is not None:
-                rangfolge[genre] = schema
+    for genre, genre_diagnose in diagnose["genres"].items():
         print(
-            f"{genre}: {'UEBERNAHME BEREIT' if gewichte is not None else 'nicht uebernommen'} — "
+            f"{genre}: {'UEBERNAHME BEREIT' if genre in gewichte_je_genre else 'nicht uebernommen'} — "
             f"{genre_diagnose['grund']}"
         )
 
