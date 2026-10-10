@@ -29,12 +29,46 @@ def transport_proposal(tmp_path, monkeypatch):
     weights = {key: (index + 1) / 55 for index, key in enumerate(cp.GEWICHT_SCHLUESSEL)}
     assert len(weights) == 10 and sum(weights.values()) == pytest.approx(1.)
     updates = cp._normalisiere_updates({"Psytrance": weights})
+    # Transporttest ohne Audio: gebundene Original-Manifeste, synthetisches PCM.
+    # Der strikte v2-Receipt-Validator bleibt aktiv und wird nicht gemockt.
+    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME
+    from tools import audit_candidate_set as audit
+
+    manifest_text = (result.output_dir / audit.KANDIDATEN_MANIFEST_NAME).read_text(encoding="utf-8")
+    source_text = (result.output_dir / SOURCE_MANIFEST_NAME).read_text(encoding="utf-8")
+    manifest = json.loads(manifest_text)
+    specs = json.loads(source_text)["specs"]
+    candidates = []
+    for pair in manifest["pairs"]:
+        for clip in pair["clips"]:
+            cid = clip["clip_id"]
+            spec_digest = audit._sha(audit._json_bytes(specs[f"clips/{cid}.wav"]))
+            candidates.append({
+                "pair_id": pair["pair_id"], "clip_id": cid, "rank": clip["rank"],
+                "replay_spec_sha256": spec_digest, "source_spec_sha256": spec_digest,
+                "replay_pcm_sha256": audit._sha(b"synthetic transport fixture; no DSP"),
+                "pcm": {"samplerate": 8000, "channels": 2, "frames": 800,
+                        "format": "WAV", "subtype": "PCM_16"},
+                "kick_lag_seconds": [0.0, 0.0, 0.0],
+            })
+    binding_digest = audit._sha(audit._json_bytes(binding))
+    receipt = {
+        "format": "hpg_candidate_ram_audit", "version": 2,
+        "transport": "source_refs_ram", "evidence_kind": "spec_verified_ram_replay",
+        "purpose": "regular", "status": "passed", "ok": True,
+        "binding": deepcopy(binding),
+        "before_sha256": binding_digest, "after_sha256": binding_digest,
+        "manifest_text": manifest_text, "source_manifest_text": source_text,
+        "manifest_sha256": audit._sha(manifest_text.encode("utf-8")),
+        "pairs": len(manifest["pairs"]), "clips": len(candidates),
+        "candidates": candidates,
+    }
+    audit.validate_ram_receipt(receipt, binding)
     proposal = {
-        "format": "hpg_calibration_proposal", "version": 1, "operation_id": "a" * 32,
-        "binding": binding, "audit_passed": True,
-        # Nur die von validate_proposal geforderten Transportfelder; kein Audit-Ergebnis.
-        "audit": {"ok": True, "status": "passed", "algorithm_build": deepcopy(binding["build"])},
-        "fit_status": "passed", "gate_updates": updates,
+        "format": "hpg_calibration_proposal", "version": 2,
+        "operation_id": "a" * 32, "binding": binding,
+        "audit_passed": True, "audit": receipt, "fit_status": "passed",
+        "gate_updates": updates,
         "diagnose": {"transport_contract_fixture": True, "numerical_audit_proven": False},
         "single_proposal": None, "live_applied": False,
         "output": "Synthetic transport fixture; no replay audit or fit executed.",
@@ -169,3 +203,27 @@ def test_postcommit_merge_reload_error_reports_persisted_not_effective(transport
     # Der gueltige Commit bleibt bestehen und laesst sich danach wirklich neu laden.
     cp.reset_cache()
     assert cp.kandidaten_gewichte("Psytrance") == expected
+
+
+def test_transport_receipt_tamper_stays_rejected(transport_proposal):
+    """Ein manipuliertes Receipt darf nicht durch den reinen Transporttest gelangen."""
+    proposal, _, _ = transport_proposal
+    damaged = deepcopy(proposal)
+    damaged["audit"]["candidates"][0]["replay_pcm_sha256"] = "invalid"
+    damaged["proposal_sha256"] = calibration._digest({
+        key: value for key, value in damaged.items() if key != "proposal_sha256"
+    })
+    with pytest.raises(ValueError):
+        calibration.validate_proposal(damaged)
+
+
+def test_legacy_proposal_v1_stays_rejected(transport_proposal):
+    """Das alte Vorschlagsformat wird weiterhin strikt abgelehnt."""
+    proposal, _, _ = transport_proposal
+    legacy = deepcopy(proposal)
+    legacy["version"] = 1
+    legacy["proposal_sha256"] = calibration._digest({
+        key: value for key, value in legacy.items() if key != "proposal_sha256"
+    })
+    with pytest.raises(ValueError, match="Unbekannter Kalibrierungsvorschlag"):
+        calibration.validate_proposal(legacy)
