@@ -145,7 +145,7 @@ POSITION_MARKs, aber nur wenn `_cue_export_allowed` [hpg_core/exporters/rekordbo
 `tests/test_rekordbox_importer.py` (83 Tests, gesammelt 2026-08-25) deckt Pfadkonflikte,
 analysierte-vs-unanalysierte Duplikate und mehrdeutige Basenames ab.
 `tests/test_rekordbox_xml_exporter.py` den Export. Fuer echte DB-Laeufe:
-`benchmark_rekordbox.py`.
+gezielte Read-only-Rekordbox-Pruefungen mit `hpg_core/rekordbox_readonly.py` und echten Testdaten; synthetische Dictionary-Lookups sind kein Datenbank-Benchmark.
 
 ## Common Mistakes
 
