@@ -29,6 +29,11 @@ Dies ist ein Inventar, **keine Laufzeit-, Funktions- oder Vollabnahme**.
   Nachweis ueber reale Rekordbox-DB- oder Audio-Performance. Aus dem aktiven
   Baum entfernt; im Git-Commitverlauf wiederherstellbar. Die vier Referenzen
   in den beiden gespiegelten Skills sind aktualisiert.
+- Zwei ungesammelte Dateien unter `tests/` entfernt:
+  `example_cached_fixture_tests.py` hatte einen nicht registrierten `fast`-Marker
+  und fachlich inkonsistente Beispielerwartungen; `verify_m3u8_logic.py` lief
+  nur als ad-hoc-Skript. Sein Schutz gegen M3U8-Zeileneinschleusung wurde als
+  regulaerer Regressionstest in `tests/test_exporters.py` uebernommen.
 - `.gitignore` schliesst neu SQLite-WAL/SHM/Journal-Nebendateien und
   kurzlebige `.tmp`/`.temp` aus, damit sie nicht versehentlich versioniert
   werden. Bereits versionierte Dateien und lokale Daten bleiben unangetastet.
