@@ -65,13 +65,15 @@ Ein lokaler Agent kann den folgenden rein lesenden Bericht im bestehenden
 Projektordner ausfuehren:
 
 ```powershell
-.\venv312\Scripts\python.exe tools\repo_inventory.py --json > "$env:TEMP\hpg-repo-inventory.json"
+.\venv312\Scripts\python.exe tools\repo_inventory.py --deep-local --json > "$env:TEMP\hpg-repo-inventory.json"
 ```
 
 Ohne `--json` wird eine kurze Liste ausgegeben. Die Inventar-Funktion
 liest keine Audiodateien, loescht nichts und folgt keinen Dateisystemlinks.
-Unversionierte/ignorierte Verzeichnisse werden zur Begrenzung des Aufwands
-als Verzeichniseintraege gemeldet; ihr innerer Inhalt wird noch nicht geprueft.
+Ohne `--deep-local` werden ignorierte Verzeichnisse nur gruppiert.
+Mit `--deep-local` werden auch Unterordner rekursiv ueber ihre Dateimetadaten
+inventarisiert (Obergrenze: 100.000 Eintraege, `truncated` im JSON pruefen).
+Dateinamen mit Alter ueber 90 Tage sind ausschliesslich **Pruefkandidaten**.
 Erst nach Sichtung und Sicherung der wertvollen Daten ist eine gezielte
 Bereinigung einzelner lokaler Artefakte vertretbar.
 

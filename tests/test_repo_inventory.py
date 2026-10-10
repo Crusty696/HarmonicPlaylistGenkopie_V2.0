@@ -42,3 +42,21 @@ def test_inventory_includes_local_ignored_and_does_not_modify_files(tmp_path, ca
     assert main(["--root", str(root), "--json"]) == 0
     parsed = json.loads(capsys.readouterr().out)
     assert parsed["tracked_file_count"] == 5
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="Git erforderlich")
+def test_deep_scan_finds_old_ignored_files_without_following_links(tmp_path):
+    import os
+    from tools.repo_inventory import deep_local_file_inventory
+    folder = tmp_path / "ignored"
+    folder.mkdir()
+    old = folder / "old.log"
+    old.write_bytes(b"unchanged")
+    os.utime(old, (1000000, 1000000))
+    result = deep_local_file_inventory(tmp_path, ["ignored/"], max_entries=30)
+    assert result["files"] == 1
+    assert result["directories"] == 1
+    assert result["largest_old_by_mtime"] == [{"path": "ignored/old.log", "bytes": 9}]
+    assert result["truncated"] is False
+    assert old.read_bytes() == b"unchanged"
+    assert deep_local_file_inventory(tmp_path, ["ignored/"], max_entries=1)["truncated"] is True
