@@ -4500,7 +4500,7 @@ class PlaylistPanel(QWidget):
             self.table.setItem(i, 14, score_item)
 
         # Spalten 10/11 haengen seit Teil 4 vom Paar ab (Plan des aktiven
-        # Kandidaten) — nach dem Umsortieren neu setzen (Waechter Tor 2 Teil 4)
+        # Kandidaten) — nach dem Umsortieren neu setzen.
         for i, track in enumerate(self.playlist[:self.table.rowCount()]):
             mix_in_item, mix_out_item = _mixpunkt_items(i, track, self.transition_recommendations)
             self.table.setItem(i, 10, mix_in_item)

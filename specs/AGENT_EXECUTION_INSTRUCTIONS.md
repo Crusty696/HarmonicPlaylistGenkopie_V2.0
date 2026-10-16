@@ -94,13 +94,15 @@ Arbeite die Phasen aus dem Plan strikt nacheinander ab:
 
 ---
 
-## 4. WÄCHTER-TOR 1 VORLAGE (DIREKT ÜBERNEHMEN)
+## 4. OPTIONALE WÄCHTERPRÜFUNG
 
-Bevor du anfängst, Code zu committen oder gravierende Änderungen vorzunehmen, gilt dieser verbindliche Vertrag für **Tor 1**:
+Eine unabhängige Wächterprüfung kann auf Anforderung Vorhaben, Diff oder
+Gesamtänderung prüfen. Sie hat keine Vorab- oder Commitgate-Funktion.
+Ein Prüfvertrag kann diesen Umfang dokumentieren:
 
 ```text
 ## Pruefvertrag
-- tor: TOR 1
+- pruefumfang: Vorhaben | Diff | Gesamt
 - auftrag: Autonome Umsetzung der Rekordbox Deep Analysis Integration (DirectML, Phrasen, Beatgrid, Stems)
 - akzeptanzkriterien:
   1. onnxruntime-directml laeuft auf AMD GPU ohne Fehler (DmlExecutionProvider)
@@ -126,6 +128,11 @@ Bevor du anfängst, Code zu committen oder gravierende Änderungen vorzunehmen, 
 ```
 
 ---
+
+Es ist kein vorheriges Tor-1-Urteil und keine zweite Prüfung erforderlich.
+Wächterbefunde sind Reviewhinweise; sie blockieren Umsetzung oder Commit nicht
+automatisch. Angeforderte Korrekturen und geltende Sicherheitsregeln bleiben
+maßgeblich.
 
 ## 5. ABSCHLUSS-SIGNAL
 Wenn alle Schritte autonom durchgeführt wurden und die Minimal-Tests bestanden sind, melde dem Nutzer:

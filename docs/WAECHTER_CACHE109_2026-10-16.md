@@ -48,3 +48,11 @@ Kein verbleibender Produktfehler aus den beiden Erstbefunden und kein konkretes 
 
 - Kein eigener Testlauf, Volltest, Build, EXE-Lauf oder Originaltrack-Ablauf. Der bereits geprüfte Rest des Erstberichts wurde nicht erneut breit untersucht.
 - Musikalische Hörabnahme und Gesamtabnahme bleiben offen.
+
+## Nachtrag 16.10.2026
+
+Auf ausdrückliche Nutzeranweisung wurden die verpflichtenden Vorab- und
+Commitprüfungen (TOR 1 und TOR 2) aus den aktuellen Projektregeln entfernt.
+Das oben dokumentierte MIT AUFLAGEN bleibt das historische Urteil zum damaligen
+Vertrag; ein fehlendes Vorabreview blockiert nach der Regeländerung weder
+Umsetzung noch Commit.

@@ -35,9 +35,10 @@ Arbeitsregeln. Aktuelle Nutzeranweisungen bestimmen den Auftrag.
 
 ## Umsetzung und unabhängige Prüfung
 
-- Vor Umsetzung und vor jedem Commit unabhängige, schreibgeschützte Prüfung
-  nach [hpg-waechter](.agents/agents/hpg-waechter.md). Dessen Prüfvertrag und
-  Urteile gelten; eine eigene Prüfung ersetzt den Wächter nicht.
+- Unabhängige, schreibgeschützte Wächterprüfungen nach
+  [hpg-waechter](.agents/agents/hpg-waechter.md) erfolgen auf Anforderung.
+  Es gibt keine verpflichtende Vorab- oder Commitprüfung; ein früheres
+  Wächterurteil ist keine Voraussetzung für Umsetzung oder Commit.
 - Parallel nur unabhängige Recherche, Reviews oder Testvorbereitung. Ein
   Verantwortlicher je teurem Lauf; keine doppelten Test-/Build-Aufträge und
   niemals zwei vollständige pytest-Läufe gleichzeitig. Während codegebundener

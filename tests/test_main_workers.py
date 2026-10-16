@@ -4443,7 +4443,7 @@ def test_close_erfasst_auch_superseded_ai_detect_worker(qtbot, monkeypatch):
 
 
 def test_reorder_setzt_mixpunkt_spalten_aus_neuen_empfehlungen(qtbot, monkeypatch):
-  """Waechter Tor 2 Teil 4: nach Drag-Drop muessen Spalten 10/11 den Plan der
+  """Nach Drag-Drop muessen Spalten 10/11 den Plan der
   neuen Empfehlungen zeigen, nicht den alten Partner."""
   rec = _rec_mit_kandidaten()
   panel = main.PlaylistPanel()

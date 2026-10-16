@@ -55,7 +55,8 @@ Aus den historischen Handoffs, docs/agent-memory und dem Session-Corpus vom
 - Implementierung, automatischer Test, nativer Originaltrack-Ablauf und
   musikalische Bewertung sind getrennte Nachweise. EXE-Pfad und SHA-256
   muessen zum getesteten Build passen; frische Analyse und Cache getrennt.
-- Unabhaengiger Waechter vor Umsetzung und vor Commit. Skill-Spiegel pflegen.
+- Unabhaengige Waechterpruefung auf Anforderung; kein Vorab- oder Commitgate.
+  Die Spiegel unter `.agents/agents` und `.claude/agents` synchron halten.
 - Historisch dokumentierte Kommunikationspraeferenz: Antworten mit :-) enden.
 
 ## Quellen fuer den laufenden Auftrag

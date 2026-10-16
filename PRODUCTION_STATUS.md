@@ -19,7 +19,12 @@ Reservefehler als RAM-Clips erzeugt (115,652s und73,913s).
 `TEMP/hpg-native109-gui/gui-events.json` belegt beide Clips im GUI-RAM-Cache;
 Qt meldet beide geladenen WAV-Streams. Kein frischer GUI-Ordnerimport behauptet.
 Hörproben-Quellformat2 erhält die neue Messmethode, Format1 bleibt lesbar.
-Unabhängige Wächterprüfung am 16.10.: falsche Default-Angabe und lokales Audio-Gate ohne Modellbeats beanstandet; beide korrigiert. Ein neuer Regressionsfall zuerst fehlgeschlagen, nach Korrektur bestanden. Nachprüfung: beide Befunde behoben, kein konkretes Commitumfang-Risiko. Urteil MIT AUFLAGEN wegen der ausdrücklich aufgeschobenen TOR1-Prüfung; Formularvalidator meldet ausschließlich das fehlende TOR1-Urteil. Bericht: docs/WAECHTER_CACHE109_2026-10-16.md. Musikalische Hörabnahme und Gesamtfreigabe offen.
+Unabhängiger Wächterbericht vom 16.10.: zwei Produktbefunde wurden korrigiert,
+der neue Regressionsfall bestand nach vorherigem Fehlschlag. Das Urteil MIT
+AUFLAGEN bezog sich auf das damals fehlende TOR1. Auf ausdrückliche Nutzeranweisung
+ist die Pflicht zu beiden Toren inzwischen aus dem Prozess entfernt; fehlendes
+Vorabreview blockiert daher nicht mehr. Historischer Bericht:
+docs/WAECHTER_CACHE109_2026-10-16.md. Musikalische Hörabnahme und Gesamtfreigabe offen.
 Entwicklungsstand zur versionierten Sicherung; keine Releasefreigabe und kein EXE-Build.
 
 ## Historische Befunde bis zur nativen Gesamtpipeline

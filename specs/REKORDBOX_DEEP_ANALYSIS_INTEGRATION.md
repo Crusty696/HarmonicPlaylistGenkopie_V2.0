@@ -381,15 +381,14 @@ Rekordbox und die mitgelieferte Analyse sind die primaere Forschungs- und Integr
 - Vor jedem Preview-Render Renderbarkeit sicherstellen. Ein groesserer Hoertestsatz wird nur aus erfolgreich gerenderten, vollstaendigen und abspielbaren Varianten publiziert; keine Synchronpruefung lockern und Originalaudio nicht in einen persistenten Hoertestdatensatz kopieren.
 - Vollstaendiger nativer Nachweis: Originaltracks am Quellort auswaehlen, isoliert frisch analysieren, Paare bewerten, Playlist erzeugen, betroffene Uebergaenge in der App rendern/abspielen und Ergebnis anwenden/exportieren. Cache-Reuse separat pruefen. Menschliche Klangbeurteilung separat ausweisen.
 
-## 5. Umsetzungsetappen und Abnahmetore
+## 5. Umsetzung und Nachweise
 
 1. **TOR 0 – Bestand und Referenzdaten:** Manifest/Kohorten/Rohbelege/Hashes wiederverwenden; unabhaengige Takt-/Kick-/Phrasenlabels und Modellrechte klaeren. Ohne Referenzdaten nur Fehlerursachen und technische Konsistenz, keine Accuracy-Freigabe.
-2. **TOR 1 – Pruefvertrag und unabh. Waechter:** Akzeptanzkriterien, Invarianten, exakt erlaubte Dateien, Regressionen und Modellquellen fuer diesen konkreten Patch; read-only Urteil vor Produktcode.
-3. **TOR 2 – Kleine technische Scheiben:** Je Ursache/Modell enger RED/GREEN-Test, dann beide Analysepfade, Cache roundtrip, Paar-/Mixpoint- und Renderer-No-loosening-Tests. Keine parallelen vollen pytest-Laeufe; fuer Schlussbeleg Projekt-Volltest nach `AGENTS.md`.
+2. **Technische Umsetzung:** Je Ursache/Modell passende Änderungen für beide Analysepfade, Cache-Roundtrip, Paar-/Mixpoint- und Renderer-Synchronität. Tests nach Nutzerauftrag und in passenden, gebündelten Etappen; keine parallelen vollen pytest-Läufe.
 4. **TOR 3 – Isolierte Multi-Genre-Holdouts:** Frische Analyse gegen unabhaengige Ground Truth, mit getrenntem Resultat fuer Audio-only und exakte RB-Zuordnung. Vorher festgelegte Genauigkeits-/Coverage-/Laufzeit-/Ressourcenwerte. Keine Kalibrierung auf Holdout.
 5. **TOR 4 – Native App und abspielbarer Hoersatz:** Quelltrackfluss bis zu Preview-Wiedergabe in der tatsaechlichen App belegen. Renderfehler nach Grund klassifizieren; nur erfolgreich komplett gerenderte Varianten aufnehmen. Bewertungen bleiben menschliche musikalische Evidenz.
 6. **TOR 5 – Doku/Cache/Release:** Skills und Projektwissen aktualisieren; Cache-Bump nur nach tatsaechlichem persistiertem Vertragswechsel. Unveraenderte/ungueltige Kandidaten weiter fail-closed. Build/EXE erst nach funktionalen Nachweisen; exakter EXE-Pfad und SHA-256 separat belegen.
-7. **TOR 6 – Unabhaengige Abschlusspruefung:** Waechter prueft exakten Diff und Nachweise. Status je Punkt: implementiert, automatisch getestet, mit frischen Originaltracks nativ geprueft, musikalisch bewertet. Kein pauschales "alles geloest".
+7. **Abschlussnachweise:** Status je Punkt: implementiert, automatisch getestet, mit frischen Originaltracks nativ geprüft, musikalisch bewertet. Eine unabhängige Wächterprüfung kann auf Anforderung erfolgen. Kein pauschales "alles gelöst".
 
 ## 6. Anforderungsinventar aus der urspruenglichen Spezifikation
 
@@ -406,7 +405,7 @@ Kein Punkt der alten Spezifikation wird still verworfen:
 | Vocal-Kollision >0.4 | Phase D, bis Validierung Hypothese statt Gate |
 | Bass-Swap am Downbeat | Phase D, Ereignis mit Messunsicherheit |
 | CNN-Embedding / Kosinus-Score | Phase E |
-| `analysis.py`, `structure_analyzer.py`, `downbeat.py`, `dj_brain.py`, `pair_candidates.py`, `models.py`, `caching.py`, `rekordbox_importer.py`, Requirements | jeweilige Phasen; exakte Patchdateien nach TOR 1 festzulegen |
+| `analysis.py`, `structure_analyzer.py`, `downbeat.py`, `dj_brain.py`, `pair_candidates.py`, `models.py`, `caching.py`, `rekordbox_importer.py`, Requirements | jeweilige Phasen; konkrete Patchdateien vor Umsetzung festlegen |
 | Kein Qt-Hauptthread, Genre-SSoT schuetzen, HPG-001/Mixpoint-Vertrag | 2, B, F; `main.py` nur bei gesondertem GUI-Akzeptanzpunkt |
 | CACHE_VERSION 53 | ersetzt durch bedingte Regel: naechste Version erst bei nachgewiesenem Cachevertrag festlegen |
 

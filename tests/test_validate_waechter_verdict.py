@@ -1,9 +1,9 @@
 from tools import validate_waechter_verdict as validator
 
 
-def _report(*, tor="TOR 1", verdict="DURCHGEWUNKEN", findings="- keine", untested="- keine", extra_contract=""):
+def _report(*, scope="Gesamt", verdict="DURCHGEWUNKEN", findings="- keine", untested="- keine", extra_contract=""):
     return f"""## Pruefvertrag
-- tor: {tor}
+- pruefumfang: {scope}
 - auftrag: Waechtervertrag absichern
 - akzeptanzkriterien: Formale Validierung vorhanden
 - erlaubte_dateien: .agents/agents/hpg-waechter.md, tools/validate_waechter_verdict.py
@@ -25,12 +25,12 @@ def _report(*, tor="TOR 1", verdict="DURCHGEWUNKEN", findings="- keine", unteste
 """
 
 
-def test_gueltiger_tor_1_bericht_wird_akzeptiert():
+def test_valider_bericht_mit_freiem_pruefumfang_wird_akzeptiert():
     assert validator.validate_report(_report()) == []
 
 
-def test_gueltiger_tor_2_bericht_braucht_tor_1_und_diff():
-    report = _report(tor="TOR 2", extra_contract="- tor_1_urteil: DURCHGEWUNKEN\n- diff_bereich: HEAD~1..HEAD")
+def test_legacy_tor_2_bericht_braucht_keinen_vorgaenger():
+    report = _report(scope="", extra_contract="- tor: TOR 2")
     assert validator.validate_report(report) == []
 
 
@@ -61,21 +61,6 @@ def test_durchgewunken_mit_offenem_punkt_wird_abgelehnt():
     assert any("DURCHGEWUNKEN" in error for error in errors)
 
 
-def test_tor_2_ohne_tor_1_urteil_wird_abgelehnt():
-    errors = validator.validate_report(_report(tor="TOR 2"))
-    assert any("tor_1_urteil" in error for error in errors)
-
-
-def test_tor_2_mit_ungueltigem_tor_1_urteil_wird_abgelehnt():
-    report = _report(tor="TOR 2", extra_contract="- tor_1_urteil: erfunden\n- diff_bereich: HEAD~1..HEAD")
-    assert any("Tor-1-Urteil" in error for error in validator.validate_report(report))
-
-
-def test_tor_2_ohne_diff_bereich_wird_abgelehnt():
-    report = _report(tor="TOR 2", extra_contract="- tor_1_urteil: DURCHGEWUNKEN")
-    assert any("diff_bereich" in error for error in validator.validate_report(report))
-
-
-def test_tor_2_mit_ungueltigem_diff_bereich_wird_abgelehnt():
-    report = _report(tor="TOR 2", extra_contract="- tor_1_urteil: DURCHGEWUNKEN\n- diff_bereich: erfunden")
+def test_optional_ungueltiger_diff_bereich_wird_abgelehnt():
+    report = _report(extra_contract="- diff_bereich: erfunden")
     assert any("diff_bereich" in error for error in validator.validate_report(report))
