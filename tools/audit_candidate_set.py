@@ -694,8 +694,8 @@ def _render_with_diagnostics(
     rendered = []
     original = transition_renderer._synchronize_and_verify_kicks
 
-    def wrapped(ref_segment, segment_b, sr, bpm, cf_frames):
-        corrected = original(ref_segment, segment_b, sr, bpm, cf_frames)
+    def wrapped(ref_segment, segment_b, sr, bpm, cf_frames, **kwargs):
+        corrected = original(ref_segment, segment_b, sr, bpm, cf_frames, **kwargs)
         captured[:] = transition_renderer._kick_lags_across_overlap(
             ref_segment, corrected, sr, bpm, cf_frames
         )
@@ -918,8 +918,8 @@ def _ram_render(spec, sources, *, capture_lags=False):
     captured = []
     original = transition_renderer._synchronize_and_verify_kicks
 
-    def wrapped(ref, segment_b, sr, bpm, cf_frames):
-        corrected = original(ref, segment_b, sr, bpm, cf_frames)
+    def wrapped(ref, segment_b, sr, bpm, cf_frames, **kwargs):
+        corrected = original(ref, segment_b, sr, bpm, cf_frames, **kwargs)
         captured[:] = transition_renderer._kick_lags_across_overlap(ref, corrected, sr, bpm, cf_frames)
         return corrected
 
