@@ -339,7 +339,7 @@ def _handle(payload):
     reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v11',
+    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v12',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
         model_hashes=hashes, verified=False, beats=rows, grid=grid,
         bpm=final_bpm if segmented is not None else final_bpm/100., selection=selection, reader=reader_metadata,

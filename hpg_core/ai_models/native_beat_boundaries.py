@@ -1,8 +1,9 @@
 """Originale Grenz-/Nahtkorrekturen aus RVA1294100 im privaten RAM-Abbild.
 
-Der Originalwrapper bleibt unverändert. Drei belegte Schnittstellen werden im
-Einmalprozess überbrückt: Reader-Konstruktion, PCM-Lesen und Modelldispatch.
-So bleiben Roh-Modellbeats verfügbar, ohne eine zweite Inferenz auszuführen.
+Der Originalwrapper bleibt unverändert. Vier belegte Schnittstellen werden im
+Einmalprozess überbrückt: Reader-Konstruktion, Kanalabfrage, PCM-Lesen und
+Modelldispatch. So bleiben Roh-Modellbeats verfügbar, ohne eine zweite Inferenz
+auszuführen.
 Installationsdateien und fremde Prozesse werden niemals verändert.
 """
 import ctypes as ct
@@ -13,7 +14,7 @@ from .native_phrase_worker import EXE, NativeContractError
 from .native_beat_worker import FloatMatrix
 from .native_beat_grid import _Json, _read_json
 
-VERSION = 'rb-7.2.19-wrapper1294100-v2'
+VERSION = 'rb-7.2.19-wrapper1294100-v3'
 
 
 class _PrivateBridges:
@@ -45,6 +46,12 @@ def run(image, reader, selection, window_start):
     """Grenzkorrekturen nativ; Callbackfehler sperren das gesamte Ergebnis."""
     from .native_beat_pipeline_worker import validate_model_rows
     errors, raw_rows = [], []
+    channels = getattr(reader, 'channels', None)
+    frames = getattr(reader, 'frames', None)
+    if type(channels) is not int or channels not in (1, 2):
+        raise NativeContractError('Invalid wrapper reader channel count')
+    if type(frames) is not int or frames < 1:
+        raise NativeContractError('Invalid wrapper reader frame count')
     bridge = _PrivateBridges(image)
     # Der Wrapper besitzt nur seine kleine Readerhülle; Decoder/Resampler sind
     # bis zum Ende des isolierten Prozesses im NativeAudioReader referenziert.
@@ -63,8 +70,18 @@ def run(image, reader, selection, window_start):
         ct.c_void_p.from_address(address).value = ct.addressof(table)
         ct.c_void_p.from_address(address + 0x220).value = ct.addressof(reader.owner)
         ct.c_int32.from_address(address + 0x228).value = 44100
-        ct.c_int32.from_address(address + 0x238).value = reader.frames
+        ct.c_int32.from_address(address + 0x238).value = frames
         return address
+
+    # RVA1294100 branches on the reader's channel getter: two channels are
+    # deinterleaved from the two PCM buffers, while mono follows a separate
+    # path. A fallback NativeAudioReader has no Rekordbox-owned decoder object,
+    # so the original getter would report zero channels despite valid PCM.
+    channel_type = ct.WINFUNCTYPE(ct.c_uint16, ct.c_void_p)
+
+    @channel_type
+    def channel_count(address):
+        return channels
 
     read_type = ct.WINFUNCTYPE(ct.c_int32, ct.c_void_p, ct.c_int32,
                               ct.c_void_p, ct.c_void_p, ct.c_int32)
@@ -147,6 +164,7 @@ def run(image, reader, selection, window_start):
             model_ready[index] = True
 
         bridge.install(0x1104be0, construct)
+        bridge.install(0x11042d0, channel_count)
         bridge.install(0x2ccfd60, read)
         bridge.install(0x1293f70, dispatch)
         # The recovered wrapper signature is (..., int sample_rate,
