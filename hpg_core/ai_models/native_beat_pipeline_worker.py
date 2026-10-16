@@ -14,7 +14,9 @@ import numpy as np
 
 from .native_phrase_worker import NativeImage, NativeContractError, EXE, SHA256, _source_identity
 from .beat_predictor import _hashes
-from .native_audio_reader import NativeAudioReader, bind_reader_imports
+from .native_audio_reader import (
+    NativeAudioReader, _source_channel_count, bind_reader_imports,
+)
 from .native_beat_selection import (
     MAX_NATIVE_BEAT_WINDOW_SECONDS, select_model,
 )
@@ -290,15 +292,16 @@ def _handle(payload):
     library = _bind_tensorflow(image)
     if image.function(0x2998258, ct.c_int32)() != 0:
         raise NativeContractError('Native standard-stream initialization failed')
+    source_channels = _source_channel_count(path)
+    # Unbekannte und breite Kanal-Layouts bleiben beim HPG-Decoder; ein
+    # unbekannter Wert ist keine Freigabe fuer den privaten Rekordbox-Reader.
+    use_native_reader = source_channels in (1, 2)
     try:
-        import soundfile as sf
-        source_channels = int(sf.info(str(path)).channels)
-    except Exception:
-        source_channels = None
-    # Rekordbox' privater PCM-Reader akzeptiert nur Mono/Stereo. Breitere
-    # Layouts nutzen begrenztes HPG-Decoding und denselben Mono-Downmix wie DSP.
-    reader = NativeAudioReader(image, path,
-        use_rekordbox=source_channels is None or source_channels <= 2)
+        reader = NativeAudioReader(image, path, use_rekordbox=use_native_reader)
+    except NativeContractError:
+        # Der NativeCodec ist optional. Nach einem kontrollierten Open-Fehler
+        # dekodiert der isolierte Einmalprozess dieselbe Quelle mit HPG weiter.
+        reader = NativeAudioReader(None, path, use_rekordbox=False)
     frames = reader.frames
     from .native_beat_boundaries import run as correct_boundaries, VERSION as boundary_contract
     if frames <= MAX_NATIVE_BEAT_WINDOW_SECONDS * _SAMPLE_RATE:
@@ -336,7 +339,7 @@ def _handle(payload):
     reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v10',
+    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v11',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
         model_hashes=hashes, verified=False, beats=rows, grid=grid,
         bpm=final_bpm if segmented is not None else final_bpm/100., selection=selection, reader=reader_metadata,
