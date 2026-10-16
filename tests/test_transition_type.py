@@ -404,3 +404,17 @@ class TestTransitionInRecommendation:
     recs = compute_transition_recommendations([t1, t2], bpm_tolerance=6.0)
     assert len(recs) == 1
     assert recs[0].transition_type == "halftime_switch"
+
+  def test_halftime_cut_ueberstimmt_bass_swap_pflicht(self):
+    """Ein Kickkonflikt darf den Half/Double-Cut nicht in einen Blend drehen."""
+    from types import SimpleNamespace
+    from hpg_core.playlist import transition_type_for_candidate
+
+    t1 = _make_track(title="T1", bpm=140.0, camelot="8A", energy=50, genre="Tech House")
+    t2 = _make_track(title="T2", bpm=70.0, camelot="8A", energy=50, genre="Tech House")
+    kandidat = SimpleNamespace(
+      flags={"bass_swap_pflicht": True},
+      teilwerte={"harmonic": 1.0},
+    )
+
+    assert transition_type_for_candidate(t1, t2, kandidat, bpm_tolerance=6.0) == "halftime_switch"
