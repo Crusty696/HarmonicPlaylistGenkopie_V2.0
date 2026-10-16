@@ -118,7 +118,7 @@ def make_exportable_track(**overrides):
   track.beatgrid_status = "verified"
   track.beatgrid_source = "audio"
   track.downbeat_confidence = 0.9
-  track.first_downbeat = 0.0
+  track.first_downbeat = overrides.get("first_downbeat", 0.0)
   return track
 
 
@@ -526,7 +526,7 @@ class TestRekordboxCuePunkte:
   def test_mix_in_cue_zeitstempel(self, tmp_path):
     """Mix-In Cue hat korrekten Zeitstempel."""
     playlist = [make_exportable_track(
-      duration=300.0, mix_in_point=45.0, mix_out_point=250.0,
+      duration=300.0, mix_in_point=45.0, mix_out_point=255.0,
       outro_covered=True,
     )]
     out = str(tmp_path / "cue_time.xml")
@@ -613,10 +613,12 @@ class TestKandidatenCues:
     assert punkte[2]["mix_in"] == 80.0
 
   def test_rang1_und_hpg_k_cues_fortlaufend_nach_dedupe(self, tmp_path):
-    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, mix_in_point=60.0,
-                   mix_out_point=200.0, outro_covered=True)
-    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, mix_in_point=50.0,
-                   mix_out_point=210.0, outro_covered=True)
+    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), duration=300.0,
+                   bpm=192.0, mix_in_point=62.0, mix_out_point=200.0,
+                   first_downbeat=2.0, outro_covered=True)
+    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), duration=300.0,
+                   bpm=192.0, mix_in_point=82.3, mix_out_point=212.3,
+                   first_downbeat=2.3, outro_covered=True)
     kand = [_kand(1, 192.0, 82.3, "pssi_phrase", "auto_cue"),
             _kand(2, 192.0, 82.3, "pssi_phrase", "auto_cue"),     # zweite Blende, gleiche Zeit
             _kand(3, 164.6, 82.3, "sektion", "auto_cue"),
@@ -699,8 +701,8 @@ class TestKandidatenCues:
     assert any(mark[0] == "MIX OUT" for mark in rb_b.marks)
 
   def test_duplicate_occurrence_cues_werden_aggregiert(self, tmp_path):
-    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), outro_covered=True)
-    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), outro_covered=True)
+    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), bpm=192.0, outro_covered=True)
+    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), bpm=192.0, outro_covered=True)
     transitions = [
       _rec(190.0, 80.0, [], index=0),
       _rec(200.0, 90.0, [], index=1),

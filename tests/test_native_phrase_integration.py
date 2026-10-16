@@ -111,6 +111,7 @@ def test_active_native_path_preserves_input_grid_and_separate_snapshot(monkeypat
         assert kwargs['verified_grid'] is True
         assert kwargs['key_index'] == index
         return dict(status='ok', reason=None, phrases=native_snapshot()['phrases'], terminal_beat=240,
+            reader_backend='hpg-libsndfile',
             raw_result=dict(input_grid=dict(bpm_hundredths=12000, offset_ms=0, bar_position=1, key_index=index)))
     monkeypatch.setattr(adapter, 'generate_phrases', generate)
     reference = [dict(time=i*.5, beat=i%4+1) for i in range(240)] if source == 'rekordbox' else []
@@ -160,6 +161,7 @@ def test_native_cache_contract_roundtrip_and_tampering(tmp_path):
     path.write_bytes(b'cache identity only')
     track = Track(filePath=str(path), fileName=path.name, duration=120., bpm=120.,
         downbeat_confidence=.9, beatgrid_status='verified', beatgrid_source='audio',
+        bar_position_status='audio_estimate',
         beatgrid_windows_checked=3, beatgrid_max_phase_error_ms=1.,
         analysis_mode='librosa_full_or_tail', native_phrase_analysis=snapshot,
         phrase_grid=phrase_grid_from_phrases(snapshot['phrases']),
