@@ -12,7 +12,9 @@ from pathlib import Path
 import numpy as np
 
 from .native_phrase_worker import NativeImage, NativeContractError, SHA256, _source_identity
-from .native_audio_reader import NativeAudioReader, bind_reader_imports
+from .native_audio_reader import (
+    NativeAudioReader, _source_channel_count, bind_reader_imports,
+)
 from .native_beat_selection import MAX_NATIVE_BEAT_WINDOW_SECONDS
 
 _used = False
@@ -54,7 +56,11 @@ def _handle(payload):
         previous = row['pos']
     image = NativeImage()
     bind_reader_imports(image)
-    source = NativeAudioReader(image, path)
+    channels = _source_channel_count(path)
+    try:
+        source = NativeAudioReader(image, path, use_rekordbox=channels in (1, 2))
+    except NativeContractError:
+        source = NativeAudioReader(None, path, use_rekordbox=False)
     if source.frames < frames or source.channels not in (1, 2):
         raise NativeContractError('Native reader does not cover refinement input')
     # RVA262bf53/1853f30 erzeugt Diagnose-CSV unter APPDATA. Ausschließlich
@@ -124,7 +130,7 @@ def _handle(payload):
         raise NativeContractError('Source changed during refinement')
     # Native Speicher bleibt bis zum sofortigen Ende dieses Einmalprozesses.
     # Kein wiederverwendbarer Dienst, solange der Freigabevertrag offen ist.
-    return json.dumps(dict(contract='rb-7.2.19-final-grid-research-v1',
+    return json.dumps(dict(contract='rb-7.2.19-final-grid-research-v2',
         executable_sha256=SHA256, verified=False, frames=frames, sample_rate=44100,
         initial_bpm_hundredths=initial_bpm, initial_count=initial_count,
         bpm_hundredths=final_bpm, grid=rows, diagnostic_dir=diagnostic_dir), allow_nan=False).encode('utf8')
