@@ -1047,7 +1047,7 @@ class TestRenderTransitionClip:
         monkeypatch.setattr("hpg_core.transition_renderer._align_beat_phase", align)
         monkeypatch.setattr(
             "hpg_core.transition_renderer._synchronize_and_verify_kicks",
-            lambda _a, b, *_args: b,
+            lambda _a, b, *_args, **_kwargs: b,
         )
         spec = _strict_spec(
             mix_in_sec=10.0,
