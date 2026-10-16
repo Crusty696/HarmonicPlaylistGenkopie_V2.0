@@ -405,7 +405,7 @@ class RekordboxXMLExporter(BaseExporter):
         (Track.first_downbeat). Ein unsicherer Anker wird nicht als Beatgrid
         exportiert.
 
-        AUDIT-FIX D-03 (2026-08-14): Hier ist WIRKLICH nur das
+        AUDIT-FIX D-03 (2026-08-14): Ursprünglich war hier nur das
         Referenz-Beatgrid gemeint, deshalb steht die Bedingung jetzt explizit
         als `== REFERENCE_BEATGRID_CONFIDENCE` statt als Zahlenschwelle. Ein
         TEMPO-Element traegt `Battito=1`, behauptet also die TAKT-Phase — und
@@ -413,14 +413,24 @@ class RekordboxXMLExporter(BaseExporter):
         35 ANLZ-Referenzen: 9 von 19 Schaetzungen um ganze Beats daneben).
         Ein falsches Beatgrid landet in der Rekordbox-Bibliothek des Nutzers
         und ist dort schlimmer als gar keines.
+
+        Native Analysegrids verwenden dieselbe Herkunfts-, Zeitkorrektur- und
+        Ankerprüfung wie der Renderer. Das ist technische Freigabe, keine
+        unabhängige musikalische Takt-1-Abnahme.
         """
+        if getattr(track, "bar_position_usage_blocked", False):
+            return 0, [
+                f"{track.filePath}: Beatgrid ausgelassen (Taktpositionshinweis; Takt-1 nicht freigegeben)"
+            ]
         if not track.bpm or track.bpm <= 0:
             return 0, [f"{track.filePath}: Beatgrid fehlt wegen ungueltiger BPM"]
         try:
+            from ..ai_models.native_track_beats import has_verified_grid
             first_downbeat = float(getattr(track, "first_downbeat", 0.0) or 0.0)
             if (
                 hasattr(rb_track, "add_tempo")
-                and getattr(track, "beatgrid_source", "unknown") == "rekordbox"
+                and (getattr(track, "beatgrid_source", "unknown") == "rekordbox"
+                     or has_verified_grid(track))
                 and getattr(track, "beatgrid_status", "unknown") == "verified"
                 and getattr(track, "downbeat_confidence", 0.0)
                 == REFERENCE_BEATGRID_CONFIDENCE
@@ -545,6 +555,8 @@ class RekordboxXMLExporter(BaseExporter):
         geprueft auf den effektiven Punkten (Kandidat oder Track)."""
         import math
 
+        if getattr(track, "bar_position_usage_blocked", False):
+            return False
         if not getattr(track, "outro_covered", False) or track.duration <= 0:
             return False
         if allow_partial:

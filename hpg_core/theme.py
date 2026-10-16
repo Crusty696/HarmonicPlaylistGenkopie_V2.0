@@ -803,18 +803,18 @@ def get_texture_label(value: float) -> str:
   Uebersetzt den nackten Texture-Similarity Wert (0.0 bis 1.0) 
   in eine fuer DJs verstaendliche, qualitative Bezeichnung.
   """
-  if value != value:  # NaN -> undefinierter Klang = schlechtester Fall
-    return "Klang: Discord"
+  if value != value or value in (float('inf'), float('-inf')):
+    return "Klangfarbe: unbekannt"
   value = max(0.0, min(1.0, value))
   if value >= 0.85:
-    return "Klang: Identisch"
+    return "Klangfarbe: sehr ähnlich"
   elif value >= 0.70:
-    return "Klang: Aehnlich"
+    return "Klangfarbe: ähnlich"
   elif value >= 0.55:
-    return "Klang: Harmonisch"
+    return "Klangfarbe: mäßig ähnlich"
   elif value >= 0.40:
-    return "Klang: Passend"
+    return "Klangfarbe: wenig ähnlich"
   elif value >= 0.25:
-    return "Klang: Kontrast"
+    return "Klangfarbe: unterschiedlich"
   else:
-    return "Klang: Discord"  # Unruhiger Kontrast
+    return "Klangfarbe: unterschiedlich"

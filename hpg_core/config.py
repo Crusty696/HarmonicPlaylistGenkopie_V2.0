@@ -190,11 +190,30 @@ PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder fest
 # Windows fuehren mehr als vier parallele Decoder bei grossen AIFF/WAV-Dateien
 # zu C-Level-Abstuerzen des ProcessPools; explizite Nutzerlimits bleiben moeglich.
 PARALLEL_AUTO_MAX_WORKERS = 4
+# Gemeinsamer Cue-/Beat-Modellprozess: Obergrenze für zugesicherten Windows-
+# Job-Speicher, kein VRAM-Limit. Startbudget; Eignung erst im Abschlusstest messen.
+MODEL_PROCESS_MEMORY_LIMIT_BYTES = 4 * 1024 * 1024 * 1024
 # AUDIT-FIX N-04 (2026-07-26): Obergrenze fuer die Haenger-Deadline im
 # Parallel-Analyzer. Die Deadline ist eine INAKTIVITAETS-Deadline pro
 # Wartezyklus (TIMEOUT * worker_count + 30) und wird hier auf ~15 Minuten
 # gedeckelt — sie waechst NICHT mehr mit der Batch-Groesse.
 PARALLEL_HANG_DEADLINE_MAX = 900  # Sekunden (15 Minuten)
+
+
+def analysis_timeout_seconds(worker_count: int = 1) -> float:
+    """Begrenztes Trackbudget inklusive serieller Zusatzmodell-Warteschlange."""
+    import os
+
+    if type(worker_count) is not int or worker_count < 1:
+        raise ValueError("worker_count muss eine positive Ganzzahl sein")
+    # Native Einzelaufrufe bleiben auf 180 s begrenzt. Bis zu worker_count
+    # aktive Tracks teilen denselben Broker; Wartezeit zählt zum Gesamtbudget.
+    extra = (180. if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
+    extra += 30. if os.environ.get("HPG_EMBEDDINGS", "1") == "1" else 0.
+    if not extra:
+        return float(PARALLEL_ANALYSIS_TIMEOUT)
+    return min(float(PARALLEL_ANALYSIS_TIMEOUT) + worker_count * extra,
+               max(float(PARALLEL_ANALYSIS_TIMEOUT), PARALLEL_HANG_DEADLINE_MAX - 30.))
 
 # === Structure Analysis ===
 SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung (0.1-0.5)

@@ -2305,6 +2305,14 @@ Algorithmus-/Build-Digest sichern den lokal verwendeten Python-Code ab.
 def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     _producer_checkpoint(args)
     render_sink = _producer_sink(args)
+    preflight = getattr(args, "hpg_preflight", None)
+    if preflight is not None and (render_sink is None or not callable(preflight)):
+        raise ValueError("Preflight erfordert den Quellreferenz-Sink")
+    source_snapshot = getattr(args, "hpg_source_snapshot", None)
+    if preflight is not None and not callable(source_snapshot):
+        raise ValueError("Preflight erfordert pruefbaren globalen Quell-Snapshot")
+    class PreflightPairRejected(Exception):
+        """Nur echter BeatSync-Ausschluss vor globalem Sink-Commit."""
     out = Path(args.out)
     anzeige_out = Path(getattr(args, "anzeige_out", out))
     clips_dir = out / "clips"
@@ -2404,6 +2412,16 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             continue
         if [int(pc.rang) for pc in pcs] != list(range(1, len(pcs) + 1)):
             raise ValueError("Kandidaten sind kein exakter Top-N-Rangprefix")
+        if preflight is not None and any(
+            min(crossfade_reserve(
+                float(pc.t_out), float(a.duration), float(b.duration), float(pc.t_in),
+            )) < float(pc.overlap_sec)
+            for pc in pcs
+        ):
+            # Den ganzen Rangprefix vor jedem Emit pruefen, inklusive B-Nachlauf.
+            logger.warning("Paar wegen unzureichender Audio-/Nachlaufreserve vollstaendig verworfen")
+            uebersprungen += 1
+            continue
         pair_id = f"{paare_fertig + 1:03d}"
         print(f"[{paare_fertig + 1}/{args.anzahl}] Paar {pair_id}: {len(pcs)} Kandidaten ...", flush=True)
         pair_temp = (
@@ -2413,6 +2431,16 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
         clips: list[str] = []
         gerenderte_typen: list[str] = []
         verschoben: list[Path] = []
+        pending_specs = []
+        pair_sink = None
+        if preflight is not None:
+            from hpg_core.hearing_sources import SourceRenderSink
+            pair_sink = SourceRenderSink(
+                out, tuple(args.source_roots), checkpoint=lambda: _producer_checkpoint(args),
+            )
+            def stage_spec(spec, target):
+                pair_sink.emit(spec, target)
+                pending_specs.append((spec, target))
         try:
             for n, pc in enumerate(pcs, start=1):
                 _producer_checkpoint(args)
@@ -2428,11 +2456,37 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
                     ),
                     bpm_toleranz=args.bpm_toleranz,
                     energy_direction=energy_direction,
-                    **({"render_sink": render_sink} if render_sink is not None else {}),
+                    **({"render_sink": stage_spec if pair_sink is not None else render_sink}
+                       if render_sink is not None else {}),
                 )
                 _producer_checkpoint(args)
                 clips.append(clip)
                 gerenderte_typen.append(_validiere_transition_type(gerenderter_typ))
+            if pair_sink is not None:
+                if len(pending_specs) != len(pcs):
+                    raise RuntimeError("Preflight-Specs unvollstaendig")
+                sources = pair_sink.sources
+                for spec, _target in pending_specs:
+                    _producer_checkpoint(args)
+                    bound = [dict(sources[path], size_bytes=sources[path]["size"])
+                             for path in dict.fromkeys((spec.track_a_path, spec.track_b_path))]
+                    verdict = preflight(spec, bound)
+                    _producer_checkpoint(args)
+                    if type(verdict) is not bool:
+                        raise RuntimeError("Ungueltiges Preflight-Ergebnis")
+                    if not verdict:
+                        raise PreflightPairRejected()
+                if _algorithm_build_fingerprint() != algorithm_build:
+                    raise RuntimeError("Algorithmus-/Build-Dateien im Preflight veraendert")
+                for spec, target in pending_specs:
+                    _producer_checkpoint(args)
+                    render_sink(spec, target)
+                    global_sources = source_snapshot()
+                    if type(global_sources) is not dict or any(
+                        global_sources.get(path) != expected
+                        for path, expected in sources.items()
+                    ):
+                        raise RuntimeError("Globaler Sink hat andere Quellbytes als der Preflight gebunden")
             if render_sink is None:
                 for n in range(1, len(pcs) + 1):
                     quelle = pair_temp / f"{pair_id}_k{n}.wav"
@@ -2443,6 +2497,10 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
                     verschoben.append(ziel)
         except InterruptedError:
             raise
+        except PreflightPairRejected:
+            logger.warning("Paar %s wegen BeatSyncError vollstaendig verworfen", pair_id)
+            uebersprungen += 1
+            continue
         except Exception as exc:  # noqa: BLE001 — Reservepaar statt Teilsatz
             if render_sink is not None:
                 # Der Sink kann schon Referenzen besitzen: ganzen Dienstlauf abbrechen.

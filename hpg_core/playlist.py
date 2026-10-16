@@ -12,6 +12,7 @@ from .models import (
 from typing import TYPE_CHECKING
 from .dj_brain import (
     _get_outro_start_from_sections,
+    effective_track_phrase_unit,
     get_genre_compatibility,
     generate_dj_recommendation,
 )
@@ -2549,7 +2550,11 @@ def compute_transition_recommendations(
         if kandidaten:
             aktiv, kandidat_konsistent = kette[index]
             if aktiv is None:
-                aktiv = kandidaten[0]
+                logger.warning(
+                    "Uebergang %s verworfen: kein physisch spielbarer Kandidat in Kette",
+                    index,
+                )
+                continue
             compatibility_score = int(round(metrics.overall_score * 100))
             energy_delta = int(round(float(metrics.energy_delta or 0.0)))
             risk_level = _categorise_risk_level(
@@ -3379,9 +3384,7 @@ def _snapshot_flag(snapshot: "CandidateSnapshot", name: str, default=False):
 def _candidate_link_consistent(
     previous: "CandidateSnapshot", current: "CandidateSnapshot", middle: Track
 ) -> bool:
-    grid = seconds_per_bar(middle.bpm) * int(
-        getattr(middle, "phrase_unit", 8) or 8
-    )
+    grid = seconds_per_bar(middle.bpm) * effective_track_phrase_unit(middle)
     return (
         current.t_out
         >= previous.t_in + 2.0 * grid - QUANTIZE_TOLERANCE_SEC
@@ -3546,6 +3549,14 @@ def legacy_transition_recommendations(
     return legacy
 
 
+class _BoundaryCandidateMap(dict):
+    """Kandidaten und Ablehnungsbeleg aus genau demselben Rankinglauf."""
+
+    def __init__(self, values, rejection_reasons=()):
+        super().__init__(values)
+        self.rejection_reasons = tuple(rejection_reasons)
+
+
 def _rank_fixed_boundaries(
     occurrences: tuple[TrackOccurrence, ...],
     bpm_tolerance: float,
@@ -3580,6 +3591,7 @@ def _rank_fixed_boundaries(
         schema_rank = schema_profiles.get(
             genre, schema_profiles.get("Unknown", [])
         ) if isinstance(schema_profiles, Mapping) else None
+        rejection_reasons = []
         mutable = rank_pair_candidates(
             track_a,
             track_b,
@@ -3592,6 +3604,7 @@ def _rank_fixed_boundaries(
             tolerances=tolerances,
             wahl=persisted,
             schema_rang=schema_rank,
+            rejection_reasons=rejection_reasons,
         )[:12]
         _check_cancel(cancel_check)
         snapshots = tuple(
@@ -3600,7 +3613,10 @@ def _rank_fixed_boundaries(
         )
         all_snapshots.append(snapshots)
         mutable_maps.append(
-            {snapshot.key: candidate for snapshot, candidate in zip(snapshots, mutable)}
+            _BoundaryCandidateMap(
+                {snapshot.key: candidate for snapshot, candidate in zip(snapshots, mutable)},
+                rejection_reasons,
+            )
         )
     return tuple(all_snapshots), tuple(mutable_maps), saved_present
 
@@ -3620,6 +3636,12 @@ def _recommendation_snapshot(
     upcoming = occurrences[index + 1]
     bpm_delta = float(upcoming.track.bpm) - float(current.track.bpm)
     if selected is None:
+        reasons = (
+            ("Mixpunkte passen nicht zur Kette", "Einzelne Paar-Kandidaten sind vorhanden, lassen sich aber nicht zu einer durchgängigen Folge verbinden.")
+            if candidates else getattr(mutable_by_key, "rejection_reasons", ())
+        )
+        if not reasons:
+            reasons = ("Keine zulässigen Mixpunkte", "Für dieses Paar liegt kein ausführbarer Übergangsplan vor.")
         return ImmutableRecommendationSnapshot(
             index=index,
             from_occurrence_id=current.occurrence_id,
@@ -3633,7 +3655,7 @@ def _recommendation_snapshot(
             energy_delta=0,
             compatibility_score=0,
             risk_level="unplanned",
-            notes="UNGEPLANT — kein ausführbarer TransitionPlan",
+            notes="\n".join(reasons),
             transition_type="unplanned",
             plan=None,
             candidates=candidates,

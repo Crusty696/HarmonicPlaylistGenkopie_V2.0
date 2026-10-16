@@ -16,8 +16,10 @@ Features:
 import logging
 import math
 import os
+import ntpath
 import hashlib
 import json
+import mutagen
 from copy import deepcopy
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
@@ -108,6 +110,9 @@ class RekordboxTrackData:
     # Downbeat-Feature 2026-07-17: DB-Content-ID fuer den lazy ANLZ-Zugriff
     # (Beatgrid/PQTZ liegt in den .DAT-Analysedateien, nicht in master.db)
     content_id: Optional[str] = None
+    file_size: Optional[int] = None
+    isrc: Optional[str] = None
+    path_match: str = "exact_path"
 
 
 
@@ -115,8 +120,9 @@ class RekordboxTrackData:
 class RekordboxCoverage:
     """Wie viele Tracks eines Laufs konnten Rekordbox-Daten nutzen?
 
-    Trennt die drei Faelle, die im Log sonst alle gleich aussehen:
-    analysiert, in der Collection aber unanalysiert, gar nicht vorhanden.
+    Trennt analysierte, unanalysierte und nicht sicher zugeordnete Pfade.
+    `not_in_collection` bedeutet kein eindeutiger Eintrag mit identischem
+    Pfad; ein Eintrag unter anderem Pfad bleibt moeglich.
     """
 
     available: bool = False
@@ -180,6 +186,8 @@ class RekordboxImporter:
         # Ein ANLZ-Snapshot je content_id. Signatur, Beatgrid, Downbeat und
         # Phrasen eines Analyselaufs muessen aus exakt denselben Dateien stammen.
         self._anlz_cache: Dict[str, list] = {}
+        # Dateityp erhalten: PSSI kommt aus EXT, das zugehoerige PQTZ aus DAT.
+        self._anlz_files_by_kind: Dict[str, Dict[str, List[tuple[Optional[str], object]]]] = {}
         # Nur Lesebelege, niemals Teil der bisherigen Nutzdaten/Signatur.
         self._anlz_read_status: Dict[str, dict] = {}
         self._read_status_cache: Dict[tuple, str] = {}
@@ -213,6 +221,7 @@ class RekordboxImporter:
         self._beatgrid_cache.clear()
         self._phrases_cache.clear()
         self._anlz_cache.clear()
+        self._anlz_files_by_kind.clear()
         getattr(self, "_anlz_read_status", {}).clear()
         getattr(self, "_read_status_cache", {}).clear()
         if db is not None:
@@ -322,7 +331,7 @@ class RekordboxImporter:
             return
 
         if folder_path:
-            full_path = os.path.normpath(folder_path).lower()
+            full_path = ntpath.normcase(ntpath.normpath(folder_path))
         else:
             logger.debug(
                 "Rekordbox-Track ohne FolderPath, nur Basename-Zuordnung: %s",
@@ -341,6 +350,8 @@ class RekordboxImporter:
             rating=content.Rating if content.Rating else None,
             color=content.ColorName if hasattr(content, "ColorName") else None,
             content_id=str(content.ID) if hasattr(content, "ID") else None,
+            file_size=self._safe_file_size(getattr(content, "FileSize", None)),
+            isrc=self._safe_identity_text(getattr(content, "ISRC", None)),
         )
 
         if data.key:
@@ -393,6 +404,95 @@ class RekordboxImporter:
         ) + len(data.cue_points or [])
 
     @staticmethod
+    def _safe_file_size(value):
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, float) and not value.is_integer():
+            return None
+        try:
+            result = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return result if result > 0 else None
+
+    @staticmethod
+    def _safe_identity_text(value):
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @classmethod
+    def _source_identity(cls, file_path):
+        """Direkte Quelldatei-Tags; Dateiname-Fallback ist absichtlich verboten."""
+        try:
+            stat_size = os.stat(file_path).st_size
+            audio = mutagen.File(file_path, easy=False)
+            if not stat_size or audio is None or audio.info is None:
+                return None
+            duration = float(audio.info.length)
+            if not math.isfinite(duration) or duration <= 0:
+                return None
+            tags = audio.tags or {}
+
+            def direct(*keys):
+                for key in keys:
+                    try:
+                        value = tags.get(key)
+                    except Exception:
+                        value = None
+                    if value is None:
+                        continue
+                    if hasattr(value, "text"):
+                        value = value.text
+                    if isinstance(value, (list, tuple)):
+                        value = value[0] if value else None
+                    text = cls._safe_identity_text(value)
+                    if text:
+                        return text
+                return None
+
+            identity = {
+                "file_size": int(stat_size),
+                "duration": round(duration),
+                "isrc": direct("TSRC", "ISRC", "isrc"),
+                "title": direct("TIT2", "TITLE", "title"),
+                "artist": direct("TPE1", "ARTIST", "artist"),
+            }
+            return identity if all(identity.get(key) not in (None, "") for key in identity) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _path_without_drive(path):
+        if not isinstance(path, str):
+            return None
+        drive, tail = ntpath.splitdrive(ntpath.normpath(path))
+        if len(drive) != 2 or drive[1] != ":" or not tail.startswith("\\"):
+            return None
+        return ntpath.normcase(tail)
+
+    @staticmethod
+    def _identity_matches(data, source):
+        if not source:
+            return False
+        try:
+            db_duration = round(float(data.duration))
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return all((
+            data.file_size == source["file_size"],
+            abs(db_duration - source["duration"]) <= 1,
+            data.isrc == source["isrc"],
+            RekordboxImporter._safe_identity_text(data.title) == source["title"],
+            RekordboxImporter._safe_identity_text(data.artist) == source["artist"],
+        )) and all(source.get(key) not in (None, "") for key in source)
+
+    @staticmethod
     def _track_data_conflicts(
         left: RekordboxTrackData, right: RekordboxTrackData
     ) -> bool:
@@ -404,6 +504,8 @@ class RekordboxImporter:
             (left.title, right.title),
             (left.artist, right.artist),
             (left.genre, right.genre),
+            (left.file_size, right.file_size),
+            (left.isrc, right.isrc),
         ):
             if left_value is not None and right_value is not None and left_value != right_value:
                 return True
@@ -578,6 +680,7 @@ class RekordboxImporter:
             cache = self._anlz_cache = {}
         if content_id in cache:
             return list(cache[content_id])
+        by_kind = {}
         anlz_files = []
         if self.db is None:
             return anlz_files
@@ -605,14 +708,69 @@ class RekordboxImporter:
                 continue
             # read_anlz_files liefert dict {path: AnlzFile}, read_anlz_file ein Objekt
             if isinstance(res, dict):
-                anlz_files.extend(res.values())
+                for key, anlz_file in res.items():
+                    anlz_files.append(anlz_file)
+                    kind, group = self._anlz_identity_from_key(key)
+                    if kind:
+                        by_kind.setdefault(kind, []).append((group, anlz_file))
             else:
                 anlz_files.append(res)
+                if len(args) == 2 and args[1] == "DAT":
+                    by_kind.setdefault("DAT", []).append((None, res))
             if anlz_files:
                 break
         cache[content_id] = list(anlz_files)
+        self._anlz_files_by_kind[content_id] = by_kind
         self.__dict__.setdefault("_anlz_read_status", {})[content_id] = status
         return list(anlz_files)
+
+    @staticmethod
+    def _anlz_identity_from_key(key) -> tuple[Optional[str], Optional[str]]:
+        """Liefert Dateityp und ANLZ-Stamm nur, wenn der Schluessel ihn traegt."""
+        try:
+            raw = os.fspath(key)
+        except (TypeError, ValueError):
+            raw = str(key)
+        value = str(raw).strip().upper()
+        if value in {"DAT", "EXT", "2EX"}:
+            return value, None
+        basename = ntpath.basename(value)
+        stem, suffix = ntpath.splitext(basename)
+        kind = suffix.lstrip(".")
+        if kind not in {"DAT", "EXT", "2EX"}:
+            return None, None
+        return kind, stem or None
+
+    def _get_anlz_phrase_pair(self, content_id: str):
+        """PSSI/EXT und PQTZ/DAT nur aus einem eindeutigen ANLZ-Stamm verbinden."""
+        files = self._read_anlz_files(content_id)
+        by_kind = self._anlz_files_by_kind.get(content_id, {})
+        ext_files = [(group, file) for group, file in by_kind.get("EXT", [])
+                     if _hat_tag(file, "PSSI")]
+        dat_files = [(group, file) for group, file in by_kind.get("DAT", [])
+                     if _hat_tag(file, "PQTZ")]
+        pairs = [
+            (ext_file, dat_file)
+            for ext_group, ext_file in ext_files
+            for dat_group, dat_file in dat_files
+            if (
+                ext_group == dat_group
+                or (
+                    (ext_group is None or dat_group is None)
+                    and len(ext_files) == 1
+                    and len(dat_files) == 1
+                )
+            )
+        ]
+        if len(pairs) == 1:
+            return pairs[0]
+        # Aeltere Reader koennen genau ein anonymes Kombinationsobjekt liefern.
+        # Mehrere nicht zuordenbare Dateien werden nie nach Listenfolge gepaart.
+        if not by_kind and len(files) == 1:
+            file = files[0]
+            if _hat_tag(file, "PSSI") and _hat_tag(file, "PQTZ"):
+                return file, file
+        return None, None
 
     def get_phrases(
         self, file_path: str, *, duration: Optional[float] = None
@@ -648,8 +806,7 @@ class RekordboxImporter:
         token = _detail_uncertain.set(False)
         try:
             files = self._read_anlz_files(data.content_id)
-            ext = next((f for f in files if _hat_tag(f, "PSSI")), None)
-            dat = next((f for f in files if _hat_tag(f, "PQTZ")), None)
+            ext, dat = self._get_anlz_phrase_pair(data.content_id)
             with _opaque_phrase_logging():
                 result = phrases_from_anlz(ext, dat, effective_duration)
             pssi = _tag_evidence(files, ("PSSI",))
@@ -672,6 +829,10 @@ class RekordboxImporter:
         finally:
             _detail_uncertain.reset(token)
         self._store_read_status(data, "phrases", effective_duration, state)
+        # Teilweise gelesene PSSI-Daten dürfen keine bestätigte Struktur liefern.
+        # Der Lesestatus bleibt erhalten; die Audiostruktur übernimmt den Fallback.
+        if state != "ok":
+            result = []
         self._phrases_cache[cache_key] = deepcopy(result)
         return deepcopy(self._phrases_cache[cache_key])
 
@@ -786,7 +947,7 @@ class RekordboxImporter:
             return None
 
         # Normalize path for lookup
-        normalized_path = os.path.normpath(file_path).lower()
+        normalized_path = ntpath.normcase(ntpath.normpath(file_path))
 
         # Try exact match
         if normalized_path in self._ambiguous_paths:
@@ -797,17 +958,26 @@ class RekordboxImporter:
         if normalized_path in self.track_cache:
             return self.track_cache[normalized_path]
 
-        # Try filename-only match (fallback for moved files)
-        filename = os.path.basename(normalized_path)
-        fallback = self.basename_cache.get(filename)
-        if fallback is not None:
-            logger.debug(f"Rekordbox-Match per Dateiname: {filename}")
-            return fallback
-        if filename in self.basename_cache:
-            logger.warning(
-                "Mehrdeutiger Rekordbox-Basename-Fallback verworfen: %s", filename
-            )
+        source_suffix = self._path_without_drive(file_path)
+        if source_suffix is None:
+            return None
+        candidates = [
+            data for path, data in self.track_cache.items()
+            if path not in self._ambiguous_paths
+            and self._path_without_drive(path) == source_suffix
+        ]
+        if len(candidates) != 1:
+            return None
+        source_identity = self._source_identity(file_path)
+        candidate = candidates[0]
+        if not self._identity_matches(candidate, source_identity):
+            return None
+        rebound = deepcopy(candidate)
+        rebound.path_match = "volume_rebind"
+        return rebound
 
+        # Ein gleicher Dateiname belegt keine identischen Audiobytes. Auch
+        # eindeutige Basenames duerfen BPM, Key, Cues und ANLZ nicht freigeben.
         return None
 
     @staticmethod
@@ -852,6 +1022,7 @@ class RekordboxImporter:
                 if status_key[0] == data.content_id:
                     self._read_status_cache.pop(status_key, None)
             self._anlz_cache.pop(data.content_id, None)
+            self._anlz_files_by_kind.pop(data.content_id, None)
             self._beatgrid_cache.pop(data.content_id, None)
             self._downbeat_cache.pop(data.content_id, None)
             for cache_key in tuple(self._phrases_cache):
@@ -893,11 +1064,7 @@ class RekordboxImporter:
                 continue
 
             normalized = os.path.normpath(file_path).lower()
-            basename = os.path.basename(normalized)
-            is_ambiguous = normalized in self._ambiguous_paths or (
-                basename in self.basename_cache
-                and self.basename_cache[basename] is None
-            )
+            is_ambiguous = normalized in self._ambiguous_paths
             if is_ambiguous:
                 summary.ambiguous += 1
                 if len(summary.examples_ambiguous) < 3:

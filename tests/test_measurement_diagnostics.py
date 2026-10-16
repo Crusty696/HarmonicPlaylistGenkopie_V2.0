@@ -18,6 +18,7 @@ def _controlled_estimator(monkeypatch):
   fold = Mock(return_value=(0.1, 0.8))
   monkeypatch.setattr(downbeat.librosa.beat, "beat_track", tracker)
   monkeypatch.setattr(downbeat.librosa, "frames_to_time", lambda frames, **kw: frames * 0.5)
+  monkeypatch.setattr(downbeat.librosa, "time_to_frames", lambda times, **kw: np.floor(np.asarray(times) / 0.5).astype(int))
   monkeypatch.setattr(downbeat.librosa.onset, "onset_strength", onset)
   monkeypatch.setattr(downbeat.librosa.feature, "chroma_stft", chroma)
   monkeypatch.setattr(downbeat, "_beat_phase_from_fold", fold)
@@ -60,6 +61,162 @@ def test_grid_diagnostics_immutable_json_and_same_legacy_values(monkeypatch):
   assert raw["window_diagnostics"][0]["reason"] == "measured"
 
 
+def test_signed_offset_persists_in_v3_and_legacy_v1_v2_still_validate(monkeypatch):
+  from copy import deepcopy
+  from hpg_core.measurement_contract import (
+    measurement_snapshot, validate_measurement_diagnostics,
+  )
+
+  fold = Mock(return_value=(0.02, 0.8))
+  monkeypatch.setattr(downbeat, "_beat_phase_from_fold", fold)
+  grid = downbeat.validate_beatgrid_windows(
+    [(offset, np.ones(100)) for offset in (0.0, 30.0, 60.0)],
+    1024, 120.0, anchor=0.0, collect_diagnostics=True,
+  )
+  snapshot = measurement_snapshot(
+    {"reason": "fewbeats", "stage": "trim"}, grid,
+    anchor_decision={
+      "source": "audio", "method": "dsp", "anchor_s": 0.0,
+      "confidence": 0.5, "reference": None,
+      "bar_position_comparison": {
+        "status": "unknown", "reason": "reference_not_verified",
+        "rotation_beats": None, "windows": [],
+        "audio_confirmation": {
+          "status": "unknown", "reason": "not_attempted",
+          "expected_anchor_s": None, "final_grid_status": "unknown", "windows": [],
+        },
+      },
+      "neural": {"reason": "baseline_preferred", "transient": False,
+                 "windows": [], "candidate_anchor_s": None},
+    },
+  )
+
+  assert snapshot["version"] == 5
+  assert snapshot["grid"]["phase_pattern"] == "consistent_offset"
+  assert snapshot["grid"]["phase_center_ms"] == pytest.approx(20.0)
+  assert [window["signed_phase_error_ms"] for window in snapshot["grid"]["window_diagnostics"]] == pytest.approx([20.0] * 3)
+  validate_measurement_diagnostics(snapshot)
+
+  legacy_grid = deepcopy(snapshot["grid"])
+  legacy_grid.pop("phase_pattern")
+  legacy_grid.pop("phase_center_ms")
+  for window in legacy_grid["window_diagnostics"]:
+    window.pop("signed_phase_error_ms")
+  legacy_base = {
+    "version": 1, "downbeat": deepcopy(snapshot["downbeat"]),
+    "grid": legacy_grid,
+  }
+  validate_measurement_diagnostics(legacy_base)
+  legacy_anchor = deepcopy(snapshot["anchor"])
+  legacy_anchor.pop("bar_position_comparison")
+  legacy_v2 = dict(legacy_base, version=2, anchor=legacy_anchor)
+  validate_measurement_diagnostics(legacy_v2)
+  legacy_v3 = dict(snapshot, version=3)
+  legacy_v3["anchor"] = deepcopy(snapshot["anchor"])
+  legacy_v3["anchor"].pop("bar_position_comparison")
+  validate_measurement_diagnostics(legacy_v3)
+
+
+def test_schema_v5_records_rekordbox_path_match_and_rejects_unknown_value():
+  from hpg_core.measurement_contract import measurement_snapshot, validate_measurement_diagnostics
+  from hpg_core.downbeat import BeatgridValidation
+  anchor = {
+    "source": "audio", "method": "dsp", "anchor_s": 0.0, "confidence": 0.5,
+    "reference": {"anchor_s": 0.1, "bpm": 120.0, "target_bpm": 120.0,
+                  "path_match": "volume_rebind",
+                  "measurement": {"version": 1,
+                      "downbeat": {"reason": "unknown", "stage": None},
+                      "grid": {"status": "verified", "windows_checked": 3,
+                          "max_phase_error_ms": 0.0, "reason": "verified",
+                          "window_diagnostics": [], "decode_failures": []}}},
+    "neural": {"reason": "baseline_preferred", "transient": False,
+               "windows": [], "candidate_anchor_s": None},
+    "bar_position_comparison": {
+      "status": "unknown", "reason": "insufficient_evidence",
+      "rotation_beats": None, "windows": [],
+      "audio_confirmation": {
+        "status": "unknown", "reason": "not_attempted",
+        "expected_anchor_s": None, "final_grid_status": "unknown", "windows": [],
+      },
+    },
+  }
+  snapshot = measurement_snapshot(
+    {"reason": "fewbeats", "stage": "trim"},
+    BeatgridValidation("mismatch", 3, 16.3, "phasemismatch", phase_pattern="variable_phase"),
+    anchor_decision=anchor)
+  assert snapshot["anchor"]["reference"]["path_match"] == "volume_rebind"
+  validate_measurement_diagnostics(snapshot)
+  snapshot["anchor"]["reference"]["path_match"] = "made_up"
+  with pytest.raises(ValueError):
+    validate_measurement_diagnostics(snapshot)
+
+
+def test_tempo_mismatch_without_phase_measurements_persists_as_unknown():
+  from hpg_core.measurement_contract import measurement_snapshot
+
+  grid = downbeat.validate_beatgrid_windows(
+    [(0.0, np.ones(100)) for _ in range(3)],
+    1024, 120.0, anchor=0.0, grid_times=[0.0, 0.75, 1.5],
+    collect_diagnostics=True,
+  )
+  snapshot = measurement_snapshot(
+    {"reason": "fewbeats", "stage": "trim"}, grid,
+  )
+
+  assert (snapshot["grid"]["status"], snapshot["grid"]["phase_pattern"]) == (
+    "mismatch", "unknown",
+  )
+  assert snapshot["grid"]["windows_checked"] == 0
+  assert snapshot["grid"]["phase_center_ms"] is None
+
+
+def test_gridcoverage_window_is_persistable_with_three_measured_windows(monkeypatch):
+  from hpg_core.measurement_contract import measurement_snapshot
+
+  monkeypatch.setattr(downbeat, "_beat_phase_from_fold", lambda *args: (0.02, 0.8))
+  grid = downbeat.validate_beatgrid_windows(
+    [(offset, np.ones(100)) for offset in (0.0, 30.0, 60.0, 90.0)],
+    1024, 120.0, anchor=0.0,
+    grid_times=[index * 0.5 for index in range(121)],
+    collect_diagnostics=True,
+  )
+
+  assert grid.status == "mismatch"
+  assert [item.reason for item in grid.window_diagnostics] == [
+    "measured", "measured", "measured", "gridcoverage",
+  ]
+  snapshot = measurement_snapshot(
+    {"reason": "fewbeats", "stage": "trim"}, grid,
+  )
+  assert snapshot["grid"]["window_diagnostics"][-1]["reason"] == "gridcoverage"
+
+
+def test_fold_alignment_diagnostic_is_schema_valid():
+  from hpg_core.measurement_contract import measurement_snapshot
+  from hpg_core.downbeat import BeatgridValidation
+
+  result = measurement_snapshot(
+    {"reason": "fold_alignment", "stage": "fold"},
+    BeatgridValidation("unverifiable", 0, -1.0, "fewwindows"),
+  )
+  assert result["downbeat"] == {"reason": "fold_alignment", "stage": "fold"}
+
+
+def test_retry_reason_is_optional_validated_and_snapshotted():
+  from hpg_core.measurement_contract import measurement_snapshot, validate_measurement_diagnostics
+  from hpg_core.downbeat import BeatgridValidation
+
+  result = measurement_snapshot(
+    {"reason": "incommensurate", "stage": "beat_tracking", "retry_reason": "fold_alignment"},
+    BeatgridValidation("unverifiable", 0, -1.0, "fewwindows"),
+  )
+  assert result["downbeat"]["retry_reason"] == "fold_alignment"
+  validate_measurement_diagnostics(result)
+  result["downbeat"]["retry_reason"] = "made_up_reason"
+  with pytest.raises(ValueError):
+    validate_measurement_diagnostics(result)
+
+
 @pytest.mark.parametrize("case, reason", [
   ("short", "inputshort"), ("few", "fewbeats"),
   ("trim", "fewbeats"), ("tempo", "incommensurate"),
@@ -93,8 +250,9 @@ def test_estimator_records_actual_branch_preserves_tuple(monkeypatch, case, reas
   result = downbeat.estimate_first_downbeat(audio, 1024, 120.0, diagnostics=diagnostics)
   assert isinstance(result, tuple) and len(result) == 2
   assert result == legacy
-  # Gegen die vor der Umsetzung im RAM geladene Quelle gemessene Ergebnisse.
-  expected = (1.6, 0.8) if case == "ok" else (1.6, 0.0) if case == "vote" else (0.0, 0.0)
+  # Nach Fold-Ausrichtung endet der letzte Beat bei 16.1 s ausserhalb
+  # der 16-s-Fixture. Er darf nicht abstimmen; die Onset-Rampe waehlt Klasse 2.
+  expected = (1.1, 0.8) if case == "ok" else (1.1, 0.0) if case == "vote" else (0.0, 0.0)
   assert result == expected
   assert diagnostics["reason"] == reason
   assert tuple(mock.call_count for mock in (tracker, onset, chroma, fold)) == calls
@@ -106,7 +264,7 @@ def test_estimator_records_actual_branch_preserves_tuple(monkeypatch, case, reas
     assert diagnostics["loud_max"] == 0.0
   if case == "vote":
     # Bestehende Taktphase bleibt erhalten, auch bei null Voting-Konfidenz.
-    assert result == (1.6, 0.0)
+    assert result == (1.1, 0.0)
   json.dumps(diagnostics, allow_nan=False)
 
 
@@ -192,7 +350,9 @@ def test_estimator_does_not_add_fold_lock_gate(monkeypatch, lock):
   audio = np.ones(16384)
   diagnostics = {}
   result = downbeat.estimate_first_downbeat(audio, 1024, 120.0, diagnostics=diagnostics)
-  assert result == (1.6, lock)
+  # Nur ein ausreichend belastbarer Fold richtet die Featurefenster aus.
+  # Dabei faellt das letzte unvollstaendige Fenster aus der Rampe heraus.
+  assert result == (1.1 if lock >= downbeat.BEATGRID_MIN_FOLD_LOCK else 1.6, lock)
   assert diagnostics["reason"] == "ok"
   assert diagnostics["phase_seconds"] == 0.1
 
@@ -268,7 +428,7 @@ def test_validator_preserves_phase_error_boundary(monkeypatch, error):
   ([0.0, 0.0, 0.0], None, "duplicategrid", "unsupported"),
   ([0.0, 0.5, 1.1], None, "variablegrid", "unsupported"),
   ([0.0, 0.75, 1.5], None, "tempomismatch", "mismatch"),
-  ([], None, "missingreference", "unverifiable"),
+  ([], None, "fewgridpoints", "unverifiable"),
 ])
 def test_grid_early_reasons_skip_dsp(monkeypatch, ticks, anchor, reason, status):
   fold = Mock(return_value=(0.0, 0.8))
@@ -309,3 +469,18 @@ def test_window_fold_exception_is_explicit_and_missing_values_none(monkeypatch):
   assert item.reason == "estimationerror"
   assert item.phase_seconds is None and item.fold_lock is None
   assert item.phase_error_ms is None
+
+
+@pytest.mark.parametrize('phase', [0., .005])
+def test_verified_measured_grid_can_be_snapshotted(monkeypatch, phase):
+  from hpg_core.measurement_contract import measurement_snapshot, validate_measurement_diagnostics
+  monkeypatch.setattr(downbeat, '_beat_phase_from_fold', lambda *a: (phase, .8))
+  grid = downbeat.validate_beatgrid_windows(
+    [(offset, np.ones(1024)) for offset in (0., 30., 60.)],
+    1024, 120., anchor=0., collect_diagnostics=True)
+  assert grid.status == 'verified'
+  snapshot = measurement_snapshot({'reason': 'ok', 'stage': 'result'}, grid)
+  assert snapshot['grid']['phase_center_ms'] == pytest.approx(phase*1000.)
+  snapshot['grid']['phase_center_ms'] = 6.001
+  with pytest.raises(ValueError):
+    validate_measurement_diagnostics(snapshot)

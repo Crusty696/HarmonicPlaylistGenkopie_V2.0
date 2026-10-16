@@ -13,6 +13,14 @@ from hpg_core.rekordbox_importer import RekordboxTrackData
 from hpg_core.structure_analyzer import TrackSection, TrackStructure
 
 
+@pytest.fixture(autouse=True)
+def _isolate_optional_models(monkeypatch, tmp_path):
+  # DSP-Vertrag unabhängig von lokal installierten Rekordbox-Modellen prüfen.
+  # Modellintegration besitzt eigene kontrollierte und native Laufnachweise.
+  monkeypatch.setenv("HPG_BEAT_MODEL_DIR", str(tmp_path / "absent-beat-models"))
+  monkeypatch.setenv("HPG_CUE_MODEL_DIR", str(tmp_path / "absent-cue-models"))
+
+
 # ============================================================
 # Hilfsfunktionen
 # ============================================================
@@ -348,7 +356,8 @@ class TestAnalyzeTrackBasics:
 
     assert isinstance(track, Track)
     assert not track.analysis_mode.startswith("rekordbox")
-    assert seen["signature"] == ""
+    assert seen["signature"].startswith("|neural:")
+    assert len(seen["signature"].split(":", 1)[1]) == 64
 
   def test_cache_key_error_fails_closed_before_cache_and_decode(
     self, monkeypatch, simple_wav
@@ -496,6 +505,7 @@ class TestAnalyzeTrackMixPoints:
     """Diese Tests pruefen Mixpunkte nur fuer einen freigegebenen Track."""
     from hpg_core import analysis
 
+    monkeypatch.setattr(analysis, "_estimate_audio_downbeat", lambda *a, **k: (0., .8))
     monkeypatch.setattr(
       analysis,
       "_validate_track_beatgrid",
@@ -800,7 +810,7 @@ class TestAnalyzeTrackFastPathCandidates:
     monkeypatch.setattr(
       analysis,
       "_validate_track_beatgrid",
-      lambda *a, **k: analysis.BeatgridValidation("mismatch", 3, 35.0),
+      lambda *a, **k: analysis.BeatgridValidation("mismatch", 3, 35.0, phase_pattern="variable_phase"),
     )
     monkeypatch.setattr(
       analysis, "estimate_first_downbeat", lambda *a, **k: (0.0, 0.8)
@@ -810,12 +820,12 @@ class TestAnalyzeTrackFastPathCandidates:
 
     assert track is not None
     assert track.duration == pytest.approx(120.0)
-    assert track.beatgrid_source == "rekordbox"
+    assert track.beatgrid_source == "audio"
     assert track.beatgrid_status == "mismatch"
     assert track.downbeat_confidence == 0.8
     assert track.phrases == [] and track.phrase_grid == []
-    assert track.mix_in_point >= 0.0 and track.mix_out_point > track.mix_in_point
-    assert track.mix_in_candidates and track.mix_out_candidates
+    assert track.mix_in_point == -1.0 and track.mix_out_point == -1.0
+    assert track.mix_in_candidates == [] and track.mix_out_candidates == []
     importer.get_phrases.assert_not_called()
 
 
@@ -828,6 +838,7 @@ def test_voll_pfad_ohne_rekordbox_hat_analyzer_kandidaten_ohne_phrasen(monkeypat
     """Voll-Pfad (kein Rekordbox): keine Phrasen/Cues/Gitter, aber Kandidaten aus Analyzer/Sektionen."""
     from unittest.mock import Mock
     from hpg_core import analysis
+    monkeypatch.setattr(analysis, "_estimate_audio_downbeat", lambda *a, **k: (0., .8))
     wav = tmp_path / "voll.wav"
     _create_click_wav(str(wav), bpm=128.0, duration=120.0)
     monkeypatch.setattr(analysis, "get_rekordbox_importer",
@@ -871,7 +882,7 @@ def test_voll_pfad_beatgrid_diagnose_sperrt_mixpunkte_nicht(
     monkeypatch.setattr(
       analysis,
       "_validate_track_beatgrid",
-      lambda *a, **k: analysis.BeatgridValidation("mismatch", 3, 35.0),
+      lambda *a, **k: analysis.BeatgridValidation("mismatch", 3, 35.0, phase_pattern="variable_phase"),
     )
 
     track = analysis.analyze_track(str(wav))
@@ -879,8 +890,8 @@ def test_voll_pfad_beatgrid_diagnose_sperrt_mixpunkte_nicht(
     assert track is not None
     assert track.beatgrid_source == "audio"
     assert track.beatgrid_status == "mismatch"
-    assert track.mix_in_point >= 0.0 and track.mix_out_point > track.mix_in_point
-    assert track.mix_in_candidates and track.mix_out_candidates
+    assert track.mix_in_point == -1.0 and track.mix_out_point == -1.0
+    assert track.mix_in_candidates == [] and track.mix_out_candidates == []
 
 
 @pytest.mark.integration
@@ -1040,7 +1051,7 @@ def test_voll_pfad_verwirft_pssi_bei_rb_grid_mismatch_aber_behaelt_cues(
     monkeypatch.setattr(
       analysis,
       "_validate_track_beatgrid",
-      lambda *a, **k: analysis.BeatgridValidation("mismatch", 3, 35.0),
+      lambda *a, **k: analysis.BeatgridValidation("mismatch", 3, 35.0, phase_pattern="variable_phase"),
     )
     monkeypatch.setattr(
       analysis, "estimate_first_downbeat", lambda *a, **k: (0.25, 0.8)
@@ -1049,7 +1060,7 @@ def test_voll_pfad_verwirft_pssi_bei_rb_grid_mismatch_aber_behaelt_cues(
     track = analysis.analyze_track(str(wav))
 
     assert track is not None
-    assert track.beatgrid_source == "rekordbox"
+    assert track.beatgrid_source == "audio"
     assert track.beatgrid_status == "mismatch"
     assert track.downbeat_confidence == 0.8
     assert track.phrases == [] and track.phrase_grid == []
@@ -1151,6 +1162,8 @@ def test_harter_cue_vertrag_nutzt_acht_bar_fallback_bei_phrase_unit_null():
   }
 
   assert not _mixpoint_pair_erfuellt_harten_vertrag(48.0, 64.0, **kwargs)
+  assert not _mixpoint_pair_erfuellt_harten_vertrag(48.0, 80.0, **kwargs)
+  kwargs["phrase_unit"] = 8
   assert _mixpoint_pair_erfuellt_harten_vertrag(48.0, 80.0, **kwargs)
 
 
@@ -1166,6 +1179,8 @@ class TestMixBarsRundung:
     Suite es merkt.
     """
     from hpg_core import analysis
+    monkeypatch.setattr(analysis, "_estimate_audio_downbeat", lambda *a, **k: (0., .8))
+    monkeypatch.setattr(analysis, "_validate_track_beatgrid", lambda *a, **k: analysis.BeatgridValidation("verified", 3, 0.))
 
     importer = Mock()
     importer.get_track_data.return_value = None if pfad == "librosa_voll" else RekordboxTrackData(

@@ -430,9 +430,12 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
     monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
     # Kein DSP in diesem Steuerungstest; Start muss eine neue Analyse binden.
     source = SimpleNamespace(isRunning=lambda: False)
-    def start_analysis():
+    def start_analysis(*, cache_policy="reuse", _hearing_config=None):
+        assert cache_policy == "fresh"
         window.worker = source
         window._run_id = "hearing-test-run"
+        window._hearing_analysis_pending = (_hearing_config, source, window._run_id)
+        return True
     monkeypatch.setattr(window, "start_analysis", start_analysis)
     window._prepare_hearing_set()
     assert not starts

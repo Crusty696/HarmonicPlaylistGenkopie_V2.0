@@ -232,16 +232,16 @@ class TestPhraseAnchor:
 
   R4: Sentinel fuer 'nicht geschaetzt' ist -1.0 — eine Phrasen-Phase von
   exakt 0.0 ist GUELTIG und darf nicht verworfen werden.
-  R2: Ohne belastbaren Downbeat (downbeat_confidence == 0.0) waere das
-  Bar-Raster, auf dem first_phrase abgestimmt wurde, erfunden — dann
-  Fallback auf first_downbeat.
+  Ein phrase_anchor wird nur aus ausreichender Konfidenz und bestaetigtem
+  Beatgrid abgeleitet; unbestaetigte Raster bleiben downstream neutral.
   """
 
   def _track(self, **kw) -> Track:
     return Track(filePath="/t.mp3", fileName="t.mp3", **kw)
 
-  def test_default_ist_sentinel_und_faellt_auf_downbeat_zurueck(self):
-    t = self._track(first_downbeat=1.5, downbeat_confidence=0.8)
+  def test_default_ist_sentinel_und_faellt_bei_bestaetigtem_grid_zurueck(self):
+    t = self._track(first_downbeat=1.5, downbeat_confidence=0.8,
+                    beatgrid_status="verified")
     assert t.first_phrase == -1.0
     assert t.phrase_anchor == 1.5
 
@@ -250,14 +250,14 @@ class TestPhraseAnchor:
     mit ausreichender Konfidenz ist ein gueltiger Anker."""
     t = self._track(
       first_phrase=0.0, phrase_confidence=0.9,
-      first_downbeat=1.5, downbeat_confidence=0.8,
+      first_downbeat=1.5, downbeat_confidence=0.8, beatgrid_status="verified",
     )
     assert t.phrase_anchor == 0.0
 
   def test_belastbare_phase_wird_verwendet(self):
     t = self._track(
       first_phrase=14.2, phrase_confidence=0.5,
-      first_downbeat=0.5, downbeat_confidence=0.7,
+      first_downbeat=0.5, downbeat_confidence=0.7, beatgrid_status="verified",
     )
     assert t.phrase_anchor == 14.2
 
@@ -265,25 +265,41 @@ class TestPhraseAnchor:
     from hpg_core.config import PHRASE_CONFIDENCE_MIN
     t = self._track(
       first_phrase=14.2, phrase_confidence=PHRASE_CONFIDENCE_MIN - 0.01,
-      first_downbeat=0.5, downbeat_confidence=0.7,
+      first_downbeat=0.5, downbeat_confidence=0.7, beatgrid_status="verified",
     )
     assert t.phrase_anchor == 0.5
 
-  def test_ohne_downbeat_konfidenz_faellt_auf_downbeat_zurueck(self):
-    """R2-Kern: first_phrase aus einem erfundenen Raster (gescheiterter
-    Downbeat-Estimate, z. B. Alt-Cache) wird nicht als Anker verwendet."""
+  def test_ohne_downbeat_konfidenz_ist_anker_neutral(self):
+    """Alt-Caches ohne belastbaren Anker erzeugen downstream kein Raster."""
     t = self._track(
       first_phrase=14.2, phrase_confidence=0.9,
       first_downbeat=0.0, downbeat_confidence=0.0,
     )
-    assert t.phrase_anchor == 0.0  # == first_downbeat (Fallback)
+    assert t.phrase_anchor == 0.0
+
+  def test_unterschwellige_konfidenz_ist_anker_neutral(self):
+    from hpg_core.downbeat import DOWNBEAT_RELIABLE_MIN
+    t = self._track(
+      first_phrase=14.2, phrase_confidence=0.9,
+      first_downbeat=2.25, downbeat_confidence=DOWNBEAT_RELIABLE_MIN - 0.01,
+      beatgrid_status="verified",
+    )
+    assert t.phrase_anchor == 0.0
 
   def test_sentinel_minus_1_faellt_auf_downbeat_zurueck(self):
     t = self._track(
       first_phrase=-1.0, phrase_confidence=0.9,
-      first_downbeat=2.25, downbeat_confidence=1.0,
+      first_downbeat=2.25, downbeat_confidence=1.0, beatgrid_status="verified",
     )
     assert t.phrase_anchor == 2.25
+
+  def test_unverified_und_unknown_grid_geben_keinen_rasteranker_frei(self):
+    for status in ("unknown", "mismatch", "unverified"):
+      t = self._track(
+        first_phrase=14.2, phrase_confidence=0.9,
+        first_downbeat=2.25, downbeat_confidence=0.8, beatgrid_status=status,
+      )
+      assert t.phrase_anchor == 0.0
 
 
 def test_bar_conversion_has_explicit_rounding_contract():

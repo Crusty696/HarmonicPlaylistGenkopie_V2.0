@@ -50,9 +50,12 @@ class HearingCohortWorker(QThread):
                                      context=context)
             if selected.shortfall or len(selected.paths) < 2:
                 raise ValueError("Zu wenige verfuegbare Tracks fuer die gewuenschte Kohorte")
-            self.status_update.emit(f"Kohorte: {len(selected.paths)} Tracks gewaehlt; Analyse startet.")
+            self.status_update.emit(
+                f"Kohorte: {len(selected.paths)} Tracks gewaehlt; frische Analyse ohne Track-Cache startet."
+            )
             analysis = analyze_cohort(
                 self.index, selected, context=context, cancel=self.cancel,
+                cache_policy="fresh",
                 progress=lambda current, total, message: self.status_update.emit(
                     f"Kohorte: {current}/{total} – {message}"),
             )
@@ -60,8 +63,17 @@ class HearingCohortWorker(QThread):
                 raise InterruptedError("Kohortenanalyse abgebrochen")
             if not analysis.complete or len(analysis.track_snapshots) != len(selected.paths):
                 raise ValueError(f"Kohortenanalyse unvollstaendig: {len(analysis.issues)} Probleme; kein Hoertest erstellt")
+            origin_counts = {name: sum(origin == name for _, origin in analysis.analysis_origins)
+                             for name in ("fresh", "cache", "unknown")}
+            self.status_update.emit(
+                "Analyseherkunft: "
+                f"{origin_counts['fresh']} frisch, {origin_counts['cache']} Cache, "
+                f"{origin_counts['unknown']} unbekannt."
+            )
             result.update(ok=True, analysis=analysis, mode=self.mode,
-                          pair_count=self.pair_count, seed=self.seed)
+                          pair_count=self.pair_count, seed=self.seed,
+                          analysis_origin=analysis.analysis_origin,
+                          analysis_origins=analysis.analysis_origins)
         except InterruptedError as exc:
             result.update(cancelled=True, output=str(exc))
         except Exception as exc:
@@ -92,13 +104,28 @@ class HearingPrepareWorker(QThread):
         ownership = None
         published = False
         try:
+            preflight = None
+            if self.config.mode == "kandidaten":
+                from .hearing_playback import preflight_renderability
+                preflight = lambda spec, sources: preflight_renderability(
+                    spec, sources, self.cancel.checkpoint,
+                )
             if self.managed_metadata is not None:
                 from .hearing_managed import write_snapshot
                 ownership = write_snapshot(self.config, self.managed_metadata, cancel=self.cancel)
+                origin_counts = {name: sum(origin == name for _, origin in ownership.analysis_origins)
+                                 for name in ("fresh", "cache", "unknown")}
+                origin_summary = (
+                    f"Analyseherkunft: {origin_counts['fresh']} frisch, "
+                    f"{origin_counts['cache']} Cache, {origin_counts['unknown']} unbekannt"
+                )
+            else:
+                origin_summary = "Analyseherkunft unbekannt (kein verwalteter Track-Snapshot)"
             prepared = create_set(
                 self.config,
                 progress=lambda p: self.status_update.emit(f"{p.phase}: {p.completed}/{p.total} – {p.message}"),
                 cancel=self.cancel,
+                preflight=preflight,
             )
             published = True
             if self.managed_metadata is not None:
@@ -107,7 +134,10 @@ class HearingPrepareWorker(QThread):
                 if warning:
                     result["cleanup_warning"] = warning
             result.update(ok=True, prepared_only=True,
-                          output=f"{prepared.pair_count} Paare, {prepared.clip_count} Quellenreferenzen vorbereitet. Nicht auditiert.",
+                          output=(f"{prepared.pair_count} Paare, {prepared.clip_count} Quellenreferenzen vorbereitet. "
+                                  f"{origin_summary}. Nicht auditiert."),
+                          analysis_origin=ownership.analysis_origin if ownership is not None else "unknown",
+                          analysis_origins=ownership.analysis_origins if ownership is not None else (),
                           warnings=list(prepared.warnings))
         except (HearingCancelledError, InterruptedError) as exc:
             result.update(cancelled=True, output=str(exc))
@@ -149,11 +179,20 @@ class HearingLoadWorker(QThread):
                 raise InterruptedError("Laden abgebrochen")
             self.status_update.emit("Prüfe Satz, Originalquellen und Bewertungen …")
             session = load_session(self.folder)
-            from .hearing_managed import resolve_association
+            from .hearing_managed import read_snapshot_origins, resolve_association
             cache = resolve_association(self.folder)
+            origins = read_snapshot_origins(cache) if cache else ()
+            origin_values = {origin for _, origin in origins}
+            analysis_origin = (
+                next(iter(origin_values)) if len(origin_values) == 1
+                else "mixed" if origin_values == {"fresh", "cache"}
+                else "unknown"
+            )
+            self.status_update.emit(f"Analyseherkunft des privaten Track-Snapshots: {analysis_origin}.")
             if self.isInterruptionRequested():
                 raise InterruptedError("Laden abgebrochen")
-            result.update(ok=True, session=session, cache_path=str(cache) if cache else "")
+            result.update(ok=True, session=session, cache_path=str(cache) if cache else "",
+                          analysis_origin=analysis_origin, analysis_origins=origins)
         except Exception as exc:
             result["output"] = str(exc)
             result["cancelled"] = isinstance(exc, InterruptedError)

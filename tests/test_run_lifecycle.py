@@ -438,7 +438,7 @@ def test_playlist_shows_unplanned_transition_without_executable_plan(qtbot):
   score_item = panel.table.item(1, 14)
   score = score_item.data(Qt.ItemDataRole.UserRole)
   assert score == 0.0
-  assert score_item.text() == "0% · UNGEPLANT"
+  assert score_item.text() == "Kein Übergang: Keine Übergangsfreigabe"
   accent_color, _, _ = transition_score_style(0.0)
   assert score_item.background().color().name() == QColor(accent_color).name()
 

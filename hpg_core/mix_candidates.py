@@ -22,7 +22,10 @@ from .config import (
 )
 from .downbeat import DOWNBEAT_RELIABLE_MIN
 from .groove import ON_BEAT_SLOTS, bass_kennwerte, extract_groove, syncopation_from_pattern
-from .models import CAMELOT_MAP, QUANTIZE_TOLERANCE_SEC, quantize_to_grid
+from .models import (
+    CAMELOT_MAP, QUANTIZE_TOLERANCE_SEC, is_supported_phrase_unit,
+    quantize_to_grid,
+)
 from .rekordbox_phrases import phrase_grid_from_phrases
 
 logger = logging.getLogger(__name__)
@@ -33,13 +36,14 @@ CUE_IN_PATTERN = re.compile(r"\b(MIX[- ]?IN|IN|START)\b")
 CUE_OUT_PATTERN = re.compile(r"\b(MIX[- ]?OUT|OUT|OUTRO|END)\b")
 
 SCHEMA_PRIORITAET = (
-    "benannter_cue", "pssi_phrase", "auto_cue", "analyzer", "sektion", "energie_neuheit",
+    "benannter_cue", "pssi_phrase", "auto_cue", "analyzer", "native_phrase", "sektion", "energie_neuheit",
 )
 
 PROVENANCE_JE_SCHEMA = {
     "benannter_cue": "rekordbox_manual", "auto_cue": "rekordbox_auto",
     "pssi_phrase": "rekordbox_pssi", "analyzer": "hpg_analyzer",
     "sektion": "hpg_analyzer", "energie_neuheit": "hpg_analyzer",
+    "native_phrase": "rekordbox_native_phrase_generator",
 }
 
 
@@ -268,12 +272,17 @@ def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict
 def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], phrases: list[dict],
                             cues: list[dict], analyzer_in: float | None, analyzer_out: float | None,
                             duration: float, grid_sec: float, intro_end: float, outro_start: float,
-                            outro_covered: bool, anchor: float = 0.0,
+                            outro_covered: bool, anchor: float = 0.0, cue_scores: dict | None = None,
+                            native_phrases: list[dict] | None = None,
                             ) -> tuple[list[MixCandidate], list[MixCandidate]]:
     """Kandidaten-Zeitpunkte je Seite: quantisieren, Gates, Dedupe (gleicher
     Gitterpunkt → Schemata vereinigen), Kappung auf KANDIDATEN_MAX_JE_SEITE
     nach SCHEMA_PRIORITAET, dann zeitlich sortiert. Noch OHNE Messwerte."""
     rohe = _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out)
+    if not phrases and native_phrases:
+        for side in ('in', 'out'):
+            rohe[side].extend((float(phrase['start_s']), 'native_phrase', False)
+                             for phrase in native_phrases)
     ergebnis: dict[str, list[MixCandidate]] = {}
     for seite in ("in", "out"):
         if seite == "out" and not outro_covered:
@@ -304,7 +313,7 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             k.provenance = PROVENANCE_JE_SCHEMA[k.schema[0]]
             sek = _section_at(sections, k.t)
             k.section_label = sek.get("label", "") if sek else ""
-            ph = _phrase_at(phrases, k.t)
+            ph = _phrase_at(phrases or native_phrases or [], k.t)
             k.phrase_label = ph["label"] if ph else ""
         if len(kandidaten) > KANDIDATEN_MAX_JE_SEITE:
             # Tiebreak explizit ueber die Zeit, nicht ueber die Einfuegereihenfolge.
@@ -312,6 +321,31 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             # musikalischen Rolle der Seite (Out-Punkte nahe am Outro ueberleben).
             t_richtung = 1.0 if seite == "in" else -1.0
             kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema), t_richtung * k.t))
+            if cue_scores:
+                # Kollidierende PSSI-Ursprünge bleiben neutral, auch wenn nur
+                # einer einen Score besitzt. Dieselbe Quantisierung wie oben.
+                origins = {}
+                for index, phrase in enumerate(phrases):
+                    point = _quantize(float(phrase['start_s']), seite, seite_grid, grid_sec, anchor)
+                    if point is not None:
+                        origins.setdefault(round(float(point), 3), []).append(index)
+                groups = {}
+                for slot, candidate in enumerate(kandidaten):
+                    indices = origins.get(candidate.t, [])
+                    if ('pssi_phrase' not in candidate.schema or 'benannter_cue' in candidate.schema
+                            or len(indices) != 1):
+                        continue
+                    score = cue_scores.get(indices[0])
+                    if type(score) not in (int, float) or not math.isfinite(score):
+                        continue
+                    group = (candidate.schema[0], len(candidate.schema))
+                    groups.setdefault(group, []).append((slot, candidate, score))
+                for scored in groups.values():
+                    # Nur bereits gescorte Slots tauschen. Unbekannte und
+                    # manuelle Kandidaten behalten ihre bisherige Position.
+                    ranked = sorted(scored, key=lambda row: -row[2])
+                    for (slot, _, _), (_, candidate, _) in zip(scored, ranked):
+                        kandidaten[slot] = candidate
             kandidaten = kandidaten[:KANDIDATEN_MAX_JE_SEITE]
         kandidaten.sort(key=lambda k: k.t)
         if 0 < len(kandidaten) < KANDIDATEN_MIN_JE_SEITE:
@@ -533,21 +567,24 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
                            downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
                            phrase_unit: int, sections: list[dict], phrases: list[dict], cues: list[dict],
                            analyzer_in: float | None, analyzer_out: float | None, outro_covered: bool,
+                           cue_scores: dict | None = None,
+                           native_phrases: list[dict] | None = None,
                            ) -> tuple[list[dict], list[dict]]:
     """Vollstaendige Kandidaten beider Seiten als Dict-Listen (fuer Track/Cache)."""
     # Lazy nur aus Konsistenz mit dem analysis-Import; dj_brain importiert weder
     # analysis noch mix_candidates (kein Zyklus).
     from .dj_brain import _get_intro_end_from_sections, _get_outro_start_from_sections
-    if bpm <= 0 or duration <= 0:
+    if bpm <= 0 or duration <= 0 or not is_supported_phrase_unit(phrase_unit):
         return [], []
-    grid_sec = (60.0 / bpm) * METER * (phrase_unit if phrase_unit > 0 else 8)
-    seite_grid = phrase_grid_from_phrases(phrases)
+    grid_sec = (60.0 / bpm) * METER * phrase_unit
+    seite_grid = phrase_grid_from_phrases(phrases or native_phrases or [])
     intro_end = _get_intro_end_from_sections(sections)
     outro_start = _get_outro_start_from_sections(sections, duration)
     ins, outs = collect_candidate_times(
         seite_grid=seite_grid, sections=sections, phrases=phrases, cues=cues,
         analyzer_in=analyzer_in, analyzer_out=analyzer_out, duration=duration, grid_sec=grid_sec,
-        intro_end=intro_end, outro_start=outro_start, outro_covered=outro_covered, anchor=phrase_anchor,
+        intro_end=intro_end, outro_start=outro_start, outro_covered=outro_covered, anchor=phrase_anchor, cue_scores=cue_scores,
+        native_phrases=native_phrases,
     )
     for cand in ins + outs:
         measure_candidate_window(file_path, cand, bpm=bpm, first_downbeat=first_downbeat,
@@ -560,6 +597,6 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
         # ohne outro_covered entstehen in collect_candidate_times gar nicht erst.
         covered = sek is not None and sek.get("label") != "unanalysed"
         cand.confidence = candidate_confidence(
-            downbeat_confidence=downbeat_confidence, pssi_grid=bool(seite_grid),
+            downbeat_confidence=downbeat_confidence, pssi_grid=bool(phrases),
             phrase_confidence=phrase_confidence, key_confidence_lokal=cand.key_confidence_lokal, covered=covered)
     return [c.to_dict() for c in ins], [c.to_dict() for c in outs]

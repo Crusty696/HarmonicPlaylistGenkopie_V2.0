@@ -254,6 +254,13 @@ class TestCacheIntegration:
 
   def test_track_to_dict_and_back(self, sample_track):
     """Prueft die JSON-Serialisierung/Deserialisierung fuer den SQLite-Cache."""
+    from hpg_core.measurement_contract import measurement_snapshot
+    from hpg_core.downbeat import BeatgridValidation
+
+    sample_track.measurement_diagnostics = measurement_snapshot(
+      {"reason": "incommensurate", "stage": "beat_tracking", "retry_reason": "fold_alignment"},
+      BeatgridValidation("unverifiable", 0, -1.0, "fewwindows"),
+    )
     d = track_to_dict(sample_track)
     restored = dict_to_track(d)
     assert restored.bpm == sample_track.bpm
@@ -265,6 +272,7 @@ class TestCacheIntegration:
     assert restored.duration == sample_track.duration
     assert restored.energy == sample_track.energy
     assert restored.mix_in_point == sample_track.mix_in_point
+    assert restored.measurement_diagnostics["downbeat"]["retry_reason"] == "fold_alignment"
 
   def test_track_is_picklable_for_multiprocessing(self, sample_track):
     """Stellt sicher, dass das Track-Objekt fuer Multiprocessing picklable ist."""
@@ -696,8 +704,8 @@ def test_cache_version_ist_bewusst_gesetzt():
   """
   from hpg_core import caching
 
-  # Neues gespeichertes Diagnosefeld invalidiert den v45-Analysevertrag.
-  assert caching.CACHE_VERSION == 46
+  # Version 69 persistiert Audio-Bestätigung für PQTZ-Taktpositionskandidaten.
+  assert caching.CACHE_VERSION == 104
 
 
 def test_alter_cache_marker_wird_invalidiert():
@@ -712,12 +720,12 @@ def test_alter_cache_marker_wird_invalidiert():
     assert name in caching.TRACK_LIST_FIELDS
 
 
-def test_track_pflichtsatz_ist_exakt_die_61_felder_der_dataclass():
+def test_track_pflichtsatz_ist_exakt_die_71_felder_der_dataclass():
   from dataclasses import fields
 
   dataclass_fields = {field.name for field in fields(TrackModel)}
 
-  assert len(TRACK_REQUIRED_FIELDS) == 61
+  assert len(TRACK_REQUIRED_FIELDS) == 71
   assert TRACK_REQUIRED_FIELDS == dataclass_fields
 
 
@@ -2104,3 +2112,10 @@ def test_korruptionsquarantaene_nimmt_rollback_journal_bytegleich_mit(
   moved = list((tmp_path / "quarantine").glob("journal.db-journal.*.corrupt"))
   assert len(moved) == 1
   assert moved[0].read_bytes() == b"rollback journal"
+
+
+def test_runtime_origin_is_not_persisted():
+  track = Track(filePath="C:/x.mp3", fileName="x.mp3")
+  track.analysis_origin = "fresh"
+  assert set(track_to_dict(track)) == TRACK_REQUIRED_FIELDS
+  assert track.analysis_origin == "fresh"

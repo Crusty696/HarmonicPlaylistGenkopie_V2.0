@@ -68,6 +68,16 @@ pytest_plugins = ["tests.performance_fixtures"]
 
 
 @pytest.fixture(autouse=True)
+def native_phrase_explicit_opt_in(monkeypatch):
+  # Proprietäre Native-Inferenz gehört in den isolierten Originaltrack-Lauf,
+  # nicht implizit in jeden Analyse-/Cache-Unit-Test. Spezialtests setzen 1.
+  monkeypatch.setenv('HPG_NATIVE_PHRASE', '0')
+  monkeypatch.setenv('HPG_NATIVE_BEAT', '0')
+  monkeypatch.setenv('HPG_STEMS', '0')
+  monkeypatch.setenv('HPG_EMBEDDINGS', '0')
+
+
+@pytest.fixture(autouse=True)
 def isolated_ai_qualification_session(monkeypatch):
   # Tests sind unabhaengige App-Sessions; keine Schemafehler anderer Tests erben.
   from hpg_core import lmstudio_runtime

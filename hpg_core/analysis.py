@@ -21,6 +21,7 @@ from .caching import (
 from .config import (
     HOP_LENGTH,
     METER,
+    MIX_POINT_UNSET,
     MIX_IN_SEARCH_WINDOW_PCT,
     MIX_OUT_SEARCH_WINDOW_PCT,
     RMS_THRESHOLD,
@@ -42,13 +43,20 @@ from .dj_brain import (
 )
 from .downbeat import (
     BeatgridValidation,
+    BEATGRID_MIN_FOLD_LOCK,
+    BEATGRID_MIN_WINDOWS,
+    BEATGRID_MAX_INTERVAL_DEVIATION,
+    EXACT_BEAT_SYNC_TOLERANCE_SECONDS,
     DOWNBEAT_RELIABLE_MIN,
+    _beat_phase_from_fold,
     estimate_first_downbeat,
     estimate_first_phrase,
     validate_beatgrid_windows,
 )
 from .genre_classifier import classify_genre, match_id3_genre
-from .measurement_contract import measurement_snapshot
+from .measurement_contract import DOWNBEAT_REASONS, GRID_REASONS, measurement_snapshot
+from .ai_models import cue_service
+from contextlib import nullcontext
 from .genres import GENRE_PROFILES
 from .groove import (
     BASS_KENNWERTE_MIN_SEC,
@@ -66,6 +74,7 @@ from .models import (
     CAMELOT_MAP,
     QUANTIZE_TOLERANCE_SEC,
     Track,
+    bar_position_usage_blocked,
     get_camelot_components,
     quantize_to_grid,
     seconds_to_bars,
@@ -78,6 +87,7 @@ from .structure_analyzer import (
     TrackStructure,
     analyze_structure,
 )
+from .tempo_refinement import TEMPO_TRAINING_SECONDS, estimate_fine_tempo
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +155,116 @@ def _correct_id3_bpm_factor(
     return round(corrected, 2)
 
 
+def _refine_audio_tempo(
+    y: np.ndarray, sr: int, bpm: float, *, file_path: str, duration: float,
+    diagnostics: dict | None = None,
+) -> float:
+    """Feintempo nur nach drei vollstaendigen, getrennten Audiopruefungen."""
+    detail = diagnostics if diagnostics is not None else {}
+    detail.clear()
+
+    def retain(reason: str) -> float:
+        detail["reason"] = reason
+        logger.debug("Feintempo unveraendert: %s (%s)", reason, file_path)
+        return bpm
+
+    try:
+        sample_rate, track_duration, prior = float(sr), float(duration), float(bpm)
+        audio = np.asarray(y)
+        if (
+            not np.isfinite(sample_rate) or sample_rate <= 300
+            or not sample_rate.is_integer()
+            or not np.isfinite(track_duration) or track_duration <= 0
+            or not np.isfinite(prior) or prior <= 0
+            or audio.ndim != 1 or np.iscomplexobj(audio)
+            or not np.all(np.isfinite(audio))
+        ):
+            return retain("invalid_input")
+        sample_rate = int(sample_rate)
+        training_end = TEMPO_TRAINING_SECONDS * sample_rate
+        if len(audio) < training_end:
+            return retain("insufficient_training")
+        width = int(_BEATGRID_WINDOW_SECONDS * sample_rate)
+        starts = (
+            training_end,
+            math.floor((track_duration / 2.0 - _BEATGRID_WINDOW_SECONDS / 2.0) * sample_rate),
+            math.floor((track_duration - _BEATGRID_WINDOW_SECONDS) * sample_rate),
+        )
+        total_samples = math.floor(track_duration * sample_rate)
+        # Feste Fensterpolitik der 16 synthetischen Tempo-Familien und des
+        # Originalfalls You Never Alone (2026-10-13): keine Trainingssamples
+        # als Gegenprobe wiederverwenden. Diese Anordnung benoetigt >=112 s.
+        previous_end = training_end
+        for start in starts:
+            if start < previous_end or start + width > total_samples:
+                return retain("overlapping_windows")
+            previous_end = start + width
+
+        fit_detail = {}
+        candidate = estimate_fine_tempo(
+            audio[:training_end], sample_rate, prior, track_duration,
+            factor_candidates=ID3_BPM_FACTOR_CANDIDATES, diagnostics=fit_detail,
+        )
+        detail["training"] = fit_detail
+        if candidate is None:
+            return retain("candidate_rejected")
+        candidate_bpm, candidate_phase = candidate
+        if (not np.isfinite(candidate_bpm) or candidate_bpm <= 0
+                or not np.isfinite(candidate_phase)
+                or not 0 <= candidate_phase < 60.0 / candidate_bpm):
+            return retain("candidate_rejected")
+
+        windows = []
+        for start in starts:
+            if start + width <= len(audio):
+                window = audio[start:start + width]
+            else:
+                try:
+                    window, loaded_sr = librosa.load(
+                        file_path, sr=sample_rate, mono=True,
+                        offset=start / sample_rate, duration=_BEATGRID_WINDOW_SECONDS,
+                    )
+                except (OSError, RuntimeError, ValueError, sf.LibsndfileError) as error:
+                    detail["error_type"] = type(error).__name__
+                    return retain("decode_error")
+                if loaded_sr != sample_rate:
+                    return retain("invalid_window")
+            window = np.asarray(window)
+            if (window.ndim != 1 or len(window) != width or np.iscomplexobj(window)
+                    or not np.all(np.isfinite(window))):
+                return retain("invalid_window")
+            windows.append((start / sample_rate, window))
+
+        prior_phase, prior_lock = _beat_phase_from_fold(
+            np.asarray(audio[:training_end], dtype=np.float64), sample_rate, 60.0 / prior,
+        )
+        detail["prior_status"] = "unverifiable"
+        if (prior_phase is not None and np.isfinite(prior_phase)
+                and 0 <= prior_phase < 60.0 / prior
+                and np.isfinite(prior_lock) and prior_lock >= BEATGRID_MIN_FOLD_LOCK):
+            prior_validation = validate_beatgrid_windows(
+                windows, sample_rate, prior, anchor=prior_phase,
+            )
+            detail["prior_status"] = prior_validation.status
+            if prior_validation.status == "verified":
+                return retain("prior_verified")
+        validation = validate_beatgrid_windows(
+            windows, sample_rate, candidate_bpm, anchor=candidate_phase,
+        )
+        detail["candidate_status"] = validation.status
+        if validation.status != "verified":
+            return retain("candidate_grid_rejected")
+        detail["reason"] = "accepted"
+        logger.info(
+            "Feintempo am Audio bestaetigt: %.9f -> %.9f BPM, Restfehler %.3f ms (%s)",
+            prior, candidate_bpm, validation.max_phase_error_ms, file_path,
+        )
+        return float(candidate_bpm)
+    except (TypeError, ValueError, OverflowError, FloatingPointError, RuntimeError) as error:
+        detail["error_type"] = type(error).__name__
+        return retain("estimation_error")
+
+
 def _validate_track_beatgrid(
     file_path: str,
     duration: float,
@@ -186,11 +306,117 @@ def _validate_track_beatgrid(
             logger.warning("Beatgrid-Fenster %.2fs nicht lesbar: %s", offset, error)
             continue
         windows.append((offset, np.asarray(audio)))
-    grid_times = [float(point["time"]) for point in (grid_points or [])]
+    grid_times = (
+        [float(point["time"]) for point in grid_points]
+        if grid_points is not None else None
+    )
     return validate_beatgrid_windows(
         windows, sample_rate, bpm, anchor=anchor, grid_times=grid_times,
         collect_diagnostics=True,
     )
+
+def _estimate_audio_downbeat(
+    y: np.ndarray, sr: int, bpm: float, *, file_path: str, duration: float,
+    diagnostics: dict,
+) -> tuple[float, float]:
+    """Bei langem Tracker-Drift drei lokale Taktanker unabhaengig vergleichen."""
+    original = _estimate_audio_downbeat_full(
+        y, sr, bpm, file_path=file_path, duration=duration, diagnostics=diagnostics,
+    )
+    if (original[1] >= DOWNBEAT_RELIABLE_MIN
+            or 'fold_alignment' not in (diagnostics.get('reason'), diagnostics.get('retry_reason'))
+            or not math.isfinite(duration) or duration < 5 * _BEATGRID_WINDOW_SECONDS
+            or not math.isfinite(bpm) or bpm <= 0 or sr <= 0):
+        return original
+    span = _BEATGRID_WINDOW_SECONDS
+    bar = METER * 60. / bpm
+    candidates = []
+    local_diagnostics = []
+    try:
+        for fraction in (.2, .5, .8):
+            first = int((duration * fraction - span / 2.) * sr)
+            count = int(span * sr)
+            start = first / sr
+            if first + count <= len(y):
+                audio = y[first:first + count]
+            else:
+                audio, loaded_sr = librosa.load(file_path, sr=sr, mono=True,
+                    offset=start, duration=span, res_type='soxr_hq')
+                if loaded_sr != sr:
+                    return original
+            if len(audio) != count or not np.isfinite(audio).all():
+                return original
+            details = {}
+            anchor, confidence = estimate_first_downbeat(audio, sr, bpm,
+                diagnostics=details, _fixed_bpm=True, _allow_metric_retry=False)
+            if (not math.isfinite(anchor) or not math.isfinite(confidence)
+                    or confidence < DOWNBEAT_RELIABLE_MIN or confidence >= 1.):
+                return original
+            candidates.append(((anchor + start) % bar, confidence))
+            local_diagnostics.append(details)
+        anchor = candidates[0][0]
+        if any(abs((value-anchor+bar/2) % bar-bar/2) > EXACT_BEAT_SYNC_TOLERANCE_SECONDS
+               for value, _ in candidates[1:]):
+            return original
+        validation = _validate_track_beatgrid(file_path, duration, bpm, anchor,
+                                              head_audio=y, head_sr=sr)
+        if validation.status != 'verified':
+            return original
+        diagnostics.update(local_diagnostics[0])
+        diagnostics['retry_reason'] = 'fold_alignment'
+        logger.info('Lokaler Downbeat-Retry: drei disjunkte Taktanker und Gesamtgrid bestaetigt')
+        return anchor, min(confidence for _, confidence in candidates)
+    except Exception as error:
+        logger.warning('Lokaler Downbeat-Retry verworfen: %s', type(error).__name__)
+        return original
+
+
+def _estimate_audio_downbeat_full(
+    y: np.ndarray, sr: int, bpm: float, *, file_path: str, duration: float,
+    diagnostics: dict,
+) -> tuple[float, float]:
+    """Fremde Tracker-Metrik nur nach strenger Audiopruefung korrigieren."""
+    original = estimate_first_downbeat(
+        y, sr, bpm, diagnostics=diagnostics, _allow_metric_retry=False,
+    )
+    if diagnostics.get("reason") != "incommensurate":
+        return original
+
+    # Fresh30 (2026-10-13): 9/30 Tracker-Raster widersprachen dem Zieltempo.
+    # Explizites BPM allein rettete 3 Konfidenzen, aber nur 1 bestand auch
+    # die unveraenderte Drei-Fenster-Pruefung. Daher beide Bedingungen.
+    retry_diagnostics = {}
+    candidate = estimate_first_downbeat(
+        y, sr, bpm, diagnostics=retry_diagnostics, _fixed_bpm=True,
+        _allow_metric_retry=False,
+    )
+    if candidate[1] < DOWNBEAT_RELIABLE_MIN:
+        logger.debug("Downbeat-Tempo-Retry verworfen: Konfidenz %.3f", candidate[1])
+        retry_reason = retry_diagnostics.get("reason")
+        if retry_reason in DOWNBEAT_REASONS:
+            diagnostics["retry_reason"] = retry_reason
+        return original
+    validation = _validate_track_beatgrid(
+        file_path, duration, bpm, candidate[0], head_audio=y, head_sr=sr,
+    )
+    if validation.status != "verified":
+        logger.debug(
+            "Downbeat-Tempo-Retry verworfen: Grid %s, Restfehler %.3f ms",
+            validation.status, validation.max_phase_error_ms,
+        )
+        retry_reason = validation.reason
+        if retry_reason in GRID_REASONS:
+            diagnostics["retry_reason"] = retry_reason
+        return original
+    logger.info(
+        "Downbeat-Tempo-Retry am Audio bestaetigt: %.2f BPM, Konfidenz %.3f, "
+        "Restfehler %.3f ms", bpm, candidate[1], validation.max_phase_error_ms,
+    )
+    # Erfolgreiche Retries uebernehmen ihre Messung; abgewiesene Retries
+    # behalten den Hauptgrund und persistieren den separaten retry_reason.
+    diagnostics.update(retry_diagnostics)
+    return candidate
+
 
 # Reverse mapping: Camelot code → (Note, Mode)
 REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
@@ -792,31 +1018,6 @@ def _get_file_duration(file_path: str) -> float:
     return float(librosa.get_duration(path=file_path))
 
 
-def _median_seconds_per_bar(
-    beat_frames: np.ndarray,
-    sr: int,
-    bpm: float,
-    hop_length: int = 512,
-) -> float | None:
-    """Leitet eine robuste Taktlänge aus vorhandenen Beat-Intervallen ab."""
-    frames = np.asarray(beat_frames).reshape(-1)
-    if sr <= 0 or bpm <= 0 or frames.size < 8:
-        return None
-    intervals = np.diff(frames.astype(float))
-    intervals = intervals[intervals > 0]
-    if intervals.size == 0:
-        return None
-    ibi = float(np.median(intervals) * hop_length / sr)
-    expected_ibi = 60.0 / bpm
-    if ibi > expected_ibi * 1.5:
-        ibi /= 2.0
-    elif ibi < expected_ibi * 0.75:
-        ibi *= 2.0
-    if not np.isfinite(ibi) or ibi <= 0:
-        return None
-    return 4.0 * ibi
-
-
 def calculate_energy(y: np.ndarray) -> int:
     """Calculates the overall energy of a track and scales it to 0-100."""
     if y is None or len(y) == 0:
@@ -1370,7 +1571,7 @@ def extract_bpm_from_tags(file_path: str) -> float | None:
     return None
 
 
-def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown", anchor: float = 0.0, first_downbeat: float | None = None) -> tuple[float, float, int, int]:
+def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, energy_level: int, bpm: float, genre: str = "Unknown", anchor: float = 0.0, first_downbeat: float | None = None, phrase_unit: int | None = None) -> tuple[float, float, int, int]:
     """
     RMS-Fallback fuer Mix-Punkte, wenn keine Struktur-Analyse (Sections) vorliegt.
 
@@ -1492,6 +1693,7 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
         return calculate_genre_aware_mix_points(
             pseudo_sections, bpm, duration, genre, anchor=anchor,
             first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
+            phrase_unit=phrase_unit,
         )
 
     except Exception as e:
@@ -1514,6 +1716,7 @@ def analyze_structure_and_mix_points(y: np.ndarray, sr: int, duration: float, en
             genre,
             anchor=anchor,
             first_downbeat=first_downbeat,
+            phrase_unit=phrase_unit,
         )
 
 
@@ -1530,8 +1733,8 @@ def _offset_section(
     end = section.end_time + offset
     return TrackSection(
         label=section.label,
-        start_time=_round_time_within_duration(start, duration),
-        end_time=_round_time_within_duration(end, duration),
+        start_time=min(max(0.0, start), duration),
+        end_time=min(max(0.0, end), duration),
         start_bar=int(round(start / seconds_bar)) if seconds_bar else 0,
         end_bar=int(round(end / seconds_bar)) if seconds_bar else 0,
         avg_energy=section.avg_energy,
@@ -1543,15 +1746,83 @@ def _round_time_within_duration(value: float, duration: float) -> float:
     return min(round(value, 2), duration)
 
 
+def _cue_phrase_identities(phrases):
+    """Unveränderte PSSI-Rohidentität in Originalreihenfolge, ohne Zeitrundung."""
+    try:
+        result = []
+        for index, phrase in enumerate(phrases):
+            start, end = phrase['start_s'], phrase['end_s']
+            if (type(start) not in (int, float) or type(end) not in (int, float)
+                    or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end):
+                return None
+            categories = tuple(phrase[key] for key in ('kind', 'mood', 'fill'))
+            if any(type(value) is not int for value in categories):
+                return None
+            result.append((index, start, end, *categories))
+        return tuple(result)
+    except (TypeError, KeyError):
+        return None
+
+
+def _bind_cue_scores(phrases, source_signature, verified):
+    from .ai_models.cue_predictor import MODEL_HASHES, PREPROCESS_VERSION
+    identity = _cue_phrase_identities(phrases)
+    return dict(phrases=identity, source_signature=source_signature,
+                model_hashes=dict(MODEL_HASHES), preprocess_version=PREPROCESS_VERSION,
+                valid=verified is True and identity is not None
+                      and type(source_signature) is str and bool(source_signature))
+
+
+def _bound_cue_scores(phrases, source_signature, binding, windows):
+    """Nur eindeutige gebundene Erfolge nutzen; Ausfälle tragen keinen Score."""
+    from .ai_models.cue_predictor import MODEL_HASHES, PREPROCESS_VERSION
+    identity = _cue_phrase_identities(phrases)
+    if (not binding or binding.get('valid') is not True or identity is None
+            or binding.get('phrases') != identity or binding.get('source_signature') != source_signature
+            or binding.get('model_hashes') != MODEL_HASHES or binding.get('preprocess_version') != PREPROCESS_VERSION):
+        return {}
+    from collections import Counter
+    counts = Counter(item[1:] for item in identity)
+    successes, ambiguous = {}, set()
+    for window in windows:
+        if window.get('status') != 'evaluated':
+            continue
+        seen = set()
+        for result in window.get('results', []):
+            index = result.get('index')
+            if type(index) is not int or not 0 <= index < len(identity):
+                continue
+            if index in seen:
+                ambiguous.add(index)
+            seen.add(index)
+            if result.get('status') != 'ok':
+                continue
+            score = result.get('raw_score')
+            if (counts[identity[index][1:]] != 1 or type(score) not in (int, float)
+                    or not math.isfinite(score) or result.get('model_hashes') != binding['model_hashes']
+                    or result.get('preprocess_version') != binding['preprocess_version']
+                    or result.get('source') != 'rekordbox_pssi_cue_regressor'):
+                ambiguous.add(index)
+                continue
+            if index in successes and successes[index] != score:
+                ambiguous.add(index)
+            successes[index] = float(score)
+    return {index: score for index, score in successes.items() if index not in ambiguous}
+
+
 def _kandidaten_berechnen(
     file_path: str, *, pfad: str, bpm: float, duration: float, first_downbeat: float,
     downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
+    anchor_grid_usable: bool,
     phrase_unit: int, sections: list, phrases: list, cues: list,
-    analyzer_in: float, analyzer_out: float, outro_covered: bool,
+    analyzer_in: float, analyzer_out: float, outro_covered: bool, cue_scores: dict | None = None,
+    native_phrases: list[dict] | None = None,
 ) -> tuple[list, list] | None:
     """Mix-Kandidaten beider Seiten berechnen; Fehler kippen die Analyse nie.
     `pfad` ("fast"/"voll") erscheint im Log, damit tools/kandidaten_messen.py die
     Laufzeit je Analysepfad trennen kann."""
+    if not anchor_grid_usable:
+        return [], []
     t0 = time.perf_counter()
     try:
         mix_in, mix_out = build_track_candidates(
@@ -1559,7 +1830,8 @@ def _kandidaten_berechnen(
             downbeat_confidence=downbeat_confidence, phrase_confidence=phrase_confidence,
             phrase_anchor=phrase_anchor, phrase_unit=phrase_unit, sections=sections,
             phrases=phrases, cues=cues, analyzer_in=analyzer_in, analyzer_out=analyzer_out,
-            outro_covered=outro_covered,
+            outro_covered=outro_covered, cue_scores=cue_scores,
+            native_phrases=native_phrases,
         )
     except Exception as e:
         logger.warning(f"Kandidaten [{pfad}] fehlgeschlagen: {e}")
@@ -1582,131 +1854,188 @@ def analyze_structure_windows(
     phrase_unit: int | None = None,
     seconds_per_bar: float | None = None,
     feature_cache: FeatureCache | None = None,
+    cue_candidates: list[dict] | None = None,
+    cue_verified_grid: bool = False,
+    cue_source_signature: str = "",
+    cue_score_binding: dict | None = None,
+    phrase_unit_source: str | None = None,
+    native_phrase_analysis: dict | None = None,
 ) -> tuple[TrackStructure, list[dict], bool]:
     """Kombiniert Anfang und echtes Track-Ende mit expliziter Coverage-Luecke."""
-    head_duration = min(float(librosa.get_duration(y=head_audio, sr=sr)), duration)
-    structure_kwargs = {"anchor": anchor}
-    if phrase_unit is not None:
-        structure_kwargs["phrase_unit"] = phrase_unit
-    if seconds_per_bar is not None:
-        structure_kwargs["seconds_per_bar"] = seconds_per_bar
-    if feature_cache is not None:
-        structure_kwargs["feature_cache"] = feature_cache
-    head = analyze_structure(head_audio, sr, bpm, genre, **structure_kwargs)
-    for section in head.sections:
-        section.end_time = min(section.end_time, head_duration)
+    with (cue_service.session() if cue_candidates is not None else nullcontext(None)) as cue_client:
+        head_duration = min(float(librosa.get_duration(y=head_audio, sr=sr)), duration)
+        structure_kwargs = {"anchor": anchor}
+        if phrase_unit is not None:
+            structure_kwargs["phrase_unit"] = phrase_unit
+        if phrase_unit_source is not None:
+            structure_kwargs["phrase_unit_source"] = phrase_unit_source
+        if seconds_per_bar is not None:
+            structure_kwargs["seconds_per_bar"] = seconds_per_bar
+        if feature_cache is not None:
+            structure_kwargs["feature_cache"] = feature_cache
+        if cue_score_binding is not None:
+            cue_score_binding.clear()
+            cue_score_binding.update(_bind_cue_scores(cue_candidates, cue_source_signature, cue_verified_grid))
+        if cue_client is not None:
+            structure_kwargs['cue_context'] = dict(
+                candidates=cue_candidates, **{key: cue_client.config[key] for key in
+                    ('samplecnn_path', 'cue_model_path', 'prefer_directml')}, window_start_s=0.0,
+                track_duration_s=duration, verified_grid=cue_verified_grid, _client=cue_client,
+            )
+        if native_phrase_analysis and native_phrase_analysis.get('status') == 'ok':
+            structure_kwargs['native_phrase_context'] = dict(
+                candidates=native_phrase_analysis['phrases'], verified_grid=True,
+                window_start_s=0., track_duration_s=duration)
+        head = analyze_structure(head_audio, sr, bpm, genre, **structure_kwargs)
+        if cue_client is not None:
+            head.cue_diagnostics = [dict(start_s=0.0, status=(
+                'unverified_grid' if not cue_verified_grid else
+                'no_candidates' if not cue_candidates else 'evaluated'), results=head.cue_diagnostics)]
+        for section in head.sections:
+            section.end_time = min(section.end_time, head_duration)
 
-    coverage = [{
-        "start": 0.0,
-        "end": _round_time_within_duration(head_duration, duration),
-    }]
-    if duration <= head_duration + 1.0:
-        return head, coverage, True
+        coverage = [{
+            "start": 0.0,
+            "end": _round_time_within_duration(head_duration, duration),
+        }]
+        if duration <= head_duration + 1.0:
+            return head, coverage, True
 
-    # AUDIT-FIX N1 (2026-07-24): Das Head-Fenster endet NICHT am Track-Ende —
-    # ein dort vergebenes "outro"-Label ist ein Fenster-Artefakt (der Labeler
-    # markiert immer die letzte Section als Outro-Kandidat, ohne zu wissen,
-    # dass der Track weitergeht). Solche Labels zu "main" degradieren, sonst
-    # zieht der Outro-Scanner in dj_brain den outro_start in die Track-Mitte.
-    for section in head.sections:
-        if section.label == "outro":
-            section.label = "main"
+        # AUDIT-FIX N1 (2026-07-24): Das Head-Fenster endet NICHT am Track-Ende —
+        # ein dort vergebenes "outro"-Label ist ein Fenster-Artefakt (der Labeler
+        # markiert immer die letzte Section als Outro-Kandidat, ohne zu wissen,
+        # dass der Track weitergeht). Solche Labels zu "main" degradieren, sonst
+        # zieht der Outro-Scanner in dj_brain den outro_start in die Track-Mitte.
+        for section in head.sections:
+            if section.label == "outro":
+                section.label = "main"
 
-    tail_start = max(head_duration, duration - LIBROSA_TAIL_DURATION)
-    try:
-        tail_audio, _ = librosa.load(
-            file_path,
-            sr=sr,
-            mono=True,
-            offset=tail_start,
-            duration=max(0.0, duration - tail_start),
-        )
-    except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as error:
-        logger.warning("Track-Ende konnte nicht analysiert werden: %s", error)
-        seconds_bar = seconds_per_bar or (
-            (60.0 / bpm) * METER if bpm > 0 else 0.0
-        )
-        if duration > head_duration + 1.0:
-            head.sections.append(
+        tail_start = max(head_duration, duration - LIBROSA_TAIL_DURATION)
+        try:
+            tail_audio, _ = librosa.load(
+                file_path,
+                sr=sr,
+                mono=True,
+                offset=tail_start,
+                duration=max(0.0, duration - tail_start),
+            )
+        except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as error:
+            logger.warning("Track-Ende konnte nicht analysiert werden: %s", error)
+            if cue_client is not None:
+                head.cue_diagnostics.append(dict(start_s=tail_start, status='decode_error', results=[]))
+            seconds_bar = seconds_per_bar or (
+                (60.0 / bpm) * METER if bpm > 0 else 0.0
+            )
+            if duration > head_duration + 1.0:
+                head.sections.append(
+                    TrackSection(
+                        label="unanalysed",
+                        start_time=_round_time_within_duration(head_duration, duration),
+                        end_time=duration,
+                        start_bar=(
+                            int(round(head_duration / seconds_bar)) if seconds_bar else 0
+                        ),
+                        end_bar=(
+                            int(round(duration / seconds_bar)) if seconds_bar else 0
+                        ),
+                        avg_energy=0.0,
+                    )
+                )
+                head.total_bars = (
+                    int(duration / seconds_bar) if seconds_bar else head.total_bars
+                )
+            return head, coverage, False
+        tail_duration = float(librosa.get_duration(y=tail_audio, sr=sr))
+        tail_end = min(duration, tail_start + tail_duration)
+        if tail_duration <= 0:
+            if cue_client is not None:
+                head.cue_diagnostics.append(dict(start_s=tail_start, status='decode_error', results=[]))
+            return head, coverage, False
+
+        tail_kwargs = {"anchor": anchor - tail_start}
+        # Wenn die Head-Noveltly die Phrasenlaenge ermittelt hat, muss das
+        # Tail dieselbe Einheit verwenden. Zwei unabhaengige Fenster duerfen
+        # nicht verschiedene Phrasenraster in ein Track-Ergebnis mischen.
+        tail_phrase_unit = phrase_unit if phrase_unit is not None else head.phrase_unit
+        if tail_phrase_unit is not None:
+            tail_kwargs["phrase_unit"] = tail_phrase_unit
+        if head.phrase_unit_source == "genre_prior":
+            tail_kwargs["phrase_unit_source"] = "genre_prior"
+        if seconds_per_bar is not None:
+            tail_kwargs["seconds_per_bar"] = seconds_per_bar
+        if feature_cache is not None:
+            tail_kwargs["feature_cache"] = FeatureCache(tail_audio, sr)
+        if cue_client is not None:
+            if cue_score_binding is not None and cue_score_binding.get('phrases') != _cue_phrase_identities(cue_candidates):
+                cue_score_binding['valid'] = False
+            tail_kwargs['cue_context'] = dict(
+                candidates=cue_candidates, **{key: cue_client.config[key] for key in
+                    ('samplecnn_path', 'cue_model_path', 'prefer_directml')}, window_start_s=tail_start,
+                track_duration_s=duration, verified_grid=cue_verified_grid, _client=cue_client,
+            )
+        if native_phrase_analysis and native_phrase_analysis.get('status') == 'ok':
+            tail_kwargs['native_phrase_context'] = dict(
+                candidates=native_phrase_analysis['phrases'], verified_grid=True,
+                window_start_s=tail_start, track_duration_s=duration)
+        tail = analyze_structure(tail_audio, sr, bpm, genre, **tail_kwargs)
+        if cue_client is not None:
+            tail.cue_diagnostics = [dict(start_s=tail_start, status=(
+                'unverified_grid' if not cue_verified_grid else
+                'no_candidates' if not cue_candidates else 'evaluated'), results=tail.cue_diagnostics)]
+        # AUDIT-FIX B7 (2026-07-24): Spiegelbildlich zum Head-Fenster — das
+        # Tail-Fenster beginnt mitten im Track, ein "intro"-Label dort ist ein
+        # Fenster-Artefakt und wuerde den Intro-Scanner in dj_brain vergiften.
+        for section in tail.sections:
+            if section.label == "intro":
+                section.label = "main"
+
+        shifted_tail = [
+            _offset_section(
+                section,
+                tail_start,
+                bpm,
+                duration,
+                seconds_per_bar=seconds_per_bar,
+            )
+            for section in tail.sections
+        ]
+        coverage.append({
+            "start": _round_time_within_duration(tail_start, duration),
+            "end": _round_time_within_duration(tail_end, duration),
+        })
+
+        head_sections = [section for section in head.sections if section.start_time < tail_start]
+        if head_sections:
+            head_sections[-1].end_time = min(head_sections[-1].end_time, tail_start)
+
+        merged_sections = head_sections
+        if tail_start > head_duration + 1.0:
+            seconds_bar = seconds_per_bar or ((60.0 / bpm) * METER if bpm > 0 else 0.0)
+            merged_sections.append(
                 TrackSection(
                     label="unanalysed",
                     start_time=_round_time_within_duration(head_duration, duration),
-                    end_time=duration,
-                    start_bar=(
-                        int(round(head_duration / seconds_bar)) if seconds_bar else 0
-                    ),
-                    end_bar=(
-                        int(round(duration / seconds_bar)) if seconds_bar else 0
-                    ),
+                    end_time=_round_time_within_duration(tail_start, duration),
+                    start_bar=int(round(head_duration / seconds_bar)) if seconds_bar else 0,
+                    end_bar=int(round(tail_start / seconds_bar)) if seconds_bar else 0,
                     avg_energy=0.0,
                 )
             )
-            head.total_bars = (
-                int(duration / seconds_bar) if seconds_bar else head.total_bars
-            )
-        return head, coverage, False
-    tail_duration = float(librosa.get_duration(y=tail_audio, sr=sr))
-    tail_end = min(duration, tail_start + tail_duration)
-    if tail_duration <= 0:
-        return head, coverage, False
-
-    tail_kwargs = {"anchor": anchor - tail_start}
-    if phrase_unit is not None:
-        tail_kwargs["phrase_unit"] = phrase_unit
-    if seconds_per_bar is not None:
-        tail_kwargs["seconds_per_bar"] = seconds_per_bar
-    if feature_cache is not None:
-        tail_kwargs["feature_cache"] = FeatureCache(tail_audio, sr)
-    tail = analyze_structure(tail_audio, sr, bpm, genre, **tail_kwargs)
-    # AUDIT-FIX B7 (2026-07-24): Spiegelbildlich zum Head-Fenster — das
-    # Tail-Fenster beginnt mitten im Track, ein "intro"-Label dort ist ein
-    # Fenster-Artefakt und wuerde den Intro-Scanner in dj_brain vergiften.
-    for section in tail.sections:
-        if section.label == "intro":
-            section.label = "main"
-
-    shifted_tail = [
-        _offset_section(
-            section,
-            tail_start,
-            bpm,
-            duration,
-            seconds_per_bar=seconds_per_bar,
+        merged_sections.extend(shifted_tail)
+        total_bars = int(
+            duration / (seconds_per_bar or ((60.0 / bpm) * METER))
+        ) if bpm > 0 else 0
+        merged = TrackStructure(
+            sections=merged_sections,
+            total_bars=total_bars,
+            phrase_unit=head.phrase_unit or tail.phrase_unit,
+            phrase_unit_source=head.phrase_unit_source,
+            phrase_unit_candidate=head.phrase_unit_candidate,
+            phrase_unit_score=head.phrase_unit_score,
+            phrase_unit_margin=head.phrase_unit_margin,
+            cue_diagnostics=head.cue_diagnostics + tail.cue_diagnostics,
         )
-        for section in tail.sections
-    ]
-    coverage.append({
-        "start": _round_time_within_duration(tail_start, duration),
-        "end": _round_time_within_duration(tail_end, duration),
-    })
-
-    head_sections = [section for section in head.sections if section.start_time < tail_start]
-    if head_sections:
-        head_sections[-1].end_time = min(head_sections[-1].end_time, tail_start)
-
-    merged_sections = head_sections
-    if tail_start > head_duration + 1.0:
-        seconds_bar = seconds_per_bar or ((60.0 / bpm) * METER if bpm > 0 else 0.0)
-        merged_sections.append(
-            TrackSection(
-                label="unanalysed",
-                start_time=_round_time_within_duration(head_duration, duration),
-                end_time=_round_time_within_duration(tail_start, duration),
-                start_bar=int(round(head_duration / seconds_bar)) if seconds_bar else 0,
-                end_bar=int(round(tail_start / seconds_bar)) if seconds_bar else 0,
-                avg_energy=0.0,
-            )
-        )
-    merged_sections.extend(shifted_tail)
-    total_bars = int(
-        duration / (seconds_per_bar or ((60.0 / bpm) * METER))
-    ) if bpm > 0 else 0
-    merged = TrackStructure(
-        sections=merged_sections,
-        total_bars=total_bars,
-        phrase_unit=head.phrase_unit or tail.phrase_unit,
-    )
-    return merged, coverage, tail_end >= duration - 1.0
+        return merged, coverage, tail_end >= duration - 1.0
 
 
 def cue_in_verwerfen(
@@ -1747,7 +2076,9 @@ def _mixpoint_pair_erfuellt_harten_vertrag(
     if mix_in <= intro_end + tolerance or mix_out >= outro_start - tolerance:
         return False
 
-    unit = int(phrase_unit) if phrase_unit and phrase_unit > 0 else 8
+    if type(phrase_unit) is not int or phrase_unit not in {8, 16, 32}:
+        return False
+    unit = phrase_unit
     phrase_grid = (60.0 / bpm) * METER * unit
     if phrase_grid <= 0.0 or mix_out - mix_in + tolerance < 2.0 * phrase_grid:
         return False
@@ -1831,6 +2162,162 @@ def _apply_manual_mixpoint_cues(
     return result_in, result_out
 
 
+def _reestimate_phrase_phase_for_selected_unit(
+    y: np.ndarray,
+    sr: int,
+    bpm: float,
+    first_downbeat: float,
+    prior_unit: int,
+    structure: TrackStructure,
+    *,
+    first_phrase: float,
+    phrase_confidence: float,
+    phrase_anchor: float | None,
+    anchor_grid_usable: bool,
+    phrase_usage_blocked: bool,
+) -> tuple[float, float, float | None]:
+    """Rechnet Phrasenphase neu, wenn Novelty das zugrunde liegende Raster ändert."""
+    if (
+        not anchor_grid_usable
+        or phrase_usage_blocked
+        or structure.phrase_unit_source != "audio_novelty"
+        or structure.phrase_unit == prior_unit
+    ):
+        return first_phrase, phrase_confidence, phrase_anchor
+
+    selected_phrase, selected_confidence = estimate_first_phrase(
+        y, sr, bpm, first_downbeat, structure.phrase_unit
+    )
+    selected_anchor = first_downbeat
+    if (
+        selected_phrase >= 0.0
+        and selected_confidence >= PHRASE_CONFIDENCE_MIN
+    ):
+        selected_anchor = selected_phrase
+    return selected_phrase, selected_confidence, selected_anchor
+
+
+def _reanalyze_structure_for_phrase_anchor(
+    file_path: str,
+    y: np.ndarray,
+    sr: int,
+    bpm: float,
+    genre: str,
+    duration: float,
+    phrase_anchor: float,
+    phrase_unit: int,
+    *,
+    feature_cache,
+    cue_candidates: list[dict],
+    cue_verified_grid: bool,
+    cue_source_signature,
+    cue_score_binding: dict,
+    original_structure: TrackStructure,
+    native_phrase_analysis: dict | None = None,
+) -> tuple[TrackStructure, list[dict], bool]:
+    """Quantisiert Sektionen erneut auf das final bestaetigte Phrase-Raster."""
+    refined, coverage, outro_covered = analyze_structure_windows(
+        file_path,
+        y,
+        sr,
+        bpm,
+        genre,
+        duration,
+        anchor=phrase_anchor,
+        phrase_unit=phrase_unit,
+        phrase_unit_source="genre_prior",
+        feature_cache=feature_cache,
+        cue_candidates=cue_candidates,
+        cue_verified_grid=cue_verified_grid,
+        cue_source_signature=cue_source_signature,
+        cue_score_binding=cue_score_binding,
+        native_phrase_analysis=native_phrase_analysis,
+    )
+    refined.phrase_unit = original_structure.phrase_unit
+    refined.phrase_unit_source = original_structure.phrase_unit_source
+    refined.phrase_unit_candidate = original_structure.phrase_unit_candidate
+    refined.phrase_unit_score = original_structure.phrase_unit_score
+    refined.phrase_unit_margin = original_structure.phrase_unit_margin
+    return refined, coverage, outro_covered
+
+
+def _analyze_structure_with_final_phrase_anchor(
+    file_path: str,
+    y: np.ndarray,
+    sr: int,
+    bpm: float,
+    genre: str,
+    duration: float,
+    *,
+    first_downbeat: float,
+    phrase_anchor: float | None,
+    first_phrase: float,
+    phrase_confidence: float,
+    phrase_unit: int,
+    measure_phrase_unit: bool,
+    anchor_grid_usable: bool,
+    phrase_usage_blocked: bool,
+    feature_cache,
+    cue_candidates: list[dict],
+    cue_verified_grid: bool,
+    reanalyze_cue_verified_grid: bool,
+    cue_source_signature,
+    native_phrase_analysis: dict | None = None,
+):
+    """Teilt die finale Phrasen-/Strukturentscheidung beider Analysepfade."""
+    cue_score_binding = {}
+    structure, coverage, outro_covered = analyze_structure_windows(
+        file_path,
+        y,
+        sr,
+        bpm,
+        genre,
+        duration,
+        anchor=0.0 if phrase_usage_blocked else phrase_anchor,
+        phrase_unit=None if measure_phrase_unit else phrase_unit,
+        phrase_unit_source=None if measure_phrase_unit else "genre_prior",
+        feature_cache=feature_cache,
+        cue_candidates=None if phrase_usage_blocked else cue_candidates,
+        cue_verified_grid=cue_verified_grid,
+        cue_source_signature=cue_source_signature,
+        cue_score_binding=cue_score_binding,
+        native_phrase_analysis=native_phrase_analysis,
+    )
+    previous_phrase_anchor = phrase_anchor
+    first_phrase, phrase_confidence, phrase_anchor = (
+        _reestimate_phrase_phase_for_selected_unit(
+            y, sr, bpm, first_downbeat, phrase_unit, structure,
+            first_phrase=first_phrase,
+            phrase_confidence=phrase_confidence,
+            phrase_anchor=phrase_anchor,
+            anchor_grid_usable=anchor_grid_usable,
+            phrase_usage_blocked=phrase_usage_blocked,
+        )
+    )
+    if phrase_anchor != previous_phrase_anchor:
+        try:
+            structure, coverage, outro_covered = _reanalyze_structure_for_phrase_anchor(
+                file_path, y, sr, bpm, genre, duration,
+                phrase_anchor, structure.phrase_unit,
+                feature_cache=feature_cache,
+                cue_candidates=cue_candidates,
+                cue_verified_grid=reanalyze_cue_verified_grid,
+                cue_source_signature=cue_source_signature,
+                cue_score_binding=cue_score_binding,
+                original_structure=structure,
+                native_phrase_analysis=native_phrase_analysis,
+            )
+        except Exception as exc:
+            logger.warning("Struktur-Neuquantisierung nach Novelty-Phrase fehlgeschlagen: %s", exc)
+            phrase_anchor = previous_phrase_anchor
+            first_phrase = MIX_POINT_UNSET
+            phrase_confidence = 0.0
+    return (
+        structure, coverage, outro_covered,
+        first_phrase, phrase_confidence, phrase_anchor, cue_score_binding,
+    )
+
+
 def _persist_analysis_result(cache_key: str | None, track: Track) -> bool:
     """Meldet Analyseerfolg nur nach bestaetigter Cache-Persistenz."""
     try:
@@ -1846,8 +2333,977 @@ def _persist_analysis_result(cache_key: str | None, track: Track) -> bool:
     return True
 
 
-def analyze_track(file_path: str) -> Track | None:
-    """Analyzes a single audio file for all v3.0 metadata, using a cache."""
+def _reference_grid_attempt(file_path, duration, bpm, y, sr, grid, reference_bpm,
+                            reference_path_match="unknown"):
+    """Originalreferenz vor einer möglichen Tempoänderung unverfälscht prüfen."""
+    # Rekordbox verwendet 0 für ein fehlendes Tempo. Das Grid bleibt prüfbar,
+    # die Diagnose darf daraus aber kein gemessenes positives Tempo machen.
+    if (type(reference_bpm) not in (int, float)
+            or not math.isfinite(reference_bpm) or reference_bpm <= 0):
+        reference_bpm = None
+    anchor = next((p['time'] for p in grid if p['beat'] == 1), None)
+    if anchor is None:
+        return None
+    details = {}
+    try:
+        validation = _validate_track_beatgrid(file_path, duration, bpm, float(anchor),
+            grid_points=grid, head_audio=y, head_sr=sr, diagnostics=details)
+        diagnostic = dict(reason='reference_verified' if validation.status == 'verified' else 'unknown',
+                          stage='reference')
+    except Exception as error:
+        validation = BeatgridValidation('unverifiable', 0, -1.)
+        diagnostic = dict(reason='estimationerror', stage='reference', error_type=type(error).__name__)
+        logger.warning('Originalreferenzprüfung fehlgeschlagen: %s', type(error).__name__)
+    return dict(anchor_s=float(anchor), bpm=reference_bpm, target_bpm=float(bpm),
+        path_match=reference_path_match,
+        measurement=measurement_snapshot(diagnostic, validation,
+            decode_failures=details.get('decode_failures', ())))
+
+
+def _unknown_bar_position_comparison(reason="reference_not_verified", windows=()):
+    """Liefert eine strikt unbekannte Modell-gegen-PQTZ-Taktpositionsdiagnose."""
+    return dict(status="unknown", reason=reason, rotation_beats=None,
+                windows=list(windows),
+                audio_confirmation=_unknown_bar_audio_confirmation())
+
+
+def _compare_rekordbox_bar_positions(
+    bpm, grid, beat_windows, *, grid_time_offset_seconds=0.0,
+):
+    """Vergleicht PQTZ-Taktpositionen mit vorhandenen Modellausgaben.
+
+    Das Ergebnis ist nur ein Modellkandidat. Es aendert weder Anker noch Gate.
+    Die Modellausgaben werden ohne Zeit-/Positionsverschiebung gematcht.
+    """
+    if (type(bpm) not in (int, float) or not math.isfinite(bpm) or bpm <= 0
+            or type(grid_time_offset_seconds) not in (int, float)
+            or not math.isfinite(grid_time_offset_seconds)
+            or not isinstance(grid, (list, tuple)) or len(grid) < 4):
+        return _unknown_bar_position_comparison("invalid_reference")
+
+    ibi = 60.0 / float(bpm)
+    rb_times, rb_positions = [], []
+    previous_time = None
+    previous_position = None
+    for point in grid:
+        if type(point) is not dict or set(point) != {"beat", "time"}:
+            return _unknown_bar_position_comparison("invalid_reference")
+        position, timestamp = point["beat"], point["time"]
+        if (type(position) is not int or position not in {1, 2, 3, 4}
+                or type(timestamp) not in (int, float) or not math.isfinite(timestamp)
+                or timestamp < 0 or (previous_time is not None and timestamp <= previous_time)
+                or (previous_position is not None and position != previous_position % 4 + 1)):
+            return _unknown_bar_position_comparison("invalid_reference")
+        if (previous_time is not None
+                and abs((timestamp - previous_time) / ibi - 1.0) > BEATGRID_MAX_INTERVAL_DEVIATION):
+            return _unknown_bar_position_comparison("invalid_reference")
+        # Bei einem separat gemessenen konstanten Audio-minus-Grid-Versatz
+        # werden Ticks nur fuer diesen Positionsvergleich in die Audiophase
+        # projiziert. Der importierte Grid-Rohwert bleibt unberuehrt.
+        rb_times.append(float(timestamp) + float(grid_time_offset_seconds))
+        rb_positions.append(position)
+        previous_time, previous_position = float(timestamp), position
+
+    if (not isinstance(beat_windows, (list, tuple))
+            or len(beat_windows) != BEATGRID_MIN_WINDOWS
+            or any(type(window) is not dict for window in beat_windows)):
+        return _unknown_bar_position_comparison("window_count")
+    for window in beat_windows:
+        start, duration = window.get("start_s"), window.get("duration_s")
+        if (type(start) not in (int, float) or not math.isfinite(start)
+                or type(duration) not in (int, float) or not math.isfinite(duration)
+                or start < 0 or duration <= 0):
+            return _unknown_bar_position_comparison("window_overlap")
+    ordered_windows = sorted(beat_windows, key=lambda window: window["start_s"])
+    previous_end = -1.0
+    window_starts = set()
+    for window in ordered_windows:
+        start, duration = window.get("start_s"), window.get("duration_s")
+        if (type(start) not in (int, float) or not math.isfinite(start)
+                or type(duration) not in (int, float) or not math.isfinite(duration)
+                or start < 0 or duration <= 0 or start < previous_end):
+            return _unknown_bar_position_comparison("window_overlap")
+        previous_end = start + duration
+        window_starts.add(start)
+    if len(window_starts) != BEATGRID_MIN_WINDOWS:
+        return _unknown_bar_position_comparison("window_count")
+
+    rows = []
+    valid_rotations = set()
+    saw_conflict = False
+    for window in ordered_windows:
+        results = window.get("results")
+        by_model = ({item.get("model_id"): item for item in results
+                     if type(item) is dict and type(item.get("model_id")) is str}
+                    if isinstance(results, list) else {})
+        for model_id in ("model7", "model8"):
+            base = dict(model_id=model_id, start_s=float(window["start_s"]),
+                        status="unavailable", matched_beats=0,
+                        max_time_error_ms=None, rotation_beats=None,
+                        decoder_positions=[], rekordbox_positions=[],
+                        rotation_candidates=[])
+            item = by_model.get(model_id)
+            decoder = item.get("decoder") if item and item.get("status") == "ok" else None
+            if (type(decoder) is not dict or decoder.get("status") != "ok" or decoder.get("ambiguous")
+                    or not isinstance(decoder.get("beats"), list)):
+                rows.append(base)
+                continue
+
+            observed = [event for event in decoder["beats"]
+                        if type(event) is dict and event.get("observed") is True]
+            direct = []
+            used_rb = set()
+            event_invalid = False
+            for event in observed:
+                timestamp, position = event.get("time_s"), event.get("position")
+                if (type(timestamp) not in (int, float) or not math.isfinite(timestamp)
+                        or type(position) is not int or position not in {1, 2, 3, 4}):
+                    event_invalid = True
+                    break
+                lo, hi = 0, len(rb_times)
+                while lo < hi:
+                    middle = (lo + hi) // 2
+                    if rb_times[middle] < timestamp:
+                        lo = middle + 1
+                    else:
+                        hi = middle
+                candidates = [index for index in (lo - 1, lo) if 0 <= index < len(rb_times)]
+                if not candidates:
+                    continue
+                nearest = min(candidates, key=lambda index: abs(rb_times[index] - timestamp))
+                error = abs(rb_times[nearest] - timestamp)
+                if error > EXACT_BEAT_SYNC_TOLERANCE_SECONDS:
+                    continue
+                if nearest in used_rb:
+                    event_invalid = True
+                    break
+                used_rb.add(nearest)
+                direct.append((position, rb_positions[nearest], error))
+
+            rotations = {(decoder_position - rb_position) % 4
+                         for decoder_position, rb_position, _ in direct}
+            decoder_positions = {decoder_position for decoder_position, _, _ in direct}
+            rb_matched_positions = {rb_position for _, rb_position, _ in direct}
+            base["matched_beats"] = len(direct)
+            base["decoder_positions"] = sorted(decoder_positions)
+            base["rekordbox_positions"] = sorted(rb_matched_positions)
+            base["rotation_candidates"] = sorted(rotations)
+            if direct:
+                base["max_time_error_ms"] = round(max(error for _, _, error in direct) * 1000.0, 3)
+            if event_invalid:
+                base["status"] = "invalid_events"
+            elif len(rotations) > 1:
+                base["status"] = "conflict"
+                saw_conflict = True
+            elif (len(direct) < 4 or decoder_positions != {1, 2, 3, 4}
+                    or rb_matched_positions != {1, 2, 3, 4}):
+                base["status"] = "insufficient_matches"
+            elif observed and len(direct) != len(observed):
+                base["status"] = "time_mismatch"
+            else:
+                rotation = next(iter(rotations))
+                base.update(status="measured", rotation_beats=rotation)
+                valid_rotations.add(rotation)
+            rows.append(base)
+
+    if saw_conflict or len(valid_rotations) > 1:
+        status, reason, rotation = "conflict", "rotation_disagreement", None
+    elif len(rows) == 2 * BEATGRID_MIN_WINDOWS and all(row["status"] == "measured" for row in rows):
+        rotation = next(iter(valid_rotations))
+        status, reason = ("aligned", "measured") if rotation == 0 else ("candidate_rotation", "measured")
+    else:
+        status, reason, rotation = "unknown", "insufficient_evidence", None
+    if reason == "measured" and grid_time_offset_seconds != 0.0:
+        reason = "offset_compensated"
+    return dict(status=status, reason=reason, rotation_beats=rotation, windows=rows,
+                audio_confirmation=_unknown_bar_audio_confirmation())
+
+
+def _unknown_bar_audio_confirmation(reason="not_attempted"):
+    return dict(status="unknown", reason=reason, expected_anchor_s=None,
+                final_grid_status="unknown", windows=[])
+
+
+def _confirm_rekordbox_bar_rotation(
+    file_path, duration, bpm, y, sr, rekordbox_anchor_s, beat_windows,
+    comparison, *, grid_time_offset_seconds=0.0, independent_windows=False,
+):
+    """Bestaetigt Taktrotation oder Zeitversatz per Audio samt Gesamtgrid."""
+    offset_candidate = (
+        comparison.get("reason") == "offset_compensated"
+        and comparison.get("status") in {"candidate_rotation", "aligned"}
+    )
+    regular_rotation = (
+        comparison.get("reason") == "measured"
+        and comparison.get("status") == "candidate_rotation"
+    )
+    if not (offset_candidate or regular_rotation):
+        return _unknown_bar_audio_confirmation("no_rotation_candidate")
+    if independent_windows is not True:
+        return _unknown_bar_audio_confirmation("independent_windows_unavailable")
+    rotation = comparison.get("rotation_beats")
+    allowed_rotations = {0, 1, 2, 3} if offset_candidate else {1, 2, 3}
+    if (type(rotation) is not int or rotation not in allowed_rotations
+            or type(bpm) not in (int, float) or not math.isfinite(bpm) or bpm <= 0
+            or type(rekordbox_anchor_s) not in (int, float)
+            or not math.isfinite(rekordbox_anchor_s) or rekordbox_anchor_s < 0
+            or type(grid_time_offset_seconds) not in (int, float)
+            or not math.isfinite(grid_time_offset_seconds)):
+        return _unknown_bar_audio_confirmation("invalid_candidate")
+    ibi = 60.0 / float(bpm)
+    bar = 4.0 * ibi
+    raw_expected_anchor = (
+        float(rekordbox_anchor_s) + float(grid_time_offset_seconds)
+        - rotation * ibi
+    )
+    if offset_candidate and rotation == 0 and not 0.0 <= raw_expected_anchor < bar:
+        return _unknown_bar_audio_confirmation("invalid_candidate")
+    expected_anchor = raw_expected_anchor
+    while expected_anchor < 0.0:
+        expected_anchor += bar
+    while expected_anchor >= bar:
+        expected_anchor -= bar
+
+    windows_by_start = {
+        float(window["start_s"]): window
+        for window in beat_windows if type(window) is dict
+        and type(window.get("start_s")) in (int, float)
+    }
+    records = []
+    comparisons = comparison.get("windows", [])
+    if (len(comparisons) != 6
+            or any(row.get("status") != "measured" for row in comparisons)):
+        return _unknown_bar_audio_confirmation("incomplete_model_evidence")
+
+    if independent_windows:
+        if len(windows_by_start) != BEATGRID_MIN_WINDOWS:
+            return _unknown_bar_audio_confirmation("incomplete_model_evidence")
+        targets = [
+            (model_id, window)
+            for window in beat_windows
+            for model_id in ("model7", "model8")
+        ]
+    else:
+        targets = [
+            (row["model_id"], windows_by_start.get(float(row["start_s"])))
+            for row in comparisons
+        ]
+
+    confirmed_audio_windows = {}
+    for model_id, source_window in targets:
+        start = (float(source_window["start_s"])
+                 if type(source_window) is dict else -1.0)
+        record = dict(model_id=model_id, start_s=start, status="unavailable",
+                      reason="window_unavailable", anchor_s=None,
+                      confidence=None, phase_error_ms=None)
+        records.append(record)
+        if (source_window is None or source_window.get("status") != "evaluated"
+                or type(source_window.get("duration_s")) not in (int, float)):
+            continue
+        results = source_window.get("results")
+        matches = [item for item in results if type(item) is dict
+                   and item.get("model_id") == model_id] if isinstance(results, list) else []
+        if len(matches) != 1:
+            record.update(status="unavailable", reason="model_unavailable")
+            continue
+        item = matches[0]
+        decoder = item.get("decoder")
+        decoder_bpm = decoder.get("bpm") if type(decoder) is dict else None
+        if (item.get("status") != "ok" or type(decoder) is not dict
+                or decoder.get("status") != "ok" or decoder.get("ambiguous")
+                or type(decoder_bpm) not in (int, float)
+                or not math.isfinite(decoder_bpm) or decoder_bpm <= 0
+                or abs(decoder_bpm / bpm - 1.0) > BEATGRID_MAX_INTERVAL_DEVIATION):
+            record.update(status="unavailable", reason="model_unavailable")
+            continue
+
+        width = float(source_window["duration_s"])
+        try:
+            rate = int(sr)
+            first = int(start * rate)
+            count = int(width * rate)
+            retained_audio = (source_window.get("_audio")
+                              if independent_windows and type(source_window) is dict else None)
+            if isinstance(retained_audio, np.ndarray):
+                rate = 44100
+                count = int(width * rate)
+            if (isinstance(retained_audio, np.ndarray)
+                    and retained_audio.ndim == 1 and len(retained_audio) == count):
+                audio = retained_audio
+                audio_start = start
+            elif rate > 0 and y is not None and len(y) >= first + count:
+                audio = np.asarray(y)[first:first + count]
+                audio_start = first / rate
+            else:
+                rate = 44100
+                audio, loaded_rate = librosa.load(
+                    file_path, sr=rate, mono=True, offset=start,
+                    duration=width, res_type="soxr_hq",
+                )
+                if loaded_rate != rate:
+                    raise ValueError("source_rate")
+                audio = np.asarray(audio)
+                audio_start = start
+                count = int(width * rate)
+            if (audio.ndim != 1 or len(audio) != count
+                    or not np.isfinite(audio).all()):
+                raise ValueError("incomplete_audio_window")
+            events = [
+                dict(time_s=event["time_s"] - audio_start,
+                     position=event["position"], observed=event["observed"])
+                for event in decoder["beats"]
+            ]
+            downbeat = {}
+            local_anchor, confidence = estimate_first_downbeat(
+                audio, rate, bpm, external_beats=events,
+                diagnostics=downbeat, _allow_metric_retry=False,
+            )
+            if (not math.isfinite(local_anchor) or not math.isfinite(confidence)
+                    or not 0 <= local_anchor < len(audio) / rate
+                    or not 0 <= confidence < 1):
+                raise ValueError("invalid_audio_estimate")
+            absolute_anchor = float(local_anchor + audio_start)
+            phase_error = abs((absolute_anchor - expected_anchor + bar / 2.0) % bar - bar / 2.0)
+            record.update(anchor_s=absolute_anchor, confidence=float(confidence),
+                          phase_error_ms=round(phase_error * 1000.0, 3))
+            if confidence < DOWNBEAT_RELIABLE_MIN:
+                record.update(status="rejected", reason="weak_audio")
+            elif phase_error > EXACT_BEAT_SYNC_TOLERANCE_SECONDS:
+                record.update(status="rejected", reason="audio_phase_conflict")
+            else:
+                record.update(status="confirmed", reason="measured")
+                if independent_windows:
+                    if not isinstance(retained_audio, np.ndarray):
+                        raise ValueError("independent_audio_missing")
+                    confirmed_audio_windows[start] = retained_audio
+        except Exception as error:
+            record.update(status="error", reason="audio_error")
+            logger.warning("Rekordbox-Taktkandidat %.3fs: %s", start, type(error).__name__)
+
+    if len(records) != 6 or any(row["status"] != "confirmed" for row in records):
+        reason = next((row["reason"] for row in records if row["status"] != "confirmed"),
+                      "incomplete_model_evidence")
+        return dict(status="rejected", reason=reason, expected_anchor_s=expected_anchor,
+                    final_grid_status="not_checked", windows=records)
+
+    final_details = {}
+    try:
+        if independent_windows:
+            final = validate_beatgrid_windows(
+                sorted(confirmed_audio_windows.items()), 44100, bpm,
+                anchor=expected_anchor,
+                collect_diagnostics=True,
+            )
+        else:
+            final = _validate_track_beatgrid(
+                file_path, duration, bpm, expected_anchor, head_audio=y,
+                head_sr=sr, diagnostics=final_details,
+            )
+    except Exception as error:
+        logger.warning("Rekordbox-Taktkandidat-Gesamtgrid: %s", type(error).__name__)
+        return dict(status="error", reason="final_grid_error",
+                    expected_anchor_s=expected_anchor, final_grid_status="unknown",
+                    windows=records)
+    if final.status != "verified":
+        return dict(status="rejected", reason="final_grid_rejected",
+                    expected_anchor_s=expected_anchor,
+                    final_grid_status=final.status, windows=records)
+    confirmation = dict(status="audio_confirmed", reason="measured",
+                        expected_anchor_s=expected_anchor,
+                        final_grid_status=final.status, windows=records)
+    if independent_windows:
+        confirmation["_final_validation"] = final
+        confirmation["_final_details"] = final_details
+        confirmation["_final_downbeat"] = dict(
+            reason="external_alignment", stage="external_alignment",
+            beats_detected=0, beats_used=0,
+        )
+    return confirmation
+
+
+def _resolve_track_tempo(file_path, duration, bpm, y, sr, grid, windows, *, reference_bpm=None,
+                         reference_path_match="unknown"):
+    """Beide Modelle und unabhängige Audioprüfung müssen das neue Tempo tragen."""
+    reference = _reference_grid_attempt(file_path, duration, bpm, y, sr, grid,
+        reference_bpm, reference_path_match)
+    transient = bool(reference and (reference['measurement']['grid']['decode_failures']
+        or reference['measurement']['downbeat']['reason'] == 'estimationerror'))
+    baseline = (bpm, reference, transient)
+    model_samples = []
+
+    def baseline_result(reason, *, model_bpm=None, refined_bpm=None,
+                        model_spread=None, transient_result=None):
+        if len(model_samples) == 6:
+            sample_tempos = [sample['bpm'] for sample in model_samples]
+            if model_bpm is None:
+                model_bpm = float(np.median(sample_tempos))
+            if model_spread is None:
+                model_spread = max(sample_tempos) / min(sample_tempos) - 1.
+        diagnostic = dict(
+            status='baseline', reason=reason, model_bpm=model_bpm,
+            refined_bpm=refined_bpm, model_spread=model_spread,
+            model_samples=[dict(sample) for sample in model_samples],
+        )
+        return (*baseline[:2], transient if transient_result is None else transient_result,
+                diagnostic)
+
+    if transient or (reference and reference['measurement']['grid']['status'] == 'verified'):
+        return baseline_result('reference_error' if transient else 'reference_verified')
+    try:
+        if len(windows) != BEATGRID_MIN_WINDOWS:
+            return baseline_result('window_count')
+        end, tempos = -1., []
+        for window in windows:
+            if window['status'] != 'evaluated' or window['start_s'] < end:
+                return baseline_result('window_unavailable')
+            end = window['start_s'] + window['duration_s']
+            models = {item['model_id']: item for item in window['results']}
+            if len(window['results']) != 2 or set(models) != {'model7', 'model8'}:
+                return baseline_result('model_set_invalid')
+            for model in ('model7', 'model8'):
+                item, decoder = models[model], models[model].get('decoder')
+                if (item['status'] != 'ok' or not decoder or decoder['status'] != 'ok'
+                        or decoder['ambiguous']):
+                    return baseline_result('model_unavailable')
+                value = decoder['bpm']
+                if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                    return baseline_result('model_bpm_invalid')
+                tempos.append(float(value))
+                model_samples.append(dict(
+                    model_id=model, start_s=float(window['start_s']),
+                    bpm=float(value),
+                ))
+        # Bereits geltende 2%-Intervalltoleranz; kein neues Modellgewicht.
+        tempo_spread = max(tempos) / min(tempos) - 1.
+        candidate = float(np.median(tempos))
+        if tempo_spread > BEATGRID_MAX_INTERVAL_DEVIATION:
+            logger.info(
+                "Neuronales Tempo verworfen: Modellfenster widersprechen sich "
+                "(min=%.6f, max=%.6f BPM, spread=%.4f%%, Grenze=%.4f%%)",
+                min(tempos), max(tempos), tempo_spread * 100.,
+                BEATGRID_MAX_INTERVAL_DEVIATION * 100.,
+            )
+            return baseline_result(
+                'model_disagreement', model_bpm=candidate,
+                model_spread=tempo_spread,
+            )
+        # Alle sechs Modellwerte tragen gleichberechtigt; der Median vermeidet
+        # eine Abhaengigkeit von Fenster- und Modellreihenfolge. DSP-Refinement
+        # und das unabhaengige Gesamtgrid bleiben die Uebernahme-Gates.
+        diagnostic_values = dict(model_bpm=candidate, model_spread=tempo_spread)
+        if candidate == bpm:
+            return baseline_result('candidate_matches_baseline', **diagnostic_values)
+        detail = {}
+        refined = _refine_audio_tempo(y, sr, candidate, file_path=file_path,
+                                     duration=duration, diagnostics=detail)
+        if detail.get('reason') not in {'accepted', 'prior_verified'}:
+            return baseline_result(
+                'audio_refinement_rejected', **diagnostic_values,
+                transient_result=transient or detail.get('reason') in {'decode_error', 'estimation_error'},
+            )
+        if (not math.isfinite(refined) or refined <= 0
+                or any(abs(refined / value - 1.) > BEATGRID_MAX_INTERVAL_DEVIATION for value in tempos)):
+            return baseline_result(
+                'refined_tempo_invalid', refined_bpm=float(refined)
+                if math.isfinite(refined) else None, **diagnostic_values,
+            )
+        phase, lock = _beat_phase_from_fold(
+            np.asarray(y[:int(TEMPO_TRAINING_SECONDS*sr)], dtype=np.float64), sr, 60./refined)
+        if phase is None or not math.isfinite(phase) or not math.isfinite(lock) or lock < BEATGRID_MIN_FOLD_LOCK:
+            return baseline_result(
+                'audio_phase_unlocked', refined_bpm=float(refined), **diagnostic_values,
+            )
+        details = {}
+        validation = _validate_track_beatgrid(file_path, duration, refined, phase,
+            head_audio=y, head_sr=sr, diagnostics=details)
+        if details.get('decode_failures'):
+            return baseline_result(
+                'final_grid_decode_error', refined_bpm=float(refined),
+                transient_result=True, **diagnostic_values,
+            )
+        if validation.status != 'verified':
+            return baseline_result(
+                'final_grid_unverified', refined_bpm=float(refined), **diagnostic_values,
+            )
+        logger.info('Neuronales Tempo durch beide Modelle und Audio bestätigt: %.9f -> %.9f', bpm, refined)
+        return float(refined), reference, transient, dict(
+            status='accepted', reason='accepted', model_bpm=candidate,
+            refined_bpm=float(refined), model_spread=tempo_spread,
+            model_samples=[dict(sample) for sample in model_samples],
+        )
+    except Exception as error:
+        logger.warning('Neuronale Tempoprüfung fehlgeschlagen: %s', type(error).__name__)
+        return baseline_result('resolver_error', transient_result=True)
+
+
+def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
+                          beat_windows, *, reference_bpm=None, reference_attempt=None,
+                          phrase_unit=None, reference_path_match="unknown", native_context=None):
+    """Nur audio-bestätigte Modellphasen übernehmen; Quellen getrennt halten."""
+    if native_context is not None and native_context.get('accepted'):
+        native = native_context['analysis']
+        if bpm != native['bpm']:
+            raise ValueError('Native beat tempo changed before anchor adoption')
+        from .ai_models.native_beat_alignment import active_anchor
+        anchor = active_anchor(native)
+        corrected = 'audio_alignment' in native
+        # Native Taktpositionen bleiben unverändert. Konfidenz1 bezeichnet hier
+        # die übernommene native Quelle; musikalische Abnahme bleibt separat false.
+        decision = dict(source='audio', method='native_rekordbox_audio_offset' if corrected else 'native_rekordbox', anchor_s=anchor,
+            confidence=1., reference=None,
+            bar_position_comparison=_unknown_bar_position_comparison(),
+            neural=dict(reason='native_offset_adopted' if corrected else 'native_adopted', transient=False, windows=[], candidate_anchor_s=anchor))
+        return (anchor, 1., 'audio', native_context['validation'],
+                dict(reason='native_verified', stage='reference'),
+                native_context['diagnostics'], decision, None)
+    reference = reference_attempt
+    if reference is None:
+        reference = _reference_grid_attempt(file_path, duration, bpm, y, sr,
+            rekordbox_grid, reference_bpm, reference_path_match)
+    if reference and reference['measurement']['grid']['status'] == 'verified':
+        bar_comparison = _compare_rekordbox_bar_positions(bpm, rekordbox_grid, beat_windows)
+        grid = reference['measurement']['grid']
+        validation = BeatgridValidation(**{key: value for key, value in grid.items() if key != 'decode_failures'})
+        diagnostic = reference['measurement']['downbeat']
+        details = dict(decode_failures=grid['decode_failures'])
+        anchor = reference['anchor_s']
+        decision = dict(source='rekordbox', method='rekordbox', anchor_s=anchor,
+            confidence=1., reference=reference,
+            bar_position_comparison=bar_comparison,
+            neural=dict(reason='reference_preferred', transient=False, windows=[], candidate_anchor_s=None))
+        confirmation = _unknown_bar_audio_confirmation('no_rotation_candidate')
+        if bar_comparison.get('status') == 'candidate_rotation':
+            span = min(_BEATGRID_WINDOW_SECONDS, float(duration))
+            independent_starts = _offset_confirmation_starts(
+                duration, span, grid, beat_windows,
+            )
+            if len(independent_starts) == BEATGRID_MIN_WINDOWS:
+                confirmation_windows = _collect_beat_windows(
+                    file_path, duration, y, sr,
+                    window_starts=independent_starts, retain_audio=True,
+                )
+                confirmation = _confirm_rekordbox_bar_rotation(
+                    file_path, duration, bpm, y, sr, reference['anchor_s'],
+                    confirmation_windows, bar_comparison,
+                    independent_windows=True,
+                )
+            else:
+                confirmation = _unknown_bar_audio_confirmation(
+                    'independent_windows_unavailable',
+                )
+        bar_comparison['audio_confirmation'] = confirmation
+        if confirmation['status'] == 'audio_confirmed':
+            # Modellkandidat und Audio-Bestaetigung nutzen disjunkte Quellfenster.
+            # Der korrigierte Anker bleibt Audioherkunft; PSSI und Rekordbox-
+            # Render-Sync behandeln ihn nicht als unveraenderten RB-Anker.
+            final_validation = confirmation.pop('_final_validation')
+            final_details = confirmation.pop('_final_details')
+            downbeat_diagnostic = confirmation.pop('_final_downbeat')
+            corrected_anchor = confirmation['expected_anchor_s']
+            confidence = min(row['confidence'] for row in confirmation['windows'])
+            decision.update(
+                source='audio', method='model_audio_rotation',
+                anchor_s=corrected_anchor, confidence=confidence,
+                neural=dict(
+                    reason='bar_rotation_adopted', transient=False,
+                    windows=[], candidate_anchor_s=corrected_anchor,
+                ),
+            )
+            return (corrected_anchor, confidence, 'audio', final_validation,
+                    downbeat_diagnostic, final_details, decision, None)
+        return anchor, 1., 'rekordbox', validation, diagnostic, details, decision, None
+
+    diagnostic, details = {}, {}
+    anchor, confidence = _estimate_audio_downbeat(y, sr, bpm, file_path=file_path,
+                                                 duration=duration, diagnostics=diagnostic)
+    validation = _validate_track_beatgrid(file_path, duration, bpm, anchor,
+                                         head_audio=y, head_sr=sr, diagnostics=details)
+    neural = dict(reason='no_candidates', transient=bool(details.get('decode_failures') or
+        (reference and reference['measurement']['grid']['decode_failures'])), windows=[], candidate_anchor_s=None)
+    phase_grid = reference['measurement']['grid'] if reference else None
+    if (isinstance(phase_grid, dict)
+            and phase_grid.get('status') == 'mismatch'
+            and phase_grid.get('phase_pattern') == 'consistent_offset'):
+        # Der gemessene konstante Zeitversatz darf Modellpositionen gegen das
+        # phasenprojizierte Referenzgrid vergleichen. Erst der unten ausgefuehrte
+        # disjunkte Modell-/Audiowindowsatz darf den Kandidaten bestaetigen.
+        phase_center_ms = phase_grid.get('phase_center_ms')
+        if (type(phase_center_ms) in (int, float) and math.isfinite(phase_center_ms)):
+            bar_comparison = _compare_rekordbox_bar_positions(
+                bpm, rekordbox_grid, beat_windows,
+                grid_time_offset_seconds=phase_center_ms / 1000.0,
+            )
+        else:
+            bar_comparison = _unknown_bar_position_comparison('reference_constant_offset')
+    else:
+        bar_comparison = _unknown_bar_position_comparison()
+    decision = dict(source='audio', method='dsp', anchor_s=float(anchor), confidence=float(confidence),
+                    reference=reference,
+                    bar_position_comparison=bar_comparison, neural=neural)
+    baseline = (anchor, confidence, 'audio', validation, diagnostic, details, decision)
+    if (reference is not None
+            and bar_comparison.get('status') in {'candidate_rotation', 'aligned'}
+            and bar_comparison.get('reason') == 'offset_compensated'):
+        span = min(_BEATGRID_WINDOW_SECONDS, float(duration))
+        independent_starts = _offset_confirmation_starts(
+            duration, span, phase_grid, beat_windows,
+        )
+        if len(independent_starts) == BEATGRID_MIN_WINDOWS:
+            confirmation_windows = _collect_beat_windows(
+                file_path, duration, y, sr,
+                window_starts=independent_starts, retain_audio=True,
+            )
+            phase_offset = float(phase_grid['phase_center_ms']) / 1000.0
+            confirmation = _confirm_rekordbox_bar_rotation(
+                file_path, duration, bpm, y, sr, reference['anchor_s'],
+                confirmation_windows, bar_comparison,
+                grid_time_offset_seconds=phase_offset,
+                independent_windows=True,
+            )
+            bar_comparison['audio_confirmation'] = confirmation
+            if confirmation.get('status') == 'audio_confirmed':
+                final_validation = confirmation.pop('_final_validation')
+                final_details = confirmation.pop('_final_details')
+                downbeat_diagnostic = confirmation.pop('_final_downbeat')
+                corrected_anchor = confirmation['expected_anchor_s']
+                corrected_confidence = min(
+                    row['confidence'] for row in confirmation['windows']
+                )
+                phase_only = bar_comparison.get('rotation_beats') == 0
+                decision.update(
+                    source='audio',
+                    method='model_audio_phase_offset' if phase_only else 'model_audio_rotation',
+                    anchor_s=corrected_anchor, confidence=corrected_confidence,
+                    neural=dict(
+                        reason='phase_offset_adopted' if phase_only else 'bar_rotation_adopted', transient=False,
+                        windows=[], candidate_anchor_s=corrected_anchor,
+                    ),
+                )
+                return (corrected_anchor, corrected_confidence, 'audio',
+                        final_validation, downbeat_diagnostic, final_details,
+                        decision, None)
+        else:
+            bar_comparison['audio_confirmation'] = _unknown_bar_audio_confirmation(
+                'independent_windows_unavailable',
+            )
+    baseline_phrase = None
+    if confidence >= DOWNBEAT_RELIABLE_MIN and validation.status == 'verified':
+        if phrase_unit is not None:
+            try:
+                first_phrase, phrase_confidence = estimate_first_phrase(y, sr, bpm, anchor, phrase_unit)
+                baseline_phrase = (first_phrase, phrase_confidence)
+            except Exception as error:
+                neural['transient'] = True
+                logger.warning('Baseline-Phrasenprüfung fehlgeschlagen: %s', type(error).__name__)
+        model_candidates_available = any(
+            window.get('status') == 'evaluated'
+            and any(item.get('status') == 'ok'
+                    and isinstance(item.get('decoder'), dict)
+                    and item['decoder'].get('status') == 'ok'
+                    for item in window.get('results', ()))
+            for window in beat_windows
+        )
+        if not model_candidates_available and (phrase_unit is None or (
+                baseline_phrase is not None and baseline_phrase[1] >= PHRASE_CONFIDENCE_MIN)):
+            # Phrasenkonfidenz bestaetigt keine musikalische Takt-Eins.
+            # Vorhandene Modellkandidaten immer gegen Audio pruefen, auch
+            # wenn das regulaere DSP-Raster bereits technisch verifiziert ist.
+            neural['reason'] = 'baseline_preferred'
+            return (*baseline, baseline_phrase)
+
+    supported = []
+    for window in beat_windows:
+        start, width = window['start_s'], window['duration_s']
+        if window['status'] != 'evaluated':
+            neural['windows'].append(dict(model_id=None, start_s=start, duration_s=width,
+                reason='window_unavailable', input_status=window['status'], input_reason=window.get('reason'),
+                anchor_s=None, confidence=None, downbeat={}))
+            continue
+        audio = None
+        for item in window['results']:
+            record = dict(model_id=item['model_id'], start_s=start, duration_s=width,
+                          reason='model_unavailable', input_status=item['status'], input_reason=item.get('reason'),
+                          anchor_s=None, confidence=None, downbeat={})
+            neural['windows'].append(record)
+            decoder = item.get('decoder')
+            if item['status'] != 'ok' or not decoder or decoder['status'] != 'ok':
+                continue
+            if decoder['ambiguous']:
+                record['reason'] = 'ambiguous'
+                continue
+            if abs(decoder['bpm'] / bpm - 1.) > BEATGRID_MAX_INTERVAL_DEVIATION:
+                record['reason'] = 'tempo_mismatch'
+                continue
+            try:
+                if audio is None:
+                    # Das Audio-Voting darf den DSP-Head verwenden. Sein echter
+                    # Sampleoffset bleibt beim Lokalisieren der Modellzeiten erhalten.
+                    rate = int(sr)
+                    first = int(start * rate)
+                    count = int(width * rate)
+                    if rate > 0 and y is not None and len(y) >= first + count:
+                        audio = np.asarray(y)[first:first+count]
+                        audio_start = first / rate
+                    else:
+                        rate = 44100
+                        audio, loaded_rate = librosa.load(file_path, sr=rate, mono=True,
+                            offset=start, duration=width, res_type='soxr_hq')
+                        if loaded_rate != rate:
+                            raise ValueError('source_rate')
+                        audio = np.asarray(audio)
+                        audio_start = start
+                        count = int(width * rate)
+                    if (audio.ndim != 1 or len(audio) != count or not np.isfinite(audio).all()):
+                        raise ValueError('incomplete_audio_window')
+                events = [dict(time_s=e['time_s']-audio_start, position=e['position'], observed=e['observed'])
+                          for e in decoder['beats']]
+                local = {}
+                local_anchor, local_confidence = estimate_first_downbeat(audio, rate, bpm,
+                    external_beats=events, diagnostics=local, _allow_metric_retry=False)
+                record['downbeat'] = local
+                if local.get('reason') == 'estimationerror':
+                    neural['transient'] = True
+                record['confidence'] = float(local_confidence)
+                record['anchor_s'] = float(local_anchor + audio_start)
+                if (not math.isfinite(local_anchor) or not math.isfinite(local_confidence)
+                        or not 0 <= local_anchor < len(audio)/rate or not 0 <= local_confidence < 1):
+                    raise ValueError('invalid_audio_estimate')
+                if local_confidence < DOWNBEAT_RELIABLE_MIN:
+                    record['reason'] = 'weak_audio'
+                    continue
+                record['reason'] = 'confirmed'
+                supported.append(record)
+            except Exception as error:
+                record.update(reason='audio_error', anchor_s=None, confidence=None, downbeat={})
+                neural['transient'] = True
+                logger.warning('Neuronale Taktprüfung %.3fs: %s', start, type(error).__name__)
+
+    if not supported:
+        neural['reason'] = 'insufficient_evidence'
+        return (*baseline, baseline_phrase)
+    # Auch ein einzelner belastbarer Widerspruch des anderen Modells sperrt.
+    bar = 4. * 60. / bpm
+    for index, left in enumerate(supported):
+        for right in supported[index+1:]:
+            distance = abs((left['anchor_s']-right['anchor_s']+bar/2) % bar-bar/2)
+            if distance > EXACT_BEAT_SYNC_TOLERANCE_SECONDS:
+                neural['reason'] = 'bar_conflict'
+                return (*baseline, baseline_phrase)
+    eligible_models = set()
+    for model in ('model7', 'model8'):
+        distinct = sorted((r for r in supported if r['model_id'] == model), key=lambda r: r['start_s'])
+        end, count = -1., 0
+        for record in distinct:
+            if record['start_s'] >= end:
+                count += 1
+                end = record['start_s'] + record['duration_s']
+        if count >= BEATGRID_MIN_WINDOWS:
+            eligible_models.add(model)
+    if eligible_models != {'model7', 'model8'}:
+        neural['reason'] = 'insufficient_windows'
+        return (*baseline, baseline_phrase)
+    winner = min(supported, key=lambda r: (r['anchor_s'], r['model_id']))
+    selected_anchor = winner['anchor_s']
+    neural['candidate_anchor_s'] = selected_anchor
+    final_details = {}
+    try:
+        final = _validate_track_beatgrid(file_path, duration, bpm, selected_anchor,
+            head_audio=y, head_sr=sr, diagnostics=final_details)
+    except Exception as error:
+        neural.update(reason='final_grid_error', transient=True)
+        logger.warning('Neuronale Gesamtgridprüfung: %s', type(error).__name__)
+        return (*baseline, baseline_phrase)
+    if final_details.get('decode_failures'):
+        neural['transient'] = True
+    if final.status != 'verified':
+        neural['reason'] = 'final_grid_rejected'
+        return (*baseline, baseline_phrase)
+    confidence = min(record['confidence'] for record in supported)
+    neural['reason'] = 'adopted'
+    decision.update(method='neural_audio', anchor_s=selected_anchor, confidence=confidence)
+    return selected_anchor, confidence, 'audio', final, winner['downbeat'], final_details, decision, None
+
+
+def _offset_confirmation_starts(duration, span, reference_grid, candidate_windows=(), *, eligible=None):
+    """Waehlt drei Audiofenster ausserhalb von Referenz und Modellkandidat."""
+    if (type(duration) not in (int, float) or not math.isfinite(duration)
+            or type(span) not in (int, float) or not math.isfinite(span)
+            or duration <= 0 or span <= 0 or duration < span):
+        return ()
+    diagnostics = reference_grid.get('window_diagnostics') if type(reference_grid) is dict else None
+    if not isinstance(diagnostics, (list, tuple)) or len(diagnostics) != BEATGRID_MIN_WINDOWS:
+        return ()
+    excluded = []
+    for item in diagnostics:
+        if type(item) is not dict:
+            return ()
+        start, width = item.get('offset_seconds'), item.get('duration_seconds')
+        if (type(start) not in (int, float) or not math.isfinite(start)
+                or type(width) not in (int, float) or not math.isfinite(width)
+                or start < 0 or width <= 0 or start + width > duration + 1e-6):
+            return ()
+        excluded.append((float(start), float(start + width)))
+    if len(candidate_windows) != BEATGRID_MIN_WINDOWS:
+        return ()
+    for item in candidate_windows:
+        if type(item) is not dict:
+            return ()
+        start, width = item.get('start_s'), item.get('duration_s')
+        if (type(start) not in (int, float) or not math.isfinite(start)
+                or type(width) not in (int, float) or not math.isfinite(width)
+                or start < 0 or width <= 0 or start + width > duration + 1e-6):
+            return ()
+        excluded.append((float(start), float(start + width)))
+    ordered = sorted(excluded)
+    merged = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    last_start = int(math.floor(duration - span))
+    candidates = [
+        float(start) for start in range(max(0, last_start + 1))
+        if (eligible is None or eligible(float(start), span)) and all(start + span <= left or start >= right
+               for left, right in merged)
+    ]
+    chosen = []
+    for target in (duration * 0.2, duration * 0.5, duration * 0.8):
+        available = [start for start in candidates
+                     if all(start + span <= other or start >= other + span
+                            for other in chosen)]
+        if not available:
+            return ()
+        selected = min(available, key=lambda start: (abs(start - target), start))
+        chosen.append(selected)
+    return tuple(sorted(chosen)) if len(chosen) == BEATGRID_MIN_WINDOWS else ()
+
+
+def _prepare_native_beats(file_path, duration, y, sr):
+    """Native Gesamtanalyse vor alten Modellfenstern; Audio-Synchronsperre bleibt."""
+    from .ai_models import native_track_beats
+    if not native_track_beats.enabled():
+        return dict(analysis=dict(status='disabled', reason='disabled'), accepted=False, transient=False)
+    with cue_service.session() as client:
+        native = native_track_beats.analyze(file_path, transport=getattr(client, 'native_beats', None))
+    context = dict(analysis=native, accepted=False,
+                   transient=native.get('status') == 'unavailable' and native.get('reason') != 'unsupported_source_format')
+    if native.get('status') != 'ok':
+        return context
+    native_track_beats.validate_snapshot(native, duration=duration)
+    period = 60. / native['bpm']
+    first = native['grid'][0]['pos'] / 44100
+    if any(abs(row['pos']/44100 - (first + index*period)) > EXACT_BEAT_SYNC_TOLERANCE_SECONDS
+           for index, row in enumerate(native['grid'])):
+        # HPGs aktueller Renderer verwendet ein konstantes Raster. Ein natives
+        # variables Grid bleibt erhalten, wird aber nicht still begradigt.
+        return context
+    details = {}
+    validation = _validate_track_beatgrid(file_path, duration, native['bpm'],
+        native['first_downbeat'], head_audio=y, head_sr=sr, diagnostics=details,
+        grid_points=[dict(time=row['pos']/44100, beat=row['numBar']) for row in native['grid']])
+    context.update(accepted=validation.status == 'verified', validation=validation, diagnostics=details)
+    if (validation.status == 'mismatch' and validation.phase_pattern == 'consistent_offset'
+            and validation.phase_center_ms is not None):
+        from dataclasses import asdict
+        from .ai_models.native_beat_alignment import validate_alignment, stable_model_window
+        shift = validation.phase_center_ms / 1000.
+        if not EXACT_BEAT_SYNC_TOLERANCE_SECONDS < abs(shift) < period / 4:
+            return context
+        records = [asdict(row) for row in validation.window_diagnostics]
+        span = _BEATGRID_WINDOW_SECONDS
+        starts = _offset_confirmation_starts(duration, span,
+            {'window_diagnostics': records},
+            [dict(start_s=r['offset_seconds'], duration_s=r['duration_seconds']) for r in records],
+            eligible=lambda start, width: stable_model_window(native, start, width))
+        if len(starts) != BEATGRID_MIN_WINDOWS:
+            return context
+        windows = []
+        try:
+            for start in starts:
+                audio, loaded_sr = librosa.load(file_path, sr=sr, mono=True, offset=start, duration=span)
+                if loaded_sr != sr:
+                    return context
+                windows.append((start, audio))
+            confirmation = validate_beatgrid_windows(windows, sr, native['bpm'],
+                anchor=native['first_downbeat'] + shift,
+                grid_times=[r['pos']/44100 + shift for r in native['grid']], collect_diagnostics=True)
+            alignment = dict(offset_seconds=shift, calibration=records,
+                confirmation=[asdict(r) for r in confirmation.window_diagnostics])
+            if confirmation.status != 'verified':
+                return context
+            validate_alignment(native, alignment)
+        except (OSError, RuntimeError, ValueError, sf.LibsndfileError):
+            return context
+        native['audio_alignment'] = alignment
+        context.update(accepted=True, validation=confirmation)
+    return context
+
+
+def _collect_beat_windows(
+    file_path, duration, head_audio, head_sr, *, window_starts=None,
+    retain_audio=False,
+):
+    """Bis drei getrennte Quellfenster; ausschließlich unverifizierte Kandidaten.
+
+    Ein 22050-Hz-Head hat Hochfrequenzanteile bereits verloren und wird niemals
+    für diese Modelle hochgesampelt. Wiederverwendung nur bei echten 44100 Hz.
+    """
+    span = min(_BEATGRID_WINDOW_SECONDS, float(duration))
+    if not math.isfinite(span) or span <= 0:
+        return []
+    requested_starts = (
+        (0., max(0., duration / 2 - span / 2), max(0., duration - span))
+        if window_starts is None else tuple(window_starts)
+    )
+    starts = tuple(dict.fromkeys(int(offset * 44100) for offset in requested_starts))
+    windows = []
+    for sample_start in starts:
+        offset = sample_start / 44100
+        count = int(min(span, duration - offset) * 44100)
+        requested_duration = count / 44100
+        window = dict(start_s=offset, duration_s=requested_duration,
+                      status='unavailable', reason='insufficient_audio', results=[])
+        if count < 44100:
+            if requested_duration > 0:
+                windows.append(window)
+            continue
+        try:
+            if head_sr == 44100 and head_audio is not None and len(head_audio) >= sample_start + count:
+                audio = np.asarray(head_audio)[sample_start:sample_start+count]
+                sample_rate = 44100
+            else:
+                audio, sample_rate = librosa.load(file_path, sr=44100, mono=True,
+                    offset=offset, duration=requested_duration, res_type='soxr_hq')
+                audio = np.asarray(audio)[:count]
+            if (sample_rate != 44100 or audio.ndim != 1 or audio.dtype.kind != 'f'
+                    or len(audio) < count - 1 or not np.isfinite(audio).all()):
+                raise ValueError('incomplete_or_invalid_source_window')
+            if retain_audio:
+                window['_audio'] = np.asarray(audio[:count], dtype=np.float32)
+            if len(audio) < 44100:
+                windows.append(window)
+                continue
+            with cue_service.session() as client:
+                result = client.score_beats(audio, 44100, window_start_s=offset,
+                                           track_duration_s=duration)
+            cue_service._validate_beat_window(result)
+            if retain_audio:
+                result['_audio'] = window['_audio']
+            windows.append(result)
+        except Exception as error:
+            logger.warning('Beat-Modellfenster %.2fs nicht verfügbar: %s', offset, type(error).__name__)
+            window.update(status='decode_error', reason=f'beat_window_error:{type(error).__name__}')
+            windows.append(window)
+    return windows
+
+
+@cue_service.track_session
+def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | None:
+    """Analyzes one track; ``fresh`` bypasses both track-cache reads and writes."""
+    if type(cache_policy) is not str or cache_policy not in {"reuse", "fresh"}:
+        raise ValueError("cache_policy muss 'reuse' oder 'fresh' sein")
     if not file_path:
         return None
 
@@ -1908,7 +3364,12 @@ def analyze_track(file_path: str) -> Track | None:
                 )
                 rekordbox_data = None
 
+    cue_source_signature = rekordbox_signature
     try:
+        neural_identity = cue_service.fingerprint()
+        # Bestehende Cache-/Metadatenkonsumenten verwenden dieses Signaturfeld.
+        # Deshalb dieselbe erweiterte Quellidentität im Track und Lookup halten.
+        rekordbox_signature = f"{rekordbox_signature}|neural:{neural_identity}"
         cache_key = generate_cache_key(file_path, rekordbox_signature)
     except Exception as error:
         logger.error("Cache-Key konnte nicht sicher erzeugt werden: %s", error)
@@ -1917,15 +3378,18 @@ def analyze_track(file_path: str) -> Track | None:
         logger.error("Cache-Key konnte nicht sicher erzeugt werden: %s", file_path)
         return None
 
-    try:
-        cached_track = get_cached_track(cache_key, file_path=file_path)
-    except Exception as error:
-        logger.warning("Cache-Lesefehler; Track wird neu analysiert: %s", error)
-        cached_track = None
+    cached_track = None
+    if cache_policy == "reuse":
+        try:
+            cached_track = get_cached_track(cache_key, file_path=file_path)
+        except Exception as error:
+            logger.warning("Cache-Lesefehler; Track wird neu analysiert: %s", error)
+            cached_track = None
 
     if cached_track:
         cached_mode = getattr(cached_track, "analysis_mode", None)
         if cached_mode in VALID_ANALYSIS_MODES:
+            cached_track.analysis_origin = "cache"
             logger.debug(f"Cache-Hit: {os.path.basename(file_path)}")
             return cached_track
         logger.warning(
@@ -1981,9 +3445,22 @@ def analyze_track(file_path: str) -> Track | None:
             # Key aus der Rekordbox-DB = verlaesslich analysiert
             key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
 
+            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
+            rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
+            native_context = _prepare_native_beats(file_path, duration, y, sr)
+            if native_context['accepted']:
+                beat_windows = []
+                bpm, reference_attempt, tempo_transient, tempo_diagnostic = native_context['analysis']['bpm'], None, False, None
+            else:
+                beat_windows = _collect_beat_windows(file_path, duration, y, sr)
+                bpm, reference_attempt, tempo_transient, tempo_diagnostic = _resolve_track_tempo(
+                    file_path, duration, rekordbox_data.bpm, y, sr, rekordbox_grid, beat_windows,
+                    reference_bpm=rekordbox_data.bpm,
+                    reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
+
             # DJ Brain: Genre-Klassifikation
             genre_result = classify_genre(
-                y, sr, rekordbox_data.bpm, bass_intensity, genre
+                y, sr, bpm, bass_intensity, genre
             )
             logger.info(
                 f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
@@ -1991,12 +3468,6 @@ def analyze_track(file_path: str) -> Track | None:
 
             # Downbeat-Anker (2026-07-17): zuerst der exakte Rekordbox-Beatgrid
             # (ANLZ/PQTZ, Konfidenz 1.0), sonst eigene Schaetzung (Phase-Voting)
-            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
-            rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
-            anlz_downbeat = next(
-                (point["time"] for point in rekordbox_grid if point["beat"] == 1),
-                None,
-            )
             # Rekordbox-Phrasen (PSSI) und Cues mit Provenienz — Rohmaterial
             # fuer die Mixpunkt-Kandidaten (Spec 2026-08-21)
             cue_points = normalize_cues(
@@ -2004,68 +3475,86 @@ def analyze_track(file_path: str) -> Track | None:
                 duration=file_duration,
                 source=file_path,
             )
-            downbeat_diagnostics = {"reason": "unknown", "stage": None}
-            grid_diagnostics = {}
-            if anlz_downbeat is not None:
-                beatgrid_source = "rekordbox"
-                beatgrid_validation = _validate_track_beatgrid(
-                    file_path, duration, rekordbox_data.bpm, float(anlz_downbeat),
-                    grid_points=rekordbox_grid, head_audio=y, head_sr=sr,
-                    diagnostics=grid_diagnostics,
-                )
-                if beatgrid_validation.status == "verified":
-                    first_downbeat, downbeat_confidence = float(anlz_downbeat), 1.0
-                    downbeat_diagnostics.update(reason="reference_verified", stage="reference")
-                else:
-                    # Das Rekordbox-Grid bleibt als Diagnose sichtbar, darf die
-                    # musikalische Analyse aber nicht sperren. Fuer Mixpunkte
-                    # wird in diesem Fall der Audio-Anker verwendet.
-                    first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                        y, sr, rekordbox_data.bpm, diagnostics=downbeat_diagnostics,
-                    )
-            else:
-                first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                    y, sr, rekordbox_data.bpm, diagnostics=downbeat_diagnostics,
-                )
-                beatgrid_source = "audio"
-                beatgrid_validation = _validate_track_beatgrid(
-                    file_path, duration, rekordbox_data.bpm, first_downbeat,
-                    head_audio=y, head_sr=sr,
-                    diagnostics=grid_diagnostics,
-                )
+            phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
+            (first_downbeat, downbeat_confidence, beatgrid_source, beatgrid_validation,
+             downbeat_diagnostics, grid_diagnostics, anchor_decision, phrase_estimate) = _resolve_track_anchor(
+                file_path, duration, bpm, y, sr, rekordbox_grid, beat_windows,
+                reference_bpm=rekordbox_data.bpm, reference_attempt=reference_attempt,
+                phrase_unit=phrase_unit, native_context=native_context,
+                reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
+            anchor_decision["neural"]["transient"] |= tempo_transient or native_context.get('transient', False)
+            phrase_usage_blocked = bar_position_usage_blocked(anchor_decision)
+            # Das prueft stabile Beatphase, nicht unabhaengige Takt-1-Genauigkeit.
+            anchor_grid_usable = (
+                downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
+                and beatgrid_validation.status == "verified"
+            )
             phrases = (
                 rekordbox_importer.get_phrases(file_path, duration=file_duration)
-                if beatgrid_source == "rekordbox"
+                if not phrase_usage_blocked
+                and beatgrid_source == "rekordbox"
                 and beatgrid_validation.status == "verified"
                 and hasattr(rekordbox_importer, "get_phrases")
                 else []
             )
 
-            phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
-            if downbeat_confidence > 0.0:
-                first_phrase, phrase_confidence = estimate_first_phrase(
-                    y, sr, rekordbox_data.bpm, first_downbeat, phrase_unit
-                )
+            if anchor_grid_usable and not phrase_usage_blocked:
+                if phrase_estimate is not None:
+                    first_phrase, phrase_confidence = phrase_estimate
+                else:
+                    first_phrase, phrase_confidence = estimate_first_phrase(
+                        y, sr, bpm, first_downbeat, phrase_unit
+                    )
             else:
-                first_phrase, phrase_confidence = -1.0, 0.0
-            phrase_anchor = (
+                first_phrase, phrase_confidence = MIX_POINT_UNSET, 0.0
+            phrase_anchor = None if phrase_usage_blocked else (
                 first_phrase
-                if first_phrase >= 0.0
+                if anchor_grid_usable
+                and first_phrase >= 0.0
                 and phrase_confidence >= PHRASE_CONFIDENCE_MIN
-                else first_downbeat
+                else first_downbeat if anchor_grid_usable else 0.0
             )
 
-            # DJ Brain: Struktur-Analyse (phrase-verankert)
-            structure, analysis_coverage, outro_covered = analyze_structure_windows(
-                file_path,
-                y,
-                sr,
-                rekordbox_data.bpm,
-                genre_result.genre,
-                duration,
-                anchor=phrase_anchor,
+            # Wenn Audio kein belastbares erstes Phrasenereignis findet,
+            # darf die Novelty-Messung im Strukturpfad die Genre-Prior-
+            # Phrasenlaenge bestimmen. Das Raster bleibt am bestaetigten
+            # Downbeat verankert; gesperrte oder unbestaetigte Raster behalten
+            # unveraendert den Genre-Prior.
+            measure_phrase_unit = (
+                anchor_grid_usable
+                and not phrase_usage_blocked
+                and (first_phrase < 0.0 or phrase_confidence < PHRASE_CONFIDENCE_MIN)
+            )
+
+            # Native Erzeugung ist getrennt von importierten PSSI-Phrasen.
+            from .ai_models.native_phrase_adapter import analyze_track_phrases
+            native_key_note, native_key_mode = REVERSE_CAMELOT_MAP.get(
+                rekordbox_data.camelot_code, ('', ''))
+            native_phrase_analysis = analyze_track_phrases(
+                file_path, bpm=bpm, duration=file_duration, first_downbeat=first_downbeat,
+                grid_usable=anchor_grid_usable, usage_blocked=phrase_usage_blocked,
+                imported_phrases=phrases, reference_grid=rekordbox_grid,
+                grid_source=beatgrid_source, key_note=native_key_note, key_mode=native_key_mode)
+            # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
+            (
+                structure, analysis_coverage, outro_covered,
+                first_phrase, phrase_confidence, phrase_anchor, cue_score_binding,
+            ) = _analyze_structure_with_final_phrase_anchor(
+                file_path, y, sr, bpm, genre_result.genre, duration,
+                first_downbeat=first_downbeat,
+                phrase_anchor=phrase_anchor,
+                first_phrase=first_phrase,
+                phrase_confidence=phrase_confidence,
                 phrase_unit=phrase_unit,
+                measure_phrase_unit=measure_phrase_unit,
+                anchor_grid_usable=anchor_grid_usable,
+                phrase_usage_blocked=phrase_usage_blocked,
                 feature_cache=feature_cache,
+                cue_candidates=phrases,
+                cue_verified_grid=(not phrase_usage_blocked and beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
+                reanalyze_cue_verified_grid=(beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
+                cue_source_signature=cue_source_signature,
+                native_phrase_analysis=native_phrase_analysis,
             )
             section_dicts = [s.to_dict() for s in structure.sections]
             for section in section_dicts:
@@ -2087,12 +3576,16 @@ def analyze_track(file_path: str) -> Track | None:
             # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
             # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
             # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-            if section_dicts:
+            if phrase_usage_blocked:
+                mix_in_point = mix_out_point = MIX_POINT_UNSET
+                mix_in_bars = mix_out_bars = 0
+            elif section_dicts:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     calculate_genre_aware_mix_points(
-                        section_dicts, rekordbox_data.bpm, duration,
+                        section_dicts, bpm, duration,
                         genre_result.genre, anchor=phrase_anchor,
                         first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
+                        phrase_unit=structure.phrase_unit,
                     )
                 )
                 logger.info(
@@ -2101,26 +3594,28 @@ def analyze_track(file_path: str) -> Track | None:
             else:
                 mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                     analyze_structure_and_mix_points(
-                        y, sr, duration, energy, rekordbox_data.bpm,
+                        y, sr, duration, energy, bpm,
                         genre=genre_result.genre,
                         anchor=phrase_anchor,
                         first_downbeat=first_downbeat,  # R3
+                        phrase_unit=structure.phrase_unit,
                     )
                 )
 
             # Gerichtete manuelle Cues behalten ihre Prioritaet, muessen aber
             # denselben quantisierten Intro-/Outro-Vertrag wie Analyzerpunkte
             # erfuellen. Der gemeinsame Helfer wird auch im Vollpfad benutzt.
-            mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
-                mix_in_point,
-                mix_out_point,
-                cue_points=cue_points,
-                bpm=rekordbox_data.bpm,
-                duration=duration,
-                phrase_unit=structure.phrase_unit,
-                anchor=phrase_anchor,
-                sections=section_dicts,
-            )
+            if not phrase_usage_blocked:
+                mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
+                    mix_in_point,
+                    mix_out_point,
+                    cue_points=cue_points,
+                    bpm=bpm,
+                    duration=duration,
+                    phrase_unit=structure.phrase_unit,
+                    anchor=phrase_anchor,
+                    sections=section_dicts,
+                )
             # Nach den manuellen Cues neu rechnen -- sie koennen die Punkte
             # verschoben haben. Dieselbe Rundung wie `dj_brain` und die
             # Anzeige: `int()` trunkierte, wodurch Cache und Anzeige um einen
@@ -2128,19 +3623,24 @@ def analyze_track(file_path: str) -> Track | None:
             # ergaebe gerundet ab 174 BPM einen negativen Takt, den
             # `caching.validate_track_dict` zurueckweist.
             mix_in_bars = (
-                seconds_to_bars(mix_in_point, rekordbox_data.bpm)
+                seconds_to_bars(mix_in_point, bpm)
                 if mix_in_point >= 0 else 0
             )
             mix_out_bars = (
-                seconds_to_bars(mix_out_point, rekordbox_data.bpm)
+                seconds_to_bars(mix_out_point, bpm)
                 if mix_out_point >= 0 else 0
             )
+            if not anchor_grid_usable:
+                # Kein Track-Mixpunkt darf auf dem unzuverlaessigen
+                # Fallback-Anker als Takt- oder Phrasenraster ausgegeben werden.
+                mix_in_point = mix_out_point = MIX_POINT_UNSET
+                mix_in_bars = mix_out_bars = 0
 
             # Audio Feature Extensions
             brightness = calculate_brightness(y_fenster, sr, cache_fenster)
             vocal_instrumental = detect_vocal_instrumental(y_fenster, sr, cache_fenster)
             danceability = calculate_danceability(
-                y_fenster, sr, rekordbox_data.bpm, cache_fenster
+                y_fenster, sr, bpm, cache_fenster
             )
             # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
             mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
@@ -2186,7 +3686,8 @@ def analyze_track(file_path: str) -> Track | None:
             # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
             # compute_groove_fields). y/sr sind hier das Fast-Path-Audio.
             groove = compute_groove_fields(
-                y_fenster, sr, rekordbox_data.bpm, first_downbeat, downbeat_confidence,
+                y_fenster, sr, bpm, first_downbeat,
+                downbeat_confidence if anchor_grid_usable else 0.0,
                 feature_cache=cache_fenster, sections=section_dicts,
             )
 
@@ -2254,21 +3755,30 @@ def analyze_track(file_path: str) -> Track | None:
         # sind die Listen bereits leer gesetzt und duerfen nicht ueberschrieben
         # werden (section_dicts/structure waeren dort Platzhalter).
         if not analysis_degraded:
-            kandidaten = _kandidaten_berechnen(
-                file_path, pfad="fast", bpm=rekordbox_data.bpm, duration=duration,
-                first_downbeat=first_downbeat,
-                downbeat_confidence=downbeat_confidence,
-                phrase_confidence=phrase_confidence,
-                phrase_anchor=phrase_anchor,
-                phrase_unit=structure.phrase_unit, sections=section_dicts,
-                phrases=phrases, cues=cue_points,
-                analyzer_in=mix_in_point, analyzer_out=mix_out_point,
-                outro_covered=outro_covered,
-            )
-            if kandidaten is None:
+            if phrase_usage_blocked:
+                mix_in_candidates, mix_out_candidates = [], []
+                phrase_grid = []
+                kandidaten = None
+            else:
+                kandidaten = _kandidaten_berechnen(
+                    file_path, pfad="fast", bpm=bpm, duration=duration,
+                    first_downbeat=first_downbeat,
+                    downbeat_confidence=downbeat_confidence,
+                    phrase_confidence=phrase_confidence,
+                    phrase_anchor=phrase_anchor,
+                    anchor_grid_usable=anchor_grid_usable,
+                    phrase_unit=structure.phrase_unit, sections=section_dicts,
+                    phrases=phrases, cues=cue_points,
+                    native_phrases=native_phrase_analysis.get('phrases', []),
+                    analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+                    outro_covered=outro_covered,
+                    cue_scores=_bound_cue_scores(phrases, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
+                )
+            if not phrase_usage_blocked and kandidaten is None:
                 return None
-            mix_in_candidates, mix_out_candidates = kandidaten
-            phrase_grid = phrase_grid_from_phrases(phrases)
+            if not phrase_usage_blocked:
+                mix_in_candidates, mix_out_candidates = kandidaten
+                phrase_grid = phrase_grid_from_phrases(phrases or native_phrase_analysis.get('phrases', []))
 
         # Create Track object with Rekordbox data
         track = Track(
@@ -2289,7 +3799,7 @@ def analyze_track(file_path: str) -> Track | None:
             title=title,
             genre=genre,
             duration=duration,
-            bpm=rekordbox_data.bpm,
+            bpm=bpm,
             keyNote=key_note,
             keyMode=key_mode,
             camelotCode=rekordbox_data.camelot_code,
@@ -2304,6 +3814,10 @@ def analyze_track(file_path: str) -> Track | None:
             genre_source=genre_result.source,
             sections=section_dicts,
             phrase_unit=structure.phrase_unit,
+            phrase_unit_source=structure.phrase_unit_source,
+            phrase_unit_candidate=structure.phrase_unit_candidate,
+            phrase_unit_score=structure.phrase_unit_score,
+            phrase_unit_margin=structure.phrase_unit_margin,
             brightness=brightness,
             vocal_instrumental=vocal_instrumental,
             danceability=danceability,
@@ -2314,9 +3828,21 @@ def analyze_track(file_path: str) -> Track | None:
             beatgrid_status=beatgrid_validation.status,
             beatgrid_windows_checked=beatgrid_validation.windows_checked,
             beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
+            neural_analysis=cue_service.neural_snapshot(structure, neural_identity, beat_windows),
+            native_phrase_analysis=native_phrase_analysis,
+            native_beat_analysis=native_context['analysis'],
             measurement_diagnostics=measurement_snapshot(
                 downbeat_diagnostics, beatgrid_validation,
                 decode_failures=grid_diagnostics.get("decode_failures", ()),
+                anchor_decision=anchor_decision,
+                phrase_unit_diagnostic=dict(
+                    unit=structure.phrase_unit,
+                    source=structure.phrase_unit_source,
+                    candidate=structure.phrase_unit_candidate,
+                    raw_score=structure.phrase_unit_score,
+                    ranking_margin=structure.phrase_unit_margin,
+                ),
+                tempo_diagnostic=tempo_diagnostic,
             ),
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
@@ -2341,16 +3867,22 @@ def analyze_track(file_path: str) -> Track | None:
             mix_out_candidates=mix_out_candidates,
         )
 
+        # Laufzeit-Provenienz fuer Kohorten/Hoertests; kein persistiertes Feld.
+        track.analysis_origin = "fresh"
+        from .ai_models import deep_features
+        deep_features.attach(track)
+
         # AUDIT-FIX A-02 (2026-07-24): Degradierte Analysen NICHT persistieren —
         # sonst liefert der mtime-basierte Cache die erfundenen Default-Werte
         # (energy=50, mix_in=0.0) fuer immer zurueck, ohne sichtbaren Fehler.
-        if not analysis_degraded:
-            if not _persist_analysis_result(cache_key, track):
-                return None
-        else:
-            logger.warning(
-                f"Degradierte Analyse NICHT gecacht: {os.path.basename(file_path)}"
-            )
+        if cache_policy == "reuse":
+            if not analysis_degraded and not deep_features.transient_failure(track) and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
+                if not _persist_analysis_result(cache_key, track):
+                    return None
+            else:
+                logger.warning(
+                    f"Degradierte Analyse NICHT gecacht: {os.path.basename(file_path)}"
+                )
         return track
 
     # Kein Rekordbox-Tempo: BPM kommt aus dem Audio. Ein vorhandener, aber in
@@ -2472,6 +4004,27 @@ def analyze_track(file_path: str) -> Track | None:
                 bpm = round(bpm / 2, 2)
             logger.info(f"BPM via Librosa: {bpm:.2f} (keine BPM-Tags gefunden)")
 
+        # Vorhandenes Audio-Feintempo bildet die Baseline des Vollpfads.
+        # Die anschließende gemeinsame Entscheidung schützt bestätigte Referenzen.
+        bpm = _refine_audio_tempo(y, sr, bpm, file_path=file_path, duration=duration)
+
+        rekordbox_grid: list[dict] = []
+        if rekordbox_data is not None:
+            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
+            rekordbox_grid = (
+                grid_reader(file_path) if callable(grid_reader) else []
+            )
+        native_context = _prepare_native_beats(file_path, duration, y, sr)
+        if native_context['accepted']:
+            beat_windows = []
+            bpm, reference_attempt, tempo_transient, tempo_diagnostic = native_context['analysis']['bpm'], None, False, None
+        else:
+            beat_windows = _collect_beat_windows(file_path, duration, y, sr)
+            bpm, reference_attempt, tempo_transient, tempo_diagnostic = _resolve_track_tempo(
+                file_path, duration, bpm, y, sr, rekordbox_grid, beat_windows,
+                reference_bpm=rekordbox_data.bpm if rekordbox_data is not None else None,
+                reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
+
         rekordbox_key = (
             REVERSE_CAMELOT_MAP.get(rekordbox_data.camelot_code)
             if rekordbox_data is not None and rekordbox_data.camelot_code
@@ -2525,48 +4078,24 @@ def analyze_track(file_path: str) -> Track | None:
             f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
         )
 
-        # Ein BPM-loser Rekordbox-Datensatz kann dennoch ein PQTZ/PSSI-Paket
-        # besitzen. Es wird erst gegen das jetzt gemessene Tempo validiert;
-        # bei Mismatch bleibt nur die Diagnose, der Anker kommt aus dem Audio.
-        rekordbox_grid: list[dict] = []
-        if rekordbox_data is not None:
-            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
-            rekordbox_grid = (
-                grid_reader(file_path) if callable(grid_reader) else []
-            )
-        anlz_downbeat = next(
-            (point["time"] for point in rekordbox_grid if point["beat"] == 1),
-            None,
+        phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
+        (first_downbeat, downbeat_confidence, beatgrid_source, beatgrid_validation,
+         downbeat_diagnostics, grid_diagnostics, anchor_decision, phrase_estimate) = _resolve_track_anchor(
+            file_path, duration, bpm, y, sr, rekordbox_grid, beat_windows,
+            reference_bpm=rekordbox_data.bpm if rekordbox_data is not None else None,
+                reference_attempt=reference_attempt, phrase_unit=phrase_unit, native_context=native_context,
+                reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
+        anchor_decision["neural"]["transient"] |= tempo_transient or native_context.get('transient', False)
+        phrase_usage_blocked = bar_position_usage_blocked(anchor_decision)
+        # Das prueft stabile Beatphase, nicht unabhaengige Takt-1-Genauigkeit.
+        anchor_grid_usable = (
+            downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
+            and beatgrid_validation.status == "verified"
         )
-        downbeat_diagnostics = {"reason": "unknown", "stage": None}
-        grid_diagnostics = {}
-        if anlz_downbeat is not None:
-            beatgrid_source = "rekordbox"
-            beatgrid_validation = _validate_track_beatgrid(
-                file_path, duration, bpm, float(anlz_downbeat),
-                grid_points=rekordbox_grid, head_audio=y, head_sr=sr,
-                diagnostics=grid_diagnostics,
-            )
-            if beatgrid_validation.status == "verified":
-                first_downbeat = float(anlz_downbeat)
-                downbeat_confidence = 1.0
-                downbeat_diagnostics.update(reason="reference_verified", stage="reference")
-            else:
-                first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                    y, sr, bpm, diagnostics=downbeat_diagnostics,
-                )
-        else:
-            first_downbeat, downbeat_confidence = estimate_first_downbeat(
-                y, sr, bpm, diagnostics=downbeat_diagnostics,
-            )
-            beatgrid_source = "audio"
-            beatgrid_validation = _validate_track_beatgrid(
-                file_path, duration, bpm, first_downbeat, head_audio=y, head_sr=sr,
-                diagnostics=grid_diagnostics,
-            )
         phrases = (
             rekordbox_importer.get_phrases(file_path, duration=file_duration)
-            if rekordbox_data is not None
+            if not phrase_usage_blocked
+            and rekordbox_data is not None
             and beatgrid_source == "rekordbox"
             and beatgrid_validation.status == "verified"
             and hasattr(rekordbox_importer, "get_phrases")
@@ -2581,33 +4110,59 @@ def analyze_track(file_path: str) -> Track | None:
             if rekordbox_data is not None else []
         )
 
-        phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
-        if downbeat_confidence > 0.0:
-            first_phrase, phrase_confidence = estimate_first_phrase(
-                y, sr, bpm, first_downbeat, phrase_unit
-            )
+        if anchor_grid_usable and not phrase_usage_blocked:
+            if phrase_estimate is not None:
+                first_phrase, phrase_confidence = phrase_estimate
+            else:
+                first_phrase, phrase_confidence = estimate_first_phrase(
+                    y, sr, bpm, first_downbeat, phrase_unit
+                )
         else:
-            first_phrase, phrase_confidence = -1.0, 0.0
-        phrase_anchor = (
+            first_phrase, phrase_confidence = MIX_POINT_UNSET, 0.0
+        phrase_anchor = None if phrase_usage_blocked else (
             first_phrase
-            if first_phrase >= 0.0
+            if anchor_grid_usable
+            and first_phrase >= 0.0
             and phrase_confidence >= PHRASE_CONFIDENCE_MIN
-            else first_downbeat
+            else first_downbeat if anchor_grid_usable else 0.0
         )
-        median_bar_length = _median_seconds_per_bar(beat_frames, sr, bpm)
-
-        # DJ Brain: Struktur-Analyse (phrase-verankert)
-        structure, analysis_coverage, outro_covered = analyze_structure_windows(
-            file_path,
-            y,
-            sr,
-            bpm,
-            genre_result.genre,
-            duration,
-            anchor=phrase_anchor,
+        # Wie im Fast-Path kann die Novelty-Messung den Genre-Prior nur bei
+        # bestaetigtem Beatgrid und schwacher Phrasenphase ersetzen.
+        measure_phrase_unit = (
+            anchor_grid_usable
+            and not phrase_usage_blocked
+            and (first_phrase < 0.0 or phrase_confidence < PHRASE_CONFIDENCE_MIN)
+        )
+        # Wie im Fast-Path bleibt die Struktur auf dem BPM-Raster von
+        # Downbeat, Phrasen und Mixpunkten. Der Median hopgerasterter
+        # Trackerintervalle erzeugte hier einen abweichenden Taktabstand.
+        # Native Erzeugung ist getrennt von importierten PSSI-Phrasen.
+        from .ai_models.native_phrase_adapter import analyze_track_phrases
+        native_phrase_analysis = analyze_track_phrases(
+            file_path, bpm=bpm, duration=file_duration, first_downbeat=first_downbeat,
+            grid_usable=anchor_grid_usable, usage_blocked=phrase_usage_blocked,
+            imported_phrases=phrases, reference_grid=rekordbox_grid,
+            grid_source=beatgrid_source, key_note=key_note, key_mode=key_mode)
+        # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
+        (
+            structure, analysis_coverage, outro_covered,
+            first_phrase, phrase_confidence, phrase_anchor, cue_score_binding,
+        ) = _analyze_structure_with_final_phrase_anchor(
+            file_path, y, sr, bpm, genre_result.genre, duration,
+            first_downbeat=first_downbeat,
+            phrase_anchor=phrase_anchor,
+            first_phrase=first_phrase,
+            phrase_confidence=phrase_confidence,
             phrase_unit=phrase_unit,
-            seconds_per_bar=median_bar_length,
+            measure_phrase_unit=measure_phrase_unit,
+            anchor_grid_usable=anchor_grid_usable,
+            phrase_usage_blocked=phrase_usage_blocked,
             feature_cache=feature_cache,
+            cue_candidates=phrases,
+            cue_verified_grid=(not phrase_usage_blocked and beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
+            reanalyze_cue_verified_grid=(beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
+            cue_source_signature=cue_source_signature,
+            native_phrase_analysis=native_phrase_analysis,
         )
         section_dicts = [s.to_dict() for s in structure.sections]
         for section in section_dicts:
@@ -2628,12 +4183,16 @@ def analyze_track(file_path: str) -> Track | None:
         # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
         # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
         # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-        if section_dicts:
+        if phrase_usage_blocked:
+            mix_in_point = mix_out_point = MIX_POINT_UNSET
+            mix_in_bars = mix_out_bars = 0
+        elif section_dicts:
             mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
                 calculate_genre_aware_mix_points(
                     section_dicts, bpm, duration, genre_result.genre,
                     anchor=phrase_anchor,
                     first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
+                    phrase_unit=structure.phrase_unit,
                 )
             )
             logger.info(
@@ -2646,22 +4205,28 @@ def analyze_track(file_path: str) -> Track | None:
                     genre=genre_result.genre,
                     anchor=phrase_anchor,
                     first_downbeat=first_downbeat,  # R3
+                    phrase_unit=structure.phrase_unit,
                 )
             )
 
-        mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
-            mix_in_point,
-            mix_out_point,
-            cue_points=cue_points,
-            bpm=bpm,
-            duration=duration,
-            phrase_unit=structure.phrase_unit,
-            anchor=phrase_anchor,
-            sections=section_dicts,
-        )
+        if not phrase_usage_blocked:
+            mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
+                mix_in_point,
+                mix_out_point,
+                cue_points=cue_points,
+                bpm=bpm,
+                duration=duration,
+                phrase_unit=structure.phrase_unit,
+                anchor=phrase_anchor,
+                sections=section_dicts,
+            )
         # Siehe Fast-Path: gleiche Rundung, gleicher Sentinel-Guard.
         mix_in_bars = seconds_to_bars(mix_in_point, bpm) if mix_in_point >= 0 else 0
         mix_out_bars = seconds_to_bars(mix_out_point, bpm) if mix_out_point >= 0 else 0
+        if not anchor_grid_usable or phrase_usage_blocked:
+            # Fast-Path gleich: ohne belastbare Taktphase keine Mix-Ausgabe.
+            mix_in_point = mix_out_point = MIX_POINT_UNSET
+            mix_in_bars = mix_out_bars = 0
 
         # Audio Feature Extensions
         brightness = calculate_brightness(y_fenster, sr, cache_fenster)
@@ -2737,7 +4302,8 @@ def analyze_track(file_path: str) -> Track | None:
             # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
             # compute_groove_fields).
             groove = compute_groove_fields(
-                y_fenster, sr, bpm, first_downbeat, downbeat_confidence,
+                y_fenster, sr, bpm, first_downbeat,
+                downbeat_confidence if anchor_grid_usable else 0.0,
                 feature_cache=cache_fenster, sections=section_dicts,
             )
         except Exception as e:
@@ -2750,21 +4316,28 @@ def analyze_track(file_path: str) -> Track | None:
         # Mixpunkt-Kandidaten (Spec 2026-08-21), Spiegel des Rekordbox-Pfads.
         # Ohne validiertes Rekordbox-Raster bleiben Phrasen leer; benannte und
         # unbenannte Cues sind davon unabhaengige, sichere Nutzerdaten.
-        phrase_grid = phrase_grid_from_phrases(phrases)
-        kandidaten = _kandidaten_berechnen(
+        phrase_grid = [] if phrase_usage_blocked else phrase_grid_from_phrases(
+            phrases or native_phrase_analysis.get('phrases', []))
+        kandidaten = None if phrase_usage_blocked else _kandidaten_berechnen(
             file_path, pfad="voll", bpm=bpm, duration=duration,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
             phrase_confidence=phrase_confidence,
             phrase_anchor=phrase_anchor,
+            anchor_grid_usable=anchor_grid_usable,
             phrase_unit=structure.phrase_unit, sections=section_dicts,
             phrases=phrases, cues=cue_points,
+            native_phrases=native_phrase_analysis.get('phrases', []),
             analyzer_in=mix_in_point, analyzer_out=mix_out_point,
             outro_covered=outro_covered,
+            cue_scores=_bound_cue_scores(phrases, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
         )
-        if kandidaten is None:
+        if phrase_usage_blocked:
+            mix_in_candidates, mix_out_candidates = [], []
+        elif kandidaten is None:
             return None
-        mix_in_candidates, mix_out_candidates = kandidaten
+        else:
+            mix_in_candidates, mix_out_candidates = kandidaten
 
         track = Track(
             groove_pattern=groove.groove_pattern,
@@ -2799,6 +4372,10 @@ def analyze_track(file_path: str) -> Track | None:
             genre_source=genre_result.source,
             sections=section_dicts,
             phrase_unit=structure.phrase_unit,
+            phrase_unit_source=structure.phrase_unit_source,
+            phrase_unit_candidate=structure.phrase_unit_candidate,
+            phrase_unit_score=structure.phrase_unit_score,
+            phrase_unit_margin=structure.phrase_unit_margin,
             brightness=brightness,
             vocal_instrumental=vocal_instrumental,
             danceability=danceability,
@@ -2809,9 +4386,21 @@ def analyze_track(file_path: str) -> Track | None:
             beatgrid_status=beatgrid_validation.status,
             beatgrid_windows_checked=beatgrid_validation.windows_checked,
             beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
+            neural_analysis=cue_service.neural_snapshot(structure, neural_identity, beat_windows),
+            native_phrase_analysis=native_phrase_analysis,
+            native_beat_analysis=native_context['analysis'],
             measurement_diagnostics=measurement_snapshot(
                 downbeat_diagnostics, beatgrid_validation,
                 decode_failures=grid_diagnostics.get("decode_failures", ()),
+                anchor_decision=anchor_decision,
+                phrase_unit_diagnostic=dict(
+                    unit=structure.phrase_unit,
+                    source=structure.phrase_unit_source,
+                    candidate=structure.phrase_unit_candidate,
+                    raw_score=structure.phrase_unit_score,
+                    ranking_margin=structure.phrase_unit_margin,
+                ),
+                tempo_diagnostic=tempo_diagnostic,
             ),
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
@@ -2832,8 +4421,15 @@ def analyze_track(file_path: str) -> Track | None:
             mix_out_candidates=mix_out_candidates,
         )
 
-        if not _persist_analysis_result(cache_key, track):
-            return None
+        # Laufzeit-Provenienz fuer Kohorten/Hoertests; kein persistiertes Feld.
+        track.analysis_origin = "fresh"
+
+        from .ai_models import deep_features
+        deep_features.attach(track)
+        if cache_policy == "reuse":
+            if not deep_features.transient_failure(track) and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
+                if not _persist_analysis_result(cache_key, track):
+                    return None
         return track
 
     except Exception as e:

@@ -9,6 +9,7 @@ import stat
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import quote
 
 from .caching import CACHE_VERSION, track_to_dict, validate_track_dict
 from .hearing_workflow import PrepareConfig
@@ -29,6 +30,8 @@ class SnapshotOwnership:
     root_identity: FileIdentity
     directory_identity: FileIdentity
     file_identity: FileIdentity | None = None
+    analysis_origin: str = "unknown"
+    analysis_origins: tuple[tuple[str, str], ...] = ()
 
 
 def _identity_from_stat(value, kind):
@@ -73,8 +76,10 @@ def managed_root() -> Path:
     return (Path(base) / "HPG" / "hearing_sets").resolve()
 
 
-def freeze_tracks(tracks, folder) -> tuple[str, ...]:
-    """Nur bestaetigte Tracks im gewaehlten Ordner; JSON ist tief unveraenderlich."""
+def freeze_tracks(tracks, folder, *, require_fresh=False) -> tuple[str, ...]:
+    """Track-JSON plus Laufzeit-Herkunft separat und tief unveraenderlich einfrieren."""
+    if type(require_fresh) is not bool:
+        raise ValueError("require_fresh muss Boolean sein")
     root = Path(folder).resolve(strict=True)
     if not root.is_dir():
         raise ValueError("Musikordner fehlt")
@@ -89,7 +94,13 @@ def freeze_tracks(tracks, folder) -> tuple[str, ...]:
             raise ValueError("Doppelter Track im Analyse-Snapshot")
         seen.add(key)
         data = validate_track_dict(data)
-        result.append(json.dumps(data, ensure_ascii=False, allow_nan=False, sort_keys=True))
+        origin = getattr(track, "analysis_origin", "unknown")
+        if origin not in {"fresh", "cache"}:
+            origin = "unknown"
+        if require_fresh and origin != "fresh":
+            raise ValueError("Hoertest-Snapshot enthaelt keine nachweislich frische Trackanalyse")
+        result.append(json.dumps({"track": data, "analysis_origin": origin},
+                                 ensure_ascii=False, allow_nan=False, sort_keys=True))
     if not result:
         raise ValueError("Keine bestaetigten Analyse-Tracks im Musikordner")
     return tuple(result)
@@ -126,24 +137,38 @@ def _private_directory(config) -> Path:
 
 
 def write_snapshot(config, snapshots, *, cancel=None):
-    """Neue DB exklusiv erstellen; keine vorhandene DB oeffnen oder veraendern."""
+    """Neue DB exklusiv erstellen; Trackdaten unveraendert, Herkunft separat zurueckgeben."""
     private = _private_directory(config)
     roots = _validated_roots(config.source_roots)
-    rows, seen = [], set()
+    rows, seen, origins = [], set(), []
     for raw in snapshots:
         if cancel:
             cancel.checkpoint()
-        data = json.loads(raw)
+        snapshot = json.loads(raw)
+        if type(snapshot) is dict and set(snapshot) == {"track", "analysis_origin"}:
+            data = snapshot["track"]
+            origin = snapshot["analysis_origin"]
+            if type(origin) is not str or origin not in {"fresh", "cache", "unknown"}:
+                raise ValueError("Analyseherkunft im Track-Snapshot ist ungueltig")
+        else:
+            data, origin = snapshot, "unknown"
         data = validate_track_dict(data)
         path = Path(data["filePath"]).resolve()
         key = str(path).casefold()
         if not any(path.is_relative_to(root) for root in roots) or key in seen:
             raise ValueError("Snapshot enthaelt fremde oder doppelte Tracks")
         seen.add(key)
+        origins.append((data["filePath"], origin))
         rows.append((hashlib.sha256(key.encode()).hexdigest(), data["filePath"], CACHE_VERSION,
                      json.dumps(data, allow_nan=False, ensure_ascii=False)))
     if not rows:
         raise ValueError("Leerer Analyse-Snapshot")
+    origin_values = {origin for _, origin in origins}
+    analysis_origin = (
+        next(iter(origin_values)) if len(origin_values) == 1
+        else "mixed" if origin_values == {"fresh", "cache"}
+        else "unknown"
+    )
     if cancel:
         cancel.checkpoint()
     private.parent.mkdir(parents=True, exist_ok=True)
@@ -166,19 +191,62 @@ def write_snapshot(config, snapshots, *, cancel=None):
                 connection.execute("CREATE TABLE cache (key TEXT PRIMARY KEY, filepath TEXT, version INTEGER, data TEXT)")
                 connection.execute("INSERT INTO cache VALUES (?, ?, ?, ?)", ("version", "system", CACHE_VERSION, "metadata"))
                 connection.executemany("INSERT INTO cache VALUES (?, ?, ?, ?)", rows)
+                connection.execute(
+                    "CREATE TABLE hpg_analysis_origin (file_path TEXT PRIMARY KEY, origin TEXT NOT NULL)"
+                )
+                connection.executemany(
+                    "INSERT INTO hpg_analysis_origin VALUES (?, ?)", origins
+                )
         finally:
             connection.close()
         _require_owner(owner)
         _require_identity(config.cache, owner.file_identity)
         if cancel:
             cancel.checkpoint()
-        return owner
+        return replace(owner, analysis_origin=analysis_origin,
+                       analysis_origins=tuple(origins))
     except Exception as original:
         try:
             discard_unpublished_snapshot(owner)
         except Exception as cleanup:
             original.add_note(f"Eigener Snapshot blieb erhalten: {cleanup}")
         raise
+
+
+def read_snapshot_origins(cache_path) -> tuple[tuple[str, str], ...]:
+    """Liest optionale Herkunft aus privatem Hoertestcache; alte Caches bleiben unknown."""
+    path = Path(cache_path).resolve(strict=True)
+    uri = f"file:{quote(path.as_posix(), safe='/:')}?mode=ro&immutable=1"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        tables = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if "hpg_analysis_origin" not in tables:
+            return ()
+        columns = [row[1] for row in connection.execute(
+            "PRAGMA table_info(hpg_analysis_origin)")]
+        if columns != ["file_path", "origin"]:
+            raise ValueError("Analyseherkunftstabelle hat ein unbekanntes Schema")
+        rows = tuple(connection.execute(
+            "SELECT file_path, origin FROM hpg_analysis_origin ORDER BY file_path"))
+        cache_columns = [row[1] for row in connection.execute(
+            "PRAGMA table_info(cache)")]
+        if cache_columns != ["key", "filepath", "version", "data"]:
+            raise ValueError("Track-Snapshot hat ein unbekanntes Schema")
+        track_paths = tuple(row[0] for row in connection.execute(
+            "SELECT filepath FROM cache WHERE key <> ? ORDER BY filepath", ("version",)))
+    finally:
+        connection.close()
+    expected = {value.casefold() for value in track_paths if type(value) is str}
+    actual = [value.casefold() for value, _ in rows if type(value) is str]
+    if (len(expected) != len(track_paths) or len(actual) != len(rows)
+            or len(set(actual)) != len(actual) or set(actual) != expected):
+        raise ValueError("Analyseherkunft stimmt nicht mit dem Track-Snapshot ueberein")
+    for path_value, origin in rows:
+        if (type(path_value) is not str or not Path(path_value).is_absolute()
+                or type(origin) is not str or origin not in {"fresh", "cache", "unknown"}):
+            raise ValueError("Analyseherkunft im privaten Hoertestcache ist ungueltig")
+    return rows
 
 
 def discard_unpublished_snapshot(owner):
@@ -313,7 +381,7 @@ def bind_set(config, *, ownership=None):
 
 
 def resolve_association(folder) -> Path | None:
-    """Nur gespeicherte, hashgebundene Zuordnung. Alt-Saetze haben keinen Fallback."""
+    """Hashgebundene Zuordnung; alte Snapshot-Versionen bleiben bewertbar."""
     from .hearing_sources import strict_json_bytes
     directory = Path(folder).resolve(strict=True)
     association = directory.parent / "association.json"
@@ -332,7 +400,8 @@ def resolve_association(folder) -> Path | None:
             ("hpg-hearing-association-v1", "hpg-hearing-association-v2")
             or set(data) != common | ({"source_folder"} if data["format"].endswith("v1")
                                      else {"source_roots"})
-            or type(data["cache_version"]) is not int or data["cache_version"] != CACHE_VERSION
+            or type(data["cache_version"]) is not int
+            or not 0 < data["cache_version"] <= CACHE_VERSION
             or data["cache"] != "analysis.sqlite" or data["set"] != "set"
             or any(type(data[key]) is not str for key in ("cache_sha256", "manifest_sha256"))):
         raise ValueError("Ungueltige Hoertest-Zuordnung")

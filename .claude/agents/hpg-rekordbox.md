@@ -19,9 +19,12 @@ Tempo-Segmente kennt. Diese Frage kommt wieder — die Antwort ist belegt.
 ## Das Beatgrid
 
 `get_first_downbeat(file_path)` liest die erste Eins aus den
-ANLZ-`.DAT`-Dateien (PQTZ-Tag), lazy und memoisiert. Das ist die **einzige**
-Quelle, die auch die TAKT-Phase kennt — deshalb ist
-`downbeat_confidence = 1.0` ihr vorbehalten.
+ANLZ-Dateien (PQTZ-Tag), lazy und memoisiert. Der Treffer ist ein
+Referenzkandidat. Beide Pfade in `analysis.py` setzen ihn nur bei
+`beatgrid_validation.status == "verified"` auf `downbeat_confidence = 1.0`.
+PSSI braucht zusaetzlich Rekordbox-Herkunft und denselben verifizierten Status.
+Audio-Anker und Referenzanker nicht gleichsetzen. Technisch verifiziertes Grid
+beweist keine unabhaengig gelabelte musikalische Takt-1.
 
 ## Rekordbox laeuft
 
@@ -54,12 +57,35 @@ Memory- und Hot-Cues kommen ueber `content.Cues`. `InMsec = -1` heisst "keine
 Position" — nicht als Cue bei -0,001 s durchreichen.
 
 Benannte Cues (`MIX-IN`, `MIX-OUT`, `OUTRO`) ueberschreiben berechnete
-Mixpunkte ueber einen Wortgrenzen-Regex; unbenannte laufen in eine Heuristik,
-die mindestens drei deduplizierte Cues braucht. In einer realen Sammlung waren
-fast alle Cues unbenannt — die Heuristik ist also der Regelfall, nicht die
-Ausnahme.
+Mixpunkte ueber einen Wortgrenzen-Regex, sofern die normalisierte Provenienz
+`manual` ist. Ausrichtung und harter Mixpunktvertrag bleiben bindend.
+Unbenannte Cues liefern Kandidaten; keine allgemeine positionsbasierte
+Override-Heuristik wieder einfuehren. Den aktuellen Vertrag in
+`_apply_manual_mixpoint_cues` und `mix_candidates.py` lesen.
+
+## Deep-Analysis-Auftrag
+
+Lies `hpg-orientation`, `hpg-rekordbox` und `hpg-deep-analysis`.
+Optimiere oder ersetze die bestehende Anbindung entsprechend dem aktuellen
+Nutzerauftrag; halte DB-, ANLZ-, Signatur-, Cue- und Exportvertrag konsistent.
+Artefakt-/ABI-Untersuchung an `hpg-rb-artifacts`, Runtime an `hpg-inference`
+uebergeben. Modellsemantik und Beispielcode der Spezifikation nicht ungeprueft
+uebernehmen. Vorhandene Fachrollen weiterverwenden, fremde Aenderungen bewahren.
 
 ## Bevor du fertig meldest
+
+## Taktphase und Taktrotation
+
+Ein signierter Audio-minus-Grid-Zeitversatz ist eine Beatphasenmessung, keine
+Taktpositionsrotation und kein Auftrag zur automatischen Gridkorrektur. Die
+persistierte `candidate_rotation` bleibt in Diagnoseschema v5 und v6 wirksam:
+bei einer einheitlich gemessenen Nichtnullrotation keine PSSI-/Phrasen- oder
+Mixnutzung, ausser beide Modelle stimmen in allen drei Fenstern ueberein, sechs
+Audiofenster bestaetigen die Kandidatenphase innerhalb 6 ms und das Gesamtgrid
+ist verifiziert. Eine so uebernommene Korrektur bleibt Audioherkunft und gibt
+weder PSSI noch Rekordbox-Render-Sync frei. Neuronale Audioanker brauchen
+mindestens drei getrennte, audio-bestaetigte Fenster von **jedem** Modell sowie
+das bestehende 6-ms-Gesamtgrid-Gate.
 
 - An echten Pfaden geprueft, nicht an konstruierten?
 - Verhalten bei laufendem Rekordbox bedacht?

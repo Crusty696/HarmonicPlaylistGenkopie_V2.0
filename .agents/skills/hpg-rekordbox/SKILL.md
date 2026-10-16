@@ -22,8 +22,8 @@ instanziieren, der Cache-Aufbau scannt die ganze DB.
 
 Liefert der Importer BPM, nimmt `analyze_track` den Fast-Path: BPM/Key/Genre
 aus der DB, librosa nur `LIBROSA_FAST_PATH_DURATION = 360` s fuer Energy und
-Genre-Features, `key_confidence = 1.0`. Rund 12x schneller — beim Optimieren
-nicht kaputtmachen.
+Genre-Features, `key_confidence = 1.0`. Laufzeitvorteile am konkreten Bestand
+messen; eine feste Beschleunigung ist kein allgemeiner Vertrag.
 
 ## Mehrdeutigkeit: lieber nichts als falsch
 
@@ -35,11 +35,23 @@ so — `_build_track_cache` [hpg_core/rekordbox_importer.py]:
 |---|---|
 | gleicher Pfad, **widerspruechliche** Felder (`_track_data_conflicts` [hpg_core/rekordbox_importer.py]) | Pfad landet in `_ambiguous_paths`, `get_track_data` liefert `None` |
 | gleicher Pfad, ein Record klar besser analysiert (`_track_data_quality` [hpg_core/rekordbox_importer.py]) | besserer Record gewinnt (z. B. gegen BPM `0`) |
-| gleicher Basename, mehrere Dateien | `basename_cache`-Eintrag wird `None` -> Fallback verworfen |
+| gleicher Basename an anderem Pfad | kein Identitaetsbeweis -> keine Rekordbox-Daten fuer Analyse, Signatur oder ANLZ |
 
 `get_statistics()` und `get_available_count()` zaehlen nur eindeutige Pfade.
-**Regel: bei Zweifel `None` zurueckgeben.** Falsche Metadaten sind schlimmer
-als gar keine — sie fliessen still in BPM, Key und Mixpoints.
+`get_track_data` bevorzugt exakte, nicht widerspruechliche Pfade. Fehlt ein
+exakter Pfadtreffer, ist seit Cache 67 nur der unten beschriebene streng
+gepruefte Volume-Rebind zulaessig. Ein eindeutiger Dateiname allein beweist
+keine Byteidentitaet; ein Basename-Fallback bleibt ausgeschlossen. **Regel:
+bei Zweifel `None` zurueckgeben.**
+
+Bei einem reinen Laufwerkswechsel kann der Importer seit Cache 67 nach einem
+konservativen `volume_rebind` suchen: gleicher normalisierter Pfadrest und
+genau ein Kandidat, dazu direkte Mutagen-Tags plus Dateigröße und Länge. ISRC,
+Titel, Künstler und Bytes müssen exakt übereinstimmen; die auf ganze Sekunden
+gerundeten Längen dürfen höchstens 1 s abweichen. Fehlende
+Werte bedeuten Ablehnung. Das ist Metadaten-Korroboration, kein Byteidentitäts-
+oder musikalischer Ground-Truth-Beweis. Diagnose und Signatur führen die
+Matchart; sämtliche Grid-/Phrasenfreigaben bleiben unverändert.
 
 ## Zeit-Einheiten — der teuerste Fehler
 
@@ -67,8 +79,62 @@ hier ein still toter Pfad.
 `db.read_anlz_file(content_id, "DAT")`; beide `get_first_downbeat` und
 `get_phrases` gehen darueber, damit es nur eine robuste Leseroutine gibt.
 
-Treffer -> `downbeat_confidence = 1.0`. Nur damit greift der exakte
-Beat-Alignment-Pfad im Renderer (`downbeat_reliable_* = conf >= 0.9`).
+Ein ANLZ-Treffer ist zunaechst ein Referenzkandidat. Beide Analysepfade in
+`analysis.py` setzen dessen `downbeat_confidence` nur bei
+`beatgrid_validation.status == "verified"` auf 1.0. Andernfalls wird der
+Audio-Anker ermittelt; die Abweichung bleibt diagnostizierbar. PSSI wird nur
+bei Rekordbox-Quelle UND verifiziertem Grid uebernommen.
+Nur vollständig mit Lesestatus `ok` importierte Phrasen werden weitergegeben.
+In analysierten Audiofenstern bestimmen gültige PSSI-Intervalle auch die
+Strukturgrenzen; außerhalb ihrer Abdeckung bleibt die DSP-Struktur erhalten.
+Abschnittsenergie und Labels bleiben Audioauswertung, keine PSSI-Modelllabels.
+`TransitionClipSpec.from_plan` trennt Beat- und Taktphasen-Verlaesslichkeit
+und setzt `strict_beat_sync=True`. Ein verifiziertes Grid ist ein technischer
+Vergleichsnachweis, keine unabhaengige musikalische Takt-1-Ground-Truth.
+Ein verworfener Referenzversuch bleibt unter `anchor.reference.measurement`
+persistiert. `_reference_grid_summary` in `measurement_panel.py` zeigt dessen
+Phasenmuster und signierten Mittelpunkt getrennt vom aktiven Audio-Grid; ein
+Zeitversatz wird dadurch nicht als Taktrotation oder automatische Gridkorrektur
+ausgegeben.
+
+Bei `reference_constant_offset` liegt ein als `consistent_offset` gemessener
+Audio-minus-Grid-Phasenversatz über der 6-ms-Grenze vor. Ab Cache 85 darf HPG
+bei reiner Zeitverschiebung ohne Bar-Rotation oder bei bestätigter Rotation
+einen abgeleiteten Audioanker nur nach drei disjunkten Bestätigungsfenstern je
+Model 7/8, separater lokaler Audiophasenprüfung und verifiziertem Gesamtgrid
+übernehmen. Rekordbox-Rohticks und Bar-Labels bleiben unverändert. Der technische
+Beatnachweis beweist keine unabhängige musikalische Takt-1-Zuordnung.
+Rotation-0-Korrektur wird verworfen, wenn der signed Offset den Anker aus dem
+aktuellen Bar-Intervall schieben würde; keine implizite Ein-Bar-Phasenverschiebung.
+
+Seit Cache-Version 80 darf der Taktpositionsvergleich die Modellbeats für die
+Diagnose gegen um den gemessenen Phasenmittelpunkt projizierte PQTZ-Ticks
+abgleichen. Ein Treffer bleibt `candidate_rotation` und aktiviert die
+vorhandene PSSI-/Mixpunkt-Sperre. Da derselbe Modellfenstersatz die
+Offsetmessung und den Vergleich trägt, ist das keine unabhängige Bestätigung;
+Grid, aktiver Anker und Sync-Freigabe ändern sich nicht.
+
+Wenn die gespeicherte Schema-v5- oder -v6-Taktpositionsdiagnose einen
+einheitlichen, gemessenen `candidate_rotation` ausweist, sperrt HPG vorsorglich
+PSSI-/Phrasen-Nutzung und Mixausgaben. Die v6-Erweiterung um Phrase-Details
+darf die Rotationssperre aus v5 nicht umgehen; Cachevalidierung und
+Messanzeige verwenden denselben Helper. `_add_beat_grid` exportiert dann kein `Battito=1`;
+`_cue_export_allowed` verwirft auch extern uebergebene Mixpunkte. Eine Rotation
+wird nur uebernommen, wenn beide Modelle in allen drei Fenstern uebereinstimmen,
+sechs Audiofenster die Kandidatenphase innerhalb 6 ms bestaetigen und das
+Gesamtgrid verifiziert ist. Der aktive Anker bleibt dann Audioherkunft; PSSI
+und Rekordbox-Render-Sync werden nicht freigegeben. Reine DSP-Bestaetigung hebt
+die Sperre nicht auf.
+
+Neuronale Beat-/Taktanker werden erst uebernommen, wenn **Model7 und Model8
+jeweils** mindestens drei getrennte, audio-bestaetigte Fenster liefern und das
+Gesamtgrid den bestehenden 6-ms-Vertrag besteht. Drei Fenster nur eines
+Modells reichen nicht.
+
+Fuer neuronale Rekordbox-Integration zuerst `hpg-deep-analysis` verwenden.
+DLL-/Modellvertraege gehoeren zu `hpg-deep-analysis-artifacts`; DB-/ANLZ-/Cue-
+und Exportvertraege bleiben hier. Bestehende Verfahren anhand belegter
+Abloesekriterien optimieren oder ersetzen, keine doppelte Dauerimplementierung.
 
 **Vertrag:** der Importer liefert ausschliesslich den **Takt**-Anker
 `first_downbeat`. Der Phrasen-Anker entsteht downstream — Skill
@@ -84,12 +150,25 @@ EXT-Datei mit dem `PSSI`-Tag und die DAT-Datei mit dem `PQTZ`-Tag und delegiert
 an `rekordbox_phrases.phrases_from_anlz`. Leer, wenn kein Rekordbox-Eintrag,
 keine EXT-Datei oder kein PSSI-Tag vorliegt.
 
+Der Importer behaelt Typ und erkennbaren ANLZ-Dateistamm aus
+`read_anlz_files` im gemeinsamen Snapshot. Er verbindet EXT/PSSI und DAT/PQTZ
+nur bei gleichem Stamm. Fehlt der Stamm auf einer Seite, ist die Verbindung nur
+bei genau einem passenden EXT- und einem passenden DAT-Kandidaten erlaubt.
+Mehrdeutige Kandidaten bleiben ohne Phrase-Daten; sie werden nicht nach
+Listenreihenfolge oder durch unsichere Kreuzpaarung zusammengesetzt. Ein
+einzelnes anonymes Kombinationsobjekt mit beiden Tags bleibt als Reader-Fallback
+zulaessig.
+
 `get_track_signature` ruft `get_phrases(file_path)` bewusst parameterlos auf;
 die mit Rekordbox-Dauer beziehungsweise `0.0` abgeleiteten Phrasen bleiben
 Teil der Rekordbox-Signatur. Fast-Path und BPM-loser Vollpfad uebergeben dagegen
 jeweils die echte `file_duration`, damit Analyse-Phrasenenden am Audiosignal
 enden. Die getrennten Memo-Keys verhindern, dass beide Verwendungen einander
 vergiften.
+Beim Signatur-Neuaufbau werden `_anlz_cache` und `_anlz_files_by_kind` gemeinsam
+verworfen; Beatgrid und Phrasen der neuen Signatur stammen danach aus demselben
+frisch eingelesenen Snapshot. Die Aenderung fuegt kein persistiertes Track-Feld
+hinzu; die bereits signaturgebundene Phrasenausgabe bestimmt Cache-Invalidierung.
 
 `phrases_from_anlz` (`hpg_core/rekordbox_phrases.py`) liest die Phrasengrenzen
 aus PSSI und die Zeiten aus dem PQTZ-Beatgrid: `entry.beat` ist ein
@@ -101,6 +180,13 @@ Label-Tabellen je nach PSSI-`mood`:
 `PHRASE_LABELS_MIDLOW` (mood 2/3: Intro/Verse 1-6/Bridge/Chorus/Outro).
 Rohe Beatgrid-Floats, keine Rundung — dieselbe 3-ms-Falle wie beim
 Mix-In-Rundungsfehler (`hpg-mixpoint-engineering`).
+
+Der lokale Cue-Phrasen-Regressor bewertet vorhandene PSSI-Kandidaten; er erzeugt
+keine eigenen Phrasengrenzen. `score_phrase_candidates` verlangt
+`verified_grid is True`. Ein roher Modellscore ist weder Wahrscheinlichkeit
+noch musikalisches Label und darf nur innerhalb der bestehenden
+Kandidaten-/Tie-Break-Regel wirken. Audio-only oder korrigierte Audioanker
+liefern deshalb keine Rekordbox-PSSI-Kandidaten an diesen Pfad.
 
 ## Cue-Override (liegt in analysis.py, nicht im Importer)
 
@@ -168,3 +254,13 @@ Empfehlungen schreibt `_kandidaten_punkte` je Playlist-Position MIX OUT aus
 (`_kandidaten_cues`: n je Seite fortlaufend 1..6 nach Dedupe gleicher
 Zeitpunkte — nicht `PairCandidate.rang`). `_cue_export_allowed(track, mix_in,
 mix_out)` prueft die effektiven Punkte; Gate `outro_covered` bleibt.
+
+## Native Gesamtanalyse und Export (16.10.2026)
+
+`native_track_beats.has_verified_grid` prüft den nativen Snapshot samt optionaler
+Audio-Zeitkorrektur sowie die Übereinstimmung mit aktivem Tempo und Anker.
+Renderer und XML-Export verwenden dieselbe Freigabe; Taktpositionssperren bleiben
+wirksam. Native Herkunft wird nicht als DB-Import oder musikalische Ground Truth
+bezeichnet. Die bestehende Messdiagnose zeigt Herkunft und Zusatzmerkmalsabdeckung.
+Details und Nachweisgrenzen stehen im Deep-Analysis-Auftrag, nicht in einer zweiten
+Statusliste. Originalquellen und native Modellartefakte werden nicht versioniert.

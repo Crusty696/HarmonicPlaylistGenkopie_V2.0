@@ -58,8 +58,16 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
     def forbidden(*args, **kwargs):
         raise AssertionError("Kein DSP, HTTP, CLI oder produktiver Gewichts-Write in diesem Test")
     from tools import hoertest_server, rate_transitions
-    from hpg_core import candidate_preferences, transition_renderer
+    from hpg_core import candidate_preferences, hearing_playback, transition_renderer
     monkeypatch.setattr(transition_renderer, "render_transition_clip", forbidden)
+    # Dieser Metadaten-Test simuliert nur Preflight-Erfolg; echter DSP hat
+    # einen eigenen Kindprozess-Test und ist hier bewusst verboten.
+    preflight_calls = []
+    def synthetic_preflight(spec, sources, checkpoint):
+        checkpoint()
+        preflight_calls.append((spec, sources))
+        return True
+    monkeypatch.setattr(hearing_playback, "preflight_renderability", synthetic_preflight)
     monkeypatch.setattr(hoertest_server, "ThreadingHTTPServer", forbidden)
     monkeypatch.setattr(main.HearingWorkflowWorker, "_run_command", forbidden)
     monkeypatch.setattr(candidate_preferences, "merge_user_preferences_atomically", forbidden)
@@ -207,6 +215,7 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
         expected = {"einzel": 1, "kandidaten": 2, "dreinoten": 2,
                     "dramaturgie": len(rate_transitions.dramaturgie_varianten()) * 5}[mode]
         assert len(manifest["specs"]) == expected
+        assert len(preflight_calls) == (expected if producer_mode == "kandidaten" else 0)
         immutable_before = {name: (config.output_dir / name).read_bytes()
                             for name in manifest["immutable_metadata"]}
         source_manifest_before = (config.output_dir / hearing_sources.SOURCE_MANIFEST_NAME).read_bytes()

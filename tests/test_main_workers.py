@@ -2533,6 +2533,18 @@ def test_tracks_outside_collection_are_not_a_finding(qtbot, monkeypatch):
   assert window.status_bar.hint_label.isHidden()
 
 
+def test_mixed_rekordbox_coverage_does_not_claim_missing_collection(qtbot, monkeypatch):
+  """Anderer Pfad kann denselben Track enthalten; UI darf das nicht verneinen."""
+  window = _window(qtbot, monkeypatch)
+  window._on_rekordbox_coverage(
+    _coverage(total=3, with_analysis=1, without_analysis=1, not_in_collection=1)
+  )
+
+  tooltip = window.status_bar.hint_label.toolTip()
+  assert "keinen Rekordbox-Eintrag mit identischem Pfad" in tooltip
+  assert "gar nicht in Rekordbox" not in tooltip
+
+
 def test_no_hint_without_rekordbox(qtbot, monkeypatch):
   window = _window(qtbot, monkeypatch)
   window._on_rekordbox_coverage(
@@ -2783,8 +2795,8 @@ def test_playlist_result_verwirft_fremde_oder_planlose_detailmetrik(qtbot):
     generation_result=result,
   )
   item = panel.table.item(1, 14)
-  assert item.text() == "0% · UNGEPLANT"
-  assert item.toolTip().startswith("Ungeplant:")
+  assert item.text() == "Kein Übergang: Keine Übergangsfreigabe"
+  assert item.toolTip().startswith("Keine Übergangsfreigabe")
 
 
 def test_mix_tips_panel_zeigt_kandidatentabelle_und_sendet_wahl(qtbot):
@@ -3629,7 +3641,7 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
 
   monkeypatch.setattr(main, "AnalysisWorker", _AnalysisWorker)
   second.start_analysis()
-  assert captured == {"folder_path": str(tmp_path)}
+  assert captured == {"folder_path": str(tmp_path), "cache_policy": "reuse"}
   assert second._run_settings["ai_enabled"] is False
   assert second._run_settings["ai_provider"] == "LM Studio"
   assert second._run_settings["ai_model"] == "local-model"
@@ -4101,7 +4113,7 @@ def test_planlose_empfehlung_bleibt_ungeplant_und_score_null(qtbot, monkeypatch)
   )
   score_item = panel.table.item(1, 14)
   assert score_item.data(main.Qt.ItemDataRole.UserRole) == 0.0
-  assert "UNGEPLANT" in score_item.text()
+  assert "Kein Übergang:" in score_item.text()
 
   wheel = main.CamelotWheelWidget()
   qtbot.addWidget(wheel)
@@ -4114,7 +4126,7 @@ def test_planlose_empfehlung_bleibt_ungeplant_und_score_null(qtbot, monkeypatch)
   qtbot.addWidget(tips)
   tips.set_recommendations([rec])
   labels = [label.text() for label in tips.layout().itemAt(0).widget().findChildren(main.QLabel)]
-  assert any("UNGEPLANT" in text for text in labels)
+  assert any("Kein Übergang:" in text for text in labels)
   tips.setup_transition_previews([rec])
   preview = tips._preview_buttons[0]
   assert not preview.isEnabled()
@@ -4132,7 +4144,7 @@ def test_real_uebersprungene_empfehlung_erscheint_im_mix_tips_panel(qtbot):
   panel.set_recommendations([], tracks)
 
   texte = [label.text() for label in panel.findChildren(main.QLabel)]
-  assert any("a.wav → b.wav" in text and "UNGEPLANT" in text for text in texte)
+  assert any("a.wav → b.wav" in text and "Kein Übergang:" in text for text in texte)
 
 
 def test_mix_tips_leeren_verwirft_auch_die_alte_playlist(qtbot):
@@ -4165,7 +4177,7 @@ def test_mix_tips_ordnet_geplante_und_ungeplante_paare_nach_playlist(qtbot):
   assert isinstance(erster_eintrag, main.QLabel)
   assert "start.wav" in erster_eintrag.text()
   assert rec.from_track.fileName in erster_eintrag.text()
-  assert "UNGEPLANT" in erster_eintrag.text()
+  assert "Kein Übergang:" in erster_eintrag.text()
   assert not isinstance(zweite_karte, main.QLabel)
   assert 1 in panel._preview_buttons
   assert panel._preview_buttons[1].parent() is zweite_karte

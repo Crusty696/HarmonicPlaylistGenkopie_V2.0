@@ -1,10 +1,10 @@
 """Regressionstests fuer Tail-Coverage und vollstaendige LUFS-Provenienz."""
 
 import numpy as np
+import pytest
 
 from hpg_core.analysis import (
   FeatureCache,
-  _median_seconds_per_bar,
   analyze_structure_windows,
   calculate_file_lufs,
 )
@@ -18,7 +18,7 @@ def test_structure_windows_include_real_tail_and_mark_gap(monkeypatch):
   head = np.zeros(360 * sr, dtype=np.float32)
   tail = np.zeros(180 * sr, dtype=np.float32)
 
-  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0):
+  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0, phrase_unit=None, phrase_unit_source=None):
     duration = len(audio) / sample_rate
     return TrackStructure(
       sections=[
@@ -49,7 +49,7 @@ def test_structure_windows_degrades_when_tail_decode_fails(monkeypatch):
   sr = 10
   head_audio = np.zeros(360 * sr, dtype=np.float32)
 
-  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0):
+  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0, phrase_unit=None, phrase_unit_source=None):
     duration = len(audio) / sample_rate
     return TrackStructure(
       sections=[TrackSection("outro", 0.0, duration, 0, 180, 50.0)],
@@ -84,7 +84,7 @@ def test_structure_windows_rounding_never_exceeds_raw_duration(monkeypatch):
   head_audio = np.zeros(10 * sr, dtype=np.float32)
   tail_audio = np.zeros(180 * sr, dtype=np.float32)
 
-  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0):
+  def fake_structure(audio, sample_rate, bpm, genre, anchor=0.0, phrase_unit=None, phrase_unit_source=None):
     local_duration = len(audio) / sample_rate
     return TrackStructure(
       sections=[TrackSection("main", 0.0, local_duration, 0, 1, 50.0)],
@@ -228,18 +228,81 @@ def test_feature_cache_reuses_same_feature_matrix():
   assert first_rms is second_rms
 
 
-def test_median_ibi_reuse_returns_bar_length():
-  """Die Struktur kann die gemessene statt der gerundeten BPM-Taktlänge nutzen."""
-  frames = np.array([0, 100, 201, 301, 402, 502, 603, 703], dtype=np.int64)
-  bar_length = _median_seconds_per_bar(
-    frames,
-    sr=1000,
-    bpm=60.0,
-    hop_length=10,
-  )
+@pytest.mark.parametrize("fast_path", [False, True])
+@pytest.mark.parametrize("bpm", [128.0, 138.0])
+@pytest.mark.parametrize("split_windows", [False, True])
+def test_analyse_struktur_teilt_das_bpm_raster(
+  monkeypatch, tmp_path, fast_path, bpm, split_windows,
+):
+  """Kein zweites Raster aus Hop-Median: echte Pipeline bis zur Quantisierung.
 
-  assert bar_length is not None
-  assert abs(bar_length - 4.0) < 0.05
+  Ersetzt den alten Helpervertrag bewusst: gemessene Trackerintervalle
+  duerfen nicht nur der Struktur ein vom Track-BPM abweichendes Raster geben.
+  Tempo-/Downbeat-Erkennung sind hier kontrollierte Eingaben, keine Audioabnahme.
+  """
+  from types import SimpleNamespace
+  from unittest.mock import Mock
+  from hpg_core import analysis, structure_analyzer
+  from hpg_core.rekordbox_importer import RekordboxTrackData
+  from tests.test_analyze_track import _create_click_wav
+
+  sr = 22050
+  wav = tmp_path / "struktur-raster.wav"
+  _create_click_wav(str(wav), bpm=bpm, duration=64.0, sr=sr)
+  if split_windows:
+    monkeypatch.setattr(analysis, "LIBROSA_MAX_DURATION", 32.0)
+    monkeypatch.setattr(analysis, "LIBROSA_FAST_PATH_DURATION", 32.0)
+    monkeypatch.setattr(analysis, "LIBROSA_TAIL_DURATION", 32.0)
+  importer = Mock()
+  importer.get_track_data.return_value = RekordboxTrackData(
+    bpm=bpm if fast_path else None, duration=64.0, camelot_code="8A",
+  )
+  importer.get_track_signature.return_value = "synthetic-structure-grid"
+  importer.get_beatgrid.return_value = []
+  importer.get_phrases.return_value = []
+  monkeypatch.setattr(analysis, "get_rekordbox_importer", lambda: importer)
+  monkeypatch.setattr(analysis, "get_cached_track", lambda *a, **k: None)
+  monkeypatch.setattr(analysis, "extract_bpm_from_tags", lambda *_: bpm)
+  frames = np.rint(np.arange(128) * 60.0 / bpm * sr / 512).astype(int)
+  monkeypatch.setattr(analysis.librosa.beat, "beat_track", lambda **k: (bpm, frames))
+  monkeypatch.setattr(analysis, "_estimate_audio_downbeat", lambda *a, **k: (0.3, 0.8))
+  monkeypatch.setattr(analysis, "estimate_first_phrase", lambda *a, **k: (0.3, 0.8))
+  monkeypatch.setattr(analysis, "_validate_track_beatgrid", lambda *a, **k:
+                      analysis.BeatgridValidation("unverifiable", 0, -1.0))
+  monkeypatch.setattr(analysis, "calculate_file_lufs", lambda *_: (-14., "complete", 1., 1, sr))
+  monkeypatch.setattr(analysis, "classify_genre", lambda *a, **k:
+                      SimpleNamespace(genre="Techno", confidence=1., source="test"))
+  monkeypatch.setattr(structure_analyzer, "_compute_novelty_curve", lambda *a, **k:
+                      (np.ones(64), np.arange(64, dtype=float)))
+  monkeypatch.setattr(structure_analyzer, "_pick_boundaries", lambda *a, **k: [0., 10., 20., 30.])
+  measured = []
+  original_quantize = structure_analyzer._quantize_to_bars
+
+  def quantize(*args, **kwargs):
+    result = original_quantize(*args, **kwargs)
+    measured.append((kwargs["seconds_per_bar"], args[4], result))
+    return result
+
+  monkeypatch.setattr(structure_analyzer, "_quantize_to_bars", quantize)
+  original_windows = analysis.analyze_structure_windows
+
+  class StructureReached(BaseException):
+    """Nach dem realen Strukturaufruf stoppen, ohne Ergebnis zu persistieren."""
+
+  def structure_then_stop(*args, **kwargs):
+    original_windows(*args, **kwargs)
+    raise StructureReached
+
+  monkeypatch.setattr(analysis, "analyze_structure_windows", structure_then_stop)
+  with pytest.raises(StructureReached):
+    analysis.analyze_track(str(wav))
+  assert len(measured) == (2 if split_windows else 1)
+  for bar_length, local_anchor, boundaries in measured:
+    assert bar_length == pytest.approx(240.0 / bpm, abs=1e-12)
+    for boundary in boundaries:
+      if boundary > 0.0:
+        beat_number = (boundary - local_anchor) / (60.0 / bpm)
+        assert beat_number == pytest.approx(round(beat_number), abs=1e-9)
 
 
 def test_ladefenster_entscheidet_ueber_die_zerlegung(monkeypatch):

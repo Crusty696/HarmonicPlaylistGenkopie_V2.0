@@ -17,6 +17,42 @@ from hpg_core.hearing_workflow import CancellationToken, create_set
 from tests.test_hearing_producer_sink import _source_service_config
 
 
+def _synthetic_transport_receipt(binding):
+    """Aktueller Receiptvertrag mit synthetischen PCM-/Lag-Daten, ohne Replay."""
+    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME
+    from tools import audit_candidate_set as audit
+
+    root = Path(binding["set_path"])
+    manifest_text = (root / audit.KANDIDATEN_MANIFEST_NAME).read_bytes().decode("utf-8")
+    source_text = (root / SOURCE_MANIFEST_NAME).read_bytes().decode("utf-8")
+    manifest, sources = json.loads(manifest_text), json.loads(source_text)
+    candidates = []
+    for pair in manifest["pairs"]:
+        for clip in pair["clips"]:
+            spec = sources["specs"][f"clips/{clip['clip_id']}.wav"]
+            spec_digest = audit._sha(audit._json_bytes(spec))
+            candidates.append({
+                "pair_id": pair["pair_id"], "clip_id": clip["clip_id"], "rank": clip["rank"],
+                "source_spec_sha256": spec_digest, "replay_spec_sha256": spec_digest,
+                # Nur Transportdaten: kein gerendertes PCM und keine gemessenen Lags.
+                "replay_pcm_sha256": audit._sha(b"synthetic transport fixture; no rendered PCM"),
+                "pcm": {"samplerate": 8000, "channels": 2, "frames": 1,
+                        "format": "WAV", "subtype": "PCM_16"},
+                "kick_lag_seconds": [0., 0., 0.],
+            })
+    binding_digest = audit._sha(audit._json_bytes(binding))
+    return {
+        "format": "hpg_candidate_ram_audit", "version": 2,
+        "transport": "source_refs_ram", "evidence_kind": "spec_verified_ram_replay",
+        "purpose": "regular", "status": "passed", "ok": True,
+        "binding": deepcopy(binding), "before_sha256": binding_digest,
+        "after_sha256": binding_digest, "manifest_text": manifest_text,
+        "source_manifest_text": source_text,
+        "manifest_sha256": audit._sha(manifest_text.encode("utf-8")),
+        "pairs": len(manifest["pairs"]), "clips": len(candidates), "candidates": candidates,
+    }
+
+
 @pytest.fixture
 def transport_proposal(tmp_path, monkeypatch):
     config = _source_service_config(monkeypatch, tmp_path, "kandidaten")
@@ -30,10 +66,10 @@ def transport_proposal(tmp_path, monkeypatch):
     assert len(weights) == 10 and sum(weights.values()) == pytest.approx(1.)
     updates = cp._normalisiere_updates({"Psytrance": weights})
     proposal = {
-        "format": "hpg_calibration_proposal", "version": 1, "operation_id": "a" * 32,
+        "format": "hpg_calibration_proposal", "version": 2, "operation_id": "a" * 32,
         "binding": binding, "audit_passed": True,
-        # Nur die von validate_proposal geforderten Transportfelder; kein Audit-Ergebnis.
-        "audit": {"ok": True, "status": "passed", "algorithm_build": deepcopy(binding["build"])},
+        # Struktureller v2-Transportbeleg; kein ausgefuehrter Replay-Audit.
+        "audit": _synthetic_transport_receipt(binding),
         "fit_status": "passed", "gate_updates": updates,
         "diagnose": {"transport_contract_fixture": True, "numerical_audit_proven": False},
         "single_proposal": None, "live_applied": False,

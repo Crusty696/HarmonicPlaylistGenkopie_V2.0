@@ -261,11 +261,13 @@ class TestTimingValues:
     current = make_track(
       camelotCode="8A", bpm=143.0, duration=420.0, energy=75,
       detected_genre="Psytrance", mix_in_point=60.0, mix_out_point=360.0,
+      phrase_unit=8, phrase_unit_source="configured",
       sections=_sections(),
     )
     upcoming = make_track(
       camelotCode="8A", bpm=143.0, duration=420.0, energy=78,
       detected_genre="Psytrance", mix_in_point=0.0, mix_out_point=360.0,
+      phrase_unit=8, phrase_unit_source="configured",
       sections=_sections(),
     )
 

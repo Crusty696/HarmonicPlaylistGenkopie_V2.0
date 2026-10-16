@@ -77,6 +77,7 @@ def producer_fixture(root, *, count=64):
             track = Track(filePath=str(path), fileName=path.name)
             track.bpm, track.duration, track.camelotCode = 120., float(duration), "8A"
             track.detected_genre, track.phrase_unit = "Psytrance", 8
+            track.phrase_unit_source = "configured"
             track.first_downbeat, track.downbeat_confidence = 0., 1.
             track.beatgrid_source, track.beatgrid_status = "rekordbox", "verified"
             track.beatgrid_windows_checked, track.beatgrid_max_phase_error_ms = 3, 0.

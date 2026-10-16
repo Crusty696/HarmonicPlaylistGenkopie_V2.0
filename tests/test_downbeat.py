@@ -43,7 +43,7 @@ class TestBeatgridMehrfensterValidierung:
     windows = [(0.13, np.ones(100)), (30.17, np.ones(100)), (60.29, np.ones(100))]
 
     result = validate_beatgrid_windows(
-      windows, SR, 120.0, grid_times=[0.0, 0.5, 1.0, 1.5]
+      windows, SR, 120.0, grid_times=[index * 0.5 for index in range(241)]
     )
 
     assert result.status == "verified"
@@ -59,12 +59,160 @@ class TestBeatgridMehrfensterValidierung:
     windows = [(0.13, np.ones(100)), (30.17, np.ones(100)), (60.29, np.ones(100))]
 
     result = validate_beatgrid_windows(
-      windows, SR, 120.0, grid_times=[0.0, 0.5, 1.0, 1.5]
+      windows, SR, 120.0, grid_times=[index * 0.5 for index in range(241)]
     )
 
     assert result.status == "mismatch"
     assert result.windows_checked == BEATGRID_MIN_WINDOWS
     assert result.max_phase_error_ms == pytest.approx(80.0)
+
+  def test_rekordbox_grid_vergleicht_lokale_ticks_statt_globaler_projektion(self, monkeypatch):
+    grid_times = [0.1 + index * 0.505 for index in range(180)]
+    offsets = (0.13, 30.17, 60.29)
+    phases = []
+    for offset in offsets:
+      index = int(np.searchsorted(grid_times, offset))
+      nearby = grid_times[max(0, index - 1):min(len(grid_times), index + 1)]
+      tick = min(nearby, key=lambda value: abs(value - offset))
+      phases.append((tick - offset) % 0.5)
+    observed = iter((phase, 0.8) for phase in phases)
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(observed),
+    )
+
+    result = validate_beatgrid_windows(
+      [(offset, np.ones(100)) for offset in offsets],
+      SR,
+      120.0,
+      grid_times=grid_times,
+    )
+
+    assert result.status == "verified"
+    assert result.max_phase_error_ms == pytest.approx(0.0)
+    assert result.windows_checked == BEATGRID_MIN_WINDOWS
+
+  def test_lokaler_rekordbox_tickfehler_ueber_sechs_ms_bleibt_abgelehnt(self, monkeypatch):
+    grid_times = [0.1 + index * 0.505 for index in range(180)]
+    offsets = (0.13, 30.17, 60.29)
+    phases = []
+    for offset in offsets:
+      index = int(np.searchsorted(grid_times, offset))
+      nearby = grid_times[max(0, index - 1):min(len(grid_times), index + 1)]
+      tick = min(nearby, key=lambda value: abs(value - offset))
+      phases.append(((tick - offset) % 0.5 + 0.008) % 0.5)
+    observed = iter((phase, 0.8) for phase in phases)
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(observed),
+    )
+
+    result = validate_beatgrid_windows(
+      [(offset, np.ones(100)) for offset in offsets],
+      SR,
+      120.0,
+      grid_times=grid_times,
+    )
+
+    assert result.status == "mismatch"
+    assert result.max_phase_error_ms == pytest.approx(8.0)
+    assert result.windows_checked == BEATGRID_MIN_WINDOWS
+
+  @pytest.mark.parametrize("offset_ms", [20.0, -20.0])
+  def test_konstanter_signed_phaseversatz_wird_diagnostiziert_ohne_freigabe(
+    self, monkeypatch, offset_ms
+  ):
+    grid_times = [0.1 + index * 0.5 for index in range(180)]
+    offsets = (0.13, 30.17, 60.29)
+    phases = []
+    for offset in offsets:
+      index = int(np.searchsorted(grid_times, offset))
+      nearby = grid_times[max(0, index - 1):min(len(grid_times), index + 1)]
+      tick = min(nearby, key=lambda value: abs(value - offset))
+      expected = (tick - offset) % 0.5
+      phases.append(((expected + offset_ms / 1000.0) % 0.5, 0.8))
+    observed = iter(phases)
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(observed),
+    )
+
+    result = validate_beatgrid_windows(
+      [(offset, np.ones(100)) for offset in offsets],
+      SR,
+      120.0,
+      grid_times=grid_times,
+      collect_diagnostics=True,
+    )
+
+    assert result.status == "mismatch"
+    assert result.reason == "phasemismatch"
+    assert result.phase_pattern == "consistent_offset"
+    assert result.phase_center_ms == pytest.approx(offset_ms)
+    assert [item.signed_phase_error_ms for item in result.window_diagnostics] == pytest.approx(
+      [offset_ms] * 3
+    )
+
+  def test_wechselnde_phase_bleibt_mismatch_und_wird_nicht_als_offset_klassifiziert(self, monkeypatch):
+    grid_times = [0.1 + index * 0.5 for index in range(180)]
+    offsets = (0.13, 30.17, 60.29)
+    phase_pairs = []
+    for offset, error in zip(offsets, (0.02, 0.04, 0.06)):
+      index = int(np.searchsorted(grid_times, offset))
+      nearby = grid_times[max(0, index - 1):min(len(grid_times), index + 1)]
+      tick = min(nearby, key=lambda value: abs(value - offset))
+      phase_pairs.append((((tick - offset) % 0.5 + error) % 0.5, 0.8))
+    observed = iter(phase_pairs)
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(observed),
+    )
+
+    result = validate_beatgrid_windows(
+      [(offset, np.ones(100)) for offset in offsets],
+      SR,
+      120.0,
+      grid_times=grid_times,
+      collect_diagnostics=True,
+    )
+
+    assert result.status == "mismatch"
+    assert result.phase_pattern == "variable_phase"
+    assert result.phase_center_ms == pytest.approx(40.0)
+    assert [item.signed_phase_error_ms for item in result.window_diagnostics] == pytest.approx(
+      [20.0, 40.0, 60.0]
+    )
+
+  def test_zirkulaerer_versatz_um_halben_beat_wird_konsistent_klassifiziert(self, monkeypatch):
+    grid_times = [0.1 + index * 0.5 for index in range(180)]
+    offsets = (0.13, 30.17, 60.29)
+    phases = []
+    errors = (0.249, -0.249, 0.249)
+    for offset, error in zip(offsets, errors):
+      index = int(np.searchsorted(grid_times, offset))
+      nearby = grid_times[max(0, index - 1):min(len(grid_times), index + 1)]
+      tick = min(nearby, key=lambda value: abs(value - offset))
+      phases.append((((tick - offset) % 0.5 + error) % 0.5, 0.8))
+    observed = iter(phases)
+    monkeypatch.setattr(
+      "hpg_core.downbeat._beat_phase_from_fold",
+      lambda *_args, **_kwargs: next(observed),
+    )
+
+    result = validate_beatgrid_windows(
+      [(offset, np.ones(100)) for offset in offsets],
+      SR,
+      120.0,
+      grid_times=grid_times,
+      collect_diagnostics=True,
+    )
+
+    assert result.status == "mismatch"
+    assert result.phase_pattern == "consistent_offset"
+    assert result.phase_center_ms == pytest.approx(249.0)
+    assert [item.signed_phase_error_ms for item in result.window_diagnostics] == pytest.approx(
+      [249.0, -249.0, 249.0]
+    )
 
   def test_stille_fenster_bleiben_unverifiable_mit_sentinel(self, monkeypatch):
     monkeypatch.setattr(
@@ -104,6 +252,32 @@ class TestBeatgridMehrfensterValidierung:
     assert result.max_phase_error_ms == -1.0
     assert calls == []
 
+  @pytest.mark.parametrize("grid_times", [[], [0.0, 0.5]])
+  def test_unvollstaendiges_rekordbox_grid_faellt_nicht_auf_anker_zurueck(
+    self, monkeypatch, grid_times
+  ):
+    calls = []
+
+    def fold(*_args, **_kwargs):
+      calls.append(True)
+      return 0.0, 1.0
+
+    monkeypatch.setattr("hpg_core.downbeat._beat_phase_from_fold", fold)
+
+    result = validate_beatgrid_windows(
+      [(0.0, np.ones(100)), (30.0, np.ones(100)), (60.0, np.ones(100))],
+      SR,
+      120.0,
+      anchor=0.0,
+      grid_times=grid_times,
+      collect_diagnostics=True,
+    )
+
+    assert result.status == "unverifiable"
+    assert result.reason == "fewgridpoints"
+    assert result.windows_checked == 0
+    assert calls == []
+
   @pytest.mark.parametrize(
     ("error_seconds", "expected"),
     [
@@ -127,7 +301,7 @@ class TestBeatgridMehrfensterValidierung:
       [(offset, np.ones(100)) for offset in offsets],
       SR,
       120.0,
-      grid_times=[0.0, 0.5, 1.0, 1.5],
+      grid_times=[index * 0.5 for index in range(241)],
     )
 
     assert result.status == expected

@@ -1,9 +1,74 @@
 from __future__ import annotations
 import os
 import re
+import math
 from dataclasses import dataclass, field
 
 from .config import METER, BPM_HALF_DOUBLE_ENABLED, MIX_POINT_UNSET
+
+SUPPORTED_PHRASE_UNITS = (8, 16, 32)
+
+
+def is_supported_phrase_unit(value: object) -> bool:
+    """Prueft Phraseneinheit ohne bool-als-int oder implizite Umwandlung."""
+    return type(value) is int and value in SUPPORTED_PHRASE_UNITS
+
+
+def bar_position_usage_blocked(anchor_or_diagnostics) -> bool:
+    """Sperrt unaufgeloeste Rotation; audio-bestaetigte Korrektur ist aktiv."""
+    if not isinstance(anchor_or_diagnostics, dict):
+        return False
+    if "version" in anchor_or_diagnostics and anchor_or_diagnostics.get("version") not in {5, 6, 7}:
+        return False
+    anchor = anchor_or_diagnostics.get("anchor", anchor_or_diagnostics)
+    comparison = anchor.get("bar_position_comparison") if isinstance(anchor, dict) else None
+    if not isinstance(comparison, dict):
+        return False
+    confirmation = comparison.get("audio_confirmation")
+    if (
+        comparison.get("status") == "candidate_rotation"
+        and isinstance(anchor, dict)
+        and anchor.get("method") == "model_audio_rotation"
+        and anchor.get("source") == "audio"
+        and isinstance(confirmation, dict)
+        and anchor.get("anchor_s") == confirmation.get("expected_anchor_s")
+        and confirmation.get("status") == "audio_confirmed"
+        and confirmation.get("final_grid_status") == "verified"
+    ):
+        return False
+    rotation = comparison.get("rotation_beats")
+    windows = comparison.get("windows")
+    if not isinstance(windows, list) or any(
+        not isinstance(row, dict)
+        or type(row.get("model_id")) is not str
+        or row["model_id"] not in {"model7", "model8"}
+        or type(row.get("start_s")) not in (int, float)
+        or not math.isfinite(row["start_s"])
+        for row in windows
+    ):
+        return False
+    model_ids = {row.get("model_id") for row in windows}
+    starts = {row.get("start_s") for row in windows}
+    measured_pairs = {(row.get("model_id"), row.get("start_s")) for row in windows}
+    expected_pairs = {
+        (model_id, start_s)
+        for model_id in ("model7", "model8")
+        for start_s in starts
+    }
+    return (
+        comparison.get("status") == "candidate_rotation"
+        and comparison.get("reason") in {"measured", "offset_compensated"}
+        and type(rotation) is int and rotation in {1, 2, 3}
+        and isinstance(windows, list) and len(windows) == 6
+        and model_ids == {"model7", "model8"} and len(starts) == 3
+        and measured_pairs == expected_pairs
+        and all(
+            isinstance(row, dict)
+            and row.get("status") == "measured"
+            and row.get("rotation_beats") == rotation
+            for row in windows
+        )
+    )
 
 # Mapping from Key and Mode to Camelot Code
 CAMELOT_MAP = {
@@ -223,29 +288,42 @@ class Track:
         return hash(self.track_id)
 
     @property
-    def phrase_anchor(self) -> float:
+    def phrase_anchor(self) -> float | None:
         """AUDIT-FEATURE A1: Anker fuers PHRASEN-Gitter.
 
-        first_phrase, wenn die Schaetzung belastbar ist (Konfidenz-Gate aus
-        config.PHRASE_CONFIDENCE_MIN), sonst first_downbeat (bisheriges
-        Verhalten). Damit ist die Umstellung fuer Alt-Caches und schwache
-        Schaetzungen ein No-Op.
+        first_phrase, wenn Downbeat-Konfidenz und Beatgrid bestaetigt sind
+        und die Phrasenschaetzung belastbar ist. Sonst bleibt der rohe
+        first_downbeat fuer Diagnose erhalten, wird downstream aber nicht
+        als Rasteranker weitergereicht.
 
         AUDIT-FIX R4 (2026-07-26): Sentinel fuer "nicht geschaetzt" ist -1.0
         — eine Phase von exakt 0.0 ist GUELTIG und wurde vorher verworfen.
-        AUDIT-FIX R2 (2026-07-26): zusaetzliches Gate auf
-        downbeat_confidence — ein first_phrase aus Alt-Caches, das auf einem
-        gescheiterten (erfundenen) Downbeat-Raster abgestimmt wurde, wird
-        nicht mehr als Anker verwendet.
+        Ein konsistentes Beatgrid belegt keine unabhaengige musikalische
+        Takt-1-Genauigkeit. Es ist hier das technische Gate gegen
+        unbestaetigte Raster, keine Ground-Truth-Aussage.
+        Bei einer validierten nichtnulligen Modell-Taktrotation ist der Anker
+        explizit nicht verfuegbar (None), damit kein Aufrufer auf 0.0 ausweicht.
         """
         from .config import PHRASE_CONFIDENCE_MIN
+        from .downbeat import DOWNBEAT_RELIABLE_MIN
+        if bar_position_usage_blocked(self.measurement_diagnostics):
+            return None
+        if (
+            self.downbeat_confidence < DOWNBEAT_RELIABLE_MIN
+            or self.beatgrid_status != "verified"
+        ):
+            return 0.0
         if (
             self.first_phrase >= 0.0
-            and self.downbeat_confidence > 0.0
             and self.phrase_confidence >= PHRASE_CONFIDENCE_MIN
         ):
             return self.first_phrase
         return self.first_downbeat
+
+    @property
+    def bar_position_usage_blocked(self) -> bool:
+        """Takt-/Phrasen-Nutzung bei validiertem Rotationshinweis sperren."""
+        return bar_position_usage_blocked(self.measurement_diagnostics)
 
     # ID3 Tag Info
     artist: str = "Unknown"
@@ -257,6 +335,9 @@ class Track:
     bpm: float = 0.0
     keyNote: str = ""
     keyMode: str = ""
+    stem_analysis: dict = field(default_factory=dict)
+    embedding_analysis: dict = field(default_factory=dict)
+    audio_embedding: list[float] = field(default_factory=list)
     camelotCode: str = ""
     energy: int = 0
     bass_intensity: int = 0
@@ -282,8 +363,15 @@ class Track:
     beatgrid_status: str = "unknown"
     beatgrid_windows_checked: int = 0
     beatgrid_max_phase_error_ms: float = -1.0
+    # Schema 2 trennt aktive Ankerquelle, RB-Versuch und neuronale Audio-Prüfung.
     # Leeres Objekt bedeutet unbekannt, niemals nachtraeglich erfundene Ursache.
     measurement_diagnostics: dict = field(default_factory=dict)
+    # Versionierte Cue-/Beat-Kandidaten; leer bedeutet unbekannt, kein Scoringbonus.
+    neural_analysis: dict = field(default_factory=dict)
+    # Native Phrasenerzeugung getrennt von importiertem PSSI und Cue-Regressor.
+    native_phrase_analysis: dict = field(default_factory=dict)
+    # Vollständiges natives Beatgrid, getrennt von importiertem ANLZ/PSSI.
+    native_beat_analysis: dict = field(default_factory=dict)
 
     # AUDIT-FEATURE A1 (2026-07-26): PHRASEN-Anker — Zeitpunkt der ersten
     # Phrasengrenze in Sekunden (liegt auf dem Bar-Raster: first_downbeat +
@@ -313,6 +401,10 @@ class Track:
     # DJ Brain - Track Structure (Phase 2)
     sections: list = field(default_factory=list)  # Liste von TrackSection-Dicts
     phrase_unit: int = 8
+    phrase_unit_source: str = "genre_prior"  # genre_prior, audio_novelty, configured
+    phrase_unit_candidate: int | None = None
+    phrase_unit_score: float | None = None  # rohe Novelty-Korrelation, keine Wahrscheinlichkeit
+    phrase_unit_margin: float | None = None  # Abstand im prior-adjustierten Ranking
 
     # Audio Feature Extensions (Phase 3)
     brightness: int = 0  # Spektrale Helligkeit 0-100 (dunkel?hell)
@@ -331,7 +423,8 @@ class Track:
     sub_energy: float = 0.0     # 20-60 Hz, Anteil an der Gesamtenergie
     bass_punch: float = 0.0     # Crest-Faktor des Bassbands
     ai_metadata: dict = field(default_factory=dict)  # LLM Analysis Results
-    # Signatur der verwendeten Rekordbox-Metadaten fuer Cache-Invalidierung.
+    # Quellidentität: Rekordbox-Metadatensignatur plus Cue-/Beat-Modell-/Preprocess-
+    # Fingerprint. Bestehende Cache-/KI-Merge-Konsumenten verwenden dieses Feld.
     rekordbox_signature: str = ""
 
     # Provenienz der Audioabdeckung. Luecken bleiben explizit sichtbar; ein

@@ -65,8 +65,12 @@ def test_living_docs_reference_current_cache_contract():
     "docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md",
   ):
     content = (ROOT / relative_path).read_text(encoding="utf-8")
-    assert expected_version in content, relative_path
-    assert expected_path in content, relative_path
+    # AGENTS darf den Code verlinken, ohne veränderliche Versionszahlen zu
+    # duplizieren. Vorhandene konkrete Angaben müssen dagegen aktuell sein.
+    versions = re.findall(r'CACHE_VERSION \d+', content)
+    paths = re.findall(r'hpg_cache_v\d+\.db', content)
+    assert all(value == expected_version for value in versions), relative_path
+    assert all(value == expected_path for value in paths), relative_path
 
   production_status = (ROOT / "PRODUCTION_STATUS.md").read_text(encoding="utf-8")
   assert f"Cache-Version {CACHE_VERSION}" in production_status

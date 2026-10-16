@@ -1,9 +1,11 @@
 """Isolierter On-Demand-Render in RAM; keine dauerhaften WAV-Artefakte."""
 
 import io
+import math
 import multiprocessing
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -56,6 +58,86 @@ def _render_child(connection, spec, sources):
         connection.send((False, f"{type(exc).__name__}: {exc}"))
     finally:
         connection.close()
+
+
+def _preflight_child(connection, spec, sources):
+    """Prueft exakten RAM-Renderer im Kindprozess, uebertraegt kein Audio."""
+    from hpg_core.transition_renderer import BeatSyncError
+
+    try:
+        data = render_wav_bytes(spec, sources)
+        connection.send(("ok", len(data)))
+    except BeatSyncError:
+        connection.send(("beat_sync", None))
+    except Exception as exc:
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
+
+
+def preflight_renderability(spec, sources, checkpoint, timeout=120.0) -> bool:
+    """Nur echter BeatSyncError verwirft ein Reservepaar; Rest bricht ab."""
+    if (not callable(checkpoint) or isinstance(timeout, bool) or
+            type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError("Ungueltiger Preflight-Vertrag")
+    checkpoint()
+    _check_sources(sources)
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_preflight_child, args=(sender, asdict(spec), list(sources)), daemon=True,
+    )
+    started = False
+    try:
+        checkpoint()
+        process.start()
+        started = True
+        sender.close()
+        deadline = time.monotonic() + float(timeout)
+        while True:
+            checkpoint()
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Preflight-Render ueberschreitet Zeitlimit")
+            if receiver.poll(0.1):
+                result = receiver.recv()
+                checkpoint()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Preflight-Render ueberschreitet Zeitlimit")
+                _check_sources(sources)
+                process.join(timeout=min(2.0, max(0.0, deadline - time.monotonic())))
+                checkpoint()
+                if process.is_alive():
+                    raise RuntimeError("Preflight-Renderprozess nach Antwort nicht beendet")
+                if process.exitcode != 0:
+                    raise RuntimeError(f"Preflight-Renderprozess fehlerhaft beendet ({process.exitcode})")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Preflight-Render ueberschreitet Zeitlimit")
+                if type(result) is not tuple or len(result) != 2:
+                    raise RuntimeError("Ungueltige Preflight-Antwort")
+                status, detail = result
+                if status == "ok" and type(detail) is int and 0 < detail <= MAX_PLAYBACK_BYTES:
+                    return True
+                if status == "beat_sync" and detail is None:
+                    return False
+                if status == "error" and type(detail) is str:
+                    raise RuntimeError(f"Preflight-Renderfehler: {detail}")
+                raise RuntimeError("Ungueltige Preflight-Antwort")
+            if not process.is_alive():
+                raise RuntimeError(f"Preflight-Renderprozess beendet ohne Ergebnis ({process.exitcode})")
+    finally:
+        receiver.close()
+        sender.close()
+        if started:
+            process.join(timeout=0.1)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=2.0)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=2.0)
+            if process.is_alive():
+                raise RuntimeError("Preflight-Renderprozess konnte nicht beendet werden")
+            process.close()
 
 
 class HearingAudioWorker(QThread):

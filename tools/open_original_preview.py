@@ -1,0 +1,55 @@
+"""Sichtbare App mit belegten Originaltrack-Snapshots, ohne erneute Analyse.
+
+Dies belegt keinen frischen GUI-Import: die Eingangsdaten stammen explizit
+aus dem benannten vorherigen Analysebeleg. Vorschau wird normal angeklickt.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+def main():
+    root = Path(sys.argv[1]).resolve(strict=True)
+    output = Path(sys.argv[2]).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    os.environ['HPG_CACHE_FILE'] = str(output/'isolated.db')
+    os.environ['HPG_CANDIDATE_CHOICES_FILE'] = str(output/'choices.json')
+    from dataclasses import asdict
+    from hpg_core.ai_models.feature_reuse import digest
+    report = json.loads((root/'report.json').read_text(encoding='utf-8'))
+    for path, source in report['sources'].items():
+        if digest(path) != source['before_sha256']:
+            raise ValueError('Originalquelle seit Analysebeleg geaendert')
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QApplication
+    from hpg_core.caching import dict_to_track
+    from hpg_core.playlist import generate_playlist_result
+    from hpg_core.theme import apply_dark_theme
+    from main import MainWindow
+    app = QApplication(sys.argv[:1])
+    app.setStyle('Fusion')
+    apply_dark_theme(app)
+    events = []
+    def record(selected):
+        base, result, peaks, duration, pending = selected
+        events.append(dict(event='reserve_ready', bytes=len(result.audio), duration=duration,
+            rejected=len(result.rejected), spec=asdict(result.spec), pending=list(pending)))
+        (output/'gui-events.json').write_text(json.dumps(events, indent=2), encoding='utf-8')
+    class EvidenceWindow(MainWindow):
+        def _publiziere_generation_result(self, result):
+            super()._publiziere_generation_result(result)
+            self.mix_tips_panel.reserve_ready.connect(record)
+    settings = QSettings(str(output/'settings.ini'), QSettings.Format.IniFormat)
+    window = EvidenceWindow(settings=settings)
+    tracks = [dict_to_track(json.loads((root/f'track-{i}.json').read_text(encoding='utf-8'))) for i in range(2)]
+    result = generate_playlist_result(tracks, 'Harmonic Flow', candidate_choice_snapshot={})
+    window._publiziere_generation_result(result)
+    window.setWindowTitle('HPG – Originaltrack-Vorschau mit Analyse-Snapshot')
+    window.show()
+    return app.exec()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -44,7 +44,7 @@ class TestReadStatus:
     imp, path = self.prepared()
     anlz = FakeAnlzFile(FakeBeatTag(beats=[1, 2], times=[0.0, 0.5]))
     imp.db.read_anlz_files = lambda cid: {"DAT": anlz}
-    assert imp.get_track_signature(path) == "dcbcfe46ed6c48f0409449bf0bc8b052caaecb5a68772dc3425404a1dbd21725"
+    assert imp.get_track_signature(path) == "d33f611f75bac404bac8c2b7a045d3a6caf10f82e482328f9a38484610b8bd3d"
 
   def test_partial_dat_confirms_grid_not_unread_ext(self):
     from hpg_core.rekordbox_readonly import RekordboxAnlzReadError
@@ -352,6 +352,8 @@ class FakeContent:
     self.Rating = rating
     self.ColorName = color_name
     self.Cues = cues or []
+    self.FileSize = None
+    self.ISRC = None
 
 
 class FakeDatabase:
@@ -1003,16 +1005,116 @@ class TestGetTrackData:
     assert data is not None
     assert data.bpm == pytest.approx(128.0)
 
-  def test_filename_fallback(self, tmp_path):
-    """Track in anderem Ordner, gleiches Filename → Fallback findet ihn."""
+  def test_filename_only_match_is_rejected(self, tmp_path):
+    """Ein gleicher Dateiname beweist keine identische Audiodatei."""
     original_folder = str(tmp_path / "original")
     filename = "track.mp3"
     imp = make_importer_with_track(original_folder, filename, bpm=14000)
-    # Suche mit anderem Pfad, gleichem Dateinamen
+    # Geaenderter Sicherheitsvertrag: Ohne exakten Pfad kein RB-BPM/Key/Cue.
     other_path = os.path.join(str(tmp_path / "moved"), filename)
-    data = imp.get_track_data(other_path)
+    assert imp.get_track_data(other_path) is None
+    assert imp.get_track_signature(other_path) == ""
+
+  def test_volume_rebind_requires_unique_path_and_all_direct_identity_fields(self, monkeypatch):
+    from types import SimpleNamespace
+    content = FakeContent(folder_path=r"D:\Music\Album", filename="track.aiff",
+                          length=323, title="Never Die", artist_name="4i20, Mandragora")
+    content.FileSize = 57237600
+    content.ISRC = "GBKQU1572232"
+    imp = make_importer(db=FakeDatabase([content]))
+    tags = {"TSRC": "GBKQU1572232", "TIT2": "Never Die",
+            "TPE1": "4i20, Mandragora"}
+    monkeypatch.setattr(rb_module.os, "stat", lambda _path: SimpleNamespace(st_size=57237600))
+    monkeypatch.setattr(rb_module.mutagen, "File", lambda *_a, **_k: SimpleNamespace(
+        info=SimpleNamespace(length=324.0), tags=tags))
+
+    data = imp.get_track_data(r"F:\Music\Album\track.aiff")
     assert data is not None
+    assert data.path_match == "volume_rebind"
+    assert imp.get_track_data(r"F:\Other\Album\track.aiff") is None
+    imp.get_beatgrid = lambda _path: []
+    imp.get_phrases = lambda _path: []
+    assert imp.get_track_signature(r"D:\Music\Album\track.aiff") != imp.get_track_signature(
+        r"F:\Music\Album\track.aiff")
+
+  @pytest.mark.parametrize("field,value", [
+      ("FileSize", None), ("ISRC", "wrong"), ("Title", "wrong"),
+      ("ArtistName", "wrong"), ("Length", 325),
+  ])
+  def test_volume_rebind_rejects_missing_or_conflicting_identity(self, monkeypatch, field, value):
+    from types import SimpleNamespace
+    content = FakeContent(folder_path=r"D:\Music\Album", filename="track.aiff",
+                          length=323, title="Never Die", artist_name="4i20, Mandragora")
+    content.FileSize, content.ISRC = 57237600, "GBKQU1572232"
+    setattr(content, field, value)
+    imp = make_importer(db=FakeDatabase([content]))
+    monkeypatch.setattr(rb_module.os, "stat", lambda _path: SimpleNamespace(st_size=57237600))
+    monkeypatch.setattr(rb_module.mutagen, "File", lambda *_a, **_k: SimpleNamespace(
+        info=SimpleNamespace(length=323.2), tags={"TSRC": "GBKQU1572232",
+        "TIT2": "Never Die", "TPE1": "4i20, Mandragora"}))
+    assert imp.get_track_data(r"F:\Music\Album\track.aiff") is None
+
+  def test_volume_rebind_accepts_one_second_shorter_source(self, monkeypatch):
+    from types import SimpleNamespace
+    content = FakeContent(folder_path=r"D:\Music\Album", filename="track.aiff",
+                          length=323, title="Never Die", artist_name="4i20, Mandragora")
+    content.FileSize, content.ISRC = 57237600, "GBKQU1572232"
+    imp = make_importer(db=FakeDatabase([content]))
+    monkeypatch.setattr(rb_module.os, "stat", lambda _path: SimpleNamespace(st_size=57237600))
+    monkeypatch.setattr(rb_module.mutagen, "File", lambda *_a, **_k: SimpleNamespace(
+        info=SimpleNamespace(length=322.0), tags={"TSRC": "GBKQU1572232",
+        "TIT2": "Never Die", "TPE1": "4i20, Mandragora"}))
+    assert imp.get_track_data(r"F:\Music\Album\track.aiff").path_match == "volume_rebind"
+
+  def test_volume_rebind_rejects_missing_source_tag(self, monkeypatch):
+    from types import SimpleNamespace
+    content = FakeContent(folder_path=r"D:\Music\Album", filename="track.aiff",
+                          length=323, title="Never Die", artist_name="4i20, Mandragora")
+    content.FileSize, content.ISRC = 57237600, "GBKQU1572232"
+    imp = make_importer(db=FakeDatabase([content]))
+    monkeypatch.setattr(rb_module.os, "stat", lambda _path: SimpleNamespace(st_size=57237600))
+    monkeypatch.setattr(rb_module.mutagen, "File", lambda *_a, **_k: SimpleNamespace(
+        info=SimpleNamespace(length=323.0), tags={
+            "TIT2": "Never Die", "TPE1": "4i20, Mandragora"}))
+    assert imp.get_track_data(r"F:\Music\Album\track.aiff") is None
+
+  def test_exact_path_takes_precedence_over_volume_rebind_candidate(self):
+    moved = FakeContent(folder_path=r"D:\Music\Album", filename="track.aiff", bpm=12800)
+    exact = FakeContent(folder_path=r"F:\Music\Album", filename="track.aiff", bpm=14000)
+    imp = make_importer(db=FakeDatabase([moved, exact]))
+    data = imp.get_track_data(r"F:\Music\Album\track.aiff")
     assert data.bpm == pytest.approx(140.0)
+    assert data.path_match == "exact_path"
+
+  def test_volume_rebind_rejects_ambiguous_same_relative_paths(self, monkeypatch):
+    from types import SimpleNamespace
+    records = []
+    for drive in ("D:", "E:"):
+      item = FakeContent(folder_path=drive + r"\Music\Album", filename="track.aiff",
+                         length=323, title="Never Die", artist_name="4i20, Mandragora")
+      item.FileSize, item.ISRC = 57237600, "GBKQU1572232"
+      records.append(item)
+    imp = make_importer(db=FakeDatabase(records))
+    monkeypatch.setattr(rb_module.os, "stat", lambda _path: SimpleNamespace(st_size=57237600))
+    monkeypatch.setattr(rb_module.mutagen, "File", lambda *_a, **_k: SimpleNamespace(
+        info=SimpleNamespace(length=323.2), tags={"TSRC": "GBKQU1572232",
+        "TIT2": "Never Die", "TPE1": "4i20, Mandragora"}))
+    assert imp.get_track_data(r"F:\Music\Album\track.aiff") is None
+
+  def test_gleicher_basename_anderer_audioinhalt_ist_keine_rekordbox_identitaet(self, tmp_path):
+    """Ein eindeutiger Name darf fremde BPM/Key/Cues nicht in die Analyse geben."""
+    filename = "track.mp3"
+    original = tmp_path / "original" / filename
+    moved = tmp_path / "moved" / filename
+    original.parent.mkdir()
+    moved.parent.mkdir()
+    original.write_bytes(b"audio-a")
+    moved.write_bytes(b"audio-b")
+    imp = make_importer_with_track(str(original.parent), filename, bpm=14000)
+
+    assert imp.get_track_data(str(original)) is not None
+    assert imp.get_track_data(str(moved)) is None
+    assert imp.get_track_signature(str(moved)) == ""
 
   def test_mehrdeutiger_filename_fallback_wird_verworfen(self, tmp_path):
     """Gleichnamige Tracks duerfen keine falschen RB-Metadaten liefern."""
@@ -1295,6 +1397,17 @@ class TestSummarizeCoverage:
     assert cov.degraded == 1
     assert cov.examples_ambiguous == ["a.mp3"]
 
+  def test_andere_pfade_zaehlen_nicht_als_exakte_mehrdeutigkeit(self, tmp_path):
+    """Mehrere gleiche Basenames sind ohne Pfadtreffer kein Record-Konflikt."""
+    contents = [
+      FakeContent(folder_path=str(tmp_path / "first"), filename="a.mp3", bpm=12800),
+      FakeContent(folder_path=str(tmp_path / "second"), filename="a.mp3", bpm=14000),
+    ]
+    imp = make_importer(db=FakeDatabase(contents))
+    cov = imp.summarize_coverage([str(tmp_path / "moved" / "a.mp3")])
+    assert cov.ambiguous == 0
+    assert cov.not_in_collection == 1
+
   def test_summanden_ergeben_immer_die_gesamtzahl(self):
     contents = [
       FakeContent(folder_path=MUSIC_DIR, filename="ok.mp3", bpm=14000),
@@ -1340,6 +1453,7 @@ def test_get_phrases_liest_ext_und_dat_ueber_read_anlz_files(monkeypatch):
   imp._ambiguous_paths = set()
   imp._downbeat_cache = {}
   imp._phrases_cache = {}
+  imp._anlz_files_by_kind = {}
   data = RekordboxTrackData(bpm=128.0, duration=60.0, content_id="42")
   imp.get_track_data = lambda path: data
   imp.is_available = lambda: True
@@ -1352,6 +1466,9 @@ def test_get_phrases_liest_ext_und_dat_ueber_read_anlz_files(monkeypatch):
   class _File:
     def __init__(self, tags):
       self._tags = tags
+
+    def __contains__(self, key):
+      return key in self._tags
 
     def get_tag(self, k):
       if k not in self._tags:
@@ -1384,6 +1501,7 @@ def test_get_phrases_memo_trennt_effektive_dauern(monkeypatch):
   imp.get_track_data = lambda _path: data
   tagged = SimpleNamespace(get_tag=lambda _key: object())
   imp._read_anlz_files = lambda _content_id: [tagged]
+  imp._get_anlz_phrase_pair = lambda _content_id: (tagged, tagged)
   verwendete_dauern = []
 
   def fake_phrases(_ext, _dat, duration):
@@ -1413,6 +1531,7 @@ def test_get_phrases_memo_ist_tief_von_quelle_und_rueckgaben_getrennt(
   )
   tagged = SimpleNamespace(get_tag=lambda _key: object())
   imp._read_anlz_files = lambda _content_id: [tagged]
+  imp._get_anlz_phrase_pair = lambda _content_id: (tagged, tagged)
   quelle = [
     {
       "start_s": 0.0,
@@ -1458,6 +1577,7 @@ def test_get_phrases_positiver_override_gewinnt_gegen_rb_dauer(monkeypatch):
   )
   tagged = SimpleNamespace(get_tag=lambda _key: object())
   imp._read_anlz_files = lambda _content_id: [tagged]
+  imp._get_anlz_phrase_pair = lambda _content_id: (tagged, tagged)
   verwendete_dauern = []
   monkeypatch.setattr(
     rekordbox_phrases,
@@ -1485,6 +1605,7 @@ def test_get_phrases_ungueltige_dauer_faellt_auf_rb_dauer_zurueck(
   )
   tagged = SimpleNamespace(get_tag=lambda _key: object())
   imp._read_anlz_files = lambda _content_id: [tagged]
+  imp._get_anlz_phrase_pair = lambda _content_id: (tagged, tagged)
   verwendete_dauern = []
   monkeypatch.setattr(
     rekordbox_phrases,
@@ -1519,6 +1640,7 @@ def test_get_phrases_beide_dauern_ungueltig_verwendet_exakt_null(
   )
   tagged = SimpleNamespace(get_tag=lambda _key: object())
   imp._read_anlz_files = lambda _content_id: [tagged]
+  imp._get_anlz_phrase_pair = lambda _content_id: (tagged, tagged)
   verwendete_dauern = []
   monkeypatch.setattr(
     rekordbox_phrases,

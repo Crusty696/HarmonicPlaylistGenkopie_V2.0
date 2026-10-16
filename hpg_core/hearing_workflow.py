@@ -188,7 +188,7 @@ def _validate_config(config: PrepareConfig, rate) -> None:
         raise HearingValidationError("Parameter werden vom Dramaturgieproduzenten nicht verwendet")
 
 
-def _producer_namespace(config, staging, target, sink, token, progress):
+def _producer_namespace(config, staging, target, sink, token, progress, preflight=None):
     def report(phase: str, completed: int, total: int) -> None:
         token.checkpoint()
         if (type(phase) is not str or type(completed) is not int or type(total) is not int
@@ -196,7 +196,7 @@ def _producer_namespace(config, staging, target, sink, token, progress):
             raise HearingOperationError("Ungueltiger Produzentenfortschritt")
         if progress is not None:
             progress(Progress(completed, total, phase, phase))
-    return argparse.Namespace(
+    namespace = argparse.Namespace(
         modus=config.mode, out=staging, anzeige_out=target, cache=str(config.cache),
         anzahl=config.count, bpm_toleranz=config.bpm_tolerance,
         energy_direction=None if config.energy_direction == "auto" else config.energy_direction,
@@ -209,16 +209,23 @@ def _producer_namespace(config, staging, target, sink, token, progress):
         storage=config.storage, source_roots=sink.source_roots,
         hpg_render_sink=sink.emit, hpg_cancel=token, hpg_progress=report,
     )
+    if preflight is not None:
+        namespace.hpg_preflight = preflight
+        namespace.hpg_source_snapshot = lambda: sink.sources
+    return namespace
 
 
 def create_set(
     config: PrepareConfig,
     progress: Callable[[Progress], None] | None = None,
     cancel: CancellationToken | None = None,
+    preflight: Callable | None = None,
 ) -> PrepareResult:
     """Publiziert vorbereitete Referenzen; behauptet keinen Render-/Audit-Erfolg."""
     rate = importlib.import_module("tools.rate_transitions")
     _validate_config(config, rate)
+    if preflight is not None and (config.mode != "kandidaten" or not callable(preflight)):
+        raise HearingValidationError("Preflight ist nur fuer Kandidatensaetze zulaessig")
     target = config.output_dir.absolute()
     if target.exists() or target.is_symlink():
         raise HearingTargetExistsError(f"Ausgabeziel existiert bereits: {target}")
@@ -233,7 +240,7 @@ def create_set(
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=target.parent))
         sink = SourceRenderSink(staging, roots, checkpoint=token.checkpoint)
-        args = _producer_namespace(config, staging, target, sink, token, progress)
+        args = _producer_namespace(config, staging, target, sink, token, progress, preflight)
         status = getattr(rate, _PRODUCERS[config.mode])(args)
         if type(status) is not int or status != 0:
             raise HearingOperationError(f"Produzent meldete Status {status!r}; nichts publiziert")

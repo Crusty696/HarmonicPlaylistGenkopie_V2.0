@@ -145,14 +145,25 @@ class TransitionClipSpec:
                 and status == "verified"
                 and confidence == REFERENCE_BEATGRID_CONFIDENCE
             )
+            # Native Rekordbox-Taktzahlen kommen aus dem separaten Analyselauf,
+            # nicht aus dem Datenbankimport. Herkunft und ggf. Audio-Zeitkorrektur
+            # vollständig prüfen, bevor dieselben Taktzahlen zum Renderer gehen.
+            from .ai_models.native_track_beats import has_verified_grid
+            native_grid = has_verified_grid(track)
             # Audio-Schaetzungen unterhalb 1.0 duerfen die gemessene Beatphase
             # trotz eines Diagnose-Mismatch liefern. Confidence 1.0 ist dagegen
             # dem Rekordbox-Referenzgrid vorbehalten und braucht dessen Status.
+            # Auch model_audio_rotation bleibt Audioherkunft: Sie kann den
+            # Beatanker fuer Beat-Alignment liefern, belegt aber keine
+            # unabhaengige musikalische Takt-1 und setzt bar_phase nicht frei.
             measured_audio = (
                 DOWNBEAT_RELIABLE_MIN <= confidence
                 < REFERENCE_BEATGRID_CONFIDENCE
             )
-            return reference_grid or measured_audio, reference_grid
+            return (
+                reference_grid or native_grid or measured_audio,
+                (reference_grid or native_grid) and not getattr(track, "bar_position_usage_blocked", False),
+            )
 
         downbeat_a, bar_a = _phase_reliability(from_track)
         downbeat_b, bar_b = _phase_reliability(to_track)
@@ -395,6 +406,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Ausgabe- und Quellraster getrennt halten: Stretch skaliert Zeiten mit 1/rate.
     output_grid_sec = bar_sec_a * (2.0 if half_double == "half" else 1.0)
     source_grid_b_sec = output_grid_sec * applied_stretch_rate
+    reference_phases = None
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
             known_a = known_b = None
@@ -419,6 +431,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                 phase_b = (spec.first_downbeat_b - b_start) % source_grid_b_sec
                 # Track B wurde ggf. gestretcht: Zeitpunkte skalieren mit 1/rate
                 known_b = phase_b / applied_stretch_rate
+            before_alignment_frames = len(seg_b)
             seg_b = _align_beat_phase(
                 seg_a[pre_frames:], seg_b, spec.bpm_a, sr,
                 known_first_beat_a=known_a, known_first_beat_b=known_b,
@@ -427,6 +440,8 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                     int(round(output_grid_sec * sr)) if half_double else None
                 ),
             )
+            if bar_aligned:
+                reference_phases = (known_a, known_b - (before_alignment_frames-len(seg_b))/sr)
         except Exception as align_err:
             if spec.strict_beat_sync:
                 raise BeatSyncError("Beat-Phase-Alignment fehlgeschlagen") from align_err
@@ -445,7 +460,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     if spec.strict_beat_sync:
         seg_b = _synchronize_and_verify_kicks(
             seg_a[pre_frames:pre_frames + cf_frames], seg_b, sr, spec.bpm_a,
-            cf_frames,
+            cf_frames, reference_phases=reference_phases,
         )
 
     # Lautheits-Normalisierung: absolute Pegel ausschliesslich aus dem
@@ -633,8 +648,12 @@ def _synchronize_and_verify_kicks(
     sr: int,
     bpm: float,
     cf_frames: int,
+    *, reference_phases=None,
 ) -> np.ndarray:
     """Korrigiert globalen Kickversatz und lehnt Restfehler/Drift hart ab."""
+    if reference_phases is not None:
+        return _synchronize_reference_kicks(ref_segment, segment_b, sr, bpm,
+                                            cf_frames, reference_phases)
     before = _kick_lags_across_overlap(ref_segment, segment_b, sr, bpm, cf_frames)
     if len(before) != 3 or any(value is None for value in before):
         raise BeatSyncError(
@@ -656,6 +675,54 @@ def _synchronize_and_verify_kicks(
         raise BeatSyncError(
             "Kickphasen driften nach Korrektur um mehr als 6 ms auseinander"
         )
+    # Drei Stichproben uebersehen lokale Abweichungen innerhalb langer
+    # Blenden. Nach der globalen Korrektur deshalb lueckenlos nachmessen.
+    window = min(KICK_SYNC_WINDOW_BEATS * max(1, int(round(60.0 / bpm * sr))),
+                 cf_frames // 3)
+    starts = list(range(0, cf_frames - window + 1, window))
+    if starts[-1] != cf_frames - window:
+        starts.append(cf_frames - window)
+    for start in starts:
+        stop = start + window
+        measured = _relative_kick_lag(ref_segment[start:stop], corrected[start:stop], sr, bpm)
+        if measured is None or not np.isfinite(measured[0]):
+            raise BeatSyncError(f'Kickphase im Blendenabschnitt ab {start / sr:.3f} s nicht messbar')
+        if abs(measured[0]) > KICK_SYNC_MAX_ERROR_SECONDS:
+            raise BeatSyncError(f'Kickphasenfehler im Blendenabschnitt ab {start / sr:.3f} s ueber 6 ms')
+    return corrected
+
+
+def _synchronize_reference_kicks(a, b, sr, bpm, frames, phases):
+    """Bekannte Taktreferenzen an lokalen Audio-Attacks prüfen, nicht Bassklänge gleichsetzen."""
+    from .downbeat import _beat_phase_from_fold, BEATGRID_MIN_FOLD_LOCK
+    period = 60./bpm
+    window = math.ceil(4*period*sr)
+    if frames < window or len(phases) != 2 or not all(math.isfinite(x) for x in phases):
+        raise BeatSyncError('Referenz-Kickprüfung hat zu wenig Audio oder ungültige Phasen')
+    starts = list(range(0, frames-window+1, window))
+    if starts[-1] != frames-window:
+        starts.append(frames-window)
+    def difference(x, y):
+        return (x-y+period/2) % period-period/2
+    def measured(segment, reference):
+        values = []
+        for start in starts:
+            expected = (reference-start/sr) % period
+            mono = np.asarray(segment[start:start+window]).mean(axis=1)
+            phase, lock = _beat_phase_from_fold(mono, sr, period,
+                expected_phase=expected, minimum_beats=4)
+            if phase is None or lock < BEATGRID_MIN_FOLD_LOCK:
+                raise BeatSyncError(f'Referenz-Kickphase ab {start/sr:.3f} s nicht messbar')
+            if abs(difference(phase, expected)) > KICK_SYNC_MAX_ERROR_SECONDS:
+                raise BeatSyncError(f'Referenz-Kickphase ab {start/sr:.3f} s über 6 ms')
+            values.append(phase)
+        return values
+    phases_a, phases_b = measured(a, phases[0]), measured(b, phases[1])
+    shift = round(float(np.median([difference(y, x) for x, y in zip(phases_a, phases_b)]))*sr)
+    corrected = _ensure_len(_shift_segment(b, shift), len(b))
+    after = measured(corrected, phases[1]-shift/sr)
+    if any(abs(difference(y, x)) > KICK_SYNC_MAX_ERROR_SECONDS for x, y in zip(phases_a, after)):
+        raise BeatSyncError('Relative Referenz-Kickphasen überschreiten 6 ms')
     return corrected
 
 
@@ -740,6 +807,16 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
     # des Ergebnis-Anfangs auf dem Raster von A liegt.
     raw = int(round((t_b - t_a) * sr))
     if lead_frames > 0:
+        # Mixkandidaten sind auf Millisekunden gerundet, Gridphasen dagegen
+        # samplegenau. Ein kleiner positiver Rundungsrest darf nicht durch
+        # floor-Division einen ganzen Takt aus dem Vorlauf zur Blende machen.
+        # Nominalen Einsatz behalten; die nachfolgende strikte Audioprüfung
+        # misst/korrigiert den Rest weiterhin. Zwei Samples decken die beiden
+        # zusätzlichen Frame-Rundungen ab, keine neue musikalische Toleranz.
+        nearest = raw + grid_len * round((lead_frames - raw) / grid_len)
+        rounding_frames = int(math.ceil(.001 * sr)) + 2
+        if abs(nearest - lead_frames) <= rounding_frames:
+            return seg_b[lead_frames:]
         # N-02: groesster phasengleicher Schnitt <= lead_frames — der Einsatz
         # (bei lead_frames) bleibt vollstaendig erhalten und landet maximal
         # grid_len-1 Samples hinter dem Crossfade-Start.
@@ -1031,6 +1108,10 @@ def _level_mix_loudness(
             if curr_db > -32.0:
                 diff_db = float(np.clip(target_db - curr_db, -8.0, 8.0))
                 gain = float(10.0 ** (diff_db / 20.0))
+                # Transienten erhalten statt sie erst im Limiter abzuschneiden.
+                peak = float(np.max(np.abs(audio)))
+                if peak > 0.0:
+                    gain = min(gain, 0.95 / peak)
                 return (audio * gain).astype(np.float32)
         return audio
 
@@ -1060,6 +1141,12 @@ def _level_mix_loudness(
         else:
             gain = 1.0
 
+        # Jedes Fenster begrenzt seinen Gain anhand beider Kanaele. Die
+        # positive gewichtete Mittelung bleibt dadurch auch zwischen den
+        # Fenstern unter der Limiter-Schwelle; Stereo bleibt gekoppelt.
+        peak = float(np.max(np.abs(chunk)))
+        if peak > 0.0:
+            gain = min(gain, 0.95 / peak)
         envelope[start:end] += gain * w
         weights[start:end] += w
 

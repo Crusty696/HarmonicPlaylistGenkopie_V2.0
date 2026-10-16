@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from .downbeat import EXACT_BEAT_SYNC_TOLERANCE_SECONDS, REFERENCE_BEATGRID_CONFIDENCE
 from .mix_candidates import MixCandidate, SCHEMA_PRIORITAET
-from .models import BEATGRID_SOURCES, BEATGRID_STATUSES, Track
+from .models import (
+    BEATGRID_SOURCES, BEATGRID_STATUSES, Track, is_supported_phrase_unit,
+)
 from .config import MIX_POINT_UNSET
 
 logger = logging.getLogger(__name__)
@@ -158,7 +160,83 @@ logger = logging.getLogger(__name__)
 # vorlagen.
 # FIX 2026-10-04: 45 -> 46. Diagnosezweige und lokale Gridfenster werden
 # explizit gespeichert. Alte Records enthalten keine belegten Fehlerursachen.
-CACHE_VERSION = 46
+# FIX 2026-10-13: 46 -> 47. Begrenzter Downbeat-Retry mit unabhaengiger
+# Drei-Fenster-Pruefung; alte Analyseergebnisse enthalten diesen Versuch nicht.
+# FIX 2026-10-13: 47 -> 48. Physische Beatnummern statt Tracker-Arraypositionen
+# bewahren die Taktphase bei fehlenden oder doppelten Beat-Zuordnungen.
+# FIX 2026-10-13: 48 -> 49. Die Vollpfad-Struktur verwendet wie alle
+# Rasterkonsumenten die BPM-Taktlaenge statt eines hopgerasterten Medians.
+# FIX 2026-10-13: 49 -> 50. Downbeat-Merkmale werden bei eindeutiger
+# Beatzuordnung auf derselben Fold-Phase wie der abschliessende Anker gemessen.
+# FIX 2026-10-13: 50 -> 51. Vollstaendige Beat-Energiefenster mit anteiligen
+# Rand-Samples vermeiden kuenstliche Downbeat-Akzente aus Teilfenstern.
+# FIX 2026-10-13: 51 -> 52. Audio-Feintempo im Vollpfad nach separater
+# Drei-Fenster-Pruefung; alte Analysen enthalten diese Korrektur nicht.
+# Version 53: versionierte Cue-Rohdiagnostik und Modell-/Preprocess-Cacheidentität.
+# Version 54: Beat-Modellkandidaten, Schema 2 und gemeinsame neuronale Quellidentität.
+# Version 55: audio-bestätigte neuronale Taktanker und getrennte Referenzdiagnosen.
+# Version 56: audio-bestätigte neuronale Tempoentscheidung in beiden Analysepfaden.
+# Version 57: identitätsgebundene Cue-Rohscores beeinflussen die PSSI-Kandidatenkappung.
+# Version 58: nur exakt zugeordnete Rekordbox-Pfade liefern Metadaten;
+# fruehere Basename-Treffer muessen ohne fremde BPM/Keys/Cues neu analysiert werden.
+# Version 59: widerspruechliche Fold-/Trackerzuordnungen liefern keinen Downbeat.
+# Version 60: Mixpunkte und Kandidaten ohne belastbare Taktphase werden nicht ausgegeben.
+# Version 61: abgeleitete Rasterwerte verlangen bestaetigte Beatgridphase.
+# Version 62: Track.phrase_anchor faellt bei unbestaetigtem Raster nicht mehr
+# auf den rohen first_downbeat zurueck, damit Downstream kein Raster erfindet.
+# Version 63: ANLZ-Beatticks validieren die lokale Phase je Audiofenster statt
+# den ersten Rekordbox-Anker ueber den ganzen Track konstant fortzuschreiben.
+# Version 64: Diagnose unterscheidet einen konsistenten Beatphasen-Offset von
+# wechselnder Phase; Sync-Status und Freigabegates bleiben unveraendert.
+# Version 65: eine verifizierte DSP-Baseline wird bei schwacher Phrase durch
+# vorhandene Audio-Beatmodelle geprueft; der Phrasenwert folgt dem gewaehlten Anker.
+# Version 66: der Fixed-BPM-Retrygrund bleibt neben dem primaeren Downbeatgrund sichtbar.
+# Version 67: Diagnose-Schema v4 kennzeichnet exakten Rekordbox-Pfad vs. Laufwerks-Rebind.
+# Version 68: Schema v5 speichert einen rein diagnostischen Modellkandidaten fuer
+# die PQTZ-Taktpositionsrotation; aktive Rekordbox-Anker und Freigaben bleiben gleich.
+# Version 69: Audio-Voting und Vollgridprüfung protokollieren den Kandidaten,
+# ohne den aktiven Rekordbox-Anker oder bestehende Freigaben zu ersetzen.
+# Version 70: eine gemessene Nichtnull-Taktrotation sperrt PSSI/Phrasenraster,
+# Mixpunkte, Paar-Kandidaten, Takt-1-Rendererphase und Cue-/Beatgrid-Export.
+# Version 71: PSSI/PQTZ-Phrasen werden nur aus eindeutig zugeordneten
+# ANLZ-Dateigruppen gebildet; alte Phrase-/Mix-Ergebnisse duerfen nicht bleiben.
+# Version 72: Bei schwacher Phrasenphase kann die Audio-Novelty-Messung im
+# bestaetigten Beatgrid die Genre-Prior-Phrasenlaenge ersetzen.
+# Version 73: Track speichert die Herkunft der effektiven Phrasenlaenge.
+# Version 74: Track speichert den besten Novelty-Kandidaten, Rohscore und Margin.
+# Version 77: neuronaler Taktanker benoetigt dieselben drei bestaetigten
+# Version 78: Nur audio-bestaetigte Modell-Taktrotationen duerfen Rekordbox-
+# Takt-1 ersetzen; sie bleiben Audioherkunft und erhalten keine RB-Sync-Freigabe.
+# Version 79: Ein erkannter konstanter Rekordbox-Grid-Offset wird als
+# reference_constant_offset in der persistierten Taktpositionsdiagnose abgelegt;
+# der Befund korrigiert weder Grid noch Anker und gibt keine Sync-Freigabe.
+# Version 80: Bei konstantem Grid-Offset vergleicht die Taktpositionsdiagnose
+# Modellbeats gegen zeitlich phasenprojizierte PQTZ-Ticks. Ein Rotationstreffer
+# bleibt Kandidat, sperrt vorsorglich PSSI/Mixausgaben und korrigiert nichts.
+# Version 81: Ein versatzbereinigter Rotationstreffer darf nur mit drei
+# disjunkten Zusatzfenstern je Modell, separater Audiophasenbestätigung und
+# verifiziertem Grid als Audioanker übernommen werden.
+# Quellfenster je Modell; gespeicherter Kandidat und Mindestkonfidenz muessen
+# dem Resolver entsprechen. Phrase-Novelty braucht Grid/Downbeat; Schema v6
+# behaelt die vorhandene Sperre fuer gemessene Taktrotationen.
+# Cache 86: reine Offsetkorrektur ohne Rotation wird verworfen, wenn sie den
+# Anker ueber eine Bar-Grenze wickeln und so Phrasenphase verschieben muesste.
+# Cache 87: die wirksame Phrase-Unit steuert bereits die interne Mix-In/Out-
+# Kandidatenquantisierung, nicht nur das abschliessende gemeinsame Phrasenraster.
+# Cache 88: neuronales Tempo-Kandidatentempo ist der Median aller sechs
+# konsistenten Modellfenster, nicht das erste Modell-/Fensterergebnis.
+# Cache 89: persistierter Tempoentscheid mit Status, Grund und Modellwerten.
+# Cache 90: die sechs einzelnen Tempo-Modellwerte bleiben mit Fensterherkunft erhalten.
+# v92: Verifizierte PSSI-Intervalle bestimmen gedeckte Strukturgrenzen;
+# lokale Sektionsenergie und davon abhängige Mixpunkte müssen neu entstehen.
+# v93: nativer Phrasenvertrag mit eigener Provenienz und Strukturgrenzen.
+# v94: bekannte Tonarten an nativen Generator binden; Schema-7-Taktsperre beachten.
+# v95: native Schlussgrenze statt künstlicher Verlängerung bis Dateiende.
+# v96: lokale Stemkurven und normalisierte Embeddings samt Herkunft/Coverage.
+# v97: interner Tracker-Lag darf bei erhaltener Beatidentitaet schwanken.
+# v98: lokaler Drei-Fenster-Retry nach langem Tracker-Drift, Gesamtgrid unveraendert.
+# v99: interner Trackerdrift nutzt separat bestaetigtes Audio-Raster vor Takt-Voting.
+CACHE_VERSION = 104
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -215,13 +293,15 @@ def _ensure_cache_schema(conn: sqlite3.Connection) -> None:
 TRACK_REQUIRED_FIELDS = frozenset({
     "filePath", "fileName", "artist", "title", "genre", "duration", "bpm",
     "keyNote", "keyMode", "camelotCode", "energy", "bass_intensity",
+    "stem_analysis", "embedding_analysis", "audio_embedding",
     "avg_bass", "avg_mids", "avg_highs", "mix_in_point", "mix_out_point",
     "first_downbeat", "downbeat_confidence", "beatgrid_source",
     "beatgrid_status", "beatgrid_windows_checked",
-    "beatgrid_max_phase_error_ms", "measurement_diagnostics", "first_phrase", "phrase_confidence",
+    "beatgrid_max_phase_error_ms", "measurement_diagnostics", "neural_analysis", "native_phrase_analysis", "native_beat_analysis", "first_phrase", "phrase_confidence",
     "key_confidence", "lufs", "mix_in_bars", "mix_out_bars",
     "detected_genre", "genre_confidence", "genre_source", "sections",
-    "phrase_unit", "brightness", "vocal_instrumental", "danceability",
+    "phrase_unit", "phrase_unit_source", "phrase_unit_candidate",
+    "phrase_unit_score", "phrase_unit_margin", "brightness", "vocal_instrumental", "danceability",
     "spectral_flatness", "percussive_ratio", "mfcc_fingerprint",
     "timbre_fingerprint", "groove_pattern", "bass_pattern", "syncopation",
     "sub_energy", "bass_punch", "ai_metadata", "rekordbox_signature",
@@ -231,11 +311,13 @@ TRACK_REQUIRED_FIELDS = frozenset({
 })
 VALID_ANALYSIS_MODES = frozenset({"rekordbox_fast_tail", "librosa_full_or_tail"})
 TRACK_LIST_FIELDS = {
+    "audio_embedding",
     "sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage",
     "groove_pattern", "bass_pattern",
     "phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates",
 }
-TRACK_DICT_FIELDS = {"ai_metadata", "measurement_diagnostics"}
+TRACK_DICT_FIELDS = {"ai_metadata", "measurement_diagnostics", "neural_analysis", "native_phrase_analysis", "native_beat_analysis",
+                     "stem_analysis", "embedding_analysis"}
 TRACK_CONFIDENCE_FIELDS = {
     "downbeat_confidence", "phrase_confidence", "key_confidence",
     "genre_confidence",
@@ -709,8 +791,83 @@ def validate_track_dict(data: dict) -> dict:
 
     filtered = {key: value for key, value in data.items() if key in TRACK_REQUIRED_FIELDS}
     from .measurement_contract import validate_measurement_diagnostics
+    from .ai_models.cue_service import validate_neural_analysis
+    from .models import bar_position_usage_blocked
     try:
         validate_measurement_diagnostics(filtered["measurement_diagnostics"])
+        measured = filtered['measurement_diagnostics']
+        if measured.get('version') in {6, 7}:
+            phrase_diagnostic = measured['phrase_unit']
+            for diagnostic_key, track_key in (
+                    ('unit', 'phrase_unit'), ('source', 'phrase_unit_source'),
+                    ('candidate', 'phrase_unit_candidate'),
+                    ('raw_score', 'phrase_unit_score'),
+                    ('ranking_margin', 'phrase_unit_margin')):
+                if phrase_diagnostic[diagnostic_key] != filtered[track_key]:
+                    raise CacheValidationError(
+                        f"measurement_diagnostics.phrase_unit.{diagnostic_key} widerspricht {track_key}"
+                    )
+        if bar_position_usage_blocked(measured):
+            if (
+                filtered["first_phrase"] != MIX_POINT_UNSET
+                or filtered["phrase_confidence"] != 0.0
+                or filtered["phrases"]
+                or filtered["phrase_grid"]
+                or filtered["mix_in_candidates"]
+                or filtered["mix_out_candidates"]
+                or filtered["mix_in_point"] != MIX_POINT_UNSET
+                or filtered["mix_out_point"] != MIX_POINT_UNSET
+            ):
+                raise ValueError("Taktpositionsrotation verlangt gesperrte Phrasen- und Mixausgaben")
+        if measured.get('version') in {2, 3, 4, 5, 6, 7} and 'anchor' in measured:
+            active = measured['anchor']
+            if (active['source'] != filtered['beatgrid_source']
+                    or active['anchor_s'] != filtered['first_downbeat']
+                    or active['confidence'] != filtered['downbeat_confidence']
+                    or measured['grid']['status'] != filtered['beatgrid_status']
+                    or measured['grid']['windows_checked'] != filtered['beatgrid_windows_checked']
+                    or measured['grid']['max_phase_error_ms'] != filtered['beatgrid_max_phase_error_ms']):
+                raise ValueError('Aktive Ankerdiagnose widerspricht Track')
+            if active['source'] != 'rekordbox' and filtered['phrases']:
+                raise ValueError('PSSI erfordert bestaetigte Rekordbox-Referenz')
+
+        from .ai_models.native_track_beats import validate_snapshot as validate_native_beats
+        native_beats = filtered['native_beat_analysis']
+        if native_beats:
+            validate_native_beats(native_beats, duration=filtered['duration'])
+        native_method = measured.get('anchor', {}).get('method')
+        if native_method in {'native_rekordbox', 'native_rekordbox_audio_offset'}:
+            from .ai_models.native_beat_alignment import active_anchor
+            if (native_beats.get('status') != 'ok'
+                    or filtered['bpm'] != native_beats['bpm']
+                    or filtered['first_downbeat'] != active_anchor(native_beats)
+                    or ('audio_alignment' in native_beats) != (native_method == 'native_rekordbox_audio_offset')
+                    or filtered['beatgrid_status'] != 'verified'):
+                raise ValueError('Native beat provenance conflicts with active track')
+        from .ai_models.native_phrase_adapter import validate_snapshot
+        from .downbeat import DOWNBEAT_RELIABLE_MIN
+        validate_snapshot(filtered['native_phrase_analysis'], duration=filtered['duration'],
+            grid_verified=(filtered['beatgrid_status'] == 'verified'
+                           and filtered['downbeat_confidence'] >= DOWNBEAT_RELIABLE_MIN),
+            usage_blocked=bar_position_usage_blocked(measured))
+        native = filtered['native_phrase_analysis']
+        if native.get('status') == 'ok':
+            native_grid = native['input_grid']
+            from .ai_models.native_key import native_key_index
+            expected_key = native_key_index(filtered['keyNote'], filtered['keyMode'])
+            if (native['key_source'] != ('native_unknown_fallback_zero' if expected_key is None
+                                        else 'hpg_key_native_table')
+                    or native_grid['key_index'] != (0 if expected_key is None else expected_key)):
+                raise ValueError('Native phrase key provenance mismatch')
+            if (filtered['phrases'] or not filtered['neural_analysis']
+                    or native_grid['bpm_hundredths'] != int(math.floor(filtered['bpm']*100+.5))
+                    or (native_grid['basis'] == 'verified_rekordbox_grid') != (filtered['beatgrid_source'] == 'rekordbox')):
+                raise ValueError('Native phrase provenance contradicts track')
+        validate_neural_analysis(filtered["neural_analysis"], track_duration_s=filtered['duration'])
+        if filtered['neural_analysis']:
+            suffix = '|neural:' + filtered['neural_analysis']['fingerprint']
+            if not isinstance(filtered['rekordbox_signature'], str) or not filtered['rekordbox_signature'].endswith(suffix):
+                raise ValueError('neural_analysis passt nicht zur Quellidentität')
     except ValueError as error:
         raise CacheValidationError(str(error)) from error
     if filtered.get("ai_metadata"):
@@ -746,6 +903,19 @@ def validate_track_dict(data: dict) -> dict:
         if name not in {"mix_in_candidates", "mix_out_candidates"}:
             _validate_finite_values(value, name)
     duration, _first_downbeat, _first_phrase = _validate_top_level_physics(filtered)
+    from .ai_models.deep_features import validate as validate_deep_feature
+    try:
+        for kind, field in (('stems', 'stem_analysis'), ('embedding', 'embedding_analysis')):
+            validate_deep_feature(filtered[field], kind=kind, duration=duration)
+        expected_embedding = filtered['embedding_analysis'].get('data', {}).get('vector', [])
+        if filtered['audio_embedding'] != expected_embedding:
+            raise ValueError('Embedding vector does not match provenance')
+        stem_fp = filtered['stem_analysis'].get('fingerprint')
+        embedding_fp = filtered['embedding_analysis'].get('fingerprint')
+        if stem_fp is not None and embedding_fp is not None and stem_fp != embedding_fp:
+            raise ValueError('Deep feature fingerprints differ')
+    except (ValueError, TypeError, KeyError) as error:
+        raise CacheValidationError(str(error)) from error
 
     source = filtered.get("beatgrid_source", "unknown")
     status = filtered.get("beatgrid_status", "unknown")
@@ -784,11 +954,33 @@ def validate_track_dict(data: dict) -> dict:
         raise CacheValidationError("Mix-In muss vor Mix-Out liegen")
     phrase_unit = filtered["phrase_unit"]
     if (
-        isinstance(phrase_unit, bool)
-        or not isinstance(phrase_unit, int)
-        or phrase_unit not in {8, 16, 32}
+        not is_supported_phrase_unit(phrase_unit)
     ):
         raise CacheValidationError("phrase_unit muss 8, 16 oder 32 sein")
+    phrase_unit_source = filtered["phrase_unit_source"]
+    if (type(phrase_unit_source) is not str
+            or phrase_unit_source not in {"genre_prior", "audio_novelty", "configured"}):
+        raise CacheValidationError("phrase_unit_source ist ungueltig")
+    phrase_unit_candidate = filtered["phrase_unit_candidate"]
+    if (phrase_unit_candidate is not None
+            and not is_supported_phrase_unit(phrase_unit_candidate)):
+        raise CacheValidationError("phrase_unit_candidate muss 8, 16, 32 oder None sein")
+    phrase_unit_score = filtered["phrase_unit_score"]
+    phrase_unit_margin = filtered["phrase_unit_margin"]
+    if phrase_unit_candidate is None:
+        if phrase_unit_score is not None or phrase_unit_margin is not None:
+            raise CacheValidationError("Novelty-Score ohne Phrasenkandidat")
+    else:
+        if phrase_unit_score is None or not _is_finite_number(phrase_unit_score):
+            raise CacheValidationError("phrase_unit_score muss endlich sein")
+        if phrase_unit_margin is not None and (
+            not _is_finite_number(phrase_unit_margin) or phrase_unit_margin < 0.0
+        ):
+            raise CacheValidationError("phrase_unit_margin muss endlich und nichtnegativ sein")
+    if phrase_unit_source == "audio_novelty" and (
+        phrase_unit_candidate != phrase_unit or phrase_unit_score is None or phrase_unit_margin is None
+    ):
+        raise CacheValidationError("audio_novelty erfordert vollstaendige Messwerte")
     _validate_sections(filtered["sections"], duration)
     coverage = _validate_analysis_coverage(filtered["analysis_coverage"], duration)
     phrases = _validate_phrases(filtered["phrases"], duration)
@@ -802,7 +994,9 @@ def validate_track_dict(data: dict) -> dict:
         raise CacheValidationError(
             "outro_covered erfordert Analyse-Coverage bis zum Trackende"
         )
-    _validate_phrases_and_grid(phrases, filtered["phrase_grid"])
+    native_phrases = filtered['native_phrase_analysis'].get('phrases', [])
+    active_intervals = phrases or [(p['start_s'], p['end_s']) for p in native_phrases]
+    _validate_phrases_and_grid(active_intervals, filtered["phrase_grid"])
     _validate_mix_candidate_lists(filtered, duration)
     if filtered["analysis_mode"] not in VALID_ANALYSIS_MODES:
         raise CacheValidationError("analysis_mode ist ungueltig")
@@ -912,7 +1106,8 @@ def _snapshot_value(value):
 
 def track_to_dict(track: Track) -> dict:
     """Erstellt einen rekursiv losgeloesten Snapshot des Track-Objekts."""
-    return {key: _snapshot_value(value) for key, value in track.__dict__.items()}
+    # Laufzeitattribute wie analysis_origin sind kein persistierter Trackvertrag.
+    return {field.name: _snapshot_value(getattr(track, field.name)) for field in fields(Track)}
 
 
 def dict_to_track(d: dict) -> Track:

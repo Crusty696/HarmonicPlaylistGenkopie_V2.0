@@ -610,6 +610,34 @@ def test_build_liefert_sortierte_raenge_und_zwei_blenden():
     assert all(p.overlap_sec == pytest.approx(p.blend_bars * (60.0 / 140.0) * 4) for p in res)
 
 
+def test_a_blende_verwirft_reproduzierten_physischen_ueberhang():
+    """Originalfall: 21,57 ms Ueberhang darf keine strukturelle Toleranz nutzen."""
+    from hpg_core.pair_candidates import _blenden_gate
+    a = _track(duration=378.85714285714283)
+    out = _out(356.593)
+    assert _blenden_gate(a, out, 13, deckel=a.duration)
+
+
+@pytest.mark.parametrize("mix_out", [0.0, 100.5])
+def test_a_blende_behaelt_exakte_physische_grenze(mix_out):
+    from hpg_core.pair_candidates import _blenden_gate
+    a = _track(bpm=120.0, duration=mix_out + 26.0)
+    assert not _blenden_gate(a, _out(mix_out), 13, deckel=a.duration)
+
+
+def test_build_verwirft_a_ueberhang_vor_kandidatenaufnahme(monkeypatch):
+    """Ein gueltiger lokaler Score darf fehlendes Audio nicht ersetzen."""
+    bpm = 120.0
+    out_t, in_t = 128.0, 96.0
+    a = _track_mit_kandidaten("a.mp3", bpm=bpm, outs=[_voll(out_t)])
+    b = _track_mit_kandidaten("b.mp3", bpm=bpm, ins=[_voll(in_t)])
+    a.duration = out_t + 32.0 - 0.021571428571469653
+    a.sections = _sections(a.duration, intro_end=32.0, outro_start=a.duration)
+    a.analysis_coverage = [{"start": 0.0, "end": a.duration}]
+    monkeypatch.setattr("hpg_core.pair_candidates.blend_bars_options", lambda *_args: [16])
+    assert build_pair_candidates(a, b) == []
+
+
 def test_build_akzeptiert_exakt_64_sekunden_overlap(monkeypatch):
     bpm = 120.0
     g = _grid(bpm)

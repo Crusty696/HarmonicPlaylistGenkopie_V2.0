@@ -584,7 +584,8 @@ def test_ungeplante_kante_bleibt_mit_n_minus_eins_empfehlung_sichtbar(monkeypatc
     assert first.recommendation.compatibility_score == 0
     assert first.recommendation.active_candidate_key is None
     assert first.recommendation.candidate_consistent is False
-    assert "UNGEPLANT" in first.recommendation.notes
+    # Nutzervertrag: konkrete Gruende statt des unverstaendlichen Sammelworts.
+    assert "Keine zulässigen Mixpunkte" in first.recommendation.notes
     assert result.boundaries[1].consistent is True
     expected_quality = (
         round(result.boundaries[1].metrics.overall_score * 100) / 2 / 100.0
