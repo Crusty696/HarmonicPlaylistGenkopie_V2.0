@@ -17,11 +17,11 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v18'
+CONTRACT = 'rb-7.2.19-file-reader-v19'
 RATE = 44100
 MAX_SECONDS = 7200
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
-MPG123_ENC_FLOAT_32 = 0x200
+MPG123_ENC_SIGNED_16 = 0xD0
 MPG123_DONE = -12
 MPG123_NEW_FORMAT = -11
 _MPG123_RUNTIME_LOCK = threading.Lock()
@@ -355,20 +355,16 @@ class NativeAudioReader:
                     raise NativeContractError('Rekordbox mpg123 parameter setup failed')
             if library.mpg123_format_none(decoder) != 0:
                 raise NativeContractError('Rekordbox mpg123 format reset failed')
-            rates_pointer = ct.POINTER(ct.c_long)()
-            rates_count = ct.c_size_t()
-            library.mpg123_rates(ct.byref(rates_pointer), ct.byref(rates_count))
             encodings_pointer = ct.POINTER(ct.c_int)()
             encodings_count = ct.c_size_t()
             library.mpg123_encodings(ct.byref(encodings_pointer), ct.byref(encodings_count))
-            rates = [int(rates_pointer[index]) for index in range(min(rates_count.value, 32))]
             encodings = [int(encodings_pointer[index]) for index in range(min(encodings_count.value, 64))]
-            if (not rates or not 8000 <= min(rates) <= max(rates) <= 384000
-                    or MPG123_ENC_FLOAT_32 not in encodings):
-                raise NativeContractError('Rekordbox mpg123 lacks bounded float output')
-            for rate in rates:
-                if library.mpg123_format(decoder, rate, 3, MPG123_ENC_FLOAT_32) != 0:
-                    raise NativeContractError('Rekordbox mpg123 rejected float output format')
+            if MPG123_ENC_SIGNED_16 not in encodings:
+                raise NativeContractError('Rekordbox mpg123 lacks its native signed-16 format')
+            # Rekordbox 7.2.19 pins this decoder to 48-kHz stereo and signed
+            # 16-bit PCM (constructor +0x54/+0x58, then mpg123_format(...,0xd0)).
+            if library.mpg123_format(decoder, 48000, 2, MPG123_ENC_SIGNED_16) != 0:
+                raise NativeContractError('Rekordbox mpg123 rejected its native PCM format')
             if library.mpg123_replace_reader_handle(
                     decoder, ct.cast(read_hook, ct.c_void_p),
                     ct.cast(seek_hook, ct.c_void_p),
@@ -383,8 +379,8 @@ class NativeAudioReader:
                 if library.mpg123_getformat(decoder, ct.byref(source_rate),
                         ct.byref(channels), ct.byref(encoding)) != 0:
                     raise NativeContractError('Rekordbox mpg123 could not read MP3 format')
-                if (not 8000 <= source_rate.value <= 384000 or channels.value not in (1, 2)
-                        or encoding.value != MPG123_ENC_FLOAT_32):
+                if (source_rate.value != 48000 or channels.value != 2
+                        or encoding.value != MPG123_ENC_SIGNED_16):
                     raise NativeContractError('Unsupported Rekordbox mpg123 output format')
 
             get_format()
@@ -482,11 +478,11 @@ class NativeAudioReader:
                 raise NativeContractError('Rekordbox mpg123 format changed mid-track')
         elif status not in (0, MPG123_DONE):
             raise NativeContractError(f'Rekordbox mpg123 decode failed ({status})')
-        if written.value % (state['channels'] * 4):
+        if written.value % (state['channels'] * 2):
             raise NativeContractError('Rekordbox mpg123 returned a partial frame')
         if written.value:
-            source = np.frombuffer(state['output'].raw[:written.value], dtype=np.float32)
-            source = source.reshape(-1, state['channels'])
+            source = (np.frombuffer(state['output'].raw[:written.value], dtype='<i2')
+                      .reshape(-1, state['channels']).astype(np.float32) / 32768.0)
             state['stalls'] = 0
         else:
             source = np.empty((0, state['channels']), np.float32)
