@@ -185,7 +185,7 @@ def _reader_image():
 
 
 class NativeAudioReader:
-    """Native WAV/AIFF/FLAC/MP4-Reader und MP3-Decoder aus Rekordbox' Bundle.
+    """Native WAV/AIFF/FLAC/MP4/AAC-Reader und MP3-Decoder aus Rekordbox' Bundle.
 
     MP3 läuft direkt über das versionsgeprüfte libmpg123.dll aus der
     Rekordbox-Installation; ein HPG-Decoder bleibt als Fallback gekennzeichnet.
@@ -223,7 +223,8 @@ class NativeAudioReader:
                 self._open_fallback()
                 return
         if suffix not in (
-                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla', '.m4a', '.mp4'):
+                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
+                '.m4a', '.mp4', '.aac'):
             self._open_fallback()
             return
         if image is None:
@@ -241,12 +242,14 @@ class NativeAudioReader:
             '.fla': 0x2cdd6e0,
             '.m4a': 0x2cdd760,
             '.mp4': 0x2cdd760,
+            '.aac': 0x2cdd8a0,
         }[suffix]
         self.backend = {
             '.flac': 'rekordbox-builtin-flac',
             '.fla': 'rekordbox-builtin-flac',
             '.m4a': 'rekordbox-builtin-mp4',
             '.mp4': 'rekordbox-builtin-mp4',
+            '.aac': 'rekordbox-builtin-aac',
         }.get(suffix, 'rekordbox-builtin')
         image.function(0x1104730, ct.c_void_p, ct.c_void_p)(self.owner)
         name = ct.c_void_p()
@@ -1048,7 +1051,8 @@ class NativeAudioStream:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
         if use_rekordbox and suffix in (
-                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla', '.m4a', '.mp4'):
+                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
+                '.m4a', '.mp4', '.aac'):
             try:
                 import soundfile as sf
                 source_channels = int(sf.info(str(path)).channels)

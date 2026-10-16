@@ -4,6 +4,7 @@ NATIVE_BEAT_INPUT_CONVENTIONS = {
     'rekordbox-builtin': 'rekordbox-builtin-planar-float32',
     'rekordbox-builtin-flac': 'rekordbox-builtin-flac-planar-float32',
     'rekordbox-builtin-mp4': 'rekordbox-builtin-mp4-planar-float32',
+    'rekordbox-builtin-aac': 'rekordbox-builtin-aac-planar-float32',
     'rekordbox-mpg123': 'rekordbox-mpg123-planar-float32',
     'rekordbox-mpg123-soxr-hq': 'rekordbox-mpg123-soxr-hq-planar-float32',
     'rekordbox-mpg123-stream': 'rekordbox-mpg123-stream-planar-float32',
