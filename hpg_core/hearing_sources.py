@@ -356,10 +356,8 @@ def _candidate_metadata(root, specs, rt):
                      schema_resolver=rt.kandidaten_merkmale_schema)
     def rating_schema_resolver(actual):
         if producer.get("rating_schema") == "three_notes_v1":
-            return actual in (rt.BEWERTUNG_DREINOTEN_SPALTEN,
-                              rt.BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN)
-        return actual in (rt.BEWERTUNG_KANDIDATEN_SPALTEN,
-                          rt.BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN)
+            return actual == rt.BEWERTUNG_DREINOTEN_SPALTEN
+        return actual == rt.BEWERTUNG_KANDIDATEN_SPALTEN
     ratings = _read_csv(root / "bewertung.csv", (), schema_resolver=rating_schema_resolver)
     expected = [(p["pair_id"], c["clip_id"]) for p in producer["pairs"] for c in p["clips"]]
     if ([(r["pair_id"], r["clip_id"]) for r in rows] != expected
