@@ -19,6 +19,7 @@ from .caching import (
     get_cached_track,
 )
 from .config import (
+    SUPPORTED_AUDIO_EXTENSIONS,
     HOP_LENGTH,
     METER,
     MIX_POINT_UNSET,
@@ -220,9 +221,10 @@ def _refine_audio_tempo(
                 window = audio[start:start + width]
             else:
                 try:
-                    window, loaded_sr = librosa.load(
-                        file_path, sr=sample_rate, mono=True,
-                        offset=start / sample_rate, duration=_BEATGRID_WINDOW_SECONDS,
+                    window, loaded_sr = _load_analysis_audio(
+                        file_path, sr=sample_rate,
+                        offset=start / sample_rate,
+                        duration=_BEATGRID_WINDOW_SECONDS,
                     )
                 except (OSError, RuntimeError, ValueError, sf.LibsndfileError) as error:
                     detail["error_type"] = type(error).__name__
@@ -297,9 +299,9 @@ def _validate_track_beatgrid(
             if offset == 0 and head_audio is not None and sample_rate > 0:
                 audio = np.asarray(head_audio)[: int(span * sample_rate)]
             else:
-                audio, loaded_sr = librosa.load(
-                    file_path, sr=sample_rate or None, mono=True,
-                    offset=offset, duration=span,
+                audio, loaded_sr = _load_analysis_audio(
+                    file_path, sr=sample_rate or None, offset=offset,
+                    duration=span,
                 )
                 sample_rate = int(loaded_sr)
         except (OSError, RuntimeError, ValueError, sf.LibsndfileError) as error:
@@ -344,8 +346,10 @@ def _estimate_audio_downbeat(
             if first + count <= len(y):
                 audio = y[first:first + count]
             else:
-                audio, loaded_sr = librosa.load(file_path, sr=sr, mono=True,
-                    offset=start, duration=span, res_type='soxr_hq')
+                audio, loaded_sr = _load_analysis_audio(
+                    file_path, sr=sr, offset=start, duration=span,
+                    res_type='soxr_hq',
+                )
                 if loaded_sr != sr:
                     return original
             if len(audio) != count or not np.isfinite(audio).all():
@@ -895,6 +899,42 @@ def calculate_file_lufs(file_path: str) -> tuple[float, str, float, int, int]:
     try:
         import pyloudnorm as pyln
 
+        if os.path.splitext(file_path)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS:
+            from types import SimpleNamespace
+            from .ai_models.native_audio_reader import NativeAudioStream
+            try:
+                with NativeAudioStream(file_path) as stream:
+                    sample_rate = int(stream.samplerate)
+                    channels = int(stream.channels)
+                    frames = int(stream.frames)
+                    info = SimpleNamespace(
+                        samplerate=sample_rate, channels=channels, frames=frames
+                    )
+                    meter = pyln.Meter(sample_rate, filter_class="DeMan")
+                    block_frames = max(sample_rate, sample_rate * 10)
+
+                    def decoded_blocks():
+                        remaining = frames
+                        while remaining:
+                            amount = min(remaining, block_frames)
+                            yield stream.read(amount, dtype="float32", always_2d=True)
+                            remaining -= amount
+
+                    value = _integrated_loudness_from_blocks(
+                        file_path, info, meter, blocks=decoded_blocks()
+                    )
+                coverage = frames / sample_rate if sample_rate > 0 else 0.0
+                full_duration = _get_file_duration(file_path)
+                status = (
+                    "complete" if full_duration - coverage <= 1.0 / sample_rate
+                    else "partial"
+                )
+                if not np.isfinite(value) or value >= 0.0 or value < -70.0:
+                    return 0.0, "invalid", coverage, channels, sample_rate
+                return round(value, 2), status, coverage, channels, sample_rate
+            except Exception as error:
+                logger.debug("Gemeinsamer Audio-Reader fuer LUFS nicht verfügbar; SoundFile-Fallback: %s", error)
+
         info = sf.info(file_path)
         sample_rate = int(info.samplerate)
         channels = int(info.channels)
@@ -910,7 +950,7 @@ def calculate_file_lufs(file_path: str) -> tuple[float, str, float, int, int]:
         return 0.0, "error", 0.0, 0, 0
 
 
-def _integrated_loudness_from_blocks(file_path: str, info, meter) -> float:
+def _integrated_loudness_from_blocks(file_path: str, info, meter, *, blocks=None) -> float:
     """Berechnet BS.1770-Gating mit begrenztem Decode-Speicher.
 
     Die Filterzustände laufen über Chunk-Grenzen weiter. Für das Gating bleiben
@@ -954,12 +994,10 @@ def _integrated_loudness_from_blocks(file_path: str, info, meter) -> float:
     read_frames = 0
     stream_block_frames = max(block_frames, int(sample_rate * 10.0))
 
-    for chunk in sf.blocks(
-        file_path,
-        blocksize=stream_block_frames,
-        dtype="float32",
-        always_2d=True,
-    ):
+    source_blocks = blocks if blocks is not None else sf.blocks(
+        file_path, blocksize=stream_block_frames, dtype="float32", always_2d=True
+    )
+    for chunk in source_blocks:
         filtered = np.asarray(chunk, dtype=np.float64)
         for stage_index, stage in enumerate(filter_stages):
             for channel in range(channels):
@@ -1012,7 +1050,17 @@ def _integrated_loudness_from_blocks(file_path: str, info, meter) -> float:
 
 
 def _get_file_duration(file_path: str) -> float:
-    """Liest die Dauer ohne Audiodaten zu dekodieren, mit Librosa-Fallback."""
+    """Liest MP3-Dauer vom gemeinsamen Reader, sonst Container-Metadaten."""
+    suffix = os.path.splitext(file_path)[1].lower()
+    if suffix == ".mp3":
+        try:
+            from .ai_models.native_audio_reader import NativeAudioStream
+            with NativeAudioStream(file_path) as source:
+                duration = len(source) / source.samplerate
+            if math.isfinite(duration) and duration > 0:
+                return float(duration)
+        except Exception as error:
+            logger.debug(f"Gemeinsamer Reader lieferte keine Dateidauer: {error}")
     try:
         info = sf.info(file_path)
         if info.samplerate > 0:
@@ -1020,6 +1068,43 @@ def _get_file_duration(file_path: str) -> float:
     except (OSError, RuntimeError, ValueError) as error:
         logger.debug(f"SoundFile-Dauer nicht verfügbar: {error}")
     return float(librosa.get_duration(path=file_path))
+
+
+def _load_analysis_audio(
+    file_path: str,
+    *,
+    duration: float,
+    offset: float = 0.0,
+    sr: int | None = 22050,
+    res_type: str = "soxr_hq",
+) -> tuple[np.ndarray, int]:
+    """Lädt unterstützte Formate ausschließlich über den gemeinsamen Reader."""
+    suffix = os.path.splitext(file_path)[1].lower()
+    from .ai_models.native_audio_reader import MAX_SECONDS, NativeAudioStream
+
+    if suffix not in SUPPORTED_AUDIO_EXTENSIONS:
+        return librosa.load(
+            file_path, sr=sr, mono=True, offset=offset, duration=duration,
+            res_type=res_type,
+        )
+    if (offset < 0 or duration <= 0 or offset + duration > MAX_SECONDS):
+        raise ValueError("Analysefenster außerhalb des gemeinsamen Readerlimits")
+
+    with NativeAudioStream(file_path, duration=duration, offset=offset) as stream:
+        audio = stream.read(stream.frames, dtype="float32", always_2d=True)
+        source_rate = stream.samplerate
+    if audio.ndim != 2 or not 1 <= audio.shape[1] <= 2 or not len(audio):
+        raise ValueError("Audio-Reader lieferte kein gueltiges Analysefenster")
+    mono = audio[:, 0] if audio.shape[1] == 1 else np.mean(audio, axis=1, dtype=np.float32)
+    target_rate = 22050 if sr is None else int(sr)
+    if target_rate <= 0:
+        target_rate = 22050
+    if source_rate != target_rate:
+        mono = librosa.resample(
+            mono, orig_sr=source_rate, target_sr=target_rate, res_type=res_type
+        )
+    expected_frames = int(round(duration * target_rate))
+    return np.ascontiguousarray(mono[:expected_frames], dtype=np.float32), target_rate
 
 
 def calculate_energy(y: np.ndarray) -> int:
@@ -1816,8 +1901,8 @@ def _bound_cue_scores(phrases, source_signature, binding, windows):
 
 def _kandidaten_berechnen(
     file_path: str, *, pfad: str, bpm: float, duration: float, first_downbeat: float,
-    downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
-    anchor_grid_usable: bool,
+    downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float | None,
+    anchor_grid_usable: bool, phrase_phase_usable: bool, pssi_grid_usable: bool,
     phrase_unit: int, sections: list, phrases: list, cues: list,
     analyzer_in: float, analyzer_out: float, outro_covered: bool, cue_scores: dict | None = None,
     native_phrases: list[dict] | None = None,
@@ -1825,17 +1910,22 @@ def _kandidaten_berechnen(
     """Mix-Kandidaten beider Seiten berechnen; Fehler kippen die Analyse nie.
     `pfad` ("fast"/"voll") erscheint im Log, damit tools/kandidaten_messen.py die
     Laufzeit je Analysepfad trennen kann."""
-    if not anchor_grid_usable:
+    # Ein stabiles Beatgrid allein belegt keine freigegebene Takt-/Phrasenphase.
+    native_grid_available = bool(native_phrases) and not phrases
+    if (not anchor_grid_usable or phrase_anchor is None
+            or not phrase_phase_usable):
         return [], []
+    candidate_phrases = phrases if pssi_grid_usable else []
     t0 = time.perf_counter()
     try:
         mix_in, mix_out = build_track_candidates(
             file_path, bpm=bpm, duration=duration, first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence, phrase_confidence=phrase_confidence,
             phrase_anchor=phrase_anchor, phrase_unit=phrase_unit, sections=sections,
-            phrases=phrases, cues=cues, analyzer_in=analyzer_in, analyzer_out=analyzer_out,
+            phrases=candidate_phrases, cues=cues, analyzer_in=analyzer_in, analyzer_out=analyzer_out,
             outro_covered=outro_covered, cue_scores=cue_scores,
             native_phrases=native_phrases,
+            native_grid_verified=native_grid_available and phrase_phase_usable,
         )
     except Exception as e:
         logger.warning(f"Kandidaten [{pfad}] fehlgeschlagen: {e}")
@@ -1916,11 +2006,8 @@ def analyze_structure_windows(
 
         tail_start = max(head_duration, duration - LIBROSA_TAIL_DURATION)
         try:
-            tail_audio, _ = librosa.load(
-                file_path,
-                sr=sr,
-                mono=True,
-                offset=tail_start,
+            tail_audio, _ = _load_analysis_audio(
+                file_path, sr=sr, offset=tail_start,
                 duration=max(0.0, duration - tail_start),
             )
         except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as error:
@@ -2340,6 +2427,8 @@ def _persist_analysis_result(cache_key: str | None, track: Track) -> bool:
 def _reference_grid_attempt(file_path, duration, bpm, y, sr, grid, reference_bpm,
                             reference_path_match="unknown"):
     """Originalreferenz vor einer möglichen Tempoänderung unverfälscht prüfen."""
+    if not isinstance(grid, (list, tuple)) or not grid:
+        return None
     # Rekordbox verwendet 0 für ein fehlendes Tempo. Das Grid bleibt prüfbar,
     # die Diagnose darf daraus aber kein gemessenes positives Tempo machen.
     if (type(reference_bpm) not in (int, float)
@@ -2640,9 +2729,9 @@ def _confirm_rekordbox_bar_rotation(
                 audio_start = first / rate
             else:
                 rate = 44100
-                audio, loaded_rate = librosa.load(
-                    file_path, sr=rate, mono=True, offset=start,
-                    duration=width, res_type="soxr_hq",
+                audio, loaded_rate = _load_analysis_audio(
+                    file_path, sr=rate, offset=start, duration=width,
+                    res_type="soxr_hq",
                 )
                 if loaded_rate != rate:
                     raise ValueError("source_rate")
@@ -2840,26 +2929,88 @@ def _resolve_track_tempo(file_path, duration, bpm, y, sr, grid, windows, *, refe
         return baseline_result('resolver_error', transient_result=True)
 
 
+def _classify_bar_position_status(source, confidence, native_accepted, usage_blocked,
+                                  comparison=None):
+    """Takt-1 nur freigeben, wenn das RB-Grid nicht widersprochen bekommt."""
+    if usage_blocked:
+        return "blocked"
+    if source == "rekordbox" and confidence == 1.0:
+        if isinstance(comparison, dict) and comparison.get("status") == "aligned":
+            return "reference_verified"
+        return "reference_candidate"
+    if confidence >= DOWNBEAT_RELIABLE_MIN:
+        return "audio_estimate"
+    if native_accepted:
+        return "native_candidate"
+    return "unknown"
+
+
+def _phrase_phase_usable(source, status, usage_blocked, grid_usable):
+    """Gemeinsames Gate: Beatgrid-Stabilität allein gibt keine Taktphase frei."""
+    return bool(
+        grid_usable
+        and not usage_blocked
+        and status not in {
+            "reference_candidate", "native_candidate", "blocked", "unknown",
+        }
+        and not (source == "rekordbox" and status != "reference_verified")
+    )
+
+
 def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
                           beat_windows, *, reference_bpm=None, reference_attempt=None,
                           phrase_unit=None, reference_path_match="unknown", native_context=None):
-    """Nur audio-bestätigte Modellphasen übernehmen; Quellen getrennt halten."""
+    """Importiertes Grid bevorzugen; bestätigte native Analyse als Kandidat nutzen."""
     if native_context is not None and native_context.get('accepted'):
         native = native_context['analysis']
         if bpm != native['bpm']:
             raise ValueError('Native beat tempo changed before anchor adoption')
-        from .ai_models.native_beat_alignment import active_anchor
-        anchor = active_anchor(native)
-        corrected = 'audio_alignment' in native
-        # Native Taktpositionen bleiben unverändert. Konfidenz1 bezeichnet hier
-        # die übernommene native Quelle; musikalische Abnahme bleibt separat false.
-        decision = dict(source='audio', method='native_rekordbox_audio_offset' if corrected else 'native_rekordbox', anchor_s=anchor,
-            confidence=1., reference=None,
-            bar_position_comparison=_unknown_bar_position_comparison(),
-            neural=dict(reason='native_offset_adopted' if corrected else 'native_adopted', transient=False, windows=[], candidate_anchor_s=anchor))
-        return (anchor, 1., 'audio', native_context['validation'],
-                dict(reason='native_verified', stage='reference'),
-                native_context['diagnostics'], decision, None)
+        # Ein importiertes Rekordbox-Grid hat Vorrang, wenn es am Quellaudio
+        # bestätigt wird. Der native Audioanker bleibt Fallback bei fehlender
+        # oder nicht bestätigter Referenz.
+        reference = reference_attempt
+        if reference is None:
+            reference = _reference_grid_attempt(file_path, duration, bpm, y, sr,
+                rekordbox_grid, reference_bpm, reference_path_match)
+        if reference and reference['measurement']['grid']['status'] == 'verified':
+            native_context = None
+            reference_attempt = reference
+        elif (reference
+                and reference['measurement']['grid'].get('status') == 'mismatch'
+                and reference['measurement']['grid'].get('phase_pattern') == 'consistent_offset'
+                and beat_windows):
+            # Den belegten Konstantversatz nicht durch den nativen Fallback
+            # ueberspringen: unten folgen der phasenbereinigte Modellvergleich
+            # und die disjunkten Audio-/Gesamtgrid-Gates.
+            native_context = None
+            reference_attempt = reference
+        else:
+            # Die native Analyse ist am Quellaudio auf getrennten Fenstern
+            # bestätigt. Nutze ihre eigene Takt-Eins als Rekordbox-Kandidat;
+            # sie bleibt als native_candidate gekennzeichnet und wird damit
+            # nicht als unabhängig geprüfte musikalische Wahrheit ausgegeben.
+            from .ai_models.native_beat_alignment import active_anchor
+            anchor = active_anchor(native)
+            validation = native_context['validation']
+            details = native_context.get('diagnostics') or {}
+            diagnostic = details.get('downbeat') or dict(
+                reason='external_alignment', stage='external_alignment',
+                beats_detected=0, beats_used=0,
+            )
+            aligned = 'audio_alignment' in native
+            method = ('native_rekordbox_audio_offset' if aligned
+                      else 'native_rekordbox')
+            decision = dict(
+                source='audio', method=method, anchor_s=anchor, confidence=0.,
+                reference=reference,
+                bar_position_comparison=_unknown_bar_position_comparison(),
+                neural=dict(
+                    reason='native_offset_adopted' if aligned else 'native_adopted',
+                    transient=False, windows=[], candidate_anchor_s=anchor,
+                ),
+            )
+            return (anchor, 0., 'audio', validation, diagnostic, details,
+                    decision, None)
     reference = reference_attempt
     if reference is None:
         reference = _reference_grid_attempt(file_path, duration, bpm, y, sr,
@@ -3050,8 +3201,10 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
                         audio_start = first / rate
                     else:
                         rate = 44100
-                        audio, loaded_rate = librosa.load(file_path, sr=rate, mono=True,
-                            offset=start, duration=width, res_type='soxr_hq')
+                        audio, loaded_rate = _load_analysis_audio(
+                            file_path, sr=rate, offset=start, duration=width,
+                            res_type='soxr_hq',
+                        )
                         if loaded_rate != rate:
                             raise ValueError('source_rate')
                         audio = np.asarray(audio)
@@ -3063,7 +3216,8 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
                           for e in decoder['beats']]
                 local = {}
                 local_anchor, local_confidence = estimate_first_downbeat(audio, rate, bpm,
-                    external_beats=events, diagnostics=local, _allow_metric_retry=False)
+                    external_beats=events, diagnostics=local, _allow_metric_retry=False,
+                    _allow_external_conflict_candidate=True)
                 record['downbeat'] = local
                 if local.get('reason') == 'estimationerror':
                     neural['transient'] = True
@@ -3188,11 +3342,24 @@ def _prepare_native_beats(file_path, duration, y, sr):
     """Native Gesamtanalyse vor alten Modellfenstern; Audio-Synchronsperre bleibt."""
     from .ai_models import native_track_beats
     if not native_track_beats.enabled():
-        return dict(analysis=dict(status='disabled', reason='disabled'), accepted=False, transient=False)
+        return dict(analysis=dict(status='disabled', reason='disabled'), accepted=False,
+                    transient=False, decision=dict(status='disabled', reason='disabled'))
+    # Der Native-Reader und Snapshotvertrag begrenzen lange Quellen auf zwei
+    # Stunden; oberhalb davon früh zum bestehenden HPG-Pfad zurückfallen.
+    from .ai_models.native_beat_selection import MAX_NATIVE_BEAT_SECONDS
+    if duration < 1.0 or duration > MAX_NATIVE_BEAT_SECONDS:
+        return dict(analysis=dict(status='unavailable', reason='unsupported_native_duration'),
+                    accepted=False, transient=False,
+                    decision=dict(status='unavailable', reason='unsupported_duration'))
     with cue_service.session() as client:
         native = native_track_beats.analyze(file_path, transport=getattr(client, 'native_beats', None))
     context = dict(analysis=native, accepted=False,
-                   transient=native.get('status') == 'unavailable' and native.get('reason') != 'unsupported_source_format')
+                   transient=native.get('status') == 'unavailable' and native.get('reason') != 'unsupported_source_format',
+                   decision=dict(status=(native.get('status') if native.get('status') in
+                       ('disabled', 'unavailable') else 'rejected'),
+                       reason=('native_unavailable' if native.get('status') == 'unavailable'
+                               else 'disabled' if native.get('status') == 'disabled'
+                               else 'grid_unverified')))
     if native.get('status') != 'ok':
         return context
     native_track_beats.validate_snapshot(native, duration=duration)
@@ -3203,6 +3370,7 @@ def _prepare_native_beats(file_path, duration, y, sr):
            for index, row in enumerate(native['grid'])):
         # HPGs aktueller Renderer verwendet ein konstantes Raster. Ein natives
         # variables Grid bleibt erhalten, wird aber nicht still begradigt.
+        context['decision']['reason'] = 'variable_grid_unsupported'
         return context
     from .ai_models.native_beat_alignment import single_window_evidence_plan
     evidence_plan = single_window_evidence_plan(native, duration, _BEATGRID_WINDOW_SECONDS)
@@ -3213,12 +3381,15 @@ def _prepare_native_beats(file_path, duration, y, sr):
         **({'window_starts': evidence_plan[0]} if evidence_plan else {}),
         grid_points=[dict(time=row['pos']/44100, beat=row['numBar']) for row in native['grid']])
     context.update(accepted=validation.status == 'verified', validation=validation, diagnostics=details)
+    if validation.status == 'verified':
+        context['decision'] = dict(status='accepted', reason='verified')
     if (validation.status == 'mismatch' and validation.phase_pattern == 'consistent_offset'
             and validation.phase_center_ms is not None):
         from dataclasses import asdict
         from .ai_models.native_beat_alignment import validate_alignment, stable_model_window
         shift = validation.phase_center_ms / 1000.
         if not EXACT_BEAT_SYNC_TOLERANCE_SECONDS < abs(shift) < period / 4:
+            context['decision'] = dict(status='rejected', reason='offset_out_of_range')
             return context
         records = [asdict(row) for row in validation.window_diagnostics]
         span = _BEATGRID_WINDOW_SECONDS
@@ -3227,12 +3398,16 @@ def _prepare_native_beats(file_path, duration, y, sr):
             [dict(start_s=r['offset_seconds'], duration_s=r['duration_seconds']) for r in records],
             eligible=lambda start, width: stable_model_window(native, start, width))
         if len(starts) != BEATGRID_MIN_WINDOWS:
+            context['decision'] = dict(status='rejected', reason='offset_confirmation_windows_missing')
             return context
         windows = []
         try:
             for start in starts:
-                audio, loaded_sr = librosa.load(file_path, sr=sr, mono=True, offset=start, duration=span)
+                audio, loaded_sr = _load_analysis_audio(
+                    file_path, sr=sr, offset=start, duration=span
+                )
                 if loaded_sr != sr:
+                    context['decision'] = dict(status='rejected', reason='offset_audio_decode_failed')
                     return context
                 windows.append((start, audio))
             confirmation = validate_beatgrid_windows(windows, sr, native['bpm'],
@@ -3242,12 +3417,15 @@ def _prepare_native_beats(file_path, duration, y, sr):
             alignment = dict(offset_seconds=shift, calibration=records,
                 confirmation=[asdict(r) for r in confirmation.window_diagnostics])
             if confirmation.status != 'verified':
+                context['decision'] = dict(status='rejected', reason='offset_audio_confirmation_failed')
                 return context
             validate_alignment(native, alignment)
         except (OSError, RuntimeError, ValueError, sf.LibsndfileError):
+            context['decision'] = dict(status='rejected', reason='offset_audio_decode_failed')
             return context
         native['audio_alignment'] = alignment
         context.update(accepted=True, validation=confirmation)
+        context['decision'] = dict(status='accepted', reason='audio_offset_confirmed')
     return context
 
 
@@ -3284,8 +3462,10 @@ def _collect_beat_windows(
                 audio = np.asarray(head_audio)[sample_start:sample_start+count]
                 sample_rate = 44100
             else:
-                audio, sample_rate = librosa.load(file_path, sr=44100, mono=True,
-                    offset=offset, duration=requested_duration, res_type='soxr_hq')
+                audio, sample_rate = _load_analysis_audio(
+                    file_path, sr=44100, offset=offset,
+                    duration=requested_duration, res_type='soxr_hq',
+                )
                 audio = np.asarray(audio)[:count]
             if (sample_rate != 44100 or audio.ndim != 1 or audio.dtype.kind != 'f'
                     or len(audio) < count - 1 or not np.isfinite(audio).all()):
@@ -3399,6 +3579,23 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
     if cached_track:
         cached_mode = getattr(cached_track, "analysis_mode", None)
         if cached_mode in VALID_ANALYSIS_MODES:
+            retry_features = any(
+                (snapshot := getattr(cached_track, field, {})).get('reason') == 'stale_feature_producer'
+                or snapshot.get('status') == 'unavailable'
+                for field in ('stem_analysis', 'embedding_analysis')
+            )
+            if retry_features:
+                # Fehlgeschlagene/veraltete Zusatzmerkmale gezielt erneuern.
+                # Die erfolgreiche Basisanalyse bleibt dabei Cachetreffer.
+                try:
+                    from .ai_models.deep_features import attach as attach_deep_features
+                    attach_deep_features(cached_track)
+                    if not cache_track(cache_key, cached_track):
+                        logger.warning("Zusatzmerkmale nicht im Cache aktualisiert: %s",
+                                       os.path.basename(file_path))
+                except Exception as error:
+                    logger.warning("Veraltete Zusatzmerkmale nicht erneuert: %s",
+                                   type(error).__name__)
             cached_track.analysis_origin = "cache"
             logger.debug(f"Cache-Hit: {os.path.basename(file_path)}")
             return cached_track
@@ -3428,7 +3625,9 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         # For duration and some missing data, we still need librosa (quick load only)
         # K2 Audit-Fix: Dauer begrenzen — BPM/Key kommt aus Rekordbox, nur Energy/Genre noetig
         try:
-            y, sr = librosa.load(file_path, duration=LIBROSA_FAST_PATH_DURATION)
+            y, sr = _load_analysis_audio(
+                file_path, duration=LIBROSA_FAST_PATH_DURATION
+            )
             # Fensterbreite EINMAL je Pfad. Stand sie an mehreren Stellen,
             # konnte `energy` gegen ein anderes Fenster laufen als die
             # uebrigen sieben Merkmale, ohne dass ein Test das sieht.
@@ -3494,14 +3693,22 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
             anchor_decision["neural"]["transient"] |= tempo_transient or native_context.get('transient', False)
             phrase_usage_blocked = bar_position_usage_blocked(anchor_decision)
+            bar_position_status = _classify_bar_position_status(
+                beatgrid_source, downbeat_confidence, native_context['accepted'],
+                phrase_usage_blocked, anchor_decision.get("bar_position_comparison"))
             # Das prueft stabile Beatphase, nicht unabhaengige Takt-1-Genauigkeit.
             anchor_grid_usable = (
-                downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
-                and beatgrid_validation.status == "verified"
+                beatgrid_validation.status == "verified"
+                and (downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
+                     or native_context['accepted'])
+            )
+            phrase_phase_usable = _phrase_phase_usable(
+                beatgrid_source, bar_position_status, phrase_usage_blocked,
+                anchor_grid_usable,
             )
             phrases = (
                 rekordbox_importer.get_phrases(file_path, duration=file_duration)
-                if not phrase_usage_blocked
+                if phrase_phase_usable
                 and beatgrid_source == "rekordbox"
                 and beatgrid_validation.status == "verified"
                 and hasattr(rekordbox_importer, "get_phrases")
@@ -3542,9 +3749,12 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 rekordbox_data.camelot_code, ('', ''))
             native_phrase_analysis = analyze_track_phrases(
                 file_path, bpm=bpm, duration=file_duration, first_downbeat=first_downbeat,
-                grid_usable=anchor_grid_usable, usage_blocked=phrase_usage_blocked,
+                grid_usable=anchor_grid_usable and phrase_phase_usable,
+                usage_blocked=phrase_usage_blocked,
                 imported_phrases=phrases, reference_grid=rekordbox_grid,
-                grid_source=beatgrid_source, key_note=native_key_note, key_mode=native_key_mode)
+                grid_source=beatgrid_source,
+                native_beat_analysis=(native_context['analysis'] if native_context['accepted'] else None),
+                key_note=native_key_note, key_mode=native_key_mode)
             # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
             (
                 structure, analysis_coverage, outro_covered,
@@ -3561,8 +3771,10 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 phrase_usage_blocked=phrase_usage_blocked,
                 feature_cache=feature_cache,
                 cue_candidates=phrases,
-                cue_verified_grid=(not phrase_usage_blocked and beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
-                reanalyze_cue_verified_grid=(beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
+                cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                   and beatgrid_validation.status == "verified"),
+                reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                             and beatgrid_validation.status == "verified"),
                 cue_source_signature=cue_source_signature,
                 native_phrase_analysis=native_phrase_analysis,
             )
@@ -3586,7 +3798,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
             # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
             # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-            if phrase_usage_blocked:
+            if not phrase_phase_usable:
                 mix_in_point = mix_out_point = MIX_POINT_UNSET
                 mix_in_bars = mix_out_bars = 0
             elif section_dicts:
@@ -3615,7 +3827,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             # Gerichtete manuelle Cues behalten ihre Prioritaet, muessen aber
             # denselben quantisierten Intro-/Outro-Vertrag wie Analyzerpunkte
             # erfuellen. Der gemeinsame Helfer wird auch im Vollpfad benutzt.
-            if not phrase_usage_blocked:
+            if phrase_phase_usable:
                 mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
                     mix_in_point,
                     mix_out_point,
@@ -3777,6 +3989,9 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                     phrase_confidence=phrase_confidence,
                     phrase_anchor=phrase_anchor,
                     anchor_grid_usable=anchor_grid_usable,
+                    phrase_phase_usable=phrase_phase_usable,
+                    pssi_grid_usable=(bar_position_status == "reference_verified"
+                                      and beatgrid_validation.status == "verified"),
                     phrase_unit=structure.phrase_unit, sections=section_dicts,
                     phrases=phrases, cues=cue_points,
                     native_phrases=native_phrase_analysis.get('phrases', []),
@@ -3834,6 +4049,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            bar_position_status=bar_position_status,
             beatgrid_source=beatgrid_source,
             beatgrid_status=beatgrid_validation.status,
             beatgrid_windows_checked=beatgrid_validation.windows_checked,
@@ -3853,6 +4069,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                     ranking_margin=structure.phrase_unit_margin,
                 ),
                 tempo_diagnostic=tempo_diagnostic,
+                native_grid_diagnostic=native_context.get('decision'),
             ),
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
@@ -3886,7 +4103,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         # sonst liefert der mtime-basierte Cache die erfundenen Default-Werte
         # (energy=50, mix_in=0.0) fuer immer zurueck, ohne sichtbaren Fehler.
         if cache_policy == "reuse":
-            if not analysis_degraded and not deep_features.transient_failure(track) and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
+            if not analysis_degraded and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
                 if not _persist_analysis_result(cache_key, track):
                     return None
             else:
@@ -3911,7 +4128,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         # K2 Audit-Fix: Safety-Net gegen extrem lange Dateien (>10 Min)
         # Echte Datei-Dauer zuerst bestimmen (sehr schnell), dann nur max. 10 Min laden
         duration = file_duration
-        y, sr = librosa.load(file_path, duration=LIBROSA_MAX_DURATION)
+        y, sr = _load_analysis_audio(file_path, duration=LIBROSA_MAX_DURATION)
         # Siehe Fast-Path: Fensterbreite einmal je Pfad.
         fenster_samples = int(FEATURE_WINDOW_DURATION * sr)
         feature_cache = FeatureCache(y, sr)
@@ -4097,14 +4314,22 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
         anchor_decision["neural"]["transient"] |= tempo_transient or native_context.get('transient', False)
         phrase_usage_blocked = bar_position_usage_blocked(anchor_decision)
+        bar_position_status = _classify_bar_position_status(
+            beatgrid_source, downbeat_confidence, native_context['accepted'],
+            phrase_usage_blocked, anchor_decision.get("bar_position_comparison"))
         # Das prueft stabile Beatphase, nicht unabhaengige Takt-1-Genauigkeit.
         anchor_grid_usable = (
-            downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
-            and beatgrid_validation.status == "verified"
+            beatgrid_validation.status == "verified"
+            and (downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
+                 or native_context['accepted'])
+        )
+        phrase_phase_usable = _phrase_phase_usable(
+            beatgrid_source, bar_position_status, phrase_usage_blocked,
+            anchor_grid_usable,
         )
         phrases = (
             rekordbox_importer.get_phrases(file_path, duration=file_duration)
-            if not phrase_usage_blocked
+                if phrase_phase_usable
             and rekordbox_data is not None
             and beatgrid_source == "rekordbox"
             and beatgrid_validation.status == "verified"
@@ -4150,9 +4375,12 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         from .ai_models.native_phrase_adapter import analyze_track_phrases
         native_phrase_analysis = analyze_track_phrases(
             file_path, bpm=bpm, duration=file_duration, first_downbeat=first_downbeat,
-            grid_usable=anchor_grid_usable, usage_blocked=phrase_usage_blocked,
+            grid_usable=anchor_grid_usable and phrase_phase_usable,
+            usage_blocked=phrase_usage_blocked,
             imported_phrases=phrases, reference_grid=rekordbox_grid,
-            grid_source=beatgrid_source, key_note=key_note, key_mode=key_mode)
+            grid_source=beatgrid_source,
+            native_beat_analysis=(native_context['analysis'] if native_context['accepted'] else None),
+            key_note=key_note, key_mode=key_mode)
         # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
         (
             structure, analysis_coverage, outro_covered,
@@ -4169,8 +4397,10 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             phrase_usage_blocked=phrase_usage_blocked,
             feature_cache=feature_cache,
             cue_candidates=phrases,
-            cue_verified_grid=(not phrase_usage_blocked and beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
-            reanalyze_cue_verified_grid=(beatgrid_source == "rekordbox" and beatgrid_validation.status == "verified"),
+            cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                               and beatgrid_validation.status == "verified"),
+            reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                         and beatgrid_validation.status == "verified"),
             cue_source_signature=cue_source_signature,
             native_phrase_analysis=native_phrase_analysis,
         )
@@ -4193,7 +4423,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
         # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
         # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-        if phrase_usage_blocked:
+        if not phrase_phase_usable:
             mix_in_point = mix_out_point = MIX_POINT_UNSET
             mix_in_bars = mix_out_bars = 0
         elif section_dicts:
@@ -4219,7 +4449,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 )
             )
 
-        if not phrase_usage_blocked:
+        if phrase_phase_usable:
             mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
                 mix_in_point,
                 mix_out_point,
@@ -4335,6 +4565,9 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             phrase_confidence=phrase_confidence,
             phrase_anchor=phrase_anchor,
             anchor_grid_usable=anchor_grid_usable,
+            phrase_phase_usable=phrase_phase_usable,
+            pssi_grid_usable=(bar_position_status == "reference_verified"
+                              and beatgrid_validation.status == "verified"),
             phrase_unit=structure.phrase_unit, sections=section_dicts,
             phrases=phrases, cues=cue_points,
             native_phrases=native_phrase_analysis.get('phrases', []),
@@ -4392,6 +4625,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             mfcc_fingerprint=mfcc_fingerprint,
             first_downbeat=first_downbeat,
             downbeat_confidence=downbeat_confidence,
+            bar_position_status=bar_position_status,
             beatgrid_source=beatgrid_source,
             beatgrid_status=beatgrid_validation.status,
             beatgrid_windows_checked=beatgrid_validation.windows_checked,
@@ -4411,6 +4645,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                     ranking_margin=structure.phrase_unit_margin,
                 ),
                 tempo_diagnostic=tempo_diagnostic,
+                native_grid_diagnostic=native_context.get('decision'),
             ),
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
@@ -4437,7 +4672,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         from .ai_models import deep_features
         deep_features.attach(track)
         if cache_policy == "reuse":
-            if not deep_features.transient_failure(track) and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
+            if not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
                 if not _persist_analysis_result(cache_key, track):
                     return None
         return track

@@ -18,7 +18,12 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import List, Optional
 from ..downbeat import REFERENCE_BEATGRID_CONFIDENCE
-from ..models import QUANTIZE_TOLERANCE_SEC, Track
+from ..config import METER
+from ..mix_candidates import quantize_to_points
+from ..models import (
+    QUANTIZE_TOLERANCE_SEC, Track, effective_track_phrase_unit,
+    quantize_to_grid,
+)
 from .base_exporter import BaseExporter, ExportReport
 
 logger = logging.getLogger(__name__)
@@ -432,6 +437,7 @@ class RekordboxXMLExporter(BaseExporter):
                 and (getattr(track, "beatgrid_source", "unknown") == "rekordbox"
                      or has_verified_grid(track))
                 and getattr(track, "beatgrid_status", "unknown") == "verified"
+                and getattr(track, "reference_bar_position_verified", False)
                 and getattr(track, "downbeat_confidence", 0.0)
                 == REFERENCE_BEATGRID_CONFIDENCE
                 and math.isfinite(first_downbeat)
@@ -559,6 +565,44 @@ class RekordboxXMLExporter(BaseExporter):
             return False
         if not getattr(track, "outro_covered", False) or track.duration <= 0:
             return False
+        if not allow_partial:
+            mix_in = (
+                mix_in if mix_in is not None
+                else getattr(track, "mix_in_point", -1.0)
+            )
+            mix_out = (
+                mix_out if mix_out is not None
+                else getattr(track, "mix_out_point", -1.0)
+            )
+        anchor = track.phrase_anchor
+        pssi_grid = track.verified_pssi_phrase_grid
+        for side, value in (("in", mix_in), ("out", mix_out)):
+            if value is None:
+                continue
+            try:
+                point = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if not math.isfinite(point):
+                return False
+            if anchor is None and not pssi_grid:
+                return False
+            if pssi_grid:
+                aligned = quantize_to_points(
+                    point, track.phrase_grid,
+                    "ceil" if side == "in" else "floor",
+                )
+            else:
+                bpm = float(track.bpm)
+                if not math.isfinite(bpm) or bpm <= 0.0:
+                    return False
+                phrase_seconds = (60.0 / bpm) * METER * effective_track_phrase_unit(track)
+                aligned = quantize_to_grid(
+                    point, phrase_seconds, anchor,
+                    "ceil" if side == "in" else "floor",
+                )
+            if aligned is None or abs(float(aligned) - point) > QUANTIZE_TOLERANCE_SEC:
+                return False
         if allow_partial:
             values = [
                 float(value) for value in (mix_in, mix_out) if value is not None

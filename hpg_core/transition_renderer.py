@@ -22,11 +22,10 @@ import soundfile as sf
 from scipy.signal import butter, correlate, correlation_lags, sosfiltfilt
 import librosa
 
-from .config import MAX_TRANSITION_OVERLAP_SECONDS, METER
+from .config import MAX_TRANSITION_OVERLAP_SECONDS, METER, SUPPORTED_AUDIO_EXTENSIONS
 from .downbeat import (
     DOWNBEAT_RELIABLE_MIN,
     EXACT_BEAT_SYNC_TOLERANCE_SECONDS,
-    REFERENCE_BEATGRID_CONFIDENCE,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,26 +144,28 @@ class TransitionClipSpec:
             reference_grid = (
                 source == "rekordbox"
                 and status == "verified"
-                and confidence == REFERENCE_BEATGRID_CONFIDENCE
             )
             # Native Rekordbox-Taktzahlen kommen aus dem separaten Analyselauf,
             # nicht aus dem Datenbankimport. Herkunft und ggf. Audio-Zeitkorrektur
             # vollständig prüfen, bevor dieselben Taktzahlen zum Renderer gehen.
             from .ai_models.native_track_beats import has_verified_grid
             native_grid = has_verified_grid(track)
-            # Audio-Schaetzungen unterhalb 1.0 duerfen die gemessene Beatphase
-            # trotz eines Diagnose-Mismatch liefern. Confidence 1.0 ist dagegen
-            # dem Rekordbox-Referenzgrid vorbehalten und braucht dessen Status.
+            # Beatgrid-Herkunft und Bar-1-Status bleiben getrennt: ein
+            # technisch bestaetigtes Rekordbox-Grid erlaubt Beat-Sync; Takt-1
+            # wird nur mit explizitem reference_verified freigegeben.
             # Auch model_audio_rotation bleibt Audioherkunft: Sie kann den
             # Beatanker fuer Beat-Alignment liefern, belegt aber keine
             # unabhaengige musikalische Takt-1 und setzt bar_phase nicht frei.
             measured_audio = (
-                DOWNBEAT_RELIABLE_MIN <= confidence
-                < REFERENCE_BEATGRID_CONFIDENCE
+                source == "audio"
+                and status == "verified"
+                and confidence >= DOWNBEAT_RELIABLE_MIN
             )
             return (
                 reference_grid or native_grid or measured_audio,
-                (reference_grid or native_grid) and not getattr(track, "bar_position_usage_blocked", False),
+                ((reference_grid or native_grid)
+                 and getattr(track, "reference_bar_position_verified", False))
+                and not getattr(track, "bar_position_usage_blocked", False),
             )
 
         downbeat_a, bar_a = _phase_reliability(from_track)
@@ -881,45 +882,50 @@ def _load_segment(path: str, start_sec: float, duration_sec: float,
     """
     Laedt nur den benoetigten Abschnitt einer Audio-Datei.
 
-    soundfile unterstuetzt: WAV, FLAC, AIFF, OGG (nativ, schnell, offset-seeking).
-    MP3 wird von soundfile NICHT unterstuetzt → Fallback via librosa.load().
+    Unterstützte Formate verwenden den gemeinsamen Reader. Ein Readerfehler
+    wird weitergegeben, damit Analyse und Vorschau nicht still Decoder mischen.
 
     Gibt immer ein (frames, 2) float32 Array zurueck.
     Mono wird auf Stereo verdoppelt.
     """
     path = str(path)
-    audio = None
-
-    # Erster Versuch: soundfile (schnell, unterstuetzt offset-seeking)
-    try:
-        with sf.SoundFile(path) as f:
-            sr_file    = f.samplerate
-            start_frame = int(start_sec * sr_file)
-            num_frames  = int(duration_sec * sr_file)
-            # Seek jenseits Dateiende → leeres Array zurueckgeben (kein Fehler)
-            if start_frame >= f.frames:
-                # L5-Fix: hoerbar stiller Preview braucht eine sichtbare Ursache im Log
-                logger.warning(
-                    f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
-                    f"stilles Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
-                )
-                return np.zeros((0, 2), dtype=np.float32)
-            f.seek(max(0, start_frame))
-            audio = f.read(num_frames, dtype='float32', always_2d=True)
-            sr_loaded = sr_file
-    except (sf.LibsndfileError, RuntimeError):
-        # Fallback fuer MP3 und andere nicht-unterstuetzte Formate
+    from .ai_models.native_audio_reader import MAX_SECONDS, NativeAudioStream
+    if os.path.splitext(path)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS:
+        if (type(start_sec) not in (int, float) or type(duration_sec) not in (int, float)
+                or not math.isfinite(start_sec) or not math.isfinite(duration_sec)
+                or start_sec < 0 or duration_sec <= 0
+                or start_sec + duration_sec > MAX_SECONDS):
+            raise ValueError("Renderfenster außerhalb des gemeinsamen Readerlimits")
+        with NativeAudioStream(path, duration=duration_sec, offset=start_sec) as stream:
+            audio = stream.read(stream.frames, dtype='float32', always_2d=True)
+            sr_loaded = stream.samplerate
+    else:
+        # Erhaltener HPG-Pfad für nicht in der Anwendung unterstützte Endungen.
         try:
-            import librosa
-            y, sr_loaded = librosa.load(
-                path, sr=None, mono=False,
-                offset=start_sec, duration=duration_sec
-            )
-            if y.ndim == 1:
-                y = np.stack([y, y], axis=0)   # Mono → (2, frames)
-            audio = y.T.astype(np.float32)      # → (frames, 2)
-        except Exception as e:
-            raise RuntimeError(f"Konnte Datei nicht laden: {path!r} — {e}") from e
+            with sf.SoundFile(path) as f:
+                sr_file = f.samplerate
+                start_frame = int(start_sec * sr_file)
+                num_frames = int(duration_sec * sr_file)
+                if start_frame >= f.frames:
+                    logger.warning(
+                        f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
+                        f"stilles Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
+                    )
+                    return np.zeros((0, 2), dtype=np.float32)
+                f.seek(max(0, start_frame))
+                audio = f.read(num_frames, dtype='float32', always_2d=True)
+                sr_loaded = sr_file
+        except (sf.LibsndfileError, RuntimeError, OSError, ValueError):
+            try:
+                import librosa
+                y, sr_loaded = librosa.load(
+                    path, sr=None, mono=False, offset=start_sec, duration=duration_sec
+                )
+                if y.ndim == 1:
+                    y = np.stack([y, y], axis=0)
+                audio = y.T.astype(np.float32)
+            except Exception as e:
+                raise RuntimeError(f"Konnte Datei nicht laden: {path!r} — {e}") from e
 
     # Kanal-Normalisierung: immer (frames, 2)
     if audio.ndim == 1:
@@ -1250,16 +1256,16 @@ def _apply_eq_crossfade(
     _t = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)
     fo = np.cos(_t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
     fi = np.sin(_t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
+    t_type = str(config.transition_type).lower()
 
     # Audit-Fix 2026-07-21: sosfiltfilt verlangt Segmentlaenge > padlen (~30-60
     # Samples). Bei extrem kurzem Crossfade (< ~1.5ms) crasht der Filter mit
-    # "input vector x must be greater than padlen". Solche Winz-Crossfades sind
-    # ohnehin degeneriert -> sauberer linearer Crossfade ohne EQ-Filter.
+    # "input vector x must be greater than padlen". Filtertypen erhalten dann
+    # einen linearen Fallback; Cuttypen brauchen keinen Filter und bleiben als
+    # Cut verdrahtet, auch bei sehr kurzen Übergängen.
     min_frames = min(len(seg_a), len(seg_b))
-    if min_frames < 64:
+    if min_frames < 64 and t_type not in {"cold_cut", "drop_cut", "halftime_switch"}:
         return (seg_a * fo + seg_b * fi).astype(np.float32)
-
-    t_type = str(config.transition_type).lower()
 
     if t_type == "bass_swap":
         # Bass (Tief) und Hoehen separat faden (klassischer EQ-Bass-Swap)
@@ -1401,11 +1407,12 @@ def _apply_eq_crossfade(
             filtered_a = _apply_filter_ramp(seg_a, filtered_a, config.sr)
             mixed = filtered_a * fo + seg_b * fi
 
-    elif t_type == "cold_cut":
+    elif t_type in {"cold_cut", "halftime_switch"}:
         # Harter Cut in der Mitte — AUDIT-FIX R-06 (2026-07-24): mit 3ms
         # Mikro-Fade um die Schnittstelle gegen den sonst garantierten Klick
-        # (Amplitudensprung A->B = breitbandiger Impuls). Bleibt hoerbar ein
-        # harter Cut.
+        # (Amplitudensprung A->B = breitbandiger Impuls). Half/Double wird nach
+        # dem bereits angewendeten Tempo-Stretch hier als Taktwechsel geschnitten;
+        # ein Equal-Power-Blend würde die Kick überlagern.
         half = config.cf_frames // 2
         mixed = np.zeros_like(seg_a)
         mixed[:half] = seg_a[:half]

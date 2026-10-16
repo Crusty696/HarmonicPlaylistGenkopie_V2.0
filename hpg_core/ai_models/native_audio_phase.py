@@ -10,6 +10,8 @@ import numpy as np
 from scipy.signal import butter, sosfiltfilt
 from scipy.ndimage import uniform_filter1d
 
+from ..config import SUPPORTED_AUDIO_EXTENSIONS
+
 
 def _fold(audio, sr, period):
     envelope = np.abs(sosfiltfilt(butter(4, 300., fs=sr,
@@ -60,13 +62,23 @@ def supports_window(track, start, duration):
     """Nur lokal lesend; Wiederverwendung an aktuelle Quellidentität binden."""
     from .native_phrase_worker import _source_identity
     try:
+        bpm = track.bpm
+        anchor = track.first_downbeat
+        track_duration = track.duration
+        if (type(bpm) not in (int, float) or not math.isfinite(bpm) or bpm <= 0
+                or type(anchor) not in (int, float) or not math.isfinite(anchor) or anchor < 0
+                or type(start) not in (int, float) or not math.isfinite(start) or start < 0
+                or type(duration) not in (int, float) or not math.isfinite(duration)
+                or duration <= 0 or type(track_duration) not in (int, float)
+                or not math.isfinite(track_duration) or start + duration > track_duration):
+            return False
         path = Path(track.filePath).resolve(strict=True)
         identity = tuple(_source_identity(path))
         if identity != tuple(track.native_beat_analysis['source_identity']):
             return False
-        return _supports_window(str(path), identity, track.bpm,
-                                track.first_downbeat, start, duration)
-    except (OSError, ValueError, KeyError):
+        return _supports_window(str(path), identity, float(bpm),
+                                float(anchor), float(start), float(duration))
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
         return False
 
 
@@ -77,17 +89,33 @@ def _supports_window(path, identity, bpm, anchor, start, duration):
     import soundfile as sf
     from ..downbeat import EXACT_BEAT_SYNC_TOLERANCE_SECONDS, BEATGRID_MIN_FOLD_LOCK
     from .native_phrase_worker import _source_identity
+    if (not all(type(value) in (int, float) and math.isfinite(value)
+                for value in (bpm, anchor, start, duration))
+            or bpm <= 0 or anchor < 0 or start < 0 or duration <= 0):
+        return False
     period = 60./bpm
     try:
-        with sf.SoundFile(path) as source:
-            sr = source.samplerate
-            frames = round(duration*sr)
-            window = math.ceil(4*period*sr)
-            if start < 0 or frames < window:
-                return False
-            source.seek(round(start*sr))
-            audio = source.read(frames, dtype='float64', always_2d=True)
-        if len(audio) != frames:
+        if (Path(path).suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+                and start + duration <= 1200):
+            from .native_audio_reader import NativeAudioStream
+            # Dieses Kandidatengate läuft im App-Prozess; native Rekordbox-
+            # Decoder bleiben den isolierten Analyse-Kindprozessen vorbehalten.
+            with NativeAudioStream(path, duration=duration, offset=start,
+                                   use_rekordbox=False) as source:
+                sr = source.samplerate
+                frames = source.frames
+                audio = source.read(frames, dtype='float32', always_2d=True).astype(
+                    np.float64, copy=False)
+        else:
+            # Lange oder nicht freigegebene Formate bleiben beim lokalen Reader.
+            with sf.SoundFile(path) as source:
+                sr = source.samplerate
+                frames = round(duration*sr)
+                source.seek(round(start*sr))
+                audio = source.read(frames, dtype='float64', always_2d=True)
+        window = math.ceil(4*period*sr)
+        if (frames < window or audio.ndim != 2 or audio.shape[1] not in (1, 2)
+                or len(audio) != frames):
             return False
         starts = list(range(0, frames-window+1, window))
         if starts[-1] != frames-window:

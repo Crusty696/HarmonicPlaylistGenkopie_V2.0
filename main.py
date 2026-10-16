@@ -1,5 +1,6 @@
 import html as html_mod
 import csv
+import hashlib
 import importlib
 import json
 import logging
@@ -150,6 +151,7 @@ from PyQt6.QtCore import (
     QObject,
     QEvent,
     QProcess,
+    QStandardPaths,
 )
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt6.QtGui import (
@@ -1652,12 +1654,16 @@ class TransitionPreviewWidget(QWidget):
     Ist deaktiviert bis set_wav_path() aufgerufen wird.
     """
 
+    rating_requested = pyqtSignal(object, object)
+
     def __init__(self, index: int, transition, parent=None):
         super().__init__(parent)
         self._index = index
         self._tr = transition
         self._wav_path: str | None = None
+        self._audio_buffer = None
         self._error_msg: str | None = None
+        self._source_signature = None
         # M5-Fix: mit Qt-Parent erzeugen, damit Player/Output an der Widget-
         # Hierarchie haengen und bei deleteLater() mitzerstoert werden (sonst
         # haelt das offene Datei-Handle laenger als das Widget -> Windows-Lock).
@@ -1769,6 +1775,10 @@ class TransitionPreviewWidget(QWidget):
         )
         self._info_timeline_label.setStyleSheet("QLabel { font-size: 10px; color: #8b949e; font-style: italic; }")
         layout.addWidget(self._info_timeline_label)
+        self._rate_button = QPushButton("Übergang bewerten")
+        self._rate_button.setEnabled(False)
+        self._rate_button.clicked.connect(self._request_rating)
+        layout.addWidget(self._rate_button)
 
     def _connect_signals(self):
         self._play_btn.clicked.connect(self._toggle_play)
@@ -1783,6 +1793,7 @@ class TransitionPreviewWidget(QWidget):
         """Aufgerufen wenn TransitionRenderWorker clip_ready emittiert."""
         self.clear_error()
         self._wav_path = path
+        self._rate_button.setEnabled(True)
         self._player.setSource(QUrl.fromLocalFile(path))
         self._play_btn.setEnabled(True)
         self._slider.setEnabled(True)
@@ -1798,6 +1809,7 @@ class TransitionPreviewWidget(QWidget):
         self._audio_buffer = QBuffer(self)
         self._audio_buffer.setData(audio)
         self._audio_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        self._rate_button.setEnabled(True)
         self._player.setSourceDevice(self._audio_buffer, QUrl('memory:preview.wav'))
         self._play_btn.setEnabled(True)
         self._slider.setEnabled(True)
@@ -1818,6 +1830,8 @@ class TransitionPreviewWidget(QWidget):
         """
         self._error_msg = msg
         self._wav_path = None
+        self._source_signature = None
+        self._rate_button.setEnabled(False)
         self._play_btn.setEnabled(False)
         self._slider.setEnabled(False)
         self._slider.setValue(0)
@@ -1837,7 +1851,23 @@ class TransitionPreviewWidget(QWidget):
         self._time_label.setText("—")
         self._waveform.set_placeholder("Wellenform wird geladen …")
 
+    def _request_rating(self):
+        audio = bytes(self._audio_buffer.data()) if self._audio_buffer is not None else None
+        self.rating_requested.emit(self._tr, (self._wav_path, audio))
+
     def _toggle_play(self):
+        if self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            parent = self.parent()
+            signature_reader = getattr(parent, "_preview_source_signature", None)
+            current_signature = (signature_reader(self._index)
+                                 if callable(signature_reader) else None)
+            if (self._source_signature is None
+                    or current_signature != self._source_signature):
+                self.stop_and_reset()
+                self.set_error(
+                    "Trackquelle hat sich seit dem Rendern geändert; bitte erneut rendern."
+                )
+                return
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
             self._play_btn.setText("▶")
@@ -3511,7 +3541,7 @@ class LibraryPanel(QWidget):
         )
         self.info_label.setToolTip(
             "Waehle den Ordner mit deinen Audio-Dateien.\n"
-            "Unterstuetzte Formate: WAV, AIFF (.aif/.aiff), MP3, FLAC\n"
+            "Unterstuetzte Formate: WAV, AIFF, MP3, FLAC, MP4/M4A, AAC, OGG\n"
             "Unterordner werden automatisch durchsucht."
         )
         left_layout.addWidget(self.info_label)
@@ -3521,7 +3551,7 @@ class LibraryPanel(QWidget):
         self.select_folder_button.setObjectName("btn_secondary")
         self.select_folder_button.setToolTip(
             "Oeffnet einen Dialog zur Ordner-Auswahl "
-            "(WAV, AIFF .aif/.aiff, MP3, FLAC)"
+            "(WAV, AIFF, MP3, FLAC, MP4/M4A, AAC, OGG)"
         )
         left_layout.addWidget(self.select_folder_button)
 
@@ -4514,6 +4544,7 @@ class MixTipsPanel(QWidget):
     # Nutzerwahl: (Paarindex, laufstabiler Candidate-Key). Rang ist nur Anzeige.
     candidate_chosen = pyqtSignal(int, object)
     reserve_ready = pyqtSignal(object)
+    transition_rating_requested = pyqtSignal(object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4526,12 +4557,14 @@ class MixTipsPanel(QWidget):
         self._preview_transitions = {}
         self._generation_result = None
         self._ram_preview_cache = OrderedDict()
+        self._ram_preview_sources = {}
         self._preview_queue = deque(maxlen=8)
         self._preview_batch_active = False
         self._preview_batch_cancelled = False
         self._preview_batch_successes = 0
         self._preview_batch_failures = 0
         self._preview_cache = OrderedDict()
+        self._preview_cache_sources = {}
         self._preview_cache_limit = 8
         self._preview_temp_dirs: set[str] = set()
         self._active_preview_index = None
@@ -4918,6 +4951,9 @@ class MixTipsPanel(QWidget):
     def verwerfe_preview(self, index: int) -> None:
         """Gerenderte Vorschau eines Paars verwerfen (der Plan hat sich geaendert)."""
         path = self._preview_cache.pop(index, None)
+        self._preview_cache_sources.pop(index, None)
+        self._ram_preview_cache.pop(index, None)
+        self._ram_preview_sources.pop(index, None)
         if path:
             self._remove_preview_path(path)
         widget = self._preview_widgets.get(index)
@@ -4967,6 +5003,26 @@ class MixTipsPanel(QWidget):
             if index in self._card_layouts:
                 self._card_layouts[index].addWidget(button)
 
+    def _preview_source_signature(self, index: int):
+        """Gibt eine leichte Dateisignatur der beiden Preview-Quellen zurueck."""
+        transition = self._preview_transitions.get(index)
+        if transition is None:
+            return None
+        signature = []
+        for track in (getattr(transition, "from_track", None),
+                      getattr(transition, "to_track", None)):
+            source = getattr(track, "filePath", None)
+            if not isinstance(source, str) or not source:
+                return None
+            try:
+                stat = os.stat(source)
+            except OSError:
+                return None
+            signature.append((os.path.normcase(os.path.abspath(source)),
+                              getattr(stat, "st_dev", 0), getattr(stat, "st_ino", 0),
+                              stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        return tuple(signature)
+
     def _request_preview(self, index: int):
         if index not in self._preview_transitions:
             return
@@ -4981,6 +5037,7 @@ class MixTipsPanel(QWidget):
                 index, self._preview_transitions[index], self
             )
             self._preview_widgets[index] = widget
+            widget.rating_requested.connect(self.transition_rating_requested)
             self._insert_preview_widget(index, widget)
         else:
             # Retry nach Fehler: bestehendes Widget wiederverwenden und die
@@ -4993,14 +5050,37 @@ class MixTipsPanel(QWidget):
         if button:
             button.setEnabled(False)
             button.setText("Vorschau wird vorbereitet …")
-        if index in self._preview_cache:
+        source_signature = self._preview_source_signature(index)
+        if (index in self._preview_cache and os.path.isfile(self._preview_cache[index])
+                and source_signature is not None
+                and self._preview_cache_sources.get(index) == source_signature):
             path = self._preview_cache.pop(index)
             self._preview_cache[index] = path
-            self._on_clip_ready(index, path)
+            self._on_clip_ready(index, path, source_signature=source_signature)
             return
-        if index in self._ram_preview_cache:
-            self._show_ram_preview(index, *self._ram_preview_cache[index])
+        if index in self._preview_cache:
+            stale_path = self._preview_cache.pop(index)
+            self._preview_cache_sources.pop(index, None)
+            widget = self._preview_widgets.get(index)
+            if widget is not None:
+                try:
+                    widget.stop_and_reset()
+                except RuntimeError:
+                    pass
+            self._remove_preview_path(stale_path)
+        if index in self._ram_preview_cache and source_signature is not None and self._ram_preview_sources.get(index) == source_signature:
+            self._show_ram_preview(index, *self._ram_preview_cache[index],
+                                   source_signature=source_signature)
             return
+        stale_ram = self._ram_preview_cache.pop(index, None)
+        self._ram_preview_sources.pop(index, None)
+        if stale_ram is not None:
+            widget = self._preview_widgets.get(index)
+            if widget is not None:
+                try:
+                    widget.stop_and_reset()
+                except RuntimeError:
+                    pass
         # Cache-Treffer oben gehoeren nicht zu einem neuen Render-Batch.
         if not self._preview_batch_active:
             self._preview_batch_active = True
@@ -5019,11 +5099,15 @@ class MixTipsPanel(QWidget):
             return
         index = self._preview_queue.popleft()
         self._active_preview_index = index
+        source_signature = self._preview_source_signature(index)
         if self._generation_result is not None:
             from hpg_core.render_selection_worker import RenderSelectionWorker
             worker = RenderSelectionWorker(self._generation_result, index, self)
         else:
             worker = TransitionRenderWorker([self._preview_transitions[index]], self)
+        # Worker-Ergebnisse nur annehmen, solange die Audioquellen seit dem
+        # Start unveraendert sind.
+        worker.preview_source_signatures = {index: source_signature}
         self._render_workers.append(worker)
         self._render_worker = worker
         self.preview_state_changed.emit(True)
@@ -5080,9 +5164,19 @@ class MixTipsPanel(QWidget):
         is_current = worker is self._render_worker
         selection = getattr(worker, 'selection', None)
         reserve_payload = None
+        source_changed = False
+        source_index = None
         if is_current and not self._preview_batch_cancelled and selection is not None:
-            reserve_payload = (worker.base_result, selection, worker.peaks,
-                               worker.duration, tuple(self._preview_queue))
+            index = selection.boundary_index
+            expected = getattr(worker, 'preview_source_signatures', {}).get(index)
+            current = self._preview_source_signature(index)
+            if expected is not None and current == expected:
+                reserve_payload = (worker.base_result, selection, worker.peaks,
+                                   worker.duration, tuple(self._preview_queue), expected)
+            else:
+                source_changed = True
+                source_index = index
+                selection = None
         if is_current:
             self._render_worker = None
             self._active_preview_index = None
@@ -5101,6 +5195,23 @@ class MixTipsPanel(QWidget):
         ):
             self._remove_preview_dir(temp_dir)
         worker.deleteLater()
+        if source_changed and not self._preview_batch_cancelled:
+            stale_path = self._preview_cache.pop(source_index, None)
+            self._preview_cache_sources.pop(source_index, None)
+            self._ram_preview_cache.pop(source_index, None)
+            self._ram_preview_sources.pop(source_index, None)
+            stale_widget = self._preview_widgets.get(source_index)
+            if stale_widget is not None:
+                try:
+                    stale_widget.stop_and_reset()
+                except RuntimeError:
+                    self._preview_widgets.pop(source_index, None)
+            if stale_path:
+                self._remove_preview_path(stale_path)
+            self._on_clip_error(
+                source_index,
+                "Trackquelle hat sich während des Renderns geändert; bitte erneut rendern.",
+            )
         if reserve_payload is not None:
             self._preview_queue.clear()
             self._preview_batch_successes += 1
@@ -5171,21 +5282,30 @@ class MixTipsPanel(QWidget):
         for path in self._preview_cache.values():
             self._remove_preview_path(path)
         self._preview_cache.clear()
+        self._preview_cache_sources.clear()
         self._ram_preview_cache.clear()
+        self._ram_preview_sources.clear()
         for directory in list(self._preview_temp_dirs):
             self._remove_preview_dir(directory)
         self.preview_state_changed.emit(False)
 
-    def _show_ram_preview(self, index, audio, peaks, duration, spec):
+    def _show_ram_preview(self, index, audio, peaks, duration, spec,
+                          source_signature=None):
+        if source_signature is None:
+            source_signature = self._preview_source_signature(index)
         if index not in self._preview_widgets:
             widget = TransitionPreviewWidget(index, self._preview_transitions[index], self)
             self._preview_widgets[index] = widget
+            widget.rating_requested.connect(self.transition_rating_requested)
             self._insert_preview_widget(index, widget)
         self._preview_widgets[index].set_wav_bytes(audio, peaks, duration, spec)
+        self._preview_widgets[index]._source_signature = source_signature
         self._ram_preview_cache[index] = (audio, peaks, duration, spec)
+        self._ram_preview_sources[index] = source_signature
         from hpg_core.hearing_playback import MAX_PLAYBACK_BYTES
         while sum(len(value[0]) for value in self._ram_preview_cache.values()) > MAX_PLAYBACK_BYTES:
             old_index, _ = self._ram_preview_cache.popitem(last=False)
+            self._ram_preview_sources.pop(old_index, None)
             if old_index != index and old_index in self._preview_widgets:
                 self._preview_widgets[old_index].stop_and_reset()
         button = self._preview_buttons.get(index)
@@ -5194,7 +5314,7 @@ class MixTipsPanel(QWidget):
             button.setText('Vorschau geladen')
 
     def _on_clip_ready(
-        self, index: int, wav_path: str, source_worker=None
+        self, index: int, wav_path: str, source_worker=None, source_signature=None
     ):
         """Aufgerufen wenn ein Clip fertig gerendert ist."""
         if source_worker is not None and (
@@ -5203,11 +5323,23 @@ class MixTipsPanel(QWidget):
         ):
             self._remove_preview_path(wav_path)
             return
+        if source_worker is not None and hasattr(source_worker, "preview_source_signatures"):
+            expected = source_worker.preview_source_signatures.get(index)
+            if expected is None or self._preview_source_signature(index) != expected:
+                self._remove_preview_path(wav_path)
+                self._on_clip_error(
+                    index,
+                    "Trackquelle hat sich während des Renderns geändert; bitte erneut rendern.",
+                    source_worker,
+                )
+                return
         if source_worker is not None and self._preview_batch_active:
             self._preview_batch_successes += 1
         self._preview_cache[index] = wav_path
+        self._preview_cache_sources[index] = self._preview_source_signature(index)
         while len(self._preview_cache) > self._preview_cache_limit:
             stale_index, stale_path = self._preview_cache.popitem(last=False)
+            self._preview_cache_sources.pop(stale_index, None)
             # H2-Fix: falls der verdraengte Clip noch in einem Player offen ist,
             # erst Handle freigeben, sonst os.remove -> Windows-PermissionError.
             stale_widget = self._preview_widgets.get(stale_index)
@@ -5219,6 +5351,12 @@ class MixTipsPanel(QWidget):
             self._remove_preview_path(stale_path)
         if index in self._preview_widgets:
             self._preview_widgets[index].set_wav_path(wav_path)
+            self._preview_widgets[index]._source_signature = (
+                getattr(source_worker, "preview_source_signatures", {}).get(index)
+                if source_worker is not None else
+                source_signature if source_signature is not None
+                else self._preview_source_signature(index)
+            )
         button = self._preview_buttons.get(index)
         if button:
             button.setText("Vorschau geladen")
@@ -6651,6 +6789,282 @@ class MainWindow(QMainWindow):
         from hpg_core.hearing_jobs import HearingLoadWorker
         self._start_hearing_worker(HearingLoadWorker(self._hearing_set_path, self), "rate")
 
+    def _rate_transition_preview(self, transition, preview_source):
+        """Bewertet Vorschau direkt; persistiert Note mit Quell-Transition-ID."""
+        if self._close_pending or self._hearing_native_active or self._hearing_worker is not None:
+            return
+        if self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.warning(self, "Hörtest", "Zuerst den Browser-Server beenden.")
+            return
+        path, audio = preview_source
+        temporary_path = None
+        if not path and audio:
+            try:
+                fd, temporary_path = tempfile.mkstemp(prefix="hpg_transition_rating_", suffix=".wav")
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(audio)
+                path = temporary_path
+            except OSError as exc:
+                QMessageBox.warning(self, "Übergang bewerten", f"Vorschau nicht verfügbar: {exc}")
+                return
+        if not path or not os.path.isfile(path):
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+            QMessageBox.warning(self, "Übergang bewerten", "Gerenderte Vorschau fehlt.")
+            return
+
+        from_track, to_track = transition.from_track, transition.to_track
+        try:
+            from dataclasses import asdict
+            render_spec = asdict(TransitionClipSpec.from_plan(
+                transition.plan, from_track, to_track
+            ))
+        except (AttributeError, TypeError, ValueError) as exc:
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+            QMessageBox.warning(self, "Übergang bewerten", f"Renderplan nicht rekonstruierbar: {exc}")
+            return
+
+        def file_identity(value):
+            """Bindet eine Bewertung an die konkrete Datei am Quellpfad."""
+            try:
+                stat = os.stat(value)
+            except (OSError, TypeError, ValueError):
+                return None
+            return {
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "ctime_ns": int(stat.st_ctime_ns),
+                "device": int(getattr(stat, "st_dev", 0)),
+                "inode": int(getattr(stat, "st_ino", 0)),
+            }
+
+        def file_sha256(value):
+            """Bindet dateibasierte Vorschauen an ihren konkreten Audioinhalt."""
+            try:
+                before = file_identity(value)
+                if before is None:
+                    return None
+                with open(value, "rb") as handle:
+                    digest = hashlib.file_digest(handle, "sha256").hexdigest()
+                if file_identity(value) != before:
+                    return None
+                return digest
+            except (OSError, TypeError, ValueError):
+                return None
+
+        from_path = str(getattr(from_track, "filePath", "") or "")
+        to_path = str(getattr(to_track, "filePath", "") or "")
+        from_file_identity = file_identity(from_path)
+        to_file_identity = file_identity(to_path)
+        from_genre = str(getattr(from_track, "genre", "") or
+                         getattr(from_track, "detected_genre", "") or "")
+        to_genre = str(getattr(to_track, "genre", "") or
+                       getattr(to_track, "detected_genre", "") or "")
+        from_bpm = getattr(from_track, "bpm", None)
+        to_bpm = getattr(to_track, "bpm", None)
+        scoring_context = deepcopy(
+            getattr(self.playlist_panel, "scoring_context", {}) or {}
+        )
+        active_rank = getattr(transition, "kandidat_aktiv", 0)
+        candidate_snapshot = None
+        candidates = getattr(transition, "kandidaten", ()) or ()
+        candidate_set_snapshot = []
+        for candidate in candidates:
+            if type(candidate) is not dict:
+                continue
+            candidate_flags = candidate.get("flags")
+            out_candidate = candidate.get("out_a")
+            in_candidate = candidate.get("in_b")
+            candidate_set_snapshot.append({
+                "rank": candidate.get("rang"),
+                "t_out": candidate.get("t_out"),
+                "t_in": candidate.get("t_in"),
+                "blend_bars": candidate.get("blend_bars"),
+                "score": candidate.get("score"),
+                "components": candidate.get("teilwerte"),
+                "out_schemas": (out_candidate.get("schema")
+                                if type(out_candidate) is dict else []),
+                "in_schemas": (in_candidate.get("schema")
+                               if type(in_candidate) is dict else []),
+                "deep_features": (candidate_flags.get("deep_features")
+                                  if type(candidate_flags) is dict else None),
+            })
+        if type(active_rank) is int and active_rank > 0:
+            active_candidate = next((candidate for candidate in candidates
+                                     if type(candidate) is dict
+                                     and candidate.get("rang") == active_rank), None)
+            if active_candidate is not None:
+                candidate_flags = active_candidate.get("flags")
+                candidate_snapshot = {
+                    "rank": active_rank,
+                    "t_out": active_candidate.get("t_out"),
+                    "t_in": active_candidate.get("t_in"),
+                    "blend_bars": active_candidate.get("blend_bars"),
+                    "score": active_candidate.get("score"),
+                    "components": active_candidate.get("teilwerte"),
+                    "deep_features": (candidate_flags.get("deep_features")
+                                      if type(candidate_flags) is dict else None),
+                }
+        try:
+            candidate_set_id = hashlib.sha256(
+                json.dumps({
+                    "from_file_identity": from_file_identity,
+                    "to_file_identity": to_file_identity,
+                    "from_genre": from_genre,
+                    "to_genre": to_genre,
+                    "from_bpm": from_bpm,
+                    "to_bpm": to_bpm,
+                    "scoring_context": scoring_context,
+                    "candidates": candidate_set_snapshot,
+                }, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                    allow_nan=False).encode("utf-8")
+            ).hexdigest()
+        except (TypeError, ValueError):
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+            QMessageBox.warning(self, "Übergang bewerten", "Kandidatensatz enthält ungültige Werte.")
+            return
+        source = {
+            "from_path": from_path,
+            "from_name": str(getattr(from_track, "fileName", "") or ""),
+            "from_genre": from_genre,
+            "from_bpm": from_bpm,
+            "from_file_identity": from_file_identity,
+            "to_path": to_path,
+            "to_name": str(getattr(to_track, "fileName", "") or ""),
+            "to_genre": to_genre,
+            "to_bpm": to_bpm,
+            "to_file_identity": to_file_identity,
+            "transition_index": int(getattr(transition, "index", 0)),
+            "transition_type": str(getattr(transition, "transition_type", "") or ""),
+            "scoring_context": scoring_context,
+            "plan": repr(getattr(transition, "plan", None)),
+            "render_spec": render_spec,
+            "candidate_snapshot": candidate_snapshot,
+            "candidate_set_id": candidate_set_id,
+            "candidate_set": candidate_set_snapshot,
+            "preview_sha256": (hashlib.sha256(bytes(audio)).hexdigest()
+                               if audio else file_sha256(path)),
+            "preview_file_identity": file_identity(path) if not audio else None,
+        }
+        if (source["from_file_identity"] is None or source["to_file_identity"] is None
+                or source["preview_sha256"] is None):
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+            QMessageBox.warning(self, "Übergang bewerten", "Quelldatei eines Tracks ist nicht mehr verfügbar.")
+            return
+        try:
+            source_bytes = json.dumps(source, ensure_ascii=False, sort_keys=True,
+                                      separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError):
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
+            QMessageBox.warning(self, "Übergang bewerten", "Bewertungsquelle enthält ungültige Werte.")
+            return
+        identity = hashlib.sha256(source_bytes).hexdigest()
+        pair_id = f"transition:{identity}"
+        data_path = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / "transition_ratings.json"
+
+        def load_records():
+            if not data_path.exists():
+                return {}
+            def unique_pairs(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("Doppelter Schlüssel in Bewertungsdatei")
+                    result[key] = value
+                return result
+
+            stored = json.loads(data_path.read_text(encoding="utf-8"),
+                                object_pairs_hook=unique_pairs)
+            if (not isinstance(stored, dict)
+                    or set(stored) != {"format", "ratings"}
+                    or stored.get("format") != "hpg_transition_ratings_v1"
+                    or not isinstance(stored.get("ratings"), dict)):
+                raise ValueError("Bewertungsdatei hat unbekanntes Format")
+            return stored["ratings"]
+
+        def save(route, payload):
+            if route != "/note" or set(payload) != {"pair_id", "note"} or payload["pair_id"] != pair_id:
+                raise ValueError("Ungültiger Übergangsbewertungs-Aufruf")
+            if (file_identity(from_path) != source["from_file_identity"]
+                    or file_identity(to_path) != source["to_file_identity"]
+                    or (not audio and (file_identity(path) != source["preview_file_identity"]
+                                       or file_sha256(path) != source["preview_sha256"]))):
+                raise ValueError("Track oder Vorschau wurde seit dem Öffnen der Bewertung geändert")
+            note = payload["note"]
+            if note is not None and (type(note) is not int or note not in range(1, 6)):
+                raise ValueError("Note muss 1 bis 5 sein")
+            data_path.parent.mkdir(parents=True, exist_ok=True)
+            records = load_records()
+            records[pair_id] = {
+                "source": source,
+                "note": "" if note is None else note,
+                "rated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            content = json.dumps({"format": "hpg_transition_ratings_v1", "ratings": records}, ensure_ascii=False, sort_keys=True, indent=2)
+            fd, temp = tempfile.mkstemp(prefix=".transition_ratings_", dir=data_path.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, data_path)
+            finally:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+
+        try:
+            records = load_records()
+            prior = records.get(pair_id, {})
+            if type(prior) is not dict:
+                prior = {}
+            prior_note = prior.get("note")
+            if type(prior_note) is not int or not 1 <= prior_note <= 5:
+                prior_note = ""
+            candidate_count = len(candidate_set_snapshot)
+            available_ranks = {item.get("rank") for item in candidate_set_snapshot
+                               if type(item.get("rank")) is int and item["rank"] > 0}
+            rated_ranks = set()
+            for entry in records.values():
+                if type(entry) is not dict or type(entry.get("source")) is not dict:
+                    continue
+                saved_source = entry["source"]
+                saved_candidate = saved_source.get("candidate_snapshot")
+                rank = saved_candidate.get("rank") if type(saved_candidate) is dict else None
+                note = entry.get("note")
+                if (saved_source.get("candidate_set_id") == candidate_set_id
+                        and rank in available_ranks
+                        and type(note) is int and 1 <= note <= 5):
+                    rated_ranks.add(rank)
+            rated_count = len(rated_ranks)
+            session = {"mode": "einzel", "groups": [{"id": pair_id, "ratings": {}, "clips": [{
+                "pair_id": pair_id, "clip_id": pair_id, "path": Path(path),
+                "ratings": {"bewertung": prior_note}, "gewaehlt": "",
+            }]}]}
+            from hpg_core.hearing_panel import HearingRatingDialog
+            dialog = HearingRatingDialog(session, save=save, parent=self)
+            position = f"Alternative {active_rank}/{candidate_count}" if candidate_count else "Übergang"
+            dialog.setWindowTitle(
+                f"{position} bewerten ({rated_count}/{candidate_count} Alternativen bewertet): "
+                f"{source['from_name']} → {source['to_name']}"
+            )
+            self._hearing_native_active = True
+            self._update_hearing_buttons()
+            dialog.exec()
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Übergang bewerten", f"Bewertung nicht verfügbar: {exc}")
+        finally:
+            self._hearing_native_active = False
+            if temporary_path and os.path.exists(temporary_path):
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
+            self._update_hearing_buttons()
+
     def _show_hearing_rating(self, session, folder, read_only=False, analysis_origin="unknown"):
         if self._close_pending or self._hearing_native_active or (self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning):
             return
@@ -7740,6 +8154,7 @@ class MainWindow(QMainWindow):
         mix_tips_panel.preview_state_changed.connect(self._on_preview_state_changed)
         mix_tips_panel.candidate_chosen.connect(self._on_candidate_chosen)
         mix_tips_panel.reserve_ready.connect(self._on_render_reserve_ready)
+        mix_tips_panel.transition_rating_requested.connect(self._rate_transition_preview)
 
     def _disconnect_publication_signals(self, playlist_panel, mix_tips_panel, toolbar):
         connections = (
@@ -7753,6 +8168,7 @@ class MainWindow(QMainWindow):
             (mix_tips_panel.preview_state_changed, self._on_preview_state_changed),
             (mix_tips_panel.candidate_chosen, self._on_candidate_chosen),
             (mix_tips_panel.reserve_ready, self._on_render_reserve_ready),
+            (mix_tips_panel.transition_rating_requested, self._rate_transition_preview),
         )
         for signal, slot in connections:
             try:
@@ -7976,10 +8392,24 @@ class MainWindow(QMainWindow):
         )
 
     def _on_render_reserve_ready(self, payload):
-        base, selected, peaks, duration, pending = payload
+        # Alte/abgebrochene Worker-Ergebnisse dürfen den GUI-Thread nicht mit
+        # einer Tuple-Form aus einer vorherigen Generation zum Absturz bringen.
+        if not isinstance(payload, (tuple, list)) or len(payload) not in (5, 6):
+            return
+        base, selected, peaks, duration, pending = payload[:5]
+        expected_signature = payload[5] if len(payload) == 6 else None
         if self._close_pending or self.current_generation_result is not base:
             return  # Eine neue Analyse/Reihenfolge macht diesen Render veraltet.
+        index = selected.boundary_index
+        if (expected_signature is None
+                or self.mix_tips_panel._preview_source_signature(index) != expected_signature):
+            self.mix_tips_panel._on_clip_error(
+                index,
+                "Trackquelle hat sich nach dem Rendern geändert; bitte erneut rendern.",
+            )
+            return
         old_cache = dict(self.mix_tips_panel._ram_preview_cache)
+        old_sources = dict(self.mix_tips_panel._ram_preview_sources)
         try:
             self._publiziere_generation_result(selected.playlist)
         except Exception as error:
@@ -7992,10 +8422,14 @@ class MainWindow(QMainWindow):
                 continue
             spec = TransitionClipSpec.from_plan(recommendation.plan,
                 recommendation.from_track, recommendation.to_track)
-            if asdict(spec) == asdict(cached[3]):
+            source_signature = self.mix_tips_panel._preview_source_signature(index)
+            if (asdict(spec) == asdict(cached[3]) and source_signature is not None
+                    and old_sources.get(index) == source_signature):
                 self.mix_tips_panel._ram_preview_cache[index] = cached
+                self.mix_tips_panel._ram_preview_sources[index] = source_signature
         self.mix_tips_panel._show_ram_preview(selected.boundary_index,
-            selected.audio, peaks, duration, selected.spec)
+            selected.audio, peaks, duration, selected.spec,
+            source_signature=expected_signature)
         for index in pending:
             self.mix_tips_panel._request_preview(index)
 

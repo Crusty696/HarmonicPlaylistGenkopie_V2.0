@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
+import operator
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,14 @@ MOOD_NAMES: dict[int, str] = {1: "high", 2: "mid", 3: "low"}
 
 
 def phrase_label(mood: int, kind: int) -> str:
-    table = PHRASE_LABELS_HIGH if mood == 1 else PHRASE_LABELS_MIDLOW
-    return table.get(int(kind), f"Unbekannt({int(kind)})")
+    mood, kind = int(mood), int(kind)
+    if mood == 1:
+        table = PHRASE_LABELS_HIGH
+    elif mood in (2, 3):
+        table = PHRASE_LABELS_MIDLOW
+    else:
+        return f"UnbekanntMood({mood},Kind={kind})"
+    return table.get(kind, f"Unbekannt({kind})")
 
 
 def _tag_content(anlz, key: str):
@@ -46,11 +53,11 @@ def _tag_content(anlz, key: str):
 
 def _beat_time(times, beat: int) -> float | None:
     """Zeit des 1-basierten Beat-Index, an den Rand geklemmt."""
-    if isinstance(beat, bool):
+    beat_number = _integer_value(beat)
+    if beat_number is None:
         return None
     try:
         n = len(times)
-        beat_number = int(beat)
     except (TypeError, ValueError, OverflowError):
         return None
     if n == 0:
@@ -67,15 +74,22 @@ def _beat_time(times, beat: int) -> float | None:
 
 def _phrase_start_time(times, beat: int) -> float | None:
     """Liest einen PSSI-Start nur bei gueltigem, nicht geklemmtem Beatindex."""
-    if isinstance(beat, bool):
-        return None
-    try:
-        beat_number = int(beat)
-    except (TypeError, ValueError, OverflowError):
+    beat_number = _integer_value(beat)
+    if beat_number is None:
         return None
     if not 1 <= beat_number <= len(times):
         return None
     return _beat_time(times, beat_number)
+
+
+def _integer_value(value) -> int | None:
+    """Nur echte Integer-Indizes akzeptieren; int(float) würde Grenzen verschieben."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return operator.index(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def phrases_from_anlz(ext_anlz, dat_anlz, duration: float) -> list[dict]:
@@ -105,21 +119,27 @@ def phrases_from_anlz(ext_anlz, dat_anlz, duration: float) -> list[dict]:
         return []
     try:
         content = pssi.content
-        mood = int(getattr(content, "mood", 0))
+        mood = _integer_value(getattr(content, "mood", 0))
         entries = list(getattr(content, "entries", []) or [])
     except (TypeError, ValueError, OverflowError, AttributeError) as exc:
         logger.warning("PSSI-Kopf nicht lesbar: %s", exc)
+        return []
+    if mood not in MOOD_NAMES:
+        logger.warning("PSSI-Mood nicht unterstuetzt: %s", mood)
         return []
     if not entries or len(times) == 0:
         return []
     starts: list[tuple[float, int, int]] = []
     for e in entries:
         try:
-            beat = int(e.beat)
-            kind = int(e.kind)
-            fill = int(getattr(e, "fill", 0))
-        except (TypeError, ValueError, OverflowError, AttributeError) as exc:
+            beat = _integer_value(e.beat)
+            kind = _integer_value(e.kind)
+            fill = _integer_value(getattr(e, "fill", 0))
+        except AttributeError as exc:
             logger.warning("Defekter PSSI-Eintrag verworfen: %s", exc)
+            continue
+        if beat is None or kind is None or fill is None:
+            logger.warning("Nicht-ganzzahliger PSSI-Eintrag verworfen")
             continue
         t = _phrase_start_time(times, beat)
         if t is None or t > duration_value:

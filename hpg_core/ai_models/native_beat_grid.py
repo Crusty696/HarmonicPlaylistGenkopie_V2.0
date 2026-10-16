@@ -7,6 +7,7 @@ import ctypes as ct
 import math
 
 from .native_phrase_worker import NativeContractError
+from .native_beat_selection import MAX_NATIVE_BEAT_WINDOW_SECONDS
 
 
 class _Vector(ct.Structure):
@@ -73,7 +74,7 @@ def convert(image, rows, frames, *, source_samples=None, refinement_input=False)
     tempo = image.function(0x1296a80, ct.c_double, ct.POINTER(_Json), ct.c_ubyte)
     # Native Modellzeitbasis44100; der Decoder arbeitet mit100Hz.
     samples = frames * 441 if source_samples is None else source_samples
-    if type(samples) is not int or not 1 <= samples <= 1200 * 44100:
+    if type(samples) is not int or not 1 <= samples <= MAX_NATIVE_BEAT_WINDOW_SECONDS * 44100:
         raise NativeContractError('Invalid source sample count')
     convert_grid(ct.byref(output), ct.byref(vector), samples, 44100, 4)
     try:

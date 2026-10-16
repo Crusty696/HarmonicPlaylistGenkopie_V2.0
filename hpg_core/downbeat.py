@@ -545,6 +545,7 @@ def estimate_first_downbeat(
     y: np.ndarray, sr: int, bpm: float, *, diagnostics: dict | None = None,
     _fixed_bpm: bool = False,
     _allow_metric_retry: bool = True,
+    _allow_external_conflict_candidate: bool = False,
     external_beats: Sequence[Mapping] | None = None,
 ) -> tuple[float, float]:
     """
@@ -557,6 +558,8 @@ def estimate_first_downbeat(
         diagnostics: optionale Zweigdiagnose; eigene Felder werden je Aufruf ersetzt.
         _fixed_bpm: interner Retry-Kandidat; vor Nutzung separat am Audio pruefen.
         _allow_metric_retry: lokale Metrikkorrektur; Dateipipeline prueft selbst.
+        _allow_external_conflict_candidate: nur interne Trackpipeline; gibt
+            einen Audio-Gegenkandidaten zur strengen Mehrfensterpruefung frei.
         external_beats: optionale lokale Ereignisse mit time_s, position, observed.
             Nur beobachtete Punkte stimmen ab; Audio muss ihre Taktrotation bestätigen.
 
@@ -874,7 +877,12 @@ def estimate_first_downbeat(
             if np.count_nonzero(votes == votes[best_phase]) != 1:
                 return reject("external_vote_ambiguous", "voting")
             if best_phase != external_phase:
-                return reject("external_vote_conflict", "voting")
+                if not _allow_external_conflict_candidate:
+                    return reject("external_vote_conflict", "voting")
+                # Der Modell-Beatindex liefert hier das Zeitraster, nicht eine
+                # unfehlbare Takt-Eins. Nur der Aufrufer mit disjunkten
+                # Modellfenstern und Gesamtgrid-Pruefung darf den Audio-Gegen-
+                # kandidaten weiter bewerten.
         # AUDIT-FIX D-03 (2026-08-14): ehrliche 0..1-Skala statt roher Margin
         # (analytisch auf 2/3 gedeckelt, siehe _bar_phase_confidence).
         bar_confidence = _bar_phase_confidence(votes)
@@ -961,7 +969,10 @@ def estimate_first_downbeat(
         )
         if not np.isfinite(first_downbeat) or not np.isfinite(confidence):
             return reject("invalidinput", "result")
-        record(reason="voteweak" if bar_confidence == 0.0 else "ok", stage="result")
+        reason = ("external_vote_conflict"
+                  if external_beats is not None and best_phase != external_phase
+                  else "voteweak" if bar_confidence == 0.0 else "ok")
+        record(reason=reason, stage="result")
 
         logger.debug(
             f"Downbeat: Phase {best_phase}, t={first_downbeat:.3f}s, "

@@ -33,6 +33,7 @@ from tools.rate_transitions import (
     BEWERTUNG_DREINOTEN_SPALTEN,
     BEWERTUNG_KANDIDATEN_SPALTEN,
     DREINOTEN_MANIFEST_VERSION,
+    DEEP_FEATURE_COLUMNS,
     KANDIDATEN_MANIFEST_NAME,
     ALGORITHM_BUILD_SCHEME,
     HARMONIC_GATE_SCOPE,
@@ -41,6 +42,7 @@ from tools.rate_transitions import (
     MIN_HARMONIC_SCORE,
     MIN_OVERALL_SCORE,
     MERKMALE_KANDIDATEN_SPALTEN,
+    kandidaten_merkmale_schema,
     _hauptschema,
     _algorithm_build_fingerprint,
     _fingerprint_kandidatensatz,
@@ -148,10 +150,13 @@ def _fingerprint_cache_family(cache: Path) -> dict[str, tuple[int, str] | None]:
     }
 
 
-def _read_csv(path: Path, expected: tuple[str, ...]) -> list[dict[str, str]]:
+def _read_csv(path: Path, expected: tuple[str, ...], *, schema_resolver=None) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        if tuple(reader.fieldnames or ()) != expected:
+        actual = tuple(reader.fieldnames or ())
+        accepted = (schema_resolver(actual) is not None if schema_resolver
+                    else actual == expected)
+        if not accepted:
             raise AuditError(f"Falsche Spalten in {path.name}")
         return list(reader)
 
@@ -401,7 +406,8 @@ def _parse_set(set_dir: Path, cache: Path | None = None, *, source_session=None)
         raise AuditError("clips ist kein Verzeichnis")
     if any(not path.is_file() for name, path in required.items() if name != "clips"):
         raise AuditError("Satzwurzel enthaelt einen ungueltigen Pflichtdateityp")
-    merkmale = _read_csv(required["merkmale.csv"], MERKMALE_KANDIDATEN_SPALTEN)
+    merkmale = _read_csv(required["merkmale.csv"], MERKMALE_KANDIDATEN_SPALTEN,
+                         schema_resolver=kandidaten_merkmale_schema)
     try:
         order = json.loads(required["reihenfolge.json"].read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -440,6 +446,14 @@ def _parse_set(set_dir: Path, cache: Path | None = None, *, source_session=None)
             raise AuditError(f"{pair_id}: Kandidaten verweisen auf verschiedene Track-Paare")
         pair_tracks[pair_id] = tracks
         values = {field: _finite(row, field, clip_id) for field in NUMERIC_FIELDS}
+        for field in DEEP_FEATURE_COLUMNS:
+            raw = str(row.get(field, "")).strip()
+            if not raw:
+                continue
+            value = _finite(row, field, clip_id)
+            if ((field == "deep_embedding_cosine" and not -1.0 <= value <= 1.0)
+                    or (field != "deep_embedding_cosine" and value < 0.0)):
+                raise AuditError(f"{clip_id}: optional {field} liegt ausserhalb des Wertebereichs")
         direction = str(row.get("energy_direction", "")).strip().casefold()
         if direction not in ENERGY_DIRECTIONS:
             raise AuditError(f"{clip_id}: energy_direction ist ungueltig")

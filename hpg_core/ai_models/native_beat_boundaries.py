@@ -13,7 +13,7 @@ from .native_phrase_worker import EXE, NativeContractError
 from .native_beat_worker import FloatMatrix
 from .native_beat_grid import _Json, _read_json
 
-VERSION = 'rb-7.2.19-wrapper1294100-v1'
+VERSION = 'rb-7.2.19-wrapper1294100-v2'
 
 
 class _PrivateBridges:
@@ -116,27 +116,44 @@ def run(image, reader, selection, window_start):
             ct.memset(output, 0, 24)
         finally:
             image.function(0x12add90, None, ct.POINTER(FloatMatrix))(ct.byref(target))
-            release = image.function(0x2a6e690, None, ct.c_void_p)
-            release(model7)
-            release(model8)
+            release_models()
         return output
 
-    models = [ct.c_void_p(), ct.c_void_p()]
-    for model_id, target in zip(('model7', 'model8'), models):
-        image.function(0x2a6e420, ct.c_void_p, ct.c_void_p, ct.c_char_p)(
-            ct.byref(target), str(EXE.parent/'models'/'detect_beat'/model_id).encode('utf8'))
+    # MSVC x64 std::string belegt 32 Byte. Ein c_void_p-Ausgabefeld
+    # überschreibt benachbarten nativen Speicher, wenn der Konstruktor dort
+    # direkt das Stringobjekt initialisiert.
+    models = [ct.create_string_buffer(32), ct.create_string_buffer(32)]
+    model_ready = [False, False]
+    model_released = [False, False]
+    release_native = image.function(0x2a6e690, None, ct.c_void_p)
+
+    def release_models():
+        for index, model in enumerate(models):
+            if model_ready[index] and not model_released[index]:
+                release_native(ct.addressof(model))
+                model_released[index] = True
+
     path = ct.create_string_buffer(32)
     encoded = str(reader.path).encode('utf8')
     image.function(0xefbcc0, ct.c_void_p, ct.c_void_p, ct.c_char_p, ct.c_size_t)(
         path, encoded, len(encoded))
     output = _Json()
     try:
+        construct_model = image.function(0x2a6e420, ct.c_void_p,
+                                         ct.c_void_p, ct.c_char_p)
+        for index, (model_id, target) in enumerate(zip(('model7', 'model8'), models)):
+            construct_model(ct.byref(target),
+                str(EXE.parent/'models'/'detect_beat'/model_id).encode('utf8'))
+            model_ready[index] = True
+
         bridge.install(0x1104be0, construct)
         bridge.install(0x2ccfd60, read)
         bridge.install(0x1293f70, dispatch)
+        # The recovered wrapper signature is (..., int sample_rate,
+        # float window_start, char chunked, output*). Preserve its XMM ABI.
         image.function(0x1294100, None, ct.c_void_p, ct.c_void_p, ct.c_void_p,
-            ct.c_int32, ct.c_int32, ct.c_ubyte, ct.c_void_p)(ct.byref(models[0]),
-                ct.byref(models[1]), path, 44100, window_start,
+            ct.c_int32, ct.c_float, ct.c_ubyte, ct.c_void_p)(ct.byref(models[0]),
+                ct.byref(models[1]), path, 44100, float(window_start),
                 selection['chunked'], ct.byref(output))
         if errors:
             raise NativeContractError('; '.join(errors))
@@ -153,6 +170,7 @@ def run(image, reader, selection, window_start):
         return result['beatList'], result['bpm'], [
             [seconds + start/44100, bar] for seconds, bar in raw_rows], coverage
     finally:
+        release_models()
         bridge.restore()
         image.function(0x11f0540, None, ct.c_void_p, ct.c_ubyte)(
             ct.addressof(output)+8, output.kind)

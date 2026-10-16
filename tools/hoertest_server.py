@@ -176,10 +176,12 @@ def lade_uebersicht(
 # ===========================================================================
 
 BEWERTUNG_KANDIDATEN_SPALTEN = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN = (*BEWERTUNG_KANDIDATEN_SPALTEN, "mix_cluster_id")
 BEWERTUNG_DREINOTEN_SPALTEN = (
   "pair_id", "clip_id", "track_note", "technik_note", "gesamt_note",
   "gewaehlt", "zeit",
 )
+BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN = (*BEWERTUNG_DREINOTEN_SPALTEN, "mix_cluster_id")
 DRAMATURGIE_MANIFEST_NAME = "dramaturgie_manifest.json"
 DRAMATURGIE_CONTRACT = "strategy_dramaturgy_and_transition_v1"
 DRAMATURGIE_MANIFEST_VERSION = 1
@@ -215,7 +217,9 @@ def ist_kandidatensatz(bewertung_zeilen: list[dict]) -> bool:
 
 
 def ist_dreinotensatz(bewertung_zeilen: list[dict]) -> bool:
-  return bool(bewertung_zeilen) and tuple(bewertung_zeilen[0]) == BEWERTUNG_DREINOTEN_SPALTEN
+  return bool(bewertung_zeilen) and tuple(bewertung_zeilen[0]) in {
+    BEWERTUNG_DREINOTEN_SPALTEN, BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN,
+  }
 
 
 def merge_kandidaten_bewertung(zeilen: list[dict], *, pair_id: str, clip_id: str,
@@ -1542,12 +1546,15 @@ def main(argv=None) -> int:
         print(f"bewertung.csv ist nicht lesbar: {exc}")
         return 2
     erlaubte_schemata = {
-        BEWERTUNG_SPALTEN, BEWERTUNG_KANDIDATEN_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN,
+        BEWERTUNG_SPALTEN, BEWERTUNG_KANDIDATEN_SPALTEN,
+        BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN,
+        BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN,
     }
     if schema not in erlaubte_schemata:
         print(f"bewertung.csv hat ein unbekanntes Schema: {schema}")
         return 2
-    if schema in {BEWERTUNG_KANDIDATEN_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN}:
+    if schema in {BEWERTUNG_KANDIDATEN_SPALTEN, BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN,
+                  BEWERTUNG_DREINOTEN_SPALTEN, BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN}:
         if dramaturgie:
             print("Dramaturgiemodus erkannt: Playlist-Sequenznoten + getrennte Uebergangsnoten.")
         else:

@@ -20,11 +20,13 @@ _CODES = {
     "native_adopted": "Nativer Anker übernommen",
     "native_offset_adopted": "Nativer Anker mit bestätigtem Zeitversatz übernommen",
     "unknown": "Unbekannt", "reference_verified": "Referenz bestätigt",
+    "reference_candidate": "Referenz-Taktposition ungeprüft",
     "invalidinput": "Ungültige Eingabe", "inputshort": "Eingabe zu kurz",
     "fewbeats": "Zu wenige Beats", "incommensurate": "Beatabstände nicht vereinbar",
     "noactivity": "Keine messbare Aktivität", "weakfold": "Schwache Faltungsbindung",
     "fold_alignment": "Beat-Raster widerspricht Faltungsphase",
     "voteweak": "Schwache Taktabstimmung", "estimationerror": "Schätzung fehlgeschlagen",
+    "external_vote_conflict": "Audio-Taktphase weicht vom Modell-Takt ab",
     "ok": "Schätzung abgeschlossen", "nowindows": "Keine Messfenster",
     "duplicategrid": "Doppelte Gitterpunkte", "variablegrid": "Veränderliche Gitterabstände",
     "tempomismatch": "Tempoabweichung", "missingreference": "Referenz fehlt",
@@ -104,7 +106,7 @@ def _code(value):
     return _CODES.get(value, "Unbekannt")
 
 
-def _anchor_summary(diagnostic):
+def _anchor_summary(diagnostic, bar_position_status="unknown"):
     """Beschreibt nur die validierte, persistierte Ankerentscheidung."""
     anchor = diagnostic.get("anchor")
     if anchor is None:
@@ -117,6 +119,9 @@ def _anchor_summary(diagnostic):
         confidence >= DOWNBEAT_RELIABLE_MIN
         and grid_verified
         and not usage_blocked
+        and bar_position_status not in {"reference_candidate", "native_candidate"}
+        and (anchor["source"] != "rekordbox"
+             or bar_position_status == "reference_verified")
     )
     method = _code(anchor["method"])
     confidence_text = _number(confidence)
@@ -184,7 +189,8 @@ def _anchor_summary(diagnostic):
             "Phrase-/Mixraster: nicht freigegeben; dieser Anker wird dafür nicht verwendet."
         )
     return (
-        f"Anker: {_code(anchor['source'])} / {method}; Konfidenz {confidence_text}; "
+        f"Anker: {_code(anchor['source'])} / {method}; Bar-1-Status: {_code(bar_position_status)}; "
+        f"Konfidenz {confidence_text}; "
         f"Resolvergrund: {neural_reason}; Rekordbox-Pfad: {match_text}. "
         f"{provenance} {consequence}"
     )
@@ -272,12 +278,41 @@ def _neural_windows_summary(diagnostic):
         model = {"model7": "Beat-Modell 7", "model8": "Beat-Modell 8"}.get(
             model_id, "Modell nicht bekannt"
         )
+        audio_reason = window["downbeat"].get("reason")
+        audio_text = (f"Audio: {_code(audio_reason)}; " if audio_reason else "")
         summaries.append(
             f"{model}, Start {_number(window['start_s'])} s, "
             f"Dauer {_number(window['duration_s'])} s: {_code(window['reason'])}; "
-            f"{_INPUT_STATUS[window['input_status']]}"
+            f"{audio_text}{_INPUT_STATUS[window['input_status']]}"
         )
     return "Modellfenster: " + " | ".join(summaries)
+
+
+def _native_grid_summary(diagnostic):
+    """Erklärt die native Rasterentscheidung aus der gespeicherten Diagnose."""
+    decision = diagnostic.get("native_grid")
+    if not isinstance(decision, dict):
+        return "Native Rasterentscheidung: nicht verfügbar (ältere Diagnose)."
+    status = {
+        "accepted": "übernommen",
+        "rejected": "verworfen",
+        "unavailable": "nicht verfügbar",
+        "disabled": "deaktiviert",
+    }.get(decision["status"], "unbekannt")
+    reason = {
+        "verified": "Raster bestand die Audio-Synchronprüfung",
+        "audio_offset_confirmed": "Zeitversatz wurde mit separaten Fenstern bestätigt",
+        "grid_unverified": "Raster bestand die Audio-Synchronprüfung nicht",
+        "variable_grid_unsupported": "variabler Beatabstand wird vom konstanten Renderer-Raster nicht unterstützt",
+        "offset_out_of_range": "gemessener Zeitversatz lag außerhalb des zulässigen Bereichs",
+        "offset_confirmation_windows_missing": "unabhängige Bestätigungsfenster fehlten",
+        "offset_audio_confirmation_failed": "separate Audio-Bestätigung scheiterte",
+        "offset_audio_decode_failed": "Audio für die Zeitversatz-Bestätigung war nicht lesbar",
+        "native_unavailable": "native Verarbeitung lieferte kein Raster",
+        "unsupported_duration": "Trackdauer liegt außerhalb der nativen Grenzen",
+        "disabled": "native Verarbeitung ist abgeschaltet",
+    }.get(decision["reason"], "Grund unbekannt")
+    return f"Native Beatentscheidung: {status}; {reason}."
 
 
 def _bar_position_summary(diagnostic):
@@ -340,6 +375,7 @@ class _Snapshot:
     name: str
     path: str
     diagnostic: dict | None
+    bar_position_status: str
     phrase_unit: int | None
     phrase_unit_source: str
     phrase_unit_candidate: int | None
@@ -393,8 +429,23 @@ def _deep_summary(track):
                         f"{value['data']['provider_request']} angefordert, Ausführungsgerät unbestätigt; "
                         "unkalibriert, keine harte Vocal-Sperre")
             else:
+                visualization = value["data"].get("visualization")
+                projection_status = (
+                    visualization["status"] if type(visualization) is dict
+                    else "nicht vorhanden"
+                )
+                energy_model = value["data"].get("danceability")
+                if type(energy_model) is dict and energy_model.get("status") == "ok":
+                    energy_values = energy_model["values"]
+                    energy_text = (
+                        f"; Rekordbox-Danceability-Diagnose {sum(energy_values) / len(energy_values):.3f} "
+                        "(unkalibriert)"
+                    )
+                else:
+                    energy_text = "; Rekordbox-Danceability-Modell nicht verfügbar"
                 text = (f"{duration:.1f} s abgedeckt, {len(value['data']['windows'])} Fenster; "
-                        "normalisiert, Kosinusvergleich nur Diagnose, kein Rangfolgengewicht")
+                        f"normalisiert, UMAP-Projektion {projection_status}; "
+                        "Kosinusvergleich nur Diagnose, kein Rangfolgengewicht" + energy_text)
             parts.append(f"{label}: {text}.")
         except (ValueError, TypeError, KeyError, OverflowError):
             # Keine fremden Fehlertexte oder ungeprüften Messwerte ausgeben.
@@ -406,6 +457,11 @@ def _snapshot(track):
     # Keine Trackreferenz behalten und keine Quelle nachladen.
     name = deepcopy(getattr(track, "fileName", ""))
     path = deepcopy(getattr(track, "filePath", ""))
+    bar_position_status = deepcopy(getattr(track, "bar_position_status", "unknown"))
+    if bar_position_status not in {
+            "reference_verified", "reference_candidate", "native_candidate",
+            "audio_estimate", "blocked", "unknown"}:
+        bar_position_status = "unknown"
     try:
         diagnostic = deepcopy(getattr(track, "measurement_diagnostics", {}))
         validate_measurement_diagnostics(diagnostic)
@@ -432,7 +488,7 @@ def _snapshot(track):
         phrase_unit_margin = None
     phrase_diagnostic = (
         diagnostic.get("phrase_unit")
-        if isinstance(diagnostic, dict) and diagnostic.get("version") in {6, 7}
+        if isinstance(diagnostic, dict) and diagnostic.get("version") in {6, 7, 8}
         else None
     )
     if isinstance(phrase_diagnostic, dict):
@@ -443,7 +499,7 @@ def _snapshot(track):
         phrase_unit_margin = phrase_diagnostic["ranking_margin"]
     tempo_diagnostic = (
         deepcopy(diagnostic.get("tempo"))
-        if isinstance(diagnostic, dict) and diagnostic.get("version") == 7
+        if isinstance(diagnostic, dict) and diagnostic.get("version") in {7, 8}
         else None
     )
     track_bpm = deepcopy(getattr(track, "bpm", None))
@@ -464,7 +520,7 @@ def _snapshot(track):
         rekordbox_bpm = None
     return _Snapshot(name if isinstance(name, str) else "",
                      path if isinstance(path, str) else "", diagnostic,
-                     phrase_unit, phrase_unit_source, phrase_unit_candidate,
+                     bar_position_status, phrase_unit, phrase_unit_source, phrase_unit_candidate,
                      phrase_unit_score, phrase_unit_margin, tempo_diagnostic,
                      track_bpm, rekordbox_bpm, _deep_summary(track))
 
@@ -560,7 +616,7 @@ class _TrackModel(QAbstractTableModel):
                     f"Schritt: {_code(downbeat['stage'])} ({downbeat['stage']}); "
                     f"Beatgrid: {_code(grid['status'])} ({grid['status']}), "
                     f"{_code(grid['reason'])} ({grid['reason']}). "
-                    f"{_anchor_summary(diag)} {_reference_grid_summary(diag)} "
+                    f"{_anchor_summary(diag, record.bar_position_status)} {_reference_grid_summary(diag)} "
                     "Gespeicherte Messdiagnose, keine erneute Prüfung.")
         return (_code(grid["status"]), str(grid["windows_checked"]),
                 _number(grid["max_phase_error_ms"]))[index.column() - 2]
@@ -641,8 +697,8 @@ class MeasurementDialog(QDialog):
             f"Phasenmuster: {_code(grid.get('phase_pattern', 'unknown'))}; "
             f"Zentrum Audio minus Grid: {_number(grid.get('phase_center_ms'))} ms. "
             "Die Audio-Beatphase ist keine unabhängige musikalische Takt-1-Referenz. "
-            f"{_anchor_summary(diag)} {_reference_grid_summary(diag)} "
-            f"{_bar_position_summary(diag)} "
+            f"{_anchor_summary(diag, snapshot.bar_position_status)} {_reference_grid_summary(diag)} "
+            f"{_native_grid_summary(diag)} {_bar_position_summary(diag)} "
             f"{_neural_windows_summary(diag)} {snapshot.deep_summary}")
         self.detail_label.setToolTip(
             f"Grund {downbeat['reason']}: {_code(downbeat['reason'])}; "

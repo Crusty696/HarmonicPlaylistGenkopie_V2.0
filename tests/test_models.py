@@ -6,11 +6,27 @@ import pytest
 from hpg_core.models import (
   CAMELOT_MAP,
   Track,
+  bar_position_usage_blocked,
   bars_to_seconds,
   key_to_camelot,
   seconds_to_bars,
 )
 from tests.fixtures.camelot_test_data import EXPECTED_CAMELOT_MAP
+
+
+@pytest.mark.parametrize('version', [7, 8])
+def test_unconfirmed_rotation_remains_blocked_for_current_schemas(version):
+  windows = [
+    dict(model_id=model, start_s=start, status='measured', rotation_beats=1)
+    for model in ('model7', 'model8')
+    for start in (0., 16., 32.)
+  ]
+  diagnostics = dict(version=version, anchor=dict(
+    source='audio', method='model_audio_rotation', anchor_s=.2,
+    bar_position_comparison=dict(status='candidate_rotation', reason='measured',
+      rotation_beats=1, windows=windows),
+  ))
+  assert bar_position_usage_blocked(diagnostics)
 
 
 class TestCamelotMap:

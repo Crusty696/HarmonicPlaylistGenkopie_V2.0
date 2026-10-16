@@ -9,6 +9,13 @@ from hpg_core.ai_models.feature_audio import EnergyBins
 from hpg_core.models import Track
 
 
+@pytest.mark.parametrize('duration,expected', [
+    (29., 30.), (600., 36.), (7200., 180.),
+])
+def test_embedding_timeout_scales_with_full_track_windows(duration, expected):
+    assert features._feature_timeout_seconds('embedding', duration) == expected
+
+
 def embedding(duration=58.):
     vector = [1.] + [0.]*63
     return dict(version=1, status='ok', reason=None, kind='embedding', duration=duration,
@@ -91,8 +98,8 @@ def test_expired_optional_budget_never_connects(monkeypatch):
 
 
 @pytest.mark.parametrize('workers,stems,embedding,expected', [
-    (1, '0', '0', 180.), (1, '1', '1', 390.),
-    (4, '1', '1', 870.), (4, '0', '1', 300.),
+    (1, '0', '0', 180.), (1, '1', '1', 600.),
+    (4, '1', '1', 870.), (4, '0', '1', 870.),
 ])
 def test_track_budget_accounts_for_serial_models(monkeypatch, workers, stems, embedding, expected):
     from hpg_core import config
@@ -151,6 +158,6 @@ def test_attach_assigns_each_model_its_execution_budget(monkeypatch, tmp_path):
     monkeypatch.setattr(cs, 'session', session)
     track = Track(filePath=str(path), fileName=path.name, duration=58., bpm=120.)
     features.attach(track)
-    assert calls == [('embedding', 30.), ('stems', 180.)]
+    assert calls == [('embedding', 30.), ('stems', 240.)]
     assert features.transient_failure(track)
     assert track.bpm == 120.

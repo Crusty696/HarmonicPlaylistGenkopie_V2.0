@@ -148,6 +148,9 @@ class HearingAudioWorker(QThread):
 
     def __init__(self, spec, sources=(), parent=None, timeout=120.0):
         super().__init__(parent)
+        if (isinstance(timeout, bool) or type(timeout) not in (int, float)
+                or not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("Playback timeout muss endlich und positiv sein")
         self.spec = dict(spec)
         self.sources = list(sources)
         self.timeout = float(timeout)

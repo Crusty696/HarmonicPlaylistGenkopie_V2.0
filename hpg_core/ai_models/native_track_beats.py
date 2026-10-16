@@ -10,11 +10,16 @@ from .native_phrase_worker import SHA256, _source_identity
 from .native_beat_pipeline_worker import TF_SHA256
 from .beat_predictor import MODEL_HASHES
 from .process_runtime import OwnedModelProcess
-from .native_beat_selection import configured_mode, validate_selection
+from .native_beat_selection import (
+    MAX_NATIVE_BEAT_SECONDS, MAX_NATIVE_BEAT_WINDOW_SECONDS,
+    configured_mode, maximum_native_beat_rows, native_beat_segment_count,
+    validate_selection,
+)
 from .native_audio_reader import CONTRACT as READER_CONTRACT
+from .reader_contract import NATIVE_BEAT_INPUT_CONVENTIONS
 from .native_beat_boundaries import VERSION as BOUNDARY_CONTRACT
 
-CONTRACT = 'hpg-native-track-beats-v4'
+CONTRACT = 'hpg-native-track-beats-v10'
 
 
 def enabled():
@@ -22,12 +27,11 @@ def enabled():
 
 
 def has_verified_grid(track):
-    """Gemeinsame native Freigabe für Renderer und Export; keine Neuanalyse."""
+    """Prüft native Beatgrid-Gültigkeit unabhängig vom Bar-1-Status."""
     from .native_beat_alignment import active_anchor
     value = getattr(track, 'native_beat_analysis', {})
     if (not isinstance(value, dict) or value.get('status') != 'ok'
-            or getattr(track, 'beatgrid_status', None) != 'verified'
-            or getattr(track, 'downbeat_confidence', None) != 1.0):
+            or getattr(track, 'beatgrid_status', None) != 'verified'):
         return False
     try:
         validate_snapshot(value, duration=track.duration)
@@ -46,33 +50,65 @@ def validate_snapshot(value, *, duration):
     fields = {'status', 'reason', 'contract', 'executable_sha256', 'tensorflow_sha256',
               'model_id', 'model_hashes', 'source_identity', 'sample_rate', 'frames',
               'bpm', 'grid', 'first_downbeat', 'musically_verified', 'input_convention', 'selection', 'reader', 'boundary_contract', 'model_coverage'}
-    if (set(value) - {'audio_alignment', 'model_beats', 'verification', 'phase_method'} != fields or value['reason'] is not None or value['contract'] != CONTRACT
+    if (set(value) - {'audio_alignment', 'model_beats', 'verification', 'phase_method',
+                      'model_coverage_segments'} != fields or value['reason'] is not None or value['contract'] != CONTRACT
             or value['executable_sha256'] != SHA256 or value['tensorflow_sha256'] != TF_SHA256
             or value['boundary_contract'] != BOUNDARY_CONTRACT
             or value['model_id'] not in MODEL_HASHES or value['model_hashes'] != MODEL_HASHES[value['model_id']]
             or value['sample_rate'] != 44100 or type(value['frames']) is not int
-            or not 44100 <= value['frames'] <= 1200 * 44100
-            or abs(value['frames'] / 44100 - duration) > 2 / 44100
+            or not 44100 <= value['frames'] <= MAX_NATIVE_BEAT_SECONDS * 44100
+            or abs(value['frames'] / 44100 - duration) >
+                (2 / 44100 if value['input_convention'] == 'rekordbox-builtin-planar-float32' else 0.1)
             or value['musically_verified'] is not False
-            or value['input_convention'] != 'rekordbox-builtin-planar-float32'
-            or type(value['source_identity']) is not list or len(value['source_identity']) != 4
+            or type(value['input_convention']) is not str
+            or value['input_convention'] not in NATIVE_BEAT_INPUT_CONVENTIONS.values()
+            or type(value['source_identity']) is not list or len(value['source_identity']) != 5
             or any(type(v) is not int or v < 0 for v in value['source_identity'])
             or type(value['bpm']) not in (int, float) or not math.isfinite(value['bpm'])
             or not 55 <= value['bpm'] <= 215 or type(value['grid']) is not list
-            or not 4 <= len(value['grid']) <= 6000):
+            or not 4 <= len(value['grid']) <= maximum_native_beat_rows(value['frames'])):
         raise ValueError('Invalid native beat identity/coverage')
     if 'phase_method' in value and value['phase_method'] != 'native_attack_v1':
         raise ValueError('Invalid native phase method')
     validate_selection(value['selection'])
     if value['selection']['model_id'] != value['model_id']:
         raise ValueError('Native selected model mismatch')
-    validate_reader(value['reader'], value['frames'], duration)
+    validate_reader(value['reader'], value['frames'], duration, value['input_convention'])
     coverage = value['model_coverage']
     if (type(coverage) is not dict or set(coverage) != {'start_s', 'end_s'}
             or any(type(x) not in (int, float) or not math.isfinite(x) for x in coverage.values())
+            or any(x != round(x * 44100) / 44100 for x in coverage.values())
             or not 0 <= coverage['start_s'] < coverage['end_s'] <= duration
             or (not value['selection']['chunked'] and coverage['end_s']-coverage['start_s'] > 60+1e-6)):
         raise ValueError('Invalid native model coverage')
+    segments_required = (
+        not value['selection']['chunked']
+        and value['frames'] > MAX_NATIVE_BEAT_WINDOW_SECONDS * 44100
+    )
+    if segments_required and 'model_coverage_segments' not in value:
+        raise ValueError('Segmented native model coverage is required')
+    if not segments_required and 'model_coverage_segments' in value:
+        raise ValueError('Unexpected segmented native model coverage')
+    if 'model_coverage_segments' in value:
+        segments = value['model_coverage_segments']
+        if (value['selection']['chunked'] or type(segments) is not list or len(segments) < 2
+                or len(segments) != native_beat_segment_count(value['frames'])
+                or segments[0] != coverage):
+            raise ValueError('Invalid segmented model coverage')
+        previous_start = -1.
+        previous_end = None
+        for segment in segments:
+            if (type(segment) is not dict or set(segment) != {'start_s', 'end_s'}
+                    or any(type(x) not in (int, float) or not math.isfinite(x)
+                           for x in segment.values())
+                    or any(x != round(x * 44100) / 44100 for x in segment.values())
+                    or not 0 <= segment['start_s'] < segment['end_s'] <= duration
+                    or segment['end_s'] - segment['start_s'] > 60 + 1e-6
+                    or segment['start_s'] <= previous_start
+                    or previous_end is not None and segment['start_s'] >= previous_end):
+                raise ValueError('Invalid segmented model coverage range')
+            previous_start = segment['start_s']
+            previous_end = segment['end_s']
     previous = None
     for row in value['grid']:
         if (type(row) is not dict or set(row) != {'pos', 'numBar', 'bpm'}
@@ -88,7 +124,8 @@ def validate_snapshot(value, *, duration):
         raise ValueError('Invalid native downbeat')
     if 'model_beats' in value:
         previous = -1.
-        if type(value['model_beats']) is not list or not 4 <= len(value['model_beats']) <= 6000:
+        if (type(value['model_beats']) is not list or not 4 <= len(value['model_beats'])
+                <= maximum_native_beat_rows(value['frames'])):
             raise ValueError('Invalid native model beats')
         for row in value['model_beats']:
             if (type(row) is not list or len(row) != 2
@@ -102,7 +139,8 @@ def validate_snapshot(value, *, duration):
                 or verification['model_id'] != 'model7'
                 or verification['model_hashes'] != MODEL_HASHES['model7']
                 or verification['coverage'] != dict(start_s=0., end_s=(value['frames']-1)/44100)
-                or type(verification['beats']) is not list or not 4 <= len(verification['beats']) <= 6000):
+                or type(verification['beats']) is not list or not 4 <= len(verification['beats'])
+                <= maximum_native_beat_rows(value['frames'])):
             raise ValueError('Invalid native verification provenance')
         previous = -1.
         for row in verification['beats']:
@@ -116,18 +154,26 @@ def validate_snapshot(value, *, duration):
         validate_alignment(value, value['audio_alignment'])
 
 
-def validate_reader(reader, frames, duration):
-    fields = {'contract', 'source_sample_rate', 'source_channels', 'source_bit_depth',
-              'source_frames', 'output_sample_rate', 'output_frames'}
+def validate_reader(reader, frames, duration, input_convention):
+    fields = {'contract', 'source_sample_rate', 'source_channels', 'output_channels', 'source_bit_depth',
+              'source_frames', 'output_sample_rate', 'output_frames', 'backend'}
     if (type(reader) is not dict or set(reader) != fields
             or reader['contract'] != READER_CONTRACT
-            or any(type(reader[k]) is not int for k in fields - {'contract'})
-            or reader['source_channels'] not in (1, 2)
+            or type(reader['backend']) is not str
+            or reader['backend'] not in NATIVE_BEAT_INPUT_CONVENTIONS
+            or input_convention != NATIVE_BEAT_INPUT_CONVENTIONS[reader['backend']]
+            or any(type(reader[k]) is not int for k in fields - {'contract', 'backend'})
+            or not 1 <= reader['source_channels'] <= 32
+            or reader['output_channels'] not in (1, 2)
+            or reader['output_channels'] != (1 if reader['source_channels'] > 2
+                                               else reader['source_channels'])
             or not 8000 <= reader['source_sample_rate'] <= 384000
-            or reader['source_bit_depth'] not in (8, 16, 24, 32, 64)
+            or reader['source_bit_depth'] not in (0, 8, 16, 24, 32, 64)
+            or (reader['backend'] == 'rekordbox-builtin' and reader['source_bit_depth'] == 0)
             or reader['source_frames'] < 1
             or reader['output_sample_rate'] != 44100 or reader['output_frames'] != frames
-            or abs(reader['source_frames']/reader['source_sample_rate']-duration) > 2/44100):
+            or abs(reader['source_frames']/reader['source_sample_rate']-duration) >
+                (2/44100 if reader['backend'] == 'rekordbox-builtin' else 0.1)):
         raise ValueError('Invalid native reader provenance')
 
 
@@ -160,7 +206,7 @@ def analyze(path, *, transport=None, timeout_s=180., cancel_event=None):
         mode = configured_mode()
         request = dict(path=str(source), source_identity=identity, configuration=mode)
         raw = call('native_beat', 'hpg_core.ai_models.native_beat_pipeline_worker', request)
-        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v4'
+        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v10'
                 or raw.get('executable_sha256') != SHA256 or raw.get('tensorflow_sha256') != TF_SHA256
                 or raw.get('model_id') not in MODEL_HASHES
                 or raw.get('model_hashes') != MODEL_HASHES[raw['model_id']]
@@ -180,6 +226,8 @@ def analyze(path, *, transport=None, timeout_s=180., cancel_event=None):
             musically_verified=False, input_convention=raw['input_convention'], model_beats=raw['beats'],
             selection=raw['selection'], reader=raw['reader'], boundary_contract=raw['boundary_contract'],
             model_coverage=raw['model_coverage'])
+        if 'model_coverage_segments' in raw:
+            result['model_coverage_segments'] = raw['model_coverage_segments']
         validate_snapshot(result, duration=frames/44100)
         if raw.get('verification') is not None:
             result['verification'] = raw['verification']

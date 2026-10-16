@@ -4,7 +4,10 @@ Centralizes all magic numbers and configurable parameters.
 """
 
 # === Audio Processing Parameters ===
-SUPPORTED_AUDIO_EXTENSIONS = (".wav", ".aiff", ".aif", ".mp3", ".flac")
+SUPPORTED_AUDIO_EXTENSIONS = (
+    ".wav", ".wave", ".aiff", ".aif", ".mp3", ".flac", ".fla",
+    ".mp4", ".m4a", ".aac", ".ogg",
+)
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)
 MAX_TRANSITION_OVERLAP_SECONDS = 64.0
@@ -206,10 +209,12 @@ def analysis_timeout_seconds(worker_count: int = 1) -> float:
 
     if type(worker_count) is not int or worker_count < 1:
         raise ValueError("worker_count muss eine positive Ganzzahl sein")
-    # Native Einzelaufrufe bleiben auf 180 s begrenzt. Bis zu worker_count
+    # Native Phrase-/Beataufrufe bleiben auf 180 s, Stem-Aufrufe auf 240 s begrenzt.
+    # Bis zu worker_count
     # aktive Tracks teilen denselben Broker; Wartezeit zählt zum Gesamtbudget.
-    extra = (180. if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
-    extra += 30. if os.environ.get("HPG_EMBEDDINGS", "1") == "1" else 0.
+    extra = (240. if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
+    # Embeddings bleiben auf 180 s begrenzt und werden vor Stems ausgeführt.
+    extra += 180. if os.environ.get("HPG_EMBEDDINGS", "1") == "1" else 0.
     if not extra:
         return float(PARALLEL_ANALYSIS_TIMEOUT)
     return min(float(PARALLEL_ANALYSIS_TIMEOUT) + worker_count * extra,

@@ -91,7 +91,7 @@ def _validate_downbeat(downbeat, *, external=False):
 
 def _validate_anchor(value, *, schema_version=None):
     expected_anchor_fields = {'source', 'method', 'anchor_s', 'confidence', 'reference', 'neural'}
-    if schema_version in {5, 6, 7}:
+    if schema_version in {5, 6, 7, 8}:
         expected_anchor_fields.add('bar_position_comparison')
     if type(value) is not dict or set(value) != expected_anchor_fields:
         _error()
@@ -110,11 +110,11 @@ def _validate_anchor(value, *, schema_version=None):
     reference = value['reference']
     if reference is not None:
         expected_reference_fields = {'anchor_s', 'bpm', 'target_bpm', 'measurement'}
-        if schema_version in {4, 5, 6, 7}:
+        if schema_version in {4, 5, 6, 7, 8}:
             expected_reference_fields.add('path_match')
         if type(reference) is not dict or set(reference) != expected_reference_fields:
             _error()
-        if schema_version in {4, 5, 6, 7}:
+        if schema_version in {4, 5, 6, 7, 8}:
             path_match = reference['path_match']
             if type(path_match) is not str or path_match not in {
                     'unknown', 'exact_path', 'volume_rebind'}:
@@ -125,7 +125,7 @@ def _validate_anchor(value, *, schema_version=None):
             if reference[key] is not None and reference[key] <= 0:
                 _error()
         if (type(reference['measurement']) is not dict
-                or reference['measurement'].get('version') not in {1, 2, 3, 4, 5, 6, 7}):
+                or reference['measurement'].get('version') not in {1, 2, 3, 4, 5, 6, 7, 8}):
             _error()
         validate_measurement_diagnostics(reference['measurement'])
     if value['method'] == 'rekordbox' and (reference is None or reference['measurement']['grid']['status'] != 'verified'
@@ -146,15 +146,18 @@ def _validate_anchor(value, *, schema_version=None):
             or (value['method'] == 'native_rekordbox') != (neural['reason'] == 'native_adopted')
             or (value['method'] == 'native_rekordbox_audio_offset') != (neural['reason'] == 'native_offset_adopted')):
         _error()
-    if value['method'] in {'native_rekordbox', 'native_rekordbox_audio_offset'} and (value['confidence'] != 1. or neural['candidate_anchor_s'] != value['anchor_s'] or neural['windows']):
+    if value['method'] in {'native_rekordbox', 'native_rekordbox_audio_offset'} and (
+            value['confidence'] != 0.
+            or neural['candidate_anchor_s'] != value['anchor_s']
+            or neural['windows']):
         _error()
     if neural['reason'] == 'adopted' and neural['candidate_anchor_s'] != value['anchor_s']:
         _error()
 
-    if schema_version in {5, 6, 7}:
+    if schema_version in {5, 6, 7, 8}:
         _validate_bar_position_comparison(value['bar_position_comparison'])
     if value['method'] in {'model_audio_rotation', 'model_audio_phase_offset'}:
-        if schema_version not in {5, 6, 7}:
+        if schema_version not in {5, 6, 7, 8}:
             _error()
         comparison = value['bar_position_comparison']
         confirmation = comparison['audio_confirmation']
@@ -500,30 +503,57 @@ def validate_measurement_diagnostics(value):
         _error()
     if not value:
         return
-    if type(value.get('version')) is not int or value['version'] not in {1, 2, 3, 4, 5, 6, 7}:
+    if type(value.get('version')) is not int or value['version'] not in {1, 2, 3, 4, 5, 6, 7, 8}:
         _error()
     keys = {'version', 'downbeat', 'grid'} | (
-        {'anchor'} if value['version'] in {2, 3, 4, 5, 6, 7} and 'anchor' in value else set()
+        {'anchor'} if value['version'] in {2, 3, 4, 5, 6, 7, 8} and 'anchor' in value else set()
     )
-    if value['version'] in {6, 7}:
+    if value['version'] in {6, 7, 8}:
         keys.add('phrase_unit')
-    if value['version'] == 7:
+    if value['version'] == 7 or value['version'] == 8 and 'tempo' in value:
         keys.add('tempo')
+    if value['version'] == 8:
+        keys.add('native_grid')
     if set(value) != keys:
         _error()
-    if value['version'] in {2, 3, 4, 5, 6, 7} and 'anchor' in value:
+    if value['version'] in {2, 3, 4, 5, 6, 7, 8} and 'anchor' in value:
         _validate_anchor(value['anchor'], schema_version=value['version'])
         if type(value['grid']) is not dict:
             _error()
         if value['anchor']['method'] in {'rekordbox', 'neural_audio'} and value['grid'].get('status') != 'verified':
             _error()
     downbeat, grid = value["downbeat"], value["grid"]
-    _validate_downbeat(downbeat, external=value['version'] in {2, 3, 4, 5, 6, 7})
-    current_schema = value['version'] in {3, 4, 5, 6, 7}
-    if value['version'] in {6, 7}:
+    _validate_downbeat(downbeat, external=value['version'] in {2, 3, 4, 5, 6, 7, 8})
+    current_schema = value['version'] in {3, 4, 5, 6, 7, 8}
+    if value['version'] in {6, 7, 8}:
         _validate_phrase_unit_diagnostic(value['phrase_unit'])
-    if value['version'] == 7:
+    if 'tempo' in value:
         _validate_tempo_diagnostic(value['tempo'])
+    if value['version'] == 8:
+        native = value['native_grid']
+        if (type(native) is not dict or set(native) != {'status', 'reason'}
+                or type(native['status']) is not str
+                or native['status'] not in {'accepted', 'rejected', 'unavailable', 'disabled'}
+                or type(native['reason']) is not str
+                or native['reason'] not in {
+                    'verified', 'audio_offset_confirmed', 'grid_unverified',
+                    'variable_grid_unsupported', 'offset_out_of_range',
+                    'offset_confirmation_windows_missing',
+                    'offset_audio_confirmation_failed', 'offset_audio_decode_failed',
+                    'native_unavailable', 'unsupported_duration', 'disabled'}
+                or (native['status'], native['reason']) not in {
+                    ('accepted', 'verified'), ('accepted', 'audio_offset_confirmed'),
+                    ('rejected', 'grid_unverified'), ('rejected', 'variable_grid_unsupported'),
+                    ('rejected', 'offset_out_of_range'),
+                    ('rejected', 'offset_confirmation_windows_missing'),
+                    ('rejected', 'offset_audio_confirmation_failed'),
+                    ('rejected', 'offset_audio_decode_failed'),
+                    ('unavailable', 'native_unavailable'),
+                    ('unavailable', 'unsupported_duration'), ('disabled', 'disabled')}
+                or (native['status'] == 'accepted'
+                    and (type(value['grid']) is not dict
+                         or value['grid'].get('status') != 'verified'))):
+            _error()
     grid_fields = GRID_FIELDS if current_schema else LEGACY_GRID_FIELDS
     window_fields = WINDOW_FIELDS if current_schema else LEGACY_WINDOW_FIELDS
     if type(grid) is not dict or set(grid) != grid_fields:
@@ -594,12 +624,17 @@ def validate_measurement_diagnostics(value):
             _error()
         if measured_residuals >= 3 and grid['phase_center_ms'] is None:
             _error()
-    if (value['version'] in {6, 7}
+    if (value['version'] in {6, 7, 8}
             and value['phrase_unit']['source'] == 'audio_novelty'):
         from .downbeat import DOWNBEAT_RELIABLE_MIN
         anchor = value.get('anchor')
+        native_beat_anchor = (
+            type(anchor) is dict
+            and anchor.get('method') in {'native_rekordbox', 'native_rekordbox_audio_offset'}
+            and anchor.get('confidence') == 0.0
+        )
         if (grid['status'] != 'verified' or type(anchor) is not dict
-                or anchor['confidence'] < DOWNBEAT_RELIABLE_MIN):
+                or (anchor['confidence'] < DOWNBEAT_RELIABLE_MIN and not native_beat_anchor)):
             _error()
     for failure in failures:
         if type(failure) is not dict or set(failure) != {"offset_seconds", "reason"} or failure["reason"] != "decode_error":
@@ -609,7 +644,7 @@ def validate_measurement_diagnostics(value):
 
 def measurement_snapshot(
     downbeat, grid, *, decode_failures=(), anchor_decision=None,
-    phrase_unit_diagnostic=None, tempo_diagnostic=None,
+    phrase_unit_diagnostic=None, tempo_diagnostic=None, native_grid_diagnostic=None,
 ):
     """Nur bekannte Producer-Felder projizieren; Legacy-Mocks liefern unbekannt."""
     measured = {key: deepcopy(value) for key, value in downbeat.items() if key in DOWNBEAT_FIELDS}
@@ -628,5 +663,8 @@ def measurement_snapshot(
     if tempo_diagnostic is not None:
         result['version'] = 7
         result['tempo'] = deepcopy(tempo_diagnostic)
+    if native_grid_diagnostic is not None:
+        result['version'] = 8
+        result['native_grid'] = deepcopy(native_grid_diagnostic)
     validate_measurement_diagnostics(result)
     return result

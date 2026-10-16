@@ -22,8 +22,8 @@ def stable_model_window(native, start, width):
 def single_window_evidence_plan(native, duration, span):
     """Sechs disjunkte Fenster vor jeder Audiomessung wählen.
 
-    Modell8 besitzt nur ein höchstens 60s langes Beobachtungsfenster. Die drei
-    Bestätigungen liegen darin; drei Kalibrierungen liegen außerhalb davon.
+    Modell8 beobachtet je Segment höchstens 60s. Bestätigungen liegen in
+    beobachteten Bereichen; Kalibrierungen liegen außerhalb aller Bereiche.
     Keine Auswahl anhand des später gemessenen Phasenfehlers.
     """
     if native.get('verification'):
@@ -46,21 +46,25 @@ def single_window_evidence_plan(native, duration, span):
     if native.get('selection', {}).get('chunked', True):
         return None
     coverage = native.get('model_coverage')
-    if not coverage or duration < 6*span:
+    segments = native.get('model_coverage_segments') or ([coverage] if coverage else [])
+    if not segments or duration < 6*span:
         return None
-    first = max(0, math.ceil(coverage['start_s']))
-    last = math.floor(min(duration, coverage['end_s'])-span)
+    observed_candidates = [float(start) for start in range(math.floor(duration-span)+1)
+                           if any(segment['start_s'] <= start
+                                  and start+span <= segment['end_s']
+                                  for segment in segments)
+                           and stable_model_window(native, float(start), span)]
     confirmation = []
-    for start in range(first, last+1):
-        if (all(start >= other+span for other in confirmation)
-                and stable_model_window(native, float(start), span)):
-            confirmation.append(float(start))
-            if len(confirmation) == 3:
-                break
-    if len(confirmation) != 3:
-        return None
+    for fraction in (.2, .5, .8):
+        target = duration*fraction
+        available = [start for start in observed_candidates if all(
+            start+span <= other or start >= other+span for other in confirmation)]
+        if not available:
+            return None
+        confirmation.append(min(available, key=lambda start: (abs(start-target), start)))
     candidates = [float(start) for start in range(math.floor(duration-span)+1)
-                  if start+span <= coverage['start_s'] or start >= coverage['end_s']]
+                  if all(start+span <= segment['start_s'] or
+                         start >= segment['end_s'] for segment in segments)]
     calibration = []
     for target in (0., duration/2-span/2, duration-span):
         available = [start for start in candidates if all(

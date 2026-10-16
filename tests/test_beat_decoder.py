@@ -38,6 +38,14 @@ def test_weak_native_peak_is_not_declared_observed(native):
     assert result['beats'][0]['position'] == 3
 
 
+def test_peak_in_adjacent_model_frame_is_still_observed(native):
+    values, _ = native
+    values[14] = values[13].copy()
+    values[13] = .001
+    result = bd.decode_beat_activations(values, duration_s=10.)
+    assert result['beats'][0]['observed'] is True
+
+
 @pytest.mark.parametrize('field,value', [
     ('first_downbeat', True), ('selected_bar_rotation', 0),
     ('path_log_likelihood', -1.), ('verified', True),

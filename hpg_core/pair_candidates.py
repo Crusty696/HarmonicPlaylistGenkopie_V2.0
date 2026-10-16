@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import os
 import unicodedata
 from dataclasses import asdict, dataclass, field, fields
 
@@ -30,8 +31,8 @@ from .dj_brain import (
     get_genre_compatibility, get_mix_profile,
 )
 from .mix_candidates import (
-    CUE_IN_PATTERN, CUE_OUT_PATTERN, SCHEMA_PRIORITAET, MixCandidate, _quantize,
-    quantize_to_points,
+    CUE_IN_PATTERN, CUE_OUT_PATTERN, PROVENANCE_JE_SCHEMA, SCHEMA_PRIORITAET,
+    MixCandidate, _quantize, quantize_to_points,
 )
 from .genres import CANONICAL_GENRES
 from .models import (
@@ -456,19 +457,49 @@ def _grid_sec(track: Track) -> float:
     return seconds_per_bar(track.bpm) * effective_track_phrase_unit(track)
 
 
+def _phrase_points_usable(track: Track) -> bool:
+    """Nur aktive Anker oder verifizierte Rekordbox-PSSI-Punkte quantisieren."""
+    if track.bar_position_usage_blocked:
+        return False
+    if track.phrase_anchor is not None:
+        return True
+    return track.verified_pssi_phrase_grid
+
+
+def _trusted_candidates(track: Track, candidates: list[MixCandidate]) -> list[MixCandidate]:
+    """Entfernt PSSI-Rang und Label, wenn dessen Taktphase nicht bestätigt ist."""
+    if track.verified_pssi_phrase_grid:
+        return candidates
+    trusted = []
+    for candidate in candidates:
+        schemas = [schema for schema in (candidate.schema or []) if schema != "pssi_phrase"]
+        if not schemas and "pssi_phrase" in (candidate.schema or []):
+            continue
+        if len(schemas) != len(candidate.schema or []):
+            candidate.schema = schemas
+            candidate.provenance = PROVENANCE_JE_SCHEMA.get(schemas[0], "") if schemas else ""
+            candidate.phrase_label = ""
+        trusted.append(candidate)
+    return trusted
+
+
 def _ist_benannter_cue(track: Track, cand: MixCandidate, seite: str) -> bool:
     """Erkennt einen gerichteten manuellen Cue nur fuer Herkunftsdiagnose."""
     if "benannter_cue" not in (cand.schema or []):
         return False
+    phrase_anchor = track.phrase_anchor
+    if not _phrase_points_usable(track):
+        return False
     muster = CUE_IN_PATTERN if seite == "in" else CUE_OUT_PATTERN
     grid = _grid_sec(track)
+    phrase_points = list(track.phrase_grid) if track.verified_pssi_phrase_grid else []
     for cue in track.cue_points or []:
         if cue.get("provenance") != "manual":
             continue
         if not muster.search((cue.get("name") or "").upper()):
             continue
-        q = _quantize(float(cue["t"]), seite, list(track.phrase_grid or []), grid, track.phrase_anchor)
-        if q is not None and abs(round(float(q), 3) - cand.t) <= QUANTIZE_TOLERANCE_SEC:
+        q = _quantize(float(cue["t"]), seite, phrase_points, grid, phrase_anchor)
+        if q is not None and abs(float(q) - cand.t) <= QUANTIZE_TOLERANCE_SEC:
             return True
     return False
 
@@ -476,13 +507,16 @@ def _ist_benannter_cue(track: Track, cand: MixCandidate, seite: str) -> bool:
 def _auf_gitter(track: Track, t: float, seite: str) -> bool:
     """Punkt liegt (mit QUANTIZE_TOLERANCE_SEC) auf dem PSSI-Gitter bzw. dem
     Phrasenraster des Tracks."""
-    if track.phrase_grid:
+    if not _phrase_points_usable(track):
+        return False
+    if track.verified_pssi_phrase_grid:
         q = quantize_to_points(t, list(track.phrase_grid), "floor" if seite == "out" else "ceil")
     else:
         grid = _grid_sec(track)
-        if grid <= 0.0:
+        anchor = track.phrase_anchor
+        if grid <= 0.0 or anchor is None:
             return False
-        q = quantize_to_grid(t, grid, track.phrase_anchor, "round")
+        q = quantize_to_grid(t, grid, anchor, "round")
     return q is not None and abs(q - t) <= QUANTIZE_TOLERANCE_SEC
 
 
@@ -634,8 +668,13 @@ def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
         reasons.append("blende_im_outro")
     if not _blende_passt_in_b(track_b, in_b, blend_bars, seconds_per_bar(track_a.bpm)):
         reasons.append("blende_ueber_b_ende")
-    if (not _native_blend_supported(track_a, out_a.t, blend_bars * seconds_per_bar(track_a.bpm))
-            or not _native_blend_supported(track_b, in_b.t, blend_bars * seconds_per_bar(track_b.bpm))):
+    _, relation = effective_bpm_diff(track_a.bpm, track_b.bpm)
+    rendered_overlap = blend_bars * seconds_per_bar(track_a.bpm)
+    source_b_duration = rendered_overlap * _renderer_source_b_rate(
+        track_a.bpm, track_b.bpm, relation,
+    )
+    if (not _native_blend_supported(track_a, out_a.t, rendered_overlap)
+            or not _native_blend_supported(track_b, in_b.t, source_b_duration)):
         reasons.append("native_beat_gap")
     reasons += [g for g in basis if g in ("in_im_intro", "in_ausserhalb", "gitter_out", "gitter_in")]
     return reasons
@@ -858,6 +897,27 @@ def _gewichte(tol: dict, genre: str, explizit: bool) -> dict[str, float]:
     return {f: float(quelle[f"kandidaten_{f}_weight"]) for f in FAKTOREN}
 
 
+def _ablation_weight(name: str) -> float:
+    raw = os.environ.get(name, "0")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} muss eine Zahl in 0..1 sein") from error
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} muss eine Zahl in 0..1 sein")
+    return value
+
+
+def _embedding_ablation_weight() -> float:
+    """Standard bleibt das bisherige Scoring."""
+    return _ablation_weight("HPG_EMBEDDING_SCORE_WEIGHT")
+
+
+def _stem_bass_ablation_weight() -> float:
+    """Standard bleibt das bisherige Scoring."""
+    return _ablation_weight("HPG_STEM_BASS_SCORE_WEIGHT")
+
+
 def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCandidate,
                blend_bars: int, *, energy_direction=None, harmonic_strictness: int = 7,
                allow_experimental: bool = True, tolerances: dict | None = None,
@@ -868,6 +928,9 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     Half/Double: Gesamtscore x BPM_HALF_DOUBLE_PENALTY. Vocals beidseitig: -0.06.
     `blend_bars` ist bewusst KEIN Score-Merkmal (Spec Abschnitt 1: Blendenlaenge
     als Qualitaetsmerkmal widerlegt, rho -0.08); es dient nur den Gates/Flags.
+    CNN-Embeddings und Stem-Bass koennen nur als explizite Ablationen mit
+    HPG_EMBEDDING_SCORE_WEIGHT bzw. HPG_STEM_BASS_SCORE_WEIGHT einfliessen;
+    Standardgewichte sind null.
     `bass_swap_geplant`: der Aufrufer rendert/plant einen Bass-/EQ-Swap — der
     Kick-Konflikt ist damit geloest, KICK_KONFLIKT_ABZUG entfaellt, das Flag
     `bass_swap_pflicht` bleibt gesetzt."""
@@ -881,8 +944,41 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     flags = {"half_double": rel != "direct", "bass_swap_pflicht": False,
              "lange_blende_erlaubt": False,
              "benannter_cue": _ist_benannter_cue(track_a, out_a, "out") or _ist_benannter_cue(track_b, in_b, "in")}
-    from .ai_models.deep_features import pair_diagnostics
-    additional = pair_diagnostics(track_a, track_b, out_a.t, in_b.t, blend_bars)
+    overlap_sec = blend_bars * seconds_per_bar(track_a.bpm)
+    source_b_rate = _renderer_source_b_rate(track_a.bpm, track_b.bpm, rel)
+    additional = _optionale_pair_diagnostics(
+        track_a, track_b, out_a.t, in_b.t, blend_bars,
+        overlap_sec=overlap_sec, source_b_rate=source_b_rate,
+    )
+    if additional:
+        additional = dict(additional)
+    embedding_weight = _embedding_ablation_weight()
+    stem_bass_weight = _stem_bass_ablation_weight()
+    embedding_cosine = additional.get("embedding_cosine")
+    timbre_score = _teil_timbre(out_a, in_b)
+    bass_score = _teil_bass(out_a, in_b, tol, flags, bass_swap_geplant)
+    if (embedding_weight > 0.0 and type(embedding_cosine) in (int, float)
+            and math.isfinite(embedding_cosine) and -1.0 <= embedding_cosine <= 1.0
+            and timbre_score is not None):
+        embedding_score = (embedding_cosine + 1.0) / 2.0
+        teil_timbre = ((1.0 - embedding_weight) * timbre_score
+                       + embedding_weight * embedding_score)
+        additional["embedding_ablation_weight"] = embedding_weight
+        additional["affects_score"] = True
+    else:
+        teil_timbre = timbre_score
+    stems_a, stems_b = additional.get("stems_a"), additional.get("stems_b")
+    bass_a = stems_a.get("bass") if type(stems_a) is dict else None
+    bass_b = stems_b.get("bass") if type(stems_b) is dict else None
+    if (stem_bass_weight > 0.0 and type(bass_a) in (int, float)
+            and type(bass_b) in (int, float) and math.isfinite(bass_a)
+            and math.isfinite(bass_b) and bass_a >= 0.0 and bass_b >= 0.0
+            and max(bass_a, bass_b) > 0.0 and bass_score is not None):
+        stem_bass_score = min(bass_a, bass_b) / max(bass_a, bass_b)
+        bass_score = ((1.0 - stem_bass_weight) * bass_score
+                      + stem_bass_weight * stem_bass_score)
+        additional["stem_bass_ablation_weight"] = stem_bass_weight
+        additional["affects_score"] = True
     if additional:
         flags['deep_features'] = additional
     teil = {
@@ -892,8 +988,8 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
         "energy": _teil_energie(out_a, in_b, richtung),
         "genre": _teil_genre(genre_a, genre_b),
         "groove": _teil_groove(out_a, in_b, tol, flags),
-        "bass": _teil_bass(out_a, in_b, tol, flags, bass_swap_geplant),
-        "timbre": _teil_timbre(out_a, in_b),
+        "bass": bass_score,
+        "timbre": teil_timbre,
         "mood": _teil_mood(out_a, in_b, tol),
         "loudness": _teil_lautheit(out_a, in_b),
         "structure": _teil_struktur(
@@ -928,6 +1024,35 @@ def _stufe(wert: float | None) -> str:
     return "schwach"
 
 
+def _deep_feature_reason(flags: dict) -> str:
+    """Zeigt optionale Zusatzmessungen und eine aktivierte Ablation."""
+    diagnostic = flags.get("deep_features")
+    if type(diagnostic) is not dict or diagnostic.get("calibrated") is not False:
+        return ""
+    details = []
+    stems_a, stems_b = diagnostic.get("stems_a"), diagnostic.get("stems_b")
+    if isinstance(stems_a, dict) or isinstance(stems_b, dict):
+        coverage = "A+B" if isinstance(stems_a, dict) and isinstance(stems_b, dict) else (
+            "A" if isinstance(stems_a, dict) else "B")
+        details.append(f"Stems Mixfenster {coverage} vorhanden")
+    similarity = diagnostic.get("embedding_cosine")
+    if type(similarity) in (int, float) and math.isfinite(similarity):
+        details.append(f"Embedding-Rohähnlichkeit {similarity:.2f}")
+    if diagnostic.get("affects_score") is True:
+        for key, label in (("embedding_ablation_weight", "Embedding"),
+                           ("stem_bass_ablation_weight", "Stem-Bass")):
+            weight = diagnostic.get(key)
+            if type(weight) in (int, float) and math.isfinite(weight):
+                details.append(f"{label}-Ablationsgewicht {weight:.2f}")
+        return "Unkalibrierte Deep-Feature-Ablation aktiv: " + ", ".join(details)
+    bass_swap = diagnostic.get("bass_swap")
+    if type(bass_swap) is dict and type(bass_swap.get("relative_bar")) is int:
+        details.append(f"Bass-Swap-Kandidat Takt {bass_swap['relative_bar']}")
+    if not details:
+        return ""
+    return "Zusatzmerkmale unkalibriert, ohne Score-Einfluss: " + ", ".join(details)
+
+
 def begruendung_aus_teilwerten(teilwerte: dict, flags: dict, blend_bars: int) -> str:
     """Begruendung ausschliesslich aus Teilwerten und Flags (kein freier Text)."""
     teile = [f"{_FAKTOR_NAMEN.get(k, k)} {_stufe(teilwerte.get(k))}" for k in FAKTOREN if k in teilwerte]
@@ -939,6 +1064,9 @@ def begruendung_aus_teilwerten(teilwerte: dict, flags: dict, blend_bars: int) ->
         teile.append("lange Blende erlaubt")
     if flags.get("benannter_cue"):
         teile.append("benannter Cue")
+    deep_features = _deep_feature_reason(flags)
+    if deep_features:
+        teile.append(deep_features)
     teile.append(f"Blende {blend_bars} Takte")
     return "; ".join(teile)
 
@@ -975,6 +1103,35 @@ def _sortschluessel(p: PairCandidate, rang_map: dict | None = None):
     unbekannt = len(rm)
     return (-p.score, rm.get(_hauptschema(p.out_a, rm), unbekannt),
             rm.get(_hauptschema(p.in_b, rm), unbekannt), p.blend_bars)
+
+
+def _renderer_source_b_rate(bpm_a, bpm_b, relation):
+    """Quellsekunden von B pro Rendersekunde gemaess Renderer-Stretch."""
+    if not all(math.isfinite(value) and value > 0 for value in (bpm_a, bpm_b)):
+        return 1.0
+    target_b = bpm_b * 2.0 if relation == "half" else bpm_b / 2.0 if relation == "double" else bpm_b
+    if abs(bpm_a - bpm_b) <= 0.05 and relation == "direct":
+        return 1.0
+    return max(0.92, min(1.08, bpm_a / target_b))
+
+
+def _optionale_pair_diagnostics(track_a, track_b, out_s, in_s, blend_bars,
+                                *, overlap_sec=None, source_b_rate=1.0):
+    """Unkalibrierte Zusatzmerkmale duerfen Pair-Ranking nie abbrechen."""
+    try:
+        from .ai_models.deep_features import pair_diagnostics
+        result = pair_diagnostics(
+            track_a, track_b, out_s, in_s, blend_bars,
+            overlap_sec=overlap_sec, source_b_rate=source_b_rate,
+        )
+        if (type(result) is not dict or result.get('calibrated') is not False
+                or result.get('affects_score') is not False):
+            return {}
+        return result
+    except Exception as error:
+        logger.debug("Optionale Stem-/Embedding-Paarmerkmale ausgelassen: %s",
+                     type(error).__name__)
+        return {}
 
 
 def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
@@ -1096,6 +1253,8 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
     rang_map = {s: i for i, s in enumerate(schema_rang)} if schema_rang else None
     outs = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_a.mix_out_candidates or [])]
     ins = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_b.mix_in_candidates or [])]
+    outs = _trusted_candidates(track_a, outs)
+    ins = _trusted_candidates(track_b, ins)
     if not outs or not ins:
         return []
     _, rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
@@ -1104,6 +1263,9 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
     for c in outs + ins:
         schemata_vorhanden.update(c.schema or [])
     paare: list[PairCandidate] = []
+    deep_ablation_requested = (
+        _embedding_ablation_weight() > 0.0 or _stem_bass_ablation_weight() > 0.0
+    )
     # Laufzeit (gemessen 2026-08-22: ~9 ms je Paar bei 128 Kombinationen): der
     # Score haengt nicht von der Blende ab (Docstring score_pair), die Gates nur
     # ueber blende_im_outro — deshalb je (out, in) EINMAL Gates + Score, dann die
@@ -1151,7 +1313,10 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
             ]
             native_bars = [b for b in bars_ok
                            if _native_blend_supported(track_a, o.t, b * spb)
-                           and _native_blend_supported(track_b, i.t, b * seconds_per_bar(track_b.bpm))]
+                           and _native_blend_supported(
+                               track_b, i.t,
+                               b * spb * _renderer_source_b_rate(track_a.bpm, track_b.bpm, rel),
+                           )]
             if len(native_bars) < len(bars_ok) and gate_rejections is not None:
                 gate_rejections.add("native_beat_gap")
             bars_ok = native_bars
@@ -1163,13 +1328,28 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
                 allow_experimental=allow_experimental, tolerances=tolerances,
                 bass_swap_geplant=bass_swap_geplant)
             for bars in bars_ok:
-                # Der Score bleibt laengenunabhaengig. Zusatzmerkmale und
-                # Bass-Swap-Hinweise muessen dagegen das echte Fenster nutzen.
+                # Ohne explizite Ablation bleibt der Score laengenunabhaengig;
+                # Fenstermerkmale und Bass-Swap-Hinweise folgen jeder Laenge.
                 variant_flags = dict(flags)
-                if bars != bars_ok[0]:
-                    from .ai_models.deep_features import pair_diagnostics
+                variant_score, variant_teil = score, teil
+                if bars != bars_ok[0] and deep_ablation_requested:
+                    # Aktivierte fensterlokale Gewichte brauchen auch den
+                    # Score und Teilwerte des jeweiligen Blendenfensters.
+                    variant_score, variant_teil, variant_flags = score_pair(
+                        track_a, track_b, o, i, bars,
+                        energy_direction=energy_direction,
+                        harmonic_strictness=harmonic_strictness,
+                        allow_experimental=allow_experimental,
+                        tolerances=tolerances,
+                        bass_swap_geplant=bass_swap_geplant,
+                    )
+                elif bars != bars_ok[0]:
                     variant_flags.pop('deep_features', None)
-                    additional = pair_diagnostics(track_a, track_b, o.t, i.t, bars)
+                    additional = _optionale_pair_diagnostics(
+                        track_a, track_b, o.t, i.t, bars,
+                        overlap_sec=bars * spb,
+                        source_b_rate=_renderer_source_b_rate(track_a.bpm, track_b.bpm, rel),
+                    )
                     if additional:
                         variant_flags['deep_features'] = additional
                 # Flache Kopien statt to_dict()/from_dict() (asdict kostete die
@@ -1180,8 +1360,9 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
                 o_k.section_label, i_k.section_label = out_section_label, in_section_label
                 paare.append(PairCandidate(
                     out_a=o_k, in_b=i_k,
-                    blend_bars=bars, overlap_sec=bars * spb, score=score, teilwerte=dict(teil),
-                    flags=variant_flags, begruendung=begruendung_aus_teilwerten(teil, variant_flags, bars),
+                    blend_bars=bars, overlap_sec=bars * spb, score=variant_score,
+                    teilwerte=dict(variant_teil), flags=variant_flags,
+                    begruendung=begruendung_aus_teilwerten(variant_teil, variant_flags, bars),
                     bpm_relation=rel))
     if not paare:
         return []

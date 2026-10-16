@@ -12,21 +12,87 @@ import ctypes as ct
 from ctypes import wintypes as wt
 import hashlib
 import json
+import math
 import multiprocessing
+import numpy as np
 from pathlib import Path
 import struct
 import sys
 
+from .feature_audio import mono_downmix
 
 EXE = Path(r'C:\Program Files\rekordbox\rekordbox 7.2.19\rekordbox.exe')
 SHA256 = 'c9ed23e974c51c75e2ec069fbd2679a3dbe606be9e79e9cbbd13d6418ab11c37'
-CONTRACT_VERSION = 'rb-7.2.19-native-phrase-static-v1'
+CONTRACT_VERSION = 'rb-7.2.19-native-phrase-static-v4'
 _resident_images = []
 _used = False
 
 
 class NativeContractError(RuntimeError):
     pass
+
+
+class _NativePcm16Stream:
+    """Begrenzt Float-PCM auf den nativen 44,1-kHz/signed16-Readervertrag."""
+    subtype = 'PCM_16'
+    samplerate = 44100
+
+    def __init__(self, source):
+        import soxr
+
+        self.source = source
+        if not 1 <= source.channels <= 32:
+            raise NativeContractError('Unsupported multichannel source')
+        self.source_channels = source.channels
+        self.channels = 1 if source.channels > 2 else source.channels
+        self.frames = math.ceil(len(source) * self.samplerate / source.samplerate)
+        self.position = 0
+        self.buffer = np.empty((0, self.channels), dtype=np.float32)
+        self.exhausted = False
+        self.resampler = (soxr.ResampleStream(source.samplerate, self.samplerate,
+                                               self.channels, dtype='float32', quality='HQ')
+                          if source.samplerate != self.samplerate else None)
+
+    def __len__(self):
+        return self.frames
+
+    def tell(self):
+        return self.position
+
+    def seek(self, frame):
+        if frame != 0:
+            raise NativeContractError('Native PCM stream supports rewind only')
+        self.source.seek(0)
+        self.position = 0
+        self.buffer = np.empty((0, self.channels), dtype=np.float32)
+        self.exhausted = False
+        if self.resampler is not None:
+            import soxr
+            self.resampler = soxr.ResampleStream(
+                self.source.samplerate, self.samplerate, self.channels,
+                dtype='float32', quality='HQ')
+        return 0
+
+    def read(self, count, *, dtype, always_2d):
+        if dtype != 'int16' or always_2d is not True:
+            raise NativeContractError('Invalid native PCM conversion request')
+        target = min(count, self.frames - self.position)
+        while len(self.buffer) < target and not self.exhausted:
+            pcm = self.source.read(65536, dtype='float32', always_2d=True)
+            if self.source_channels > 2:
+                pcm = mono_downmix(pcm)
+            self.exhausted = self.source.tell() >= len(self.source)
+            if not np.isfinite(pcm).all():
+                raise NativeContractError('Nonfinite float-PCM source')
+            if self.resampler is not None:
+                pcm = self.resampler.resample_chunk(pcm, last=self.exhausted)
+            self.buffer = np.concatenate((self.buffer, pcm), axis=0)
+        samples = self.buffer[:target]
+        self.buffer = self.buffer[target:]
+        self.position += len(samples)
+        if len(samples) != target:
+            raise NativeContractError('Incomplete native PCM stream')
+        return np.clip(np.rint(samples*32768.), -32768, 32767).astype(np.int16)
 
 
 def _kernel():
@@ -158,14 +224,17 @@ ARRAY_NAMES = ('beat_positions', 'kind', 'beat_4', 'moriage', 'moriage_pos_judge
 
 def _source_identity(path):
     stat = path.stat()
-    return [stat.st_size, stat.st_mtime_ns, stat.st_dev, stat.st_ino]
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
+            stat.st_dev, stat.st_ino]
 
 
 def generate(request):
     """Liest Originalaudio nur lesend, gibt ausschließlich rohe native Werte ab.
 
-    Keine Taktfreigabe und keine HPG-Phrasenlabels. Das vollständige native
-    Headerlayout bleibt als Rohwerte sichtbar, bis die Semantik belegt ist.
+    Keine Taktfreigabe und keine HPG-Phrasenlabels. Statischer Datenfluss
+    12e95d0 -> 12d9b20 -> 12f7420 belegt Header[6] als rechte Phrasegrenze
+    im selben Beat-Raster wie die Starts; der Adapter prüft sie gegen das
+    bestätigte Eingangsgrid. Das ist kein Laufzeit- oder Musiknachweis.
     """
     import numpy as np
     import soundfile as sf
@@ -183,22 +252,58 @@ def generate(request):
             or not 1 <= bpm <= 100000 or not 0 <= offset <= 6000000 / bpm
             or not 1 <= position <= 4 or not 0 <= key < 24):
         raise NativeContractError('Invalid native grid parameters')
-    with sf.SoundFile(str(path), mode='r') as source:
+    from .native_audio_reader import MAX_SECONDS, NativeAudioStream
+    from hpg_core.config import SUPPORTED_AUDIO_EXTENSIONS
+    suffix = path.suffix.lower()
+    source_context = None
+    if suffix == '.mp3':
+        # Der gepinnte mpg123-Reader streamt blockweise; keine Laufzeitgrenze
+        # auf 20 Minuten und kein stiller Decoderwechsel bei langen MP3s.
+        source_context = NativeAudioStream(path)
+    elif suffix in ('.wav', '.aif', '.aiff'):
+        try:
+            info = sf.info(str(path))
+        except Exception:
+            info = None
+        if info is None:
+            source_context = NativeAudioStream(path)
+        elif (info.duration <= MAX_SECONDS
+              and info.subtype not in ('FLOAT', 'DOUBLE')):
+            source_context = NativeAudioStream(path)
+        else:
+            # Float-PCM und Quellen über Readerlimit bleiben direkt blockweise.
+            source_context = sf.SoundFile(str(path), mode='r')
+    else:
+        if suffix in SUPPORTED_AUDIO_EXTENSIONS:
+            source_context = NativeAudioStream(path)
+        else:
+            source_context = sf.SoundFile(str(path), mode='r')
+    with source_context as source:
         frames, rate, channels = len(source), source.samplerate, source.channels
-        if (not 1 <= frames < 2**31 or rate <= 0 or channels not in (1, 2)
+        reader_backend = getattr(source, 'backend', 'hpg-libsndfile')
+        if (not 1 <= frames < 2**31 or rate <= 0 or not 1 <= channels <= 32
                 or frames / rate > 7200):
             raise NativeContractError('Unsupported source dimensions')
-        if source.subtype in ('FLOAT', 'DOUBLE'):
-            # libsndfile skaliert Float-Dateien beim Lesen als int16 nicht
-            # automatisch auf PCM16. Ohne belegte native Konversion ablehnen.
-            raise NativeContractError('Floating-point source conversion not reconstructed')
-        image = NativeImage()
+        if reader_backend == 'hpg-libsndfile' and (
+                source.samplerate != 44100 or source.subtype != 'PCM_16'
+                or channels > 2):
+            if channels > 2:
+                reader_backend = 'hpg-libsndfile-mono-downmix-44100'
+            elif source.samplerate != 44100:
+                reader_backend = 'hpg-libsndfile-soxr-hq-44100'
+            elif source.subtype != 'PCM_16':
+                reader_backend = 'hpg-libsndfile-pcm16-44100'
+            source = _NativePcm16Stream(source)
+            frames, rate, channels = len(source), source.samplerate, source.channels
+            if not 1 <= frames < 2**31 or frames / rate > 7200:
+                raise NativeContractError('Unsupported native PCM dimensions')
+        # NativeAudioStream liefert Reader-PCM als signed16; der Backendname
+        # bleibt bis zur Ergebnisprovenienz erhalten.
+        image = getattr(source, 'image', None) or NativeImage()
         constructor = image.function(0x12ce6c0, ct.c_void_p, ct.c_void_p)
         initialize = image.function(0x12cf6e0, ct.c_ubyte, ct.c_void_p,
             ct.c_int32, ct.c_int32, ct.c_int32, ct.c_int32, ct.c_int32, ct.c_uint32,
             ct.c_ubyte, ct.c_ubyte, ct.c_ubyte, ct.c_void_p)
-        destructor = image.function(0x12ceff0, None, ct.c_void_p)
-        release_result = image.function(0x11ee2f0, None, ct.c_void_p)
         passes = [image.function(rva, ct.c_int32, ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_int32)
                   for rva in (0x12cf990, 0x12cfaf0)]
         storage = ct.create_string_buffer(0x1d80)
@@ -206,56 +311,48 @@ def generate(request):
         # Geliehener Ergebniszeiger: rekonstruierte Shared-Pointer-Helfer
         # überspringen Refcount/virtuelle Freigabe bei null Controlblock.
         pair = (ct.c_void_p * 2)(ct.addressof(result), None)
-        constructed = False
-        completed = False
-        try:
-            constructor(ct.addressof(storage))
-            constructed = True
-            if not initialize(ct.addressof(storage), frames, rate, bpm, offset,
-                              position, key, 0, 1, 1, ct.addressof(pair)):
-                raise NativeContractError('Generator initialization failed')
-            block_size = rate * 128 // 75
-            for function, expected in zip(passes, (3, 5)):
-                source.seek(0)
-                state = 0
-                while source.tell() < frames:
-                    # Native121a780 wandelt signed16 direkt zu Float32, ohne
-                    # Normierung. HPG verwendet hier libsndfile; Decoder-
-                    # Bitgleichheit zum Rekordbox-Decoder ist nicht behauptet.
-                    pcm = source.read(min(block_size, frames-source.tell()), dtype='int16', always_2d=True)
-                    if not len(pcm):
-                        raise NativeContractError('Unexpected source EOF')
-                    left = np.ascontiguousarray(pcm[:, 0], dtype=np.float32)
-                    right = np.ascontiguousarray(pcm[:, channels-1], dtype=np.float32)
-                    state = function(ct.addressof(storage), left.ctypes.data, right.ctypes.data, len(left))
-                    if state < 0:
-                        raise NativeContractError('Native generator failure')
-                    if state >= expected:
-                        break
-                if state != expected:
-                    raise NativeContractError('Incomplete native pass')
-            completed = True
-            count = result.header[0]
-            if not 1 <= count <= 65535:
-                raise NativeContractError('Invalid native result count')
-            arrays = {}
-            for name, address in zip(ARRAY_NAMES, result.arrays):
-                if not address:
-                    raise NativeContractError('Missing native result array')
-                arrays[name] = list(struct.unpack('<' + 'i'*count, ct.string_at(address, count*4)))
-            if _source_identity(path) != request['source_identity']:
-                raise NativeContractError('Source changed while reading')
-            return dict(status='ok', contract=CONTRACT_VERSION, executable_sha256=SHA256,
-                        header=list(result.header), arrays=arrays, frames=frames, sample_rate=rate,
-                        input_grid=dict(bpm_hundredths=bpm, offset_ms=offset,
-                                        bar_position=position, key_index=key))
-        finally:
-            # Auf Fehlerpfaden kann native Ausgabe bereits intern freigegeben
-            # sein. Dann kein zweites free und keine weiteren nativen Aufrufe;
-            # der Einmal-Prozess samt Job wird vom Owner vollständig beendet.
-            if constructed and completed:
-                destructor(ct.addressof(storage))
-                release_result(ct.addressof(result))
+        constructor(ct.addressof(storage))
+        if not initialize(ct.addressof(storage), frames, rate, bpm, offset,
+                          position, key, 0, 1, 1, ct.addressof(pair)):
+            raise NativeContractError('Generator initialization failed')
+        block_size = rate * 128 // 75
+        for function, expected in zip(passes, (3, 5)):
+            source.seek(0)
+            state = 0
+            while source.tell() < frames:
+                # Native121a780 wandelt signed16 direkt zu Float32, ohne
+                # Normierung. NativeAudioStream liefert die identische
+                # PCM-Schnittstelle für Rekordbox- und HPG-Decoder.
+                pcm = source.read(min(block_size, frames-source.tell()), dtype='int16', always_2d=True)
+                if not len(pcm):
+                    raise NativeContractError('Unexpected source EOF')
+                left = np.ascontiguousarray(pcm[:, 0], dtype=np.float32)
+                right = np.ascontiguousarray(pcm[:, channels-1], dtype=np.float32)
+                state = function(ct.addressof(storage), left.ctypes.data, right.ctypes.data, len(left))
+                if state < 0:
+                    raise NativeContractError('Native generator failure')
+                if state >= expected:
+                    break
+            if state != expected:
+                raise NativeContractError('Incomplete native pass')
+        count = result.header[0]
+        if not 1 <= count <= 65535:
+            raise NativeContractError('Invalid native result count')
+        arrays = {}
+        for name, address in zip(ARRAY_NAMES, result.arrays):
+            if not address:
+                raise NativeContractError('Missing native result array')
+            arrays[name] = list(struct.unpack('<' + 'i'*count, ct.string_at(address, count*4)))
+        if _source_identity(path) != request['source_identity']:
+            raise NativeContractError('Source changed while reading')
+        # Der Owner beendet den Einmalprozess direkt nach dieser Antwort.
+        # Kein nativer Destruktor: dessen virtuelle Freigabekanten sind nicht
+        # vollständig rekonstruiert; Windows räumt den Kindprozess danach auf.
+        return dict(status='ok', contract=CONTRACT_VERSION, executable_sha256=SHA256,
+                    header=list(result.header), arrays=arrays, frames=frames, sample_rate=rate,
+                    reader_backend=reader_backend,
+                    input_grid=dict(bpm_hundredths=bpm, offset_ms=offset,
+                                    bar_position=position, key_index=key))
 
 
 def handle(payload):

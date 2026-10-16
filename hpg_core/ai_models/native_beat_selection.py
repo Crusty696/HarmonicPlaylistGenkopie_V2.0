@@ -7,7 +7,31 @@ Die Zuordnung zu Rekordbox-Oberflächenbezeichnungen ist nicht belegt.
 import os
 
 
-VERSION = 'rb-7.2.19-mode-selection-v1'
+VERSION = 'rb-7.2.19-mode-selection-v2'
+MAX_NATIVE_BEAT_WINDOW_SECONDS = 1200
+MAX_NATIVE_BEAT_SECONDS = 7200
+
+
+def maximum_native_beat_rows(frames):
+    """Maximale Beatanzahl aus Readerdauer und bestehender BPM-Grenze ableiten."""
+    import math
+    if type(frames) is not int or frames < 0:
+        raise ValueError('Invalid native beat frame count')
+    # 215 BPM ist die obere native HPG-Grenze; +1 deckt beide Randbeats ab.
+    return math.ceil(frames / 44100 * 215 / 60) + 1
+
+
+def native_beat_segment_count(frames):
+    """Zahl der festen 20-Minuten-Fenster mit zehn Beat Überlappung."""
+    import math
+    if type(frames) is not int or frames < 0:
+        raise ValueError('Invalid native beat frame count')
+    window = MAX_NATIVE_BEAT_WINDOW_SECONDS * 44100
+    if frames <= window:
+        return 1
+    overlap = math.ceil(10 * 60 / 55 * 44100)
+    step = window - overlap
+    return math.ceil((frames - window) / step) + 1
 
 
 def configured_mode():

@@ -429,6 +429,35 @@ def test_external_reason_and_real_sample_offset(pipeline, monkeypatch):
     assert snapshot['anchor']['neural']['windows'][0]['downbeat']['reason'] == 'external_vote_ambiguous'
 
 
+def test_six_disjoint_windows_can_confirm_audio_phase_against_model_labels(pipeline, monkeypatch):
+    from hpg_core.measurement_contract import measurement_snapshot, validate_measurement_diagnostics
+    path, _, _ = setup_adoption(pipeline, monkeypatch)
+    sample_rate = 22050
+    audio = np.arange(sample_rate*48, dtype=np.float32)
+    candidate_windows = windows()
+    calls = []
+
+    def vote(window_audio, sr, bpm, **kwargs):
+        assert kwargs['_allow_external_conflict_candidate'] is True
+        start = float(window_audio[0]) / sr
+        local_anchor = (0.2 - start) % (4 * 60. / bpm)
+        calls.append((start, local_anchor))
+        kwargs['diagnostics'].update(reason='external_vote_conflict', stage='result')
+        return local_anchor, 0.8
+
+    monkeypatch.setattr(analysis, 'estimate_first_downbeat', vote)
+    result = analysis._resolve_track_anchor(
+        str(path), 48., 120., audio, sample_rate, [], candidate_windows,
+    )
+    snapshot = measurement_snapshot(result[4], result[3], anchor_decision=result[6])
+    validate_measurement_diagnostics(snapshot)
+    assert len(calls) == 6
+    assert result[0] == pytest.approx(0.2)
+    assert result[6]['neural']['reason'] == 'adopted'
+    assert all(window['downbeat']['reason'] == 'external_vote_conflict'
+               for window in snapshot['anchor']['neural']['windows'])
+
+
 def test_three_nonoverlapping_windows_and_tempo_gate(pipeline, monkeypatch):
     path, _, _ = setup_adoption(pipeline, monkeypatch)
     audio = np.ones(22050*48, np.float32)

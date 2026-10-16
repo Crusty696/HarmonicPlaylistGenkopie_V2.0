@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 MAX_WIRE = 64 * 1024 * 1024
 MAX_HEADER = 1024 * 1024
 MAX_CANDIDATES = 4096
+MAX_PATH_JOB_SECONDS = 180.
+MAX_DEEP_FEATURE_SECONDS = 240.
 _local = threading.local()
 _pool_client = None
 _terminal_failure = threading.Event()
@@ -367,13 +369,13 @@ class CueClient:
             raise ValueError('Invalid native beat job')
         return self._path_job(job, parameters, timeout_s=timeout_s)
 
-    def deep_features(self, parameters, *, timeout_s=180.):
+    def deep_features(self, parameters, *, timeout_s=240.):
         started = time.monotonic()
         result = self._path_job('deep_features', parameters, timeout_s=timeout_s)
-        remaining = min(float(timeout_s), 180.) - (time.monotonic()-started)
+        remaining = min(float(timeout_s), MAX_DEEP_FEATURE_SECONDS) - (time.monotonic()-started)
         # Ein neuer Prozess ist nötig: ein fehlgeschlagener nativer Aufruf
         # darf nicht mit beschädigtem DLL-Zustand auf CPU wiederholt werden.
-        if (parameters.get('kind') == 'stems' and result.get('status') == 'unavailable'
+        if (parameters.get('kind') in ('stems', 'embedding') and result.get('status') == 'unavailable'
                 and parameters.get('config', {}).get('prefer_directml') is True
                 and remaining > 1. and str(result.get('reason', '')).startswith(('RuntimeError', 'service_error:'))):
             result = self._path_job('deep_features', dict(parameters, cpu_fallback=True), timeout_s=remaining)
@@ -388,7 +390,9 @@ class CueClient:
         # der fertige DSP-Track samt Fehlerstatus noch ausgeliefert wird.
         if job == 'deep_features':
             track_deadline -= 5.
-        execution_timeout = min(float(timeout_s), 180.)
+        timeout_limit = (MAX_DEEP_FEATURE_SECONDS if job == 'deep_features'
+                         else MAX_PATH_JOB_SECONDS)
+        execution_timeout = min(float(timeout_s), timeout_limit)
         # Das Trackbudget begrenzt die Queue. Die Laufzeit des einzelnen
         # Modells beginnt erst, wenn der serielle Broker READY meldet.
         deadline = (track_deadline if math.isfinite(track_deadline)
@@ -575,8 +579,10 @@ class CueServiceOwner:
                                 or len(payload) != 4 + envelope_size
                                 or type(envelope['parameters']) is not dict):
                             raise ValueError('Invalid or disabled native phrase job')
-                        execution_timeout = envelope.get('execution_timeout_s', 180.)
-                        if not _finite(execution_timeout) or not 0. < execution_timeout <= 180.:
+                        execution_timeout = envelope.get('execution_timeout_s', MAX_PATH_JOB_SECONDS)
+                        timeout_limit = (MAX_DEEP_FEATURE_SECONDS if envelope['job'] == 'deep_features'
+                                         else MAX_PATH_JOB_SECONDS)
+                        if not _finite(execution_timeout) or not 0. < execution_timeout <= timeout_limit:
                             raise ValueError('Invalid native execution timeout')
                         native_payload = _json(envelope['parameters'])
                         native_limit = 1024*1024 if envelope['job'] == 'native_beat_refine' else (16384 if is_phrase else 32768)

@@ -279,10 +279,13 @@ def _inventory(root: Path, mode: str, *, with_manifest: bool) -> dict[str, Path]
     return files
 
 
-def _read_csv(path: Path, columns) -> list[dict]:
+def _read_csv(path: Path, columns, *, schema_resolver=None) -> list[dict]:
     try:
         reader = csv.DictReader(io.StringIO(path.read_bytes().decode("utf-8-sig"), newline=""))
-        if tuple(reader.fieldnames or ()) != tuple(columns):
+        actual = tuple(reader.fieldnames or ())
+        accepted = (schema_resolver(actual) is not None if schema_resolver
+                    else actual == tuple(columns))
+        if not accepted:
             raise SourceValidationError(f"{path.name}: falsche Spalten")
         rows = list(reader)
         if not rows or any(None in row or any(v is None for v in row.values()) for row in rows):
@@ -349,9 +352,15 @@ def _candidate_metadata(root, specs, rt):
         producer = _load_manifest(root / rt.KANDIDATEN_MANIFEST_NAME)
     except ValueError as exc:
         raise SourceValidationError(str(exc)) from exc
-    rows = _read_csv(root / "merkmale.csv", rt.MERKMALE_KANDIDATEN_SPALTEN)
-    columns = rt.BEWERTUNG_DREINOTEN_SPALTEN if producer.get("rating_schema") == "three_notes_v1" else rt.BEWERTUNG_KANDIDATEN_SPALTEN
-    ratings = _read_csv(root / "bewertung.csv", columns)
+    rows = _read_csv(root / "merkmale.csv", rt.MERKMALE_KANDIDATEN_SPALTEN,
+                     schema_resolver=rt.kandidaten_merkmale_schema)
+    def rating_schema_resolver(actual):
+        if producer.get("rating_schema") == "three_notes_v1":
+            return actual in (rt.BEWERTUNG_DREINOTEN_SPALTEN,
+                              rt.BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN)
+        return actual in (rt.BEWERTUNG_KANDIDATEN_SPALTEN,
+                          rt.BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN)
+    ratings = _read_csv(root / "bewertung.csv", (), schema_resolver=rating_schema_resolver)
     expected = [(p["pair_id"], c["clip_id"]) for p in producer["pairs"] for c in p["clips"]]
     if ([(r["pair_id"], r["clip_id"]) for r in rows] != expected
             or [(r["pair_id"], r["clip_id"]) for r in ratings] != expected):

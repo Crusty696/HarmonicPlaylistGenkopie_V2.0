@@ -307,7 +307,7 @@ class HearingRatingDialog(QDialog):
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
-        self.player.errorOccurred.connect(lambda _error, message: self.status_label.setText(f"Audiofehler: {message}"))
+        self.player.errorOccurred.connect(self._playback_error)
         self.player.mediaStatusChanged.connect(self._media_status)
         self.player.durationChanged.connect(self._update_player_duration)
         self.player.positionChanged.connect(self._update_player_position)
@@ -489,6 +489,28 @@ class HearingRatingDialog(QDialog):
         for index, card in enumerate(self.variant_cards):
             card.play_button.setText("Pause" if index == self.clip_index and state == QMediaPlayer.PlaybackState.PlayingState else "Abspielen")
 
+    def _playback_error(self, _error, message):
+        if self._clip().get("spec"):
+            self._sequence_playing = False
+            self._current_render_ready = False
+            self._rendered_clips.discard(self._clip_key())
+            self._player_duration = 0
+            self.player.stop()
+            self.player.setSource(QUrl())
+            self._release_audio_buffer()
+            self._refresh_ratings()
+            self.status_label.setText(
+                f"Audio nicht abspielbar: {message}. Keine neue Bewertung möglich; vorhandene Noten bleiben unverändert."
+            )
+            return
+        self.status_label.setText(f"Audiofehler: {message}")
+
+    def _release_audio_buffer(self):
+        buffer, self._audio_buffer = self._audio_buffer, None
+        if buffer is not None:
+            buffer.close()
+            buffer.deleteLater()
+
     def _group(self):
         return self.session["groups"][self.pair_index]
 
@@ -500,6 +522,29 @@ class HearingRatingDialog(QDialog):
 
     def _rating_allowed(self):
         return not self._clip().get("spec") or self._current_render_ready
+
+    def _rating_sources_unchanged(self, clips):
+        """Bind source-reference ratings to bytes still matching rendered audio."""
+        sources = {
+            (source["path"], source["size_bytes"], source["sha256"], source.get("root")): source
+            for clip in clips
+            for source in clip.get("sources", ())
+        }
+        if not sources:
+            return True
+        try:
+            from .hearing_playback import _check_sources
+            _check_sources(list(sources.values()))
+        except (OSError, ValueError) as exc:
+            for index in range(len(self._group()["clips"])):
+                self._rendered_clips.discard((self.pair_index, index))
+            self._current_render_ready = False
+            self._refresh_ratings()
+            self.status_label.setText(
+                f"Originalquelle seit dem Rendern geändert; Bewertung verworfen: {exc}"
+            )
+            return False
+        return True
 
     def _group_rendered(self):
         return all(
@@ -513,10 +558,7 @@ class HearingRatingDialog(QDialog):
         self._player_duration = 0
         self.player.stop()
         self.player.setSource(QUrl())
-        if self._audio_buffer is not None:
-            self._audio_buffer.close()
-            self._audio_buffer.deleteLater()
-            self._audio_buffer = None
+        self._release_audio_buffer()
         if self._audio_worker is not None:
             self._audio_worker.request_cancel()
         self._pending_render = False
@@ -593,6 +635,9 @@ class HearingRatingDialog(QDialog):
             self.status_label.setText("Erst nach erfolgreichem Rendern bewerten. Vorhandene Noten bleiben unverändert.")
             self._refresh_ratings()
             return
+        clips_to_check = self._group()["clips"] if sequence else (self._clip(),)
+        if not self._rating_sources_unchanged(clips_to_check):
+            return
         note = index if index else None
         clip, group = self._clip(), self._group()
         if sequence:
@@ -617,6 +662,8 @@ class HearingRatingDialog(QDialog):
         if not self._rating_allowed() or not self._group_rendered():
             self.status_label.setText("Bestwahl erst nach erfolgreichem Rendern aller Varianten möglich.")
             self._refresh_ratings()
+            return
+        if not self._rating_sources_unchanged(self._group()["clips"]):
             return
         payload = {"pair_id": self._clip()["pair_id"], "clip_id": self._clip()["clip_id"] if best else ""}
         if self._persist("/bester", payload):
@@ -670,10 +717,7 @@ class HearingRatingDialog(QDialog):
         self._sequence_playing = False
         self.player.stop()
         self.player.setSource(QUrl())
-        if self._audio_buffer is not None:
-            self._audio_buffer.close()
-            self._audio_buffer.deleteLater()
-            self._audio_buffer = None
+        self._release_audio_buffer()
 
     def _start_render(self):
         if self._audio_worker is not None:
@@ -699,13 +743,17 @@ class HearingRatingDialog(QDialog):
     def _render_ready(self, data, worker, token):
         if worker is not self._audio_worker or token != self._render_generation or self._closing_result is not None:
             return
+        buffer = QBuffer(self)
+        buffer.setData(data)
+        if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+            buffer.deleteLater()
+            self._render_error("RAM-Audiopuffer konnte nicht geöffnet werden", worker, token)
+            return
+        self._audio_buffer = buffer
+        self.player.setSourceDevice(self._audio_buffer, QUrl("memory:preview.wav"))
         self._current_render_ready = True
         self._rendered_clips.add(self._clip_key())
         self._refresh_ratings()
-        self._audio_buffer = QBuffer(self)
-        self._audio_buffer.setData(data)
-        self._audio_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-        self.player.setSourceDevice(self._audio_buffer, QUrl("memory:preview.wav"))
         self.player.play()
         self.status_label.setText("Übergang bereit. Nur im Speicher; kein Audit-Nachweis.")
 
@@ -713,6 +761,9 @@ class HearingRatingDialog(QDialog):
         if worker is self._audio_worker and token == self._render_generation and self._closing_result is None:
             self._current_render_ready = False
             self._rendered_clips.discard(self._clip_key())
+            self.player.stop()
+            self.player.setSource(QUrl())
+            self._release_audio_buffer()
             self._refresh_ratings()
             self.status_label.setText(
                 f"Übergang nicht abspielbar: {error}. Keine neue Bewertung möglich; vorhandene Noten bleiben unverändert."

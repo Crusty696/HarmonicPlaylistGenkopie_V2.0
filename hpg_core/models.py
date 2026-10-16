@@ -18,7 +18,7 @@ def bar_position_usage_blocked(anchor_or_diagnostics) -> bool:
     """Sperrt unaufgeloeste Rotation; audio-bestaetigte Korrektur ist aktiv."""
     if not isinstance(anchor_or_diagnostics, dict):
         return False
-    if "version" in anchor_or_diagnostics and anchor_or_diagnostics.get("version") not in {5, 6, 7}:
+    if "version" in anchor_or_diagnostics and anchor_or_diagnostics.get("version") not in {5, 6, 7, 8}:
         return False
     anchor = anchor_or_diagnostics.get("anchor", anchor_or_diagnostics)
     comparison = anchor.get("bar_position_comparison") if isinstance(anchor, dict) else None
@@ -288,13 +288,36 @@ class Track:
         return hash(self.track_id)
 
     @property
+    def reference_bar_position_verified(self) -> bool:
+        """Prueft Bar-1-Freigabe samt persistierter, ausgerichteter Diagnose."""
+        diagnostics = self.measurement_diagnostics
+        anchor = diagnostics.get("anchor") if isinstance(diagnostics, dict) else None
+        comparison = anchor.get("bar_position_comparison") if isinstance(anchor, dict) else None
+        return bool(
+            self.bar_position_status == "reference_verified"
+            and self.beatgrid_source == "rekordbox"
+            and self.beatgrid_status == "verified"
+            and self.downbeat_confidence == 1.0
+            and isinstance(comparison, dict)
+            and comparison.get("status") == "aligned"
+        )
+
+    @property
+    def verified_pssi_phrase_grid(self) -> bool:
+        """PSSI-Punkte nur mit ausgerichtetem Referenzanker quantisieren."""
+        return bool(
+            self.phrases
+            and self.phrase_grid
+            and self.reference_bar_position_verified
+            and not self.bar_position_usage_blocked
+        )
+
+    @property
     def phrase_anchor(self) -> float | None:
         """AUDIT-FEATURE A1: Anker fuers PHRASEN-Gitter.
 
-        first_phrase, wenn Downbeat-Konfidenz und Beatgrid bestaetigt sind
-        und die Phrasenschaetzung belastbar ist. Sonst bleibt der rohe
-        first_downbeat fuer Diagnose erhalten, wird downstream aber nicht
-        als Rasteranker weitergereicht.
+        Gibt nur einen explizit nutzbaren Phrase-/Taktanker zurück. Ein
+        unbestätigtes Raster liefert None statt eines stillen Nullzeitankers.
 
         AUDIT-FIX R4 (2026-07-26): Sentinel fuer "nicht geschaetzt" ist -1.0
         — eine Phase von exakt 0.0 ist GUELTIG und wurde vorher verworfen.
@@ -308,11 +331,15 @@ class Track:
         from .downbeat import DOWNBEAT_RELIABLE_MIN
         if bar_position_usage_blocked(self.measurement_diagnostics):
             return None
-        if (
-            self.downbeat_confidence < DOWNBEAT_RELIABLE_MIN
-            or self.beatgrid_status != "verified"
-        ):
-            return 0.0
+        from .ai_models.native_track_beats import has_verified_grid
+        native_phase = has_verified_grid(self)
+        if (self.beatgrid_status != "verified"
+                or (self.downbeat_confidence < DOWNBEAT_RELIABLE_MIN and not native_phase)):
+            return None
+        if (self.bar_position_status in {"reference_candidate", "native_candidate"}
+                or (self.beatgrid_source == "rekordbox"
+                    and not self.reference_bar_position_verified)):
+            return None
         if (
             self.first_phrase >= 0.0
             and self.phrase_confidence >= PHRASE_CONFIDENCE_MIN
@@ -358,6 +385,10 @@ class Track:
     # (mix_in_bars/mix_out_bars) zaehlt weiterhin ab Track-Start.
     first_downbeat: float = 0.0
     downbeat_confidence: float = 0.0  # 0-1; 1.0 = aus Rekordbox-Beatgrid
+    # Taktzählung ist getrennt von der technisch bestätigten Beatphase.
+    # native_candidate darf fürs Debugging/Modell weitergereicht, aber nicht
+    # als unabhängig bestätigte Bar-1-Referenz exportiert oder ausgerichtet werden.
+    bar_position_status: str = "unknown"
     # -1.0 ist der Sentinel fuer "kein messbares Fenster".
     beatgrid_source: str = "unknown"
     beatgrid_status: str = "unknown"

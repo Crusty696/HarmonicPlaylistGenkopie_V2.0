@@ -99,6 +99,18 @@ def test_audio_rejects_model_bar_rotation(monkeypatch, known):
     assert diagnostics['reason'] == 'external_vote_conflict'
 
 
+def test_internal_candidate_mode_keeps_audio_phase_on_model_conflict(monkeypatch, known):
+    (anchor, confidence), diagnostics = external(
+        monkeypatch, known,
+        [dict(time_s=event['time_s'], position=event['position'] % 4 + 1,
+              observed=event['observed']) for event in known[1]],
+        _allow_external_conflict_candidate=True,
+    )
+    assert anchor == pytest.approx(ONE, abs=d.EXACT_BEAT_SYNC_TOLERANCE_SECONDS)
+    assert confidence >= d.DOWNBEAT_RELIABLE_MIN
+    assert diagnostics['reason'] == 'external_vote_conflict'
+
+
 @pytest.mark.parametrize('alignment', ['none', 'few', 'classes'])
 def test_alignment_must_keep_enough_observations(monkeypatch, known, alignment):
     def align(times, numbers, *args):

@@ -52,7 +52,9 @@ def _rows(root):
     schema = hs.bewertungsschema(path)
     modes = {hs.BEWERTUNG_SPALTEN: "einzel",
              hs.BEWERTUNG_KANDIDATEN_SPALTEN: "kandidaten",
-             hs.BEWERTUNG_DREINOTEN_SPALTEN: "dreinoten"}
+             hs.BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN: "kandidaten",
+             hs.BEWERTUNG_DREINOTEN_SPALTEN: "dreinoten",
+             hs.BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN: "dreinoten"}
     if schema not in modes:
         raise RatingError("Bewertungsschema ist ungueltig")
     rows = hs.lies_csv(path)

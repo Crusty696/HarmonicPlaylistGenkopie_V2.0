@@ -11,7 +11,10 @@ class NativeGridProcessor:
         frames = reader.frames
         # RVA262bf53/1853f30 erzeugt Diagnose-CSV unter APPDATA. Ausschließlich
         # diesen Pfad isolieren; weder echte Rekordbox-Daten noch Musik beschreiben.
-        diagnostic_dir = tempfile.mkdtemp(prefix='hpg-native-final-grid-')
+        self._diagnostic_temp = tempfile.TemporaryDirectory(
+            prefix='hpg-native-final-grid-'
+        )
+        diagnostic_dir = self._diagnostic_temp.name
         folder_type = ct.WINFUNCTYPE(ct.c_int32, ct.c_void_p, ct.c_void_p,
                                     ct.c_int32, ct.c_int32)
         @folder_type
@@ -58,7 +61,9 @@ class NativeGridProcessor:
         triples = (Triple * len(grid))(*(Triple(r['pos'], r['numBar'], r['bpm']) for r in grid))
         refine = image.function(0x11db800, ct.c_ubyte, ct.c_void_p, ct.c_int32,
             ct.c_int32, ct.c_int32, ct.POINTER(Triple), ct.c_int32, ct.c_int32)
-        refine(storage, 0, self.initial_count, self.initial_bpm, triples, len(grid), bpm)
+        if not refine(storage, 0, self.initial_count, self.initial_bpm,
+                      triples, len(grid), bpm):
+            raise NativeContractError('Native final grid refinement rejected')
         final_bpm = image.function(0x11db860, ct.c_int32, ct.c_void_p)(storage)
         count = image.function(0x11db890, ct.c_int32, ct.c_void_p)(storage)
         if not 0 < count <= 6000 or not 0 < final_bpm <= 100000:

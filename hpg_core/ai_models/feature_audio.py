@@ -8,29 +8,44 @@ import math
 import numpy as np
 
 
+def mono_downmix(samples):
+    """Faltet unbekannte Mehrkanal-Layouts reproduzierbar auf Mono zusammen."""
+    values = np.asarray(samples, dtype=np.float32)
+    if values.ndim != 2 or not 1 <= values.shape[1] <= 32:
+        raise ValueError('Unsupported audio channel layout')
+    if values.shape[1] <= 2:
+        return values
+    return np.mean(values, axis=1, keepdims=True, dtype=np.float32)
+
+
 def source_identity(path):
     value = path.stat()
-    return [value.st_size, value.st_mtime_ns, value.st_dev, value.st_ino]
+    return [value.st_size, value.st_mtime_ns, value.st_ctime_ns,
+            value.st_dev, value.st_ino]
 
 
 def windows(source, rate, width, hop, *, left_padding=0):
     """Liefert (Startsample, gültige Samples, planar Float32) mit begrenztem RAM."""
     import soxr
 
-    if source.channels not in (1, 2) or not 0 < len(source)/source.samplerate <= 7200:
+    if not 1 <= source.channels <= 32 or not 0 < len(source)/source.samplerate <= 7200:
         raise ValueError('Unsupported source dimensions')
+    source_channels = source.channels
+    channels = 1 if source_channels > 2 else source_channels
     total = int(round(len(source)*rate/source.samplerate))
     if total <= 0 or not 0 < hop <= width or not 0 <= left_padding < width:
         raise ValueError('Invalid window geometry')
-    resampler = (soxr.ResampleStream(source.samplerate, rate, source.channels,
+    resampler = (soxr.ResampleStream(source.samplerate, rate, channels,
                                    dtype='float32', quality='HQ')
                  if source.samplerate != rate else None)
-    buffered = np.zeros((left_padding, source.channels), np.float32)
+    buffered = np.zeros((left_padding, channels), np.float32)
     start = 0
     exhausted = False
     while start < total:
         while len(buffered) < width and not exhausted:
             pcm = source.read(65536, dtype='float32', always_2d=True)
+            if source_channels > 2:
+                pcm = mono_downmix(pcm)
             exhausted = source.tell() >= len(source)
             if not len(pcm) and not exhausted:
                 raise ValueError('Unexpected audio EOF')

@@ -6,7 +6,8 @@ import numpy as np
 from .native_beat_worker import CONTRACT_VERSION, MAX_FRAMES, decode
 
 
-ALGORITHM_VERSION = CONTRACT_VERSION
+ALGORITHM_VERSION = f'{CONTRACT_VERSION}-activation-neighborhood-v1'
+_OBSERVATION_RADIUS_FRAMES = 1
 
 
 def decode_beat_activations(activations, *, duration_s):
@@ -28,9 +29,19 @@ def decode_beat_activations(activations, *, duration_s):
         return result
     native = decode(values)
     native_rows = [(row['pos'] / 44100., row['numBar']) for row in native['grid']]
-    beats = [{'time_s': float(stamp), 'position': int(position),
-              'observed': bool(values[min(retained - 1, round(stamp * 100))].sum() >= .05)}
-             for stamp, position in native_rows if stamp < duration_s]
+    beats = []
+    for stamp, position in native_rows:
+        if stamp >= duration_s:
+            continue
+        # Der native Decoder kann den Peak innerhalb des 100-Hz-Rasters um
+        # ein Feld quantisieren. Den Zeitstempel deshalb auf das naechste
+        # Feld abbilden und die direkte Nachbarschaft als denselben Peak werten.
+        center = int(math.floor(stamp * 100. + .5))
+        first = max(0, center - _OBSERVATION_RADIUS_FRAMES)
+        last = min(retained, center + _OBSERVATION_RADIUS_FRAMES + 1)
+        observed = bool(float(np.max(values[first:last].sum(axis=1))) >= .05)
+        beats.append({'time_s': float(stamp), 'position': int(position),
+                      'observed': observed})
     # Native Ausgabe unverändert lassen. Weder Barrotation noch neue Beatzeiten
     # aus HPG-Heuristiken hinzufügen. Unvollständige Zyklen sind keine Freigabe.
     if (len(beats) < 4 or sum(b['observed'] for b in beats) < 4
