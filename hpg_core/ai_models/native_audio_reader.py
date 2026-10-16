@@ -381,10 +381,22 @@ class NativeAudioReader:
             encodings = [int(encodings_pointer[index]) for index in range(min(encodings_count.value, 64))]
             if MPG123_ENC_SIGNED_16 not in encodings:
                 raise NativeContractError('Rekordbox mpg123 lacks its native signed-16 format')
-            # Rekordbox 7.2.19 pins this decoder to 48-kHz stereo and signed
-            # 16-bit PCM (constructor +0x54/+0x58, then mpg123_format(...,0xd0)).
-            if library.mpg123_format(decoder, 48000, 2, MPG123_ENC_SIGNED_16) != 0:
-                raise NativeContractError('Rekordbox mpg123 rejected its native PCM format')
+            # Rekordbox 7.2.19 liest zuerst Samplerate und Kanalzahl aus dem
+            # MP3-Header und übergibt genau diese Werte an mpg123_format.
+            # HPG erlaubt dieselben MPEG-Quellformate; mpg123 wählt daraus die
+            # Rate und Kanalzahl des jeweiligen Tracks statt sie umzuwandeln.
+            rates_pointer = ct.POINTER(ct.c_long)()
+            rates_count = ct.c_size_t()
+            library.mpg123_rates(ct.byref(rates_pointer), ct.byref(rates_count))
+            if not 0 < rates_count.value <= 64:
+                raise NativeContractError('Rekordbox mpg123 returned invalid sample rates')
+            native_rates = tuple(int(rates_pointer[index]) for index in range(rates_count.value))
+            if any(not 8000 <= rate <= 384000 for rate in native_rates):
+                raise NativeContractError('Rekordbox mpg123 returned invalid sample rates')
+            for native_rate in native_rates:
+                if library.mpg123_format(
+                        decoder, native_rate, 1 | 2, MPG123_ENC_SIGNED_16) != 0:
+                    raise NativeContractError('Rekordbox mpg123 rejected native MP3 formats')
             if library.mpg123_replace_reader_handle(
                     decoder, ct.cast(read_hook, ct.c_void_p),
                     ct.cast(seek_hook, ct.c_void_p),
@@ -399,7 +411,7 @@ class NativeAudioReader:
                 if library.mpg123_getformat(decoder, ct.byref(source_rate),
                         ct.byref(channels), ct.byref(encoding)) != 0:
                     raise NativeContractError('Rekordbox mpg123 could not read MP3 format')
-                if (source_rate.value != 48000 or channels.value != 2
+                if (source_rate.value not in native_rates or channels.value not in (1, 2)
                         or encoding.value != MPG123_ENC_SIGNED_16):
                     raise NativeContractError('Unsupported Rekordbox mpg123 output format')
 
