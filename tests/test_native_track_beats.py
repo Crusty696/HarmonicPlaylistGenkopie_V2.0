@@ -24,7 +24,8 @@ def snapshot(duration=48.):
         model_coverage=dict(start_s=0., end_s=duration-1/44100),
         reader=dict(contract=native.READER_CONTRACT, source_sample_rate=44100,
             source_channels=2, source_bit_depth=16, source_frames=int(duration*44100),
-            output_sample_rate=44100, output_frames=int(duration*44100)))
+            output_sample_rate=44100, output_frames=int(duration*44100),
+            backend='rekordbox-builtin'))
 
 
 @pytest.mark.parametrize('fast', [True, False])
