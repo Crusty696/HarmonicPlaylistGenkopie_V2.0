@@ -135,7 +135,7 @@ def config_fingerprint(settings=None, kind=None):
     if any(value is None for value in producer_hashes.values()):
         raise ValueError('Deep-feature producer identity unavailable')
     # Native reader and format fallback can use these for either feature type.
-    distributions = ('numpy', 'soundfile', 'soxr', 'audioread', 'pefile')
+    distributions = ('numpy', 'soundfile', 'soxr', 'audioread', 'pefile', 'mutagen')
     if kind == 'embedding':
         distributions += ('onnxruntime', 'onnxruntime-directml')
     runtime_versions = {}

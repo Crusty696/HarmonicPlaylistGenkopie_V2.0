@@ -17,7 +17,7 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v19'
+CONTRACT = 'rb-7.2.19-file-reader-v20'
 RATE = 44100
 MAX_SECONDS = 7200
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
@@ -152,7 +152,12 @@ def bind_reader_imports(image):
     # Manuell gemappte EXE besitzt keine registrierte statische PE-TLS.
     initialize = image.kernel.InitializeCriticalSection
     initialize.argtypes, initialize.restype = [ct.c_void_p], None
-    for rva in (0x61ac388, 0x61ac1c8):
+    # AAC-Konstruktor RVA2d0ee30 betritt die globale Sperre 0x1461a5670
+    # (Image-RVA 0x61a5670), bevor er seinen Decoder-Singleton erzeugt.
+    # Die EXE-Startupinitialisierung wurde im isolierten Readerprozess nicht
+    # ausgeführt; die private Sperre muss daher wie die Resampler-Sperren
+    # genau einmal vor dem ersten nativen Factory-Aufruf angelegt werden.
+    for rva in (0x61ac388, 0x61ac1c8, 0x61a5670):
         initialize(image.base + rva)
     for rva in (0x61ac1c0, 0x61ac590):
         ct.c_int32.from_address(image.base + rva).value = -(2**31)
@@ -1027,6 +1032,25 @@ class _WinMpg123File:
             self.kernel.CloseHandle(handle)
 
 
+def _source_channel_count(path):
+    """Bestimme Mono/Stereo ohne Audio-Decode, auch für AAC/MP4-Metadaten."""
+    try:
+        import soundfile as sf
+        channels = sf.info(str(path)).channels
+    except Exception:
+        channels = None
+    if type(channels) is int and 1 <= channels <= 32:
+        return channels
+    try:
+        import mutagen
+        audio = mutagen.File(str(path), easy=False)
+        info = getattr(audio, 'info', None)
+        channels = getattr(info, 'channels', None)
+    except Exception:
+        channels = None
+    return channels if type(channels) is int and 1 <= channels <= 32 else None
+
+
 class NativeAudioStream:
     """SoundFile-artige Leseansicht über Rekordbox-Reader und HPG-Fallback."""
     subtype = 'PCM_16'
@@ -1054,8 +1078,7 @@ class NativeAudioStream:
                 '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
                 '.m4a', '.mp4', '.aac'):
             try:
-                import soundfile as sf
-                source_channels = int(sf.info(str(path)).channels)
+                source_channels = _source_channel_count(path)
                 if source_channels in (1, 2):
                     self.image = _reader_image()
             except NativeContractError:
@@ -1065,9 +1088,20 @@ class NativeAudioStream:
             except Exception:
                 # Ohne belegte Kanalzahl den nativen Mono-/Stereo-Reader meiden.
                 self.image = None
-        self.reader = NativeAudioReader(self.image, path, max_seconds=limit,
-                                        start_seconds=offset,
-                                        use_rekordbox=use_rekordbox)
+        try:
+            self.reader = NativeAudioReader(self.image, path, max_seconds=limit,
+                                            start_seconds=offset,
+                                            use_rekordbox=use_rekordbox)
+        except NativeContractError:
+            # Native optionale Codecobjekte besitzen noch keinen belegten
+            # Freigabepfad. Reader laufen deshalb isoliert; ein fehlgeschlagener
+            # FLAC/MP4/AAC-Decoder bleibt bis zum Ende dieses Kindprozesses
+            # resident, waehrend der HPG-Decoder die Quelle neu und read-only
+            # oeffnet. WAV/AIFF bleiben fail-closed beim nativen Pflichtpfad.
+            if suffix not in ('.flac', '.fla', '.m4a', '.mp4', '.aac'):
+                raise
+            self.reader = NativeAudioReader(None, path, max_seconds=limit,
+                start_seconds=offset, use_rekordbox=False)
         self.frames = min(self.reader.frames, math.ceil(limit * RATE))
         self.samplerate = RATE
         self.channels = self.reader.channels

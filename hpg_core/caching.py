@@ -279,7 +279,8 @@ logger = logging.getLogger(__name__)
 # v149: Cache-Validierung verlangt für PSSI und native Phrasen dieselbe
 # freigegebene Takt-/Phrasephase wie die Analysepfade.
 # v150: Native FLAC/MP4/AAC-Readerausgabe und Reader-Provenienzvertrag.
-CACHE_VERSION = 150
+# v151: AAC-Sperrinitialisierung und Metadaten-Kanalauflösung erweitern den Readervertrag.
+CACHE_VERSION = 151
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
