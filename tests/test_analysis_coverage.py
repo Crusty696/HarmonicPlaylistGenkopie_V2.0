@@ -347,8 +347,10 @@ def test_ladefenster_entscheidet_ueber_die_zerlegung(monkeypatch):
     )
 
   monkeypatch.setattr(analysis, "analyze_structure", fake_structure)
+  # WAV analyse windows use the shared reader; patch that seam so this test
+  # measures only head/tail decomposition.
   monkeypatch.setattr(
-    analysis.librosa, "load",
+    analysis, "_load_analysis_audio",
     lambda *a, **k: (np.zeros(int(60 * sr), dtype=np.float32), sr),
   )
 

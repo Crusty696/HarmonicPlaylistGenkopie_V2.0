@@ -120,7 +120,7 @@ def test_unvollstaendiges_nachladefenster_ergibt_keinen_teilnachweis(monkeypatch
             raise OSError("synthetischer Decodefehler")
         count = 16 * sr - (failure == "short")
         return np.full(count, np.nan if failure == "nan" else 1.0), sr + (failure == "wrong_sr")
-    monkeypatch.setattr(analysis.librosa, "load", load)
+    monkeypatch.setattr(analysis, "_load_analysis_audio", load)
     result = analysis._refine_audio_tempo(np.ones(32 * sr), sr, PRIOR, file_path="synthetic.wav", duration=112.0)
     assert result == PRIOR
     assert calls == []
@@ -150,7 +150,7 @@ def test_ohne_kandidat_bleibt_urspruenglicher_float_exakt(monkeypatch, failure):
     else:
         candidate.side_effect = ValueError("synthetischer Schaetzfehler")
     decode = Mock(side_effect=AssertionError("Ohne Kandidat nicht nachladen"))
-    monkeypatch.setattr(analysis.librosa, "load", decode)
+    monkeypatch.setattr(analysis, "_load_analysis_audio", decode)
     prior = 136.123456789
     result = analysis._refine_audio_tempo(np.ones(32 * 1000), 1000, prior, file_path="unused.wav", duration=112.0)
     assert result.hex() == prior.hex()
@@ -209,7 +209,7 @@ def test_komplette_nachladefenster_nutzen_samplegenaue_offsets(monkeypatch):
         requests.append((path, offset, duration, sr))
         start = round(offset * sr)
         return audio[start:start + round(duration * sr)], sr
-    monkeypatch.setattr(analysis.librosa, "load", load)
+    monkeypatch.setattr(analysis, "_load_analysis_audio", load)
     result = analysis._refine_audio_tempo(audio[:32000], 1000, PRIOR, file_path="synthetic.wav", duration=112.001)
     assert result == PRECISE
     assert requests == [("synthetic.wav", offset, 16.0, 1000) for offset in (32.0, 48.0, 96.001)]

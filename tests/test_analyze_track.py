@@ -286,7 +286,7 @@ class TestAnalyzeTrackBasics:
     def fail_decode(*args, **kwargs):
       raise RuntimeError("decode failed")
 
-    monkeypatch.setattr(analysis.librosa, "load", fail_decode)
+    monkeypatch.setattr(analysis, "_load_analysis_audio", fail_decode)
 
     track = analysis.analyze_track(simple_wav)
 
@@ -1604,18 +1604,16 @@ class TestLadegrenzenWerdenBenutzt:
     mp = pytest.MonkeyPatch()
     try:
       gesehen = []
-      original = analysis.librosa.load
+      original = analysis._load_analysis_audio
 
       def spy(*args, **kwargs):
-        # Die uebrigen Ladestellen tragen alle `offset=`: Beatgrid-Fenster
-        # (analysis.py:172), Tail (:1608) und die Kandidatenfenster
-        # (mix_candidates.py:337). Nur die beiden Einstiegsladungen kommen
-        # ohne -- daran wird unterschieden, nicht an der Reihenfolge.
+        # Der gemeinsame Audio-Reader bedient Haupt-, Beatgrid- und
+        # Tail-Fenster. Nur die Einstiegsladung kommt ohne Offset.
         if "offset" not in kwargs:
           gesehen.append(kwargs.get("duration"))
         return original(*args, **kwargs)
 
-      mp.setattr(analysis.librosa, "load", spy)
+      mp.setattr(analysis, "_load_analysis_audio", spy)
       mp.setattr(analysis, konstante, erwartet)
       # Mit dem GELTENDEN Fenster fahren, nicht mit einem Testwert: sonst
       # haengt diese Zusicherung an einer fremden Testkonstante.
