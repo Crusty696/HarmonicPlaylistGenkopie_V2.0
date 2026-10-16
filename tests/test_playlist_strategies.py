@@ -322,7 +322,7 @@ class TestSmallPoolStrategyContracts:
     a = _small_track("A", genre="Techno")
     b = _small_track("B", genre="Trance")
     monkeypatch.setattr(
-      "hpg_core.playlist.calculate_compatibility",
+      "hpg_core.playlist.calculate_transition_objective",
       lambda left, right, *_args, **_kwargs:
         90 if (left.title, right.title) == ("A", "B") else 80,
     )
