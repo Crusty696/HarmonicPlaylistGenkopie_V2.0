@@ -20,9 +20,9 @@ from typing import List, Optional
 from ..downbeat import REFERENCE_BEATGRID_CONFIDENCE
 from ..config import METER
 from ..mix_candidates import quantize_to_points
+from ..dj_brain import effective_track_phrase_unit
 from ..models import (
-    QUANTIZE_TOLERANCE_SEC, Track, effective_track_phrase_unit,
-    quantize_to_grid,
+    QUANTIZE_TOLERANCE_SEC, Track, quantize_to_grid,
 )
 from .base_exporter import BaseExporter, ExportReport
 
