@@ -185,7 +185,7 @@ def _reader_image():
 
 
 class NativeAudioReader:
-    """Native WAV/AIFF/FLAC-Decoder und MP3-Decoder aus Rekordbox' Bundle.
+    """Native WAV/AIFF/FLAC/MP4-Reader und MP3-Decoder aus Rekordbox' Bundle.
 
     MP3 läuft direkt über das versionsgeprüfte libmpg123.dll aus der
     Rekordbox-Installation; ein HPG-Decoder bleibt als Fallback gekennzeichnet.
@@ -222,7 +222,8 @@ class NativeAudioReader:
             except NativeContractError:
                 self._open_fallback()
                 return
-        if suffix not in ('.wav', '.wave', '.aif', '.aiff', '.flac', '.fla'):
+        if suffix not in (
+                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla', '.m4a', '.mp4'):
             self._open_fallback()
             return
         if image is None:
@@ -238,9 +239,15 @@ class NativeAudioReader:
             '.aiff': 0x2cdd910,
             '.flac': 0x2cdd6e0,
             '.fla': 0x2cdd6e0,
+            '.m4a': 0x2cdd760,
+            '.mp4': 0x2cdd760,
         }[suffix]
-        self.backend = ('rekordbox-builtin-flac'
-                        if suffix in ('.flac', '.fla') else 'rekordbox-builtin')
+        self.backend = {
+            '.flac': 'rekordbox-builtin-flac',
+            '.fla': 'rekordbox-builtin-flac',
+            '.m4a': 'rekordbox-builtin-mp4',
+            '.mp4': 'rekordbox-builtin-mp4',
+        }.get(suffix, 'rekordbox-builtin')
         image.function(0x1104730, ct.c_void_p, ct.c_void_p)(self.owner)
         name = ct.c_void_p()
         image.function(0x2a6e420, ct.c_void_p, ct.c_void_p, ct.c_char_p)(
@@ -1041,7 +1048,7 @@ class NativeAudioStream:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
         if use_rekordbox and suffix in (
-                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla'):
+                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla', '.m4a', '.mp4'):
             try:
                 import soundfile as sf
                 source_channels = int(sf.info(str(path)).channels)
