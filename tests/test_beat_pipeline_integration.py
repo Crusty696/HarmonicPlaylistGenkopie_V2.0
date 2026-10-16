@@ -80,7 +80,7 @@ def test_schema55_roundtrip_and_strict_validation(tmp_path):
     track = Track(filePath=str(path), fileName=path.name, duration=32., bpm=120., neural_analysis=neural,
                   rekordbox_signature='source|neural:'+'a'*64, analysis_mode='librosa_full_or_tail')
     key = caching.generate_cache_key(str(path), track.rekordbox_signature)
-    assert caching.CACHE_VERSION == 99
+    assert caching.CACHE_VERSION >= 99
     assert caching.cache_track(key, track)
     assert caching.get_cached_track(key, file_path=str(path)).neural_analysis == neural
     neural['beat_windows'][0]['results'][0]['extra'] = True

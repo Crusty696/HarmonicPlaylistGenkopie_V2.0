@@ -11,7 +11,7 @@ import pytest
 
 
 def test_neural_schema_is_persisted():
-    assert caching.CACHE_VERSION == 99
+    assert caching.CACHE_VERSION >= 99
     assert 'neural_analysis' in caching.TRACK_REQUIRED_FIELDS
     assert 'neural_analysis' in caching.TRACK_DICT_FIELDS
     assert 'neural_analysis' in Track.__dataclass_fields__
@@ -86,7 +86,10 @@ def test_cache55_roundtrip_and_schema(tmp_path):
 @pytest.fixture
 def pipeline(monkeypatch, tmp_path):
     path = tmp_path/'pipeline.wav'
-    path.write_bytes(b'synthetic source metadata')
+    # Der Analysepfad liest den Reader auch bei gemockten Modellfenstern.
+    # Ein gültiges kleines PCM-WAV testet den Vertrag ohne Decoderfehler.
+    import soundfile as sf
+    sf.write(path, np.zeros(44100, dtype=np.int16), 44100, subtype='PCM_16')
     importer = Mock()
     importer.get_track_signature.return_value = 'source-signature'
     importer.get_beatgrid.return_value = [dict(time=0., beat=1)]

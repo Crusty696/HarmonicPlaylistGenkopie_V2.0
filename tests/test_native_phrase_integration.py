@@ -11,13 +11,14 @@ from hpg_core.rekordbox_phrases import phrase_grid_from_phrases
 
 
 def native_snapshot():
-    return dict(version=3, status='ok', reason=None,
+    return dict(version=4, status='ok', reason=None,
         source='rekordbox_native_phrase_generator', contract=adapter.CONTRACT_VERSION,
         executable_sha256=adapter.SHA256, terminal_boundary_source='native_terminal_beat',
         key_source='native_unknown_fallback_zero',
         input_grid=dict(bpm_hundredths=12000, offset_ms=0, bar_position=1, key_index=0,
                         basis='hpg_verified_constant_grid', beat_count=240,
                         first_tick_s=0., last_tick_s=119.5, terminal_beat=240),
+        reader_backend='hpg-libsndfile',
         phrases=[dict(start_s=0., end_s=32., label='Intro', kind=1, mood=1, fill=0),
                  dict(start_s=32., end_s=119.5, label='Outro', kind=6, mood=1, fill=0)])
 
@@ -59,7 +60,8 @@ def test_worker_grid_changes_are_rejected_before_adoption(tmp_path):
     def transport(request, **kwargs):
         return dict(status='ok', contract=adapter.CONTRACT_VERSION, executable_sha256=adapter.SHA256,
                     input_grid={key: request[key] for key in ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
-                    header=[2, 10, 1, 1, 0, 0, 0], arrays={}, frames=12000, sample_rate=100)
+                    header=[2, 10, 1, 1, 0, 0, 0], arrays={}, frames=12000, sample_rate=100,
+                    reader_backend='hpg-libsndfile')
     result = adapter.generate_phrases(path, beat_times=[i*.5 for i in range(240)],
         beat_positions=[i%4+1 for i in range(240)], bpm=120., duration=120.,
         verified_grid=True, key_index=0, transport=transport)
@@ -75,7 +77,7 @@ def test_native_terminal_boundary_is_not_extended_to_file_end(tmp_path, terminal
             input_grid={key: request[key] for key in ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
             header=[2, 0, 1, 1, 0, 0, terminal],
             arrays=dict(beat_positions=[1, 65], kind=[1, 6], fill_in=[0, 0]),
-            frames=12000, sample_rate=100)
+            frames=12000, sample_rate=100, reader_backend='hpg-libsndfile')
     result = adapter.generate_phrases(path, beat_times=[i*.5 for i in range(240)],
         beat_positions=[i%4+1 for i in range(240)], bpm=120., duration=120.,
         verified_grid=True, key_index=0, transport=transport)

@@ -112,6 +112,16 @@ def make_export(playlist, out_path, fake_xml=None, transitions=None):
   return _xml
 
 
+def make_exportable_track(**overrides):
+  """Fixture mit verifiziertem Beat-/Phrasenanker für Cue-Exportfälle."""
+  track = make_track(**overrides)
+  track.beatgrid_status = "verified"
+  track.beatgrid_source = "audio"
+  track.downbeat_confidence = 0.9
+  track.first_downbeat = 0.0
+  return track
+
+
 # ─── Tests: Initialisierung ───────────────────────────────────────────────────
 
 class TestRekordboxXMLExporterInit:
@@ -400,7 +410,7 @@ class TestRekordboxCuePunkte:
   """_add_cue_points Tests."""
 
   def test_cue_points_werden_hinzugefuegt(self, tmp_path):
-    playlist = [make_track(
+    playlist = [make_exportable_track(
       title="T1", bpm=128.0, camelotCode="8A", duration=300.0,
       mix_in_point=30.0, mix_out_point=270.0, outro_covered=True,
     )]
@@ -413,7 +423,7 @@ class TestRekordboxCuePunkte:
 
   def test_keine_cues_wenn_mix_points_nicht_gesetzt(self, tmp_path):
     """Keine Cue-Points wenn mix_in/out den Sentinel tragen."""
-    playlist = [make_track(
+    playlist = [make_exportable_track(
       title="T1", bpm=128.0, camelotCode="8A", duration=300.0,
       mix_in_point=-1.0, mix_out_point=-1.0,
     )]
@@ -469,7 +479,7 @@ class TestRekordboxCuePunkte:
     owner = FakeRekordboxXml()
     rb_track = PartlyBrokenTrack()
     rb_track.owner = owner
-    track = make_track(
+    track = make_exportable_track(
       filePath="/test/cues.mp3", duration=300.0,
       mix_in_point=30.0, mix_out_point=270.0, outro_covered=True,
       sections=[{"label": "drop", "start_time": 120.0}],
@@ -501,7 +511,7 @@ class TestRekordboxCuePunkte:
       return original_add_mark(instance, *args, **kwargs)
 
     monkeypatch.setattr(track_type, "add_mark", partly_broken_add_mark)
-    track = make_track(
+    track = make_exportable_track(
       filePath=f"/test/real_cues_{fail_at}.mp3", duration=300.0,
       mix_in_point=30.0, mix_out_point=270.0, outro_covered=True,
       sections=[{"label": "drop", "start_time": 120.0}],
@@ -515,7 +525,7 @@ class TestRekordboxCuePunkte:
 
   def test_mix_in_cue_zeitstempel(self, tmp_path):
     """Mix-In Cue hat korrekten Zeitstempel."""
-    playlist = [make_track(
+    playlist = [make_exportable_track(
       duration=300.0, mix_in_point=45.0, mix_out_point=250.0,
       outro_covered=True,
     )]
@@ -529,7 +539,7 @@ class TestRekordboxCuePunkte:
       assert cue["time"] == pytest.approx(45.0)
 
   def test_partial_report_for_track_without_tail_coverage(self, tmp_path):
-    playlist = [make_track(
+    playlist = [make_exportable_track(
       duration=300.0, mix_in_point=30.0, mix_out_point=270.0,
       outro_covered=False,
     )]
@@ -603,9 +613,9 @@ class TestKandidatenCues:
     assert punkte[2]["mix_in"] == 80.0
 
   def test_rang1_und_hpg_k_cues_fortlaufend_nach_dedupe(self, tmp_path):
-    a = make_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, mix_in_point=60.0,
+    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, mix_in_point=60.0,
                    mix_out_point=200.0, outro_covered=True)
-    b = make_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, mix_in_point=50.0,
+    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, mix_in_point=50.0,
                    mix_out_point=210.0, outro_covered=True)
     kand = [_kand(1, 192.0, 82.3, "pssi_phrase", "auto_cue"),
             _kand(2, 192.0, 82.3, "pssi_phrase", "auto_cue"),     # zweite Blende, gleiche Zeit
@@ -662,8 +672,8 @@ class TestKandidatenCues:
   def test_ohne_plan_sperrt_nur_die_betroffenen_v6_mix_cues(self, tmp_path):
     from types import SimpleNamespace
 
-    a = make_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, outro_covered=True)
-    b = make_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, outro_covered=True)
+    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, outro_covered=True)
+    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), duration=300.0, outro_covered=True)
     rec = SimpleNamespace(plan=None, kandidaten=[], kandidat_aktiv=0, index=0)
     with patch("hpg_core.exporters.rekordbox_xml_exporter.PYREKORDBOX_AVAILABLE", True, create=True):
       exp = RekordboxXMLExporter()
@@ -689,8 +699,8 @@ class TestKandidatenCues:
     assert any(mark[0] == "MIX OUT" for mark in rb_b.marks)
 
   def test_duplicate_occurrence_cues_werden_aggregiert(self, tmp_path):
-    a = make_track(filePath=str(tmp_path / "a.mp3"), outro_covered=True)
-    b = make_track(filePath=str(tmp_path / "b.mp3"), outro_covered=True)
+    a = make_exportable_track(filePath=str(tmp_path / "a.mp3"), outro_covered=True)
+    b = make_exportable_track(filePath=str(tmp_path / "b.mp3"), outro_covered=True)
     transitions = [
       _rec(190.0, 80.0, [], index=0),
       _rec(200.0, 90.0, [], index=1),
