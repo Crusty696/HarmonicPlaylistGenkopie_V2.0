@@ -1,12 +1,26 @@
 # HPG — Quellenstand statt pauschaler Produktionsfreigabe
 
-Aktueller Arbeitsstand: 16.10.2026, Cache104. Maßgebliche Umsetzungsmatrix und
+Aktueller Arbeitsstand: 16.10.2026, Cache109. Maßgebliche Umsetzungsmatrix und
 datierte Belege: [Deep-Analysis-Auftrag](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md).
 Native Beats/Takt/Phrasen, Stem-/Embedding-Metadaten, Playlist-Vorschau und
-XML-Export sind angebunden. Ein normaler GUI-Vorschaulauf mit zwei Originalen
-lieferte einen RAM-Clip; dessen musikalische Abnahme steht aus. Weitere native
-Readerformate, unabhängige Qualitätsreferenzen und die Wächterprüfung bleiben offen.
+XML-Export sind angebunden. Der aktuelle GUI-Nachweis steht unten. Weitere native
+Codecplugins, vollständige Wrapperparität, unabhängige Qualitätsreferenzen bleiben offen.
+WAV/AIFF-Reader, native Sampleratenwandlung und Modellwahl2/3/4 sind angebunden.
+Original-Beatläufe beider Modelle erfolgreich; neue musikalische Freigabe fehlt.
 Kein neuer EXE-Build und keine vollständige Produktfreigabe.
+
+Aktueller Originalnachweis: `TEMP/hpg-original109-completed/report.json`.
+Alle drei Tracks: native Übernahme, Grid verified und native Phrasen erfolgreich.
+You Never Alone und Harmonise stammen aus dem erfolgreichen Analyselauf108;
+Never Die wurde nach der Fensterkorrektur frisch analysiert. Herkunft getrennt
+im Bericht. Kein erneuter Stem-Lauf. Alle Original-SHA256 unverändert.
+Playlist: You Never Alone → Never Die → Harmonise. Beide Übergänge ohne
+Reservefehler als RAM-Clips erzeugt (115,652s und73,913s).
+`TEMP/hpg-native109-gui/gui-events.json` belegt beide Clips im GUI-RAM-Cache;
+Qt meldet beide geladenen WAV-Streams. Kein frischer GUI-Ordnerimport behauptet.
+Hörproben-Quellformat2 erhält die neue Messmethode, Format1 bleibt lesbar.
+Unabhängige Wächterprüfung am 16.10.: falsche Default-Angabe und lokales Audio-Gate ohne Modellbeats beanstandet; beide korrigiert. Ein neuer Regressionsfall zuerst fehlgeschlagen, nach Korrektur bestanden. Nachprüfung: beide Befunde behoben, kein konkretes Commitumfang-Risiko. Urteil MIT AUFLAGEN wegen der ausdrücklich aufgeschobenen TOR1-Prüfung; Formularvalidator meldet ausschließlich das fehlende TOR1-Urteil. Bericht: docs/WAECHTER_CACHE109_2026-10-16.md. Musikalische Hörabnahme und Gesamtfreigabe offen.
+Entwicklungsstand zur versionierten Sicherung; keine Releasefreigabe und kein EXE-Build.
 
 ## Historische Befunde bis zur nativen Gesamtpipeline
 

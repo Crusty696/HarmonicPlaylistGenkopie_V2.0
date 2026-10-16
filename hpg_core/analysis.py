@@ -275,6 +275,8 @@ def _validate_track_beatgrid(
     head_audio: np.ndarray | None = None,
     head_sr: int = 0,
     diagnostics: dict | None = None,
+    window_starts=None,
+    phase_method='bass_fold',
 ) -> BeatgridValidation:
     """Laedt bis zu drei getrennte Fenster und prueft deren reale Kickphase."""
     if diagnostics is not None:
@@ -285,12 +287,14 @@ def _validate_track_beatgrid(
         max(0.0, float(duration) / 2.0 - span / 2.0),
         max(0.0, float(duration) - span),
     )
-    offsets = tuple(dict.fromkeys(raw_offsets))
+    offsets = tuple(dict.fromkeys(raw_offsets if window_starts is None else window_starts))
+    if any(not math.isfinite(offset) or offset < 0 or offset+span > duration+1e-6 for offset in offsets):
+        raise ValueError("Invalid beatgrid evidence window")
     windows: list[tuple[float, np.ndarray]] = []
     sample_rate = int(head_sr or 0)
     for index, offset in enumerate(offsets):
         try:
-            if index == 0 and head_audio is not None and sample_rate > 0:
+            if offset == 0 and head_audio is not None and sample_rate > 0:
                 audio = np.asarray(head_audio)[: int(span * sample_rate)]
             else:
                 audio, loaded_sr = librosa.load(
@@ -312,7 +316,7 @@ def _validate_track_beatgrid(
     )
     return validate_beatgrid_windows(
         windows, sample_rate, bpm, anchor=anchor, grid_times=grid_times,
-        collect_diagnostics=True,
+        collect_diagnostics=True, phase_method=phase_method,
     )
 
 def _estimate_audio_downbeat(
@@ -3192,6 +3196,7 @@ def _prepare_native_beats(file_path, duration, y, sr):
     if native.get('status') != 'ok':
         return context
     native_track_beats.validate_snapshot(native, duration=duration)
+    native['phase_method'] = 'native_attack_v1'
     period = 60. / native['bpm']
     first = native['grid'][0]['pos'] / 44100
     if any(abs(row['pos']/44100 - (first + index*period)) > EXACT_BEAT_SYNC_TOLERANCE_SECONDS
@@ -3199,9 +3204,13 @@ def _prepare_native_beats(file_path, duration, y, sr):
         # HPGs aktueller Renderer verwendet ein konstantes Raster. Ein natives
         # variables Grid bleibt erhalten, wird aber nicht still begradigt.
         return context
+    from .ai_models.native_beat_alignment import single_window_evidence_plan
+    evidence_plan = single_window_evidence_plan(native, duration, _BEATGRID_WINDOW_SECONDS)
     details = {}
     validation = _validate_track_beatgrid(file_path, duration, native['bpm'],
         native['first_downbeat'], head_audio=y, head_sr=sr, diagnostics=details,
+        phase_method=native['phase_method'],
+        **({'window_starts': evidence_plan[0]} if evidence_plan else {}),
         grid_points=[dict(time=row['pos']/44100, beat=row['numBar']) for row in native['grid']])
     context.update(accepted=validation.status == 'verified', validation=validation, diagnostics=details)
     if (validation.status == 'mismatch' and validation.phase_pattern == 'consistent_offset'
@@ -3213,7 +3222,7 @@ def _prepare_native_beats(file_path, duration, y, sr):
             return context
         records = [asdict(row) for row in validation.window_diagnostics]
         span = _BEATGRID_WINDOW_SECONDS
-        starts = _offset_confirmation_starts(duration, span,
+        starts = evidence_plan[1] if evidence_plan else _offset_confirmation_starts(duration, span,
             {'window_diagnostics': records},
             [dict(start_s=r['offset_seconds'], duration_s=r['duration_seconds']) for r in records],
             eligible=lambda start, width: stable_model_window(native, start, width))
@@ -3228,7 +3237,8 @@ def _prepare_native_beats(file_path, duration, y, sr):
                 windows.append((start, audio))
             confirmation = validate_beatgrid_windows(windows, sr, native['bpm'],
                 anchor=native['first_downbeat'] + shift,
-                grid_times=[r['pos']/44100 + shift for r in native['grid']], collect_diagnostics=True)
+                grid_times=[r['pos']/44100 + shift for r in native['grid']],
+                collect_diagnostics=True, phase_method=native['phase_method'])
             alignment = dict(offset_seconds=shift, calibration=records,
                 confirmation=[asdict(r) for r in confirmation.window_diagnostics])
             if confirmation.status != 'verified':

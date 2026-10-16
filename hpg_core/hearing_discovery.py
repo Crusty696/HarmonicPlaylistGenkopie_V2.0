@@ -59,7 +59,7 @@ def _source_metadata(directory: Path) -> dict:
     mode = manifest["mode"]
     if (manifest["format"] != sources.SOURCE_FORMAT
             or type(manifest["format_version"]) is not int
-            or manifest["format_version"] != sources.SOURCE_VERSION
+            or manifest["format_version"] not in (1, sources.SOURCE_VERSION)
             or manifest["status"] != "prepared"
             or type(mode) is not str or mode not in sources._MODE_FILES):
         raise ValueError("Unsupported source format/version/mode/status")
@@ -73,7 +73,7 @@ def _source_metadata(directory: Path) -> dict:
     referenced = set()
     for ref, spec in specs.items():
         sources._virtual_path(ref)
-        sources.validate_spec_v1(spec)
+        (sources.validate_spec_v1 if manifest['format_version'] == 1 else sources.validate_spec_v2)(spec)
         referenced.update((spec["track_a_path"], spec["track_b_path"]))
     if referenced != set(originals):
         raise ValueError("Specs and sources differ")

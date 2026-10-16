@@ -17,7 +17,7 @@ from .transition_renderer import TransitionClipSpec, SUPPORTED_TRANSITION_TYPES
 
 SOURCE_MANIFEST_NAME = "hearing_source_manifest.json"
 SOURCE_FORMAT = "hpg_hearing_source_refs"
-SOURCE_VERSION = 1
+SOURCE_VERSION = 2
 # Explizites v1-Schema: neue Rendererfelder duerfen alte Referenzen nicht umdeuten.
 _STRING_FIELDS = frozenset({
     "track_a_path", "track_b_path", "transition_type", "beatgrid_status_a", "beatgrid_status_b",
@@ -33,6 +33,7 @@ _NUMBER_FIELDS = frozenset({
     "normalize_target_db", "lufs_a", "lufs_b",
 })
 SPEC_V1_FIELDS = _STRING_FIELDS | _BOOL_FIELDS | _NUMBER_FIELDS | {"target_sr", "tempo_ratio"}
+SPEC_V2_FIELDS = SPEC_V1_FIELDS | {'phase_method_a', 'phase_method_b'}
 _MANIFEST_KEYS = {
     "format", "format_version", "mode", "status", "source_roots", "specs", "sources", "immutable_metadata",
 }
@@ -144,7 +145,7 @@ def _fingerprint_schema(value, label):
 
 def validate_spec_v1(spec: dict) -> dict:
     _exact(spec, SPEC_V1_FIELDS, "TransitionClipSpec v1")
-    if {field.name for field in fields(TransitionClipSpec)} != SPEC_V1_FIELDS:
+    if {field.name for field in fields(TransitionClipSpec)} != SPEC_V2_FIELDS:
         raise SourceValidationError("Renderer-Feldschema passt nicht mehr zu source_refs v1")
     for name in _STRING_FIELDS:
         if type(spec[name]) is not str or not spec[name]:
@@ -173,6 +174,15 @@ def validate_spec_v1(spec: dict) -> dict:
     for name in ("track_a_path", "track_b_path"):
         if not Path(spec[name]).is_absolute():
             raise SourceValidationError("Quellpfade muessen absolut sein")
+    return spec
+
+
+def validate_spec_v2(spec: dict) -> dict:
+    _exact(spec, SPEC_V2_FIELDS, 'TransitionClipSpec v2')
+    validate_spec_v1({key: value for key, value in spec.items() if key in SPEC_V1_FIELDS})
+    for key in ('phase_method_a', 'phase_method_b'):
+        if spec[key] not in ('bass_fold', 'native_attack_v1'):
+            raise SourceValidationError('Unbekannte Phasenmessung')
     return spec
 
 
@@ -214,7 +224,7 @@ class SourceRenderSink:
                 raise SourceValidationError("Vorheriger Quellfehler; gesamter Satz wird abgebrochen")
             if not isinstance(spec, TransitionClipSpec):
                 raise SourceValidationError("TransitionClipSpec erforderlich")
-            payload = validate_spec_v1(asdict(spec))
+            payload = validate_spec_v2(asdict(spec))
             target = Path(target)
             if ".." in target.parts:
                 raise SourceValidationError("Clip-Ziel enthaelt Traversal")
@@ -527,7 +537,7 @@ def _validate_manifest(root: Path, manifest: dict, *, with_manifest: bool,
                        verify_source_contents: bool = True) -> SourceSession:
     _exact(manifest, _MANIFEST_KEYS, "Quellmanifest")
     if (manifest["format"] != SOURCE_FORMAT or type(manifest["format_version"]) is not int
-            or manifest["format_version"] != SOURCE_VERSION or manifest["status"] != "prepared"
+            or manifest["format_version"] not in (1, SOURCE_VERSION) or manifest["status"] != "prepared"
             or type(manifest["mode"]) is not str or manifest["mode"] not in _MODE_FILES):
         raise SourceValidationError("Unbekannter Quellmanifestvertrag oder Status")
     mode = manifest["mode"]
@@ -551,7 +561,7 @@ def _validate_manifest(root: Path, manifest: dict, *, with_manifest: bool,
     referenced = set()
     for ref, spec in specs.items():
         _virtual_path(ref)
-        validate_spec_v1(spec)
+        (validate_spec_v1 if manifest['format_version'] == 1 else validate_spec_v2)(spec)
         referenced.update((spec["track_a_path"], spec["track_b_path"]))
     if referenced != set(sources):
         raise SourceValidationError("Spec-Pfade und Quellen sind nicht exakt 1:1")

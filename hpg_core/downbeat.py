@@ -158,6 +158,7 @@ def validate_beatgrid_windows(
     anchor: float | None = None,
     grid_times: list[float] | None = None,
     collect_diagnostics: bool = False,
+    phase_method: str = 'bass_fold',
 ) -> BeatgridValidation:
     """Prueft ein Beatgrid gegen tieffrequente Kickphasen mehrerer Fenster.
 
@@ -170,6 +171,8 @@ def validate_beatgrid_windows(
     ohne eine zweite Faltung auszufuehren. Fehlende Messwerte bleiben None.
     """
     details: list[BeatgridWindowDiagnostic] = []
+    if phase_method not in ('bass_fold', 'native_attack_v1'):
+        raise ValueError('Unknown beat phase measurement')
     signed_errors: list[float] = []
 
     def result(status, checked, error, reason):
@@ -231,7 +234,11 @@ def validate_beatgrid_windows(
                 if mono.ndim == 2:
                     mono = np.mean(mono, axis=1)
                 if np.all(np.isfinite(mono)):
-                    phase, lock = _beat_phase_from_fold(mono, sr, ibi)
+                    if phase_method == 'native_attack_v1':
+                        from .ai_models.native_audio_phase import measure
+                        phase, lock = measure(mono, sr, ibi, (reference-finite_offset) % ibi)
+                    else:
+                        phase, lock = _beat_phase_from_fold(mono, sr, ibi)
                     phase_value, lock_value = _finite_scalar(phase), _finite_scalar(lock)
                     if lock_value is not None and (phase is None or phase_value is not None):
                         if phase is None or lock_value < BEATGRID_MIN_FOLD_LOCK:

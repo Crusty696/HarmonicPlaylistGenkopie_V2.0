@@ -236,7 +236,7 @@ logger = logging.getLogger(__name__)
 # v97: interner Tracker-Lag darf bei erhaltener Beatidentitaet schwanken.
 # v98: lokaler Drei-Fenster-Retry nach langem Tracker-Drift, Gesamtgrid unveraendert.
 # v99: interner Trackerdrift nutzt separat bestaetigtes Audio-Raster vor Takt-Voting.
-CACHE_VERSION = 104
+CACHE_VERSION = 109
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

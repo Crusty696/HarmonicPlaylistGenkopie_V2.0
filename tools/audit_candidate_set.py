@@ -1041,21 +1041,21 @@ def validate_ram_receipt(report, binding):
     source_text = report["source_manifest_text"]
     source_specs = {}
     if transport == "source_refs_ram":
-        from hpg_core.hearing_sources import strict_json_bytes, validate_spec_v1
+        from hpg_core.hearing_sources import strict_json_bytes, validate_spec_v1, validate_spec_v2
         if type(source_text) is not str or {"size": len(source_text.encode("utf-8")), "sha256": _sha(source_text.encode("utf-8"))} != binding["files"][SOURCE_MANIFEST_NAME]:
             raise AuditError("RAM-Audit-Quellmanifest ist nicht gebunden")
         source_manifest = strict_json_bytes(source_text.encode("utf-8"))
         _exact_dict(source_manifest, {"format", "format_version", "mode", "status", "source_roots",
                                       "specs", "sources", "immutable_metadata"}, "Quellmanifest")
         if (source_manifest["format"] != SOURCE_FORMAT or type(source_manifest["format_version"]) is not int
-                or source_manifest["format_version"] != SOURCE_VERSION or source_manifest["mode"] != "kandidaten"
+                or source_manifest["format_version"] not in (1, SOURCE_VERSION) or source_manifest["mode"] != "kandidaten"
                 or source_manifest["status"] != "prepared"):
             raise AuditError("Kein exakt validierter regulaerer Quellmanifestvertrag")
         if source_manifest.get("sources") != binding["sources"] or type(source_manifest.get("specs")) is not dict:
             raise AuditError("RAM-Audit-Quellen stimmen nicht")
         source_specs = source_manifest["specs"]
         for spec in source_specs.values():
-            validate_spec_v1(spec)
+            (validate_spec_v1 if source_manifest['format_version'] == 1 else validate_spec_v2)(spec)
     elif source_text is not None:
         raise AuditError("Legacy-Audit darf kein natives Quellmanifest vortaeuschen")
     expected = [(p["pair_id"], c["clip_id"], c["rank"]) for p in manifest["pairs"] for c in p["clips"]]

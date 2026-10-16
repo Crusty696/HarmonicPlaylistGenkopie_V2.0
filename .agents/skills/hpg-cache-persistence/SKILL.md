@@ -15,7 +15,7 @@ passen.
 
 ## CACHE_VERSION — wo und wann
 
-`CACHE_VERSION = 104` in **`hpg_core/caching.py`** — nicht in `config.py`. Cache 85 umfasst die bestätigte reine Rekordbox-Phasenoffset-Korrektur ohne Bar-Rotation. Cache 86 verwirft Rotation-0-Korrekturen, die den Anker über eine Bar-Grenze wickeln würden. Cache 87 berücksichtigt die wirksame Phrase-Unit bereits in der internen Mix-In/Out-Kandidatensuche und deren Guards. Cache 88 verwendet den Median aller sechs konsistenten Tempoausgaben statt des ersten Werts. Cache 89 persistiert strukturierte Tempoentscheidungsdiagnosen im Messschema v7. Cache 90 erhält alle sechs Modell-BPM-Werte samt Modell-ID und Fensterstart; die v7-Validierung leitet bei sechs Werten Median und Spread daraus neu ab, verwirft widersprüchliche Payloads und bindet akzeptierte Tempi an die bestehende 2%-Grenze.
+`CACHE_VERSION = 109` in **`hpg_core/caching.py`** — nicht in `config.py`. Cache 85 umfasst die bestätigte reine Rekordbox-Phasenoffset-Korrektur ohne Bar-Rotation. Cache 86 verwirft Rotation-0-Korrekturen, die den Anker über eine Bar-Grenze wickeln würden. Cache 87 berücksichtigt die wirksame Phrase-Unit bereits in der internen Mix-In/Out-Kandidatensuche und deren Guards. Cache 88 verwendet den Median aller sechs konsistenten Tempoausgaben statt des ersten Werts. Cache 89 persistiert strukturierte Tempoentscheidungsdiagnosen im Messschema v7. Cache 90 erhält alle sechs Modell-BPM-Werte samt Modell-ID und Fensterstart; die v7-Validierung leitet bei sechs Werten Median und Spread daraus neu ab, verwirft widersprüchliche Payloads und bindet akzeptierte Tempi an die bestehende 2%-Grenze.
 Das ist ein haeufiger Fehlgriff.
 
 Die Version steckt im **Dateinamen**: `hpg_cache_v96.db`. Ein Bump erzeugt
@@ -253,3 +253,5 @@ Cache 102: native Beatzeiten aus Samplepositionen statt nativen msec-Hilfsfelder
 Cache 103: native_beat_analysis speichert den vollständigen nativen Modell-/Endgrid-Lauf samt Herkunft. Aktive Übernahme verlangt unveränderte BPM/Takt-Eins und bestätigte Audio-Synchronität.
 
 Version104: native Rohgrids unverändert; optionale Audio-Zeitkorrektur mit sechs disjunkten Messfenstern und eigener Ankerherkunft persistieren.
+
+Version105: nativer WAV/AIFF-Reader mit eigener Quell-/Ausgabezeitbasis und rekonstruierter Modus-/Modellwahl; Endgrid im selben Einmalprozess. Native Herkunft bleibt getrennt von Audio- und musikalischer Freigabe.

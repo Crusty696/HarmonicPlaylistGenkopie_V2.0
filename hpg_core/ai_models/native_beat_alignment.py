@@ -11,10 +11,64 @@ def stable_model_window(native, start, width):
     100-Hz-Modellraster: zwei Quantisierungsschritte plus 2% Tempotoleranz.
     """
     period = 60. / native['bpm']
-    times = [r[0] for r in native.get('model_beats', []) if start <= r[0] < start + width]
+    verification = native.get('verification')
+    rows = verification['beats'] if verification else native.get('model_beats', [])
+    times = [r[0] for r in rows if start <= r[0] < start + width]
     return (len(times) >= 8 and times[0] - start <= period
             and start + width - times[-1] <= period
             and all(abs(b-a-period) <= .02 + .02*period for a, b in zip(times, times[1:])))
+
+
+def single_window_evidence_plan(native, duration, span):
+    """Sechs disjunkte Fenster vor jeder Audiomessung wählen.
+
+    Modell8 besitzt nur ein höchstens 60s langes Beobachtungsfenster. Die drei
+    Bestätigungen liegen darin; drei Kalibrierungen liegen außerhalb davon.
+    Keine Auswahl anhand des später gemessenen Phasenfehlers.
+    """
+    if native.get('verification'):
+        # Alle sechs Abschnitte vor jeder Phasenmessung aus tatsächlich
+        # modellbeobachteten, regelmäßigen Beats wählen; nie nach Restfehler.
+        candidates = [float(start) for start in range(math.floor(duration-span)+1)
+                      if stable_model_window(native, float(start), span)]
+        selected = []
+        # Feste innere Quantile vermeiden Fade-In/Outro als Kickreferenz.
+        # Der lokale Kandidaten- und Rendercheck prüft spätere Mixstellen
+        # zusätzlich; kein Fenster wird nach seinem Phasenfehler ersetzt.
+        for fraction in (.2, .5, .8, .1, .35, .65):
+            target = duration*fraction
+            available = [start for start in candidates if all(
+                start+span <= other or start >= other+span for other in selected)]
+            if not available:
+                return None
+            selected.append(min(available, key=lambda start: (abs(start-target), start)))
+        return tuple(selected[:3]), tuple(selected[3:])
+    if native.get('selection', {}).get('chunked', True):
+        return None
+    coverage = native.get('model_coverage')
+    if not coverage or duration < 6*span:
+        return None
+    first = max(0, math.ceil(coverage['start_s']))
+    last = math.floor(min(duration, coverage['end_s'])-span)
+    confirmation = []
+    for start in range(first, last+1):
+        if (all(start >= other+span for other in confirmation)
+                and stable_model_window(native, float(start), span)):
+            confirmation.append(float(start))
+            if len(confirmation) == 3:
+                break
+    if len(confirmation) != 3:
+        return None
+    candidates = [float(start) for start in range(math.floor(duration-span)+1)
+                  if start+span <= coverage['start_s'] or start >= coverage['end_s']]
+    calibration = []
+    for target in (0., duration/2-span/2, duration-span):
+        available = [start for start in candidates if all(
+            start+span <= other or start >= other+span for other in calibration)]
+        if not available:
+            return None
+        calibration.append(min(available, key=lambda start: (abs(start-target), start)))
+    return tuple(sorted(calibration)), tuple(confirmation)
 
 
 def validate_alignment(native, alignment):

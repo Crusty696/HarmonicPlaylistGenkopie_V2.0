@@ -118,6 +118,8 @@ class TransitionClipSpec:
     downbeat_reliable_b: bool = False
     bar_phase_reliable_a: bool = False
     bar_phase_reliable_b: bool = False
+    phase_method_a: str = 'bass_fold'
+    phase_method_b: str = 'bass_fold'
     beatgrid_status_a: str = "unknown"
     beatgrid_status_b: str = "unknown"
     analysis_mode_a: str = "unknown"
@@ -167,6 +169,10 @@ class TransitionClipSpec:
 
         downbeat_a, bar_a = _phase_reliability(from_track)
         downbeat_b, bar_b = _phase_reliability(to_track)
+        def phase_method(track):
+            from .ai_models.native_track_beats import has_verified_grid
+            return (track.native_beat_analysis.get('phase_method', 'bass_fold')
+                    if has_verified_grid(track) else 'bass_fold')
         bpm_a = float(from_track.bpm or 120.0)
         bpm_b = float(to_track.bpm or 120.0)
         tempo_ratio = getattr(plan, "tempo_ratio", bpm_b / bpm_a)
@@ -189,6 +195,8 @@ class TransitionClipSpec:
             downbeat_reliable_b=downbeat_b,
             bar_phase_reliable_a=bar_a,
             bar_phase_reliable_b=bar_b,
+            phase_method_a=phase_method(from_track),
+            phase_method_b=phase_method(to_track),
             beatgrid_status_a=getattr(from_track, "beatgrid_status", "unknown"),
             beatgrid_status_b=getattr(to_track, "beatgrid_status", "unknown"),
             analysis_mode_a=getattr(from_track, "analysis_mode", "unknown"),
@@ -461,6 +469,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         seg_b = _synchronize_and_verify_kicks(
             seg_a[pre_frames:pre_frames + cf_frames], seg_b, sr, spec.bpm_a,
             cf_frames, reference_phases=reference_phases,
+            reference_methods=(spec.phase_method_a, spec.phase_method_b),
         )
 
     # Lautheits-Normalisierung: absolute Pegel ausschliesslich aus dem
@@ -648,12 +657,12 @@ def _synchronize_and_verify_kicks(
     sr: int,
     bpm: float,
     cf_frames: int,
-    *, reference_phases=None,
+    *, reference_phases=None, reference_methods=('bass_fold', 'bass_fold'),
 ) -> np.ndarray:
     """Korrigiert globalen Kickversatz und lehnt Restfehler/Drift hart ab."""
     if reference_phases is not None:
         return _synchronize_reference_kicks(ref_segment, segment_b, sr, bpm,
-                                            cf_frames, reference_phases)
+                                            cf_frames, reference_phases, reference_methods)
     before = _kick_lags_across_overlap(ref_segment, segment_b, sr, bpm, cf_frames)
     if len(before) != 3 or any(value is None for value in before):
         raise BeatSyncError(
@@ -692,10 +701,12 @@ def _synchronize_and_verify_kicks(
     return corrected
 
 
-def _synchronize_reference_kicks(a, b, sr, bpm, frames, phases):
+def _synchronize_reference_kicks(a, b, sr, bpm, frames, phases, methods=('bass_fold', 'bass_fold')):
     """Bekannte Taktreferenzen an lokalen Audio-Attacks prüfen, nicht Bassklänge gleichsetzen."""
     from .downbeat import _beat_phase_from_fold, BEATGRID_MIN_FOLD_LOCK
     period = 60./bpm
+    if len(methods) != 2 or any(m not in ('bass_fold', 'native_attack_v1') for m in methods):
+        raise BeatSyncError('Unbekannte Referenz-Phasenmessung')
     window = math.ceil(4*period*sr)
     if frames < window or len(phases) != 2 or not all(math.isfinite(x) for x in phases):
         raise BeatSyncError('Referenz-Kickprüfung hat zu wenig Audio oder ungültige Phasen')
@@ -704,23 +715,27 @@ def _synchronize_reference_kicks(a, b, sr, bpm, frames, phases):
         starts.append(frames-window)
     def difference(x, y):
         return (x-y+period/2) % period-period/2
-    def measured(segment, reference):
+    def measured(segment, reference, method):
         values = []
         for start in starts:
             expected = (reference-start/sr) % period
             mono = np.asarray(segment[start:start+window]).mean(axis=1)
-            phase, lock = _beat_phase_from_fold(mono, sr, period,
-                expected_phase=expected, minimum_beats=4)
+            if method == 'native_attack_v1':
+                from .ai_models.native_audio_phase import measure
+                phase, lock = measure(mono, sr, period, expected, minimum_beats=4)
+            else:
+                phase, lock = _beat_phase_from_fold(mono, sr, period,
+                    expected_phase=expected, minimum_beats=4)
             if phase is None or lock < BEATGRID_MIN_FOLD_LOCK:
                 raise BeatSyncError(f'Referenz-Kickphase ab {start/sr:.3f} s nicht messbar')
             if abs(difference(phase, expected)) > KICK_SYNC_MAX_ERROR_SECONDS:
                 raise BeatSyncError(f'Referenz-Kickphase ab {start/sr:.3f} s über 6 ms')
             values.append(phase)
         return values
-    phases_a, phases_b = measured(a, phases[0]), measured(b, phases[1])
+    phases_a, phases_b = measured(a, phases[0], methods[0]), measured(b, phases[1], methods[1])
     shift = round(float(np.median([difference(y, x) for x, y in zip(phases_a, phases_b)]))*sr)
     corrected = _ensure_len(_shift_segment(b, shift), len(b))
-    after = measured(corrected, phases[1]-shift/sr)
+    after = measured(corrected, phases[1]-shift/sr, methods[1])
     if any(abs(difference(y, x)) > KICK_SYNC_MAX_ERROR_SECONDS for x, y in zip(phases_a, after)):
         raise BeatSyncError('Relative Referenz-Kickphasen überschreiten 6 ms')
     return corrected

@@ -1108,10 +1108,22 @@ def _sort_harmonic_flow(
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
     cancel_check = kwargs.get("cancel_check")
     _check_cancel(cancel_check)
-    if len(tracks) <= 2:
+    if len(tracks) <= 6:
+        # Kleine Pools vollständig lösen: ein lokal guter Start kann eine
+        # Sackgasse erzeugen, obwohl eine lückenlose gerichtete Kette existiert.
+        # Jedes Paar nur einmal bewerten, auch bei bis zu 720 Reihenfolgen.
+        edge_scores = {}
+        def complete_path_score(order):
+            scores = []
+            for a, b in zip(order, order[1:]):
+                key = (id(a), id(b))
+                if key not in edge_scores:
+                    edge_scores[key] = calculate_transition_objective(a, b, bpm_tolerance, **kwargs)
+                scores.append(edge_scores[key])
+            return sum(score > 0 for score in scores), sum(scores)
         return _small_pool_order(
             tracks,
-            lambda order: _transition_path_score(order, bpm_tolerance, kwargs),
+            complete_path_score,
             cancel_check,
         )
 

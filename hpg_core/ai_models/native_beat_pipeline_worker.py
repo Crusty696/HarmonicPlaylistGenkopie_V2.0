@@ -1,7 +1,7 @@
 """Rekordbox-Modellaufruf und Beatdecoder im isolierten Forschungsprozess.
 
-Die native Vorverarbeitung beginnt an den Float-Stereopuffern. Der originale
-Dateidecoder und die musikalische Gleichwertigkeit sind noch nicht nachgewiesen.
+Native WAV/AIFF-Decoder, Moduswahl und Original-Grenzkorrekturen.
+Musikalische Gleichwertigkeit bleibt ein getrennter Nachweis.
 """
 import ctypes as ct
 import hashlib
@@ -9,12 +9,12 @@ import json
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 
 from .native_phrase_worker import NativeImage, NativeContractError, EXE, SHA256, _source_identity
-from .native_beat_worker import FloatMatrix
-from .native_beat_grid import convert
 from .beat_predictor import _hashes
+from .native_audio_reader import NativeAudioReader, bind_reader_imports
+from .native_beat_selection import select_model
+from .native_grid_processor import NativeGridProcessor
 
 TF_SHA256 = 'b158ff8fdd75723871c5966ec8c1f7c8cda888c9d836365e3b1976966c718424'
 _used = False
@@ -50,70 +50,66 @@ def _bind_tensorflow(image):
     return library
 
 
+def validate_model_rows(values, window_frames):
+    # Ein Modell8-Ereignis darf genau auf dem Ende des 60s-Fensters liegen.
+    # Es ist weiterhin an die Quelldauer gebunden, nachdem der Start addiert ist.
+    if (values.ndim != 2 or values.shape[1] != 2
+            or not np.isfinite(values).all() or np.any(values[:, 0] < 0)
+            or np.any(values[:, 0] > window_frames / 44100)
+            or np.any(np.diff(values[:, 0]) <= 0)
+            or not np.isin(values[:, 1], [1, 2, 3, 4]).all()):
+        raise NativeContractError('Invalid native pipeline beats')
+    return values.tolist()
+
+
 def _handle(payload):
     global _used
     if _used:
         raise NativeContractError('Single-use native pipeline required')
     _used = True
     request = json.loads(payload)
-    if type(request) is not dict or set(request) != {'path', 'source_identity', 'frames', 'model_id'}:
+    if type(request) is not dict or set(request) != {'path', 'source_identity', 'configuration'}:
         raise NativeContractError('Invalid pipeline request')
-    path, frames, model_id = Path(request['path']), request['frames'], request['model_id']
-    if (not path.is_absolute() or _source_identity(path) != request['source_identity']
-            or type(frames) is not int or not 44100 <= frames <= 1200 * 44100
-            or model_id not in ('model7', 'model8')):
-        raise NativeContractError('Invalid pipeline source or window')
-    directory = EXE.parent / 'models' / 'detect_beat' / model_id
-    hashes = _hashes(directory, model_id)
-    with sf.SoundFile(str(path), mode='r') as source:
-        if source.samplerate != 44100 or source.channels != 2 or source.subtype != 'PCM_16' or len(source) < frames:
-            raise NativeContractError('Only stereo PCM16/44100 input reconstructed')
-        samples = source.read(frames, dtype='float32', always_2d=True)
-    left, right = (np.ascontiguousarray(samples[:, channel]) for channel in (0, 1))
+    path = Path(request['path'])
+    if not path.is_absolute() or _source_identity(path) != request['source_identity']:
+        raise NativeContractError('Invalid pipeline source')
+    mode = request['configuration']
+    if type(mode) is not int or mode not in (2, 3, 4):
+        raise NativeContractError('Unsupported native configuration')
     image = NativeImage()
+    bind_reader_imports(image)
     library = _bind_tensorflow(image)
     if image.function(0x2998258, ct.c_int32)() != 0:
         raise NativeContractError('Native standard-stream initialization failed')
-    model_path = ct.c_void_p()
-    image.function(0x2a6e420, ct.c_void_p, ct.c_void_p, ct.c_char_p)(
-        ct.byref(model_path), str(directory).encode('utf8'))
-    target = FloatMatrix()
-    # RVA1293f70: beide Varianten konsumieren ihre JUCE-Stringkopie.
-    # Für lange Tracks übernimmt RVA12a8ef0 die originale 60s-Fensteraufteilung
-    # samt Restfenstern und Verknüpfung. Keine HPG-eigene Grenzkorrektur.
-    if frames > 60 * 44100:
-        image.function(0x12a8ef0, None, ct.POINTER(FloatMatrix), ct.c_void_p,
-            ct.c_void_p, ct.c_void_p, ct.c_int32, ct.c_uint64)(ct.byref(target),
-                ct.byref(model_path), left.ctypes.data, right.ctypes.data, 44100, frames)
-    else:
-        image.function(0x12ab830, None, ct.POINTER(FloatMatrix), ct.c_void_p,
-            ct.c_void_p, ct.c_void_p, ct.c_uint64)(ct.byref(target), ct.byref(model_path),
-                left.ctypes.data, right.ctypes.data, frames)
-    try:
-        if (target.columns != 2 or not 4 <= target.rows <= 6000
-                or target.size != target.rows * 2 or not target.data):
-            raise NativeContractError('Invalid native pipeline matrix')
-        values = np.ctypeslib.as_array(ct.cast(target.data, ct.POINTER(ct.c_float)),
-                                      shape=(target.size,)).reshape(-1, 2)
-        rows = values.tolist()
-        if (not np.isfinite(values).all() or np.any(values[:, 0] < 0)
-                or np.any(values[:, 0] >= frames / 44100)
-                or np.any(np.diff(values[:, 0]) <= 0)
-                or not np.isin(values[:, 1], [1, 2, 3, 4]).all()):
-            raise NativeContractError('Invalid native pipeline beats')
-    finally:
-        image.function(0x12add90, None, ct.POINTER(FloatMatrix))(ct.byref(target))
-    # Native Fenstergrenzen können nach Sample-Rundung doppelte Positionen
-    # enthalten. RVA128ecd0 reicht diese unverändert an die Endkorrektur weiter.
-    grid, bpm = convert(image, rows, (frames + 440) // 441,
-                        source_samples=frames, refinement_input=True)
+    reader = NativeAudioReader(image, path)
+    processor = NativeGridProcessor(image, reader)
+    selection = select_model(mode, processor.stored_mode)
+    model_id = selection['model_id']
+    directory = EXE.parent / 'models' / 'detect_beat' / model_id
+    hashes = _hashes(directory, model_id)
+    frames = reader.frames
+    from .native_beat_boundaries import run as correct_boundaries, VERSION as boundary_contract
+    grid, bpm_hundredths, rows, coverage = correct_boundaries(image, reader, selection, processor.window_start)
+    grid, final_bpm = processor.refine(grid, int(bpm_hundredths), selection['chunked'])
+    verification = None
+    if not selection['chunked']:
+        # Modell8 beobachtet nur 60 Sekunden. Für unabhängige Audiofenster
+        # liefert der originale Modell7-Lauf zusätzlich die ganze Beatfolge.
+        # Das ausgewählte Endgrid und seine Taktnummern bleiben unverändert.
+        verification_hashes = _hashes(EXE.parent/'models'/'detect_beat'/'model7', 'model7')
+        _, _, verification_rows, verification_coverage = correct_boundaries(
+            image, reader, select_model(4), 0)
+        verification = dict(model_id='model7', model_hashes=verification_hashes,
+                            beats=verification_rows, coverage=verification_coverage)
+    reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    return json.dumps(dict(contract='rb-7.2.19-native-beat-pipeline-research-v1',
+    return json.dumps(dict(contract='rb-7.2.19-native-beat-pipeline-research-v4',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
-        model_hashes=hashes, verified=False, beats=rows, grid=grid, bpm=bpm,
-        input_convention='soundfile-normalized-stereo-float32', frames=frames,
-        chunked=frames > 60 * 44100),
+        model_hashes=hashes, verified=False, beats=rows, grid=grid, bpm=final_bpm/100., selection=selection, reader=reader_metadata,
+        input_convention='rekordbox-builtin-planar-float32', frames=frames,
+        chunked=selection['chunked'], boundary_contract=boundary_contract,
+        model_coverage=coverage, verification=verification),
         allow_nan=False).encode('utf8')
 
 

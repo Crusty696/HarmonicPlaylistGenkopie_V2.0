@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from hpg_core import analysis, caching
+from hpg_core.ai_models.native_beat_selection import select_model
 from hpg_core.ai_models import native_track_beats as native
 from tests.test_cue_pipeline_integration import pipeline
 from tests.test_neural_anchor_integration import setup_adoption
@@ -18,7 +19,12 @@ def snapshot(duration=48.):
         bpm=120., grid=[dict(pos=round((.005+i*.5)*44100), numBar=i%4+1, bpm=12000)
                        for i in range(int(duration*2))],
         first_downbeat=round(.005*44100)/44100, musically_verified=False,
-        input_convention='soundfile-normalized-stereo-float32')
+        input_convention='rekordbox-builtin-planar-float32',
+        selection=select_model(4), boundary_contract=native.BOUNDARY_CONTRACT,
+        model_coverage=dict(start_s=0., end_s=duration-1/44100),
+        reader=dict(contract=native.READER_CONTRACT, source_sample_rate=44100,
+            source_channels=2, source_bit_depth=16, source_frames=int(duration*44100),
+            output_sample_rate=44100, output_frames=int(duration*44100)))
 
 
 @pytest.mark.parametrize('fast', [True, False])
@@ -75,3 +81,19 @@ def test_rejects_corrupt_native_provenance(field, value):
     data[field] = value
     with pytest.raises(ValueError):
         native.validate_snapshot(data, duration=48.)
+
+
+def test_single_model_window_keeps_six_audio_windows_disjoint():
+    from hpg_core.ai_models.native_beat_alignment import single_window_evidence_plan
+    data = dict(bpm=120., selection=select_model(3),
+                model_coverage=dict(start_s=30., end_s=90.),
+                model_beats=[[30.+i*.5, i%4+1] for i in range(121)])
+    calibration, confirmation = single_window_evidence_plan(data, 240., 16.)
+    assert len(calibration) == len(confirmation) == 3
+    assert all(30. <= start and start+16. <= 90. for start in confirmation)
+    assert all(start+16. <= 30. or start >= 90. for start in calibration)
+    starts = sorted(calibration+confirmation)
+    assert all(b-a >= 16. for a, b in zip(starts, starts[1:]))
+    assert single_window_evidence_plan(data, 80., 16.) is None
+    data['model_beats'] = []
+    assert single_window_evidence_plan(data, 240., 16.) is None

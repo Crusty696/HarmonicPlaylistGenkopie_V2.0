@@ -60,6 +60,8 @@ def fingerprint(config=None):
     from .native_phrase_adapter import identity as native_phrase_identity
     from .deep_features import config_fingerprint as deep_feature_fingerprint
     from .native_track_beats import CONTRACT as native_beat_contract, TF_SHA256, enabled as native_beat_enabled
+    from .native_beat_selection import configured_mode, VERSION as selection_version
+    from .native_audio_reader import CONTRACT as reader_contract
     config = dict(model_config(), **(config or (_pool_client.config if _pool_client else {})))
     identities = {}
     paths = {key: config[key] for key in ('samplecnn_path', 'cue_model_path')}
@@ -77,7 +79,8 @@ def fingerprint(config=None):
                                      beat_decoder=BEAT_DECODER_VERSION,
                                      native_phrase=native_phrase_identity(),
                                      native_beat=dict(contract=native_beat_contract, tensorflow_sha256=TF_SHA256,
-                                                      enabled=native_beat_enabled()),
+                                                      enabled=native_beat_enabled(), configuration=configured_mode(),
+                                                      selection=selection_version, reader=reader_contract),
                                      deep_features=deep_feature_fingerprint(),
                                      runtimes=_runtime_versions(), wire=2,
                                      memory_limit_bytes=MODEL_PROCESS_MEMORY_LIMIT_BYTES))).hexdigest()

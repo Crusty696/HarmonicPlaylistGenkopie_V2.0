@@ -705,7 +705,7 @@ def test_cache_version_ist_bewusst_gesetzt():
   from hpg_core import caching
 
   # Version 69 persistiert Audio-Bestätigung für PQTZ-Taktpositionskandidaten.
-  assert caching.CACHE_VERSION == 104
+  assert caching.CACHE_VERSION == 109
 
 
 def test_alter_cache_marker_wird_invalidiert():

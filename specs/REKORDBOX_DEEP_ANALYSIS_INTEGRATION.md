@@ -1198,3 +1198,100 @@ Verbleibende Grenzen des Gesamtauftrags:
 Git-Auftrag: Änderungen sollen als nachvollziehbarer Entwicklungsstand gesichert werden, nicht als Release oder vollständige Abnahme. Das konfigurierte GitHub-Repository ist öffentlich. Originalmusik, Modelle, DLLs, private Rohbelege, Cachedateien und die lokale Chatübergabe gehören nicht in den Commit.
 
 Commitfreigabe16.10.2026: Der Nutzer hat für diesen vorbereiteten Entwicklungsstand ausdrücklich „Einmalige Ausnahme: committen und pushen“ ohne unabhängige Wächterprüfung erlaubt. Das ersetzt keine fachliche Prüfung und ist keine dauerhafte Aufhebung des Wächtervertrags. Öffentliches Zielrepository wurde dabei ausdrücklich benannt; private Rohbelege, Modelle, Musik und die lokale Chatübergabe bleiben ausgeschlossen.
+
+
+## Umsetzung 16.10.2026: nativer Reader und konfigurierte Modellwahl, Cache105
+
+Implementiert: `native_audio_reader.py` verwendet die gepinnten WAV-/AIFF-Factories (RVA2cdda20/2cdd910), den nativen Dateistream, PCM-Decoder und Resampler (RVA1113330). Der synchrone native Lesemodus0 ersetzt die außerhalb der App unvollständige asynchrone Vorladekoordination. Keine Audio-Kopie, keine Änderung der Installation oder Originaldateien. Systemimporte werden explizit gebunden; die beiden aus RVA11236f9/112373c belegten privaten Resampler-Sperren werden initialisiert. Externe Codecplugins und der globale App-Factoryaufbau sind nicht übernommen.
+
+`native_beat_selection.py` setzt den rekonstruierten Konfigurationsvertrag um: 3 verwendet Modell8/Einzelfenster, 4 Modell7/Fensterverkettung, 2 das native gespeicherte Modusbit aus RVA11db7d0. `HPG_NATIVE_BEAT_MODE` hat HPG-Default2 (Übernahme des nativen Modusbits); dies behauptet keinen Rekordbox-Default oder eine Zuordnung zu UI-Bezeichnungen. Die bisherige Entscheidung anhand der Tracklänge ist entfernt. Die DSP-Voranalyse, Modusübernahme und Endkorrektur laufen mit dem Reader im selben begrenzten Kindprozess. Modell8 verwendet das native Startfenster, begrenzt auf60s und die verfügbare Quelldauer. Ein Ereignis genau am Fensterende ist zulässig; Ereignisse darüber bleiben abgelehnt.
+
+Cache105 und der Dienstfingerprint binden Readervertrag, Quell-/Ausgabezeitbasis, Modus und ausgewähltes Modell. Alte Snapshots sind keine Nachweise für den neuen Berechnungspfad. Die ursprünglichen Roh-Modellbeats bleiben als solche erhalten; die Audio-, Paar- und Renderfreigaben werden nicht abgeschwächt.
+
+Ausgeführte gezielte Nachweise:
+- 31 Vertragsfälle bestanden: erster Lauf29 bestanden/1 fehlgeschlagen (Testumgebung hatte native Analyse deaktiviert), genau dieser Fall nach expliziter Testaktivierung bestanden, danach1 neuer Grenzfalltest bestanden. Logs `TEMP/hpg-reader-selection-tests-20261016.log`, `TEMP/hpg-reader-selection-retest-20261016.log`, `TEMP/hpg-reader-endpoint-test-20261016.log`. Keine Wiederholung der bestandenen Fälle.
+- Reader: synthetisches PCM16-WAV/AIFF zunächst samplegenau, 48kHz-Mono nach Initialisierung der nativen Resampler-Sperren erfolgreich. Der anschließend am vollständigen Original-WAV entdeckte Vorladefehler wurde durch den synchronen nativen Dateimodus behoben. Danach gesamtes Original-WAV samplegenau gegenüber PCM-Referenz, maximaler Fehler0: `TEMP/hpg-reader-proof-jzyb0tku/report.json`. Neue48kHz-Mono-Prüfung nach dieser relevanten Lesemodusänderung erfolgreich: `TEMP/hpg-reader-proof-zacd2rh3/report.json`. Frühere Teilbelege ersetzen diese Nachweise nicht.
+- Original-WAV „You Never Alone“, Modell7/Modus4: `TEMP/hpg-native-reader-beat-20261016-run2.json`,12.687s,137.93BPM, erster nativer Taktanker1.3s, Original-SHA unverändert. Diese geänderten Werte sind ein technischer Laufbeleg, keine Verbesserung oder Freigabe der Taktposition.
+- Original-AIFF „Never Die“, Modell8/Modus3: `TEMP/hpg-native-reader-model8-20261016-run3.json`,7.719s,138BPM, erster nativer Taktanker1.7385034013605443s, Original-SHA unverändert. Vorherige Modell8-Läufe scheiterten an der zu strengen60s-Endgrenze; Rohbelege bleiben erhalten.
+
+Grenzen: zusätzliche Naht-/Grenznachverarbeitung des gesamten RVA1294100-Wrappers ist weiterhin nicht vollständig übernommen. Deshalb keine vollständige1:1-Rekordbox-Parität behaupten. Modus2 ist im Auswahlvertrag getestet; kein zusätzlicher Original-Modelllauf dafür. Neue Werte sind noch nicht im vollständigen GUI-Analyse-/Playlist-/Hörprobenablauf freigegeben. Musikalische Abnahme und unabhängiger Wächter fehlen. Keine Stem-Läufe, kein EXE-Build, kein Volltest. Die einmalige Commitausnahme galt dem bereits veröffentlichten vorherigen Entwicklungsstand; die jetzigen Änderungen sind noch nicht committed.
+
+### Fortsetzung 16.10.2026: Cache108, zusätzliche Beatbelege und Attack-Messung
+
+Die einzelne automatische Ablehnung meldete ausschließlich `blocked by policy`.
+Ein weitergehender Grund ist nicht verfügbar. Der abgelehnte Vorschlag,
+Bestätigungsfenster ohne Modellbeobachtung freizugeben, wurde nicht ausgeführt.
+
+Stattdessen liefert beim 60s-Modell8 ein zusätzlicher originaler Modell7-Lauf
+modellbeobachtete Beats des ganzen Tracks. Ausgewähltes Endgrid und Taktnummern
+bleiben unverändert. Herkunft, Modellhashes, Zeitabdeckung und Beatfolge werden
+validiert. Sechs disjunkte Audiofenster werden vor ihrer Phasenmessung anhand
+regelmäßiger Modellbeats gewählt; keine Auswahl nach erfolgreichem Restfehler.
+
+Die neue native Audio-Phasenmessung erfasst kurze breitbandige Anschläge oberhalb
+300Hz statt den zeitlich variablen Basskörper. Die native Referenz beschränkt
+nur die Ereignisfamilie; der gemessene Attack wird nicht auf das Grid gesetzt.
+Rausch- und Stilleprüfung sowie die unveränderte 6ms-Grenze bleiben erforderlich.
+Legacy-Analysen behalten ihre bisherige Messung. Renderer und native Analyse
+tragen die Messmethode explizit weiter; musikalische Takt-1-Abnahme bleibt separat.
+
+Neue Tests: vier Herkunfts-/Abdeckungsfälle, vier Attack-Fälle und zwei neue
+Rendererfälle bestanden. Keine zuvor bestandenen Tests erneut ausgeführt.
+Originalreader Harmonise: vollständiger Vergleich mit SoundFile, maximale
+Sampleabweichung0 (TEMP/hpg-reader-proof-z4cdtd_e/report.json).
+Der vollständige Produktlauf108 ist unter TEMP/hpg-original108-native-run1
+angelegt; sein Ergebnis ist bei diesem Eintrag noch ausstehend. Keine Stem-Läufe,
+keine EXE, keine unabhängige Wächter- oder musikalische Freigabe.
+
+Abschluss der konkreten Fehlerkette, Cache109:
+- Feste innere Quantile20/50/80% für Kalibrierung,10/35/65% für zusätzliche
+  Bestätigungen; jeweils nächstes modellbeobachtetes regelmäßiges Fenster,
+  sechs disjunkte Abschnitte, Auswahl ohne Kenntnis der Audio-Restfehler.
+  Der zwischenzeitlich untersuchte schwächere Attack-Rauschzweig wurde verworfen.
+- Native Kandidaten erhalten vor dem Ranking dieselbe lokale Vier-Beat-Attack-
+  Prüfung wie der Renderer. Nur boolesche Ergebnisse im begrenzten RAM-LRU;
+  Quellidentität verhindert Wiederverwendung nach einer Dateiänderung.
+- Harmonic Flow durchsucht Pools bis6Tracks vollständig. Jede gerichtete
+  Paarbewertung wird einmal berechnet. Damit geht eine durchgehende Kette vor
+  einem höher bewerteten Einzelübergang mit anschließender Sackgasse.
+- Quellreferenzformat2 speichert die Messmethode pro Deck. Laden, Discovery und
+  Kandidatenaudit unterscheiden explizit Format1/2; alte Referenzen erhalten
+  weiterhin ihre ursprüngliche Bass-Fold-Methode.
+
+Produktnachweis TEMP/hpg-original109-completed/report.json, Exit0: Never Die
+frisch analysiert; erfolgreiche Analyse-Snapshots von You Never Alone und
+Harmonise aus Lauf108 ausdrücklich wiederverwendet. Alle3 native_rekordbox,
+Grid verified, native Phrasen ok. Maximale Grid-Restfehler0.674/0.580/2.832ms.
+Alle Original-SHA256 gleich. Keine Stem-Inferenz, keine Originalkopien.
+Playlist You Never Alone → Never Die → Harmonise; beide RAM-Render erfolgreich,
+115.652s und73.913s, endliche Samples, keine Reserve-Ablehnung.
+
+GUI-Nachweis TEMP/hpg-native109-gui/gui-events.json: beide Clips geladen,
+Index0/1, gui_cache_ready=true, rejected=0. Qt protokolliert beide WAV-Streams.
+Das ist eine sichtbare Vorschau aus belegten Analyse-Snapshots, kein erneuter
+GUI-Ordnerimport und keine menschliche musikalische Bewertung.
+Neue gezielte Tests der ergänzten Verträge/Messungen/Reihenfolge erfolgreich;
+keine zuvor bestandenen Testfälle erneut gestartet. Kein Volltest, kein EXE.
+Unabhängiger Wächter, Commit/Push und musikalische Abnahme bleiben offen.
+
+### Wächterkorrekturen 16.10.2026
+
+Unabhängiger schreibgeschützter CLI-Review mit gpt-6-sol, service_tier=default,
+reasoning_effort=medium: zwei Befunde. Die Default-Angabe ist auf Modus2
+korrigiert. Das lokale Audio-Gate wird bei verifiziertem nativen Raster nun
+auch ohne optionale model_beats ausgeführt, bevor die Modellprüfung zurückkehrt.
+Der neue Regressionstest tests/test_native_candidate_missing_beats.py schlug
+vorher fehl und bestand danach (1 Fall, 0,62s; TEMP/hpg-waechter109-gate-green.log).
+Kein bestandener Test wiederholt, keine Stem-Inferenz, kein EXE-Build.
+Der gespeicherte Analysevertrag bleibt Cache109; korrigiert wurde die
+Kandidatenprüfung, nicht der persistierte Analyseoutput. Frühere Originalbelege
+bleiben datiert; kein neuer Original- oder musikalischer Nachweis behauptet.
+TOR1 wurde auf ausdrücklichen Nutzerwunsch auf den Abschluss verschoben;
+eine historische Vorabfreigabe wird nicht nachträglich behauptet.
+
+Nachprüfung: beide Erstbefunde behoben; kein konkretes Risiko im geprüften
+Commitumfang. Bericht: docs/WAECHTER_CACHE109_2026-10-16.md. Urteil MIT AUFLAGEN
+wegen fehlendem TOR1 nach Nutzeraufschub. Der Formularvalidator meldet nur
+dieses fehlende TOR1-Urteil; keine formal vollständige Wächterfreigabe behauptet.
+Der aktuelle Nutzerauftrag autorisiert Commit und Push des Entwicklungsstands.
+Musikalische Abnahme, Gesamtfreigabe und EXE bleiben davon getrennt offen.
