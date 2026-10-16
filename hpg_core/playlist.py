@@ -2185,19 +2185,21 @@ def transition_type_for_candidate(
         _resolve_track_genre(from_track) == "Psytrance"
         or _resolve_track_genre(to_track) == "Psytrance"
     )
-    if (
-        kandidat is not None
-        and kandidat.flags.get("bass_swap_pflicht")
-        and not psytrance
-    ):
-        return "bass_swap"
-    return predict_transition_type(
+    predicted = predict_transition_type(
         from_track,
         to_track,
         bpm_tolerance,
         kandidat=kandidat,
         **dict(scoring_context or {}),
     )
+    if (
+        kandidat is not None
+        and kandidat.flags.get("bass_swap_pflicht")
+        and not psytrance
+        and predicted != "halftime_switch"
+    ):
+        return "bass_swap"
+    return predicted
 
 
 def _build_transition_description(
