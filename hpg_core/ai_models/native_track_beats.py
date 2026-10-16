@@ -169,11 +169,12 @@ def validate_reader(reader, frames, duration, input_convention):
                                                else reader['source_channels'])
             or not 8000 <= reader['source_sample_rate'] <= 384000
             or reader['source_bit_depth'] not in (0, 8, 16, 24, 32, 64)
-            or (reader['backend'] == 'rekordbox-builtin' and reader['source_bit_depth'] == 0)
+            or (reader['backend'].startswith('rekordbox-builtin')
+                and reader['source_bit_depth'] == 0)
             or reader['source_frames'] < 1
             or reader['output_sample_rate'] != 44100 or reader['output_frames'] != frames
             or abs(reader['source_frames']/reader['source_sample_rate']-duration) >
-                (2/44100 if reader['backend'] == 'rekordbox-builtin' else 0.1)):
+                (2/44100 if reader['backend'].startswith('rekordbox-builtin') else 0.1)):
         raise ValueError('Invalid native reader provenance')
 
 

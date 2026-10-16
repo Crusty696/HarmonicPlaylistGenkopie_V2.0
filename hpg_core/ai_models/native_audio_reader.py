@@ -185,7 +185,7 @@ def _reader_image():
 
 
 class NativeAudioReader:
-    """Native WAV/AIFF-Decoder und MP3-Decoder aus Rekordbox' Bundle.
+    """Native WAV/AIFF/FLAC-Decoder und MP3-Decoder aus Rekordbox' Bundle.
 
     MP3 läuft direkt über das versionsgeprüfte libmpg123.dll aus der
     Rekordbox-Installation; ein HPG-Decoder bleibt als Fallback gekennzeichnet.
@@ -222,7 +222,7 @@ class NativeAudioReader:
             except NativeContractError:
                 self._open_fallback()
                 return
-        if suffix not in ('.wav', '.wave', '.aif', '.aiff'):
+        if suffix not in ('.wav', '.wave', '.aif', '.aiff', '.flac', '.fla'):
             self._open_fallback()
             return
         if image is None:
@@ -231,16 +231,21 @@ class NativeAudioReader:
             # nativer Decoder angelegt; der HPG-Reader kann sicher uebernehmen.
             self._open_fallback()
             return
-        self.backend = 'rekordbox-builtin'
+        factory_rva = {
+            '.wav': 0x2cdda20,
+            '.wave': 0x2cdda20,
+            '.aif': 0x2cdd910,
+            '.aiff': 0x2cdd910,
+            '.flac': 0x2cdd6e0,
+            '.fla': 0x2cdd6e0,
+        }[suffix]
+        self.backend = ('rekordbox-builtin-flac'
+                        if suffix in ('.flac', '.fla') else 'rekordbox-builtin')
         image.function(0x1104730, ct.c_void_p, ct.c_void_p)(self.owner)
         name = ct.c_void_p()
         image.function(0x2a6e420, ct.c_void_p, ct.c_void_p, ct.c_char_p)(
             ct.byref(name), str(self.path).encode('utf8'))
         try:
-            if suffix in ('.wav', '.wave'):
-                factory_rva = 0x2cdda20
-            else:
-                factory_rva = 0x2cdd910
             decoder = image.function(factory_rva, ct.c_void_p, ct.c_void_p,
                                      ct.c_void_p)(None, ct.byref(name))
             if not decoder:
@@ -956,7 +961,7 @@ class NativeAudioReader:
         if self.backend in {'rekordbox-mpg123-stream',
                             'rekordbox-mpg123-soxr-hq-stream'}:
             return self._read_mpg123_stream(start, count)
-        if self.backend != 'rekordbox-builtin':
+        if not self.backend.startswith('rekordbox-builtin'):
             if self._audioread_state is not None:
                 return self._read_audioread_stream(start, count)
             if self._soundfile_state is not None:
@@ -1035,7 +1040,8 @@ class NativeAudioStream:
         if limit <= 0:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
-        if use_rekordbox and suffix in ('.wav', '.wave', '.aif', '.aiff'):
+        if use_rekordbox and suffix in (
+                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla'):
             try:
                 import soundfile as sf
                 source_channels = int(sf.info(str(path)).channels)

@@ -278,7 +278,8 @@ logger = logging.getLogger(__name__)
 # Phrasephase in die Struktur; alte abgeleitete Sektionen werden neu berechnet.
 # v149: Cache-Validierung verlangt für PSSI und native Phrasen dieselbe
 # freigegebene Takt-/Phrasephase wie die Analysepfade.
-CACHE_VERSION = 149
+# v150: Native FLAC-Readerausgabe und Reader-Provenienzvertrag.
+CACHE_VERSION = 150
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
