@@ -82,10 +82,15 @@ def test_corrected_native_producer_cache_and_render_contract(pipeline, monkeypat
     plan = SimpleNamespace(mix_out_a=20., mix_in_b=4., overlap=8.,
         transition_type='pro_eq_swap', target_sr=44100, tempo_ratio=1.)
     spec = TransitionClipSpec.from_plan(plan, track, restored)
-    assert spec.downbeat_reliable_a and spec.bar_phase_reliable_a and spec.bar_phase_reliable_b
+    # Native Audio-Offset bestätigt Beatphase. Ohne unabhängige Takt-1-Referenz
+    # bleibt die Bar-Phase gesperrt.
+    assert spec.downbeat_reliable_a and spec.downbeat_reliable_b
+    assert not spec.bar_phase_reliable_a and not spec.bar_phase_reliable_b
     assert spec.strict_beat_sync
     restored.first_downbeat += .1
-    assert not TransitionClipSpec.from_plan(plan, restored, track).bar_phase_reliable_a
+    corrupted = TransitionClipSpec.from_plan(plan, restored, track)
+    assert not corrupted.downbeat_reliable_a
+    assert not corrupted.bar_phase_reliable_a
 
 
 def test_confirmation_selection_does_not_use_audio_residual():

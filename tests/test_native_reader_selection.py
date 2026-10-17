@@ -46,6 +46,8 @@ def test_model8_snapshot_retains_its_own_hashes():
         'beats': [[row['pos'] / 44100, row['numBar']] for row in data['grid']],
         'coverage': {'start_s': 0., 'end_s': (data['frames'] - 1) / 44100},
     }
+    data['model_beats'] = [[row['pos'] / 44100, row['numBar']]
+                           for row in data['grid']]
     native.validate_snapshot(data, duration=48.)
     data['model_hashes'] = deepcopy(native.MODEL_HASHES['model7'])
     with pytest.raises(ValueError):
@@ -150,7 +152,7 @@ def test_aac_factory_route_survives_unknown_channel_metadata(monkeypatch, tmp_pa
 def test_resampled_metadata_uses_source_and_output_timebases():
     data = snapshot()
     data['reader'].update(source_sample_rate=48000, source_frames=48*48000,
-                          source_channels=1)
+                          source_channels=1, output_channels=1)
     native.validate_snapshot(data, duration=48.)
 
 
@@ -163,13 +165,21 @@ def test_parent_requests_selected_mode_once(tmp_path, monkeypatch):
     calls = []
     def transport(job, request, **kwargs):
         calls.append((job, request))
-        return dict(contract='rb-7.2.19-native-beat-pipeline-research-v4',
+        return dict(contract='rb-7.2.19-native-beat-pipeline-research-v17',
             executable_sha256=native.SHA256, tensorflow_sha256=native.TF_SHA256,
             model_id='model8', model_hashes=native.MODEL_HASHES['model8'],
             selection=select_model(3), boundary_contract=native.BOUNDARY_CONTRACT, model_coverage=data['model_coverage'], reader=data['reader'], frames=data['frames'],
             verified=False, bpm=data['bpm'], grid=data['grid'],
-            input_convention=data['input_convention'], beats=[[.005, 1], [.505, 2],
-                                                          [1.005, 3], [1.505, 4]])
+            input_convention=data['input_convention'],
+            beats=[[row['pos'] / 44100, row['numBar']]
+                   for row in data['grid']],
+            verification=dict(
+                model_id='model7',
+                model_hashes=native.MODEL_HASHES['model7'],
+                beats=[[row['pos'] / 44100, row['numBar']]
+                       for row in data['grid']],
+                coverage=dict(start_s=0., end_s=(data['frames'] - 1) / 44100),
+            ))
     result = native.analyze(source, transport=transport)
     assert result['status'] == 'ok', result
     assert len(calls) == 1
