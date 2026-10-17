@@ -275,7 +275,11 @@ def needs_refresh(track):
         settings = config()
         fingerprints = config_fingerprint(settings)
     except Exception:
-        return False
+        return any(
+            type(snapshot := getattr(track, field, {})) is dict
+            and snapshot.get('status') == 'ok'
+            for field in ('stem_analysis', 'embedding_analysis')
+        )
     for kind, field in (('stems', 'stem_analysis'), ('embedding', 'embedding_analysis')):
         if not settings[kind + '_enabled']:
             continue

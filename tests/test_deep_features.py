@@ -120,6 +120,18 @@ def test_cached_disabled_features_refresh_when_later_enabled(monkeypatch):
     assert not features.needs_refresh(track)
 
 
+def test_cache_hit_rechecks_ok_features_when_fingerprint_unavailable(monkeypatch):
+    monkeypatch.setattr(features, 'config', lambda: dict(
+        stems_enabled=True, embedding_enabled=True))
+    monkeypatch.setattr(features, 'config_fingerprint',
+        lambda _settings: (_ for _ in ()).throw(OSError('model files unavailable')))
+    monkeypatch.setattr(features, 'validate', lambda *_args, **_kwargs: None)
+    track = Track(filePath='track.wav', fileName='track.wav', duration=58., bpm=120.,
+        embedding_analysis=dict(status='ok', fingerprint='b'*64))
+
+    assert features.needs_refresh(track)
+
+
 def test_expired_optional_budget_never_connects(monkeypatch):
     from hpg_core.ai_models import cue_service as cs
     monkeypatch.setattr(cs.time, 'monotonic', lambda: 100.)
