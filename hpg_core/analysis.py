@@ -1913,7 +1913,7 @@ def _kandidaten_berechnen(
     # Ein stabiles Beatgrid allein belegt keine freigegebene Takt-/Phrasenphase.
     native_grid_available = bool(native_phrases) and not phrases
     if (not anchor_grid_usable or phrase_anchor is None
-            or not phrase_phase_usable):
+            or not (phrase_phase_usable or pssi_grid_usable)):
         return [], []
     candidate_phrases = phrases if pssi_grid_usable else []
     t0 = time.perf_counter()
@@ -2346,6 +2346,7 @@ def _analyze_structure_with_final_phrase_anchor(
     phrase_confidence: float,
     phrase_unit: int,
     measure_phrase_unit: bool,
+    preserve_phrase_anchor: bool,
     anchor_grid_usable: bool,
     phrase_usage_blocked: bool,
     feature_cache,
@@ -2375,16 +2376,17 @@ def _analyze_structure_with_final_phrase_anchor(
         native_phrase_analysis=native_phrase_analysis,
     )
     previous_phrase_anchor = phrase_anchor
-    first_phrase, phrase_confidence, phrase_anchor = (
-        _reestimate_phrase_phase_for_selected_unit(
-            y, sr, bpm, first_downbeat, phrase_unit, structure,
-            first_phrase=first_phrase,
-            phrase_confidence=phrase_confidence,
-            phrase_anchor=phrase_anchor,
-            anchor_grid_usable=anchor_grid_usable,
-            phrase_usage_blocked=phrase_usage_blocked,
+    if not preserve_phrase_anchor:
+        first_phrase, phrase_confidence, phrase_anchor = (
+            _reestimate_phrase_phase_for_selected_unit(
+                y, sr, bpm, first_downbeat, phrase_unit, structure,
+                first_phrase=first_phrase,
+                phrase_confidence=phrase_confidence,
+                phrase_anchor=phrase_anchor,
+                anchor_grid_usable=anchor_grid_usable,
+                phrase_usage_blocked=phrase_usage_blocked,
+            )
         )
-    )
     if phrase_anchor != previous_phrase_anchor:
         try:
             structure, coverage, outro_covered = _reanalyze_structure_for_phrase_anchor(
@@ -3706,11 +3708,14 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 beatgrid_source, bar_position_status, phrase_usage_blocked,
                 anchor_grid_usable,
             )
+            pssi_grid_usable = bool(
+                beatgrid_source == "rekordbox"
+                and beatgrid_validation.status == "verified"
+                and not phrase_usage_blocked
+            )
             phrases = (
                 rekordbox_importer.get_phrases(file_path, duration=file_duration)
-                if phrase_phase_usable
-                and beatgrid_source == "rekordbox"
-                and beatgrid_validation.status == "verified"
+                if pssi_grid_usable
                 and hasattr(rekordbox_importer, "get_phrases")
                 else []
             )
@@ -3731,6 +3736,8 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 and phrase_confidence >= PHRASE_CONFIDENCE_MIN
                 else first_downbeat if anchor_grid_usable else 0.0
             )
+            if phrases and pssi_grid_usable:
+                phrase_anchor = float(phrases[0]["start_s"])
 
             # Wenn Audio kein belastbares erstes Phrasenereignis findet,
             # darf die Novelty-Messung im Strukturpfad die Genre-Prior-
@@ -3767,14 +3774,13 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 phrase_confidence=phrase_confidence,
                 phrase_unit=phrase_unit,
                 measure_phrase_unit=measure_phrase_unit,
+                preserve_phrase_anchor=bool(phrases and pssi_grid_usable),
                 anchor_grid_usable=anchor_grid_usable,
                 phrase_usage_blocked=phrase_usage_blocked,
                 feature_cache=feature_cache,
                 cue_candidates=phrases,
-                cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                   and beatgrid_validation.status == "verified"),
-                reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                             and beatgrid_validation.status == "verified"),
+                cue_verified_grid=pssi_grid_usable,
+                reanalyze_cue_verified_grid=pssi_grid_usable,
                 cue_source_signature=cue_source_signature,
                 native_phrase_analysis=native_phrase_analysis,
             )
@@ -3990,8 +3996,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                     phrase_anchor=phrase_anchor,
                     anchor_grid_usable=anchor_grid_usable,
                     phrase_phase_usable=phrase_phase_usable,
-                    pssi_grid_usable=(bar_position_status == "reference_verified"
-                                      and beatgrid_validation.status == "verified"),
+                    pssi_grid_usable=pssi_grid_usable and bool(phrases),
                     phrase_unit=structure.phrase_unit, sections=section_dicts,
                     phrases=phrases, cues=cue_points,
                     native_phrases=native_phrase_analysis.get('phrases', []),
@@ -4327,12 +4332,15 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             beatgrid_source, bar_position_status, phrase_usage_blocked,
             anchor_grid_usable,
         )
+        pssi_grid_usable = bool(
+            beatgrid_source == "rekordbox"
+            and beatgrid_validation.status == "verified"
+            and not phrase_usage_blocked
+        )
         phrases = (
             rekordbox_importer.get_phrases(file_path, duration=file_duration)
-                if phrase_phase_usable
+            if pssi_grid_usable
             and rekordbox_data is not None
-            and beatgrid_source == "rekordbox"
-            and beatgrid_validation.status == "verified"
             and hasattr(rekordbox_importer, "get_phrases")
             else []
         )
@@ -4361,6 +4369,8 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             and phrase_confidence >= PHRASE_CONFIDENCE_MIN
             else first_downbeat if anchor_grid_usable else 0.0
         )
+        if phrases and pssi_grid_usable:
+            phrase_anchor = float(phrases[0]["start_s"])
         # Wie im Fast-Path kann die Novelty-Messung den Genre-Prior nur bei
         # bestaetigtem Beatgrid und schwacher Phrasenphase ersetzen.
         measure_phrase_unit = (
@@ -4393,14 +4403,13 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             phrase_confidence=phrase_confidence,
             phrase_unit=phrase_unit,
             measure_phrase_unit=measure_phrase_unit,
+            preserve_phrase_anchor=bool(phrases and pssi_grid_usable),
             anchor_grid_usable=anchor_grid_usable,
             phrase_usage_blocked=phrase_usage_blocked,
             feature_cache=feature_cache,
             cue_candidates=phrases,
-            cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                               and beatgrid_validation.status == "verified"),
-            reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                         and beatgrid_validation.status == "verified"),
+            cue_verified_grid=pssi_grid_usable,
+            reanalyze_cue_verified_grid=pssi_grid_usable,
             cue_source_signature=cue_source_signature,
             native_phrase_analysis=native_phrase_analysis,
         )
@@ -4566,8 +4575,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             phrase_anchor=phrase_anchor,
             anchor_grid_usable=anchor_grid_usable,
             phrase_phase_usable=phrase_phase_usable,
-            pssi_grid_usable=(bar_position_status == "reference_verified"
-                              and beatgrid_validation.status == "verified"),
+            pssi_grid_usable=pssi_grid_usable and bool(phrases),
             phrase_unit=structure.phrase_unit, sections=section_dicts,
             phrases=phrases, cues=cue_points,
             native_phrases=native_phrase_analysis.get('phrases', []),

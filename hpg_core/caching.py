@@ -932,8 +932,9 @@ def validate_track_dict(data: dict) -> dict:
         )
         if filtered['phrases'] and (
                 filtered['beatgrid_source'] != 'rekordbox'
-                or filtered['bar_position_status'] != 'reference_verified'):
-            raise ValueError('PSSI requires a phase-verified Rekordbox grid')
+                or filtered['beatgrid_status'] != 'verified'
+                or blocked_bar_position):
+            raise ValueError('PSSI requires a verified, unblocked Rekordbox beatgrid')
         if native.get('status') == 'ok' and not phase_usable:
             raise ValueError('Native phrases require a usable phrase phase')
         if native.get('status') == 'ok':

@@ -304,11 +304,12 @@ class Track:
 
     @property
     def verified_pssi_phrase_grid(self) -> bool:
-        """PSSI-Punkte nur mit ausgerichtetem Referenzanker quantisieren."""
+        """PSSI-Punkte bei verifiziertem Rekordbox-Grid verwenden."""
         return bool(
             self.phrases
             and self.phrase_grid
-            and self.reference_bar_position_verified
+            and self.beatgrid_source == "rekordbox"
+            and self.beatgrid_status == "verified"
             and not self.bar_position_usage_blocked
         )
 
@@ -322,8 +323,9 @@ class Track:
         AUDIT-FIX R4 (2026-07-26): Sentinel fuer "nicht geschaetzt" ist -1.0
         — eine Phase von exakt 0.0 ist GUELTIG und wurde vorher verworfen.
         Ein konsistentes Beatgrid belegt keine unabhaengige musikalische
-        Takt-1-Genauigkeit. Es ist hier das technische Gate gegen
-        unbestaetigte Raster, keine Ground-Truth-Aussage.
+        Takt-1-Genauigkeit. Vorhandene, verifizierte Rekordbox-PSSI-Phrasen
+        liefern jedoch einen eigenen Phrasenanker. Das ist kein Beleg fuer
+        eine unabhaengig bestaetigte Takt-1-Position.
         Bei einer validierten nichtnulligen Modell-Taktrotation ist der Anker
         explizit nicht verfuegbar (None), damit kein Aufrufer auf 0.0 ausweicht.
         """
@@ -331,6 +333,8 @@ class Track:
         from .downbeat import DOWNBEAT_RELIABLE_MIN
         if bar_position_usage_blocked(self.measurement_diagnostics):
             return None
+        if self.verified_pssi_phrase_grid:
+            return float(self.phrase_grid[0])
         from .ai_models.native_track_beats import has_verified_grid
         native_phase = has_verified_grid(self)
         if (self.beatgrid_status != "verified"
