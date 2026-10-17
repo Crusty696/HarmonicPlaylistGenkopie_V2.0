@@ -966,12 +966,7 @@ def test_voll_pfad_behaelt_sichere_rekordbox_daten_ohne_rb_bpm(
       for candidate in track.mix_in_candidates + track.mix_out_candidates
     )
     validate_track_dict(track_to_dict(track))
-    from hpg_core.mix_candidates import KANDIDATEN_MIN_JE_SEITE
-    if (len(track.mix_in_candidates) < KANDIDATEN_MIN_JE_SEITE
-        or len(track.mix_out_candidates) < KANDIDATEN_MIN_JE_SEITE):
-      assert track.mix_in_point == -1.0 and track.mix_out_point == -1.0
-    else:
-      assert track.mix_in_point >= 0.0 < track.mix_out_point <= track.duration
+    assert track.mix_in_point >= 0.0 < track.mix_out_point <= track.duration
     importer.get_phrases.assert_called_once_with(
       str(wav), duration=pytest.approx(120.0)
     )
