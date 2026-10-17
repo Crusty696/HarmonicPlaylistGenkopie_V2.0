@@ -9,6 +9,13 @@ from hpg_core.ai_models import cue_service as cs
 from hpg_core.ai_models import beat_predictor as bp
 
 
+def test_removed_native_refinement_route_is_rejected():
+    client = cs.CueClient(('127.0.0.1', 1), 'token', 'generation', {})
+
+    with pytest.raises(ValueError, match='Invalid native beat job'):
+        client.native_beats('native_beat_refine', {})
+
+
 @pytest.fixture
 def fake_models(monkeypatch):
     from hpg_core.ai_models import native_beat_decoder
