@@ -43,6 +43,10 @@ def test_scoring_cache_trennt_pfadgleiche_trackinstanzen():
 
 def test_partieller_scoring_context_behaelt_kandidatenvertrag(monkeypatch):
     monkeypatch.setattr(candidate_choices, "snapshot", lambda: {})
+    monkeypatch.setattr(
+        pc, "rank_pair_candidates",
+        lambda *args, **kwargs: [_candidate(140.0, 70.0)],
+    )
     tracks = [
         make_track(
             filePath="a.wav", fileName="a.wav",

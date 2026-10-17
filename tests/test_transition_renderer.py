@@ -1787,7 +1787,7 @@ class TestTor1GridRegression:
         )
         monkeypatch.setattr(
             "hpg_core.transition_renderer._synchronize_and_verify_kicks",
-            lambda _a, b, *_args: b,
+            lambda _a, b, *_args, **_kwargs: b,
         )
         monkeypatch.setattr("hpg_core.transition_renderer.sf.write", Mock())
         output_grid = 240.0 / bpm_a * factor

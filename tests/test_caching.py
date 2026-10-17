@@ -1271,6 +1271,8 @@ def test_verifiziertes_cache_grid_akzeptiert_exakt_sechs_ms():
     "beatgrid_windows_checked": 3,
     "beatgrid_max_phase_error_ms": 6.0,
     "downbeat_confidence": 1.0,
+    # Beatgrid verifiziert, Bar-1-Abgleich bleibt mangels Diagnose Kandidat.
+    "bar_position_status": "reference_candidate",
   })
 
   assert validate_track_dict(data)["beatgrid_max_phase_error_ms"] == 6.0
