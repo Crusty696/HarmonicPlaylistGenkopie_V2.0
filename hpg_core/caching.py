@@ -934,7 +934,6 @@ def validate_track_dict(data: dict) -> dict:
                     or filtered['beatgrid_status'] != 'verified'):
                 raise ValueError('Native beat provenance conflicts with active track')
         from .ai_models.native_phrase_adapter import validate_snapshot
-        from .downbeat import DOWNBEAT_RELIABLE_MIN
         validate_snapshot(filtered['native_phrase_analysis'], duration=filtered['duration'],
             grid_verified=(filtered['beatgrid_status'] == 'verified'
                            and (filtered['downbeat_confidence'] >= DOWNBEAT_RELIABLE_MIN

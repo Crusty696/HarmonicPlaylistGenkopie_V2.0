@@ -145,8 +145,6 @@ def _fingerprint_schema(value, label):
 
 def validate_spec_v1(spec: dict) -> dict:
     _exact(spec, SPEC_V1_FIELDS, "TransitionClipSpec v1")
-    if {field.name for field in fields(TransitionClipSpec)} != SPEC_V2_FIELDS:
-        raise SourceValidationError("Renderer-Feldschema passt nicht mehr zu source_refs v1")
     for name in _STRING_FIELDS:
         if type(spec[name]) is not str or not spec[name]:
             raise SourceValidationError(f"{name}: nichtleerer Text erforderlich")
