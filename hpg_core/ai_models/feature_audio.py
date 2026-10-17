@@ -57,6 +57,9 @@ def windows(source, rate, width, hop, *, left_padding=0):
         valid = min(hop, total-start)
         block = np.zeros((width, 2), np.float32)
         available = min(width, len(buffered))
+        required = min(width, left_padding + valid)
+        if available < required:
+            raise ValueError('Incomplete resampled source coverage')
         block[:available, 0] = buffered[:available, 0]
         block[:available, 1] = buffered[:available, -1]
         yield start, valid, np.ascontiguousarray(block.T)
