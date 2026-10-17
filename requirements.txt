@@ -21,6 +21,7 @@ tensorboard==2.16.2; sys_platform == "win32"
 
 # Audio I/O
 soundfile==0.14.0  # Direkt importiert in main.py, transition_renderer.py, analysis.py
+imageio-ffmpeg==0.6.0  # Mitgelieferter Decoder fuer AAC/WMA/MP4-Formate ohne libsndfile
 mutagen==1.47.0
 
 # Datenbank (Rekordbox-Import)

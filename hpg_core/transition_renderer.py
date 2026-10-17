@@ -1042,6 +1042,8 @@ def _load_segment(path: str, start_sec: float, duration_sec: float,
         except (sf.LibsndfileError, RuntimeError, OSError, ValueError):
             try:
                 import librosa
+                from .audio_decoder import configure_audioread_ffmpeg
+                configure_audioread_ffmpeg()
                 y, sr_loaded = librosa.load(
                     path, sr=None, mono=False, offset=start_sec, duration=duration_sec
                 )

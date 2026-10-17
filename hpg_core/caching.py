@@ -307,7 +307,10 @@ logger = logging.getLogger(__name__)
 # jedes Fenster wird einzeln gegen die durchgehende Modell7-Folge bestätigt.
 # v165: Native Phrasen nutzen bei spaetem erstem Grid-Treffer einen
 # phasenerhaltenden Eingabeoffset innerhalb der ersten Beatperiode.
-CACHE_VERSION = 165
+# v166: Variable lange native Beatgrids werden nicht mehr am globalen
+# Konstanttempo verworfen; HPG-FFmpeg ist Teil des gebundenen Readerpfads.
+# v167: AAC wird mit der nativen Rekordbox-Factory dekodiert.
+CACHE_VERSION = 167
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

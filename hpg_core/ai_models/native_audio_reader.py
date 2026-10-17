@@ -18,7 +18,7 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v30'
+CONTRACT = 'rb-7.2.19-file-reader-v32'
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {
@@ -29,10 +29,11 @@ NATIVE_REKORDBOX_FACTORIES = {
     '.aiff': 0x2cdd910,
     '.flac': 0x2cdd6e0,
     '.fla': 0x2cdd6e0,
+    '.aac': 0x2cdd7f0,
     '.m4a': 0x2cdd760,
     '.mp4': 0x2cdd760,
 }
-# Für AAC fehlt ein Rohbeleg zu Factory-Callsite und ABI; es bleibt beim HPG-Decoder.
+# Die nativen Factorys sind für MP3, WAV/AIFF, FLAC, AAC und M4A/MP4 belegt.
 NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset(NATIVE_REKORDBOX_FACTORIES)
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
 MPG123_ENC_SIGNED_16 = 0xD0
@@ -192,8 +193,7 @@ def bind_reader_imports(image):
     # Manuell gemappte EXE besitzt keine registrierte statische PE-TLS.
     initialize = image.kernel.InitializeCriticalSection
     initialize.argtypes, initialize.restype = [ct.c_void_p], None
-    # Die AAC-Factory ist mangels ABI-Beleg nicht angebunden; nur die beiden
-    # belegten Resampler-Sperren werden für den unterstützten Reader benötigt.
+    # Die zwei belegten Resampler-Sperren werden für den Reader benötigt.
     for rva in (0x61ac388, 0x61ac1c8):
         initialize(image.base + rva)
     for rva in (0x61ac1c0, 0x61ac590):
@@ -282,6 +282,7 @@ class NativeAudioReader:
             '.mp3': 'rekordbox-builtin-mp3',
             '.flac': 'rekordbox-builtin-flac',
             '.fla': 'rekordbox-builtin-flac',
+            '.aac': 'rekordbox-builtin-aac',
             '.m4a': 'rekordbox-builtin-mp4',
             '.mp4': 'rekordbox-builtin-mp4',
         }.get(suffix, 'rekordbox-builtin')
@@ -720,6 +721,8 @@ class NativeAudioReader:
     @staticmethod
     def _audioread_source(path):
         import audioread
+        from ..audio_decoder import configure_audioread_ffmpeg
+        configure_audioread_ffmpeg()
         return audioread.audio_open(str(path))
 
     def _count_audioread_frames(self):
@@ -1179,7 +1182,7 @@ class NativeAudioStream:
             except Exception:
                 self.image = None
         elif use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS:
-            optional_codec = suffix in ('.flac', '.fla', '.m4a', '.mp4')
+            optional_codec = suffix in ('.flac', '.fla', '.aac', '.m4a', '.mp4')
             channels = _source_channel_count(path)
             if optional_codec and channels not in (None, 1, 2):
                 # Bekannte Mehrkanalquellen direkt im HPG-Reader downmixen;

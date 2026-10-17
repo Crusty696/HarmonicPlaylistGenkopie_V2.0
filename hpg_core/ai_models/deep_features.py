@@ -31,6 +31,7 @@ EMBEDDING_WINDOW_SECONDS = 29.
 _DIGEST_LOCK = threading.Lock()
 _DIGEST_CACHE = {}
 _COMMON_PRODUCER_FILES = (
+    'hpg_core/audio_decoder.py',
     'hpg_core/ai_models/feature_audio.py',
     'hpg_core/ai_models/native_audio_reader.py',
     'hpg_core/ai_models/reader_contract.py',
@@ -138,7 +139,8 @@ def config_fingerprint(settings=None, kind=None):
     if any(value is None for value in producer_hashes.values()):
         raise ValueError('Deep-feature producer identity unavailable')
     # Native reader and format fallback can use these for either feature type.
-    distributions = ('numpy', 'soundfile', 'soxr', 'audioread', 'pefile', 'mutagen')
+    distributions = ('numpy', 'soundfile', 'soxr', 'audioread', 'imageio-ffmpeg',
+                     'pefile', 'mutagen')
     if kind == 'embedding':
         distributions += ('onnxruntime', 'onnxruntime-directml')
     runtime_versions = {}

@@ -427,6 +427,8 @@ def _lade_fenster(file_path: str, start: float, ende: float, sr: int):
                 mono, orig_sr=source_rate, target_sr=sr, res_type="soxr_hq"
             )
         return np.ascontiguousarray(mono, dtype=np.float32)
+    from .audio_decoder import configure_audioread_ffmpeg
+    configure_audioread_ffmpeg()
     y, _ = librosa.load(file_path, sr=sr, mono=True, offset=max(0.0, start),
                         duration=duration)
     return y

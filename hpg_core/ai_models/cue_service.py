@@ -50,7 +50,9 @@ def model_config():
 
 def _runtime_versions():
     versions = {}
-    for name in ('numpy', 'librosa', 'soxr', 'soundfile', 'pefile', 'onnxruntime-directml', 'tensorflow-cpu', 'tensorflow-intel'):
+    for name in ('numpy', 'librosa', 'soxr', 'soundfile', 'audioread',
+                 'imageio-ffmpeg', 'pefile', 'onnxruntime-directml',
+                 'tensorflow-cpu', 'tensorflow-intel'):
         try:
             versions[name] = metadata.version(name)
         except metadata.PackageNotFoundError:

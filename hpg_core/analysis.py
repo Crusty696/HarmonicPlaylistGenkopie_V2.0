@@ -1092,6 +1092,8 @@ def _get_file_duration(file_path: str) -> float:
             return float(info.frames / info.samplerate)
     except (OSError, RuntimeError, ValueError) as error:
         logger.debug(f"SoundFile-Dauer nicht verfügbar: {error}")
+    from .audio_decoder import configure_audioread_ffmpeg
+    configure_audioread_ffmpeg()
     return float(librosa.get_duration(path=file_path))
 
 
@@ -1108,6 +1110,8 @@ def _load_analysis_audio(
     from .ai_models.native_audio_reader import MAX_SECONDS, NativeAudioStream
 
     if suffix not in SUPPORTED_AUDIO_EXTENSIONS:
+        from .audio_decoder import configure_audioread_ffmpeg
+        configure_audioread_ffmpeg()
         return librosa.load(
             file_path, sr=sr, mono=True, offset=offset, duration=duration,
             res_type=res_type,

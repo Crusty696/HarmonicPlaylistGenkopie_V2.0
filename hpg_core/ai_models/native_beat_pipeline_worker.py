@@ -124,7 +124,13 @@ def _merge_model8_rows(previous_rows, local_rows, source_start_frame):
     return result
 
 
-def _constant_grid_bpm(grid):
+def _average_grid_bpm(grid):
+    """Liefert ein Gesamt-Tempo, ohne variable native Grids zu verwerfen.
+
+    Die 6-ms-Grenze gilt an Fensternaehten und fuer lokale Synchronpruefungen.
+    Sie darf kein komplettes Grid sperren, nur weil ein Track ueber seine
+    gesamte Laufzeit nicht auf ein einziges konstantes Tempo regressiert.
+    """
     if len(grid) < 4:
         raise NativeContractError('Native segment grid too short')
     times = np.asarray([row['pos'] / _SAMPLE_RATE for row in grid], dtype=np.float64)
@@ -134,9 +140,6 @@ def _constant_grid_bpm(grid):
                     / np.dot(centered, centered))
     if not math.isfinite(period) or period <= 0:
         raise NativeContractError('Invalid stitched beat period')
-    residual = times - (times[0] + beats * period)
-    if float(np.max(np.abs(residual))) > _BEAT_PHASE_TOLERANCE_SECONDS:
-        raise NativeContractError('Stitched grid exceeds 6-ms phase contract')
     bpm = 60. / period
     if not 55 <= bpm <= 215:
         raise NativeContractError('Stitched BPM outside native range')
@@ -211,7 +214,7 @@ def _segmented_pipeline(image, reader, selection, first_processor=None):
     if any(right['numBar'] != left['numBar'] % 4 + 1
            for left, right in zip(merged_grid, merged_grid[1:])):
         raise NativeContractError('Stitched native bar positions are discontinuous')
-    bpm = _constant_grid_bpm(merged_grid)
+    bpm = _average_grid_bpm(merged_grid)
     selected_coverage_segments.sort(key=lambda item: item['start_s'])
     model_coverage = (dict(start_s=0., end_s=(reader.frames - 1) / _SAMPLE_RATE)
                       if selection['chunked'] else selected_coverage_segments[0])
