@@ -239,9 +239,17 @@ def test_attach_assigns_each_model_its_execution_budget(monkeypatch, tmp_path):
     path.write_bytes(b'Nur Identitaet, keine Audiodaten')
     settings = dict(stems_enabled=True, embedding_enabled=True)
     monkeypatch.setattr(features, 'config', lambda: settings)
-    monkeypatch.setattr(features, 'config_fingerprint', lambda config: 'a'*64)
-    monkeypatch.setattr(features, 'identities', lambda config: dict(
-        dll=features.DLL_HASH, stems=features.MODEL_HASHES, embedding=features.EMBEDDING_HASH))
+    monkeypatch.setattr(features, 'config_fingerprint', lambda config: {
+        'stems': 'a'*64, 'embedding': 'a'*64,
+    })
+    monkeypatch.setattr(features, 'identities', lambda config: {
+        'stems': {'dll': features.DLL_HASH, 'stems': features.MODEL_HASHES},
+        'embedding': {
+            'embedding_model': features.EMBEDDING_HASH,
+            'energy_model': features.ENERGY_HASH,
+            **features.UMAP_HASHES,
+        },
+    })
     calls = []
     class Client:
         def deep_features(self, parameters, *, timeout_s):
