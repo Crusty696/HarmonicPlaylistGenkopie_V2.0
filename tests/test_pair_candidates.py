@@ -85,7 +85,7 @@ def _grid(bpm=140.0, phrase_unit=16):
 
 
 def test_unverified_pssi_filter_does_not_mutate_stored_candidate():
-    track = _track(verified_pssi_phrase_grid=False)
+    track = _track()
     stored = MixCandidate(t=60.0, schema=['sektion', 'pssi_phrase'],
         provenance='rekordbox_pssi', phrase_label='intro')
 
