@@ -120,6 +120,33 @@ def test_supported_wav_reader_initialization_failure_uses_hpg_fallback(
     assert stream.backend == 'hpg-libsndfile'
 
 
+def test_aac_factory_route_survives_unknown_channel_metadata(monkeypatch, tmp_path):
+    from hpg_core.ai_models.reader_contract import NATIVE_BEAT_INPUT_CONVENTIONS
+
+    source = tmp_path / 'unknown-channels.aac'
+    source.write_bytes(b'')
+    image = object()
+    calls = []
+
+    class Reader:
+        def __init__(self, selected_image, path, **kwargs):
+            calls.append((selected_image, path, kwargs['use_rekordbox']))
+            self.frames = 44100
+            self.channels = 2
+            self.backend = 'rekordbox-builtin-aac'
+
+    monkeypatch.setattr(reader_module, '_source_channel_count', lambda _path: None)
+    monkeypatch.setattr(reader_module, '_reader_image', lambda: image)
+    monkeypatch.setattr(reader_module, 'NativeAudioReader', Reader)
+
+    stream = reader_module.NativeAudioStream(source)
+
+    assert calls == [(image, source, True)]
+    assert stream.backend == 'rekordbox-builtin-aac'
+    assert NATIVE_BEAT_INPUT_CONVENTIONS[stream.backend] == (
+        'rekordbox-builtin-aac-planar-float32')
+
+
 def test_resampled_metadata_uses_source_and_output_timebases():
     data = snapshot()
     data['reader'].update(source_sample_rate=48000, source_frames=48*48000,
