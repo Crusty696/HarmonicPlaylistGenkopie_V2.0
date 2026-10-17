@@ -165,3 +165,17 @@ def test_native_beat_worker_reports_python_contract_failure_without_native_crash
         raise ValueError('invalid contract')
     monkeypatch.setattr(worker, '_handle', invalid)
     assert json.loads(worker.handle(b'{}')) == dict(status='unavailable', reason='ValueError: invalid contract')
+
+
+def test_native_segment_average_tempo_accepts_variable_grid_periods():
+    from hpg_core.ai_models.native_beat_pipeline_worker import _average_grid_bpm
+
+    grid = []
+    position = 0
+    for index in range(120):
+        grid.append(dict(pos=position, numBar=index % 4 + 1))
+        position += round((.60 - .00035 * index) * 44100)
+
+    bpm = _average_grid_bpm(grid)
+
+    assert 95.0 < bpm < 115.0
