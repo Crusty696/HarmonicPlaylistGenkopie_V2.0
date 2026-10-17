@@ -203,6 +203,25 @@ class TestM3U8ExporterBasics:
     assert "../music/track.mp3" in content.replace("\\", "/")
 
 
+
+def test_m3u8_track_fields_cannot_inject_new_lines(export_dir):
+  """Der bisherige Standalone-Sicherheitstest laeuft jetzt regulaer mit."""
+  from hpg_core.models import Track
+  malicious_path = "normal/path.mp3\n/etc/passwd\n#EXTINF:100,Injected\n../../../secret.txt"
+  track = Track(
+    filePath=malicious_path, fileName="path.mp3",
+    artist="Artist\nInjected", title="Title\rInjected", duration=100.0,
+  )
+  output = os.path.join(export_dir, "sanitization.m3u8")
+  M3U8Exporter().export([track], output)
+  with open(output, "r", encoding="utf-8") as stream:
+    lines = stream.read().splitlines()
+  assert "#EXTINF:100,Artist Injected - TitleInjected" in lines
+  assert "normal/path.mp3/etc/passwd#EXTINF:100,Injected../../../secret.txt" in lines
+  assert sum(line.startswith("#EXTINF:") for line in lines) == 1
+  assert not any(line.startswith("/etc/passwd") for line in lines)
+
+
 class TestM3U8Unicode:
   """M3U8 Unicode-Unterstuetzung."""
 
