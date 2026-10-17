@@ -63,10 +63,28 @@ def test_missing_embeddings_are_not_zero_distance():
     assert features.pair_diagnostics(left, right, 50., 0., 8) == {}
 
 
-def test_embedding_roundtrip_and_vector_binding():
+def test_embedding_roundtrip_and_vector_binding(monkeypatch):
     from hpg_core.caching import track_to_dict, dict_to_track, CacheValidationError
+    from hpg_core.ai_models.native_audio_reader import CONTRACT
+    current = embedding()
+    current['version'] = 5
+    current['fingerprint'] = 'a'*64
+    current['data'].update(
+        reader_backend='rekordbox-mpg123',
+        reader_contract=CONTRACT,
+        visualization=dict(status='unavailable', reason='models_unavailable',
+            coordinates=[None, None], model_hashes=[], calibrated=False),
+        danceability=dict(status='unavailable', reason='models_unavailable',
+            values=[None, None], model_sha256=features.ENERGY_HASH,
+            providers=[], calibrated=False),
+    )
+    monkeypatch.setattr(
+        features, 'config_fingerprint',
+        lambda: {'stems': 'b'*64, 'embedding': 'a'*64},
+    )
     track = Track(filePath='track.wav', fileName='track.wav', duration=58., bpm=120.,
-                  analysis_mode="librosa_full_or_tail", embedding_analysis=embedding(), audio_embedding=[1.]+[0.]*63)
+                  analysis_mode="librosa_full_or_tail", embedding_analysis=current,
+                  audio_embedding=[1.]+[0.]*63)
     value = track_to_dict(track)
     assert dict_to_track(value).audio_embedding == track.audio_embedding
     value = deepcopy(value)
