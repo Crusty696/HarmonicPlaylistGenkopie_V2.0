@@ -467,8 +467,9 @@ def validate(value, *, kind, duration, duration_tolerance=1/16000.):
                 or not data['providers'] or any(x not in ('DmlExecutionProvider', 'CPUExecutionProvider') for x in data['providers'])
                 or type(data['windows']) is not list or not 1 <= len(data['windows']) <= 249):
             raise ValueError('Invalid embedding contract')
+        rows = data['windows']
         previous = 0.
-        for row in data['windows']:
+        for row in rows:
             if (type(row) is not dict or set(row) != {'start_s', 'end_s', 'vector'}
                     or not _finite(row['start_s']) or not _finite(row['end_s'])
                     or row['start_s'] != previous or not previous < row['end_s'] <= measured_duration
