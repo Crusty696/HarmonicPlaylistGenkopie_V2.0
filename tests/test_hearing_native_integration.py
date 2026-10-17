@@ -211,7 +211,8 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
         assert all(thread == gui_thread for _, _, thread in progress)
         assert config.output_dir.is_dir()
         manifest = hearing_sources.strict_json_bytes((config.output_dir / hearing_sources.SOURCE_MANIFEST_NAME).read_bytes())
-        assert manifest["format"] == "hpg_hearing_source_refs" and manifest["format_version"] == 1
+        assert manifest["format"] == hearing_sources.SOURCE_FORMAT
+        assert manifest["format_version"] == hearing_sources.SOURCE_VERSION
         expected = {"einzel": 1, "kandidaten": 2, "dreinoten": 2,
                     "dramaturgie": len(rate_transitions.dramaturgie_varianten()) * 5}[mode]
         assert len(manifest["specs"]) == expected
