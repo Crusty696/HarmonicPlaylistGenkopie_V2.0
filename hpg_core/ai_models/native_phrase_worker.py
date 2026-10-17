@@ -20,8 +20,9 @@ import struct
 import sys
 
 from .feature_audio import mono_downmix
+from .rekordbox_runtime import REKORDBOX_EXE
 
-EXE = Path(r'C:\Program Files\rekordbox\rekordbox 7.2.19\rekordbox.exe')
+EXE = REKORDBOX_EXE
 SHA256 = 'c9ed23e974c51c75e2ec069fbd2679a3dbe606be9e79e9cbbd13d6418ab11c37'
 CONTRACT_VERSION = 'rb-7.2.19-native-phrase-static-v4'
 _resident_images = []

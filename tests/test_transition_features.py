@@ -68,6 +68,15 @@ def test_cosine_similarity_leer_ist_none():
     assert cosine_similarity([], [1.0]) is None
 
 
+@pytest.mark.parametrize("left, right", [
+    ([float("nan"), 0.0], [0.0, 1.0]),
+    ([float("inf"), 0.0], [0.0, 1.0]),
+    (1.0, [1.0]),
+])
+def test_cosine_similarity_ungueltige_vektoren_sind_fehlend(left, right):
+    assert cosine_similarity(left, right) is None
+
+
 def test_groove_match_gleiches_muster_ist_hoch():
     a = _track(groove_pattern=_gerade(), bass_pattern=_gerade())
     b = _track(groove_pattern=_gerade(), bass_pattern=_gerade())

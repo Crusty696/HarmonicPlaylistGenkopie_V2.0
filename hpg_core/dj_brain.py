@@ -205,6 +205,17 @@ def calculate_genre_aware_mix_points(
   strict_intro_floor = quantize_to_grid(
     intro_end + strict_boundary_step, grid_seconds, anchor, "ceil"
   )
+  # first_downbeat ist die Untergrenze fuer den Mix-In, waehrend anchor
+  # ausschliesslich die Phase des Phrasengitters bestimmt. Die Signatur und
+  # der Vertrag nennen diesen Downbeat explizit; bisher blieb der Parameter
+  # unbenutzt und ein frueher Sektionskandidat konnte vor der musikalischen 1
+  # landen. Auf das bestehende Phrase-Gitter anheben, nicht ein zweites Raster
+  # einfuehren.
+  if first_downbeat is not None and math.isfinite(first_downbeat):
+    downbeat_floor = quantize_to_grid(
+      first_downbeat - grid_epsilon, grid_seconds, anchor, "ceil"
+    )
+    strict_intro_floor = max(strict_intro_floor, downbeat_floor)
   strict_outro_ceiling = quantize_to_grid(
     outro_start - strict_boundary_step, grid_seconds, anchor, "floor"
   )

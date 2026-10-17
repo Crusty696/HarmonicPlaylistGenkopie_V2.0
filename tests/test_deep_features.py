@@ -1,5 +1,6 @@
 """Lokale Zusatzmerkmale: Coverage, Herkunft, Fehlerfallback und keine Scheinscores."""
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -7,6 +8,17 @@ import pytest
 from hpg_core.ai_models import deep_features as features
 from hpg_core.ai_models.feature_audio import EnergyBins
 from hpg_core.models import Track
+
+
+def test_rekordbox_artifacts_follow_shared_install_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(features, 'REKORDBOX_ROOT', tmp_path / 'Rekordbox')
+
+    paths = features.config()
+
+    assert Path(paths['stem_dll']) == tmp_path / 'Rekordbox' / 'Demucs3.dll'
+    assert Path(paths['embedding_model']) == (
+        tmp_path / 'Rekordbox' / 'models' / 'embed_model' / 'cnn_embedding.onnx'
+    )
 
 
 @pytest.mark.parametrize('duration,expected', [

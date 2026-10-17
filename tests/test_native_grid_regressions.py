@@ -158,10 +158,9 @@ def test_native_reference_renderer_keeps_six_ms_gate(damage):
             reference_phases=(.25,.25)), b)
 
 
-@pytest.mark.parametrize('module', ['native_beat_pipeline_worker', 'native_grid_refinement_worker'])
-def test_worker_reports_python_contract_failure_without_native_crash(monkeypatch, module):
+def test_native_beat_worker_reports_python_contract_failure_without_native_crash(monkeypatch):
     import importlib, json
-    worker = importlib.import_module('hpg_core.ai_models.' + module)
+    worker = importlib.import_module('hpg_core.ai_models.native_beat_pipeline_worker')
     def invalid(payload):
         raise ValueError('invalid contract')
     monkeypatch.setattr(worker, '_handle', invalid)

@@ -327,6 +327,28 @@ def test_preview_error_keeps_widget_and_retry_clears_it(qtbot):
   assert widget._waveform._placeholder == "Wellenform wird geladen …"
 
 
+def test_preview_rating_rejects_changed_source_signature(qtbot, monkeypatch):
+  transition = SimpleNamespace(
+    from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
+    to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
+    plan=SimpleNamespace(mix_out_a=30.0, mix_in_b=0.0, overlap=8.0),
+    transition_type="blend",
+  )
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = TransitionPreviewWidget(0, transition, panel)
+  qtbot.addWidget(widget)
+  widget._source_signature = ("old-source",)
+  monkeypatch.setattr(panel, "_preview_source_signature", lambda index: ("new-source",))
+  requested = []
+  widget.rating_requested.connect(lambda *args: requested.append(args))
+
+  widget._request_rating()
+
+  assert requested == []
+  assert widget._error_msg == "Trackquelle hat sich seit dem Rendern geändert; bitte erneut rendern."
+
+
 def test_reorder_uses_full_track_identity_for_duplicate_basenames(qtbot):
   panel = PlaylistPanel()
   qtbot.addWidget(panel)

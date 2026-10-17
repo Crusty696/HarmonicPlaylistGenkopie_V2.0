@@ -3,7 +3,7 @@ import ctypes as ct
 import tempfile
 import numpy as np
 from .native_phrase_worker import NativeContractError
-from .native_grid_refinement_worker import Triple
+from .native_grid_types import Triple
 
 
 class NativeGridProcessor:

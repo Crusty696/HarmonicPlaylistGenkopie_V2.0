@@ -26,6 +26,7 @@ from .cue_predictor import PREPROCESS_VERSION, MODEL_HASHES
 from .process_runtime import OwnedModelProcess, ModelProcessCleanupError
 from .beat_predictor import MODEL_HASHES as BEAT_HASHES, PREPROCESS_VERSION as BEAT_PREPROCESS
 from .native_beat_decoder import ALGORITHM_VERSION as BEAT_DECODER_VERSION
+from .rekordbox_runtime import REKORDBOX_ROOT
 
 logger = logging.getLogger(__name__)
 MAX_WIRE = 64 * 1024 * 1024
@@ -39,8 +40,8 @@ _terminal_failure = threading.Event()
 
 
 def model_config():
-    root = Path(os.environ.get('HPG_CUE_MODEL_DIR', r'C:\Program Files\rekordbox\rekordbox 7.2.19\models\detect_cue_model'))
-    beat_root = Path(os.environ.get('HPG_BEAT_MODEL_DIR', r'C:\Program Files\rekordbox\rekordbox 7.2.19\models\detect_beat'))
+    root = Path(os.environ.get('HPG_CUE_MODEL_DIR', str(REKORDBOX_ROOT/'models'/'detect_cue_model')))
+    beat_root = Path(os.environ.get('HPG_BEAT_MODEL_DIR', str(REKORDBOX_ROOT/'models'/'detect_beat')))
     return dict(samplecnn_path=str(root / 'samplecnn.onnx'),
                 cue_model_path=str(root / 'cue_prediction_model_no_abs_position.onnx'),
                 beat_model7_path=str(beat_root / 'model7'), beat_model8_path=str(beat_root / 'model8'),
@@ -365,7 +366,7 @@ class CueClient:
         return self._path_job('native_phrase', parameters, timeout_s=timeout_s)
 
     def native_beats(self, job, parameters, *, timeout_s=180.):
-        if job not in ('native_beat', 'native_beat_refine'):
+        if job != 'native_beat':
             raise ValueError('Invalid native beat job')
         return self._path_job(job, parameters, timeout_s=timeout_s)
 
@@ -569,7 +570,7 @@ class CueServiceOwner:
                     _send(sock, b'READY', deadline, cancel)
                     payload = _receive(sock, MAX_WIRE, deadline, cancel)
                     envelope, envelope_size = _header(payload)
-                    if envelope.get('job') in ('native_phrase', 'deep_features', 'native_beat', 'native_beat_refine'):
+                    if envelope.get('job') in ('native_phrase', 'deep_features', 'native_beat'):
                         from .native_phrase_adapter import enabled
                         is_phrase = envelope['job'] == 'native_phrase'
                         if ((is_phrase and not enabled()) or set(envelope) not in (
@@ -585,7 +586,7 @@ class CueServiceOwner:
                         if not _finite(execution_timeout) or not 0. < execution_timeout <= timeout_limit:
                             raise ValueError('Invalid native execution timeout')
                         native_payload = _json(envelope['parameters'])
-                        native_limit = 1024*1024 if envelope['job'] == 'native_beat_refine' else (16384 if is_phrase else 32768)
+                        native_limit = 16384 if is_phrase else 32768
                         if len(native_payload) > native_limit:
                             raise ValueError('Native request too large')
                         # Vor dem nativen Aufruf ONNX/TF freigeben: kein zweites
@@ -598,7 +599,6 @@ class CueServiceOwner:
                             'native_phrase': 'hpg_core.ai_models.native_phrase_worker',
                             'deep_features': 'hpg_core.ai_models.deep_feature_worker',
                             'native_beat': 'hpg_core.ai_models.native_beat_pipeline_worker',
-                            'native_beat_refine': 'hpg_core.ai_models.native_grid_refinement_worker',
                         }[envelope['job']]
                         with OwnedModelProcess(module, 'handle',
                                 max_payload_bytes=8*1024*1024,

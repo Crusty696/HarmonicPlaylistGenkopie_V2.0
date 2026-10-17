@@ -1852,6 +1852,17 @@ class TransitionPreviewWidget(QWidget):
         self._waveform.set_placeholder("Wellenform wird geladen …")
 
     def _request_rating(self):
+        parent = self.parent()
+        signature_reader = getattr(parent, "_preview_source_signature", None)
+        current_signature = (signature_reader(self._index)
+                            if callable(signature_reader) else None)
+        if (self._source_signature is None
+                or current_signature != self._source_signature):
+            self.stop_and_reset()
+            self.set_error(
+                "Trackquelle hat sich seit dem Rendern geändert; bitte erneut rendern."
+            )
+            return
         audio = bytes(self._audio_buffer.data()) if self._audio_buffer is not None else None
         self.rating_requested.emit(self._tr, (self._wav_path, audio))
 

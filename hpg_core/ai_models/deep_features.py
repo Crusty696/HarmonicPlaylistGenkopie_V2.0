@@ -14,6 +14,7 @@ from pathlib import Path
 import threading
 
 from .feature_audio import source_identity
+from .rekordbox_runtime import REKORDBOX_ROOT
 from .stem_model_hashes import MODEL_HASHES
 from .reader_contract import READER_BACKENDS
 
@@ -67,7 +68,7 @@ def _feature_timeout_seconds(kind, duration):
 
 
 def config():
-    root = Path(r'C:\Program Files\rekordbox\rekordbox 7.2.19')
+    root = REKORDBOX_ROOT
     embed_root = root/'models'/'embed_model'
     return dict(stem_dll=str(root/'Demucs3.dll'),
         stem_dir=os.environ.get('HPG_STEM_MODEL_DIR', str(Path.home()/'.hpg/models/demucs3_model')),

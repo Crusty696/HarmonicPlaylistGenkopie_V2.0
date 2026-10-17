@@ -281,6 +281,7 @@ logger = logging.getLogger(__name__)
 # v150: Native FLAC/MP4/AAC-Readerausgabe und Reader-Provenienzvertrag.
 # v151: AAC-Sperre, Metadaten-Kanalauflösung und Codec-Fallback ändern Reader-/Beat-Eingaben.
 # v152: Nativer Grenzwrapper meldet die aktive Mono-/Stereo-Kanalzahl auch beim HPG-Readerfallback.
+# v153: Readervertrag v22 aendert Analyse-Eingaenge; alte Cachezeilen muessen neu analysiert werden.
 CACHE_VERSION = 153
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 

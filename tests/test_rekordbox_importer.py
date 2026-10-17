@@ -738,6 +738,20 @@ class TestRekordboxTimeHeuristic:
       {"beat": 3, "time": 1.0},
     ]
 
+  @pytest.mark.parametrize(
+    "tag",
+    [
+      FakeBeatTag(beats=[1.9, True, 2], times=[0.0, 0.5, 1.0]),
+      FakeBeatTag(entries=[
+        FakeBeatEntry(1.9, 0), FakeBeatEntry(True, 500), FakeBeatEntry(2, 1000),
+      ]),
+    ],
+  )
+  def test_nichtganzzahlige_beatindizes_werden_nicht_abgeschnitten(self, tag):
+    result = RekordboxImporter._extract_beatgrid_from_anlz([FakeAnlzFile(tag)])
+
+    assert result == [{"beat": 2, "time": 1.0}]
+
   def test_first_downbeat_wird_aus_vollstaendigem_grid_abgeleitet(self, monkeypatch):
     path = os.path.join("C:\\Music", "track.mp3")
     imp = make_importer_with_track("C:\\Music", "track.mp3")

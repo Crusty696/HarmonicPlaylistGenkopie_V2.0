@@ -20,10 +20,20 @@ from .native_phrase_worker import EXE, NativeContractError, _source_identity
 CONTRACT = 'rb-7.2.19-file-reader-v22'
 RATE = 44100
 MAX_SECONDS = 7200
-NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset({
-    '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
-    '.m4a', '.mp4', '.aac', '.mp3',
-})
+NATIVE_REKORDBOX_FACTORIES = {
+    '.wav': 0x2cdda20,
+    '.wave': 0x2cdda20,
+    '.aif': 0x2cdd910,
+    '.aiff': 0x2cdd910,
+    '.flac': 0x2cdd6e0,
+    '.fla': 0x2cdd6e0,
+    '.m4a': 0x2cdd760,
+    '.mp4': 0x2cdd760,
+    '.aac': 0x2cdd8a0,
+}
+NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset(
+    (*NATIVE_REKORDBOX_FACTORIES, '.mp3')
+)
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
 MPG123_ENC_SIGNED_16 = 0xD0
 MPG123_DONE = -12
@@ -231,9 +241,7 @@ class NativeAudioReader:
             except NativeContractError:
                 self._open_fallback()
                 return
-        if suffix not in (
-                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
-                '.m4a', '.mp4', '.aac'):
+        if suffix not in NATIVE_REKORDBOX_FACTORIES:
             self._open_fallback()
             return
         if image is None:
@@ -242,17 +250,7 @@ class NativeAudioReader:
             # nativer Decoder angelegt; der HPG-Reader kann sicher uebernehmen.
             self._open_fallback()
             return
-        factory_rva = {
-            '.wav': 0x2cdda20,
-            '.wave': 0x2cdda20,
-            '.aif': 0x2cdd910,
-            '.aiff': 0x2cdd910,
-            '.flac': 0x2cdd6e0,
-            '.fla': 0x2cdd6e0,
-            '.m4a': 0x2cdd760,
-            '.mp4': 0x2cdd760,
-            '.aac': 0x2cdd8a0,
-        }[suffix]
+        factory_rva = NATIVE_REKORDBOX_FACTORIES[suffix]
         self.backend = {
             '.flac': 'rekordbox-builtin-flac',
             '.fla': 'rekordbox-builtin-flac',

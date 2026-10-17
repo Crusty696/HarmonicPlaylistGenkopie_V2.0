@@ -19,6 +19,7 @@ import os
 import ntpath
 import hashlib
 import json
+import operator
 import mutagen
 from copy import deepcopy
 from typing import Optional, Dict, List
@@ -880,7 +881,11 @@ class RekordboxImporter:
                             # pyrekordbox normalisiert ``PQTZAnlzTag.times``
                             # bereits von Millisekunden auf Sekunden.
                             position = float(raw_time)
-                            beat = int(beat_num)
+                            # Kein int(float): 1.9 wuerde sonst still zu Beat 1
+                            # und damit zu einem falschen Downbeat-Anker.
+                            if isinstance(beat_num, bool):
+                                raise TypeError("bool ist keine Beatnummer")
+                            beat = operator.index(beat_num)
                             if (
                                 1 <= beat <= 4
                                 and math.isfinite(position)
@@ -904,7 +909,9 @@ class RekordboxImporter:
                                 beat = getattr(entry, "beat", None)
                                 t = getattr(entry, "time", None)
                                 position = RekordboxImporter._milliseconds_to_seconds(t)
-                                beat = int(beat) if beat is not None else 0
+                                if isinstance(beat, bool):
+                                    raise TypeError("bool ist keine Beatnummer")
+                                beat = operator.index(beat) if beat is not None else 0
                                 if 1 <= beat <= 4 and position is not None:
                                     points.append({"beat": beat, "time": position})
                                 else:

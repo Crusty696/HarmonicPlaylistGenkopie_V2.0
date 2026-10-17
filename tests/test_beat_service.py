@@ -147,6 +147,19 @@ def test_fingerprint_includes_beat_files_and_runtime_versions(tmp_path, monkeypa
     assert len({first, second, cs.fingerprint(config)}) == 3
 
 
+def test_model_config_uses_shared_rekordbox_root(monkeypatch, tmp_path):
+    monkeypatch.delenv('HPG_CUE_MODEL_DIR', raising=False)
+    monkeypatch.delenv('HPG_BEAT_MODEL_DIR', raising=False)
+    monkeypatch.setattr(cs, 'REKORDBOX_ROOT', tmp_path / 'Rekordbox')
+
+    config = cs.model_config()
+
+    assert config['samplecnn_path'] == str(
+        tmp_path / 'Rekordbox' / 'models' / 'detect_cue_model' / 'samplecnn.onnx')
+    assert config['beat_model7_path'] == str(
+        tmp_path / 'Rekordbox' / 'models' / 'detect_beat' / 'model7')
+
+
 def test_model7_error_keeps_model8_result(monkeypatch, fake_models):
     original = bp.infer_beat_activations
     def partial(audio, sr, *, model_directory, model_id):

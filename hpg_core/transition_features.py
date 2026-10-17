@@ -44,14 +44,35 @@ MODE_SWITCH_PENALTY = 0.15
 
 def cosine_similarity(a, b) -> float | None:
     """Kosinus-Aehnlichkeit zweier Vektoren, auf [0, 1] geklemmt."""
-    if not a or not b or len(a) != len(b):
+    if a is None or b is None or isinstance(a, (str, bytes, dict)) or isinstance(b, (str, bytes, dict)):
         return None
-    punkt = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na <= 0.0 or nb <= 0.0:
+    try:
+        if len(a) == 0 or len(b) == 0 or len(a) != len(b):
+            return None
+    except TypeError:
         return None
-    return max(0.0, min(1.0, punkt / (na * nb)))
+    try:
+        links = tuple(float(x) for x in a)
+        rechts = tuple(float(y) for y in b)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not all(math.isfinite(x) for x in (*links, *rechts)):
+        return None
+    punkt = sum(x * y for x, y in zip(links, rechts))
+    na = math.sqrt(sum(x * x for x in links))
+    nb = math.sqrt(sum(y * y for y in rechts))
+    if (
+        not math.isfinite(punkt)
+        or not math.isfinite(na)
+        or not math.isfinite(nb)
+        or na <= 0.0
+        or nb <= 0.0
+    ):
+        return None
+    similarity = punkt / (na * nb)
+    if not math.isfinite(similarity):
+        return None
+    return max(0.0, min(1.0, similarity))
 
 
 def _spreize(wert: float, boden: float) -> float:

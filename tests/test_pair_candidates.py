@@ -48,7 +48,7 @@ from hpg_core.mix_candidates import MixCandidate
 from hpg_core.models import QUANTIZE_TOLERANCE_SEC, Track
 from hpg_core.pair_candidates import (
     PairCandidate, blend_bars_options, build_pair_candidates, pair_gate_reasons,
-    pair_quality_reasons,
+    pair_quality_reasons, _trusted_candidates,
 )
 
 
@@ -82,6 +82,21 @@ def _track(name="a.mp3", bpm=140.0, duration=300.0, genre="Psytrance", **kw) -> 
 
 def _grid(bpm=140.0, phrase_unit=16):
     return (60.0 / bpm) * 4 * phrase_unit   # 27.428 s
+
+
+def test_unverified_pssi_filter_does_not_mutate_stored_candidate():
+    track = _track(verified_pssi_phrase_grid=False)
+    stored = MixCandidate(t=60.0, schema=['sektion', 'pssi_phrase'],
+        provenance='rekordbox_pssi', phrase_label='intro')
+
+    ranked = _trusted_candidates(track, [stored])
+
+    assert stored.schema == ['sektion', 'pssi_phrase']
+    assert stored.provenance == 'rekordbox_pssi'
+    assert stored.phrase_label == 'intro'
+    assert ranked[0] is not stored
+    assert ranked[0].schema == ['sektion']
+    assert ranked[0].phrase_label == ''
 
 
 def _out(t, **kw):

@@ -476,6 +476,10 @@ def _trusted_candidates(track: Track, candidates: list[MixCandidate]) -> list[Mi
         if not schemas and "pssi_phrase" in (candidate.schema or []):
             continue
         if len(schemas) != len(candidate.schema or []):
+            # Track.mix_*_candidates kann bereits MixCandidate-Objekte enthalten.
+            # Die Vertrauensfilterung ist eine Sicht fuer dieses Ranking und darf
+            # deren gespeicherte Provenienz nicht dauerhaft am Track umschreiben.
+            candidate = copy.copy(candidate)
             candidate.schema = schemas
             candidate.provenance = PROVENANCE_JE_SCHEMA.get(schemas[0], "") if schemas else ""
             candidate.phrase_label = ""
