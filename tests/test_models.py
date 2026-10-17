@@ -291,7 +291,7 @@ class TestPhraseAnchor:
       first_phrase=14.2, phrase_confidence=0.9,
       first_downbeat=0.0, downbeat_confidence=0.0,
     )
-    assert t.phrase_anchor == 0.0
+    assert t.phrase_anchor is None
 
   def test_unterschwellige_konfidenz_ist_anker_neutral(self):
     from hpg_core.downbeat import DOWNBEAT_RELIABLE_MIN
@@ -300,7 +300,7 @@ class TestPhraseAnchor:
       first_downbeat=2.25, downbeat_confidence=DOWNBEAT_RELIABLE_MIN - 0.01,
       beatgrid_status="verified",
     )
-    assert t.phrase_anchor == 0.0
+    assert t.phrase_anchor is None
 
   def test_sentinel_minus_1_faellt_auf_downbeat_zurueck(self):
     t = self._track(
@@ -315,7 +315,38 @@ class TestPhraseAnchor:
         first_phrase=14.2, phrase_confidence=0.9,
         first_downbeat=2.25, downbeat_confidence=0.8, beatgrid_status=status,
       )
-      assert t.phrase_anchor == 0.0
+      assert t.phrase_anchor is None
+
+  def test_verifizierte_pssi_phrasen_liefern_anker_ohne_bar1_beweis(self):
+    t = self._track(
+      phrases=[{"start_s": 30.0, "end_s": 60.0}],
+      phrase_grid=[30.0, 60.0],
+      beatgrid_source="rekordbox", beatgrid_status="verified",
+      bar_position_status="reference_candidate", downbeat_confidence=1.0,
+    )
+    assert t.phrase_anchor == 30.0
+
+  def test_unbestaetigte_rotation_sperrt_auch_pssi_anker(self):
+    windows = [
+      dict(model_id=model, start_s=start, status="measured", rotation_beats=1)
+      for model in ("model7", "model8")
+      for start in (0.0, 16.0, 32.0)
+    ]
+    diagnostics = dict(version=8, anchor=dict(
+      source="audio", method="model_audio_rotation", anchor_s=0.2,
+      bar_position_comparison=dict(
+        status="candidate_rotation", reason="measured",
+        rotation_beats=1, windows=windows,
+      ),
+    ))
+    t = self._track(
+      phrases=[{"start_s": 30.0, "end_s": 60.0}],
+      phrase_grid=[30.0, 60.0],
+      beatgrid_source="rekordbox", beatgrid_status="verified",
+      bar_position_status="reference_candidate", downbeat_confidence=1.0,
+      measurement_diagnostics=diagnostics,
+    )
+    assert t.phrase_anchor is None
 
 
 def test_bar_conversion_has_explicit_rounding_contract():
