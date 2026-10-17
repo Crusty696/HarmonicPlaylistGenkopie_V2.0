@@ -17,10 +17,10 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v21'
+CONTRACT = 'rb-7.2.19-file-reader-v22'
 RATE = 44100
 MAX_SECONDS = 7200
-NATIVE_BEAT_READER_EXTENSIONS = frozenset({
+NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset({
     '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
     '.m4a', '.mp4', '.aac', '.mp3',
 })
@@ -1090,20 +1090,16 @@ class NativeAudioStream:
         if limit <= 0:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
-        if use_rekordbox and suffix in (
-                '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
-                '.m4a', '.mp4', '.aac'):
-            try:
-                source_channels = _source_channel_count(path)
-                if source_channels in (1, 2):
+        if (use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS
+                and suffix != '.mp3'):
+            optional_codec = suffix in ('.flac', '.fla', '.m4a', '.mp4', '.aac')
+            if optional_codec or _source_channel_count(path) in (1, 2):
+                try:
+                    # Optional-Codec-Vertrag kann unbekannte Kanäle intern
+                    # prüfen und kontrolliert auf den HPG-Reader zurückfallen.
                     self.image = _reader_image()
-            except NativeContractError:
-                # Lokale HPG-Decoder halten Analyse und Vorschau auch dann
-                # verfuegbar, wenn das native Rekordbox-Abbild nicht startet.
-                self.image = None
-            except Exception:
-                # Ohne belegte Kanalzahl den nativen Mono-/Stereo-Reader meiden.
-                self.image = None
+                except Exception:
+                    self.image = None
         try:
             self.reader = NativeAudioReader(self.image, path, max_seconds=limit,
                                             start_seconds=offset,

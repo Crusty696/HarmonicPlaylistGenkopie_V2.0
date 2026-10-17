@@ -19,7 +19,7 @@ from .native_audio_reader import CONTRACT as READER_CONTRACT
 from .reader_contract import NATIVE_BEAT_INPUT_CONVENTIONS
 from .native_beat_boundaries import VERSION as BOUNDARY_CONTRACT
 
-CONTRACT = 'hpg-native-track-beats-v14'
+CONTRACT = 'hpg-native-track-beats-v15'
 
 
 def enabled():
@@ -207,7 +207,7 @@ def analyze(path, *, transport=None, timeout_s=180., cancel_event=None):
         mode = configured_mode()
         request = dict(path=str(source), source_identity=identity, configuration=mode)
         raw = call('native_beat', 'hpg_core.ai_models.native_beat_pipeline_worker', request)
-        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v14'
+        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v15'
                 or raw.get('executable_sha256') != SHA256 or raw.get('tensorflow_sha256') != TF_SHA256
                 or raw.get('model_id') not in MODEL_HASHES
                 or raw.get('model_hashes') != MODEL_HASHES[raw['model_id']]

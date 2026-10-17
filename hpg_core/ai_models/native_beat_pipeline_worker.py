@@ -15,7 +15,7 @@ import numpy as np
 from .native_phrase_worker import NativeImage, NativeContractError, EXE, SHA256, _source_identity
 from .beat_predictor import _hashes
 from .native_audio_reader import (
-    NativeAudioReader, NATIVE_BEAT_READER_EXTENSIONS, bind_reader_imports,
+    NativeAudioReader, NATIVE_REKORDBOX_READER_EXTENSIONS, bind_reader_imports,
 )
 from .native_beat_selection import (
     MAX_NATIVE_BEAT_WINDOW_SECONDS, select_model,
@@ -294,7 +294,7 @@ def _handle(payload):
         raise NativeContractError('Native standard-stream initialization failed')
     # Codec-Unterstützung entscheidet vor Metadatenheuristiken. Der Reader
     # validiert Kanalzahl und Quelldaten und fällt bei Fehlern kontrolliert zurück.
-    use_native_reader = path.suffix.lower() in NATIVE_BEAT_READER_EXTENSIONS
+    use_native_reader = path.suffix.lower() in NATIVE_REKORDBOX_READER_EXTENSIONS
     try:
         reader = NativeAudioReader(image, path, use_rekordbox=use_native_reader)
     except NativeContractError:
@@ -338,7 +338,7 @@ def _handle(payload):
     reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v14',
+    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v15',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
         model_hashes=hashes, verified=False, beats=rows, grid=grid,
         bpm=final_bpm if segmented is not None else final_bpm/100., selection=selection, reader=reader_metadata,
