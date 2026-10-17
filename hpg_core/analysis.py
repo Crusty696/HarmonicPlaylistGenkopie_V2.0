@@ -4110,7 +4110,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         # sonst liefert der mtime-basierte Cache die erfundenen Default-Werte
         # (energy=50, mix_in=0.0) fuer immer zurueck, ohne sichtbaren Fehler.
         if cache_policy == "reuse":
-            if not analysis_degraded and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
+            if not analysis_degraded and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"] and not deep_features.transient_failure(track):
                 if not _persist_analysis_result(cache_key, track):
                     return None
             else:
@@ -4688,7 +4688,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         from .ai_models import deep_features
         deep_features.attach(track)
         if cache_policy == "reuse":
-            if not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
+            if not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"] and not deep_features.transient_failure(track):
                 if not _persist_analysis_result(cache_key, track):
                     return None
         return track

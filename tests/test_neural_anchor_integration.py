@@ -402,6 +402,25 @@ def test_local_errors_skip_cache_and_final_grid_fails_closed(pipeline, monkeypat
     assert track.measurement_diagnostics['anchor']['neural']['reason'] == 'final_grid_rejected'
 
 
+@pytest.mark.parametrize("fast", [True, False])
+def test_transient_deep_feature_failure_skips_cache(pipeline, monkeypatch, fast):
+    path, _, _ = setup_adoption(pipeline, monkeypatch, fast=fast)
+    writes = []
+    monkeypatch.setattr(analysis, '_persist_analysis_result', lambda *a: writes.append(a) or True)
+
+    def attach_unavailable(track):
+        track.stem_analysis = {'status': 'unavailable'}
+        track.embedding_analysis = {'status': 'disabled'}
+
+    from hpg_core.ai_models import deep_features
+    monkeypatch.setattr(deep_features, 'attach', attach_unavailable)
+    track = analysis.analyze_track(str(path))
+
+    assert track is not None
+    assert track.stem_analysis['status'] == 'unavailable'
+    assert writes == []
+
+
 def test_external_reason_and_real_sample_offset(pipeline, monkeypatch):
     from hpg_core.measurement_contract import measurement_snapshot, validate_measurement_diagnostics
     path, _, _ = setup_adoption(pipeline, monkeypatch)
