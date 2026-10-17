@@ -6,7 +6,7 @@ Centralizes all magic numbers and configurable parameters.
 # === Audio Processing Parameters ===
 SUPPORTED_AUDIO_EXTENSIONS = (
     ".wav", ".wave", ".aiff", ".aif", ".mp3", ".flac", ".fla",
-    ".mp4", ".m4a", ".aac", ".ogg",
+    ".mp4", ".m4a", ".aac", ".ogg", ".wma",
 )
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)

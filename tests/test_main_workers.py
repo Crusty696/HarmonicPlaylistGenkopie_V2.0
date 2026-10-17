@@ -680,7 +680,8 @@ def test_analysis_worker_empty_folder(tmp_path):
 
 def test_product_audio_extensions_are_explicit_and_complete():
   assert main.hpg_config.SUPPORTED_AUDIO_EXTENSIONS == (
-    ".wav", ".aiff", ".aif", ".mp3", ".flac"
+    ".wav", ".wave", ".aiff", ".aif", ".mp3", ".flac", ".fla",
+    ".mp4", ".m4a", ".aac", ".ogg", ".wma",
   )
 
 
