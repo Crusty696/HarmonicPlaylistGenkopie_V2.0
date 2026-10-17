@@ -283,8 +283,11 @@ def _read_csv(path: Path, columns, *, schema_resolver=None) -> list[dict]:
     try:
         reader = csv.DictReader(io.StringIO(path.read_bytes().decode("utf-8-sig"), newline=""))
         actual = tuple(reader.fieldnames or ())
-        accepted = (schema_resolver(actual) is True if schema_resolver
-                    else actual == tuple(columns))
+        if schema_resolver:
+            resolved = schema_resolver(actual)
+            accepted = resolved is True or (type(resolved) is tuple and resolved == actual)
+        else:
+            accepted = actual == tuple(columns)
         if not accepted:
             raise SourceValidationError(f"{path.name}: falsche Spalten")
         rows = list(reader)
