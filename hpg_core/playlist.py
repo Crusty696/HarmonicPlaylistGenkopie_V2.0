@@ -681,10 +681,29 @@ def _kandidaten_fuer_paar(
     else:
         wahl = None
     # Lazy: pair_candidates importiert playlist-Teile lazy — kein Zyklus auf Modulebene.
-    from .pair_candidates import rank_pair_candidates
+    from .pair_candidates import (
+        _embedding_ablation_weight,
+        _stem_bass_ablation_weight,
+        rank_pair_candidates,
+    )
+
+    def _deep_feature_key(track):
+        """Provenienzwechsel muessen bereits gecachte Paar-Scores erneuern."""
+        result = []
+        for field_name in ("stem_analysis", "embedding_analysis"):
+            snapshot = getattr(track, field_name, None)
+            if type(snapshot) is not dict:
+                result.append(None)
+                continue
+            result.append((snapshot.get("version"), snapshot.get("status"),
+                           snapshot.get("fingerprint"), snapshot.get("reason")))
+        return tuple(result)
+
     key = (
         id(track1), id(track2), _track_cache_key(track1), _track_cache_key(track2),
         tolerance, direction.value if direction is not None else None,
+        _embedding_ablation_weight(), _stem_bass_ablation_weight(),
+        _deep_feature_key(track1), _deep_feature_key(track2),
         _stable_fingerprint({
             k: v for k, v in kwargs.items()
             if k not in {

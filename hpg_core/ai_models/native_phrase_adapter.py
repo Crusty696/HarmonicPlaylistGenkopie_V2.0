@@ -14,6 +14,9 @@ import threading
 import time
 
 from .native_phrase_worker import CONTRACT_VERSION, EXE, SHA256
+from .native_beat_selection import (
+    MAX_NATIVE_TRACK_JOB_SECONDS, native_track_job_timeout_seconds,
+)
 from .native_key import KEY_MAPPING_VERSION, native_key_index
 from .reader_contract import READER_BACKENDS, source_duration_tolerance
 
@@ -59,7 +62,8 @@ def identity():
 
 
 def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
-                     verified_grid, key_index, cancel_event=None, timeout_s=180.0,
+                     verified_grid, key_index, cancel_event=None,
+                     timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
                      transport=None):
     """Erzeugt native Kandidaten auf einem ausdrücklich bestätigten Eingangsgrid.
 
@@ -83,7 +87,7 @@ def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
             or type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0
             or type(key_index) is not int or not 0 <= key_index < 24
             or type(timeout_s) not in (int, float) or not math.isfinite(timeout_s)
-            or not 0 < timeout_s <= 180.0):
+            or not 0 < timeout_s <= MAX_NATIVE_TRACK_JOB_SECONDS):
         return unavailable('invalid_input_contract')
     beat_period = 60.0 / bpm
     if (not 0 <= beat_times[0] < beat_period
@@ -251,6 +255,7 @@ def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
         result = generate_phrases(path, beat_times=times, beat_positions=positions,
             bpm=bpm, duration=duration, verified_grid=True,
             key_index=0 if key_index is None else key_index,
+            timeout_s=native_track_job_timeout_seconds(duration),
             transport=client.native_phrases)
     snapshot.update(status=result['status'], reason=result['reason'])
     if result['status'] == 'ok':

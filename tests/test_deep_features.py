@@ -192,14 +192,19 @@ def test_expired_optional_budget_never_connects(monkeypatch):
     assert result['reason'] == 'service_error:TimeoutError'
 
 
-@pytest.mark.parametrize('workers,stems,embedding,expected', [
-    (1, '0', '0', 180.), (1, '1', '1', 600.),
-    (4, '1', '1', 870.), (4, '0', '1', 870.),
+@pytest.mark.parametrize('workers,stems,embedding,beats,phrases,expected', [
+    (1, '0', '0', '0', '0', 180.),
+    (1, '1', '1', '1', '1', 870.),
+    (4, '1', '1', '1', '1', 870.),
+    (4, '0', '1', '1', '1', 870.),
 ])
-def test_track_budget_accounts_for_serial_models(monkeypatch, workers, stems, embedding, expected):
+def test_track_budget_accounts_for_serial_models(
+        monkeypatch, workers, stems, embedding, beats, phrases, expected):
     from hpg_core import config
     monkeypatch.setenv('HPG_STEMS', stems)
     monkeypatch.setenv('HPG_EMBEDDINGS', embedding)
+    monkeypatch.setenv('HPG_NATIVE_BEAT', beats)
+    monkeypatch.setenv('HPG_NATIVE_PHRASE', phrases)
     assert config.analysis_timeout_seconds(workers) == expected
 
 

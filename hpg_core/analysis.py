@@ -3494,8 +3494,10 @@ def _prepare_native_beats(file_path, duration, y, sr):
                     decision=dict(status='unavailable', reason='unsupported_duration'))
     try:
         with cue_service.session() as client:
+            from .ai_models.native_beat_selection import native_track_job_timeout_seconds
             native = native_track_beats.analyze(
-                file_path, transport=getattr(client, 'native_beats', None))
+                file_path, timeout_s=native_track_job_timeout_seconds(duration),
+                transport=getattr(client, 'native_beats', None))
         if type(native) is not dict:
             raise ValueError('invalid_native_result_type')
         if native.get('status') == 'ok':

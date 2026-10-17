@@ -298,10 +298,19 @@ def _handle(payload):
     if use_native_reader:
         try:
             reader = NativeAudioReader(image, path, use_rekordbox=True)
-        except NativeContractError:
+        except Exception as error:
             # Der NativeCodec ist optional. Nach einem kontrollierten Open-Fehler
-            # dekodiert der isolierte Einmalprozess dieselbe Quelle mit HPG weiter.
-            reader = NativeAudioReader(None, path, use_rekordbox=False)
+            # bleibt MP3 zuerst beim Rekordbox-Bundle; andere Quellen dekodiert
+            # der isolierte Einmalprozess direkt mit dem HPG-Reader weiter.
+            if not isinstance(error, NativeContractError) and path.suffix.lower() != '.mp3':
+                raise
+            if path.suffix.lower() == '.mp3':
+                try:
+                    reader = NativeAudioReader(None, path, use_rekordbox=True)
+                except Exception:
+                    reader = NativeAudioReader(None, path, use_rekordbox=False)
+            else:
+                reader = NativeAudioReader(None, path, use_rekordbox=False)
     else:
         # OGG/WMA und weitere HPG-Formate verwenden direkt den HPG-Reader. Ein
         # zweiter identischer Konstruktorversuch würde Decoderstart, Metadaten-
@@ -344,7 +353,7 @@ def _handle(payload):
     reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v15',
+    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v16',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
         model_hashes=hashes, verified=False, beats=rows, grid=grid,
         bpm=final_bpm if segmented is not None else final_bpm/100., selection=selection, reader=reader_metadata,

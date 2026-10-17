@@ -76,11 +76,11 @@ def config():
         umap_norm_before=str(embed_root/'norm_before_umap.onnx'),
         umap_model=str(embed_root/'umap_embedder.onnx'),
         umap_norm_after=str(embed_root/'norm_after_umap.onnx'),
-        # Stems/Embeddings bleiben ohne ausdrueckliche Freigabe aus; die
-        # unkalibrierten Zusatzmerkmale duerfen die Standardanalyse nicht
-        # verlaengern oder deren Ergebnis unbemerkt beeinflussen.
-        prefer_directml=True, stems_enabled=os.environ.get('HPG_STEMS', '0') == '1',
-        embedding_enabled=os.environ.get('HPG_EMBEDDINGS', '0') == '1')
+        # Die beauftragten Zusatzanalysen laufen standardmaessig mit. Sie
+        # bleiben ueber HPG_STEMS=0 bzw. HPG_EMBEDDINGS=0 abschaltbar; ihre
+        # unkalibrierten Werte beeinflussen weiterhin nicht das Playlist-Scoring.
+        prefer_directml=True, stems_enabled=os.environ.get('HPG_STEMS', '1') == '1',
+        embedding_enabled=os.environ.get('HPG_EMBEDDINGS', '1') == '1')
 
 
 def _digest(path):

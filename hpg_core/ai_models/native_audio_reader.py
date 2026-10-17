@@ -18,10 +18,11 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v27'
+CONTRACT = 'rb-7.2.19-file-reader-v29'
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {
+    '.mp3': 0x2cdd8a0,
     '.wav': 0x2cdda20,
     '.wave': 0x2cdda20,
     '.aif': 0x2cdd910,
@@ -30,11 +31,9 @@ NATIVE_REKORDBOX_FACTORIES = {
     '.fla': 0x2cdd6e0,
     '.m4a': 0x2cdd760,
     '.mp4': 0x2cdd760,
-    '.aac': 0x2cdd8a0,
+    '.aac': 0x2cdd7f0,
 }
-NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset(
-    (*NATIVE_REKORDBOX_FACTORIES, '.mp3')
-)
+NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset(NATIVE_REKORDBOX_FACTORIES)
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
 MPG123_ENC_SIGNED_16 = 0xD0
 MPG123_DONE = -12
@@ -221,11 +220,7 @@ def _reader_image():
 
 
 class NativeAudioReader:
-    """Native WAV/AIFF/FLAC/MP4/AAC-Reader und MP3-Decoder aus Rekordbox' Bundle.
-
-    MP3 läuft direkt über das versionsgeprüfte libmpg123.dll aus der
-    Rekordbox-Installation; ein HPG-Decoder bleibt als Fallback gekennzeichnet.
-    """
+    """Gepinnte Rekordbox-Reader; nur nicht unterstützte Quellen fallen zurück."""
     def __init__(self, image, path, *, max_seconds=MAX_SECONDS, start_seconds=0.0,
                  use_rekordbox=True):
         self.image = image
@@ -251,11 +246,15 @@ class NativeAudioReader:
         if not use_rekordbox:
             self._open_fallback()
             return
-        if suffix == '.mp3':
+        if suffix == '.mp3' and image is None:
             try:
                 self._open_rekordbox_mpg123()
                 return
-            except NativeContractError:
+            except Exception:
+                # Auch Fehler aus DLL-Bindung oder Resampler-Initialisierung
+                # muessen den vorhandenen HPG-Reader-Fallback erreichen.
+                # _open_rekordbox_mpg123 raeumt einen begonnenen Open-Versuch
+                # vor dem Weiterwerfen auf; der Fallback bleibt separat sichtbar.
                 self._open_fallback()
                 return
         if suffix not in NATIVE_REKORDBOX_FACTORIES:
@@ -270,6 +269,7 @@ class NativeAudioReader:
             return
         factory_rva = NATIVE_REKORDBOX_FACTORIES[suffix]
         self.backend = {
+            '.mp3': 'rekordbox-builtin-mp3',
             '.flac': 'rekordbox-builtin-flac',
             '.fla': 'rekordbox-builtin-flac',
             '.m4a': 'rekordbox-builtin-mp4',
@@ -859,6 +859,35 @@ class NativeAudioReader:
     def close(self):
         """Schließe aktive Decoder und gib blockweise Audioressourcen frei."""
         errors = []
+        owner = getattr(self, 'owner', None)
+        if owner is not None:
+            # RVA1113330 gibt Decoder- (owner+8) und Resampler-Referenz
+            # (owner+16) frei. Erst den Zeiger lösen, dann wie dort den
+            # Rekordbox-Refcount atomar senken und bei letzter Referenz den
+            # virtuellen Destruktor mit deleting=1 aufrufen.
+            decrement = None
+            for offset in (8, 16):
+                try:
+                    slot = ct.c_void_p.from_buffer(owner, offset)
+                    pointer, slot.value = slot.value, None
+                    if not pointer or ct.c_int32.from_address(pointer + 12).value != 0x52434F58:
+                        continue
+                    if decrement is None:
+                        kernel = ct.WinDLL('kernel32', use_last_error=True)
+                        decrement = kernel.InterlockedDecrement
+                        decrement.argtypes = [ct.POINTER(ct.c_long)]
+                        decrement.restype = ct.c_long
+                    count = ct.cast(pointer + 8, ct.POINTER(ct.c_long))
+                    if decrement(count) == 0:
+                        vtable = ct.c_void_p.from_address(pointer).value
+                        if not vtable:
+                            raise NativeContractError('Native reader has no deleting vtable')
+                        destructor = ct.c_void_p.from_address(vtable).value
+                        if not destructor:
+                            raise NativeContractError('Native reader has no deleting destructor')
+                        ct.CFUNCTYPE(None, ct.c_void_p, ct.c_int32)(destructor)(pointer, 1)
+                except Exception as error:
+                    errors.append(error)
         state, self._mpg123_state = self._mpg123_state, None
         if state is not None:
             for cleanup in (
@@ -1131,8 +1160,12 @@ class NativeAudioStream:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
         native_selection = use_rekordbox
-        if (use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS
-                and suffix != '.mp3'):
+        if use_rekordbox and suffix == '.mp3':
+            try:
+                self.image = _reader_image()
+            except Exception:
+                self.image = None
+        elif use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS:
             optional_codec = suffix in ('.flac', '.fla', '.m4a', '.mp4', '.aac')
             channels = _source_channel_count(path)
             if optional_codec and channels not in (None, 1, 2):
@@ -1146,7 +1179,7 @@ class NativeAudioStream:
                     self.image = _reader_image()
                 except Exception:
                     self.image = None
-            if self.image is None:
+            if self.image is None and suffix != '.mp3':
                 # Vor dem Anlegen eines nativen Decoders ist HPG-Fallback
                 # sicher. Das gilt auch für WAV/AIFF, wenn das Rekordbox-Abbild
                 # nicht bereitgestellt werden kann.
@@ -1156,6 +1189,14 @@ class NativeAudioStream:
                 # Der native Beatpfad verarbeitet nur Mono/Stereo. Mehrkanal-
                 # und nicht lesbare Kanalmetadaten nutzen den HPG-Decoder.
                 native_selection = False
+        def mp3_fallback():
+            try:
+                return NativeAudioReader(None, path, max_seconds=limit,
+                    start_seconds=offset, use_rekordbox=True)
+            except Exception:
+                return NativeAudioReader(None, path, max_seconds=limit,
+                    start_seconds=offset, use_rekordbox=False)
+
         try:
             self.reader = NativeAudioReader(self.image, path, max_seconds=limit,
                                             start_seconds=offset,
@@ -1167,8 +1208,18 @@ class NativeAudioStream:
             # weiterhin einen kontrollierten Fehler.
             if suffix not in NATIVE_REKORDBOX_FACTORIES:
                 raise
-            self.reader = NativeAudioReader(None, path, max_seconds=limit,
-                start_seconds=offset, use_rekordbox=False)
+            if suffix == '.mp3' and native_selection:
+                # Erst Rekordbox' mpg123-Bundle, HPG-Reader als letzte Wahl.
+                self.reader = mp3_fallback()
+            else:
+                self.reader = NativeAudioReader(None, path, max_seconds=limit,
+                    start_seconds=offset, use_rekordbox=False)
+        except Exception:
+            if suffix != '.mp3':
+                raise
+            # Ein nativer MP3-Factoryfehler bleibt im Analysekind isoliert;
+            # danach steht Rekordbox' gebündeltes mpg123 als Fallback bereit.
+            self.reader = mp3_fallback()
         self.frames = min(self.reader.frames, math.ceil(limit * RATE))
         self.samplerate = RATE
         self.channels = self.reader.channels

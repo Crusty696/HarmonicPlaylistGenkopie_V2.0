@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 MAX_WIRE = 64 * 1024 * 1024
 MAX_HEADER = 1024 * 1024
 MAX_CANDIDATES = 4096
-MAX_PATH_JOB_SECONDS = 180.
+MAX_PATH_JOB_SECONDS = 420.
 MAX_DEEP_FEATURE_SECONDS = 240.
 _local = threading.local()
 _pool_client = None
@@ -362,10 +362,10 @@ class CueClient:
         self.address, self.token, self.generation = address, token, generation
         self.config, self.error = config, error
 
-    def native_phrases(self, parameters, *, timeout_s=180.):
+    def native_phrases(self, parameters, *, timeout_s=MAX_PATH_JOB_SECONDS):
         return self._path_job('native_phrase', parameters, timeout_s=timeout_s)
 
-    def native_beats(self, job, parameters, *, timeout_s=180.):
+    def native_beats(self, job, parameters, *, timeout_s=MAX_PATH_JOB_SECONDS):
         if job != 'native_beat':
             raise ValueError('Invalid native beat job')
         return self._path_job(job, parameters, timeout_s=timeout_s)

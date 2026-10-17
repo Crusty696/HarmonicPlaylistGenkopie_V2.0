@@ -12,14 +12,18 @@ from .beat_predictor import MODEL_HASHES
 from .process_runtime import OwnedModelProcess
 from .native_beat_selection import (
     MAX_NATIVE_BEAT_SECONDS, MAX_NATIVE_BEAT_WINDOW_SECONDS,
+    MAX_NATIVE_TRACK_JOB_SECONDS,
     configured_mode, maximum_native_beat_rows, native_beat_segment_count,
     validate_selection,
 )
 from .native_audio_reader import CONTRACT as READER_CONTRACT
-from .reader_contract import NATIVE_BEAT_INPUT_CONVENTIONS
+from .reader_contract import (
+    NATIVE_BEAT_INPUT_CONVENTIONS, convention_duration_tolerance,
+    reader_duration_tolerance, SOURCE_BIT_DEPTH_REQUIRED_BACKENDS,
+)
 from .native_beat_boundaries import VERSION as BOUNDARY_CONTRACT
 
-CONTRACT = 'hpg-native-track-beats-v15'
+CONTRACT = 'hpg-native-track-beats-v16'
 
 
 def enabled():
@@ -58,7 +62,7 @@ def validate_snapshot(value, *, duration):
             or value['sample_rate'] != 44100 or type(value['frames']) is not int
             or not 44100 <= value['frames'] <= MAX_NATIVE_BEAT_SECONDS * 44100
             or abs(value['frames'] / 44100 - duration) >
-                (2 / 44100 if value['input_convention'] == 'rekordbox-builtin-planar-float32' else 0.1)
+                convention_duration_tolerance(value['input_convention'])
             or value['musically_verified'] is not False
             or type(value['input_convention']) is not str
             or value['input_convention'] not in NATIVE_BEAT_INPUT_CONVENTIONS.values()
@@ -176,22 +180,25 @@ def validate_reader(reader, frames, duration, input_convention):
                                                else reader['source_channels'])
             or not 8000 <= reader['source_sample_rate'] <= 384000
             or reader['source_bit_depth'] not in (0, 8, 16, 24, 32, 64)
-            or (reader['backend'].startswith('rekordbox-builtin')
+            or (reader['backend'] in SOURCE_BIT_DEPTH_REQUIRED_BACKENDS
                 and reader['source_bit_depth'] == 0)
             or reader['source_frames'] < 1
             or reader['output_sample_rate'] != 44100 or reader['output_frames'] != frames
             or abs(reader['source_frames']/reader['source_sample_rate']-duration) >
-                (2/44100 if reader['backend'].startswith('rekordbox-builtin') else 0.1)):
+                reader_duration_tolerance(reader['backend'],
+                                          sample_rate=reader['source_sample_rate'])):
         raise ValueError('Invalid native reader provenance')
 
 
-def analyze(path, *, transport=None, timeout_s=180., cancel_event=None):
+def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
+            cancel_event=None):
     if not enabled():
         return dict(status='disabled', reason='disabled')
     try:
         source = Path(path).resolve(strict=True)
         identity = _source_identity(source)
-        if type(timeout_s) not in (int, float) or not math.isfinite(timeout_s) or not 0 < timeout_s <= 180:
+        if (type(timeout_s) not in (int, float) or not math.isfinite(timeout_s)
+                or not 0 < timeout_s <= MAX_NATIVE_TRACK_JOB_SECONDS):
             raise ValueError('Invalid native beat timeout')
         deadline = time.monotonic() + timeout_s
         def call(job, module, request):
@@ -214,7 +221,7 @@ def analyze(path, *, transport=None, timeout_s=180., cancel_event=None):
         mode = configured_mode()
         request = dict(path=str(source), source_identity=identity, configuration=mode)
         raw = call('native_beat', 'hpg_core.ai_models.native_beat_pipeline_worker', request)
-        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v15'
+        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v16'
                 or raw.get('executable_sha256') != SHA256 or raw.get('tensorflow_sha256') != TF_SHA256
                 or raw.get('model_id') not in MODEL_HASHES
                 or raw.get('model_hashes') != MODEL_HASHES[raw['model_id']]

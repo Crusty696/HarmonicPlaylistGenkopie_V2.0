@@ -94,7 +94,10 @@ _INPUT_STATUS = {
 }
 _UNKNOWN = "Unbekannt – möglicherweise alte Analyse"
 _INVALID = "Unverifiziert – ungültige Diagnose"
-_HEADERS = ("Track", "Dateipfad (nur RAM)", "Gridstatus", "Geprüfte Fenster", "Max. Phasenfehler (ms)")
+_HEADERS = (
+    "Track", "Dateipfad (nur RAM)", "Analyse-/Beatquelle", "Beat-/Taktstatus",
+    "Audioabdeckung", "Geprüfte Fenster", "Max. Phasenfehler (ms)",
+)
 
 
 def _number(value):
@@ -384,7 +387,83 @@ class _Snapshot:
     tempo_diagnostic: dict | None
     track_bpm: float | None
     rekordbox_bpm: float | None
+    analysis_summary: str
+    source_summary: str
+    status_summary: str
     deep_summary: str = ""
+
+
+def _analysis_summary(track):
+    """Gibt nur bekannte Analysepfade und validierte Abdeckungsintervalle aus."""
+    duration = getattr(track, "duration", None)
+    mode = getattr(track, "analysis_mode", None)
+    mode_labels = {
+        "rekordbox_fast_tail": "Rekordbox-Fast-Path + Audio-Tail",
+        "rekordbox_degraded": "Rekordbox-Pfad mit Audio-Fallback",
+        "librosa_full_or_tail": "Audio-Vollpfad",
+    }
+    mode_text = mode_labels.get(mode, "Analysepfad unbekannt")
+    coverage = getattr(track, "analysis_coverage", None)
+    if (type(duration) not in (int, float) or not math.isfinite(duration)
+            or duration <= 0 or type(coverage) is not list):
+        return f"{mode_text}; Audioabdeckung unbekannt."
+    intervals = []
+    previous_end = 0.0
+    try:
+        for interval in coverage:
+            if type(interval) not in (list, tuple) or len(interval) != 2:
+                raise ValueError
+            start, end = interval
+            if (type(start) not in (int, float) or type(end) not in (int, float)
+                    or not math.isfinite(start) or not math.isfinite(end)
+                    or start < previous_end or end <= start or end > duration):
+                raise ValueError
+            intervals.append((float(start), float(end)))
+            previous_end = end
+    except (TypeError, ValueError, OverflowError):
+        return f"{mode_text}; Audioabdeckung ungültig gespeichert."
+    seconds = sum(end - start for start, end in intervals)
+    percent = min(100.0, seconds * 100.0 / duration)
+    outro = getattr(track, "outro_covered", None)
+    outro_text = "Trackende abgedeckt" if outro is True else (
+        "Trackende nicht abgedeckt" if outro is False else "Trackende unbekannt"
+    )
+    return f"{mode_text}; {seconds:.1f}/{duration:.1f} s ({percent:.0f}%); {outro_text}."
+
+
+def _source_summary(track, diagnostic):
+    from .models import BEATGRID_SOURCES
+
+    source = getattr(track, "beatgrid_source", "unknown")
+    if source not in BEATGRID_SOURCES:
+        source = "unknown"
+    anchor = diagnostic.get("anchor") if isinstance(diagnostic, dict) else None
+    if isinstance(anchor, dict) and anchor.get("source") in {"audio", "rekordbox"}:
+        source = anchor["source"]
+    labels = {"rekordbox": "Rekordbox", "audio": "Audioanalyse",
+              "none": "Keine", "unknown": "Unbekannt"}
+    return f"{labels[source]} (Herkunft, kein Genauigkeitsbeweis)"
+
+
+def _status_summary(track, diagnostic):
+    from .models import BEATGRID_STATUSES
+
+    grid_status = getattr(track, "beatgrid_status", "unknown")
+    if grid_status not in BEATGRID_STATUSES:
+        grid_status = "unknown"
+    bar_status = getattr(track, "bar_position_status", "unknown")
+    if bar_status not in {"reference_verified", "reference_candidate", "native_candidate",
+                          "audio_estimate", "blocked", "unknown"}:
+        bar_status = "unknown"
+    if isinstance(diagnostic, dict):
+        grid_status = diagnostic["grid"]["status"]
+    phrase_status = (
+        "gesperrt (Taktpositionskonflikt)"
+        if isinstance(diagnostic, dict) and bar_position_usage_blocked(diagnostic)
+        else "Freigabestatus in den Details"
+    )
+    return (f"Beatgrid: {_code(grid_status)}; Taktposition: {_code(bar_status)}; "
+            f"Phrasenraster: {phrase_status}")
 
 
 def _deep_summary(track):
@@ -522,7 +601,9 @@ def _snapshot(track):
                      path if isinstance(path, str) else "", diagnostic,
                      bar_position_status, phrase_unit, phrase_unit_source, phrase_unit_candidate,
                      phrase_unit_score, phrase_unit_margin, tempo_diagnostic,
-                     track_bpm, rekordbox_bpm, _deep_summary(track))
+                     track_bpm, rekordbox_bpm, _analysis_summary(track),
+                     _source_summary(track, diagnostic),
+                     _status_summary(track, diagnostic), _deep_summary(track))
 
 
 def _phrase_unit_summary(snapshot):
@@ -606,9 +687,13 @@ class _TrackModel(QAbstractTableModel):
         if index.column() < 2:
             return (record.name, record.path)[index.column()]
         if diag is None:
-            return _INVALID if index.column() == 2 else "Nicht gemessen"
+            values = (record.source_summary, _INVALID, record.analysis_summary,
+                      "Nicht gemessen", "Nicht gemessen")
+            return values[index.column() - 2]
         if not diag:
-            return _UNKNOWN if index.column() == 2 else "Nicht gemessen"
+            values = (record.source_summary, _UNKNOWN, record.analysis_summary,
+                      "Nicht gemessen", "Nicht gemessen")
+            return values[index.column() - 2]
         grid = diag["grid"]
         if role == Qt.ItemDataRole.ToolTipRole:
             downbeat = diag["downbeat"]
@@ -618,8 +703,8 @@ class _TrackModel(QAbstractTableModel):
                     f"{_code(grid['reason'])} ({grid['reason']}). "
                     f"{_anchor_summary(diag, record.bar_position_status)} {_reference_grid_summary(diag)} "
                     "Gespeicherte Messdiagnose, keine erneute Prüfung.")
-        return (_code(grid["status"]), str(grid["windows_checked"]),
-                _number(grid["max_phase_error_ms"]))[index.column() - 2]
+        return (record.source_summary, record.status_summary, record.analysis_summary,
+                str(grid["windows_checked"]), _number(grid["max_phase_error_ms"]))[index.column() - 2]
 
 
 class MeasurementDialog(QDialog):
@@ -627,7 +712,7 @@ class MeasurementDialog(QDialog):
     def __init__(self, tracks, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Messdiagnosen")
-        self.resize(1000, 650)
+        self.resize(1180, 650)
         self._snapshots = tuple(_snapshot(track) for track in tracks)
         layout = QVBoxLayout(self)
         self.status_label = QLabel(
@@ -642,7 +727,9 @@ class MeasurementDialog(QDialog):
         self.track_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.track_table.setColumnWidth(0, 220)
         self.track_table.setColumnWidth(1, 280)
-        self.track_table.setColumnWidth(2, 270)
+        self.track_table.setColumnWidth(2, 230)
+        self.track_table.setColumnWidth(3, 220)
+        self.track_table.setColumnWidth(4, 300)
         layout.addWidget(self.track_table)
         self.detail_label = QLabel("Keine Trackauswahl.")
         self.detail_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -687,6 +774,7 @@ class MeasurementDialog(QDialog):
             if retry_reason else ""
         )
         self.detail_label.setText(
+            f"{snapshot.analysis_summary} {snapshot.source_summary}. {snapshot.status_summary}. "
             f"{_phrase_unit_summary(snapshot)} {_tempo_summary(snapshot)} "
             f"Downbeat: {_code(downbeat['reason'])}; Schritt: {_code(downbeat['stage'])}. "
             f"{retry_text}"

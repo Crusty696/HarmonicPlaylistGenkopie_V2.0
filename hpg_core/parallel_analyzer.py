@@ -322,7 +322,7 @@ class ParallelAnalyzer:
                         # beliebig lange laufen — erst wenn laenger als
                         # hang_timeout KEIN einziges Future fertig wird, gelten
                         # die Worker als haengend. Zusaetzlich gedeckelt auf
-                        # config.PARALLEL_HANG_DEADLINE_MAX (~15 min).
+                        # config.PARALLEL_HANG_DEADLINE_MAX (~24.5 min).
                         hang_timeout = min(
                             config.PARALLEL_HANG_DEADLINE_MAX,
                             task_timeout * worker_count + 30,

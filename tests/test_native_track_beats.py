@@ -5,10 +5,32 @@ import numpy as np
 import pytest
 
 from hpg_core import analysis, caching
-from hpg_core.ai_models.native_beat_selection import select_model
+from hpg_core.ai_models.native_beat_selection import (
+    native_track_job_timeout_seconds, select_model,
+)
 from hpg_core.ai_models import native_track_beats as native
 from tests.test_cue_pipeline_integration import pipeline
 from tests.test_neural_anchor_integration import setup_adoption
+
+
+@pytest.mark.parametrize('duration,expected', [
+    (1., 180.), (600., 180.), (3600., 270.), (7200., 420.),
+])
+def test_native_job_timeout_scales_to_reader_limit(duration, expected):
+    assert native_track_job_timeout_seconds(duration) == expected
+
+
+@pytest.mark.parametrize('duration', [0., -1., 7200.1, float('nan'), float('inf')])
+def test_native_job_timeout_rejects_invalid_duration(duration):
+    with pytest.raises(ValueError):
+        native_track_job_timeout_seconds(duration)
+
+
+def test_mp3_reader_provenance_accepts_lossy_duration_and_unknown_pcm_depth():
+    data = snapshot(48.2)
+    data['input_convention'] = 'rekordbox-builtin-mp3-planar-float32'
+    data['reader'].update(backend='rekordbox-builtin-mp3', source_bit_depth=0)
+    native.validate_snapshot(data, duration=48.2)
 
 
 def snapshot(duration=48.):
@@ -83,7 +105,7 @@ def test_native_snapshot_duration_mismatch_uses_analysis_fallback(monkeypatch):
     context = analysis._prepare_native_beats('unused.wav', 48., np.ones(32), 44100)
 
     assert context['accepted'] is False
-    assert context['transient'] is True
+    assert context['transient'] is False
     assert context['analysis'] == dict(
         status='unavailable', reason='native_path_unavailable:ValueError')
     assert context['decision']['reason'] == 'native_path_unavailable:ValueError'

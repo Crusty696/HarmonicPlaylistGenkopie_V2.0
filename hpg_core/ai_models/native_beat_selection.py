@@ -10,6 +10,16 @@ import os
 VERSION = 'rb-7.2.19-mode-selection-v2'
 MAX_NATIVE_BEAT_WINDOW_SECONDS = 1200
 MAX_NATIVE_BEAT_SECONDS = 7200
+MAX_NATIVE_TRACK_JOB_SECONDS = 420
+
+
+def native_track_job_timeout_seconds(duration):
+    """Bound native beat/phrase work by source duration, up to seven minutes."""
+    import math
+    if (type(duration) not in (int, float) or not math.isfinite(duration)
+            or not 0 < duration <= MAX_NATIVE_BEAT_SECONDS):
+        raise ValueError('Invalid native track duration')
+    return min(float(MAX_NATIVE_TRACK_JOB_SECONDS), max(180., 120. + duration / 24.))
 
 
 def maximum_native_beat_rows(frames):
