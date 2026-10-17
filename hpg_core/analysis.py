@@ -3779,8 +3779,10 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 phrase_usage_blocked=phrase_usage_blocked,
                 feature_cache=feature_cache,
                 cue_candidates=phrases,
-                cue_verified_grid=pssi_grid_usable,
-                reanalyze_cue_verified_grid=pssi_grid_usable,
+                cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                   and beatgrid_validation.status == "verified"),
+                reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                             and beatgrid_validation.status == "verified"),
                 cue_source_signature=cue_source_signature,
                 native_phrase_analysis=native_phrase_analysis,
             )
@@ -4408,8 +4410,10 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             phrase_usage_blocked=phrase_usage_blocked,
             feature_cache=feature_cache,
             cue_candidates=phrases,
-            cue_verified_grid=pssi_grid_usable,
-            reanalyze_cue_verified_grid=pssi_grid_usable,
+            cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                               and beatgrid_validation.status == "verified"),
+            reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                         and beatgrid_validation.status == "verified"),
             cue_source_signature=cue_source_signature,
             native_phrase_analysis=native_phrase_analysis,
         )
