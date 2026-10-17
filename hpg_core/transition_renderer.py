@@ -170,9 +170,11 @@ class TransitionClipSpec:
             # Auch model_audio_rotation bleibt Audioherkunft: Sie kann den
             # Beatanker fuer Beat-Alignment liefern, belegt aber keine
             # unabhaengige musikalische Takt-1 und setzt bar_phase nicht frei.
+            # Ein Diagnose-Mismatch sperrt diese Audio-Beatphase nicht: die
+            # Messkonfidenz qualifiziert den Anker; der strikte Renderpfad
+            # misst und korrigiert die Kicklage anschliessend erneut.
             measured_audio = (
                 source == "audio"
-                and status == "verified"
                 and confidence >= DOWNBEAT_RELIABLE_MIN
                 and has_anchor
             )
