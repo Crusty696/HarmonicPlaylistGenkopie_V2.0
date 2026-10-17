@@ -76,9 +76,9 @@ def config():
         umap_norm_before=str(embed_root/'norm_before_umap.onnx'),
         umap_model=str(embed_root/'umap_embedder.onnx'),
         umap_norm_after=str(embed_root/'norm_after_umap.onnx'),
-        # Die beauftragten Zusatzanalysen laufen standardmaessig mit. Sie
-        # bleiben ueber HPG_STEMS=0 bzw. HPG_EMBEDDINGS=0 abschaltbar; ihre
-        # unkalibrierten Werte beeinflussen weiterhin nicht das Playlist-Scoring.
+        # Die beauftragten Zusatzanalysen laufen standardmaessig mit; ihre
+        # unkalibrierten Werte bleiben diagnostisch und veraendern das Scoring
+        # erst bei einer ausdruecklich gesetzten Ablationsgewichtung.
         prefer_directml=True, stems_enabled=os.environ.get('HPG_STEMS', '1') == '1',
         embedding_enabled=os.environ.get('HPG_EMBEDDINGS', '1') == '1')
 
@@ -323,7 +323,12 @@ def transient_failure(track):
 
 
 def _finite(value):
-    return type(value) in (int, float) and math.isfinite(value)
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
 
 
 def _unit(vector):
@@ -433,16 +438,30 @@ def pair_diagnostics(track_a, track_b, start_a, start_b, blend_bars, *,
     bass_swap = None
     if stems_a is not None and stems_b is not None and type(blend_bars) is int and blend_bars > 1:
         candidates = []
-        for bar in sorted({max(1, min(blend_bars-1, round(blend_bars*f))) for f in (.25, .5, .75)}):
+        if blend_bars <= 256:
+            candidate_bars = range(1, blend_bars)
+        else:
+            candidate_bars = sorted({
+                max(1, min(blend_bars-1, round(blend_bars*f)))
+                for f in (.25, .5, .75)
+            })
+        bar_duration = overlap_sec / blend_bars
+        for bar in candidate_bars:
             fraction = bar / blend_bars
             time_a = start_a + overlap_sec*fraction
             time_b = start_b + overlap_sec*fraction*source_b_rate
-            local_a = _local_stems(track_a, time_a, min(end_a, time_a+60./track_a.bpm))
-            local_b = _local_stems(track_b, time_b, min(end_b, time_b+(60./track_a.bpm)*source_b_rate))
+            local_a = _local_stems(track_a, time_a, min(end_a, time_a+bar_duration))
+            local_b = _local_stems(track_b, time_b,
+                                   min(end_b, time_b+bar_duration*source_b_rate))
             if local_a is not None and local_b is not None:
-                candidates.append((local_a['bass']+local_b['bass'], bar, time_a, time_b))
+                bass_a, bass_b = local_a['bass'], local_b['bass']
+                if max(bass_a, bass_b) <= 1e-8:
+                    continue
+                imbalance = abs(bass_a-bass_b) / max(bass_a, bass_b, 1e-8)
+                shared_activity = min(bass_a, bass_b)
+                candidates.append((imbalance, -shared_activity, bar, time_a, time_b))
         if candidates:
-            _, bar, time_a, time_b = min(candidates)
+            _, _, bar, time_a, time_b = min(candidates)
             bass_swap = dict(relative_bar=bar, time_a_s=time_a, time_b_s=time_b,
                              recommendation_only=True, observed_bass_stop=False)
     return dict(stems_a=stems_a, stems_b=stems_b, embedding_cosine=similarity,

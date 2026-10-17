@@ -308,6 +308,9 @@ class TransitionPlan:
     eq_mode: str = "default"
     tempo_ratio: float = 1.0
     target_sr: int = 44100
+    # Optionaler, lokaler Stem-Kandidat als Anteil der Blende (0..1).
+    # Er steuert nur die Preview-Rampe und ist keine kalibrierte Aussage.
+    bass_swap_fraction: float | None = None
 
     @property
     def crossfade_frames(self) -> int:
@@ -2236,6 +2239,21 @@ def transition_type_for_candidate(
     return predicted
 
 
+def _bass_swap_fraction(candidate) -> float | None:
+    """Mappe nur einen gültigen Stem-Kandidaten ins relative Blendenraster."""
+    flags = getattr(candidate, "flags", None)
+    deep = flags.get("deep_features") if type(flags) is dict else None
+    swap = deep.get("bass_swap") if type(deep) is dict else None
+    bars = getattr(candidate, "blend_bars", None)
+    if (type(swap) is not dict or swap.get("recommendation_only") is not True
+            or swap.get("observed_bass_stop") is not False
+            or type(bars) is not int or bars <= 1
+            or type(swap.get("relative_bar")) is not int
+            or not 1 <= swap["relative_bar"] < bars):
+        return None
+    return swap["relative_bar"] / bars
+
+
 def _build_transition_description(
     params: TransitionDescriptionParams,
 ) -> str:
@@ -2717,6 +2735,10 @@ def compute_transition_recommendations(
             transition_type=transition_type,
             eq_mode=transition_type,
             tempo_ratio=tempo_ratio,
+            bass_swap_fraction=(
+                _bass_swap_fraction(aktiv)
+                if transition_type in {"bass_swap", "pro_eq_swap"} else None
+            ),
         )
         recommendations.append(
             TransitionRecommendation(
@@ -3737,6 +3759,10 @@ def _recommendation_snapshot(
         transition_type=transition_type,
         eq_mode=transition_type,
         tempo_ratio=tempo_ratio,
+        bass_swap_fraction=(
+            _bass_swap_fraction(candidate)
+            if transition_type in {"bass_swap", "pro_eq_swap"} else None
+        ),
     )
     score = int(round(metrics.overall_score * 100))
     energy_delta = int(round(float(metrics.energy_delta or 0.0)))

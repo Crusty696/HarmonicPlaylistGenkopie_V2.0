@@ -23,7 +23,16 @@ from .reader_contract import (
 )
 from .native_beat_boundaries import VERSION as BOUNDARY_CONTRACT
 
-CONTRACT = 'hpg-native-track-beats-v16'
+CONTRACT = 'hpg-native-track-beats-v17'
+
+
+def _finite_number(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
 
 
 def enabled():
@@ -68,7 +77,7 @@ def validate_snapshot(value, *, duration):
             or value['input_convention'] not in NATIVE_BEAT_INPUT_CONVENTIONS.values()
             or type(value['source_identity']) is not list or len(value['source_identity']) != 5
             or any(type(v) is not int or v < 0 for v in value['source_identity'])
-            or type(value['bpm']) not in (int, float) or not math.isfinite(value['bpm'])
+            or not _finite_number(value['bpm'])
             or not 55 <= value['bpm'] <= 215 or type(value['grid']) is not list
             or not 4 <= len(value['grid']) <= maximum_native_beat_rows(value['frames'])):
         raise ValueError('Invalid native beat identity/coverage')
@@ -87,7 +96,7 @@ def validate_snapshot(value, *, duration):
     validate_reader(value['reader'], value['frames'], duration, value['input_convention'])
     coverage = value['model_coverage']
     if (type(coverage) is not dict or set(coverage) != {'start_s', 'end_s'}
-            or any(type(x) not in (int, float) or not math.isfinite(x) for x in coverage.values())
+            or any(not _finite_number(x) for x in coverage.values())
             or any(x != round(x * 44100) / 44100 for x in coverage.values())
             or not 0 <= coverage['start_s'] < coverage['end_s'] <= duration
             or (not value['selection']['chunked'] and coverage['end_s']-coverage['start_s'] > 60+1e-6)):
@@ -107,19 +116,16 @@ def validate_snapshot(value, *, duration):
                 or segments[0] != coverage):
             raise ValueError('Invalid segmented model coverage')
         previous_start = -1.
-        previous_end = None
         for segment in segments:
             if (type(segment) is not dict or set(segment) != {'start_s', 'end_s'}
-                    or any(type(x) not in (int, float) or not math.isfinite(x)
+                    or any(not _finite_number(x)
                            for x in segment.values())
                     or any(x != round(x * 44100) / 44100 for x in segment.values())
                     or not 0 <= segment['start_s'] < segment['end_s'] <= duration
                     or segment['end_s'] - segment['start_s'] > 60 + 1e-6
-                    or segment['start_s'] <= previous_start
-                    or previous_end is not None and segment['start_s'] >= previous_end):
+                    or segment['start_s'] <= previous_start):
                 raise ValueError('Invalid segmented model coverage range')
             previous_start = segment['start_s']
-            previous_end = segment['end_s']
     previous = None
     for row in value['grid']:
         if (type(row) is not dict or set(row) != {'pos', 'numBar', 'bpm'}
@@ -140,8 +146,8 @@ def validate_snapshot(value, *, duration):
             raise ValueError('Invalid native model beats')
         for row in value['model_beats']:
             if (type(row) is not list or len(row) != 2
-                    or any(type(x) not in (int, float) or not math.isfinite(x) for x in row)
-                    or not previous < row[0] < duration or row[0] < 0 or row[1] not in (1, 2, 3, 4)):
+                    or any(not _finite_number(x) for x in row)
+                    or not previous < row[0] <= duration or row[0] < 0 or row[1] not in (1, 2, 3, 4)):
                 raise ValueError('Invalid native model beat sequence')
             previous = row[0]
     if value.get('verification') is not None:
@@ -156,10 +162,34 @@ def validate_snapshot(value, *, duration):
         previous = -1.
         for row in verification['beats']:
             if (type(row) is not list or len(row) != 2
-                    or any(type(x) not in (int, float) or not math.isfinite(x) for x in row)
-                    or not previous < row[0] < duration or row[0] < 0 or row[1] not in (1, 2, 3, 4)):
+                    or any(not _finite_number(x) for x in row)
+                    or not previous < row[0] <= duration or row[0] < 0 or row[1] not in (1, 2, 3, 4)):
                 raise ValueError('Invalid native verification sequence')
             previous = row[0]
+        if not value['selection']['chunked']:
+            model_beats = value.get('model_beats')
+            if type(model_beats) is not list:
+                raise ValueError('Model8 verification requires selected model beats')
+            coverage_segments = value.get('model_coverage_segments', [coverage])
+            if any(not any(segment['start_s'] <= row[0] <= segment['end_s']
+                           for segment in coverage_segments)
+                   for row in model_beats):
+                raise ValueError('Model8 beats exceed selected coverage')
+        if (not value['selection']['chunked']
+                and 'model_coverage_segments' in value):
+            model_beats = value['model_beats']
+            coverage_segments = value['model_coverage_segments']
+            for segment in coverage_segments:
+                selected = [row for row in model_beats
+                            if segment['start_s'] <= row[0] <= segment['end_s']]
+                reference = [row for row in verification['beats']
+                             if segment['start_s'] <= row[0] <= segment['end_s']]
+                if len(selected) < 8 or len(selected) != len(reference):
+                    raise ValueError('Ambiguous model8/model7 window coverage')
+                if any(model8[1] != model7[1]
+                       or abs(model8[0] - model7[0]) > .010000001
+                       for model8, model7 in zip(selected, reference)):
+                    raise ValueError('Model8/model7 window phase mismatch')
     if 'audio_alignment' in value:
         from .native_beat_alignment import validate_alignment
         validate_alignment(value, value['audio_alignment'])
@@ -221,7 +251,7 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
         mode = configured_mode()
         request = dict(path=str(source), source_identity=identity, configuration=mode)
         raw = call('native_beat', 'hpg_core.ai_models.native_beat_pipeline_worker', request)
-        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v16'
+        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v17'
                 or raw.get('executable_sha256') != SHA256 or raw.get('tensorflow_sha256') != TF_SHA256
                 or raw.get('model_id') not in MODEL_HASHES
                 or raw.get('model_hashes') != MODEL_HASHES[raw['model_id']]
@@ -243,10 +273,9 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
             model_coverage=raw['model_coverage'])
         if 'model_coverage_segments' in raw:
             result['model_coverage_segments'] = raw['model_coverage_segments']
-        validate_snapshot(result, duration=frames/44100)
         if raw.get('verification') is not None:
             result['verification'] = raw['verification']
-            validate_snapshot(result, duration=frames/44100)
+        validate_snapshot(result, duration=frames/44100)
         return result
     except Exception as error:
         return dict(status='unavailable', reason=f'{type(error).__name__}: {error}')

@@ -25,6 +25,51 @@ _IDENTITY_SIGNATURE = None
 _IDENTITY_DIGEST = None
 
 
+def _finite_number(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
+
+
+def _normalize_grid_origin(times, positions, *, bpm):
+    """Ergänzt Takte vor dem ersten Treffer bis zum nativen Offsetbereich.
+
+    Der native Generator nimmt nur einen gerundeten Startoffset unter einer
+    Beatperiode an. Ein verifiziertes Grid kann wegen Stille, Rundung oder
+    eines späten ersten Treffers davor liegen. Fehlende Ticks werden rückwärts
+    aus derselben Periode und Taktphase abgeleitet; vorhandene Gridpunkte
+    bleiben erhalten.
+    """
+    if (not times or not positions or not _finite_number(bpm) or bpm <= 0
+            or type(times[0]) not in (int, float) or not math.isfinite(times[0])
+            or type(positions[0]) is not int or not 1 <= positions[0] <= 4):
+        return times, positions, 0
+    period = 60.0 / bpm
+    bpm_hundredths = int(math.floor(bpm * 100 + .5))
+    native_period_ms = 6000000.0 / bpm_hundredths
+    prepend_count = max(0, int(math.floor(times[0] / period)))
+    while prepend_count <= 120001:
+        candidate_offset = times[0] - prepend_count * period
+        offset_ms = int(math.floor(candidate_offset * 1000 + .5))
+        if 0 <= offset_ms < native_period_ms:
+            break
+        prepend_count += 1
+    if prepend_count > 120001:
+        return times, positions, 0
+    if prepend_count == 0:
+        return times, positions, 0
+    prefix_times = [times[0] - step * period
+                    for step in range(prepend_count, 0, -1)]
+    if prefix_times and -.006 <= prefix_times[0] < 0:
+        prefix_times[0] = 0.0
+    prefix_positions = [(positions[0] - step - 1) % 4 + 1
+                        for step in range(prepend_count, 0, -1)]
+    return prefix_times + times, prefix_positions + positions, prepend_count
+
+
 def enabled():
     """Nativer Pfad für die gepinnte EXE; explizit mit 0 abschaltbar."""
     return os.environ.get('HPG_NATIVE_PHRASE', '1') == '1'
@@ -81,12 +126,12 @@ def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
         return unavailable('unverified_input_grid')
     if (type(beat_times) is not list or type(beat_positions) is not list
             or len(beat_times) != len(beat_positions) or len(beat_times) < 32
-            or any(type(x) not in (int, float) or not math.isfinite(x) for x in beat_times)
+            or any(not _finite_number(x) for x in beat_times)
             or any(type(x) is not int or not 1 <= x <= 4 for x in beat_positions)
-            or type(bpm) not in (int, float) or not math.isfinite(bpm) or not 0 < bpm <= 1000
-            or type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0
+            or not _finite_number(bpm) or not 0 < bpm <= 1000
+            or not _finite_number(duration) or duration <= 0
             or type(key_index) is not int or not 0 <= key_index < 24
-            or type(timeout_s) not in (int, float) or not math.isfinite(timeout_s)
+            or not _finite_number(timeout_s)
             or not 0 < timeout_s <= MAX_NATIVE_TRACK_JOB_SECONDS):
         return unavailable('invalid_input_contract')
     beat_period = 60.0 / bpm
@@ -178,7 +223,7 @@ def analyze_track_phrases(path, **parameters):
     try:
         return _analyze_track_phrases(path, **parameters)
     except Exception as error:
-        return dict(version=4, status='unavailable', reason=type(error).__name__,
+        return dict(version=5, status='unavailable', reason=type(error).__name__,
             source='rekordbox_native_phrase_generator', contract=CONTRACT_VERSION,
             executable_sha256=SHA256, phrases=[], input_grid={},
             terminal_boundary_source='native_terminal_beat', key_source='native_unknown_fallback_zero',
@@ -197,7 +242,7 @@ def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
     key_index = native_key_index(key_note, key_mode)
     key_source = ('hpg_key_native_table' if key_index is not None
                   else 'native_unknown_fallback_zero')
-    snapshot = dict(version=4, status='skipped', reason='imported_phrases_preferred',
+    snapshot = dict(version=5, status='skipped', reason='imported_phrases_preferred',
         source='rekordbox_native_phrase_generator', contract=CONTRACT_VERSION,
         executable_sha256=SHA256, phrases=[], input_grid={},
         terminal_boundary_source='native_terminal_beat', key_source=key_source,
@@ -250,6 +295,8 @@ def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
         # Unbekannte Quellen duerfen nicht still als HPG-Audio-Raster gelten.
         snapshot.update(status='unavailable', reason='unsupported_grid_source')
         return snapshot
+    source_beat_count = len(times)
+    times, positions, origin_extension_beats = _normalize_grid_origin(times, positions, bpm=bpm)
     from .cue_service import session
     with session() as client:
         result = generate_phrases(path, beat_times=times, beat_positions=positions,
@@ -262,7 +309,9 @@ def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
         snapshot.update(phrases=result['phrases'], input_grid=dict(
             result['raw_result']['input_grid'], basis=basis,
             beat_count=len(times), first_tick_s=times[0], last_tick_s=times[-1],
-            terminal_beat=result['terminal_beat']),
+            terminal_beat=result['terminal_beat'],
+            origin_extension_beats=origin_extension_beats,
+            source_beat_count=source_beat_count),
             reader_backend=result['reader_backend'])
     try:
         validate_snapshot(snapshot, duration=duration, grid_verified=grid_usable,
@@ -279,7 +328,7 @@ def validate_snapshot(value, *, duration, grid_verified, usage_blocked):
     fields = {'version', 'status', 'reason', 'source', 'contract', 'executable_sha256',
               'phrases', 'input_grid', 'terminal_boundary_source', 'key_source', 'reader_backend'}
     if (type(value) is not dict or set(value) != fields
-            or type(value['version']) is not int or value['version'] != 4
+            or type(value['version']) is not int or value['version'] != 5
             or value['source'] != 'rekordbox_native_phrase_generator'
             or value['contract'] != CONTRACT_VERSION or value['executable_sha256'] != SHA256
             or value['terminal_boundary_source'] != 'native_terminal_beat'
@@ -298,19 +347,23 @@ def validate_snapshot(value, *, duration, grid_verified, usage_blocked):
     from ..rekordbox_phrases import phrase_label
     phrases, grid = value['phrases'], value['input_grid']
     keys = {'bpm_hundredths', 'offset_ms', 'bar_position', 'key_index', 'basis',
-            'beat_count', 'first_tick_s', 'last_tick_s', 'terminal_beat'}
+            'beat_count', 'first_tick_s', 'last_tick_s', 'terminal_beat',
+            'origin_extension_beats', 'source_beat_count'}
     if (set(grid) != keys or grid['basis'] not in
             ('verified_rekordbox_grid', 'hpg_verified_constant_grid',
              'native_verified_audio_grid')
             or any(type(grid[key]) is not int for key in
-                ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index', 'beat_count', 'terminal_beat'))
+                ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index', 'beat_count', 'terminal_beat',
+                 'origin_extension_beats', 'source_beat_count'))
             or not 1 <= grid['bpm_hundredths'] <= 100000
             or not 0 <= grid['offset_ms'] <= 6000000 / grid['bpm_hundredths']
             or not 1 <= grid['bar_position'] <= 4 or not 0 <= grid['key_index'] < 24
             or (value['key_source'] == 'native_unknown_fallback_zero' and grid['key_index'] != 0)
             or not 32 <= grid['beat_count'] <= 120001
+            or not 32 <= grid['source_beat_count'] <= grid['beat_count']
+            or grid['origin_extension_beats'] != grid['beat_count'] - grid['source_beat_count']
             or not 1 < grid['terminal_beat'] <= grid['beat_count']
-            or any(type(grid[key]) not in (int, float) or not math.isfinite(grid[key])
+            or any(not _finite_number(grid[key])
                    for key in ('first_tick_s', 'last_tick_s'))
             or not 0 <= grid['first_tick_s'] < grid['last_tick_s'] <= duration
             or not 1 <= len(phrases) <= 65535):
@@ -322,7 +375,7 @@ def validate_snapshot(value, *, duration, grid_verified, usage_blocked):
         raise ValueError('Native phrase grid geometry mismatch')
     for phrase in phrases:
         if (type(phrase) is not dict or set(phrase) != {'start_s', 'end_s', 'kind', 'mood', 'fill', 'label'}
-                or any(type(phrase[k]) not in (int, float) or not math.isfinite(phrase[k]) for k in ('start_s', 'end_s'))
+                or any(not _finite_number(phrase[k]) for k in ('start_s', 'end_s'))
                 or not 0 <= phrase['start_s'] < phrase['end_s'] <= duration
                 or (previous is not None and phrase['start_s'] != previous)
                 or type(phrase['kind']) is not int or not 1 <= phrase['kind'] <= 10

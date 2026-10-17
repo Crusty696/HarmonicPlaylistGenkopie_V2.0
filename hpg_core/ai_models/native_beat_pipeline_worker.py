@@ -74,14 +74,12 @@ def _join_overlapping_rows(previous_rows, local_rows, start_frame, previous_end_
     if grid_rows:
         current = [dict(row, pos=row['pos'] + start_frame) for row in local_rows]
         time = lambda row: row['pos'] / _SAMPLE_RATE
-        position = lambda row: row['pos']
         phase = lambda row: row['numBar']
         tolerance = _BEAT_PHASE_TOLERANCE_SECONDS
     else:
         current = [[row[0] + start_s, row[1]] for row in local_rows]
-        time = lambda row: row['pos'] / _SAMPLE_RATE if grid_rows else row[0]
-        position = lambda row: row['pos'] if grid_rows else row[0]
-        phase = lambda row: row['numBar'] if grid_rows else row[1]
+        time = lambda row: row[0]
+        phase = lambda row: row[1]
         # Native model activations use a 100-Hz time grid; this tolerance only
         # deduplicates the same observed activation. Final grid stays at 6 ms.
         tolerance = _MODEL_TIME_QUANTUM_SECONDS + 1e-9
@@ -97,26 +95,33 @@ def _join_overlapping_rows(previous_rows, local_rows, start_frame, previous_end_
     return previous_rows + [row for row in current if time(row) >= previous_end_s]
 
 
-def _join_model8_coverage(previous_rows, local_rows, source_start_frame,
-                          overlap_start_frame, overlap_end_frame):
-    """Merges model8 observations only when overlapping coverage proves phase."""
-    overlap_start = overlap_start_frame / _SAMPLE_RATE
-    overlap_end = overlap_end_frame / _SAMPLE_RATE
-    if overlap_end <= overlap_start:
-        raise NativeContractError('Disconnected model8 coverage cannot establish bar phase')
-    source_offset = source_start_frame / _SAMPLE_RATE
-    current = [[row[0] + source_offset, row[1]] for row in local_rows]
-    left = [row for row in previous_rows if overlap_start <= row[0] < overlap_end]
-    right = [row for row in current if overlap_start <= row[0] < overlap_end]
-    if len(left) < 8 or len(left) != len(right):
-        raise NativeContractError('Ambiguous model8 overlap coverage')
-    for old, new in zip(left, right):
-        if (old[1] != new[1]
-                or abs(old[0] - new[0]) > _MODEL_TIME_QUANTUM_SECONDS + 1e-9):
-            raise NativeContractError('Model8 overlap bar phase mismatch')
-    # Keep both windows' non-overlap evidence, deduplicate only matched events.
-    return previous_rows + [row for row in current
-                            if row[0] < overlap_start or row[0] >= overlap_end]
+def _verify_model8_window(model8_rows, model7_rows, start_s, end_s):
+    """Bestätigt das native 60-s-Modell8-Fenster unabhängig mit Modell7."""
+    # Der native Boundary-Vertrag erlaubt Aktivierungen exakt am Fensterende.
+    selected = [row for row in model8_rows if start_s <= row[0] <= end_s]
+    reference = [row for row in model7_rows if start_s <= row[0] <= end_s]
+    if len(selected) < 8 or len(selected) != len(reference):
+        raise NativeContractError('Ambiguous model8/model7 window coverage')
+    for model8, model7 in zip(selected, reference):
+        if (model8[1] != model7[1]
+                or abs(model8[0] - model7[0]) > _MODEL_TIME_QUANTUM_SECONDS + 1e-9):
+            raise NativeContractError('Model8/model7 window phase mismatch')
+
+
+def _merge_model8_rows(previous_rows, local_rows, source_start_frame):
+    """Vereinigt verifizierte, auch getrennte Modell8-Fenster ohne Doppelbeats."""
+    offset = source_start_frame / _SAMPLE_RATE
+    merged = sorted(previous_rows + [[row[0] + offset, row[1]] for row in local_rows],
+                    key=lambda row: row[0])
+    result = []
+    for row in merged:
+        if result and row[0] - result[-1][0] <= _MODEL_TIME_QUANTUM_SECONDS + 1e-9:
+            if (row[1] != result[-1][1]
+                    or row[0] - result[-1][0] < -1e-9):
+                raise NativeContractError('Conflicting model8 window events')
+            continue
+        result.append(row)
+    return result
 
 
 def _constant_grid_bpm(grid):
@@ -141,7 +146,6 @@ def _constant_grid_bpm(grid):
 def _segmented_pipeline(image, reader, selection, first_processor=None):
     """Process only long sources in bounded overlapping native windows."""
     from .native_beat_boundaries import run as correct_boundaries
-    from .native_grid_processor import NativeGridProcessor
 
     ranges = _window_ranges(reader.frames)
     merged_grid = []
@@ -172,21 +176,11 @@ def _segmented_pipeline(image, reader, selection, first_processor=None):
                 merged_model_beats = _join_overlapping_rows(
                     merged_model_beats, model_rows, start, previous_end,
                     grid_rows=False)
-            else:
-                previous_coverage = selected_coverage_segments[-1]
-                overlap_start_frame = max(
-                    round(previous_coverage['start_s'] * _SAMPLE_RATE),
-                    coverage_frame_range[0])
-                overlap_end_frame = min(
-                    round(previous_coverage['end_s'] * _SAMPLE_RATE),
-                    coverage_frame_range[1])
-                merged_model_beats = _join_model8_coverage(
-                    merged_model_beats, model_rows, start,
-                    overlap_start_frame, overlap_end_frame)
         else:
             merged_grid = [dict(row) for row in grid]
-            merged_model_beats = [
-                [row[0], row[1]] for row in model_rows]
+            if selection['chunked']:
+                merged_model_beats = [
+                    [row[0], row[1]] for row in model_rows]
         if not selection['chunked']:
             # Sekunden bleiben abwaertskompatibel; die Addition geschieht in
             # ganzzahligen Quellframes, damit Segmentgrenzen exakt gebunden sind.
@@ -208,12 +202,17 @@ def _segmented_pipeline(image, reader, selection, first_processor=None):
                     previous_end, grid_rows=False)
             else:
                 merged_verification_beats = [list(row) for row in verification_rows]
+            _verify_model8_window(model_rows, verification_rows,
+                                  coverage['start_s'], coverage['end_s'])
+            merged_model_beats = _merge_model8_rows(
+                merged_model_beats, model_rows, start)
 
     merged_grid.sort(key=lambda row: row['pos'])
     if any(right['numBar'] != left['numBar'] % 4 + 1
            for left, right in zip(merged_grid, merged_grid[1:])):
         raise NativeContractError('Stitched native bar positions are discontinuous')
     bpm = _constant_grid_bpm(merged_grid)
+    selected_coverage_segments.sort(key=lambda item: item['start_s'])
     model_coverage = (dict(start_s=0., end_s=(reader.frames - 1) / _SAMPLE_RATE)
                       if selection['chunked'] else selected_coverage_segments[0])
     verification = None
@@ -353,7 +352,7 @@ def _handle(payload):
     reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v16',
+    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v17',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
         model_hashes=hashes, verified=False, beats=rows, grid=grid,
         bpm=final_bpm if segmented is not None else final_bpm/100., selection=selection, reader=reader_metadata,

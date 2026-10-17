@@ -301,7 +301,13 @@ logger = logging.getLogger(__name__)
 # Taktlabelsprung getrennte Modellfenster gesammelt; betroffene abgeleitete
 # Anker-/Phrasen-/Mixwerte werden neu berechnet.
 # v162: Sektionsmerkmale langer Tracks werden auch aus dem analysierten Tail-Audio ermittelt.
-CACHE_VERSION = 162
+# v163: Unbenannte Rekordbox-Marker bleiben Mixkandidaten mit eigener
+# Provenienz und eigener Rangklasse; alte Auto-Cue-Zuordnungen verfallen.
+# v164: Modell8-Langtrack-Coverage darf getrennte 60-s-Fenster abbilden;
+# jedes Fenster wird einzeln gegen die durchgehende Modell7-Folge bestätigt.
+# v165: Native Phrasen nutzen bei spaetem erstem Grid-Treffer einen
+# phasenerhaltenden Eingabeoffset innerhalb der ersten Beatperiode.
+CACHE_VERSION = 165
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

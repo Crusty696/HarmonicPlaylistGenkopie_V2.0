@@ -7,7 +7,6 @@ auszuführen.
 Installationsdateien und fremde Prozesse werden niemals verändert.
 """
 import ctypes as ct
-import math
 import numpy as np
 
 from .native_phrase_worker import EXE, NativeContractError
@@ -189,15 +188,16 @@ def run(image, reader, selection, window_start):
         if errors:
             raise NativeContractError('; '.join(errors))
         result = _read_json(ct.addressof(output))
-        if (not isinstance(result, dict) or not isinstance(result.get('beatList'), list)
+        if (type(result) is not dict or type(result.get('beatList')) is not list
                 or not 4 <= len(result['beatList']) <= 6000
-                or not isinstance(result.get('bpm'), (int, float))
-                or not math.isfinite(result['bpm']) or not 0 < result['bpm'] <= 100000):
+                or type(result.get('bpm')) not in (int, float)
+                or not 0 < result['bpm'] <= 100000):
             raise NativeContractError('Invalid boundary wrapper output')
         start = 0 if selection['chunked'] else min(max(0, window_start),
                          max(0, reader.frames-1-60*44100))
-        coverage = dict(start_s=start/44100, end_s=(reader.frames-1)/44100 if selection['chunked']
-                        else min(reader.frames-1, start+60*44100)/44100)
+        coverage_end = (reader.frames-1 if selection['chunked']
+                        else min(reader.frames, start+60*44100))
+        coverage = dict(start_s=start/44100, end_s=coverage_end/44100)
         return result['beatList'], result['bpm'], [
             [seconds + start/44100, bar] for seconds, bar in raw_rows], coverage
     finally:

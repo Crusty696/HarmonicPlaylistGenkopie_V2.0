@@ -6,6 +6,26 @@ from .native_phrase_worker import NativeContractError
 from .native_grid_types import Triple
 
 
+def _validated_refinement_rows(grid, frames):
+    """Prüfe native Beatzeilen vor der verlustbehafteten ctypes-Konvertierung."""
+    if (type(grid) is not list or not 2 <= len(grid) <= 6000
+            or type(frames) is not int or not 1 <= frames <= 2**31 - 1):
+        raise NativeContractError('Invalid native refinement grid dimensions')
+    int32_min, int32_max = -(2**31), 2**31 - 1
+    rows = []
+    for row in grid:
+        if type(row) is not dict or not {'pos', 'numBar', 'bpm'} <= row.keys():
+            raise NativeContractError('Invalid native refinement row')
+        values = (row['pos'], row['numBar'], row['bpm'])
+        if (any(type(value) is not int or not int32_min <= value <= int32_max
+                for value in values)
+                or not 0 <= row['pos'] < frames or not 1 <= row['numBar'] <= 4
+                or not 0 < row['bpm'] <= 100000):
+            raise NativeContractError('Native refinement row exceeds its ABI')
+        rows.append(Triple(*values))
+    return rows
+
+
 class NativeGridProcessor:
     def __init__(self, image, reader):
         frames = reader.frames
@@ -46,6 +66,7 @@ class NativeGridProcessor:
                 raise NativeContractError('Native grid feed rejected')
         self.storage = storage
         self.image = image
+        self.frames = frames
         self.diagnostic_dir = diagnostic_dir
         self.folder_callback = research_folder
         self.initial_bpm = image.function(0x11db6c0, ct.c_int32, ct.c_void_p)(storage)
@@ -57,8 +78,11 @@ class NativeGridProcessor:
 
     def refine(self, grid, bpm, selected):
         image, storage = self.image, self.storage
+        rows = _validated_refinement_rows(grid, self.frames)
+        if type(bpm) is not int or not 0 < bpm <= 100000 or type(selected) is not bool:
+            raise NativeContractError('Invalid native refinement parameters')
         image.function(0x11db7a0, None, ct.c_void_p, ct.c_ubyte)(storage, selected)
-        triples = (Triple * len(grid))(*(Triple(r['pos'], r['numBar'], r['bpm']) for r in grid))
+        triples = (Triple * len(rows))(*rows)
         refine = image.function(0x11db800, ct.c_ubyte, ct.c_void_p, ct.c_int32,
             ct.c_int32, ct.c_int32, ct.POINTER(Triple), ct.c_int32, ct.c_int32)
         if not refine(storage, 0, self.initial_count, self.initial_bpm,

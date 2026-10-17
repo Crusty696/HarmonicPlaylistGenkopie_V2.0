@@ -108,7 +108,12 @@ def _load(value):
 
 
 def _finite(value):
-    return type(value) in (float, int) and math.isfinite(value)
+    if type(value) not in (float, int):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
 
 
 def _pack(header, data):

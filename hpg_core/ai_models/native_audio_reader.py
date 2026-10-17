@@ -18,7 +18,7 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v29'
+CONTRACT = 'rb-7.2.19-file-reader-v30'
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {
@@ -31,8 +31,8 @@ NATIVE_REKORDBOX_FACTORIES = {
     '.fla': 0x2cdd6e0,
     '.m4a': 0x2cdd760,
     '.mp4': 0x2cdd760,
-    '.aac': 0x2cdd7f0,
 }
+# Für AAC fehlt ein Rohbeleg zu Factory-Callsite und ABI; es bleibt beim HPG-Decoder.
 NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset(NATIVE_REKORDBOX_FACTORIES)
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
 MPG123_ENC_SIGNED_16 = 0xD0
@@ -45,6 +45,15 @@ _MPG123_VERIFIED_FILE = None
 _READER_IMAGE_LOCK = threading.Lock()
 _READER_IMAGE = None
 _READER_IMAGE_ERROR = None
+
+
+def _finite_number(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
 
 
 def _ceil_resampled_frames(source_frames, source_rate):
@@ -182,12 +191,9 @@ def bind_reader_imports(image):
     # Manuell gemappte EXE besitzt keine registrierte statische PE-TLS.
     initialize = image.kernel.InitializeCriticalSection
     initialize.argtypes, initialize.restype = [ct.c_void_p], None
-    # AAC-Konstruktor RVA2d0ee30 betritt die globale Sperre 0x1461a5670
-    # (Image-RVA 0x61a5670), bevor er seinen Decoder-Singleton erzeugt.
-    # Die EXE-Startupinitialisierung wurde im isolierten Readerprozess nicht
-    # ausgeführt; die private Sperre muss daher wie die Resampler-Sperren
-    # genau einmal vor dem ersten nativen Factory-Aufruf angelegt werden.
-    for rva in (0x61ac388, 0x61ac1c8, 0x61a5670):
+    # Die AAC-Factory ist mangels ABI-Beleg nicht angebunden; nur die beiden
+    # belegten Resampler-Sperren werden für den unterstützten Reader benötigt.
+    for rva in (0x61ac388, 0x61ac1c8):
         initialize(image.base + rva)
     for rva in (0x61ac1c0, 0x61ac590):
         ct.c_int32.from_address(image.base + rva).value = -(2**31)
@@ -231,15 +237,18 @@ class NativeAudioReader:
         self._audioread_state = None
         if type(use_rekordbox) is not bool:
             raise NativeContractError('Invalid native reader selection')
-        if (type(max_seconds) not in (int, float) or not math.isfinite(max_seconds)
+        if (not _finite_number(max_seconds)
                 or not 0 < max_seconds <= MAX_SECONDS):
             raise NativeContractError('Invalid native reader duration limit')
         self.max_seconds = float(max_seconds)
-        if (type(start_seconds) not in (int, float) or not math.isfinite(start_seconds)
+        if (not _finite_number(start_seconds)
                 or start_seconds < 0 or start_seconds + self.max_seconds > MAX_SECONDS):
             raise NativeContractError('Invalid native reader start/duration')
         self.start_seconds = float(start_seconds)
-        if self.path.stat().st_size > 2**31 - 1:
+        # Die native Route behält ihre konservative Dateigrenze. Der blockweise
+        # HPG-Fallback nutzt Python-/Decoderlängen und bleibt durch Quelldauer
+        # und Frameverträge separat begrenzt.
+        if use_rekordbox and self.path.stat().st_size > 2**31 - 1:
             raise NativeContractError('Native reader file size exceeded')
         self.owner = ct.create_string_buffer(0x28)
         suffix = self.path.suffix.lower()
@@ -274,7 +283,6 @@ class NativeAudioReader:
             '.fla': 'rekordbox-builtin-flac',
             '.m4a': 'rekordbox-builtin-mp4',
             '.mp4': 'rekordbox-builtin-mp4',
-            '.aac': 'rekordbox-builtin-aac',
         }.get(suffix, 'rekordbox-builtin')
         image.function(0x1104730, ct.c_void_p, ct.c_void_p)(self.owner)
         name = ct.c_void_p()
@@ -1146,10 +1154,10 @@ class NativeAudioStream:
         if type(use_rekordbox) is not bool:
             raise NativeContractError('Invalid native reader selection')
         if (duration is not None
-                and (type(duration) not in (int, float) or not math.isfinite(duration)
+                and (not _finite_number(duration)
                      or duration <= 0)):
             raise NativeContractError('Invalid audio-reader duration')
-        if (type(offset) not in (int, float) or not math.isfinite(offset)
+        if (not _finite_number(offset)
                 or offset < 0):
             raise NativeContractError('Invalid audio-reader offset')
         remaining = MAX_SECONDS - float(offset)
@@ -1166,7 +1174,7 @@ class NativeAudioStream:
             except Exception:
                 self.image = None
         elif use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS:
-            optional_codec = suffix in ('.flac', '.fla', '.m4a', '.mp4', '.aac')
+            optional_codec = suffix in ('.flac', '.fla', '.m4a', '.mp4')
             channels = _source_channel_count(path)
             if optional_codec and channels not in (None, 1, 2):
                 # Bekannte Mehrkanalquellen direkt im HPG-Reader downmixen;

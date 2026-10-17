@@ -37,7 +37,8 @@ CUE_IN_PATTERN = re.compile(r"\b(MIX[- ]?IN|IN|START)\b")
 CUE_OUT_PATTERN = re.compile(r"\b(MIX[- ]?OUT|OUT|OUTRO|END)\b")
 
 SCHEMA_PRIORITAET = (
-    "benannter_cue", "pssi_phrase", "auto_cue", "analyzer", "native_phrase", "sektion", "energie_neuheit",
+    "benannter_cue", "pssi_phrase", "auto_cue", "analyzer", "native_phrase", "sektion",
+    "energie_neuheit", "unbenannter_cue",
 )
 
 PROVENANCE_JE_SCHEMA = {
@@ -45,6 +46,7 @@ PROVENANCE_JE_SCHEMA = {
     "pssi_phrase": "rekordbox_pssi", "analyzer": "hpg_analyzer",
     "sektion": "hpg_analyzer", "energie_neuheit": "hpg_analyzer",
     "native_phrase": "rekordbox_native_phrase_generator",
+    "unbenannter_cue": "rekordbox_unnamed_cue",
 }
 
 
@@ -273,8 +275,12 @@ def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict
             rohe["out"].append((c["t"], "benannter_cue", True))
         elif c["provenance"] == "manual":
             beide.append((c["t"], "benannter_cue", False))
-        else:
+        elif c["provenance"] == "auto":
             beide.append((c["t"], "auto_cue", False))
+        elif c["provenance"] == "leer":
+            # Unbenannte Marker bleiben Kandidaten, erhalten aber weder
+            # Auto-Cue-Rang noch die manuelle IN-/OUT-Interpretation.
+            beide.append((c["t"], "unbenannter_cue", False))
     for p in phrases:
         beide.append((float(p["start_s"]), "pssi_phrase", False))
     vorher = None

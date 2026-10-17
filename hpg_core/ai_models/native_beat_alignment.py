@@ -4,6 +4,15 @@ import math
 from ..downbeat import EXACT_BEAT_SYNC_TOLERANCE_SECONDS, BEATGRID_MIN_FOLD_LOCK
 
 
+def _finite_number(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
+
+
 def stable_model_window(native, start, width):
     """Fenster vor der Audioprüfung auswählen, ohne deren Phasenfehler zu kennen.
 
@@ -81,7 +90,7 @@ def validate_alignment(native, alignment):
     shift = alignment['offset_seconds']
     period = 60. / native['bpm']
     tolerance = EXACT_BEAT_SYNC_TOLERANCE_SECONDS
-    if (type(shift) not in (int, float) or not math.isfinite(shift)
+    if (not _finite_number(shift)
             or not tolerance < abs(shift) < period / 4
             or native['first_downbeat'] + shift < 0):
         raise ValueError('Invalid native phase correction')
@@ -96,7 +105,7 @@ def validate_alignment(native, alignment):
                     'phase_error_ms', 'reason', 'signed_phase_error_ms'}
             if type(row) is not dict or set(row) != keys or row['reason'] != 'measured':
                 raise ValueError('Invalid native audio evidence')
-            if any(type(row[k]) not in (int, float) or not math.isfinite(row[k])
+            if any(not _finite_number(row[k])
                    for k in keys - {'reason'}):
                 raise ValueError('Nonfinite native audio evidence')
             start, width = row['offset_seconds'], row['duration_seconds']

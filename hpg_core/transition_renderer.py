@@ -75,6 +75,7 @@ class EqCrossfadeConfig:
     bass_cutoff_hz: float
     transition_type: str
     bpm_a: float = 120.0  # AUDIT-FIX R-04: fuer beat-synchrone echo_out-Delays
+    bass_swap_fraction: float | None = None
 
 
 @dataclass
@@ -134,6 +135,8 @@ class TransitionClipSpec:
     # des Renderers. 0.0 = nicht gemessen (Sentinel) -> RMS-Fallback.
     lufs_a: float = 0.0
     lufs_b: float = 0.0
+    # Optionaler Stem-Kandidat aus TransitionPlan; fehlend = Mittelpunkt.
+    bass_swap_fraction: float | None = None
 
     @classmethod
     def from_plan(cls, plan, from_track, to_track):
@@ -222,6 +225,7 @@ class TransitionClipSpec:
             bpm_a=bpm_a,
             bpm_b=bpm_b,
             tempo_ratio=tempo_ratio,
+            bass_swap_fraction=getattr(plan, "bass_swap_fraction", None),
             first_downbeat_a=usable_downbeat(from_track) or 0.0,
             first_downbeat_b=usable_downbeat(to_track) or 0.0,
             downbeat_reliable_a=downbeat_a,
@@ -338,6 +342,14 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(
                 "tempo_ratio widerspricht den BPM-Werten des Rendervertrags"
             )
+
+    if spec.bass_swap_fraction is not None:
+        value = spec.bass_swap_fraction
+        if (isinstance(value, bool) or not isinstance(value, numbers.Real)
+                or not math.isfinite(float(value)) or not 0.0 < float(value) < 1.0):
+            raise ValueError("bass_swap_fraction muss innerhalb der Blende liegen")
+        if spec.transition_type not in {"bass_swap", "pro_eq_swap"}:
+            raise ValueError("bass_swap_fraction erfordert bass_swap oder pro_eq_swap")
 
     cutoff = spec.bass_cutoff_hz
     if isinstance(cutoff, bool) or not isinstance(cutoff, numbers.Real):
@@ -604,6 +616,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         bass_cutoff_hz=spec.bass_cutoff_hz,
         transition_type=spec.transition_type,
         bpm_a=float(spec.bpm_a or 120.0),
+        bass_swap_fraction=spec.bass_swap_fraction,
     )
     part_cf   = _apply_eq_crossfade(a_cf, b_cf, config)
     part_post = seg_b[cf_frames:]              # Nur Track B nach dem Mix
@@ -1395,7 +1408,10 @@ def _apply_eq_crossfade(
 
         # M6-Fix: echter Bass-Handover — harter Swap am Crossfade-Mittelpunkt
         # mit kurzer 50ms-Rampe gegen Klicks.
-        half = config.cf_frames // 2
+        half = (int(round(config.bass_swap_fraction * config.cf_frames))
+                if config.bass_swap_fraction is not None
+                else config.cf_frames // 2)
+        half = min(max(0, half), config.cf_frames - 1)
         ramp = max(1, int(0.05 * config.sr))
         ramp_end = min(half + ramp, config.cf_frames)
         n_ramp = ramp_end - half
@@ -1442,7 +1458,10 @@ def _apply_eq_crossfade(
 
         # Envelopes
         # Lows (Bass-Swap auf der Haelfte mit 50ms Rampe)
-        half = config.cf_frames // 2
+        half = (int(round(config.bass_swap_fraction * config.cf_frames))
+                if config.bass_swap_fraction is not None
+                else config.cf_frames // 2)
+        half = min(max(0, half), config.cf_frames - 1)
         ramp = max(1, int(0.05 * config.sr))
         ramp_end = min(half + ramp, config.cf_frames)
         n_ramp = ramp_end - half

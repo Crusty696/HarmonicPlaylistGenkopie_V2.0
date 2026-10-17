@@ -17,7 +17,7 @@ from .transition_renderer import TransitionClipSpec, SUPPORTED_TRANSITION_TYPES
 
 SOURCE_MANIFEST_NAME = "hearing_source_manifest.json"
 SOURCE_FORMAT = "hpg_hearing_source_refs"
-SOURCE_VERSION = 2
+SOURCE_VERSION = 3
 # Explizites v1-Schema: neue Rendererfelder duerfen alte Referenzen nicht umdeuten.
 _STRING_FIELDS = frozenset({
     "track_a_path", "track_b_path", "transition_type", "beatgrid_status_a", "beatgrid_status_b",
@@ -34,6 +34,7 @@ _NUMBER_FIELDS = frozenset({
 })
 SPEC_V1_FIELDS = _STRING_FIELDS | _BOOL_FIELDS | _NUMBER_FIELDS | {"target_sr", "tempo_ratio"}
 SPEC_V2_FIELDS = SPEC_V1_FIELDS | {'phase_method_a', 'phase_method_b'}
+SPEC_V3_FIELDS = SPEC_V2_FIELDS | {'bass_swap_fraction'}
 _MANIFEST_KEYS = {
     "format", "format_version", "mode", "status", "source_roots", "specs", "sources", "immutable_metadata",
 }
@@ -184,6 +185,25 @@ def validate_spec_v2(spec: dict) -> dict:
     return spec
 
 
+def validate_spec_v3(spec: dict) -> dict:
+    """Validate the optional stem-derived bass handover in a new source set."""
+    _exact(spec, SPEC_V3_FIELDS, 'TransitionClipSpec v3')
+    validate_spec_v2({key: value for key, value in spec.items() if key in SPEC_V2_FIELDS})
+    value = spec['bass_swap_fraction']
+    if value is not None:
+        if spec['transition_type'] not in ('bass_swap', 'pro_eq_swap'):
+            raise SourceValidationError('bass_swap_fraction erfordert einen EQ-Basswechsel')
+        if type(value) not in (int, float):
+            raise SourceValidationError('bass_swap_fraction muss Zahl oder null sein')
+        try:
+            finite = math.isfinite(value)
+        except (OverflowError, ValueError):
+            finite = False
+        if not finite or not 0 < value < 1:
+            raise SourceValidationError('bass_swap_fraction muss innerhalb der Blende liegen')
+    return spec
+
+
 def _virtual_path(value: str) -> str:
     if (type(value) is not str or "\\" in value or ":" in value or "\0" in value
             or value != value.strip()):
@@ -222,7 +242,7 @@ class SourceRenderSink:
                 raise SourceValidationError("Vorheriger Quellfehler; gesamter Satz wird abgebrochen")
             if not isinstance(spec, TransitionClipSpec):
                 raise SourceValidationError("TransitionClipSpec erforderlich")
-            payload = validate_spec_v2(asdict(spec))
+            payload = validate_spec_v3(asdict(spec))
             target = Path(target)
             if ".." in target.parts:
                 raise SourceValidationError("Clip-Ziel enthaelt Traversal")
@@ -545,7 +565,7 @@ def _validate_manifest(root: Path, manifest: dict, *, with_manifest: bool,
                        verify_source_contents: bool = True) -> SourceSession:
     _exact(manifest, _MANIFEST_KEYS, "Quellmanifest")
     if (manifest["format"] != SOURCE_FORMAT or type(manifest["format_version"]) is not int
-            or manifest["format_version"] not in (1, SOURCE_VERSION) or manifest["status"] != "prepared"
+            or manifest["format_version"] not in (1, 2, SOURCE_VERSION) or manifest["status"] != "prepared"
             or type(manifest["mode"]) is not str or manifest["mode"] not in _MODE_FILES):
         raise SourceValidationError("Unbekannter Quellmanifestvertrag oder Status")
     mode = manifest["mode"]
@@ -569,7 +589,12 @@ def _validate_manifest(root: Path, manifest: dict, *, with_manifest: bool,
     referenced = set()
     for ref, spec in specs.items():
         _virtual_path(ref)
-        (validate_spec_v1 if manifest['format_version'] == 1 else validate_spec_v2)(spec)
+        spec_validator = {
+            1: validate_spec_v1,
+            2: validate_spec_v2,
+            SOURCE_VERSION: validate_spec_v3,
+        }[manifest['format_version']]
+        spec_validator(spec)
         referenced.update((spec["track_a_path"], spec["track_b_path"]))
     if referenced != set(sources):
         raise SourceValidationError("Spec-Pfade und Quellen sind nicht exakt 1:1")
