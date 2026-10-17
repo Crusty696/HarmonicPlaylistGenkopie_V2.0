@@ -704,7 +704,10 @@ class RekordboxImporter:
             if len(args) == 1:
                 status["all"] = isinstance(res, dict)
             else:
-                status["dat"] = True
+                # Ein API-Aufruf ohne Exception ist kein Lesebeleg, wenn er
+                # ``None`` liefert. Sonst wird ein fehlendes/fehlgeschlagenes
+                # DAT fälschlich als vollständig gelesene Datei klassifiziert.
+                status["dat"] = res is not None
             if res is None:
                 continue
             # read_anlz_files liefert dict {path: AnlzFile}, read_anlz_file ein Objekt

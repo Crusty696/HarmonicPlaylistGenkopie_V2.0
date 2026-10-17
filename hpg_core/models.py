@@ -243,8 +243,19 @@ def effective_bpm_diff(bpm1: float, bpm2: float) -> tuple[float, str]:
     Returns:
         (effektive_differenz, relation) mit relation in "direct"/"half"/"double"
     """
+    # Tempo wird an vielen Playlist- und Pair-Gates verwendet. Ungültige Werte
+    # müssen überall gleich fail-closed bleiben; NaN würde sonst Sortierungen
+    # und Vergleiche umgehen, während None/übergroße Integer Ausnahmen werfen.
+    try:
+        if (type(bpm1) is bool or type(bpm2) is bool
+                or not math.isfinite(float(bpm1))
+                or not math.isfinite(float(bpm2))):
+            return math.inf, "direct"
+        bpm1, bpm2 = float(bpm1), float(bpm2)
+    except (TypeError, ValueError, OverflowError):
+        return math.inf, "direct"
     if bpm1 <= 0 or bpm2 <= 0:
-        return abs(bpm1 - bpm2), "direct"
+        return math.inf, "direct"
 
     # AUDIT-FIX F01 (2026-07-24): Die Differenz wird IMMER im Tempo-Raum von
     # bpm1 (Referenz = Track A, der laufen bleibt) gemessen. Vorher enthielt die
@@ -368,7 +379,6 @@ class Track:
     keyMode: str = ""
     stem_analysis: dict = field(default_factory=dict)
     embedding_analysis: dict = field(default_factory=dict)
-    audio_embedding: list[float] = field(default_factory=list)
     camelotCode: str = ""
     energy: int = 0
     bass_intensity: int = 0

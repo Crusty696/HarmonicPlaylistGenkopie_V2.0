@@ -10,6 +10,7 @@ import math
 import multiprocessing
 import os
 from pathlib import Path
+import sys
 import threading
 
 import numpy as np
@@ -17,7 +18,7 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v22'
+CONTRACT = 'rb-7.2.19-file-reader-v27'
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {
@@ -52,6 +53,12 @@ def _ceil_resampled_frames(source_frames, source_rate):
     return (source_frames * RATE + source_rate - 1) // source_rate
 
 
+def _close_mpg123_decoder(library, decoder):
+    """Fehlgeschlagenes Decoder-Close nicht als sauberes Ende verbuchen."""
+    if library.mpg123_close(decoder) != 0:
+        raise NativeContractError('Rekordbox mpg123 decoder close failed')
+
+
 def _shutdown_mpg123():
     """Beende die pro Prozess einmal initialisierte Decoderbibliothek."""
     with _MPG123_RUNTIME_LOCK:
@@ -65,38 +72,48 @@ def _mpg123_library(dll_path):
     with _MPG123_RUNTIME_LOCK:
         if _MPG123_LIBRARY is not None:
             return _MPG123_LIBRARY
+        dll_directory = None
         try:
             dll_directory = os.add_dll_directory(str(dll_path.parent))
             library = ct.CDLL(str(dll_path), winmode=0x1100)
-        except OSError as error:
-            raise NativeContractError('Bundled Rekordbox mpg123 failed to load') from error
-        signatures = {
-            'mpg123_init': ([], ct.c_int),
-            'mpg123_exit': ([], None),
-            'mpg123_new': ([ct.c_char_p, ct.POINTER(ct.c_int)], ct.c_void_p),
-            'mpg123_delete': ([ct.c_void_p], None),
-            'mpg123_format_none': ([ct.c_void_p], ct.c_int),
-            'mpg123_param': ([ct.c_void_p, ct.c_int, ct.c_long, ct.c_double], ct.c_int),
-            'mpg123_format': ([ct.c_void_p, ct.c_long, ct.c_int, ct.c_int], ct.c_int),
-            'mpg123_rates': ([ct.POINTER(ct.POINTER(ct.c_long)), ct.POINTER(ct.c_size_t)], None),
-            'mpg123_encodings': ([ct.POINTER(ct.POINTER(ct.c_int)), ct.POINTER(ct.c_size_t)], None),
-            'mpg123_replace_reader_handle': ([ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p], ct.c_int),
-            'mpg123_open_handle': ([ct.c_void_p, ct.c_void_p], ct.c_int),
-            'mpg123_getformat': ([ct.c_void_p, ct.POINTER(ct.c_long), ct.POINTER(ct.c_int), ct.POINTER(ct.c_int)], ct.c_int),
-            'mpg123_length': ([ct.c_void_p], ct.c_longlong),
-            'mpg123_outblock': ([ct.c_void_p], ct.c_size_t),
-            'mpg123_read': ([ct.c_void_p, ct.c_void_p, ct.c_size_t, ct.POINTER(ct.c_size_t)], ct.c_int),
-            'mpg123_seek': ([ct.c_void_p, ct.c_longlong, ct.c_int], ct.c_longlong),
-            'mpg123_close': ([ct.c_void_p], ct.c_int),
-        }
-        for name, (arguments, result) in signatures.items():
-            try:
-                function = getattr(library, name)
-            except AttributeError as error:
-                raise NativeContractError(f'Rekordbox mpg123 export missing: {name}') from error
-            function.argtypes, function.restype = arguments, result
-        if library.mpg123_init() != 0:
-            raise NativeContractError('Rekordbox mpg123 initialization failed')
+            signatures = {
+                'mpg123_init': ([], ct.c_int),
+                'mpg123_exit': ([], None),
+                'mpg123_new': ([ct.c_char_p, ct.POINTER(ct.c_int)], ct.c_void_p),
+                'mpg123_delete': ([ct.c_void_p], None),
+                'mpg123_format_none': ([ct.c_void_p], ct.c_int),
+                'mpg123_param': ([ct.c_void_p, ct.c_int, ct.c_long, ct.c_double], ct.c_int),
+                'mpg123_format': ([ct.c_void_p, ct.c_long, ct.c_int, ct.c_int], ct.c_int),
+                'mpg123_rates': ([ct.POINTER(ct.POINTER(ct.c_long)), ct.POINTER(ct.c_size_t)], None),
+                'mpg123_encodings': ([ct.POINTER(ct.POINTER(ct.c_int)), ct.POINTER(ct.c_size_t)], None),
+                'mpg123_replace_reader_handle': ([ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p], ct.c_int),
+                'mpg123_open_handle': ([ct.c_void_p, ct.c_void_p], ct.c_int),
+                'mpg123_getformat': ([ct.c_void_p, ct.POINTER(ct.c_long), ct.POINTER(ct.c_int), ct.POINTER(ct.c_int)], ct.c_int),
+                'mpg123_length': ([ct.c_void_p], ct.c_longlong),
+                'mpg123_outblock': ([ct.c_void_p], ct.c_size_t),
+                'mpg123_read': ([ct.c_void_p, ct.c_void_p, ct.c_size_t, ct.POINTER(ct.c_size_t)], ct.c_int),
+                'mpg123_seek': ([ct.c_void_p, ct.c_longlong, ct.c_int], ct.c_longlong),
+                'mpg123_close': ([ct.c_void_p], ct.c_int),
+            }
+            for name, (arguments, result) in signatures.items():
+                try:
+                    function = getattr(library, name)
+                except AttributeError as missing:
+                    raise NativeContractError(
+                        f'Rekordbox mpg123 export missing: {name}'
+                    ) from missing
+                function.argtypes, function.restype = arguments, result
+            if library.mpg123_init() != 0:
+                raise NativeContractError('Rekordbox mpg123 initialization failed')
+        except Exception as error:
+            if dll_directory is not None:
+                try:
+                    dll_directory.close()
+                except Exception:
+                    pass
+            if isinstance(error, NativeContractError):
+                raise
+            raise NativeContractError('Bundled Rekordbox mpg123 failed to initialize') from error
         _MPG123_DLL_DIRECTORY = dll_directory
         _MPG123_LIBRARY = library
         atexit.register(_shutdown_mpg123)
@@ -245,9 +262,10 @@ class NativeAudioReader:
             self._open_fallback()
             return
         if image is None:
-            # Das Rekordbox-Abbild wird nur fuer den nativen WAV/AIFF-Pfad
-            # benoetigt. Scheitert dessen Initialisierung, ist noch kein
-            # nativer Decoder angelegt; der HPG-Reader kann sicher uebernehmen.
+            # WAV/AIFF brauchen hier ein initialisiertes Image. Der
+            # NativeAudioStream waehlt vor diesem Aufruf den HPG-Fallback.
+            if suffix in ('.wav', '.wave', '.aif', '.aiff'):
+                raise NativeContractError('Required Rekordbox reader unavailable')
             self._open_fallback()
             return
         factory_rva = NATIVE_REKORDBOX_FACTORIES[suffix]
@@ -478,11 +496,20 @@ class NativeAudioReader:
             streaming = True
             return
         finally:
-            if opened and not streaming:
-                library.mpg123_close(decoder)
             if not streaming:
-                file_reader.close()
-                library.mpg123_delete(decoder)
+                active_error = sys.exc_info()[0] is not None
+                cleanup_errors = []
+                cleanup_actions = [file_reader.close,
+                    lambda: library.mpg123_delete(decoder)]
+                if opened:
+                    cleanup_actions.insert(0, lambda: _close_mpg123_decoder(library, decoder))
+                for cleanup in cleanup_actions:
+                    try:
+                        cleanup()
+                    except Exception as error:
+                        cleanup_errors.append(error)
+                if cleanup_errors and not active_error:
+                    raise NativeContractError('Rekordbox mpg123 cleanup failed') from cleanup_errors[0]
 
     def _reset_mpg123_stream(self):
         state = self._mpg123_state
@@ -831,19 +858,31 @@ class NativeAudioReader:
 
     def close(self):
         """Schließe aktive Decoder und gib blockweise Audioressourcen frei."""
+        errors = []
         state, self._mpg123_state = self._mpg123_state, None
         if state is not None:
-            try:
-                state['library'].mpg123_close(state['decoder'])
-            finally:
-                state['file_reader'].close()
-                state['library'].mpg123_delete(state['decoder'])
+            for cleanup in (
+                    lambda: _close_mpg123_decoder(state['library'], state['decoder']),
+                    state['file_reader'].close,
+                    lambda: state['library'].mpg123_delete(state['decoder'])):
+                try:
+                    cleanup()
+                except Exception as error:
+                    errors.append(error)
         stream, self._soundfile_state = self._soundfile_state, None
         if stream is not None:
-            stream['source'].close()
+            try:
+                stream['source'].close()
+            except Exception as error:
+                errors.append(error)
         audio_stream, self._audioread_state = self._audioread_state, None
         if audio_stream is not None:
-            audio_stream['source'].close()
+            try:
+                audio_stream['source'].close()
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise NativeContractError('Audio reader cleanup failed') from errors[0]
 
     def __del__(self):
         try:
@@ -1042,8 +1081,11 @@ class _WinMpg123File:
     def close(self):
         handle = self.handle
         if handle and handle != ct.c_void_p(-1).value:
+            if not self.kernel.CloseHandle(handle):
+                raise NativeContractError(
+                    'Unable to close MP3 source handle read-only'
+                ) from ct.WinError(ct.get_last_error())
             self.handle = None
-            self.kernel.CloseHandle(handle)
 
 
 def _source_channel_count(path):
@@ -1088,27 +1130,42 @@ class NativeAudioStream:
         if limit <= 0:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
+        native_selection = use_rekordbox
         if (use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS
                 and suffix != '.mp3'):
             optional_codec = suffix in ('.flac', '.fla', '.m4a', '.mp4', '.aac')
-            if optional_codec or _source_channel_count(path) in (1, 2):
+            channels = _source_channel_count(path)
+            if optional_codec and channels not in (None, 1, 2):
+                # Bekannte Mehrkanalquellen direkt im HPG-Reader downmixen;
+                # nach erfolgreichem nativen Open ist Ownership nicht belegt.
+                native_selection = False
+            elif optional_codec or channels in (1, 2):
                 try:
                     # Optional-Codec-Vertrag kann unbekannte Kanäle intern
                     # prüfen und kontrolliert auf den HPG-Reader zurückfallen.
                     self.image = _reader_image()
                 except Exception:
                     self.image = None
+            if self.image is None:
+                # Vor dem Anlegen eines nativen Decoders ist HPG-Fallback
+                # sicher. Das gilt auch für WAV/AIFF, wenn das Rekordbox-Abbild
+                # nicht bereitgestellt werden kann.
+                native_selection = False
+            if (suffix in ('.wav', '.wave', '.aif', '.aiff')
+                    and channels not in (1, 2)):
+                # Der native Beatpfad verarbeitet nur Mono/Stereo. Mehrkanal-
+                # und nicht lesbare Kanalmetadaten nutzen den HPG-Decoder.
+                native_selection = False
         try:
             self.reader = NativeAudioReader(self.image, path, max_seconds=limit,
                                             start_seconds=offset,
-                                            use_rekordbox=use_rekordbox)
+                                            use_rekordbox=native_selection)
         except NativeContractError:
-            # Native optionale Codecobjekte besitzen noch keinen belegten
-            # Freigabepfad. Reader laufen deshalb isoliert; ein fehlgeschlagener
-            # FLAC/MP4/AAC-Decoder bleibt bis zum Ende dieses Kindprozesses
-            # resident, waehrend der HPG-Decoder die Quelle neu und read-only
-            # oeffnet. WAV/AIFF bleiben fail-closed beim nativen Pflichtpfad.
-            if suffix not in ('.flac', '.fla', '.m4a', '.mp4', '.aac'):
+            # Native Decoder ohne belegten Freigabepfad bleiben bis zum Ende
+            # dieses Kindprozesses resident. HPG kann dieselbe Quelle danach
+            # neu und read-only dekodieren; fehlende Unterstützung liefert
+            # weiterhin einen kontrollierten Fehler.
+            if suffix not in NATIVE_REKORDBOX_FACTORIES:
                 raise
             self.reader = NativeAudioReader(None, path, max_seconds=limit,
                 start_seconds=offset, use_rekordbox=False)
@@ -1130,8 +1187,10 @@ class NativeAudioStream:
         """Gib Fallbackpuffer frei und schließe einen aktiven mpg123-Decoder."""
         if self.closed:
             return
-        self.reader.close()
-        self.closed = True
+        try:
+            self.reader.close()
+        finally:
+            self.closed = True
 
     def __len__(self):
         return self.frames

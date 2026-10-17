@@ -14,7 +14,7 @@ from .native_phrase_worker import EXE, NativeContractError
 from .native_beat_worker import FloatMatrix
 from .native_beat_grid import _Json, _read_json
 
-VERSION = 'rb-7.2.19-wrapper1294100-v3'
+VERSION = 'rb-7.2.19-wrapper1294100-v4'
 
 
 class _PrivateBridges:
@@ -38,8 +38,14 @@ class _PrivateBridges:
             raise NativeContractError('Private bridge instruction flush failed')
 
     def restore(self):
+        errors = []
         for address, original in reversed(self.saved):
-            self._write(address, original)
+            try:
+                self._write(address, original)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise NativeContractError('Private bridge restoration failed') from errors[0]
 
 
 def run(image, reader, selection, window_start):
@@ -113,13 +119,20 @@ def run(image, reader, selection, window_start):
             image.function(0x2a6e660, ct.c_void_p, ct.c_void_p, ct.c_void_p)(
                 ct.byref(path), model7 if chunked else model8)
             if chunked:
-                image.function(0x12a8ef0, None, ct.POINTER(FloatMatrix), ct.c_void_p,
+                returned_matrix = image.function(0x12a8ef0, ct.c_void_p,
+                    ct.POINTER(FloatMatrix), ct.c_void_p,
                     ct.c_void_p, ct.c_void_p, ct.c_int32, ct.c_uint64)(
                         ct.byref(target), ct.byref(path), left, right, rate, frames)
             else:
-                image.function(0x12ab830, None, ct.POINTER(FloatMatrix), ct.c_void_p,
+                returned_matrix = image.function(0x12ab830, ct.c_void_p,
+                    ct.POINTER(FloatMatrix), ct.c_void_p,
                     ct.c_void_p, ct.c_void_p, ct.c_uint64)(
                         ct.byref(target), ct.byref(path), left, right, frames)
+            # Der Originalwrapper uebergibt den Rueckgabewert direkt an
+            # RVA12b2c00, das ihn als FloatMatrix liest. Der native Adapter
+            # muss bestaetigen, dass er dieselbe Out-Matrix zurueckliefert.
+            if returned_matrix != ct.addressof(target):
+                raise NativeContractError('Native wrapper returned an unexpected matrix')
             if (target.columns != 2 or not 4 <= target.rows <= 6000
                     or target.size != target.rows*2 or not target.data):
                 raise NativeContractError('Invalid native wrapper matrix')
@@ -188,8 +201,14 @@ def run(image, reader, selection, window_start):
         return result['beatList'], result['bpm'], [
             [seconds + start/44100, bar] for seconds, bar in raw_rows], coverage
     finally:
-        release_models()
-        bridge.restore()
-        image.function(0x11f0540, None, ct.c_void_p, ct.c_ubyte)(
-            ct.addressof(output)+8, output.kind)
-        image.function(0xefdf30, None, ct.c_void_p)(path)
+        try:
+            release_models()
+        finally:
+            try:
+                bridge.restore()
+            finally:
+                try:
+                    image.function(0x11f0540, None, ct.c_void_p, ct.c_ubyte)(
+                        ct.addressof(output)+8, output.kind)
+                finally:
+                    image.function(0xefdf30, None, ct.c_void_p)(path)

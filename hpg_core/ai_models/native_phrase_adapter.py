@@ -15,7 +15,7 @@ import time
 
 from .native_phrase_worker import CONTRACT_VERSION, EXE, SHA256
 from .native_key import KEY_MAPPING_VERSION, native_key_index
-from .reader_contract import READER_BACKENDS
+from .reader_contract import READER_BACKENDS, source_duration_tolerance
 
 _IDENTITY_LOCK = threading.Lock()
 _IDENTITY_SIGNATURE = None
@@ -151,8 +151,7 @@ def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
     if (type(result.get('sample_rate')) is not int or result['sample_rate'] <= 0
             or type(result.get('frames')) is not int or result['frames'] <= 0
             or abs(result['frames']/result['sample_rate'] - duration) >
-                (0.1 if source.suffix.lower() in {'.mp3', '.mp4', '.m4a', '.aac', '.ogg'}
-                 else 1/result['sample_rate'])):
+                source_duration_tolerance(source, sample_rate=result['sample_rate'])):
         return unavailable('source_duration_mismatch')
     starts = [beat_times[index-1] for index in positions]
     terminal_beat = header[6]

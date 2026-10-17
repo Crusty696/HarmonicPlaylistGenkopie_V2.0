@@ -987,7 +987,20 @@ def _calculate_compatibility_inner(
     allow_experimental = kwargs.get("allow_experimental", True)
 
     bpm_diff, bpm_relation = effective_bpm_diff(track1.bpm, track2.bpm)
-    if bpm_diff > bpm_tolerance:
+    # Ein NaN verfehlt ``>`` und wuerde dadurch trotz ungueltigem Tempo die
+    # harmonische Punktetabelle erreichen. Das BPM-Hard-Gate muss auch bei
+    # nicht endlicher Differenz fail-closed bleiben.
+    try:
+        tolerance = float(bpm_tolerance)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if (
+        type(bpm_tolerance) is bool
+        or not math.isfinite(tolerance)
+        or tolerance < 0.0
+        or not math.isfinite(bpm_diff)
+        or bpm_diff > tolerance
+    ):
         return 0  # No compatibility if BPM difference is too high
     penalty = BPM_HALF_DOUBLE_PENALTY if bpm_relation != "direct" else 1.0
     # Camelot-Tabelle zentral in models.camelot_relation_score (2026-08-22),

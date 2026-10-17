@@ -704,8 +704,8 @@ def test_cache_version_ist_bewusst_gesetzt():
   """
   from hpg_core import caching
 
-  # Version 153 verwirft MP3-Analysen mit erzwungenem 48-kHz-Stereo-Decode.
-  assert caching.CACHE_VERSION == 153
+  # Version 162 umfasst Offset-/Rotationsanker und Tail-Sektionsmerkmale.
+  assert caching.CACHE_VERSION == 162
 
 
 def test_alter_cache_marker_wird_invalidiert():
@@ -1321,10 +1321,47 @@ def test_record_ohne_beatgrid_pflichtkey_wird_abgewiesen():
 
 
 def _track_dict_mit_gueltigen_nested_daten():
+  from hpg_core.downbeat import BeatgridValidation
+  from hpg_core.measurement_contract import measurement_snapshot
+
   track = Track(
     filePath="C:/x.mp3", fileName="x.mp3", duration=300.0,
     analysis_mode="librosa_full_or_tail",
   )
+  track.beatgrid_source = "rekordbox"
+  track.beatgrid_status = "verified"
+  track.beatgrid_windows_checked = 3
+  track.beatgrid_max_phase_error_ms = 0.0
+  track.downbeat_confidence = 1.0
+  track.bar_position_status = "reference_candidate"
+  grid = BeatgridValidation("verified", 3, 0.0, "verified")
+  reference_measurement = measurement_snapshot(
+    {"reason": "fewbeats", "stage": "trim"}, grid,
+  )
+  track.measurement_diagnostics = {
+    "version": 2,
+    "downbeat": reference_measurement["downbeat"],
+    # Schema v2 predates phase-pattern fields; keep this legacy payload exact.
+    "grid": {
+      key: reference_measurement["grid"][key]
+      for key in (
+        "status", "windows_checked", "max_phase_error_ms", "reason",
+        "window_diagnostics", "decode_failures",
+      )
+    },
+    "anchor": {
+      "source": "rekordbox", "method": "rekordbox",
+      "anchor_s": track.first_downbeat, "confidence": 1.0,
+      "reference": {
+        "anchor_s": track.first_downbeat, "bpm": track.bpm,
+        "target_bpm": track.bpm, "measurement": reference_measurement,
+      },
+      "neural": {
+        "reason": "reference_preferred", "transient": False,
+        "windows": [], "candidate_anchor_s": None,
+      },
+    },
+  }
   track.sections = [{
     "label": "intro", "start_time": 0.0, "end_time": 30.0,
     "start_bar": 0, "end_bar": 16, "avg_energy": 20.0,

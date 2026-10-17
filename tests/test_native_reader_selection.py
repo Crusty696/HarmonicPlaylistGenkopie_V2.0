@@ -4,6 +4,9 @@ import pytest
 
 from hpg_core.ai_models.native_beat_selection import select_model, validate_selection, configured_mode
 from hpg_core.ai_models import native_track_beats as native
+from hpg_core.ai_models.native_audio_reader import NativeAudioReader
+from hpg_core.ai_models.native_phrase_worker import NativeContractError
+from hpg_core.ai_models import native_audio_reader as reader_module
 from tests.test_native_track_beats import snapshot
 
 
@@ -37,6 +40,12 @@ def test_model8_snapshot_retains_its_own_hashes():
     data = snapshot()
     data.update(selection=select_model(3), model_id='model8',
                 model_hashes=deepcopy(native.MODEL_HASHES['model8']))
+    data['verification'] = {
+        'model_id': 'model7',
+        'model_hashes': deepcopy(native.MODEL_HASHES['model7']),
+        'beats': [[row['pos'] / 44100, row['numBar']] for row in data['grid']],
+        'coverage': {'start_s': 0., 'end_s': (data['frames'] - 1) / 44100},
+    }
     native.validate_snapshot(data, duration=48.)
     data['model_hashes'] = deepcopy(native.MODEL_HASHES['model7'])
     with pytest.raises(ValueError):
@@ -51,6 +60,64 @@ def test_reader_provenance_is_bound_to_audio(field, value):
     data['reader'][field] = value
     with pytest.raises(ValueError):
         native.validate_snapshot(data, duration=48.)
+
+
+@pytest.mark.parametrize('suffix', ['.wav', '.wave', '.aif', '.aiff'])
+def test_required_native_reader_never_silently_falls_back(tmp_path, suffix):
+    source = tmp_path / f'input{suffix}'
+    source.write_bytes(b'')
+
+    with pytest.raises(NativeContractError, match='Required Rekordbox reader unavailable'):
+        NativeAudioReader(None, source)
+
+
+@pytest.mark.parametrize('channels', [None, 6])
+def test_unsupported_wav_channel_layout_uses_hpg_reader(monkeypatch, tmp_path, channels):
+    source = tmp_path / 'multichannel.wav'
+    source.write_bytes(b'')
+    calls = []
+
+    class Reader:
+        def __init__(self, image, path, **kwargs):
+            calls.append((image, path, kwargs['use_rekordbox']))
+            self.frames = 44100
+            self.channels = 6
+            self.backend = 'hpg-libsndfile'
+
+    monkeypatch.setattr(reader_module, '_source_channel_count', lambda _path: channels)
+    monkeypatch.setattr(reader_module, 'NativeAudioReader', Reader)
+
+    stream = reader_module.NativeAudioStream(source)
+
+    assert calls == [(None, source, False)]
+    assert stream.backend == 'hpg-libsndfile'
+
+
+def test_supported_wav_reader_initialization_failure_uses_hpg_fallback(
+        monkeypatch, tmp_path):
+    source = tmp_path / 'stereo.wav'
+    source.write_bytes(b'')
+    image = object()
+    calls = []
+
+    class Reader:
+        def __init__(self, selected_image, path, **kwargs):
+            native = kwargs['use_rekordbox']
+            calls.append((selected_image, path, native))
+            if native:
+                raise NativeContractError('Native builtin decoder could not open source')
+            self.frames = 44100
+            self.channels = 2
+            self.backend = 'hpg-libsndfile'
+
+    monkeypatch.setattr(reader_module, '_source_channel_count', lambda _path: 2)
+    monkeypatch.setattr(reader_module, '_reader_image', lambda: image)
+    monkeypatch.setattr(reader_module, 'NativeAudioReader', Reader)
+
+    stream = reader_module.NativeAudioStream(source)
+
+    assert calls == [(image, source, True), (None, source, False)]
+    assert stream.backend == 'hpg-libsndfile'
 
 
 def test_resampled_metadata_uses_source_and_output_timebases():

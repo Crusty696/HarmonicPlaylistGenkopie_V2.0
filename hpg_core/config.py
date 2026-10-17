@@ -212,9 +212,9 @@ def analysis_timeout_seconds(worker_count: int = 1) -> float:
     # Native Phrase-/Beataufrufe bleiben auf 180 s, Stem-Aufrufe auf 240 s begrenzt.
     # Bis zu worker_count
     # aktive Tracks teilen denselben Broker; Wartezeit zählt zum Gesamtbudget.
-    extra = (240. if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
+    extra = (240. if os.environ.get("HPG_STEMS", "0") == "1" else 0.)
     # Embeddings bleiben auf 180 s begrenzt und werden vor Stems ausgeführt.
-    extra += 180. if os.environ.get("HPG_EMBEDDINGS", "1") == "1" else 0.
+    extra += 180. if os.environ.get("HPG_EMBEDDINGS", "0") == "1" else 0.
     if not extra:
         return float(PARALLEL_ANALYSIS_TIMEOUT)
     return min(float(PARALLEL_ANALYSIS_TIMEOUT) + worker_count * extra,

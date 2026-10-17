@@ -6711,8 +6711,20 @@ class MainWindow(QMainWindow):
             return
         self._hearing_analysis_pending = None
         captured = getattr(self, "_hearing_analysis_snapshot", None)
+        same_source_folder = False
+        if captured is not None:
+            try:
+                captured_folder = os.path.normcase(
+                    str(Path(captured[0]).resolve(strict=True))
+                )
+                requested_folder = os.path.normcase(
+                    str(Path(config.source_roots[0]).resolve(strict=True))
+                )
+                same_source_folder = captured_folder == requested_folder
+            except (IndexError, OSError, RuntimeError, TypeError, ValueError):
+                pass
         if (self.run_state != RunState.SUCCESS or captured is None
-                or captured[0] != str(config.source_roots[0]) or captured[2] != run_id):
+                or not same_source_folder or captured[2] != run_id):
             detail = getattr(self, "_hearing_analysis_error", "")
             self.analytics_panel.hearing_status.setText("Analyse nicht vollständig erfolgreich; kein Hörtest vorbereitet. " + detail)
             self._update_hearing_buttons()

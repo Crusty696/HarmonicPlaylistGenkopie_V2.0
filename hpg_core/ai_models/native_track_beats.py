@@ -73,6 +73,13 @@ def validate_snapshot(value, *, duration):
     validate_selection(value['selection'])
     if value['selection']['model_id'] != value['model_id']:
         raise ValueError('Native selected model mismatch')
+    # Modell8 ist nicht gechunkt und muss die unabhängige Modell7-Folge
+    # mitliefern. Modell7 ist selbst die chunked-Auswahl und hat keine zweite
+    # Verifikationsfolge. Ohne diese Kopplung kann Modell8-Fallback-Code seine
+    # eigenen Beats fälschlich als unabhängige Bestätigung behandeln.
+    has_verification = value.get('verification') is not None
+    if value['selection']['chunked'] == has_verification:
+        raise ValueError('Native verification does not match selected model')
     validate_reader(value['reader'], value['frames'], duration, value['input_convention'])
     coverage = value['model_coverage']
     if (type(coverage) is not dict or set(coverage) != {'start_s', 'end_s'}

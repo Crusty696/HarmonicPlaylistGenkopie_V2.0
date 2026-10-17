@@ -39,7 +39,6 @@ def main():
         os.environ[flag] = '1'
     from hpg_core.parallel_analyzer import ParallelAnalyzer
     from hpg_core import caching
-    from hpg_core.ai_models.deep_features import transient_failure
     from hpg_core.playlist import generate_playlist_result, compute_transition_recommendations
     from hpg_core.transition_renderer import TransitionClipSpec
     from hpg_core.render_selection import render_with_reserve
@@ -91,15 +90,20 @@ def main():
                 row.update(bpm=track.bpm, grid=track.beatgrid_status,
                            stems=track.stem_analysis, embedding_status=track.embedding_analysis.get('status'),
                            native_status=track.native_phrase_analysis.get('status'))
-                # Fresh schreibt absichtlich keinen Cache. Den isolierten
-                # Snapshot explizit persistieren, dann den echten Lesepfad pruefen.
-                if not reused_track and not transient_failure(track):
+                # Zusatzmerkmale mit Status unavailable duerfen die gueltige
+                # Basisanalyse nicht verwerfen. Direkter Readback prueft den
+                # Cache, ohne ueber analyze_files sofort erneut Stem-Inferenz
+                # anzustossen.
+                if not reused_track:
                     key = caching.generate_cache_key(str(path), track.rekordbox_signature)
                     row['cache_written'] = caching.cache_track(key, track)
                     if row['cache_written']:
-                        reused = analyzer.analyze_files([str(path)], cache_policy='reuse')
-                        row['cache_reused'] = (len(reused) == 1 and
-                            getattr(reused[0], 'analysis_origin', None) == 'cache')
+                        cached = caching.get_cached_track(key, file_path=str(path))
+                        row['cache_reused'] = cached is not None
+                        if cached is not None:
+                            row['cache_feature_statuses'] = dict(
+                                stems=cached.stem_analysis.get('status'),
+                                embedding=cached.embedding_analysis.get('status'))
                 tracks.append(track)
             save()
         if len(tracks) != len(paths):

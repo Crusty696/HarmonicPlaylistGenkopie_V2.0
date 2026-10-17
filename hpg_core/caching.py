@@ -282,7 +282,23 @@ logger = logging.getLogger(__name__)
 # v151: AAC-Sperre, Metadaten-Kanalauflösung und Codec-Fallback ändern Reader-/Beat-Eingaben.
 # v152: Nativer Grenzwrapper meldet die aktive Mono-/Stereo-Kanalzahl auch beim HPG-Readerfallback.
 # v153: Readervertrag v22 aendert Analyse-Eingaenge; alte Cachezeilen muessen neu analysiert werden.
-CACHE_VERSION = 153
+# v154: Der Anchor-Resolver verarbeitet bestaetigte konstante Rekordbox-Offsets
+# auch ohne beat_windows im Audiozweig; betroffene Downbeat-/Phrasen-/Mixwerte
+# werden neu berechnet statt aus dem alten Resolver-Cache weiterverwendet.
+# v155: Reader v23 sperrt WAV/AIFF auf Mono/Stereo bei fehlendem nativem Reader;
+# Mehrkanal bleibt kontrolliert beim HPG-Decoder.
+# v156: Reader v24 erlaubt den HPG-Fallback fuer WAV/AIFF, wenn das native
+# Abbild nicht geladen werden kann und noch kein nativer Decoder existiert.
+# v157: Reader v25 nutzt fuer bekannte Mehrkanal-Optionalcodecs vor dem nativen
+# Open den HPG-Mono-Downmix statt einen unfreigebbaren nativen Decoder zu oeffnen.
+# v158: Boundary v4 validiert den vom nativen Wrapper weitergereichten FloatMatrix-Zeiger.
+# v159: Optionaler nativer Codec-Fehler fällt im isolierten Worker auf HPG-Reader zurück.
+# v160: Audioembedding wird nur noch einmal in embedding_analysis gespeichert.
+# v161: Bei nativer Analyse werden bei konstantem Rekordbox-Phasenversatz oder
+# Taktlabelsprung getrennte Modellfenster gesammelt; betroffene abgeleitete
+# Anker-/Phrasen-/Mixwerte werden neu berechnet.
+# v162: Sektionsmerkmale langer Tracks werden auch aus dem analysierten Tail-Audio ermittelt.
+CACHE_VERSION = 162
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -339,7 +355,7 @@ def _ensure_cache_schema(conn: sqlite3.Connection) -> None:
 TRACK_REQUIRED_FIELDS = frozenset({
     "filePath", "fileName", "artist", "title", "genre", "duration", "bpm",
     "keyNote", "keyMode", "camelotCode", "energy", "bass_intensity",
-    "stem_analysis", "embedding_analysis", "audio_embedding",
+    "stem_analysis", "embedding_analysis",
     "avg_bass", "avg_mids", "avg_highs", "mix_in_point", "mix_out_point",
     "first_downbeat", "downbeat_confidence", "bar_position_status", "beatgrid_source",
     "beatgrid_status", "beatgrid_windows_checked",
@@ -357,7 +373,6 @@ TRACK_REQUIRED_FIELDS = frozenset({
 })
 VALID_ANALYSIS_MODES = frozenset({"rekordbox_fast_tail", "librosa_full_or_tail"})
 TRACK_LIST_FIELDS = {
-    "audio_embedding",
     "sections", "mfcc_fingerprint", "timbre_fingerprint", "analysis_coverage",
     "groove_pattern", "bass_pattern",
     "phrases", "cue_points", "phrase_grid", "mix_in_candidates", "mix_out_candidates",
@@ -1029,9 +1044,6 @@ def validate_track_dict(data: dict) -> dict:
                 snapshot, kind=kind, duration=duration,
                 duration_tolerance=source_duration_tolerance(filtered['filePath']),
             )
-        expected_embedding = filtered['embedding_analysis'].get('data', {}).get('vector', [])
-        if filtered['audio_embedding'] != expected_embedding:
-            raise ValueError('Embedding vector does not match provenance')
     except (ValueError, TypeError, KeyError) as error:
         raise CacheValidationError(str(error)) from error
 
@@ -1246,7 +1258,6 @@ def dict_to_track(d: dict) -> Track:
                      or snapshot.get('fingerprint') != feature_fingerprint)):
             d[field_name] = _empty(kind, d['duration'],
                 feature_fingerprint or '0'*64, 'unavailable', 'stale_feature_producer')
-    d['audio_embedding'] = d['embedding_analysis'].get('data', {}).get('vector', [])
     filePath = d['filePath']
     fileName = d['fileName']
     track = Track(filePath=filePath, fileName=fileName)

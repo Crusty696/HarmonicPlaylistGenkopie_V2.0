@@ -75,7 +75,7 @@ def cosine_similarity(a, b) -> float | None:
     return max(0.0, min(1.0, similarity))
 
 
-def _spreize(wert: float, boden: float) -> float:
+def _spreize(wert: float, boden: float) -> float | None:
     """Dehnt [boden, 1.0] auf [0.0, 1.0].
 
     Zwei zufaellige Tracks erreichen nie eine Groove-Aehnlichkeit von 0: alle
@@ -85,16 +85,34 @@ def _spreize(wert: float, boden: float) -> float:
     Ohne Spreizung laege der Faktor immer zwischen 0,65 und 1,0 und wuerde
     zwei Drittel seines Wertebereichs verschenken.
     """
+    if not _finite_number(wert) or not _finite_number(boden):
+        return None
+    wert, boden = float(wert), float(boden)
+    if boden < 0.0:
+        return None
     if boden >= 1.0:
         return wert
     return max(0.0, min(1.0, (wert - boden) / (1.0 - boden)))
 
 
-def _normiert(delta: float, maximum: float) -> float:
+def _normiert(delta: float, maximum: float) -> float | None:
     """Wandelt einen Absolutabstand in eine Aehnlichkeit in [0, 1]."""
+    if not _finite_number(delta) or not _finite_number(maximum):
+        return None
+    delta, maximum = float(delta), float(maximum)
     if maximum <= 0.0:
-        return 1.0
+        return None
     return max(0.0, 1.0 - abs(delta) / maximum)
+
+
+def _finite_number(value) -> bool:
+    """Nur endliche numerische Werte zulassen; Strings sind keine Messwerte."""
+    if isinstance(value, (bool, str, bytes, bytearray)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def _tolerance_profile(genre: str, tolerances: Mapping | None) -> Mapping:
@@ -125,12 +143,13 @@ def groove_match(
     else:
         roh = BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
 
-    return _spreize(roh, _tolerance_profile(genre, tolerances).get(
+    floor = _tolerance_profile(genre, tolerances).get(
         "groove_sim_floor", DEFAULT_GROOVE_SIM_FLOOR
-    ))
+    )
+    return _spreize(roh, floor)
 
 
-def _naht_werte(track: Track, rolle: str) -> tuple[float, float]:
+def _naht_werte(track: Track, rolle: str) -> tuple[float | None, float | None] | None:
     """Bassdruck an der Nahtstelle; Trackmittel als Rueckfallebene.
 
     Die Naht ist der MIXPUNKT — `mix_out_point` fuer den auslaufenden,
@@ -157,10 +176,14 @@ def _naht_werte(track: Track, rolle: str) -> tuple[float, float]:
     Sektionen bekommen sie gar nicht erst, siehe
     groove.BASS_KENNWERTE_MIN_SEC), gilt das Trackmittel.
     """
-    mittel = (track.sub_energy, track.bass_punch)
+    mittel = (
+        float(track.sub_energy) if _finite_number(track.sub_energy)
+        and float(track.sub_energy) > 0.0 else None,
+        float(track.bass_punch) if _finite_number(track.bass_punch) else None,
+    )
 
     zeitpunkt = track.mix_out_point if rolle == "out" else track.mix_in_point
-    if zeitpunkt is None or zeitpunkt < 0.0:
+    if not _finite_number(zeitpunkt) or float(zeitpunkt) < 0.0:
         return mittel
 
     sektion = section_dict_at_time(track, float(zeitpunkt))
@@ -169,9 +192,11 @@ def _naht_werte(track: Track, rolle: str) -> tuple[float, float]:
 
     sub = sektion.get("sub_energy")
     punch = sektion.get("bass_punch")
-    if sub is None or punch is None:
-        return mittel
-    return float(sub), float(punch)
+    werte = (
+        float(sub) if _finite_number(sub) and float(sub) > 0.0 else mittel[0],
+        float(punch) if _finite_number(punch) else mittel[1],
+    )
+    return None if werte == (None, None) else werte
 
 
 def bass_continuity(
@@ -181,28 +206,31 @@ def bass_continuity(
     tolerances: Mapping | None = None,
 ) -> float | None:
     """Kontinuitaet des Bassdrucks an der Nahtstelle."""
-    # ODER, nicht UND: liefert EIN Track keinen Wert, ist der Vergleich nicht
-    # bestimmbar. Mit UND schluepfte der haeufige Fall durch — ein Track mit
-    # Werten gegen einen ohne ergab 0.0, also die haerteste Strafe fuer genau
-    # die Tracks, die die Umverteilung schuetzen soll. compute_groove_fields
-    # liefert bei downbeat_confidence < DOWNBEAT_RELIABLE_MIN ein leeres
-    # GrooveFeatures(), und dessen sub_energy ist 0.0.
-    # Ein echter Track hat immer sub_energy > 0 (gemessen 0,288 bis 0,790);
-    # eine 0 bedeutet hier zuverlaessig "nicht gemessen".
-    if track_a.sub_energy <= 0.0 or track_b.sub_energy <= 0.0:
-        return None
-
     tol = _tolerance_profile(genre, tolerances)
     sub_max = tol.get("bass_delta_max", DEFAULT_SUB_DELTA_MAX)
+    sub_max_valid = _finite_number(sub_max) and float(sub_max) > 0.0
+    if sub_max_valid:
+        sub_max = float(sub_max)
 
     # Verglichen wird die Sektion AM MIX-OUT von A gegen die Sektion AM
     # MIX-IN von B — nicht Trackmittel gegen Trackmittel und nicht
     # "Outro gegen Intro" (Spec 5.3, Herleitung in _naht_werte).
-    sub_a, punch_a = _naht_werte(track_a, "out")
-    sub_b, punch_b = _naht_werte(track_b, "in")
-
-    sub_sim = _normiert(sub_a - sub_b, sub_max)
-    punch_sim = _normiert(punch_a - punch_b, DEFAULT_PUNCH_DELTA_MAX)
+    seam_a = _naht_werte(track_a, "out")
+    seam_b = _naht_werte(track_b, "in")
+    if seam_a is None or seam_b is None:
+        return None
+    sub_a, punch_a = seam_a
+    sub_b, punch_b = seam_b
+    sub_sim = (_normiert(sub_a - sub_b, sub_max)
+               if sub_a is not None and sub_b is not None and sub_max_valid else None)
+    punch_sim = (_normiert(punch_a - punch_b, DEFAULT_PUNCH_DELTA_MAX)
+                 if punch_a is not None and punch_b is not None else None)
+    if sub_sim is None and punch_sim is None:
+        return None
+    if sub_sim is None:
+        return punch_sim
+    if punch_sim is None:
+        return sub_sim
     return 0.6 * sub_sim + 0.4 * punch_sim
 
 
@@ -221,20 +249,33 @@ def mood_match(
     # ODER statt UND, gleiche Begruendung wie bei bass_continuity.
     # analysis.py setzt brightness bei gescheiterter Feature-Phase explizit
     # auf 0; ein normal analysierter Track liegt darueber.
-    if track_a.brightness <= 0 or track_b.brightness <= 0:
-        return None
-
     tol = _tolerance_profile(genre, tolerances)
-    hell_max = tol.get("brightness_delta_max", DEFAULT_BRIGHTNESS_DELTA_MAX)
-
-    hell_sim = _normiert(
-        float(track_a.brightness - track_b.brightness), hell_max
-    )
-    flach_sim = _normiert(
-        track_a.spectral_flatness - track_b.spectral_flatness,
-        DEFAULT_FLATNESS_DELTA_MAX,
-    )
-    score = 0.7 * hell_sim + 0.3 * flach_sim
+    werte = []
+    if (_finite_number(track_a.brightness) and _finite_number(track_b.brightness)
+            and float(track_a.brightness) > 0.0 and float(track_b.brightness) > 0.0):
+        hell_max = tol.get("brightness_delta_max", DEFAULT_BRIGHTNESS_DELTA_MAX)
+        if _finite_number(hell_max) and float(hell_max) > 0.0:
+            hell_sim = _normiert(float(track_a.brightness)-float(track_b.brightness),
+                                 float(hell_max))
+            if hell_sim is not None:
+                werte.append((0.7, hell_sim))
+    # Die erweiterte Analyse setzt spectral_flatness bei einem Fehler auf 0.0.
+    # Wie brightness ist dieser Sentinel nicht als Messwert zu werten; sonst
+    # würden zwei fehlgeschlagene Messungen eine perfekte Ähnlichkeit ergeben.
+    if (_finite_number(track_a.spectral_flatness)
+            and _finite_number(track_b.spectral_flatness)
+            and float(track_a.spectral_flatness) > 0.0
+            and float(track_b.spectral_flatness) > 0.0):
+        flach_sim = _normiert(
+            float(track_a.spectral_flatness)-float(track_b.spectral_flatness),
+            DEFAULT_FLATNESS_DELTA_MAX,
+        )
+        if flach_sim is not None:
+            werte.append((0.3, flach_sim))
+    if not werte:
+        return None
+    gewicht = sum(weight for weight, _ in werte)
+    score = sum(weight * similarity for weight, similarity in werte) / gewicht
 
     if track_a.keyMode and track_b.keyMode and track_a.keyMode != track_b.keyMode:
         score = max(0.0, score - MODE_SWITCH_PENALTY)

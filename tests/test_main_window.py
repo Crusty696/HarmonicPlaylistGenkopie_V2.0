@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -441,7 +442,10 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
     assert not starts
     assert window._hearing_analysis_pending == (config, source, "hearing-test-run")
     window.worker = None
-    window._hearing_analysis_snapshot = (str(config.source_roots[0]), ("metadata",), window._run_id)
+    snapshot_folder = str(config.source_roots[0])
+    if os.name == "nt":
+        snapshot_folder = snapshot_folder.upper()
+    window._hearing_analysis_snapshot = (snapshot_folder, ("metadata",), window._run_id)
     window._set_run_state(main.RunState.SUCCESS)
     window._resume_hearing_analysis(source)
     worker, action = starts[0]

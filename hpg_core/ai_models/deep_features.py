@@ -16,7 +16,7 @@ import threading
 from .feature_audio import source_identity
 from .rekordbox_runtime import REKORDBOX_ROOT
 from .stem_model_hashes import MODEL_HASHES
-from .reader_contract import READER_BACKENDS
+from .reader_contract import READER_BACKENDS, source_duration_tolerance as _source_duration_tolerance
 
 EMBEDDING_HASH = '27d9ad6e13c077f0c0a20cd786b0c746312aebfc1063f56011defdc10e574c4e'
 ENERGY_HASH = 'c6818a83050beecbb4e701e5092a9670ac74ca787f505bf79797b2eba6f5b69b'
@@ -28,7 +28,6 @@ UMAP_HASHES = {
 DLL_HASH = 'a94ddfd5e45507f0be5cadb9e46b929433cbe2a26191ee0afb762053148bdd4b'
 EMBEDDING_WINDOW_SECONDS = 29.
 
-_LOSSY_SOURCE_SUFFIXES = {'.mp3', '.mp4', '.m4a', '.aac', '.ogg'}
 _DIGEST_LOCK = threading.Lock()
 _DIGEST_CACHE = {}
 _COMMON_PRODUCER_FILES = (
@@ -52,7 +51,7 @@ PRODUCER_FILES_BY_KIND = {
 
 def source_duration_tolerance(path):
     """Decoderdauer tolerieren; verlustfreie PCM-Dateien bleiben samplegenau."""
-    return .1 if Path(path).suffix.lower() in _LOSSY_SOURCE_SUFFIXES else 1/16000.
+    return _source_duration_tolerance(path)
 
 
 def _feature_timeout_seconds(kind, duration):
@@ -77,8 +76,11 @@ def config():
         umap_norm_before=str(embed_root/'norm_before_umap.onnx'),
         umap_model=str(embed_root/'umap_embedder.onnx'),
         umap_norm_after=str(embed_root/'norm_after_umap.onnx'),
-        prefer_directml=True, stems_enabled=os.environ.get('HPG_STEMS', '1') == '1',
-        embedding_enabled=os.environ.get('HPG_EMBEDDINGS', '1') == '1')
+        # Stems/Embeddings bleiben ohne ausdrueckliche Freigabe aus; die
+        # unkalibrierten Zusatzmerkmale duerfen die Standardanalyse nicht
+        # verlaengern oder deren Ergebnis unbemerkt beeinflussen.
+        prefer_directml=True, stems_enabled=os.environ.get('HPG_STEMS', '0') == '1',
+        embedding_enabled=os.environ.get('HPG_EMBEDDINGS', '0') == '1')
 
 
 def _digest(path):
@@ -193,26 +195,32 @@ def attach(track):
                          duration_tolerance=source_duration_tolerance(track.filePath))
                 expected_version = 5 if kind == 'embedding' else 3
                 if (current.get('status') != 'ok' or current.get('version') != expected_version
-                        or current.get('fingerprint') != expected_fingerprint):
+                        or (expected_fingerprint is not None
+                            and current.get('fingerprint') != expected_fingerprint)):
                     raise ValueError('no completed feature result')
             except Exception:
                 current = _empty(kind, track.duration, fallback_fingerprint, 'unavailable',
                                  type(error).__name__)
                 setattr(track, field, current)
-        track.audio_embedding = track.embedding_analysis.get('data', {}).get('vector', [])
 
 
 def _attach(track):
     """Fast-/Vollpfad teilen diesen Aufruf nach Fertigstellung der Basisanalyse."""
-    from .cue_service import session
     settings = config()
     fingerprints = config_fingerprint(settings)
+    if not settings['stems_enabled'] and not settings['embedding_enabled']:
+        for kind, field in (('stems', 'stem_analysis'),
+                            ('embedding', 'embedding_analysis')):
+            setattr(track, field, _empty(
+                kind, track.duration, fingerprints[kind], 'disabled',
+                'disabled_by_configuration'))
+        return
+    from .cue_service import session
     from .feature_reuse import load
     reused = load(track, fingerprints)
     if reused is not None:
         for field, value in reused.items():
             setattr(track, field, value)
-        track.audio_embedding = track.embedding_analysis.get('data', {}).get('vector', [])
         return
     found = identities(settings)
     path = Path(track.filePath).resolve(strict=True)
@@ -267,7 +275,6 @@ def _attach(track):
                     except (ValueError, TypeError, KeyError):
                         result = _empty(kind, track.duration, fingerprint, 'unavailable', 'invalid_feature_result')
             setattr(track, field, result)
-    track.audio_embedding = track.embedding_analysis.get('data', {}).get('vector', [])
 
 
 def needs_refresh(track):
@@ -283,6 +290,12 @@ def needs_refresh(track):
         )
     for kind, field in (('stems', 'stem_analysis'), ('embedding', 'embedding_analysis')):
         if not settings[kind + '_enabled']:
+            snapshot = getattr(track, field, {})
+            if (type(snapshot) is not dict
+                    or snapshot.get('status') != 'disabled'
+                    or snapshot.get('reason') != 'disabled_by_configuration'
+                    or snapshot.get('fingerprint') != fingerprints.get(kind)):
+                return True
             continue
         snapshot = getattr(track, field, {})
         fingerprint = fingerprints.get(kind)
@@ -375,14 +388,12 @@ def _local_embedding(track, start, end):
                 or not _finite(row['start_s']) or not _finite(row['end_s'])
                 or row['start_s'] != expected_start or row['start_s'] >= row['end_s']
                 or row['end_s'] > measured_duration
-                or type(row['vector']) is not list or len(row['vector']) != 64):
+                or not _unit(row['vector'])):
             return None
         expected_start = row['end_s']
         weight = max(0., min(end, row['end_s'])-max(start, row['start_s']))
         covered += weight
         for index, value in enumerate(row['vector']):
-            if not _finite(value):
-                return None
             values[index] += weight*value
     norm = math.sqrt(sum(x*x for x in values))
     if (abs(expected_start-measured_duration) > 1/16000.

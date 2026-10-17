@@ -15,7 +15,7 @@ def snapshot(duration=48.):
     return dict(status='ok', reason=None, contract=native.CONTRACT,
         executable_sha256=native.SHA256, tensorflow_sha256=native.TF_SHA256,
         model_id='model7', model_hashes=deepcopy(native.MODEL_HASHES['model7']),
-        source_identity=[100, 200, 1, 2], sample_rate=44100, frames=int(duration*44100),
+        source_identity=[100, 200, 1, 2, 3], sample_rate=44100, frames=int(duration*44100),
         bpm=120., grid=[dict(pos=round((.005+i*.5)*44100), numBar=i%4+1, bpm=12000)
                        for i in range(int(duration*2))],
         first_downbeat=round(.005*44100)/44100, musically_verified=False,
@@ -23,7 +23,7 @@ def snapshot(duration=48.):
         selection=select_model(4), boundary_contract=native.BOUNDARY_CONTRACT,
         model_coverage=dict(start_s=0., end_s=duration-1/44100),
         reader=dict(contract=native.READER_CONTRACT, source_sample_rate=44100,
-            source_channels=2, source_bit_depth=16, source_frames=int(duration*44100),
+            source_channels=2, output_channels=2, source_bit_depth=16, source_frames=int(duration*44100),
             output_sample_rate=44100, output_frames=int(duration*44100),
             backend='rekordbox-builtin'))
 
@@ -72,6 +72,40 @@ def test_native_variable_grid_is_not_silently_straightened(monkeypatch):
     monkeypatch.setattr(native, 'analyze', lambda *a, **k: data)
     monkeypatch.setattr(analysis, '_validate_track_beatgrid', lambda *a, **k: pytest.fail('Unsupported geometry'))
     assert not analysis._prepare_native_beats('unused.wav', 48., np.ones(32), 44100)['accepted']
+
+
+def test_native_snapshot_duration_mismatch_uses_analysis_fallback(monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setenv('HPG_NATIVE_BEAT', '1')
+    monkeypatch.setattr(analysis.cue_service, 'session', lambda: nullcontext(None))
+    monkeypatch.setattr(native, 'analyze', lambda *a, **k: snapshot(48.2))
+
+    context = analysis._prepare_native_beats('unused.wav', 48., np.ones(32), 44100)
+
+    assert context['accepted'] is False
+    assert context['transient'] is True
+    assert context['analysis'] == dict(
+        status='unavailable', reason='native_path_unavailable:ValueError')
+    assert context['decision']['reason'] == 'native_path_unavailable:ValueError'
+
+
+def test_native_service_start_failure_uses_analysis_fallback(monkeypatch):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def broken_session():
+        raise RuntimeError('service unavailable')
+        yield None
+
+    monkeypatch.setenv('HPG_NATIVE_BEAT', '1')
+    monkeypatch.setattr(analysis.cue_service, 'session', broken_session)
+
+    context = analysis._prepare_native_beats('unused.wav', 48., np.ones(32), 44100)
+
+    assert context['accepted'] is False
+    assert context['transient'] is True
+    assert context['analysis'] == dict(
+        status='unavailable', reason='native_path_unavailable:RuntimeError')
 
 
 @pytest.mark.parametrize('field,value', [('executable_sha256', '0'*64),

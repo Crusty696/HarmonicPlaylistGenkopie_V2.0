@@ -68,7 +68,9 @@ def _track(name="a.mp3", bpm=140.0, duration=300.0, genre="Psytrance", **kw) -> 
     t.phrase_unit = 16
     t.first_downbeat = 0.0
     t.downbeat_confidence = 1.0
-    t.beatgrid_source = "rekordbox"
+    # Diese Testtracks sind synthetische Audio-Referenzen, keine Rekordbox-
+    # Referenzen mit unabhängig bestätigter Taktposition.
+    t.beatgrid_source = "audio"
     t.beatgrid_status = "verified"
     t.beatgrid_windows_checked = 3
     t.beatgrid_max_phase_error_ms = 5.0

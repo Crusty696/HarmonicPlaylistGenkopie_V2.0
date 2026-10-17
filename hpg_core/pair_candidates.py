@@ -338,10 +338,7 @@ def pair_quality_reasons(
     gruende: list[str] = []
     for faktor in FAKTOREN:
         wert = teilwerte.get(faktor)
-        try:
-            messbar = wert is not None and math.isfinite(float(wert))
-        except (TypeError, ValueError):
-            messbar = False
+        messbar = _finite_measurement(wert)
         if not messbar or not 0.0 <= float(wert) <= 1.0:
             gruende.append(f"faktor_fehlt:{faktor}")
 
@@ -349,10 +346,7 @@ def pair_quality_reasons(
         a, b = kandidat.out_a, kandidat.in_b
 
         def endlich(*werte) -> bool:
-            try:
-                return all(v is not None and math.isfinite(float(v)) for v in werte)
-            except (TypeError, ValueError):
-                return False
+            return all(_finite_measurement(value) for value in werte)
 
         def normiert(*werte) -> bool:
             return endlich(*werte) and all(0.0 <= float(v) <= 1.0 for v in werte)
@@ -377,10 +371,10 @@ def pair_quality_reasons(
                 and endlich(*(list(a.timbre_fingerprint_lokal) + list(b.timbre_fingerprint_lokal)))
             ),
             "mood": (
-                endlich((a.mood or {}).get("brightness", a.brightness_lokal),
-                        (b.mood or {}).get("brightness", b.brightness_lokal))
-                or endlich((a.mood or {}).get("flatness", a.flatness_lokal),
-                           (b.mood or {}).get("flatness", b.flatness_lokal))
+                endlich(_candidate_mood_value(a, "brightness", "brightness_lokal"),
+                        _candidate_mood_value(b, "brightness", "brightness_lokal"))
+                or endlich(_candidate_mood_value(a, "flatness", "flatness_lokal"),
+                           _candidate_mood_value(b, "flatness", "flatness_lokal"))
             ),
             "loudness": endlich(a.lufs_lokal, b.lufs_lokal),
             "structure": (
@@ -416,12 +410,12 @@ def pair_quality_reasons(
                 gruende.append(f"quellmessung_ungueltig:{name}")
 
         mood_hell = (
-            (a.mood or {}).get("brightness", a.brightness_lokal),
-            (b.mood or {}).get("brightness", b.brightness_lokal),
+            _candidate_mood_value(a, "brightness", "brightness_lokal"),
+            _candidate_mood_value(b, "brightness", "brightness_lokal"),
         )
         mood_flach = (
-            (a.mood or {}).get("flatness", a.flatness_lokal),
-            (b.mood or {}).get("flatness", b.flatness_lokal),
+            _candidate_mood_value(a, "flatness", "flatness_lokal"),
+            _candidate_mood_value(b, "flatness", "flatness_lokal"),
         )
         if all(v is not None for v in mood_hell) and not endlich(*mood_hell):
             gruende.append("quellmessung_ungueltig:brightness")
@@ -711,7 +705,23 @@ def blend_bars_options(track_a: Track, out_a: MixCandidate, bpm_relation: str) -
 
 
 def _beide(a, b) -> bool:
-    return a is not None and b is not None
+    return _finite_measurement(a) and _finite_measurement(b)
+
+
+def _finite_measurement(value) -> bool:
+    if isinstance(value, (bool, str, bytes, bytearray)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _candidate_mood_value(candidate: MixCandidate, key: str, fallback: str):
+    """Nutze das lokale Rohmerkmal, wenn der optionale Mood-Wert fehlt."""
+    mood = candidate.mood
+    value = mood.get(key) if isinstance(mood, dict) else None
+    return getattr(candidate, fallback) if value is None else value
 
 
 def _teil_harmonie(out_a: MixCandidate, in_b: MixCandidate, *, harmonic_strictness: int,
@@ -764,8 +774,13 @@ def _teil_groove(out_a: MixCandidate, in_b: MixCandidate, tol: dict, flags: dict
     else:
         roh = BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
     wert = _spreize(roh, tol.get("groove_sim_floor", DEFAULT_GROOVE_SIM_FLOOR))
+    if wert is None:
+        return None
     if _beide(out_a.syncopation_lokal, in_b.syncopation_lokal):
-        wert *= _normiert(in_b.syncopation_lokal - out_a.syncopation_lokal, SYNCOPATION_DELTA_MAX)
+        sync = _normiert(in_b.syncopation_lokal - out_a.syncopation_lokal, SYNCOPATION_DELTA_MAX)
+        if sync is None:
+            return None
+        wert *= sync
     pa, pb = out_a.percussive_ratio_lokal, in_b.percussive_ratio_lokal
     if _beide(pa, pb):
         if pa > PERCUSSIVE_HOCH and pb > PERCUSSIVE_HOCH:
@@ -789,7 +804,10 @@ def _teil_bass(out_a: MixCandidate, in_b: MixCandidate, tol: dict, flags: dict,
     else:
         wert = 0.6 * sub + 0.4 * punch
     if _beide(out_a.bass_rms_dbfs, in_b.bass_rms_dbfs):
-        wert *= _normiert(in_b.bass_rms_dbfs - out_a.bass_rms_dbfs, BASS_RMS_DELTA_MAX_DB)
+        rms = _normiert(in_b.bass_rms_dbfs - out_a.bass_rms_dbfs, BASS_RMS_DELTA_MAX_DB)
+        if rms is None:
+            return None
+        wert *= rms
     konflikt = bool(out_a.kick_aktiv and in_b.kick_aktiv)
     flags["bass_swap_pflicht"] = konflikt
     # Plant der Aufrufer einen Bass-/EQ-Swap (App bei bass_swap_pflicht, Hoertest
@@ -809,16 +827,20 @@ def _teil_timbre(out_a: MixCandidate, in_b: MixCandidate) -> float | None:
     if _beide(out_a.avg_highs_lokal, in_b.avg_highs_lokal):
         deltas.append(abs(in_b.avg_highs_lokal - out_a.avg_highs_lokal))
     if deltas:
-        wert *= _normiert(sum(deltas) / len(deltas), MIDS_HIGHS_DELTA_MAX)
+        similarity = _normiert(sum(deltas) / len(deltas), MIDS_HIGHS_DELTA_MAX)
+        if similarity is None:
+            return None
+        wert *= similarity
     return max(0.0, min(1.0, wert))
 
 
 def _teil_mood(out_a: MixCandidate, in_b: MixCandidate, tol: dict) -> float | None:
-    ma, mb = out_a.mood or {}, in_b.mood or {}
-    ha = ma.get("brightness", out_a.brightness_lokal)
-    hb = mb.get("brightness", in_b.brightness_lokal)
-    fa = ma.get("flatness", out_a.flatness_lokal)
-    fb = mb.get("flatness", in_b.flatness_lokal)
+    ma = out_a.mood if isinstance(out_a.mood, dict) else {}
+    mb = in_b.mood if isinstance(in_b.mood, dict) else {}
+    ha = _candidate_mood_value(out_a, "brightness", "brightness_lokal")
+    hb = _candidate_mood_value(in_b, "brightness", "brightness_lokal")
+    fa = _candidate_mood_value(out_a, "flatness", "flatness_lokal")
+    fb = _candidate_mood_value(in_b, "flatness", "flatness_lokal")
     hell = (_normiert(float(hb) - float(ha), tol.get("brightness_delta_max", DEFAULT_BRIGHTNESS_DELTA_MAX))
             if _beide(ha, hb) else None)
     flach = _normiert(float(fb) - float(fa), DEFAULT_FLATNESS_DELTA_MAX) if _beide(fa, fb) else None
@@ -1428,13 +1450,20 @@ def rank_pair_candidates(track_a: Track, track_b: Track, *, bpm_tolerance: float
     if rejection_reasons is not None:
         rejection_reasons.clear()
     try:
+        if type(bpm_tolerance) is bool:
+            raise ValueError('Boolean BPM tolerance is invalid')
         tolerance = float(bpm_tolerance)
         bpm_diff, _ = effective_bpm_diff(track_a.bpm, track_b.bpm)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         if rejection_reasons is not None:
             rejection_reasons.extend(["Tempodaten ungültig", "Der Tempovergleich konnte nicht berechnet werden."])
         return []
-    if not math.isfinite(tolerance) or tolerance < 0.0 or bpm_diff > tolerance:
+    if (
+        not math.isfinite(tolerance)
+        or tolerance < 0.0
+        or not math.isfinite(bpm_diff)
+        or bpm_diff > tolerance
+    ):
         if rejection_reasons is not None:
             if math.isfinite(tolerance) and tolerance >= 0.0:
                 rejection_reasons.extend(["Tempoabstand zu groß", f"Effektiver Abstand: {bpm_diff:.2f} BPM; erlaubt: {tolerance:.2f} BPM."])

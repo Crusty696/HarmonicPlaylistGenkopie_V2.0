@@ -5,6 +5,7 @@ import math
 import os
 import re
 import time
+from bisect import bisect_left
 from dataclasses import dataclass, field
 
 import librosa
@@ -898,6 +899,30 @@ def calculate_file_lufs(file_path: str) -> tuple[float, str, float, int, int]:
     """
     try:
         import pyloudnorm as pyln
+
+        # LUFS muss Quellrate und Quellkanäle messen. Der native Beat-Reader
+        # resampelt auf 44,1 kHz und downmixt Mehrkanalton; er ist deshalb nur
+        # Decoderfallback für Formate, die SoundFile nicht direkt streamen kann.
+        try:
+            source_info = sf.info(file_path)
+            source_rate = int(source_info.samplerate)
+            source_channels = int(source_info.channels)
+            source_frames = int(source_info.frames)
+            if source_rate <= 0 or source_channels <= 0 or source_frames <= 0:
+                raise ValueError("Ungueltige SoundFile-Audiodimensionen")
+            source_meter = pyln.Meter(source_rate, filter_class="DeMan")
+            source_value = _integrated_loudness_from_blocks(
+                file_path, source_info, source_meter,
+            )
+            source_coverage = source_frames / source_rate
+            if (not np.isfinite(source_value) or source_value >= 0.0
+                    or source_value < -70.0):
+                return (0.0, "invalid", source_coverage,
+                        source_channels, source_rate)
+            return (round(source_value, 2), "complete", source_coverage,
+                    source_channels, source_rate)
+        except Exception as error:
+            logger.debug("Quellformat nicht direkt fuer LUFS lesbar; gemeinsamer Reader-Fallback: %s", error)
 
         if os.path.splitext(file_path)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS:
             from types import SimpleNamespace
@@ -1835,6 +1860,24 @@ def _round_time_within_duration(value: float, duration: float) -> float:
     return min(round(value, 2), duration)
 
 
+def _section_audio_slice(section, audio_windows, sr, fallback_cache=None):
+    """Liefert Audio und Cache passend zum absoluten Zeitbereich einer Sektion."""
+    start_s, end_s = section.get('start_time'), section.get('end_time')
+    if (type(start_s) not in (int, float) or type(end_s) not in (int, float)
+            or not math.isfinite(start_s) or not math.isfinite(end_s)
+            or start_s < 0 or end_s <= start_s):
+        return np.empty(0, dtype=np.float32), fallback_cache, (0, 0)
+    for offset_s, audio, cache in audio_windows:
+        if not isinstance(audio, np.ndarray) or audio.ndim != 1:
+            continue
+        first = int(round((start_s - offset_s) * sr))
+        last = int(round((end_s - offset_s) * sr))
+        if 0 <= first < last <= len(audio):
+            selected_cache = cache if cache is not None else fallback_cache
+            return audio[first:last], selected_cache, (first, last)
+    return np.empty(0, dtype=np.float32), fallback_cache, (0, 0)
+
+
 def _cue_phrase_identities(phrases):
     """Unveränderte PSSI-Rohidentität in Originalreihenfolge, ohne Zeitrundung."""
     try:
@@ -1981,6 +2024,10 @@ def analyze_structure_windows(
                 candidates=native_phrase_analysis['phrases'], verified_grid=True,
                 window_start_s=0., track_duration_s=duration)
         head = analyze_structure(head_audio, sr, bpm, genre, **structure_kwargs)
+        # Die spaetere Sektionsextraktion braucht dieselben echten Fenster wie
+        # der Strukturpass; das Fast-Path-Headfenster deckt lange Tracks nicht
+        # bis zum Trackende ab.
+        head._section_audio_windows = [(0.0, head_audio, feature_cache)]
         if cue_client is not None:
             head.cue_diagnostics = [dict(start_s=0.0, status=(
                 'unverified_grid' if not cue_verified_grid else
@@ -1994,6 +2041,29 @@ def analyze_structure_windows(
         }]
         if duration <= head_duration + 1.0:
             return head, coverage, True
+
+        def mark_unanalysed_tail():
+            """Mache dieselbe Coverage-Luecke fuer beide Tail-Fehlerpfade sichtbar."""
+            seconds_bar = seconds_per_bar or (
+                (60.0 / bpm) * METER if bpm > 0 else 0.0
+            )
+            head.sections.append(
+                TrackSection(
+                    label="unanalysed",
+                    start_time=_round_time_within_duration(head_duration, duration),
+                    end_time=duration,
+                    start_bar=(
+                        int(round(head_duration / seconds_bar)) if seconds_bar else 0
+                    ),
+                    end_bar=(
+                        int(round(duration / seconds_bar)) if seconds_bar else 0
+                    ),
+                    avg_energy=0.0,
+                )
+            )
+            head.total_bars = (
+                int(duration / seconds_bar) if seconds_bar else head.total_bars
+            )
 
         # AUDIT-FIX N1 (2026-07-24): Das Head-Fenster endet NICHT am Track-Ende —
         # ein dort vergebenes "outro"-Label ist ein Fenster-Artefakt (der Labeler
@@ -2014,33 +2084,17 @@ def analyze_structure_windows(
             logger.warning("Track-Ende konnte nicht analysiert werden: %s", error)
             if cue_client is not None:
                 head.cue_diagnostics.append(dict(start_s=tail_start, status='decode_error', results=[]))
-            seconds_bar = seconds_per_bar or (
-                (60.0 / bpm) * METER if bpm > 0 else 0.0
-            )
-            if duration > head_duration + 1.0:
-                head.sections.append(
-                    TrackSection(
-                        label="unanalysed",
-                        start_time=_round_time_within_duration(head_duration, duration),
-                        end_time=duration,
-                        start_bar=(
-                            int(round(head_duration / seconds_bar)) if seconds_bar else 0
-                        ),
-                        end_bar=(
-                            int(round(duration / seconds_bar)) if seconds_bar else 0
-                        ),
-                        avg_energy=0.0,
-                    )
-                )
-                head.total_bars = (
-                    int(duration / seconds_bar) if seconds_bar else head.total_bars
-                )
+            mark_unanalysed_tail()
             return head, coverage, False
         tail_duration = float(librosa.get_duration(y=tail_audio, sr=sr))
         tail_end = min(duration, tail_start + tail_duration)
         if tail_duration <= 0:
             if cue_client is not None:
                 head.cue_diagnostics.append(dict(start_s=tail_start, status='decode_error', results=[]))
+            # Leerer/ungueltiger Tail-Decode ist dieselbe Coverage-Luecke wie
+            # ein Ladefehler: den nicht analysierten Bereich sichtbar lassen,
+            # statt ihn durch ein stilles fruehes Return zu verschlucken.
+            mark_unanalysed_tail()
             return head, coverage, False
 
         tail_kwargs = {"anchor": anchor - tail_start}
@@ -2069,6 +2123,9 @@ def analyze_structure_windows(
                 candidates=native_phrase_analysis['phrases'], verified_grid=True,
                 window_start_s=tail_start, track_duration_s=duration)
         tail = analyze_structure(tail_audio, sr, bpm, genre, **tail_kwargs)
+        head._section_audio_windows.append((
+            tail_start, tail_audio, tail_kwargs.get('feature_cache'),
+        ))
         if cue_client is not None:
             tail.cue_diagnostics = [dict(start_s=tail_start, status=(
                 'unverified_grid' if not cue_verified_grid else
@@ -2453,6 +2510,87 @@ def _reference_grid_attempt(file_path, duration, bpm, y, sr, grid, reference_bpm
         path_match=reference_path_match,
         measurement=measurement_snapshot(diagnostic, validation,
             decode_failures=details.get('decode_failures', ())))
+
+
+def _native_grid_rotation_candidate(grid, native_context, bpm):
+    """Erkennt einen moeglichen konstanten Taktlabelsprung als Messausloeser."""
+    native = native_context.get('analysis') if type(native_context) is dict else None
+    rows = native.get('grid') if type(native) is dict else None
+    if (not isinstance(grid, (list, tuple)) or not isinstance(rows, list)
+            or type(bpm) not in (int, float) or not math.isfinite(bpm) or bpm <= 0):
+        return False
+    beat_period = 60.0 / float(bpm)
+    match_tolerance = min(0.08, beat_period * 0.12)
+    native_rows = []
+    previous_native_time = -1.0
+    for row in rows:
+        if (type(row) is not dict or type(row.get('pos')) is not int or row['pos'] < 0
+                or type(row.get('numBar')) is not int or row['numBar'] not in (1, 2, 3, 4)):
+            return False
+        native_time = row['pos'] / 44100.0
+        if native_time <= previous_native_time:
+            return False
+        native_rows.append((native_time, row))
+        previous_native_time = native_time
+    native_times = [item[0] for item in native_rows]
+    rotations = [0, 0, 0, 0]
+    matched = 0
+    native_positions = set()
+    reference_positions = set()
+    previous_reference_time = -1.0
+    for point in grid:
+        if (type(point) is not dict or type(point.get('time')) not in (int, float)
+                or not math.isfinite(point['time']) or point['time'] < 0
+                or point['time'] <= previous_reference_time
+                or type(point.get('beat')) is not int or point['beat'] not in (1, 2, 3, 4)):
+            return False
+        previous_reference_time = point['time']
+        right_index = bisect_left(native_times, point['time'])
+        nearby = native_rows[max(0, right_index - 1):min(len(native_rows), right_index + 1)]
+        if not nearby:
+            continue
+        nearest_time, nearest = min(nearby, key=lambda item: abs(item[0] - point['time']))
+        if abs(nearest_time - point['time']) > match_tolerance:
+            continue
+        rotation = (point['beat'] - nearest['numBar']) % 4
+        rotations[rotation] += 1
+        matched += 1
+        native_positions.add(nearest['numBar'])
+        reference_positions.add(point['beat'])
+    if (matched < 4 or native_positions != {1, 2, 3, 4}
+            or reference_positions != {1, 2, 3, 4}):
+        return False
+    dominant = max(range(4), key=rotations.__getitem__)
+    # Dieselben Mindestpositionen wie eine gemessene Modellfensterzeile;
+    # vollständige Übereinstimmung dient nur als Trigger, nie als Übernahme.
+    return dominant != 0 and rotations[dominant] == matched
+
+
+def _native_reference_candidate_windows(file_path, duration, bpm, y, sr, grid,
+                                        reference_bpm, reference_path_match,
+                                        native_context):
+    """Sammle Zusatzfenster nur für Offset-/Taktrotations-Kandidaten."""
+    reference = _reference_grid_attempt(
+        file_path, duration, bpm, y, sr, grid, reference_bpm,
+        reference_path_match,
+    )
+    reference_grid = reference['measurement']['grid'] if reference else {}
+    phase_center_ms = reference_grid.get('phase_center_ms')
+    offset_candidate = bool(
+        reference_grid.get('status') == 'mismatch'
+        and reference_grid.get('phase_pattern') == 'consistent_offset'
+        and type(phase_center_ms) in (int, float)
+        and math.isfinite(phase_center_ms)
+    )
+    rotation_candidate = bool(reference and
+        reference_grid.get('status') == 'verified'
+        and _native_grid_rotation_candidate(grid, native_context, bpm))
+    if not (offset_candidate or rotation_candidate):
+        return reference, []
+    # Der native Gesamtpfad überspringt die HPG-Modellfenster normalerweise.
+    # Bei Offset oder stabil abweichender Taktbeschriftung braucht der Resolver
+    # aber getrennte Model7/8-Kandidaten für seine Audio-Bestätigungsgates.
+    return reference, _collect_beat_windows(file_path, duration, y, sr)
 
 
 def _unknown_bar_position_comparison(reason="reference_not_verified", windows=()):
@@ -2979,11 +3117,12 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
             reference_attempt = reference
         elif (reference
                 and reference['measurement']['grid'].get('status') == 'mismatch'
-                and reference['measurement']['grid'].get('phase_pattern') == 'consistent_offset'
-                and beat_windows):
+                and reference['measurement']['grid'].get('phase_pattern') == 'consistent_offset'):
             # Den belegten Konstantversatz nicht durch den nativen Fallback
-            # ueberspringen: unten folgen der phasenbereinigte Modellvergleich
-            # und die disjunkten Audio-/Gesamtgrid-Gates.
+            # ueberspringen. Auch wenn der Native-Fast-Path keine Modellfenster
+            # gesammelt hat, muss der normale Audiozweig den Referenzversatz
+            # erhalten; fehlende Kandidatenfenster duerfen keine direkte
+            # Native-Ankeruebernahme freischalten.
             native_context = None
             reference_attempt = reference
         else:
@@ -3353,8 +3492,31 @@ def _prepare_native_beats(file_path, duration, y, sr):
         return dict(analysis=dict(status='unavailable', reason='unsupported_native_duration'),
                     accepted=False, transient=False,
                     decision=dict(status='unavailable', reason='unsupported_duration'))
-    with cue_service.session() as client:
-        native = native_track_beats.analyze(file_path, transport=getattr(client, 'native_beats', None))
+    try:
+        with cue_service.session() as client:
+            native = native_track_beats.analyze(
+                file_path, transport=getattr(client, 'native_beats', None))
+        if type(native) is not dict:
+            raise ValueError('invalid_native_result_type')
+        if native.get('status') == 'ok':
+            try:
+                native_track_beats.validate_snapshot(native, duration=duration)
+            except Exception as error:
+                # Ein formal unpassender nativer Snapshot ist dauerhaft fuer
+                # diesen Lauf unbrauchbar, aber kein transienter Workerfehler.
+                # Die bestehende HPG-Analyse muss mit ihrem Audiofallback
+                # weiterlaufen und darf den Track danach normal cachen.
+                reason = f'invalid_native_snapshot:{type(error).__name__}'
+                return dict(analysis=dict(status='unavailable', reason=reason),
+                            accepted=False, transient=False,
+                            decision=dict(status='unavailable', reason=reason))
+    except Exception as error:
+        # Start-, Transport- und Vertragsfehler des nativen Pfads dürfen die
+        # normale HPG-Analyse nicht abbrechen.
+        reason = f'native_path_unavailable:{type(error).__name__}'
+        return dict(analysis=dict(status='unavailable', reason=reason),
+                    accepted=False, transient=True,
+                    decision=dict(status='unavailable', reason=reason))
     context = dict(analysis=native, accepted=False,
                    transient=native.get('status') == 'unavailable' and native.get('reason') != 'unsupported_source_format',
                    decision=dict(status=(native.get('status') if native.get('status') in
@@ -3364,7 +3526,6 @@ def _prepare_native_beats(file_path, duration, y, sr):
                                else 'grid_unverified')))
     if native.get('status') != 'ok':
         return context
-    native_track_beats.validate_snapshot(native, duration=duration)
     native['phase_method'] = 'native_attack_v1'
     period = 60. / native['bpm']
     first = native['grid'][0]['pos'] / 44100
@@ -3656,8 +3817,14 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
             native_context = _prepare_native_beats(file_path, duration, y, sr)
             if native_context['accepted']:
-                beat_windows = []
-                bpm, reference_attempt, tempo_transient, tempo_diagnostic = native_context['analysis']['bpm'], None, False, None
+                bpm = native_context['analysis']['bpm']
+                reference_attempt, beat_windows = _native_reference_candidate_windows(
+                    file_path, duration, bpm, y, sr, rekordbox_grid,
+                    rekordbox_data.bpm,
+                    getattr(rekordbox_data, "path_match", "unknown"),
+                    native_context,
+                )
+                tempo_transient, tempo_diagnostic = False, None
             else:
                 beat_windows = _collect_beat_windows(file_path, duration, y, sr)
                 bpm, reference_attempt, tempo_transient, tempo_diagnostic = _resolve_track_tempo(
@@ -3923,14 +4090,13 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
 
             # Update each section with detailed frequency and rhythm data
             updated_sections = []
+            section_audio_windows = getattr(
+                structure, '_section_audio_windows', [(0.0, y, feature_cache)]
+            )
             for sec_dict in section_dicts:
-                start_s = sec_dict['start_time']
-                end_s = sec_dict['end_time']
-
-                # Extract segment
-                start_sample = int(start_s * sr)
-                end_sample = int(end_s * sr)
-                y_seg = y[start_sample:end_sample]
+                y_seg, section_cache, sample_range = _section_audio_slice(
+                    sec_dict, section_audio_windows, sr, feature_cache,
+                )
 
                 if len(y_seg) > sr: # At least 1 second
                     # Frequency Bands
@@ -3941,8 +4107,8 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
 
                     # Rhythm & Texture
                     percussive_ratio, spectral_flatness = analyze_rhythm_complexity(
-                        y_seg, sr, feature_cache,
-                        sample_range=(start_sample, end_sample),
+                        y_seg, sr, section_cache,
+                        sample_range=sample_range,
                     )
                     sec_dict['percussive_ratio'] = percussive_ratio
                     sec_dict['spectral_flatness'] = spectral_flatness
@@ -4106,16 +4272,16 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         from .ai_models import deep_features
         deep_features.attach(track)
 
-        # AUDIT-FIX A-02 (2026-07-24): Degradierte Analysen NICHT persistieren —
-        # sonst liefert der mtime-basierte Cache die erfundenen Default-Werte
-        # (energy=50, mix_in=0.0) fuer immer zurueck, ohne sichtbaren Fehler.
+        # Degradierte Kernanalysen nicht persistieren. Optionale Stems/Embeddings
+        # duerfen dagegen als unavailable gespeichert werden: der Cache-Hit kann
+        # sie spaeter gezielt erneuern, ohne die Basisanalyse neu zu rechnen.
         if cache_policy == "reuse":
-            if not analysis_degraded and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"] and not deep_features.transient_failure(track):
+            if not analysis_degraded and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
                 if not _persist_analysis_result(cache_key, track):
                     return None
             else:
                 logger.warning(
-                    f"Degradierte Analyse NICHT gecacht: {os.path.basename(file_path)}"
+                    f"Degradierte Kernanalyse NICHT gecacht: {os.path.basename(file_path)}"
                 )
         return track
 
@@ -4250,8 +4416,14 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             )
         native_context = _prepare_native_beats(file_path, duration, y, sr)
         if native_context['accepted']:
-            beat_windows = []
-            bpm, reference_attempt, tempo_transient, tempo_diagnostic = native_context['analysis']['bpm'], None, False, None
+            bpm = native_context['analysis']['bpm']
+            reference_attempt, beat_windows = _native_reference_candidate_windows(
+                file_path, duration, bpm, y, sr, rekordbox_grid,
+                rekordbox_data.bpm if rekordbox_data is not None else None,
+                getattr(rekordbox_data, "path_match", "unknown"),
+                native_context,
+            )
+            tempo_transient, tempo_diagnostic = False, None
         else:
             beat_windows = _collect_beat_windows(file_path, duration, y, sr)
             bpm, reference_attempt, tempo_transient, tempo_diagnostic = _resolve_track_tempo(
@@ -4523,18 +4695,19 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             timbre_fp = generate_timbre_fingerprint(y_fenster, sr, cache_fenster)
             
             updated_sections = []
+            section_audio_windows = getattr(
+                structure, '_section_audio_windows', [(0.0, y, feature_cache)]
+            )
             for sec_dict in section_dicts:
-                start_s = sec_dict['start_time']
-                end_s = sec_dict['end_time']
-                start_sample = int(start_s * sr)
-                end_sample = int(end_s * sr)
-                y_seg = y[start_sample:end_sample]
+                y_seg, section_cache, sample_range = _section_audio_slice(
+                    sec_dict, section_audio_windows, sr, feature_cache,
+                )
                 
                 if len(y_seg) > sr:
                     b, m, h = analyze_frequency_bands(y_seg, sr)
                     percussive_ratio, spectral_flatness = analyze_rhythm_complexity(
-                        y_seg, sr, feature_cache,
-                        sample_range=(start_sample, end_sample),
+                        y_seg, sr, section_cache,
+                        sample_range=sample_range,
                     )
                     sec_dict.update({
                         'avg_bass': b,
@@ -4688,7 +4861,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         from .ai_models import deep_features
         deep_features.attach(track)
         if cache_policy == "reuse":
-            if not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"] and not deep_features.transient_failure(track):
+            if not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
                 if not _persist_analysis_result(cache_key, track):
                     return None
         return track

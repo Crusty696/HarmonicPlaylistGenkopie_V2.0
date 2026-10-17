@@ -123,7 +123,7 @@ def test_producer_adopts_anchor(pipeline, monkeypatch, fast):
     assert phrases == [pytest.approx(.2)]
     assert track.beatgrid_source == 'audio'
     assert track.phrases == []
-    assert caching.CACHE_VERSION == 103
+    assert caching.CACHE_VERSION == 162
 
     assert track.measurement_diagnostics['version'] == 7
     active = track.measurement_diagnostics['anchor']
@@ -446,6 +446,102 @@ def test_external_reason_and_real_sample_offset(pipeline, monkeypatch):
     snapshot = measurement_snapshot(result[4], result[3], anchor_decision=result[6])
     validate_measurement_diagnostics(snapshot)
     assert snapshot['anchor']['neural']['windows'][0]['downbeat']['reason'] == 'external_vote_ambiguous'
+
+
+def test_native_acceptance_does_not_bypass_consistent_reference_offset_without_windows(
+        monkeypatch):
+    reference = {
+        'anchor_s': .2,
+        'measurement': {
+            'grid': {
+                'status': 'mismatch', 'phase_pattern': 'consistent_offset',
+                'phase_center_ms': 12., 'decode_failures': [],
+            },
+            'downbeat': {},
+        },
+    }
+    monkeypatch.setattr(analysis, '_reference_grid_attempt', lambda *a, **k: reference)
+    monkeypatch.setattr(analysis, '_estimate_audio_downbeat', lambda *a, **k: (.7, .8))
+    monkeypatch.setattr(analysis, '_validate_track_beatgrid', lambda *a, **k:
+                        analysis.BeatgridValidation('verified', 3, 0.))
+    native_context = {
+        'accepted': True,
+        'analysis': {'bpm': 120., 'first_downbeat': .2},
+        'validation': analysis.BeatgridValidation('verified', 3, 0.),
+        'diagnostics': {},
+    }
+
+    result = analysis._resolve_track_anchor(
+        'unused', 48., 120., np.ones(48 * 100, np.float32), 100, [], [],
+        native_context=native_context,
+    )
+
+    assert result[0] == pytest.approx(.7)
+    assert result[2] == 'audio'
+    assert result[6]['method'] == 'dsp'
+    assert result[6]['reference'] is reference
+
+
+def test_native_bar_rotation_collects_model_candidate_windows_only_on_conflict(monkeypatch):
+    bpm = 120.
+    native_rows = [dict(pos=index * 22050, numBar=index % 4 + 1, bpm=12000)
+                   for index in range(16)]
+    rekordbox_grid = [dict(time=index * .5, beat=(index + 2) % 4 + 1)
+                      for index in range(16)]
+    native_context = {'analysis': {'grid': native_rows}}
+    assert analysis._native_grid_rotation_candidate(
+        rekordbox_grid, native_context, bpm
+    )
+
+    reference = {'measurement': {'grid': {
+        'status': 'verified', 'phase_pattern': 'aligned',
+    }}}
+    monkeypatch.setattr(analysis, '_reference_grid_attempt', lambda *args, **kwargs: reference)
+    expected_windows = [{'start_s': 4.0}, {'start_s': 20.0}, {'start_s': 36.0}]
+    calls = []
+    monkeypatch.setattr(analysis, '_collect_beat_windows',
+                        lambda *args, **kwargs: calls.append(args[0]) or expected_windows)
+
+    actual_reference, candidate_windows = analysis._native_reference_candidate_windows(
+        'source.wav', 48., bpm, np.zeros(48 * 100, np.float32), 100,
+        rekordbox_grid, bpm, 'exact', native_context,
+    )
+
+    assert actual_reference is reference
+    assert candidate_windows is expected_windows
+    assert calls == ['source.wav']
+
+    aligned_grid = [dict(point, beat=native_rows[index]['numBar'])
+                    for index, point in enumerate(rekordbox_grid)]
+    aligned_context = {'analysis': {'grid': [
+        dict(row, numBar=aligned_grid[index]['beat'])
+        for index, row in enumerate(native_rows)
+    ]}}
+    assert not analysis._native_grid_rotation_candidate(aligned_grid, aligned_context, bpm)
+    mixed_grid = [dict(point) for point in rekordbox_grid]
+    mixed_grid[0]['beat'] = native_rows[0]['numBar']
+    assert not analysis._native_grid_rotation_candidate(
+        mixed_grid, native_context, bpm
+    )
+    _, aligned_windows = analysis._native_reference_candidate_windows(
+        'source.wav', 48., bpm, np.zeros(48 * 100, np.float32), 100,
+        aligned_grid, bpm, 'exact', aligned_context,
+    )
+    assert aligned_windows == []
+    assert calls == ['source.wav']
+
+    malformed_offset = {'measurement': {'grid': {
+        'status': 'mismatch', 'phase_pattern': 'consistent_offset',
+        'phase_center_ms': float('nan'),
+    }}}
+    monkeypatch.setattr(analysis, '_reference_grid_attempt',
+                        lambda *args, **kwargs: malformed_offset)
+    _, offset_windows = analysis._native_reference_candidate_windows(
+        'source.wav', 48., bpm, np.zeros(48 * 100, np.float32), 100,
+        rekordbox_grid, bpm, 'exact', native_context,
+    )
+    assert offset_windows == []
+    assert calls == ['source.wav']
 
 
 def test_six_disjoint_windows_can_confirm_audio_phase_against_model_labels(pipeline, monkeypatch):

@@ -75,6 +75,14 @@ def test_missing_embeddings_are_not_zero_distance():
     assert features.pair_diagnostics(left, right, 50., 0., 8) == {}
 
 
+def test_local_embedding_rejects_non_unit_window_vector():
+    track = Track(filePath='track.wav', fileName='track.wav', duration=58., bpm=120.)
+    track.embedding_analysis = embedding()
+    track.embedding_analysis['data']['windows'][0]['vector'] = [2.] + [0.]*63
+
+    assert features._local_embedding(track, 0., 10.) is None
+
+
 def test_embedding_roundtrip_and_vector_binding(monkeypatch):
     from hpg_core.caching import track_to_dict, dict_to_track, CacheValidationError
     from hpg_core.ai_models.native_audio_reader import CONTRACT
@@ -95,12 +103,14 @@ def test_embedding_roundtrip_and_vector_binding(monkeypatch):
         lambda: {'stems': 'b'*64, 'embedding': 'a'*64},
     )
     track = Track(filePath='track.wav', fileName='track.wav', duration=58., bpm=120.,
-                  analysis_mode="librosa_full_or_tail", embedding_analysis=current,
-                  audio_embedding=[1.]+[0.]*63)
+                  analysis_mode="librosa_full_or_tail", embedding_analysis=current)
     value = track_to_dict(track)
-    assert dict_to_track(value).audio_embedding == track.audio_embedding
+    restored = dict_to_track(value)
+    assert restored.embedding_analysis == track.embedding_analysis
+    assert not hasattr(restored, 'audio_embedding')
+    assert 'audio_embedding' not in value
     value = deepcopy(value)
-    value['audio_embedding'][0] = 0.
+    value['embedding_analysis']['data']['vector'][0] = 0.
     with pytest.raises(CacheValidationError):
         dict_to_track(value)
 
@@ -113,7 +123,6 @@ def test_feature_failure_keeps_existing_dsp_track(monkeypatch):
     features.attach(track)
     assert track.energy == 73. and track.bpm == 128.
     assert features.transient_failure(track)
-    assert track.audio_embedding == []
 
 
 def test_cached_disabled_features_refresh_when_later_enabled(monkeypatch):
@@ -129,6 +138,34 @@ def test_cached_disabled_features_refresh_when_later_enabled(monkeypatch):
     assert features.needs_refresh(track)
     track.stem_analysis = dict(status='unsupported', fingerprint='a'*64)
     track.embedding_analysis = dict(status='unsupported', fingerprint='b'*64)
+    assert not features.needs_refresh(track)
+
+
+def test_disabled_features_clear_stale_cache_without_opening_model_service(
+        monkeypatch, tmp_path):
+    import builtins
+
+    settings = dict(stems_enabled=False, embedding_enabled=False)
+    fingerprints = {'stems': 'a'*64, 'embedding': 'b'*64}
+    monkeypatch.setattr(features, 'config', lambda: settings)
+    monkeypatch.setattr(features, 'config_fingerprint', lambda _settings: fingerprints)
+    track = Track(filePath=str(tmp_path/'missing.wav'), fileName='missing.wav',
+        duration=58., bpm=120.,
+        stem_analysis=dict(status='ok', fingerprint='old-stems'),
+        embedding_analysis=dict(status='ok', fingerprint='old-embedding'))
+    assert features.needs_refresh(track)
+
+    original_import = builtins.__import__
+    def guarded_import(name, *args, **kwargs):
+        if name.endswith(('.cue_service', '.feature_reuse')):
+            raise AssertionError(f'Unexpected disabled feature import: {name}')
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', guarded_import)
+
+    features.attach(track)
+
+    assert track.stem_analysis['status'] == 'disabled'
+    assert track.embedding_analysis['status'] == 'disabled'
     assert not features.needs_refresh(track)
 
 

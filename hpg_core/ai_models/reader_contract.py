@@ -1,5 +1,19 @@
 """Gemeinsame Provenienzlabels der Analyse-Reader."""
 
+from pathlib import Path
+
+
+_LOSSY_SOURCE_SUFFIXES = frozenset({'.mp3', '.mp4', '.m4a', '.aac', '.ogg', '.wma'})
+
+
+def source_duration_tolerance(path, *, sample_rate=16000):
+    """Gemeinsame Laengentoleranz fuer verlustbehaftete Decoderquellen."""
+    if type(sample_rate) is not int or sample_rate <= 0:
+        raise ValueError('Invalid source-duration sample rate')
+    if Path(path).suffix.lower() in _LOSSY_SOURCE_SUFFIXES:
+        return .1
+    return 1 / sample_rate
+
 NATIVE_BEAT_INPUT_CONVENTIONS = {
     'rekordbox-builtin': 'rekordbox-builtin-planar-float32',
     'rekordbox-builtin-flac': 'rekordbox-builtin-flac-planar-float32',

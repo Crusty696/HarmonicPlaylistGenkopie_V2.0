@@ -295,12 +295,18 @@ def _handle(payload):
     # Codec-Unterstützung entscheidet vor Metadatenheuristiken. Der Reader
     # validiert Kanalzahl und Quelldaten und fällt bei Fehlern kontrolliert zurück.
     use_native_reader = path.suffix.lower() in NATIVE_REKORDBOX_READER_EXTENSIONS
-    try:
-        reader = NativeAudioReader(image, path, use_rekordbox=use_native_reader)
-    except NativeContractError:
-        # Der NativeCodec ist optional. Nach einem kontrollierten Open-Fehler
-        # dekodiert der isolierte Einmalprozess dieselbe Quelle mit HPG weiter.
-        reader = NativeAudioReader(None, path, use_rekordbox=False)
+    if use_native_reader:
+        try:
+            reader = NativeAudioReader(image, path, use_rekordbox=True)
+        except NativeContractError:
+            # Der NativeCodec ist optional. Nach einem kontrollierten Open-Fehler
+            # dekodiert der isolierte Einmalprozess dieselbe Quelle mit HPG weiter.
+            reader = NativeAudioReader(None, path, use_rekordbox=False)
+    else:
+        # OGG/WMA und weitere HPG-Formate verwenden direkt den HPG-Reader. Ein
+        # zweiter identischer Konstruktorversuch würde Decoderstart, Metadaten-
+        # Scan und bei Fehlern die Audioread-Dauerzählung unnötig wiederholen.
+        reader = NativeAudioReader(image, path, use_rekordbox=False)
     frames = reader.frames
     from .native_beat_boundaries import run as correct_boundaries, VERSION as boundary_contract
     if frames <= MAX_NATIVE_BEAT_WINDOW_SECONDS * _SAMPLE_RATE:

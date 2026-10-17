@@ -30,7 +30,8 @@ def test_structure_windows_include_real_tail_and_mark_gap(monkeypatch):
     )
 
   monkeypatch.setattr(analysis, "analyze_structure", fake_structure)
-  monkeypatch.setattr(analysis.librosa, "load", lambda *args, **kwargs: (tail, sr))
+  monkeypatch.setattr(analysis, "_load_analysis_audio",
+                      lambda *args, **kwargs: (tail, sr))
 
   structure, coverage, outro_covered = analyze_structure_windows(
     "long.wav", head, sr, 120.0, "Techno", 600.0
@@ -62,7 +63,7 @@ def test_structure_windows_degrades_when_tail_decode_fails(monkeypatch):
   def fail_tail_decode(*args, **kwargs):
     raise RuntimeError("tail decode failed")
 
-  monkeypatch.setattr(analysis.librosa, "load", fail_tail_decode)
+  monkeypatch.setattr(analysis, "_load_analysis_audio", fail_tail_decode)
 
   structure, coverage, outro_covered = analyze_structure_windows(
     "long.wav", head_audio, sr, 120.0, "Techno", 600.0
@@ -94,8 +95,8 @@ def test_structure_windows_rounding_never_exceeds_raw_duration(monkeypatch):
 
   monkeypatch.setattr(analysis, "analyze_structure", fake_structure)
   monkeypatch.setattr(
-    analysis.librosa,
-    "load",
+    analysis,
+    "_load_analysis_audio",
     lambda *args, **kwargs: (tail_audio, sr),
   )
 
@@ -160,8 +161,8 @@ def test_fractional_tail_decode_error_remains_within_duration(monkeypatch):
     ),
   )
   monkeypatch.setattr(
-    analysis.librosa,
-    "load",
+    analysis,
+    "_load_analysis_audio",
     lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("tail kaputt")),
   )
 

@@ -14,6 +14,7 @@ Aufbau eines gerenderten Clips:
 import os
 import logging
 import math
+import numbers
 import tempfile
 from dataclasses import dataclass
 
@@ -137,13 +138,26 @@ class TransitionClipSpec:
     @classmethod
     def from_plan(cls, plan, from_track, to_track):
         """Erzeugt eine Render-Spezifikation ohne zweite Timing-Berechnung."""
+        def usable_downbeat(track) -> float | None:
+            anchor = getattr(track, "first_downbeat", None)
+            duration = getattr(track, "duration", None)
+            if (isinstance(anchor, bool) or not isinstance(anchor, numbers.Real)
+                    or isinstance(duration, bool) or not isinstance(duration, numbers.Real)):
+                return None
+            anchor, duration = float(anchor), float(duration)
+            if not math.isfinite(anchor) or not math.isfinite(duration) or duration <= 0.0:
+                return None
+            return anchor if 0.0 <= anchor < duration else None
+
         def _phase_reliability(track) -> tuple[bool, bool]:
             confidence = float(getattr(track, "downbeat_confidence", 0.0) or 0.0)
             source = getattr(track, "beatgrid_source", "unknown")
             status = getattr(track, "beatgrid_status", "unknown")
+            has_anchor = usable_downbeat(track) is not None
             reference_grid = (
                 source == "rekordbox"
                 and status == "verified"
+                and has_anchor
             )
             # Native Rekordbox-Taktzahlen kommen aus dem separaten Analyselauf,
             # nicht aus dem Datenbankimport. Herkunft und ggf. Audio-Zeitkorrektur
@@ -160,6 +174,7 @@ class TransitionClipSpec:
                 source == "audio"
                 and status == "verified"
                 and confidence >= DOWNBEAT_RELIABLE_MIN
+                and has_anchor
             )
             return (
                 reference_grid or native_grid or measured_audio,
@@ -174,8 +189,23 @@ class TransitionClipSpec:
             from .ai_models.native_track_beats import has_verified_grid
             return (track.native_beat_analysis.get('phase_method', 'bass_fold')
                     if has_verified_grid(track) else 'bass_fold')
-        bpm_a = float(from_track.bpm or 120.0)
-        bpm_b = float(to_track.bpm or 120.0)
+        # Ein Plan-Render ist strikt beat-synchron. Fehlende/Null-BPM duerfen
+        # deshalb nicht still als 120 BPM behandelt werden: das wuerde einen
+        # plausibel aussehenden, aber auf einem erfundenen Raster ausgerichteten
+        # Preview erzeugen.
+        raw_bpm_a = getattr(from_track, "bpm", None)
+        raw_bpm_b = getattr(to_track, "bpm", None)
+        if (isinstance(raw_bpm_a, bool) or not isinstance(raw_bpm_a, numbers.Real)
+                or isinstance(raw_bpm_b, bool) or not isinstance(raw_bpm_b, numbers.Real)):
+            raise ValueError("TransitionPlan braucht numerische BPM fuer beide Tracks")
+        try:
+            bpm_a = float(raw_bpm_a)
+            bpm_b = float(raw_bpm_b)
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("TransitionPlan braucht gueltige BPM fuer beide Tracks") from exc
+        if (not math.isfinite(bpm_a) or bpm_a <= 0.0
+                or not math.isfinite(bpm_b) or bpm_b <= 0.0):
+            raise ValueError("TransitionPlan braucht endliche positive BPM fuer beide Tracks")
         tempo_ratio = getattr(plan, "tempo_ratio", bpm_b / bpm_a)
         if tempo_ratio is None:
             raise ValueError("TransitionPlan.tempo_ratio darf nicht None sein")
@@ -190,8 +220,8 @@ class TransitionClipSpec:
             bpm_a=bpm_a,
             bpm_b=bpm_b,
             tempo_ratio=tempo_ratio,
-            first_downbeat_a=float(getattr(from_track, "first_downbeat", 0.0) or 0.0),
-            first_downbeat_b=float(getattr(to_track, "first_downbeat", 0.0) or 0.0),
+            first_downbeat_a=usable_downbeat(from_track) or 0.0,
+            first_downbeat_b=usable_downbeat(to_track) or 0.0,
             downbeat_reliable_a=downbeat_a,
             downbeat_reliable_b=downbeat_b,
             bar_phase_reliable_a=bar_a,
@@ -214,7 +244,7 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
     """Validiert den Rendervertrag, ohne Timingwerte still zu veraendern."""
     for name in ("mix_out_sec", "mix_in_sec"):
         value = getattr(spec, name)
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
         try:
             numeric = float(value)
@@ -226,7 +256,7 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
 
     overlap = spec.crossfade_sec
-    if isinstance(overlap, bool):
+    if isinstance(overlap, bool) or not isinstance(overlap, numbers.Real):
         raise ValueError("crossfade_sec muss endlich und positiv sein")
     try:
         overlap = float(overlap)
@@ -252,9 +282,37 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             f"Nicht unterstuetzter transition_type: {spec.transition_type!r}"
         )
 
+    # Diese Uebergangspfade verwenden feste Filtergrenzen. Eine positive,
+    # aber zu niedrige Ziel-Samplerate liess scipy erst waehrend des Renderns
+    # mit einer schwer zuzuordnenden Nyquist-Fehlermeldung abbrechen.
+    fixed_filter_hz = {
+        "smooth_blend": SMOOTH_BLEND_LP_HZ,
+        "filter_ride": FILTER_RIDE_HP_HZ,
+        "breakdown_bridge": BREAKDOWN_HP_HZ,
+        "pro_eq_swap": 2500.0,
+    }.get(spec.transition_type)
+    if fixed_filter_hz is not None and fixed_filter_hz >= spec.target_sr / 2.0:
+        raise ValueError(
+            f"target_sr muss fuer {spec.transition_type} groesser als "
+            f"{fixed_filter_hz * 2:g} Hz sein"
+        )
+
+    for name in ("pre_roll_sec", "post_roll_sec"):
+        value = getattr(spec, name)
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
+        try:
+            numeric = float(value)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{name} muss eine endliche nichtnegative Zahl sein"
+            ) from exc
+        if not math.isfinite(numeric) or numeric < 0.0:
+            raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
+
     for name in ("bpm_a", "bpm_b"):
         value = getattr(spec, name)
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             raise ValueError(f"{name} muss eine endliche positive Zahl sein")
         try:
             numeric = float(value)
@@ -264,7 +322,8 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(f"{name} muss eine endliche positive Zahl sein")
 
     if spec.tempo_ratio is not None:
-        if isinstance(spec.tempo_ratio, bool):
+        if (isinstance(spec.tempo_ratio, bool)
+                or not isinstance(spec.tempo_ratio, numbers.Real)):
             raise ValueError("tempo_ratio muss eine endliche positive Zahl sein")
         try:
             tempo_ratio = float(spec.tempo_ratio)
@@ -277,6 +336,37 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(
                 "tempo_ratio widerspricht den BPM-Werten des Rendervertrags"
             )
+
+    cutoff = spec.bass_cutoff_hz
+    if isinstance(cutoff, bool) or not isinstance(cutoff, numbers.Real):
+        raise ValueError("bass_cutoff_hz muss endlich und innerhalb Nyquist liegen")
+    try:
+        cutoff = float(cutoff)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "bass_cutoff_hz muss endlich und innerhalb Nyquist liegen"
+        ) from exc
+    if (not math.isfinite(cutoff) or cutoff <= 0.0
+            or cutoff >= spec.target_sr / 2.0):
+        raise ValueError("bass_cutoff_hz muss endlich und innerhalb Nyquist liegen")
+
+    for name in ("first_downbeat_a", "first_downbeat_b", "normalize_target_db",
+                 "lufs_a", "lufs_b"):
+        value = getattr(spec, name)
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise ValueError(f"{name} muss eine endliche Zahl sein")
+        try:
+            numeric = float(value)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(f"{name} muss eine endliche Zahl sein") from exc
+        if not math.isfinite(numeric):
+            raise ValueError(f"{name} muss eine endliche Zahl sein")
+
+    for name in ("downbeat_reliable_a", "downbeat_reliable_b",
+                 "bar_phase_reliable_a", "bar_phase_reliable_b",
+                 "strict_beat_sync", "normalize_rms", "use_compressor"):
+        if type(getattr(spec, name)) is not bool:
+            raise ValueError(f"{name} muss boolesch sein")
 
 
 # ---------------------------------------------------------------------------

@@ -12,12 +12,12 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 from __future__ import annotations
 
 import math
+import numbers
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from .config import (
-  DEFAULT_BPM,
   DEFAULT_SECTION_ENERGY,
   GAIN_DIFF_SHOW_DB,
   GAIN_DIFF_WARN_DB,
@@ -842,10 +842,26 @@ def calculate_paired_mix_points(
   native_b = _verified_native_phrase_grid(track_b)
   if track_a.bar_position_usage_blocked or track_b.bar_position_usage_blocked:
     return MIX_POINT_UNSET, MIX_POINT_UNSET
+  # Mixpunktzeiten dürfen kein fehlendes Tempo durch den Anzeige-/DSP-Default
+  # ersetzen. Der Renderer verlangt für denselben Paarplan endliche BPM; hier
+  # deshalb bereits vor Overlap- und Rasterrechnung geschlossen ablehnen.
+  for track in (track_a, track_b):
+    bpm = track.bpm
+    if (isinstance(bpm, bool) or not isinstance(bpm, numbers.Real)
+        or not math.isfinite(bpm) or bpm <= 0):
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+    duration = track.duration
+    if (isinstance(duration, bool) or not isinstance(duration, numbers.Real)
+        or not math.isfinite(duration) or duration < 0):
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
   pssi_a = track_a.verified_pssi_phrase_grid
   pssi_b = track_b.verified_pssi_phrase_grid
-  points_a = pssi_a or native_a
-  points_b = pssi_b or native_b
+  # Nur Grenzen mit geprüfter Herkunft verwenden: die gefilterte PSSI-Liste
+  # oder das zuvor gegen den nativen Snapshot validierte Track-Raster. Ein
+  # boolescher Native-Status allein ist keine Punktliste und darf keine rohen
+  # PSSI-Grenzen freigeben.
+  points_a = pssi_a or (track_a.phrase_grid if native_a else [])
+  points_b = pssi_b or (track_b.phrase_grid if native_b else [])
   if (track_a.phrase_anchor is None and not points_a) or (
       track_b.phrase_anchor is None and not points_b
   ):
@@ -856,10 +872,12 @@ def calculate_paired_mix_points(
   if track_a.duration <= 0 or track_b.duration <= 0:
     if points_a or points_b:
       return MIX_POINT_UNSET, MIX_POINT_UNSET
-    return (
-      max(track_a.mix_out_point, 0.0),
-      max(track_b.mix_in_point, 0.0),
-    )
+    values = (track_a.mix_out_point, track_b.mix_in_point)
+    if any(isinstance(value, bool) or not isinstance(value, numbers.Real)
+           or not math.isfinite(value)
+           or (value < 0 and value != MIX_POINT_UNSET) for value in values):
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+    return values
 
   profile_b = get_mix_profile(resolve_track_genre(track_b))
 
@@ -868,12 +886,12 @@ def calculate_paired_mix_points(
 
   # --- Outro-Dauer von Track A ---
   outro_start_a = track_a.mix_out_point
-  if outro_start_a <= 0:
+  if outro_start_a < 0.0:
     outro_start_a = track_a.duration * 0.8  # Fallback: letzte 20%
   outro_duration_a = max(0.0, track_a.duration - outro_start_a)
 
   # --- Minimaler Overlap: genre-spezifisch nach Startwert des Transition-Bereichs ---
-  bpm_b = track_b.bpm if track_b.bpm > 0 else DEFAULT_BPM
+  bpm_b = float(track_b.bpm)
   seconds_per_bar_b = (60.0 / bpm_b) * METER
   min_overlap_bars = max(8, int(profile_b.transition_bars[0]))
   min_overlap = seconds_per_bar_b * min_overlap_bars
@@ -918,7 +936,7 @@ def calculate_paired_mix_points(
     # (phrase_unit=16) bis zu 15 Bars von der Phrasengrenze ab (H2-Fix).
     threshold = intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9
     adjusted_mix_in_b = (
-      quantize_to_points(threshold, track_b.phrase_grid, "ceil")
+      quantize_to_points(threshold, points_b, "ceil")
       if points_b else quantize_to_grid(threshold, phrase_seconds_b, anchor_b, "ceil")
     )
     if adjusted_mix_in_b is None:
@@ -932,7 +950,7 @@ def calculate_paired_mix_points(
   outro_start_sections_a = _get_outro_start_from_sections(
     track_a.sections or [], track_a.duration
   )
-  bpm_a = track_a.bpm if track_a.bpm > 0 else DEFAULT_BPM
+  bpm_a = float(track_a.bpm)
   seconds_per_bar_a = (60.0 / bpm_a) * METER
   phrase_unit_a = effective_track_phrase_unit(track_a)
   phrase_seconds_a = seconds_per_bar_a * phrase_unit_a
@@ -944,7 +962,7 @@ def calculate_paired_mix_points(
     if phrase_seconds_a > 0:
       threshold = outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9
       adjusted_mix_out_a = (
-        quantize_to_points(threshold, track_a.phrase_grid, "floor")
+        quantize_to_points(threshold, points_a, "floor")
         if points_a else quantize_to_grid(threshold, phrase_seconds_a, anchor_a, "floor")
       )
       if adjusted_mix_out_a is None:
@@ -955,7 +973,7 @@ def calculate_paired_mix_points(
         adjusted_mix_out_a = (
           quantize_to_points(
             outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
-            track_a.phrase_grid, "floor",
+            points_a, "floor",
           )
           if points_a else adjusted_mix_out_a - phrase_seconds_a
         )
@@ -967,7 +985,7 @@ def calculate_paired_mix_points(
   # Sicherheitscheck: Mix-Out vor Track-Ende
   if points_a and adjusted_mix_out_a > track_a.duration - seconds_per_bar_a:
     adjusted_mix_out_a = quantize_to_points(
-      track_a.duration - seconds_per_bar_a, track_a.phrase_grid, "floor"
+      track_a.duration - seconds_per_bar_a, points_a, "floor"
     )
     if adjusted_mix_out_a is None:
       return MIX_POINT_UNSET, MIX_POINT_UNSET
@@ -996,7 +1014,7 @@ def calculate_paired_mix_points(
   grid_epsilon = 1e-9
   if phrase_seconds_a > 0:
     q_out = (
-      quantize_to_points(adjusted_mix_out_a + grid_epsilon, track_a.phrase_grid, "floor")
+      quantize_to_points(adjusted_mix_out_a + grid_epsilon, points_a, "floor")
       if points_a else quantize_to_grid(
         adjusted_mix_out_a + grid_epsilon, phrase_seconds_a, anchor_a, "floor"
       )
@@ -1009,7 +1027,7 @@ def calculate_paired_mix_points(
       return MIX_POINT_UNSET, MIX_POINT_UNSET
   if phrase_seconds_b > 0:
     q_in = (
-      quantize_to_points(adjusted_mix_in_b - grid_epsilon, track_b.phrase_grid, "ceil")
+      quantize_to_points(adjusted_mix_in_b - grid_epsilon, points_b, "ceil")
       if points_b else quantize_to_grid(
         adjusted_mix_in_b - grid_epsilon, phrase_seconds_b, anchor_b, "ceil"
       )
@@ -1193,7 +1211,14 @@ def _bpm_advice(bpm_a: float, bpm_b: float) -> str:
   Keine generischen Phrasen -- immer die echten Zahlen nennen.
   Wird als Prefix "BPM: ..." in die Transition-Notes injiziert.
   """
-  if bpm_a <= 0 or bpm_b <= 0:
+  try:
+    if type(bpm_a) is bool or type(bpm_b) is bool:
+      return ""
+    bpm_a, bpm_b = float(bpm_a), float(bpm_b)
+  except (TypeError, ValueError, OverflowError):
+    return ""
+  if (not math.isfinite(bpm_a) or not math.isfinite(bpm_b)
+      or bpm_a <= 0 or bpm_b <= 0):
     return ""
 
   diff = bpm_b - bpm_a
@@ -1540,16 +1565,26 @@ def _assess_transition_risks(
   # BPM-Check mit Half/Double-Time-Erkennung
   # Audit-Fix 2026-07-21: Half/Double UNABHAENGIG von der 2.0-Grenze melden —
   # sonst blieb ein Half/Double-Uebergang mit eff. Diff 2-4 BPM voellig ohne Hinweis.
-  bpm_diff, bpm_relation = _effective_bpm_diff(track_a.bpm, track_b.bpm)
-  if bpm_relation in ("half", "double"):
-    suffix = "" if bpm_diff <= 2.0 else f", eff. {bpm_diff:.1f} BPM angleichen"
-    risks.append(
-      f"Half/Double-Time ({track_a.bpm:.1f}↔{track_b.bpm:.1f}) -- exakt auf Phrase/Downbeat cutten{suffix}"
-    )
-  elif bpm_diff > 8:
-    risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")
-  elif bpm_diff > 4:
-    risks.append(f"BPM-Differenz {bpm_diff:.1f} -- langsam angleichen")
+  try:
+    if type(track_a.bpm) is bool or type(track_b.bpm) is bool:
+      raise ValueError("Boolean BPM is invalid")
+    bpm_a, bpm_b = float(track_a.bpm), float(track_b.bpm)
+  except (TypeError, ValueError, OverflowError):
+    bpm_a = bpm_b = float("nan")
+  if (not math.isfinite(bpm_a) or not math.isfinite(bpm_b)
+      or bpm_a <= 0 or bpm_b <= 0):
+    risks.append("Tempo fehlt oder ist ungültig -- Übergang nicht bewertbar")
+  else:
+    bpm_diff, bpm_relation = _effective_bpm_diff(bpm_a, bpm_b)
+    if bpm_relation in ("half", "double"):
+      suffix = "" if bpm_diff <= 2.0 else f", eff. {bpm_diff:.1f} BPM angleichen"
+      risks.append(
+        f"Half/Double-Time ({bpm_a:.1f}↔{bpm_b:.1f}) -- exakt auf Phrase/Downbeat cutten{suffix}"
+      )
+    elif bpm_diff > 8:
+      risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")
+    elif bpm_diff > 4:
+      risks.append(f"BPM-Differenz {bpm_diff:.1f} -- langsam angleichen")
 
   # Energie-Check
   energy_diff = abs(track_a.energy - track_b.energy)
