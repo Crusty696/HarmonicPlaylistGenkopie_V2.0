@@ -269,6 +269,36 @@ def _attach(track):
     track.audio_embedding = track.embedding_analysis.get('data', {}).get('vector', [])
 
 
+def needs_refresh(track):
+    """Erneuert nur optionale Merkmale, die laut aktueller Konfiguration fehlen."""
+    try:
+        settings = config()
+        fingerprints = config_fingerprint(settings)
+    except Exception:
+        return False
+    for kind, field in (('stems', 'stem_analysis'), ('embedding', 'embedding_analysis')):
+        if not settings[kind + '_enabled']:
+            continue
+        snapshot = getattr(track, field, {})
+        fingerprint = fingerprints.get(kind)
+        if type(snapshot) is not dict or snapshot.get('fingerprint') != fingerprint:
+            return True
+        status = snapshot.get('status')
+        if status == 'unavailable':
+            return True
+        if status == 'unsupported':
+            continue
+        expected_version = 5 if kind == 'embedding' else 3
+        if status != 'ok' or snapshot.get('version') != expected_version:
+            return True
+        try:
+            validate(snapshot, kind=kind, duration=track.duration,
+                     duration_tolerance=source_duration_tolerance(track.filePath))
+        except (ValueError, TypeError, KeyError):
+            return True
+    return False
+
+
 def transient_failure(track):
     return any(getattr(track, field, {}).get('status') == 'unavailable'
                for field in ('stem_analysis', 'embedding_analysis'))

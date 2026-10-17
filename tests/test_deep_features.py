@@ -104,6 +104,22 @@ def test_feature_failure_keeps_existing_dsp_track(monkeypatch):
     assert track.audio_embedding == []
 
 
+def test_cached_disabled_features_refresh_when_later_enabled(monkeypatch):
+    settings = dict(stems_enabled=True, embedding_enabled=True)
+    fingerprints = {'stems': 'a'*64, 'embedding': 'b'*64}
+    monkeypatch.setattr(features, 'config', lambda: settings)
+    monkeypatch.setattr(features, 'config_fingerprint', lambda _settings: fingerprints)
+    monkeypatch.setattr(features, 'validate', lambda *_args, **_kwargs: None)
+    track = Track(filePath='track.wav', fileName='track.wav', duration=58., bpm=120.,
+        stem_analysis=dict(status='disabled', fingerprint='c'*64),
+        embedding_analysis=dict(status='disabled', fingerprint='d'*64))
+
+    assert features.needs_refresh(track)
+    track.stem_analysis = dict(status='unsupported', fingerprint='a'*64)
+    track.embedding_analysis = dict(status='unsupported', fingerprint='b'*64)
+    assert not features.needs_refresh(track)
+
+
 def test_expired_optional_budget_never_connects(monkeypatch):
     from hpg_core.ai_models import cue_service as cs
     monkeypatch.setattr(cs.time, 'monotonic', lambda: 100.)

@@ -3581,16 +3581,12 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
     if cached_track:
         cached_mode = getattr(cached_track, "analysis_mode", None)
         if cached_mode in VALID_ANALYSIS_MODES:
-            retry_features = any(
-                (snapshot := getattr(cached_track, field, {})).get('reason') == 'stale_feature_producer'
-                or snapshot.get('status') == 'unavailable'
-                for field in ('stem_analysis', 'embedding_analysis')
-            )
-            if retry_features:
+            from .ai_models.deep_features import attach as attach_deep_features
+            from .ai_models.deep_features import needs_refresh as deep_features_need_refresh
+            if deep_features_need_refresh(cached_track):
                 # Fehlgeschlagene/veraltete Zusatzmerkmale gezielt erneuern.
                 # Die erfolgreiche Basisanalyse bleibt dabei Cachetreffer.
                 try:
-                    from .ai_models.deep_features import attach as attach_deep_features
                     attach_deep_features(cached_track)
                     if not cache_track(cache_key, cached_track):
                         logger.warning("Zusatzmerkmale nicht im Cache aktualisiert: %s",
