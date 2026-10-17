@@ -39,6 +39,7 @@ MPG123_ENC_SIGNED_16 = 0xD0
 MPG123_DONE = -12
 MPG123_NEW_FORMAT = -11
 _MPG123_RUNTIME_LOCK = threading.Lock()
+_NATIVE_READER_REFCOUNT_LOCK = threading.Lock()
 _MPG123_LIBRARY = None
 _MPG123_DLL_DIRECTORY = None
 _MPG123_VERIFIED_FILE = None
@@ -870,23 +871,27 @@ class NativeAudioReader:
         owner = getattr(self, 'owner', None)
         if owner is not None:
             # RVA1113330 gibt Decoder- (owner+8) und Resampler-Referenz
-            # (owner+16) frei. Erst den Zeiger lösen, dann wie dort den
-            # Rekordbox-Refcount atomar senken und bei letzter Referenz den
+            # (owner+16) frei. Erst Zeiger lösen, dann unter dem
+            # Prozess-Lock den Refcount senken und bei letzter Referenz den
             # virtuellen Destruktor mit deleting=1 aufrufen.
-            decrement = None
             for offset in (8, 16):
                 try:
                     slot = ct.c_void_p.from_buffer(owner, offset)
                     pointer, slot.value = slot.value, None
                     if not pointer or ct.c_int32.from_address(pointer + 12).value != 0x52434F58:
                         continue
-                    if decrement is None:
-                        kernel = ct.WinDLL('kernel32', use_last_error=True)
-                        decrement = kernel.InterlockedDecrement
-                        decrement.argtypes = [ct.POINTER(ct.c_long)]
-                        decrement.restype = ct.c_long
-                    count = ct.cast(pointer + 8, ct.POINTER(ct.c_long))
-                    if decrement(count) == 0:
+                    # InterlockedDecrement ist ein Compilerintrinsic und auf
+                    # aktuellen Windows-Versionen kein kernel32-Export. Der
+                    # Reader laeuft im synchronen Modus 0 innerhalb eines
+                    # isolierten Analyseprozesses; alle HPG-Referenzfreigaben
+                    # werden deshalb unter diesem Prozess-Lock ausgefuehrt.
+                    refcount = ct.c_long.from_address(pointer + 8)
+                    with _NATIVE_READER_REFCOUNT_LOCK:
+                        if refcount.value <= 0:
+                            raise NativeContractError('Native reader refcount is invalid')
+                        refcount.value -= 1
+                        last_reference = refcount.value == 0
+                    if last_reference:
                         vtable = ct.c_void_p.from_address(pointer).value
                         if not vtable:
                             raise NativeContractError('Native reader has no deleting vtable')
