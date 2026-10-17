@@ -179,8 +179,14 @@ def _naht_werte(track: Track, rolle: str) -> tuple[float | None, float | None] |
     mittel = (
         float(track.sub_energy) if _finite_number(track.sub_energy)
         and float(track.sub_energy) > 0.0 else None,
-        float(track.bass_punch) if _finite_number(track.bass_punch) else None,
+        float(track.bass_punch) if _finite_number(track.bass_punch)
+        and float(track.bass_punch) > 0.0 else None,
     )
+
+    # 0.0 ist in GrooveFeatures der Sentinel fuer "nicht gemessen". Sektionen
+    # duerfen diese fehlende Trackmessung nicht nachtraeglich ueberstimmen.
+    if mittel == (None, None):
+        return None
 
     zeitpunkt = track.mix_out_point if rolle == "out" else track.mix_in_point
     if not _finite_number(zeitpunkt) or float(zeitpunkt) < 0.0:

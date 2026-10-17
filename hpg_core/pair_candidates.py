@@ -457,18 +457,82 @@ def _phrase_points_usable(track: Track) -> bool:
         return False
     if track.phrase_anchor is not None:
         return True
+    # beatgrid_status ist eine Diagnose zur Rekordbox-/Beatgrid-Uebereinstimmung.
+    # Ein separat validierter Audio-Anker bleibt fuer Audio-Gitter nutzbar.
+    if _active_audio_phrase_anchor(track) is not None:
+        return True
     return track.verified_pssi_phrase_grid
 
 
+def _active_audio_phrase_anchor(track: Track) -> float | None:
+    """Liefert nur den separat konfidenten Audioanker, unabhaengig vom Statuslabel."""
+    if (
+        track.bar_position_usage_blocked
+        or track.beatgrid_source != "audio"
+        or track.bar_position_status in {"reference_candidate", "native_candidate"}
+    ):
+        return None
+    from .downbeat import (
+        BEATGRID_MAX_PHASE_ERROR_SECONDS,
+        BEATGRID_MIN_WINDOWS,
+        DOWNBEAT_RELIABLE_MIN,
+    )
+    try:
+        anchor = float(track.first_downbeat)
+        confidence = float(track.downbeat_confidence)
+        max_phase_error_ms = float(track.beatgrid_max_phase_error_ms)
+        windows_checked = track.beatgrid_windows_checked
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (
+        math.isfinite(anchor)
+        and anchor >= 0.0
+        and math.isfinite(confidence)
+        and confidence >= DOWNBEAT_RELIABLE_MIN
+        and type(windows_checked) is int
+        and windows_checked >= BEATGRID_MIN_WINDOWS
+        and math.isfinite(max_phase_error_ms)
+        and 0.0 <= max_phase_error_ms
+        and max_phase_error_ms
+        <= BEATGRID_MAX_PHASE_ERROR_SECONDS * 1000.0 + 1e-9
+    ):
+        return anchor
+    return None
+
+
 def _trusted_candidates(track: Track, candidates: list[MixCandidate]) -> list[MixCandidate]:
-    """Entfernt PSSI-Rang und Label, wenn dessen Taktphase nicht bestätigt ist."""
+    """Entfernt PSSI-Rang/Label ohne Gridbeleg; sichere Ankerpunkte bleiben nutzbar.
+
+    Ein unbestaetigtes PSSI-Schema darf keine Phrase behaupten. Liegt sein
+    Zeitpunkt aber auf einem unabhaengig aktiven Track-Anker, ist der
+    Mixpunkt-Zeitstempel selbst rastergeprueft und kann neutral weiterlaufen.
+    """
     if track.verified_pssi_phrase_grid:
         return candidates
     trusted = []
     for candidate in candidates:
         schemas = [schema for schema in (candidate.schema or []) if schema != "pssi_phrase"]
         if not schemas and "pssi_phrase" in (candidate.schema or []):
-            continue
+            anchor = track.phrase_anchor
+            if anchor is None:
+                anchor = _active_audio_phrase_anchor(track)
+            try:
+                grid = _grid_sec(track)
+                aligned = (
+                    anchor is not None
+                    and math.isfinite(float(candidate.t))
+                    and grid > 0.0
+                    and abs(
+                        quantize_to_grid(
+                            float(candidate.t), grid, float(anchor), "round"
+                        )
+                        - float(candidate.t)
+                    ) <= QUANTIZE_TOLERANCE_SEC
+                )
+            except (TypeError, ValueError, OverflowError):
+                aligned = False
+            if not aligned:
+                continue
         if len(schemas) != len(candidate.schema or []):
             # Track.mix_*_candidates kann bereits MixCandidate-Objekte enthalten.
             # Die Vertrauensfilterung ist eine Sicht fuer dieses Ranking und darf
@@ -487,6 +551,10 @@ def _ist_benannter_cue(track: Track, cand: MixCandidate, seite: str) -> bool:
         return False
     phrase_anchor = track.phrase_anchor
     if not _phrase_points_usable(track):
+        return False
+    if phrase_anchor is None:
+        phrase_anchor = _active_audio_phrase_anchor(track)
+    if phrase_anchor is None and not track.verified_pssi_phrase_grid:
         return False
     muster = CUE_IN_PATTERN if seite == "in" else CUE_OUT_PATTERN
     grid = _grid_sec(track)
@@ -512,6 +580,8 @@ def _auf_gitter(track: Track, t: float, seite: str) -> bool:
     else:
         grid = _grid_sec(track)
         anchor = track.phrase_anchor
+        if anchor is None:
+            anchor = _active_audio_phrase_anchor(track)
         if grid <= 0.0 or anchor is None:
             return False
         q = quantize_to_grid(t, grid, anchor, "round")
@@ -1265,6 +1335,10 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
     `schema_rang`: Rangfolge der Schemata (Hoertest, Teil 3) als Tiebreak bei
     gleichem Score; None = SCHEMA_PRIORITAET."""
     _combination_limit(max_combinations)
+    if tolerances is not None:
+        # Fehlkonfigurierte Gewichte sind ein API-Fehler, auch wenn Gates spaeter
+        # alle Kandidaten verwerfen wuerden.
+        _gewichte(tolerances, _genre(track_a), explizit=True)
     try:
         bpm_gueltig = all(
             math.isfinite(float(track.bpm)) and float(track.bpm) > 0.0

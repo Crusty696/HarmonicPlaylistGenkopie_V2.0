@@ -19,7 +19,10 @@ from contextlib import contextmanager
 from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
-from .downbeat import EXACT_BEAT_SYNC_TOLERANCE_SECONDS, REFERENCE_BEATGRID_CONFIDENCE
+from .downbeat import (
+    DOWNBEAT_RELIABLE_MIN, EXACT_BEAT_SYNC_TOLERANCE_SECONDS,
+    REFERENCE_BEATGRID_CONFIDENCE,
+)
 from .mix_candidates import MixCandidate, SCHEMA_PRIORITAET
 from .models import (
     BEATGRID_SOURCES, BEATGRID_STATUSES, Track, is_supported_phrase_unit,
@@ -919,7 +922,8 @@ def validate_track_dict(data: dict) -> dict:
                     filtered['beatgrid_source'] == 'audio'
                     and native_method not in {'native_rekordbox', 'native_rekordbox_audio_offset'}
                     and filtered['downbeat_confidence'] > 0.0)
-                or bar_status == 'unknown' and filtered['downbeat_confidence'] != 0.0):
+                or bar_status == 'unknown'
+                   and filtered['downbeat_confidence'] >= DOWNBEAT_RELIABLE_MIN):
             raise ValueError('Taktpositionsstatus widerspricht der aktiven Analysequelle')
         if native_method in {'native_rekordbox', 'native_rekordbox_audio_offset'}:
             from .ai_models.native_beat_alignment import active_anchor

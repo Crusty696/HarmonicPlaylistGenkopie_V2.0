@@ -2129,9 +2129,11 @@ def predict_transition_type(
     if eff_diff > bpm_tolerance:
         # Die normale Kompatibilitaet ist hier wegen ihres BPM-Hard-Gates
         # definitionsgemaess 0. Fuer die Breakdown-Entscheidung die reine
-        # Harmonie deshalb ohne dieses Gate bewerten.
+        # Harmonie deshalb ohne dieses Gate bewerten. Die endliche gemessene
+        # Differenz reicht als Toleranz; ``inf`` wird vom zentralen Vertrag
+        # absichtlich als ungueltige Toleranz fail-closed abgewiesen.
         harmonic_without_bpm_gate = calculate_compatibility(
-            from_track, to_track, float("inf"), **kwargs
+            from_track, to_track, eff_diff, **kwargs
         )
         if harmonic_without_bpm_gate >= 50:
             return "breakdown_bridge"

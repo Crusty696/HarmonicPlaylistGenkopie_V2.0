@@ -432,14 +432,22 @@ class RekordboxXMLExporter(BaseExporter):
         try:
             from ..ai_models.native_track_beats import has_verified_grid
             first_downbeat = float(getattr(track, "first_downbeat", 0.0) or 0.0)
-            if (
-                hasattr(rb_track, "add_tempo")
-                and (getattr(track, "beatgrid_source", "unknown") == "rekordbox"
-                     or has_verified_grid(track))
+            source = getattr(track, "beatgrid_source", "unknown")
+            # Native Snapshots belegen BPM, Anker und Herkunft selbst. Sie
+            # bleiben Audioherkunft und koennen daher die nur fuer
+            # Rekordbox-Referenzen geltende Taktpositionsfreigabe nicht erfuellen.
+            native_grid = source == "audio" and has_verified_grid(track)
+            reference_grid = (
+                source == "rekordbox"
                 and getattr(track, "beatgrid_status", "unknown") == "verified"
                 and getattr(track, "reference_bar_position_verified", False)
                 and getattr(track, "downbeat_confidence", 0.0)
                 == REFERENCE_BEATGRID_CONFIDENCE
+            )
+            if (
+                hasattr(rb_track, "add_tempo")
+                and (reference_grid or native_grid)
+                and getattr(track, "beatgrid_status", "unknown") == "verified"
                 and math.isfinite(first_downbeat)
                 and 0.0 <= first_downbeat < float(track.duration)
             ):
