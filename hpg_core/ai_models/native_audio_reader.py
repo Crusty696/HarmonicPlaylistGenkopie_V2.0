@@ -20,6 +20,10 @@ from .native_phrase_worker import EXE, NativeContractError, _source_identity
 CONTRACT = 'rb-7.2.19-file-reader-v21'
 RATE = 44100
 MAX_SECONDS = 7200
+NATIVE_BEAT_READER_EXTENSIONS = frozenset({
+    '.wav', '.wave', '.aif', '.aiff', '.flac', '.fla',
+    '.m4a', '.mp4', '.aac', '.mp3',
+})
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
 MPG123_ENC_SIGNED_16 = 0xD0
 MPG123_DONE = -12
