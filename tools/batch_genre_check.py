@@ -15,10 +15,11 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from hpg_core.config import SUPPORTED_AUDIO_EXTENSIONS  # noqa: E402
 from hpg_core.analysis import analyze_track  # noqa: E402
 
 DEFAULT_FOLDER = r"D:\beatport_tracks_2025-08"
-EXTS = {".mp3", ".aiff", ".aif", ".flac", ".wav", ".m4a", ".ogg"}
+EXTS = frozenset(SUPPORTED_AUDIO_EXTENSIONS)
 
 # Genre-Aliases: Was im Dateinamen steht -> was der Classifier kennt
 GENRE_ALIASES = {

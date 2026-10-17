@@ -19,11 +19,12 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from hpg_core.config import SUPPORTED_AUDIO_EXTENSIONS  # noqa: E402
 from hpg_core.analysis import analyze_track  # noqa: E402
 
 # ── Konfiguration ────────────────────────────────────────────────────────────
 DEFAULT_FOLDER = r"D:\beatport_tracks_2025-08"
-AUDIO_EXTENSIONS = {".mp3", ".aiff", ".aif", ".flac", ".wav", ".m4a", ".ogg"}
+AUDIO_EXTENSIONS = frozenset(SUPPORTED_AUDIO_EXTENSIONS)
 
 OK = "[OK] "
 WARN = "[!]  "

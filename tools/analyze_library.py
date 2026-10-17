@@ -14,7 +14,9 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".aiff", ".aif", ".m4a"}
+from hpg_core.config import SUPPORTED_AUDIO_EXTENSIONS  # noqa: E402
+
+AUDIO_EXTENSIONS = frozenset(SUPPORTED_AUDIO_EXTENSIONS)
 
 
 def _integer_in_range(name: str, minimum: int, maximum: int | None = None):
