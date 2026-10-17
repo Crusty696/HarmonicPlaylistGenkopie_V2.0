@@ -723,9 +723,11 @@ class TestAnalyzeTrackFastPathCandidates:
     validate_track_dict(track_to_dict(track))
     assert track.beatgrid_source == "rekordbox"
     assert track.beatgrid_status == "verified"
+    assert track.bar_position_status == "reference_candidate"
     assert track.beatgrid_windows_checked >= 3
     assert [p["label"] for p in track.phrases] == ["Intro", "Chorus"]
     assert track.phrase_grid == [0.0, 30.0, 120.0]
+    assert track.phrase_anchor == 0.0
     assert [c["t"] for c in track.cue_points] == [20.0, 61.0, 100.0, 119.5]
     assert all(c["provenance"] == "leer" for c in track.cue_points)
     assert all(
@@ -964,7 +966,12 @@ def test_voll_pfad_behaelt_sichere_rekordbox_daten_ohne_rb_bpm(
       for candidate in track.mix_in_candidates + track.mix_out_candidates
     )
     validate_track_dict(track_to_dict(track))
-    assert track.mix_in_point >= 0.0 < track.mix_out_point <= track.duration
+    from hpg_core.mix_candidates import KANDIDATEN_MIN_JE_SEITE
+    if (len(track.mix_in_candidates) < KANDIDATEN_MIN_JE_SEITE
+        or len(track.mix_out_candidates) < KANDIDATEN_MIN_JE_SEITE):
+      assert track.mix_in_point == -1.0 and track.mix_out_point == -1.0
+    else:
+      assert track.mix_in_point >= 0.0 < track.mix_out_point <= track.duration
     importer.get_phrases.assert_called_once_with(
       str(wav), duration=pytest.approx(120.0)
     )
