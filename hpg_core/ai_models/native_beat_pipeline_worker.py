@@ -293,9 +293,10 @@ def _handle(payload):
     if image.function(0x2998258, ct.c_int32)() != 0:
         raise NativeContractError('Native standard-stream initialization failed')
     source_channels = _source_channel_count(path)
-    # Unbekannte und breite Kanal-Layouts bleiben beim HPG-Decoder; ein
-    # unbekannter Wert ist keine Freigabe fuer den privaten Rekordbox-Reader.
-    use_native_reader = source_channels in (1, 2)
+    # Unbekannte und breite Layouts bleiben beim HPG-Decoder. MP3 ist die
+    # Ausnahme: Der gebuendelte mpg123-Decoder liest und validiert Kanaele selbst.
+    use_native_reader = (source_channels in (1, 2)
+                         or path.suffix.lower() == '.mp3')
     try:
         reader = NativeAudioReader(image, path, use_rekordbox=use_native_reader)
     except NativeContractError:
