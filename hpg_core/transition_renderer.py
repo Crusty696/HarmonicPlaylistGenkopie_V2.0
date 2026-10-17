@@ -896,6 +896,25 @@ def _load_segment(path: str, start_sec: float, duration_sec: float,
                 or start_sec < 0 or duration_sec <= 0
                 or start_sec + duration_sec > MAX_SECONDS):
             raise ValueError("Renderfenster außerhalb des gemeinsamen Readerlimits")
+        # Der gemeinsame native Reader lehnt Offsets hinter dem Dateiende ab.
+        # Für Renderfenster gilt weiterhin der Renderer-Vertrag: dort gibt es
+        # schlicht kein Segment. Vor dem nativen Decoderstart prüfen, damit ein
+        # ungültiger Mixpunkt weder einen Readerfehler auslöst noch native
+        # Decoderressourcen unnötig anlegt.
+        if start_sec > 0:
+            try:
+                info = sf.info(path)
+                if (info.samplerate > 0 and info.frames >= 0
+                        and start_sec * info.samplerate >= info.frames):
+                    logger.warning(
+                        f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
+                        f"leeres Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
+                    )
+                    return np.zeros((0, 2), dtype=np.float32)
+            except (OSError, RuntimeError, ValueError, sf.LibsndfileError):
+                # Formate ohne SoundFile-Metadaten laufen weiter über den
+                # zuständigen nativen Reader; dessen Fehler bleibt sichtbar.
+                pass
         with NativeAudioStream(path, duration=duration_sec, offset=start_sec) as stream:
             audio = stream.read(stream.frames, dtype='float32', always_2d=True)
             sr_loaded = stream.samplerate
