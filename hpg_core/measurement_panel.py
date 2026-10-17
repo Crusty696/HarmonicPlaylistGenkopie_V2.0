@@ -456,7 +456,10 @@ def _status_summary(track, diagnostic):
                           "audio_estimate", "blocked", "unknown"}:
         bar_status = "unknown"
     if isinstance(diagnostic, dict):
-        grid_status = diagnostic["grid"]["status"]
+        grid = diagnostic.get("grid")
+        candidate_status = grid.get("status") if isinstance(grid, dict) else None
+        if candidate_status in BEATGRID_STATUSES:
+            grid_status = candidate_status
     phrase_status = (
         "gesperrt (Taktpositionskonflikt)"
         if isinstance(diagnostic, dict) and bar_position_usage_blocked(diagnostic)
