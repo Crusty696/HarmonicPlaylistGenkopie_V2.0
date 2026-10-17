@@ -485,7 +485,7 @@ def _source_service_config(monkeypatch, tmp_path, mode):
 @pytest.mark.parametrize("mode", ["einzel", "kandidaten", "dramaturgie"])
 @pytest.mark.parametrize("outcome", ["success", "sink_failure", "cancel_after_emit", "invalid_metadata"])
 def test_source_producer_service_allmode_e2e(monkeypatch, tmp_path, mode, outcome):
-    from hpg_core.hearing_sources import SourceRenderSink, load_source_session
+    from hpg_core.hearing_sources import SOURCE_VERSION, SourceRenderSink, load_source_session
     from hpg_core.hearing_workflow import (
         CancellationToken, HearingCancelledError, HearingOperationError,
         HearingValidationError, create_set,
@@ -527,7 +527,7 @@ def test_source_producer_service_allmode_e2e(monkeypatch, tmp_path, mode, outcom
                           "dramaturgie": len(rt.dramaturgie_varianten()) * 5}[mode]
         assert result.clip_count == session.clip_count == expected_clips
         assert session.specs == emitted
-        assert session.manifest["format_version"] == 1
+        assert session.manifest["format_version"] == SOURCE_VERSION
         assert session.status == result.status == "prepared"
         assert published == [config.output_dir]
         assert token.state == token.COMPLETE
