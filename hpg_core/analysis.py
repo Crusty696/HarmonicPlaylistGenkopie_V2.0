@@ -3719,6 +3719,10 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 and hasattr(rekordbox_importer, "get_phrases")
                 else []
             )
+            mix_phase_usable = bool(
+                anchor_grid_usable and not phrase_usage_blocked
+                and (phrase_phase_usable or (pssi_grid_usable and phrases))
+            )
 
             if anchor_grid_usable and not phrase_usage_blocked:
                 if phrase_estimate is not None:
@@ -3806,7 +3810,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
             # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
             # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-            if not phrase_phase_usable:
+            if not mix_phase_usable:
                 mix_in_point = mix_out_point = MIX_POINT_UNSET
                 mix_in_bars = mix_out_bars = 0
             elif section_dicts:
@@ -3835,7 +3839,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             # Gerichtete manuelle Cues behalten ihre Prioritaet, muessen aber
             # denselben quantisierten Intro-/Outro-Vertrag wie Analyzerpunkte
             # erfuellen. Der gemeinsame Helfer wird auch im Vollpfad benutzt.
-            if phrase_phase_usable:
+            if mix_phase_usable:
                 mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
                     mix_in_point,
                     mix_out_point,
@@ -4346,6 +4350,10 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             and hasattr(rekordbox_importer, "get_phrases")
             else []
         )
+        mix_phase_usable = bool(
+            anchor_grid_usable and not phrase_usage_blocked
+            and (phrase_phase_usable or (pssi_grid_usable and phrases))
+        )
         cue_points = (
             normalize_cues(
                 rekordbox_data.cue_points,
@@ -4436,7 +4444,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
         # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
         # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
         # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-        if not phrase_phase_usable:
+        if not mix_phase_usable:
             mix_in_point = mix_out_point = MIX_POINT_UNSET
             mix_in_bars = mix_out_bars = 0
         elif section_dicts:
@@ -4462,7 +4470,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 )
             )
 
-        if phrase_phase_usable:
+        if mix_phase_usable:
             mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
                 mix_in_point,
                 mix_out_point,
