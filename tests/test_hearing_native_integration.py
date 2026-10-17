@@ -174,11 +174,19 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
                     assert self.player.sourceDevice() is self._audio_buffer
                     assert first.isEnabled()
                     first.setCurrentIndex(4)
+                    qtbot.waitUntil(
+                        lambda: self._clip()["ratings"][dimensions[0]] == "4",
+                        timeout=10000,
+                    )
                     assert self._clip()["ratings"][dimensions[0]] == "4"
                     assert self.status_label.text() == "Bewertung gespeichert."
                     if mode == "dramaturgie":
                         assert self.sequence_boxes["dramaturgie_gesamt"].isEnabled()
                         self.sequence_boxes["dramaturgie_gesamt"].setCurrentIndex(4)
+                        qtbot.waitUntil(
+                            lambda: self._group()["ratings"]["dramaturgie_gesamt"] == "4",
+                            timeout=10000,
+                        )
                         assert self._group()["ratings"]["dramaturgie_gesamt"] == "4"
                     self._audio_worker = None
                 else:

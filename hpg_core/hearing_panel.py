@@ -290,6 +290,8 @@ class HearingRatingDialog(QDialog):
         self.pair_index = self.clip_index = 0
         self._loading = False
         self._audio_worker = None
+        self._source_check_worker = None
+        self._pending_source_action = None
         self._render_generation = 0
         self._audio_buffer = None
         self._pending_render = False
@@ -437,7 +439,9 @@ class HearingRatingDialog(QDialog):
             self.best_button = active.best_button
 
     def _card_play(self, pair, clip, card_token=None):
-        if pair != self.pair_index or self._closing_result is not None or card_token is not None and card_token != self._cards_generation:
+        if (self._source_check_worker is not None or pair != self.pair_index
+                or self._closing_result is not None
+                or card_token is not None and card_token != self._cards_generation):
             return
         if clip != self.clip_index:
             self._sequence_playing = False
@@ -521,30 +525,64 @@ class HearingRatingDialog(QDialog):
         return self.pair_index, self.clip_index
 
     def _rating_allowed(self):
-        return not self._clip().get("spec") or self._current_render_ready
+        return (self._source_check_worker is None
+                and (not self._clip().get("spec") or self._current_render_ready))
 
-    def _rating_sources_unchanged(self, clips):
-        """Bind source-reference ratings to bytes still matching rendered audio."""
+    def _check_sources_before_rating(self, clips, action):
+        """Prueft grosse Originaldateien vor dem Rating in einem Worker."""
         sources = {
             (source["path"], source["size_bytes"], source["sha256"], source.get("root")): source
             for clip in clips
             for source in clip.get("sources", ())
         }
         if not sources:
+            action()
             return True
-        try:
-            from .hearing_playback import _check_sources
-            _check_sources(list(sources.values()))
-        except (OSError, ValueError) as exc:
+        if self._source_check_worker is not None:
+            return False
+        from .hearing_jobs import HearingSourceCheckWorker
+        worker = HearingSourceCheckWorker(tuple(sources.values()), parent=self)
+        self._source_check_worker = worker
+        self._pending_source_action = (self._clip_key(), action)
+        worker.completed.connect(
+            lambda result, source=worker: self._source_check_done(source, result)
+        )
+        worker.finished.connect(
+            lambda source=worker: self._source_check_finished(source)
+        )
+        self.status_label.setText("Prüfe Originaldateien im Hintergrund vor dem Speichern …")
+        self._refresh_ratings()
+        worker.start()
+        return False
+
+    def _source_check_done(self, worker, result):
+        if worker is not self._source_check_worker:
+            return
+        pending, self._pending_source_action = self._pending_source_action, None
+        if not result.get("ok"):
             for index in range(len(self._group()["clips"])):
                 self._rendered_clips.discard((self.pair_index, index))
             self._current_render_ready = False
             self._refresh_ratings()
             self.status_label.setText(
-                f"Originalquelle seit dem Rendern geändert; Bewertung verworfen: {exc}"
+                f"Originalquelle seit dem Rendern geändert; Bewertung verworfen: "
+                f"{result.get('output', 'Prüfung fehlgeschlagen')}"
             )
-            return False
-        return True
+            return
+        if pending is None or pending[0] != self._clip_key():
+            self.status_label.setText("Auswahl während der Quellenprüfung geändert; Bewertung nicht gespeichert.")
+            return
+        pending[1]()
+
+    def _source_check_finished(self, worker):
+        if worker is not self._source_check_worker:
+            return
+        self._source_check_worker = None
+        worker.deleteLater()
+        if self._closing_result is not None:
+            super().done(self._closing_result)
+        else:
+            self._refresh_ratings()
 
     def _group_rendered(self):
         return all(
@@ -598,10 +636,19 @@ class HearingRatingDialog(QDialog):
             clips = [clip for group in self.session["groups"] for clip in group["clips"]]
             complete = sum(all(clip["ratings"].get(name) for name in self._dimensions) for clip in clips)
             self.progress_label.setText(f"Bewertet: {complete}/{len(clips)} Varianten vollständig")
+            checking_sources = self._source_check_worker is not None
+            for button in (
+                self.previous_clip_button, self.next_clip_button,
+                self.previous_pair_button, self.next_pair_button,
+            ):
+                button.setEnabled(not checking_sources)
             self._update_playback_state(self.player.playbackState())
             for name, box in self.sequence_boxes.items():
                 box.setCurrentIndex(int(self._group()["ratings"].get(name) or 0))
-                box.setEnabled(not self.read_only and self._group_rendered())
+                box.setEnabled(
+                    not self.read_only and self._source_check_worker is None
+                    and self._group_rendered()
+                )
             if hasattr(self, "choice_label"):
                 chosen = self._clip().get("gewaehlt", "")
                 self.choice_label.setText("Als beste gewählt" if chosen == "1" else (
@@ -636,8 +683,6 @@ class HearingRatingDialog(QDialog):
             self._refresh_ratings()
             return
         clips_to_check = self._group()["clips"] if sequence else (self._clip(),)
-        if not self._rating_sources_unchanged(clips_to_check):
-            return
         note = index if index else None
         clip, group = self._clip(), self._group()
         if sequence:
@@ -648,12 +693,15 @@ class HearingRatingDialog(QDialog):
             route, payload = "/note", {"pair_id": clip["pair_id"], "note": note}
             if self.session["mode"] != "einzel":
                 payload.update(clip_id=clip["clip_id"], dimension=dimension)
-        if self._persist(route, payload):
-            target = group["ratings"] if sequence else clip["ratings"]
-            target[dimension] = str(note) if note is not None else ""
-            if dimension == "note" and note in (None, 1) and clip.get("gewaehlt") == "1":
-                clip["gewaehlt"] = ""
-            self._refresh_ratings()
+        def save_rating():
+            if self._persist(route, payload):
+                target = group["ratings"] if sequence else clip["ratings"]
+                target[dimension] = str(note) if note is not None else ""
+                if dimension == "note" and note in (None, 1) and clip.get("gewaehlt") == "1":
+                    clip["gewaehlt"] = ""
+                self._refresh_ratings()
+
+        self._check_sources_before_rating(clips_to_check, save_rating)
 
     def _choose(self, best):
         if self.read_only:
@@ -663,20 +711,28 @@ class HearingRatingDialog(QDialog):
             self.status_label.setText("Bestwahl erst nach erfolgreichem Rendern aller Varianten möglich.")
             self._refresh_ratings()
             return
-        if not self._rating_sources_unchanged(self._group()["clips"]):
-            return
         payload = {"pair_id": self._clip()["pair_id"], "clip_id": self._clip()["clip_id"] if best else ""}
-        if self._persist("/bester", payload):
-            for clip in self._group()["clips"]:
-                clip["gewaehlt"] = ("1" if clip is self._clip() else "") if best else "0"
-            self._refresh_ratings()
+        group = self._group()
+        selected_clip = self._clip()
+
+        def save_choice():
+            if self._persist("/bester", payload):
+                for clip in group["clips"]:
+                    clip["gewaehlt"] = ("1" if clip is selected_clip else "") if best else "0"
+                self._refresh_ratings()
+
+        self._check_sources_before_rating(group["clips"], save_choice)
 
     def _move_clip(self, step):
+        if self._source_check_worker is not None:
+            return
         self._sequence_playing = False
         self.clip_index = (self.clip_index + step) % len(self._group()["clips"])
         self._show_clip()
 
     def _move_pair(self, step):
+        if self._source_check_worker is not None:
+            return
         self._sequence_playing = False
         self.pair_index = (self.pair_index + step) % len(self.session["groups"])
         self.clip_index = 0
@@ -783,6 +839,13 @@ class HearingRatingDialog(QDialog):
     def done(self, result):
         self._current_render_ready = False
         self._rendered_clips.clear()
+        if self._source_check_worker is not None:
+            self._closing_result = result
+            self._pending_source_action = None
+            self._stop_player()
+            self._source_check_worker.requestInterruption()
+            self.status_label.setText("Beende Quellenprüfung …")
+            return
         if self._audio_worker is not None:
             self._closing_result = result
             self._pending_render = False
@@ -793,7 +856,8 @@ class HearingRatingDialog(QDialog):
         super().done(result)
 
     def closeEvent(self, event):
-        if self._audio_worker is not None:
+        if (self._audio_worker is not None
+                or self._source_check_worker is not None):
             self.done(QDialog.DialogCode.Rejected)
             event.ignore()
             return

@@ -199,6 +199,30 @@ class HearingLoadWorker(QThread):
         self.completed.emit(result)
 
 
+class HearingSourceCheckWorker(QThread):
+    """Prueft Originaldateien ausserhalb der GUI vor Rating-Aenderungen."""
+
+    completed = pyqtSignal(object)
+
+    def __init__(self, sources, parent=None):
+        super().__init__(parent)
+        self.sources = tuple(dict(source) for source in sources)
+
+    def run(self):
+        result = {"ok": False}
+        try:
+            if self.isInterruptionRequested():
+                raise InterruptedError("Quellprüfung abgebrochen")
+            from .hearing_playback import _check_sources
+            _check_sources(self.sources)
+            if self.isInterruptionRequested():
+                raise InterruptedError("Quellprüfung abgebrochen")
+            result["ok"] = True
+        except Exception as exc:
+            result.update(output=str(exc), cancelled=isinstance(exc, InterruptedError))
+        self.completed.emit(result)
+
+
 class HearingDiscoveryWorker(QThread):
     status_update = pyqtSignal(str)
     completed = pyqtSignal(object)
