@@ -3900,7 +3900,7 @@ def _refine_order_with_chain(occurrences, mode, bpm_tolerance, context,
         data = [pair(a, b) for a, b in zip(items, items[1:])]
         return (tuple(x[0] for x in data), tuple(x[1] for x in data), sum(x[2] for x in data))
     current_ranked = ranked(order)
-    if len(order) < 4:
+    if len(order) < 3:
         return order, current_ranked
     selected = _select_snapshot_path(current_ranked[0], order, cancel_check)[0]
     def wave_replay(trial):
