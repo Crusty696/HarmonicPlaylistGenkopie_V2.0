@@ -130,7 +130,7 @@ def test_producer_adopts_anchor(pipeline, monkeypatch, fast):
     assert track.phrases == []
     assert caching.CACHE_VERSION == 175
 
-    assert track.measurement_diagnostics['version'] == 7
+    assert track.measurement_diagnostics['version'] == 8
     active = track.measurement_diagnostics['anchor']
     assert active['method'] == 'neural_audio'
     assert active['reference']['anchor_s'] == 0.
@@ -212,6 +212,8 @@ def test_bar_position_comparator_does_not_retime_or_fill_missing_direct_matches(
 def test_verified_rekordbox_anchor_keeps_active_value_and_attaches_rotation_diagnosis(
         pipeline, monkeypatch):
     path, importer, _ = setup_adoption(pipeline, monkeypatch)
+    # Nur die Taktübernahme prüfen; PSSI besitzt einen eigenen Phrasenanker.
+    importer.get_phrases.return_value = []
     importer.get_beatgrid.return_value = _rekordbox_grid()
     monkeypatch.setattr(analysis, '_validate_track_beatgrid', lambda *a, **k:
                         analysis.BeatgridValidation('verified', 3, 0.))

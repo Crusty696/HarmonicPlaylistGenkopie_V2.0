@@ -143,6 +143,16 @@ def test_both_producers_select_and_cache_bound_scores(pipeline,monkeypatch,fast)
     importer.get_phrases.return_value = values
     importer.get_beatgrid.return_value = [dict(time=index * .5, beat=index % 4 + 1)
                                           for index in range(480)]
+    # PSSI-Cue-Scoring braucht zusätzlich die bestätigte Taktposition.
+    from tests.test_neural_anchor_integration import windows
+    aligned_windows = windows()
+    for window in aligned_windows:
+        for item in window['results']:
+            item['decoder']['first_downbeat'] -= .2
+            for event in item['decoder']['beats']:
+                event['time_s'] -= .2
+    monkeypatch.setattr(analysis, '_collect_beat_windows', lambda *a: aligned_windows)
+    monkeypatch.setattr(analysis, 'estimate_first_downbeat', lambda *a, **k: (0., .6))
     importer.get_track_data.return_value = RekordboxTrackData(bpm=120. if fast else None,
                                                              duration=240.,camelot_code='8A')
     monkeypatch.setattr(analysis,'_get_file_duration',lambda *a:240.)
