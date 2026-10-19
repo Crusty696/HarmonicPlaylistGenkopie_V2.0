@@ -547,6 +547,7 @@ def estimate_first_downbeat(
     _allow_metric_retry: bool = True,
     _allow_external_conflict_candidate: bool = False,
     external_beats: Sequence[Mapping] | None = None,
+    phase_method: str = 'bass_fold',
 ) -> tuple[float, float]:
     """
     Schaetzt den Zeitpunkt der ersten "1" (Downbeat) und eine Konfidenz.
@@ -584,6 +585,9 @@ def estimate_first_downbeat(
 
     try:
         sample_rate, tempo = _finite_scalar(sr), _finite_scalar(bpm)
+        if (phase_method not in ('bass_fold', 'native_attack_v1')
+                or phase_method == 'native_attack_v1' and external_beats is None):
+            return reject("invalidinput", "input")
         if sample_rate is None or tempo is None or sample_rate <= 0 or tempo <= 0:
             return reject("invalidinput", "input")
         ibi = 60.0 / bpm
@@ -726,7 +730,13 @@ def estimate_first_downbeat(
         # Trim-Ablehnungen behalten ihre Diagnoseprioritaet.
         cached_fold_error = None
         try:
-            phase, lock = _beat_phase_from_fold(y, sr, ibi)
+            if phase_method == 'native_attack_v1':
+                from .ai_models.native_audio_phase import measure
+                # Modellereignisse bestimmen nur die Anschlagsfamilie; die
+                # präzise Phase wird unabhängig aus dem Audio gemessen.
+                phase, lock = measure(y, sr, ibi, float(beat_times[0]) % ibi)
+            else:
+                phase, lock = _beat_phase_from_fold(y, sr, ibi)
         except Exception as error:
             cached_fold_error = error
             phase, lock = None, None

@@ -3442,7 +3442,8 @@ def _resolve_model_audio_anchor(file_path, duration, bpm, y, sr, beat_windows,
                 local = {}
                 local_anchor, local_confidence = estimate_first_downbeat(audio, rate, bpm,
                     external_beats=events, diagnostics=local, _allow_metric_retry=False,
-                    _allow_external_conflict_candidate=True)
+                    _allow_external_conflict_candidate=True,
+                    **({'phase_method': phase_method} if phase_method != 'bass_fold' else {}))
                 record['downbeat'] = local
                 if local.get('reason') == 'estimationerror':
                     neural['transient'] = True

@@ -330,7 +330,8 @@ logger = logging.getLogger(__name__)
 # v177: Nach Ankerentscheidung nur das tatsächlich gewählte native Grid weiterreichen.
 # v178: Native Taktanker mit sechs bestätigten Modell-/Audiofenstern.
 # v179: Native Taktbestätigung nutzt vorab gewählte regelmäßige Beatfenster und behält Fehlbelege.
-CACHE_VERSION = 179
+# v180: Native Taktbestätigung und Gridprüfung messen dieselbe Attack-Phase.
+CACHE_VERSION = 180
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

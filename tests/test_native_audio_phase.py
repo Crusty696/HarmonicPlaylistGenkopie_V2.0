@@ -27,6 +27,30 @@ def test_silence_and_noise_do_not_confirm_native_grid():
     assert measure(noise, 8000, .5, .2)[0] is None
 
 
+def test_native_downbeat_voting_uses_attack_measurement(monkeypatch):
+    from hpg_core import downbeat
+    from hpg_core.ai_models import native_audio_phase
+    sr, period = 8000, .5
+    audio = np.zeros(sr * 16)
+    times = np.arange(.2, 15.8, period)
+    pulse = np.sin(2*np.pi*1700*np.arange(640)/sr) * np.exp(-90*np.arange(640)/sr)
+    for index, beat in enumerate(times):
+        start = round(beat * sr)
+        audio[start:start+len(pulse)] += pulse * (1. if index % 4 == 0 else .4)
+    calls = []
+    def measured(*args, **kwargs):
+        calls.append(args[3])
+        return measure(*args, **kwargs)
+    monkeypatch.setattr(native_audio_phase, 'measure', measured)
+    monkeypatch.setattr(downbeat, '_beat_phase_from_fold',
+                        lambda *a: pytest.fail('Nativer Pfad darf nicht auf Bass-Fold wechseln'))
+    events = [dict(time_s=float(t), position=i % 4 + 1, observed=True)
+              for i, t in enumerate(times)]
+    downbeat.estimate_first_downbeat(audio, sr, 120., external_beats=events,
+        phase_method='native_attack_v1', _allow_metric_retry=False)
+    assert calls == [pytest.approx(.2)]
+
+
 @pytest.mark.parametrize('shift', [0., .025])
 def test_native_attack_renderer_preserves_strict_sync(shift):
     from hpg_core.transition_renderer import _synchronize_and_verify_kicks, BeatSyncError
