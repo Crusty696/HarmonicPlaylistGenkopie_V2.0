@@ -351,7 +351,8 @@ class Track:
         if (self.beatgrid_status != "verified"
                 or (self.downbeat_confidence < DOWNBEAT_RELIABLE_MIN and not native_phase)):
             return None
-        if (self.bar_position_status in {"reference_candidate", "native_candidate"}
+        if ((self.bar_position_status == "reference_candidate"
+                or (self.bar_position_status == "native_candidate" and not native_phase))
                 or (self.beatgrid_source == "rekordbox"
                     and not self.reference_bar_position_verified)):
             return None
@@ -400,8 +401,8 @@ class Track:
     first_downbeat: float = 0.0
     downbeat_confidence: float = 0.0  # 0-1; 1.0 = aus Rekordbox-Beatgrid
     # Taktzählung ist getrennt von der technisch bestätigten Beatphase.
-    # native_candidate darf fürs Debugging/Modell weitergereicht, aber nicht
-    # als unabhängig bestätigte Bar-1-Referenz exportiert oder ausgerichtet werden.
+    # native_candidate darf mit geprüftem nativem Grid zum Mixen verwendet werden.
+    # Der Status belegt weiterhin keine unabhängige musikalische Bestätigung.
     bar_position_status: str = "unknown"
     # -1.0 ist der Sentinel fuer "kein messbares Fenster".
     beatgrid_source: str = "unknown"

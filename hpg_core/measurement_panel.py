@@ -119,10 +119,12 @@ def _anchor_summary(diagnostic, bar_position_status="unknown"):
     grid_verified = diagnostic["grid"]["status"] == "verified"
     usage_blocked = bar_position_usage_blocked(diagnostic)
     raster_usable = (
-        confidence >= DOWNBEAT_RELIABLE_MIN
+        (confidence >= DOWNBEAT_RELIABLE_MIN
+         or (bar_position_status == "native_candidate"
+             and anchor["method"] in {"native_rekordbox", "native_rekordbox_audio_offset"}))
         and grid_verified
         and not usage_blocked
-        and bar_position_status not in {"reference_candidate", "native_candidate"}
+        and bar_position_status != "reference_candidate"
         and (anchor["source"] != "rekordbox"
              or bar_position_status == "reference_verified")
     )
@@ -158,7 +160,7 @@ def _anchor_summary(diagnostic, bar_position_status="unknown"):
             + ("Ein separat gemessener Audio-Zeitversatz korrigiert den aktiven Anker; "
                "die native Rohfolge bleibt erhalten. "
                if anchor["method"] == "native_rekordbox_audio_offset" else "")
-            + "Konfidenz 1 bezeichnet hier die native Herkunft, keine gemessene musikalische Trefferquote. "
+            + "Die native Herkunft ist keine gemessene musikalische Trefferquote. "
             "Takt 1 ist nicht unabhängig geprüft."
         )
         consequence = (

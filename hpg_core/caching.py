@@ -332,7 +332,7 @@ logger = logging.getLogger(__name__)
 # v179: Native Taktbestätigung nutzt vorab gewählte regelmäßige Beatfenster und behält Fehlbelege.
 # v180: Native Taktbestätigung und Gridprüfung messen dieselbe Attack-Phase.
 # v181: Native Taktbestätigung schließt Audio-Gegenkandidaten zum Modell aus.
-CACHE_VERSION = 181
+CACHE_VERSION = 182
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -984,7 +984,7 @@ def validate_track_dict(data: dict) -> dict:
         native = filtered['native_phrase_analysis']
         phase_usable = (
             filtered['bar_position_status'] not in {
-                'reference_candidate', 'native_candidate', 'blocked', 'unknown',
+                'reference_candidate', 'blocked', 'unknown',
             }
             and (filtered['bar_position_status'] != 'audio_estimate'
                  or filtered['downbeat_confidence'] >= DOWNBEAT_RELIABLE_MIN)

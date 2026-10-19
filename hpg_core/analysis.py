@@ -3124,12 +3124,12 @@ def _classify_bar_position_status(source, confidence, native_accepted, usage_blo
 
 
 def _phrase_phase_usable(source, status, usage_blocked, grid_usable):
-    """Gemeinsames Gate: Beatgrid-Stabilität allein gibt keine Taktphase frei."""
+    """Native Taktposition nach Nutzerfreigabe nutzen; Bestätigungsstatus bleibt erhalten."""
     return bool(
         grid_usable
         and not usage_blocked
         and status not in {
-            "reference_candidate", "native_candidate", "blocked", "unknown",
+            "reference_candidate", "blocked", "unknown",
         }
         and not (source == "rekordbox" and status != "reference_verified")
     )
@@ -3153,20 +3153,6 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
         if reference and reference['measurement']['grid']['status'] == 'verified':
             native_context['accepted'] = False
             native_context['decision'] = dict(status='rejected', reason='reference_preferred')
-            native_context = None
-            reference_attempt = reference
-        elif (reference
-                and reference['measurement']['grid'].get('status') == 'mismatch'
-                and reference['measurement']['grid'].get('phase_pattern') == 'consistent_offset'):
-            # Den belegten Konstantversatz nicht durch den nativen Fallback
-            # ueberspringen. Auch wenn der Native-Fast-Path keine Modellfenster
-            # gesammelt hat, muss der normale Audiozweig den Referenzversatz
-            # erhalten; fehlende Kandidatenfenster duerfen keine direkte
-            # Native-Ankeruebernahme freischalten.
-            # Die nachfolgenden Producer dürfen den verworfenen Kandidaten
-            # nicht als aktives Grid an Phrasen und Mixpunkte weiterreichen.
-            native_context['accepted'] = False
-            native_context['decision'] = dict(status='rejected', reason='reference_offset_unresolved')
             native_context = None
             reference_attempt = reference
         else:
@@ -3195,37 +3181,6 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
                 ),
             )
             baseline = (anchor, 0., 'audio', validation, diagnostic, details, decision)
-            # Native Taktlabels brauchen dieselbe Modell-/Audiobestätigung wie
-            # andere Audioanker. Die native Beatfolge selbst bleibt unverändert.
-            from copy import deepcopy
-            candidate_decision = deepcopy(decision)
-            candidate_decision['neural'].update(reason='no_candidates', candidate_anchor_s=None)
-            candidate_baseline = (*baseline[:6], candidate_decision)
-            if not beat_windows:
-                from .ai_models.native_beat_alignment import single_window_evidence_plan
-                plan = single_window_evidence_plan(native, duration, _BEATGRID_WINDOW_SECONDS)
-                # Auswahl aus beobachteten Modellbeats vor dem Audiovoting.
-                # Die zweite Fenstergruppe ist von der Gridkalibrierung getrennt.
-                beat_windows.extend(_collect_beat_windows(
-                    file_path, duration, y, sr,
-                    **({'window_starts': plan[1]} if plan else {})))
-            windows = beat_windows
-            confirmed = _resolve_model_audio_anchor(
-                file_path, duration, bpm, y, sr, windows, candidate_baseline, None,
-                phase_method=native.get('phase_method', 'native_attack_v1'))
-            if confirmed[6]['method'] == 'neural_audio':
-                bar = 4. * 60. / bpm
-                records = confirmed[6]['neural']['windows']
-                if all(abs((row['anchor_s'] - anchor + bar/2) % bar - bar/2)
-                       <= EXACT_BEAT_SYNC_TOLERANCE_SECONDS
-                       for row in records if row['reason'] == 'confirmed'):
-                    confidence = confirmed[1]
-                    decision['confidence'] = confidence
-                    decision['neural']['windows'] = records
-                    return (anchor, confidence, 'audio', validation, diagnostic,
-                            details, decision, None)
-            decision['neural']['transient'] = confirmed[6]['neural']['transient']
-            decision['neural']['windows'] = confirmed[6]['neural']['windows']
             return (*baseline, None)
     reference = reference_attempt
     if reference is None:

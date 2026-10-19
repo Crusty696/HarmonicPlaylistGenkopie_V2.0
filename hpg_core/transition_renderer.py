@@ -169,7 +169,7 @@ class TransitionClipSpec:
             native_grid = has_verified_grid(track)
             # Beatgrid-Herkunft und Bar-1-Status bleiben getrennt: ein
             # technisch bestaetigtes Rekordbox-Grid erlaubt Beat-Sync; Takt-1
-            # wird nur mit explizitem reference_verified freigegeben.
+            # nutzt die ausdrücklich freigegebene native Position oder reference_verified.
             # Auch model_audio_rotation bleibt Audioherkunft: Sie kann den
             # Beatanker fuer Beat-Alignment liefern, belegt aber keine
             # unabhaengige musikalische Takt-1 und setzt bar_phase nicht frei.
@@ -183,8 +183,8 @@ class TransitionClipSpec:
             )
             return (
                 reference_grid or native_grid or measured_audio,
-                ((reference_grid or native_grid)
-                 and getattr(track, "reference_bar_position_verified", False))
+                (native_grid or (reference_grid
+                 and getattr(track, "reference_bar_position_verified", False)))
                 and not getattr(track, "bar_position_usage_blocked", False),
             )
 

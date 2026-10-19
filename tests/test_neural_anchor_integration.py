@@ -128,7 +128,7 @@ def test_producer_adopts_anchor(pipeline, monkeypatch, fast):
     assert phrases == [pytest.approx(.2)]
     assert track.beatgrid_source == 'audio'
     assert track.phrases == []
-    assert caching.CACHE_VERSION == 181
+    assert caching.CACHE_VERSION == 182
 
     assert track.measurement_diagnostics['version'] == 8
     active = track.measurement_diagnostics['anchor']
@@ -455,7 +455,7 @@ def test_external_reason_and_real_sample_offset(pipeline, monkeypatch):
     assert snapshot['anchor']['neural']['windows'][0]['downbeat']['reason'] == 'external_vote_ambiguous'
 
 
-def test_native_acceptance_does_not_bypass_consistent_reference_offset_without_windows(
+def test_verified_native_grid_retains_unverified_reference_offset_diagnostic(
         monkeypatch):
     reference = {
         'anchor_s': .2,
@@ -483,13 +483,12 @@ def test_native_acceptance_does_not_bypass_consistent_reference_offset_without_w
         native_context=native_context,
     )
 
-    assert result[0] == pytest.approx(.7)
+    assert result[0] == pytest.approx(.2)
+    assert result[1] == 0.
     assert result[2] == 'audio'
-    assert result[6]['method'] == 'dsp'
+    assert result[6]['method'] == 'native_rekordbox'
     assert result[6]['reference'] is reference
-    assert native_context['accepted'] is False
-    assert native_context['decision'] == {
-        'status': 'rejected', 'reason': 'reference_offset_unresolved'}
+    assert native_context['accepted'] is True
 
 
 def test_native_bar_rotation_collects_model_candidate_windows_only_on_conflict(monkeypatch):

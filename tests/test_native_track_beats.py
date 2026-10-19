@@ -69,11 +69,8 @@ def test_both_producers_use_native_grid_without_window_rerun(pipeline, monkeypat
     monkeypatch.setattr(analysis, '_reference_grid_attempt', lambda *a, **k: None)
     monkeypatch.setattr(analysis, '_native_reference_candidate_windows',
                         lambda *a, **k: (None, evidence))
-    def confirm_model(*args, **kwargs):
-        assert kwargs['_allow_external_conflict_candidate'] is False
-        assert kwargs['phase_method'] == 'native_attack_v1'
-        return data['first_downbeat'], .6
-    monkeypatch.setattr(analysis, 'estimate_first_downbeat', confirm_model)
+    monkeypatch.setattr(analysis, 'estimate_first_downbeat',
+                        lambda *a, **k: pytest.fail('Redundant bar confirmation'))
     monkeypatch.setattr(analysis, '_validate_track_beatgrid',
                         lambda *a, **k: analysis.BeatgridValidation('verified', 3, 1.))
     monkeypatch.setattr(analysis, '_collect_beat_windows', lambda *a: pytest.fail('Redundant model windows'))
@@ -85,15 +82,17 @@ def test_both_producers_use_native_grid_without_window_rerun(pipeline, monkeypat
     assert track.native_beat_analysis == data
     assert track.measurement_diagnostics['anchor']['method'] == 'native_rekordbox'
     assert track.neural_analysis['beat_windows'] == evidence
-    assert track.downbeat_confidence == .6
-    assert track.bar_position_status == 'audio_estimate'
-    assert len(track.measurement_diagnostics['anchor']['neural']['windows']) == 6
+    assert track.downbeat_confidence == 0.
+    assert track.bar_position_status == 'native_candidate'
+    assert track.phrase_anchor is not None
+    assert track.reference_bar_position_verified is False
+    assert track.measurement_diagnostics['anchor']['neural']['windows'] == []
     assert track.phrases == []  # Native Herkunft darf kein importiertes PSSI vortäuschen.
     serialized = caching.track_to_dict(track)
     restored = caching.dict_to_track(serialized)
     assert restored.native_beat_analysis == data
     forged = caching.track_to_dict(track)
-    forged['measurement_diagnostics']['anchor']['neural']['windows'][0]['anchor_s'] += .5
+    forged['first_downbeat'] += .5
     with pytest.raises(caching.CacheValidationError):
         caching.dict_to_track(forged)
     serialized['native_beat_analysis']['first_downbeat'] += .1
@@ -102,7 +101,7 @@ def test_both_producers_use_native_grid_without_window_rerun(pipeline, monkeypat
 
 
 @pytest.mark.parametrize('damage', ['bar_rotation', 'missing_window'])
-def test_native_bar_confirmation_rejects_rotation_or_missing_evidence(monkeypatch, damage):
+def test_native_position_keeps_unconfirmed_status_despite_model_disagreement(monkeypatch, damage):
     from tests.test_neural_anchor_integration import windows
     data = snapshot()
     evidence = windows()
@@ -121,7 +120,7 @@ def test_native_bar_confirmation_rejects_rotation_or_missing_evidence(monkeypatc
     assert result[0] == data['first_downbeat']
     assert result[1] == 0.
     assert result[6]['method'] == 'native_rekordbox'
-    assert len(result[6]['neural']['windows']) == len(evidence) * 2
+    assert result[6]['neural']['windows'] == []
 
 
 @pytest.mark.parametrize('status,accepted', [('verified', True), ('mismatch', False)])
