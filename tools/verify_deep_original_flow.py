@@ -21,6 +21,8 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--skip-features', action='store_true',
+        help='Keine Stem- oder Embedding-Inferenz ausführen')
     parser.add_argument('--reuse-features', type=Path,
         help='Belegordner fuer unveraenderte Stems/Embeddings; kein erneuter Modelllauf')
     parser.add_argument('--reuse-track', type=Path, action='append', default=[],
@@ -37,6 +39,9 @@ def main():
         os.environ['HPG_FEATURE_REUSE_REPORT'] = str(args.reuse_features.resolve(strict=True))
     for flag in ('HPG_STEMS', 'HPG_EMBEDDINGS', 'HPG_NATIVE_PHRASE'):
         os.environ[flag] = '1'
+    if args.skip_features:
+        os.environ['HPG_STEMS'] = '0'
+        os.environ['HPG_EMBEDDINGS'] = '0'
     from hpg_core.parallel_analyzer import ParallelAnalyzer
     from hpg_core import caching
     from hpg_core.playlist import generate_playlist_result, compute_transition_recommendations
