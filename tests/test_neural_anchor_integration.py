@@ -410,7 +410,7 @@ def test_local_errors_skip_cache_and_final_grid_fails_closed(pipeline, monkeypat
 
 
 @pytest.mark.parametrize("fast", [True, False])
-def test_transient_deep_feature_failure_skips_cache(pipeline, monkeypatch, fast):
+def test_optional_deep_feature_failure_preserves_core_cache(pipeline, monkeypatch, fast):
     path, _, _ = setup_adoption(pipeline, monkeypatch, fast=fast)
     writes = []
     monkeypatch.setattr(analysis, '_persist_analysis_result', lambda *a: writes.append(a) or True)
@@ -425,7 +425,8 @@ def test_transient_deep_feature_failure_skips_cache(pipeline, monkeypatch, fast)
 
     assert track is not None
     assert track.stem_analysis['status'] == 'unavailable'
-    assert writes == []
+    assert len(writes) == 1
+    assert writes[0][1] is track
 
 
 def test_external_reason_and_real_sample_offset(pipeline, monkeypatch):

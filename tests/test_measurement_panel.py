@@ -206,7 +206,7 @@ def test_modellfenster_zeigen_ursache_und_zeit_ohne_freie_fehlertexte(qtbot):
 def test_missing_attributes_and_unknown_are_not_fabricated(qtbot):
     dialog = make(qtbot, (SimpleNamespace(), track()))
     assert "unbekannt" in cell(dialog.track_table, 0, 2).lower()
-    assert "möglicherweise alte Analyse" in cell(dialog.track_table, 1, 2)
+    assert "möglicherweise alte Analyse" in cell(dialog.track_table, 1, 3)
     assert "Unbekannt" in dialog.detail_label.text()
 
 
@@ -217,7 +217,7 @@ def test_invalid_diagnostics_have_no_payload_or_error_leak(qtbot, bad):
     source.measurement_diagnostics = bad
     before = deepcopy(source.__dict__)
     dialog = make(qtbot, (source,))
-    assert cell(dialog.track_table, 0, 2) == "Unverifiziert – ungültige Diagnose"
+    assert cell(dialog.track_table, 0, 3) == "Unverifiziert – ungültige Diagnose"
     assert "PRIVATE-PAYLOAD" not in dialog.detail_label.text()
     assert dialog.window_table.rowCount() == 0
     assert source.__dict__ == before
@@ -236,7 +236,7 @@ def test_snapshot_does_not_follow_source_mutation(qtbot):
 
 def test_zero_missing_sentinel_and_decode_offsets_are_distinct(qtbot):
     dialog = make(qtbot, (track(diagnosis()), track(diagnosis(None, None))))
-    assert cell(dialog.track_table, 0, 4) == "Nicht gemessen"
+    assert cell(dialog.track_table, 0, 5) == "Nicht gemessen"
     assert cell(dialog.window_table, 0, 2) == "Nicht gemessen"
     assert cell(dialog.window_table, 0, 3) == "0.000"
     assert cell(dialog.window_table, 0, 4) == "0.000"

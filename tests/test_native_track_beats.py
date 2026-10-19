@@ -154,8 +154,8 @@ def test_native_snapshot_duration_mismatch_uses_analysis_fallback(monkeypatch):
     assert context['accepted'] is False
     assert context['transient'] is False
     assert context['analysis'] == dict(
-        status='unavailable', reason='native_path_unavailable:ValueError')
-    assert context['decision']['reason'] == 'native_path_unavailable:ValueError'
+        status='unavailable', reason='invalid_native_snapshot:ValueError')
+    assert context['decision']['reason'] == 'invalid_native_snapshot:ValueError'
 
 
 def test_native_service_start_failure_uses_analysis_fallback(monkeypatch):
@@ -201,3 +201,25 @@ def test_single_model_window_keeps_six_audio_windows_disjoint():
     assert single_window_evidence_plan(data, 80., 16.) is None
     data['model_beats'] = []
     assert single_window_evidence_plan(data, 240., 16.) is None
+
+
+@pytest.mark.parametrize('verified', [True, False])
+def test_native_render_bar_permission_preserves_strict_sync(verified):
+    from types import SimpleNamespace
+    from hpg_core.models import Track
+    from hpg_core.transition_renderer import TransitionClipSpec
+    data = snapshot()
+    track = Track(filePath='unused.wav', duration=48., bpm=120.,
+                  first_downbeat=data['first_downbeat'], downbeat_confidence=0.,
+                  bar_position_status='native_candidate', beatgrid_source='audio',
+                  beatgrid_status='verified' if verified else 'mismatch',
+                  native_beat_analysis=data)
+    plan = SimpleNamespace(mix_out_a=20., mix_in_b=4., overlap=8.,
+                           transition_type='pro_eq_swap', target_sr=44100, tempo_ratio=1.)
+    spec = TransitionClipSpec.from_plan(plan, track, track)
+    assert spec.strict_beat_sync is True
+    assert spec.bar_phase_reliable_a is verified
+    assert spec.bar_phase_reliable_b is verified
+    assert (track.phrase_anchor is not None) is verified
+    assert not track.reference_bar_position_verified
+    assert not track.native_beat_analysis['musically_verified']
