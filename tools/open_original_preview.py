@@ -34,6 +34,7 @@ def main():
     events = []
     completed = set()
     render_all = '--render-all' in sys.argv[3:]
+    verify_playback = '--verify-playback' in sys.argv[3:]
     def record(selected):
         base, result, peaks, duration, pending = selected[:5]
         index = result.boundary_index
@@ -45,6 +46,23 @@ def main():
             bytes=len(result.audio), duration=duration,
             rejected=len(result.rejected), spec=asdict(result.spec), pending=list(pending)))
         (output/'gui-events.json').write_text(json.dumps(events, indent=2), encoding='utf-8')
+        if verify_playback:
+            def play():
+                widget = window.mix_tips_panel._preview_widgets[index]
+                widget._player.setPosition(30000)
+                widget._toggle_play()
+                def capture():
+                    events.append(dict(event='playback_checked', index=index,
+                        state=widget._player.playbackState().name,
+                        position_ms=widget._player.position(),
+                        player_error=widget._player.errorString(),
+                        widget_error=widget._error_msg,
+                        rating_enabled=widget._rate_button.isEnabled()))
+                    widget._player.pause()
+                    (output/'gui-events.json').write_text(
+                        json.dumps(events, indent=2), encoding='utf-8')
+                QTimer.singleShot(1500, capture)
+            QTimer.singleShot(500, play)
         if render_all and index+1 < len(tracks)-1:
             QTimer.singleShot(100, lambda: window.mix_tips_panel._request_preview(index+1))
     class EvidenceWindow(MainWindow):
