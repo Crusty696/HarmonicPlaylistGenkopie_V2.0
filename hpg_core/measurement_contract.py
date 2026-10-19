@@ -149,7 +149,6 @@ def _validate_anchor(value, *, schema_version=None):
     native_anchor = value['method'] in {'native_rekordbox', 'native_rekordbox_audio_offset'}
     if native_anchor:
         if (neural['candidate_anchor_s'] != value['anchor_s']
-                or value['confidence'] == 0. and neural['windows']
                 or value['confidence'] != 0. and not
                     DOWNBEAT_RELIABLE_MIN <= value['confidence'] < 1.):
             _error()

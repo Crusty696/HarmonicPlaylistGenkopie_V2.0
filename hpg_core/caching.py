@@ -329,7 +329,8 @@ logger = logging.getLogger(__name__)
 # v176: Nativer Beatwrapper erhält den Fensterstart als INT32-Sampleindex.
 # v177: Nach Ankerentscheidung nur das tatsächlich gewählte native Grid weiterreichen.
 # v178: Native Taktanker mit sechs bestätigten Modell-/Audiofenstern.
-CACHE_VERSION = 178
+# v179: Native Taktbestätigung nutzt vorab gewählte regelmäßige Beatfenster und behält Fehlbelege.
+CACHE_VERSION = 179
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

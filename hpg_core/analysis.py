@@ -3201,7 +3201,15 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
             candidate_decision = deepcopy(decision)
             candidate_decision['neural'].update(reason='no_candidates', candidate_anchor_s=None)
             candidate_baseline = (*baseline[:6], candidate_decision)
-            windows = beat_windows or _collect_beat_windows(file_path, duration, y, sr)
+            if not beat_windows:
+                from .ai_models.native_beat_alignment import single_window_evidence_plan
+                plan = single_window_evidence_plan(native, duration, _BEATGRID_WINDOW_SECONDS)
+                # Auswahl aus beobachteten Modellbeats vor dem Audiovoting.
+                # Die zweite Fenstergruppe ist von der Gridkalibrierung getrennt.
+                beat_windows.extend(_collect_beat_windows(
+                    file_path, duration, y, sr,
+                    **({'window_starts': plan[1]} if plan else {})))
+            windows = beat_windows
             confirmed = _resolve_model_audio_anchor(
                 file_path, duration, bpm, y, sr, windows, candidate_baseline, None,
                 phase_method=native.get('phase_method', 'native_attack_v1'))
@@ -3217,6 +3225,7 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
                     return (anchor, confidence, 'audio', validation, diagnostic,
                             details, decision, None)
             decision['neural']['transient'] = confirmed[6]['neural']['transient']
+            decision['neural']['windows'] = confirmed[6]['neural']['windows']
             return (*baseline, None)
     reference = reference_attempt
     if reference is None:

@@ -118,7 +118,7 @@ def test_native_bar_confirmation_rejects_rotation_or_missing_evidence(monkeypatc
     assert result[0] == data['first_downbeat']
     assert result[1] == 0.
     assert result[6]['method'] == 'native_rekordbox'
-    assert result[6]['neural']['windows'] == []
+    assert len(result[6]['neural']['windows']) == len(evidence) * 2
 
 
 @pytest.mark.parametrize('status,accepted', [('verified', True), ('mismatch', False)])
