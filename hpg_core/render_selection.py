@@ -86,6 +86,13 @@ def render_with_reserve(result, index, sources, checkpoint, *, render=render_wav
                                          blend_bars=candidate.blend_bars)
         updated = rebuild_result_for_order(result, order, updated_choices,
                                             cancel_check=checkpoint)
+        if any(
+            boundary != index and previous.plan is not None
+            and (boundary >= len(updated.recommendations)
+                 or updated.recommendations[boundary].plan is None)
+            for boundary, previous in enumerate(result.recommendations)
+        ):
+            continue  # Eine Reserve darf keinen geplanten Nachbaruebergang opfern.
         plan = updated.recommendations[index].plan
         if (plan is None or abs(plan.mix_out_a-candidate.t_out) > 1e-9
                 or abs(plan.mix_in_b-candidate.t_in) > 1e-9

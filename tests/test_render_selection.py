@@ -1,5 +1,6 @@
 """Reservevertrag ohne Modell- oder Originalaudio-Wiederholungen."""
 from types import SimpleNamespace
+from dataclasses import replace
 from unittest.mock import Mock
 import pytest
 from hpg_core.playlist import generate_playlist_result
@@ -39,6 +40,38 @@ def test_non_sync_errors_never_start_reserve(result, error):
     with pytest.raises(type(error)):
         render_with_reserve(result, 0, [], lambda: None, render=render)
     assert render.call_count == 1
+
+
+@pytest.mark.parametrize('neighbor_planned', [True, False])
+def test_reserve_preserves_previously_planned_neighbors(result, monkeypatch, neighbor_planned):
+    import hpg_core.render_selection as selection
+
+    # Der Neuplaner wird isoliert: zuerst verliert er den Nachbarn, dann erhaelt er ihn.
+    recommendation = result.recommendations[0]
+    missing = replace(recommendation, plan=None)
+    neighbor = recommendation if neighbor_planned else missing
+    base = replace(result, tracks=(*result.tracks, result.tracks[0]),
+                   recommendations=(recommendation, neighbor))
+    alternatives = []
+    candidates = []
+    for offset, next_neighbor in ((1., missing), (2., neighbor)):
+        plan = replace(recommendation.plan,
+                       mix_out_a=recommendation.plan.mix_out_a + offset)
+        alternatives.append(replace(base, recommendations=(
+            replace(recommendation, plan=plan), next_neighbor)))
+        candidates.append(SimpleNamespace(t_out=plan.mix_out_a, t_in=plan.mix_in_b,
+                                         blend_bars=8, overlap_sec=plan.overlap))
+    monkeypatch.setattr(selection, 'rank_pair_candidates', Mock(return_value=candidates))
+    rebuild = Mock(side_effect=alternatives)
+    monkeypatch.setattr(selection, 'rebuild_result_for_order', rebuild)
+    render = Mock(side_effect=[BeatSyncError('Ausgangsplan scheitert'), b'RAM'])
+
+    selected = render_with_reserve(base, 0, [], lambda: None, render=render)
+
+    expected = alternatives[1 if neighbor_planned else 0]
+    assert selected.playlist is expected
+    assert rebuild.call_count == (2 if neighbor_planned else 1)
+    assert render.call_count == 2
 
 
 def test_cancel_before_render(result):
