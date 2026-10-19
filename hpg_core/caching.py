@@ -328,7 +328,8 @@ logger = logging.getLogger(__name__)
 # v175: Nativer ALAC-Reader mit eigener Herkunft und verlustfreier Dauertoleranz.
 # v176: Nativer Beatwrapper erhält den Fensterstart als INT32-Sampleindex.
 # v177: Nach Ankerentscheidung nur das tatsächlich gewählte native Grid weiterreichen.
-CACHE_VERSION = 177
+# v178: Native Taktanker mit sechs bestätigten Modell-/Audiofenstern.
+CACHE_VERSION = 178
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -943,12 +944,13 @@ def validate_track_dict(data: dict) -> dict:
                     and measured.get('anchor', {}).get('bar_position_comparison', {}).get('status') != 'aligned')
                 or bar_status == 'native_candidate' and not (
                     native_method in {'native_rekordbox', 'native_rekordbox_audio_offset'}
-                    and native_beats.get('status') == 'ok')
+                    and native_beats.get('status') == 'ok'
+                    and filtered['downbeat_confidence'] == 0.)
                 or native_method in {'native_rekordbox', 'native_rekordbox_audio_offset'}
-                   and bar_status != 'native_candidate'
+                   and bar_status != ('audio_estimate' if filtered['downbeat_confidence'] > 0.
+                                      else 'native_candidate')
                 or bar_status == 'audio_estimate' and not (
                     filtered['beatgrid_source'] == 'audio'
-                    and native_method not in {'native_rekordbox', 'native_rekordbox_audio_offset'}
                     and filtered['downbeat_confidence'] > 0.0)
                 or bar_status == 'unknown'
                    and filtered['downbeat_confidence'] >= DOWNBEAT_RELIABLE_MIN):
@@ -961,6 +963,15 @@ def validate_track_dict(data: dict) -> dict:
                     or ('audio_alignment' in native_beats) != (native_method == 'native_rekordbox_audio_offset')
                     or filtered['beatgrid_status'] != 'verified'):
                 raise ValueError('Native beat provenance conflicts with active track')
+            if filtered['downbeat_confidence'] > 0.:
+                # Anzahl und Konfidenz prüft der Messvertrag; hier die Bindung
+                # aller bestätigten Fenster an genau diese native Taktphase.
+                bar = 4. * 60. / filtered['bpm']
+                windows = measured['anchor']['neural']['windows']
+                if any(abs((row['anchor_s'] - filtered['first_downbeat'] + bar/2)
+                           % bar - bar/2) > EXACT_BEAT_SYNC_TOLERANCE_SECONDS
+                       for row in windows if row['reason'] == 'confirmed'):
+                    raise ValueError('Native bar confirmation conflicts with active anchor')
         from .ai_models.native_phrase_adapter import validate_snapshot, _normalize_grid_origin
         validate_snapshot(filtered['native_phrase_analysis'], duration=filtered['duration'],
             grid_verified=(filtered['beatgrid_status'] == 'verified'

@@ -146,11 +146,13 @@ def _validate_anchor(value, *, schema_version=None):
             or (value['method'] == 'native_rekordbox') != (neural['reason'] == 'native_adopted')
             or (value['method'] == 'native_rekordbox_audio_offset') != (neural['reason'] == 'native_offset_adopted')):
         _error()
-    if value['method'] in {'native_rekordbox', 'native_rekordbox_audio_offset'} and (
-            value['confidence'] != 0.
-            or neural['candidate_anchor_s'] != value['anchor_s']
-            or neural['windows']):
-        _error()
+    native_anchor = value['method'] in {'native_rekordbox', 'native_rekordbox_audio_offset'}
+    if native_anchor:
+        if (neural['candidate_anchor_s'] != value['anchor_s']
+                or value['confidence'] == 0. and neural['windows']
+                or value['confidence'] != 0. and not
+                    DOWNBEAT_RELIABLE_MIN <= value['confidence'] < 1.):
+            _error()
     if neural['reason'] == 'adopted' and neural['candidate_anchor_s'] != value['anchor_s']:
         _error()
 
@@ -219,14 +221,14 @@ def _validate_anchor(value, *, schema_version=None):
         if window['reason'] == 'confirmed' and (window['anchor_s'] is None or window['confidence'] is None
                 or not DOWNBEAT_RELIABLE_MIN <= window['confidence'] < 1.):
             _error()
-    if neural['reason'] == 'adopted':
+    if neural['reason'] == 'adopted' or native_anchor and value['confidence'] > 0.:
         confirmed_all = [window for window in neural['windows']
                          if window['reason'] == 'confirmed']
         winner = min(confirmed_all, key=lambda window: (
             window['anchor_s'], window['model_id'],
         )) if confirmed_all else None
         if (not confirmed_all
-                or winner['anchor_s'] != neural['candidate_anchor_s']
+                or not native_anchor and winner['anchor_s'] != neural['candidate_anchor_s']
                 or value['confidence'] != min(window['confidence'] for window in confirmed_all)):
             _error()
         confirmed_by_model = {}

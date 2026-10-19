@@ -3194,8 +3194,30 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
                     transient=False, windows=[], candidate_anchor_s=anchor,
                 ),
             )
-            return (anchor, 0., 'audio', validation, diagnostic, details,
-                    decision, None)
+            baseline = (anchor, 0., 'audio', validation, diagnostic, details, decision)
+            # Native Taktlabels brauchen dieselbe Modell-/Audiobestätigung wie
+            # andere Audioanker. Die native Beatfolge selbst bleibt unverändert.
+            from copy import deepcopy
+            candidate_decision = deepcopy(decision)
+            candidate_decision['neural'].update(reason='no_candidates', candidate_anchor_s=None)
+            candidate_baseline = (*baseline[:6], candidate_decision)
+            windows = beat_windows or _collect_beat_windows(file_path, duration, y, sr)
+            confirmed = _resolve_model_audio_anchor(
+                file_path, duration, bpm, y, sr, windows, candidate_baseline, None,
+                phase_method=native.get('phase_method', 'native_attack_v1'))
+            if confirmed[6]['method'] == 'neural_audio':
+                bar = 4. * 60. / bpm
+                records = confirmed[6]['neural']['windows']
+                if all(abs((row['anchor_s'] - anchor + bar/2) % bar - bar/2)
+                       <= EXACT_BEAT_SYNC_TOLERANCE_SECONDS
+                       for row in records if row['reason'] == 'confirmed'):
+                    confidence = confirmed[1]
+                    decision['confidence'] = confidence
+                    decision['neural']['windows'] = records
+                    return (anchor, confidence, 'audio', validation, diagnostic,
+                            details, decision, None)
+            decision['neural']['transient'] = confirmed[6]['neural']['transient']
+            return (*baseline, None)
     reference = reference_attempt
     if reference is None:
         reference = _reference_grid_attempt(file_path, duration, bpm, y, sr,
@@ -3351,6 +3373,15 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
             neural['reason'] = 'baseline_preferred'
             return (*baseline, baseline_phrase)
 
+    return _resolve_model_audio_anchor(
+        file_path, duration, bpm, y, sr, beat_windows, baseline, baseline_phrase)
+
+
+def _resolve_model_audio_anchor(file_path, duration, bpm, y, sr, beat_windows,
+                                baseline, baseline_phrase, *, phase_method='bass_fold'):
+    """Gemeinsame sechs Modell-/Audiobelege für native und bisherige Anker."""
+    decision = baseline[6]
+    neural = decision['neural']
     supported = []
     for window in beat_windows:
         start, width = window['start_s'], window['duration_s']
@@ -3451,7 +3482,7 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
     final_details = {}
     try:
         final = _validate_track_beatgrid(file_path, duration, bpm, selected_anchor,
-            head_audio=y, head_sr=sr, diagnostics=final_details)
+            head_audio=y, head_sr=sr, diagnostics=final_details, phase_method=phase_method)
     except Exception as error:
         neural.update(reason='final_grid_error', transient=True)
         logger.warning('Neuronale Gesamtgridprüfung: %s', type(error).__name__)
