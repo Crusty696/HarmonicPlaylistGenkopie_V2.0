@@ -21,6 +21,7 @@ _CODES = {
     "native_offset_adopted": "Nativer Anker mit bestätigtem Zeitversatz übernommen",
     "unknown": "Unbekannt", "reference_verified": "Referenz bestätigt",
     "reference_candidate": "Referenz-Taktposition ungeprüft",
+    "native_candidate": "Native Taktposition – nicht unabhängig musikalisch bestätigt",
     "invalidinput": "Ungültige Eingabe", "inputshort": "Eingabe zu kurz",
     "fewbeats": "Zu wenige Beats", "incommensurate": "Beatabstände nicht vereinbar",
     "noactivity": "Keine messbare Aktivität", "weakfold": "Schwache Faltungsbindung",

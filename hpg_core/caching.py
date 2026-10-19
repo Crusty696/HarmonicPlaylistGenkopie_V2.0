@@ -332,7 +332,8 @@ logger = logging.getLogger(__name__)
 # v179: Native Taktbestätigung nutzt vorab gewählte regelmäßige Beatfenster und behält Fehlbelege.
 # v180: Native Taktbestätigung und Gridprüfung messen dieselbe Attack-Phase.
 # v181: Native Taktbestätigung schließt Audio-Gegenkandidaten zum Modell aus.
-CACHE_VERSION = 182
+# v183: Native Auftaktabschnitte sperren keine folgenden taktrichtigen Mixkandidaten.
+CACHE_VERSION = 183
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 

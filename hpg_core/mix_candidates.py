@@ -684,7 +684,14 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
         # native Grenzen folgen dem zeitvariablen Beatgrid; ein konstantes
         # BPM-Raster würde über lange Tracks selbst Drift erzeugen.
         bar_seconds = 240.0 / bpm
-        bar_offset = (native_grid[0] - phrase_anchor) / bar_seconds
+        # Der erste Abschnitt kann vor der ersten Takt-Eins beginnen
+        # (Auftakt). Er ist kein Beleg für eine verschobene Phrasenphase.
+        # Die erste folgende Abschnittsgrenze muss weiterhin zur Taktphase passen.
+        phase_start = next((float(p['start_s']) for p in native_phrases
+                            if float(p['start_s']) >= first_downbeat), None)
+        if phase_start is None:
+            return [], []
+        bar_offset = (phase_start - phrase_anchor) / bar_seconds
         if abs(bar_offset - round(bar_offset)) * bar_seconds > 0.006:
             logger.warning("Natives Phrasengitter weicht mehr als 6 ms vom aktiven Anker ab")
             return [], []
