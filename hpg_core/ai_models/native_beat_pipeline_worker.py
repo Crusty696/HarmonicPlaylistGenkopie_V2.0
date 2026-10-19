@@ -40,6 +40,7 @@ class _ReaderWindow:
         self.frames = end_frame - start_frame
         self.path = reader.path
         self.owner = reader.owner
+        self.channels = reader.channels
 
     def read(self, start, count):
         if (type(start) is not int or type(count) is not int or start < 0

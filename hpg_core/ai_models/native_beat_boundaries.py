@@ -134,7 +134,11 @@ def run(image, reader, selection, window_start):
                 raise NativeContractError('Native wrapper returned an unexpected matrix')
             if (target.columns != 2 or not 4 <= target.rows <= 6000
                     or target.size != target.rows*2 or not target.data):
-                raise NativeContractError('Invalid native wrapper matrix')
+                raise NativeContractError(
+                    f'Invalid native wrapper matrix: rows={target.rows}, '
+                    f'columns={target.columns}, size={target.size}, '
+                    f'data_present={bool(target.data)}, frames={frames}, '
+                    f'chunked={bool(chunked)}')
             values = np.ctypeslib.as_array(ct.cast(target.data, ct.POINTER(ct.c_float)),
                                            shape=(target.size,)).reshape(-1, 2)
             raw_rows.extend(validate_model_rows(values, frames))
