@@ -97,6 +97,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 from copy import deepcopy
 from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
@@ -1658,6 +1659,9 @@ class TransitionPreviewWidget(QWidget):
 
     def __init__(self, index: int, transition, parent=None):
         super().__init__(parent)
+        # Layouts hängen den Player später unter die Übergangskarte um.
+        # Die Quellprüfung gehört weiterhin dem ursprünglichen MixTipsPanel.
+        self._preview_owner = weakref.ref(parent) if parent is not None else lambda: None
         self._index = index
         self._tr = transition
         self._wav_path: str | None = None
@@ -1852,7 +1856,7 @@ class TransitionPreviewWidget(QWidget):
         self._waveform.set_placeholder("Wellenform wird geladen …")
 
     def _request_rating(self):
-        parent = self.parent()
+        parent = self._preview_owner()
         signature_reader = getattr(parent, "_preview_source_signature", None)
         current_signature = (signature_reader(self._index)
                             if callable(signature_reader) else None)
@@ -1868,7 +1872,7 @@ class TransitionPreviewWidget(QWidget):
 
     def _toggle_play(self):
         if self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
-            parent = self.parent()
+            parent = self._preview_owner()
             signature_reader = getattr(parent, "_preview_source_signature", None)
             current_signature = (signature_reader(self._index)
                                  if callable(signature_reader) else None)

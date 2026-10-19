@@ -620,3 +620,32 @@ def test_bass_header_tooltip_beschreibt_anzeige_und_eq_sektionskontext(qtbot):
   assert "Trackweiter Mittelwert" in tooltip
   assert "Mix-Out-/Mix-In-Sektionen" in tooltip
   assert "Genre-Flow" not in tooltip
+
+
+@pytest.mark.parametrize('action', ['play', 'rating'])
+@pytest.mark.parametrize('changed', [False, True])
+def test_preview_source_guard_survives_card_reparenting(qtbot, monkeypatch, action, changed):
+  from PyQt6.QtWidgets import QWidget, QVBoxLayout
+  from PyQt6.QtMultimedia import QMediaPlayer
+  transition = SimpleNamespace(
+    from_track=Track(filePath='C:/a.wav', fileName='a.wav'),
+    to_track=Track(filePath='C:/b.wav', fileName='b.wav'),
+    plan=SimpleNamespace(mix_out_a=30., mix_in_b=0., overlap=8.), transition_type='blend')
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = TransitionPreviewWidget(0, transition, panel)
+  card = QWidget(panel)
+  QVBoxLayout(card).addWidget(widget)
+  assert widget.parent() is card
+  widget._source_signature = ('original',)
+  monkeypatch.setattr(panel, '_preview_source_signature', lambda index: ('changed' if changed else 'original',))
+  played, rated = [], []
+  monkeypatch.setattr(widget._player, 'play', lambda: played.append(True))
+  monkeypatch.setattr(widget._player, 'playbackState', lambda: QMediaPlayer.PlaybackState.StoppedState)
+  widget.rating_requested.connect(lambda *args: rated.append(args))
+  if action == 'play':
+    widget._toggle_play()
+  else:
+    widget._request_rating()
+  assert bool(played if action == 'play' else rated) is (not changed)
+  assert (widget._error_msg is not None) is changed
