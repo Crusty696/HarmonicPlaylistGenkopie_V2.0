@@ -69,8 +69,11 @@ def test_both_producers_use_native_grid_without_window_rerun(pipeline, monkeypat
     monkeypatch.setattr(analysis, '_reference_grid_attempt', lambda *a, **k: None)
     monkeypatch.setattr(analysis, '_native_reference_candidate_windows',
                         lambda *a, **k: (None, evidence))
-    monkeypatch.setattr(analysis, 'estimate_first_downbeat',
-                        lambda *a, **k: (data['first_downbeat'], .6))
+    def confirm_model(*args, **kwargs):
+        assert kwargs['_allow_external_conflict_candidate'] is False
+        assert kwargs['phase_method'] == 'native_attack_v1'
+        return data['first_downbeat'], .6
+    monkeypatch.setattr(analysis, 'estimate_first_downbeat', confirm_model)
     monkeypatch.setattr(analysis, '_validate_track_beatgrid',
                         lambda *a, **k: analysis.BeatgridValidation('verified', 3, 1.))
     monkeypatch.setattr(analysis, '_collect_beat_windows', lambda *a: pytest.fail('Redundant model windows'))

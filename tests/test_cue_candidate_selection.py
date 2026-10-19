@@ -180,7 +180,7 @@ def test_both_producers_select_and_cache_bound_scores(pipeline,monkeypatch,fast)
     assert 192. in [c['t'] for c in track.mix_in_candidates]
     assert all('raw_score' not in c for c in track.mix_in_candidates)
     assert track.neural_analysis['windows'][0]['results'][-1]['raw_score'] == 11.
-    assert caching.CACHE_VERSION == 180
+    assert caching.CACHE_VERSION == 181
     key = caching.generate_cache_key(str(path),track.rekordbox_signature)
     assert caching.cache_track(key,track)
     cached = caching.get_cached_track(key,file_path=str(path))

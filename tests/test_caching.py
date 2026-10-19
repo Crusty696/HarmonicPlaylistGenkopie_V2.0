@@ -705,7 +705,7 @@ def test_cache_version_ist_bewusst_gesetzt():
   from hpg_core import caching
 
   # Version 172 bindet Cue-Quelle/Dateisignatur und koppelt native Phraseflags.
-  assert caching.CACHE_VERSION == 180
+  assert caching.CACHE_VERSION == 181
 
 
 def test_alter_cache_marker_wird_invalidiert():

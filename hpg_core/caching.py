@@ -331,7 +331,8 @@ logger = logging.getLogger(__name__)
 # v178: Native Taktanker mit sechs bestätigten Modell-/Audiofenstern.
 # v179: Native Taktbestätigung nutzt vorab gewählte regelmäßige Beatfenster und behält Fehlbelege.
 # v180: Native Taktbestätigung und Gridprüfung messen dieselbe Attack-Phase.
-CACHE_VERSION = 180
+# v181: Native Taktbestätigung schließt Audio-Gegenkandidaten zum Modell aus.
+CACHE_VERSION = 181
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
