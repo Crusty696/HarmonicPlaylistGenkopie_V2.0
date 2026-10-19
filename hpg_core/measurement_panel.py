@@ -306,6 +306,8 @@ def _native_grid_summary(diagnostic):
         "verified": "Raster bestand die Audio-Synchronprüfung",
         "audio_offset_confirmed": "Zeitversatz wurde mit separaten Fenstern bestätigt",
         "grid_unverified": "Raster bestand die Audio-Synchronprüfung nicht",
+        "reference_preferred": "bestätigtes importiertes Raster hat Vorrang",
+        "reference_offset_unresolved": "Versatz zum importierten Raster ist noch nicht unabhängig bestätigt",
         "variable_grid_unsupported": "variabler Beatabstand wird vom konstanten Renderer-Raster nicht unterstützt",
         "offset_out_of_range": "gemessener Zeitversatz lag außerhalb des zulässigen Bereichs",
         "offset_confirmation_windows_missing": "unabhängige Bestätigungsfenster fehlten",

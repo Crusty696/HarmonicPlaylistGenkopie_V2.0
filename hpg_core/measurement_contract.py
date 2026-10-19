@@ -537,12 +537,14 @@ def validate_measurement_diagnostics(value):
                 or type(native['reason']) is not str
                 or native['reason'] not in {
                     'verified', 'audio_offset_confirmed', 'grid_unverified',
+                    'reference_preferred', 'reference_offset_unresolved',
                     'variable_grid_unsupported', 'offset_out_of_range',
                     'offset_confirmation_windows_missing',
                     'offset_audio_confirmation_failed', 'offset_audio_decode_failed',
                     'native_unavailable', 'unsupported_duration', 'disabled'}
                 or (native['status'], native['reason']) not in {
                     ('accepted', 'verified'), ('accepted', 'audio_offset_confirmed'),
+                    ('rejected', 'reference_preferred'), ('rejected', 'reference_offset_unresolved'),
                     ('rejected', 'grid_unverified'), ('rejected', 'variable_grid_unsupported'),
                     ('rejected', 'offset_out_of_range'),
                     ('rejected', 'offset_confirmation_windows_missing'),

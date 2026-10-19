@@ -3151,6 +3151,8 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
             reference = _reference_grid_attempt(file_path, duration, bpm, y, sr,
                 rekordbox_grid, reference_bpm, reference_path_match)
         if reference and reference['measurement']['grid']['status'] == 'verified':
+            native_context['accepted'] = False
+            native_context['decision'] = dict(status='rejected', reason='reference_preferred')
             native_context = None
             reference_attempt = reference
         elif (reference
@@ -3161,6 +3163,10 @@ def _resolve_track_anchor(file_path, duration, bpm, y, sr, rekordbox_grid,
             # gesammelt hat, muss der normale Audiozweig den Referenzversatz
             # erhalten; fehlende Kandidatenfenster duerfen keine direkte
             # Native-Ankeruebernahme freischalten.
+            # Die nachfolgenden Producer dürfen den verworfenen Kandidaten
+            # nicht als aktives Grid an Phrasen und Mixpunkte weiterreichen.
+            native_context['accepted'] = False
+            native_context['decision'] = dict(status='rejected', reason='reference_offset_unresolved')
             native_context = None
             reference_attempt = reference
         else:

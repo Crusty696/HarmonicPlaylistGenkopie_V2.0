@@ -128,7 +128,7 @@ def test_producer_adopts_anchor(pipeline, monkeypatch, fast):
     assert phrases == [pytest.approx(.2)]
     assert track.beatgrid_source == 'audio'
     assert track.phrases == []
-    assert caching.CACHE_VERSION == 176
+    assert caching.CACHE_VERSION == 177
 
     assert track.measurement_diagnostics['version'] == 8
     active = track.measurement_diagnostics['anchor']
@@ -487,6 +487,9 @@ def test_native_acceptance_does_not_bypass_consistent_reference_offset_without_w
     assert result[2] == 'audio'
     assert result[6]['method'] == 'dsp'
     assert result[6]['reference'] is reference
+    assert native_context['accepted'] is False
+    assert native_context['decision'] == {
+        'status': 'rejected', 'reason': 'reference_offset_unresolved'}
 
 
 def test_native_bar_rotation_collects_model_candidate_windows_only_on_conflict(monkeypatch):
