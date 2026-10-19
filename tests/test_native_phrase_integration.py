@@ -306,3 +306,20 @@ def test_native_cache_contract_roundtrip_and_tampering(tmp_path):
     corrupt['phrase_grid'] = []
     with pytest.raises(caching.CacheValidationError):
         caching.dict_to_track(corrupt)
+
+
+def test_pair_grid_uses_native_boundaries_and_rejects_forged_provenance():
+    from hpg_core.models import Track
+    from hpg_core.pair_candidates import _auf_gitter
+    snapshot = native_snapshot()
+    snapshot['phrases'][0]['end_s'] = 30.
+    snapshot['phrases'][1]['start_s'] = 30.
+    track = Track(filePath='unused.wav', fileName='unused.wav', duration=120., bpm=120.,
+                  first_downbeat=0., downbeat_confidence=.9, bar_position_status='audio_estimate',
+                  beatgrid_source='audio', beatgrid_status='verified', phrase_unit=16,
+                  native_phrase_analysis=snapshot, phrase_grid=phrase_grid_from_phrases(snapshot['phrases']))
+    assert _auf_gitter(track, 30., 'in')
+    assert _auf_gitter(track, 30., 'out')
+    assert not _auf_gitter(track, 30.1, 'in')
+    snapshot['executable_sha256'] = '0'*64
+    assert not _auf_gitter(track, 30., 'in')

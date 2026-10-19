@@ -44,7 +44,7 @@ def main():
         os.environ['HPG_EMBEDDINGS'] = '0'
     from hpg_core.parallel_analyzer import ParallelAnalyzer
     from hpg_core import caching
-    from hpg_core.playlist import generate_playlist_result, compute_transition_recommendations
+    from hpg_core.playlist import generate_playlist_result
     from hpg_core.transition_renderer import TransitionClipSpec
     from hpg_core.render_selection import render_with_reserve
     import numpy as np
@@ -117,17 +117,18 @@ def main():
         report['playlist'] = dict(order=[track.filePath for track in playlist.tracks],
                                  boundaries=[asdict(value) for value in playlist.boundaries],
                                  quality=playlist.quality_dict())
-        recommendations = compute_transition_recommendations(list(playlist.tracks),
-            scoring_context=playlist.scoring_context_dict())
         save()
-        for index, recommendation in enumerate(recommendations):
-            row = dict(candidate= recommendation.kandidat_aktiv, notes=recommendation.notes)
+        for index in range(len(playlist.tracks) - 1):
+            recommendation = playlist.recommendations[index]
+            row = dict(index=index, candidate=recommendation.active_candidate_key,
+                       notes=recommendation.notes)
             report['renders'].append(row)
-            if recommendation.plan is None or recommendation.kandidat_aktiv <= 0:
+            if recommendation.plan is None:
                 row['status'] = 'blocked_no_active_candidate'
+                save()
                 continue
             spec = TransitionClipSpec.from_plan(recommendation.plan,
-                recommendation.from_track, recommendation.to_track)
+                playlist.tracks[index], playlist.tracks[index+1])
             row['spec'] = asdict(spec)
             try:
                 sources = [dict(path=str(path), size_bytes=report['sources'][str(path)]['size'],
@@ -160,7 +161,7 @@ def main():
         save()
     print(json.dumps(dict(report=str(root/'report.json'), error=report.get('error'),
                           renders=[row.get('status') for row in report['renders']])), flush=True)
-    return int(bool(report.get('error')) or not report['renders'] or
+    return int(bool(report.get('error')) or len(report['renders']) != len(paths)-1 or
                any(row.get('status') != 'rendered_ram' for row in report['renders']) or
                any(not row['unchanged'] for row in report['sources'].values()))
 
