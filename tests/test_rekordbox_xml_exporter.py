@@ -749,7 +749,7 @@ class TestKandidatenCues:
     assert conflicts == []
 
 
-@pytest.mark.parametrize('damage,expected', [('none', True), ('hash', False), ('off_grid', False)])
+@pytest.mark.parametrize('damage,expected', [('none', True), ('hash', False), ('off_grid', False), ('track_default', True)])
 def test_native_phrase_cue_export_uses_verified_boundaries(damage, expected):
   from hpg_core.models import Track
   from hpg_core.rekordbox_phrases import phrase_grid_from_phrases
@@ -764,5 +764,5 @@ def test_native_phrase_cue_export_uses_verified_boundaries(damage, expected):
       phrase_grid=phrase_grid_from_phrases(native['phrases']))
   if damage == 'hash':
     native['executable_sha256'] = '0'*64
-  point = 30.1 if damage == 'off_grid' else 30.
+  point = 32. if damage == 'track_default' else 30.1 if damage == 'off_grid' else 30.
   assert RekordboxXMLExporter._cue_export_allowed(track, mix_in=point, allow_partial=True) is expected
