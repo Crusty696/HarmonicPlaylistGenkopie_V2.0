@@ -7,20 +7,29 @@ import numpy as np
 import pytest
 
 from hpg_core.ai_models import native_phrase_adapter as adapter
+from hpg_core.ai_models import native_phrase_worker as worker
 from hpg_core.rekordbox_phrases import phrase_grid_from_phrases
 
 
 def native_snapshot():
-    return dict(version=4, status='ok', reason=None,
+    return dict(version=7, status='ok', reason=None,
         source='rekordbox_native_phrase_generator', contract=adapter.CONTRACT_VERSION,
         executable_sha256=adapter.SHA256, terminal_boundary_source='native_terminal_beat',
         key_source='native_unknown_fallback_zero',
+        native_flags=[0, 1, 1],
         input_grid=dict(bpm_hundredths=12000, offset_ms=0, bar_position=1, key_index=0,
                         basis='hpg_verified_constant_grid', beat_count=240,
-                        first_tick_s=0., last_tick_s=119.5, terminal_beat=240),
+                        first_tick_s=0., last_tick_s=119.5, terminal_beat=240,
+                        origin_extension_beats=0, source_beat_count=240),
         reader_backend='hpg-libsndfile',
         phrases=[dict(start_s=0., end_s=32., label='Intro', kind=1, mood=1, fill=0),
                  dict(start_s=32., end_s=119.5, label='Outro', kind=6, mood=1, fill=0)])
+
+
+def native_call(flags=(0, 1, 1), first_downbeat=1):
+    return dict(frames=12000, sample_rate=100, bpm_hundredths=12000,
+                offset_ms=0, first_downbeat=first_downbeat, key_index=0,
+                flags=list(flags))
 
 
 def test_disabled_and_existing_pssi_never_start_service(monkeypatch):
@@ -37,7 +46,8 @@ def test_disabled_and_existing_pssi_never_start_service(monkeypatch):
     assert adapter.analyze_track_phrases('unused', imported_phrases=[], **parameters)['phrases'] == []
 
 
-@pytest.mark.parametrize('damage', ['hash', 'phase', 'interval', 'terminal', 'blocked', 'unverified'])
+@pytest.mark.parametrize('damage', [
+    'hash', 'phase', 'interval', 'terminal', 'flags', 'blocked', 'unverified'])
 def test_native_snapshot_rejects_provenance_and_grid_corruption(damage):
     value = native_snapshot()
     if damage == 'hash':
@@ -49,6 +59,8 @@ def test_native_snapshot_rejects_provenance_and_grid_corruption(damage):
         value['phrases'][0]['end_s'] = 33.
     elif damage == 'terminal':
         value['phrases'][-1]['end_s'] = 119.
+    elif damage == 'flags':
+        value['native_flags'] = [1, 0, 1]
     with pytest.raises(ValueError):
         adapter.validate_snapshot(value, duration=120., grid_verified=damage != 'unverified',
                                   usage_blocked=damage == 'blocked')
@@ -60,6 +72,7 @@ def test_worker_grid_changes_are_rejected_before_adoption(tmp_path):
     def transport(request, **kwargs):
         return dict(status='ok', contract=adapter.CONTRACT_VERSION, executable_sha256=adapter.SHA256,
                     input_grid={key: request[key] for key in ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
+                    native_call=native_call(request['native_flags']),
                     header=[2, 10, 1, 1, 0, 0, 0], arrays={}, frames=12000, sample_rate=100,
                     reader_backend='hpg-libsndfile')
     result = adapter.generate_phrases(path, beat_times=[i*.5 for i in range(240)],
@@ -75,6 +88,7 @@ def test_native_terminal_boundary_is_not_extended_to_file_end(tmp_path, terminal
     def transport(request, **kwargs):
         return dict(status='ok', contract=adapter.CONTRACT_VERSION, executable_sha256=adapter.SHA256,
             input_grid={key: request[key] for key in ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
+            native_call=native_call(request['native_flags']),
             header=[2, 0, 1, 1, 0, 0, terminal],
             arrays=dict(beat_positions=[1, 65], kind=[1, 6], fill_in=[0, 0]),
             frames=12000, sample_rate=100, reader_backend='hpg-libsndfile')
@@ -88,6 +102,37 @@ def test_native_terminal_boundary_is_not_extended_to_file_end(tmp_path, terminal
         assert result['status'] == 'ok'
         assert result['phrases'][-1]['end_s'] == expected
         assert result['terminal_boundary_source'] == 'native_terminal_beat'
+
+
+@pytest.mark.parametrize('native_downbeat', [1, 2, 3, 4])
+@pytest.mark.parametrize('first_position', [1, 2, 3, 4])
+def test_native_downbeat_ordinal_matches_hpg_bar_position(
+        tmp_path, native_downbeat, first_position):
+    path = tmp_path / 'identity.bin'
+    path.write_bytes(b'identity only')
+
+    def transport(request, **kwargs):
+        return dict(
+            status='ok', contract=adapter.CONTRACT_VERSION,
+            executable_sha256=adapter.SHA256,
+            input_grid={key: request[key] for key in
+                        ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
+            native_call=native_call(request['native_flags'], positions.index(1) + 1),
+            header=[2, 0, 1, native_downbeat, 0, 0, 200 + native_downbeat],
+            arrays=dict(beat_positions=[native_downbeat, 64 + native_downbeat],
+                        kind=[1, 6], fill_in=[0, 0]),
+            frames=12000, sample_rate=100, reader_backend='hpg-libsndfile')
+
+    positions = [(index + first_position - 1) % 4 + 1 for index in range(240)]
+    result = adapter.generate_phrases(
+        path, beat_times=[index * .5 for index in range(240)],
+        beat_positions=positions, bpm=120., duration=120., verified_grid=True,
+        key_index=0, native_flags=[0, 1, 1], transport=transport)
+    # Unabhängige Erwartung: Der bezeichnete Beat muss die musikalische 1 sein.
+    if positions[native_downbeat - 1] == 1:
+        assert result['status'] == 'ok'
+    else:
+        assert result['reason'] == 'invalid_native_header_or_grid_change'
 
 
 @pytest.mark.parametrize('source', ['audio', 'rekordbox'])
@@ -123,6 +168,70 @@ def test_active_native_path_preserves_input_grid_and_separate_snapshot(monkeypat
     assert result['input_grid']['basis'] == ('verified_rekordbox_grid' if source == 'rekordbox' else 'hpg_verified_constant_grid')
 
 
+def test_worker_rejects_sample_rate_in_downbeat_argument(tmp_path):
+    path = tmp_path/'identity.bin'
+    path.write_bytes(b'identity only, no audio')
+
+    def transport(request, **kwargs):
+        call = native_call(request['native_flags'])
+        call['first_downbeat'] = 100
+        return dict(status='ok', contract=adapter.CONTRACT_VERSION,
+            executable_sha256=adapter.SHA256,
+            input_grid={key: request[key] for key in
+                        ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
+            native_call=call, header=[2, 0, 1, 1, 0, 0, 201],
+            arrays=dict(beat_positions=[1, 65], kind=[1, 6], fill_in=[0, 0]),
+            frames=12000, sample_rate=100, reader_backend='hpg-libsndfile')
+
+    result = adapter.generate_phrases(path, beat_times=[i*.5 for i in range(240)],
+        beat_positions=[i%4+1 for i in range(240)], bpm=120., duration=120.,
+        verified_grid=True, key_index=0, transport=transport)
+    assert result['reason'] == 'native_argument_mismatch'
+
+
+def test_native_phrase_flags_are_explicit_in_the_request_and_result(tmp_path, monkeypatch):
+    monkeypatch.setenv('HPG_NATIVE_PHRASE_FLAGS', '000')
+    path = tmp_path/'identity.bin'
+    path.write_bytes(b'identity only')
+    seen = {}
+
+    def transport(request, **kwargs):
+        seen.update(request)
+        return dict(status='ok', contract=adapter.CONTRACT_VERSION,
+            executable_sha256=adapter.SHA256,
+            input_grid={key: request[key] for key in
+                        ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')},
+            native_call=native_call(request['native_flags']),
+            header=[2, 0, 1, 1, 0, 0, 201],
+            arrays=dict(beat_positions=[1, 65], kind=[1, 6], fill_in=[0, 0]),
+            frames=12000, sample_rate=100, reader_backend='hpg-libsndfile')
+
+    result = adapter.generate_phrases(path, beat_times=[i*.5 for i in range(240)],
+        beat_positions=[i%4+1 for i in range(240)], bpm=120., duration=120.,
+        verified_grid=True, key_index=0, transport=transport)
+    assert result['status'] == 'ok'
+    assert seen['native_flags'] == [0, 0, 0]
+    assert result['raw_result']['native_call']['flags'] == [0, 0, 0]
+
+
+@pytest.mark.parametrize('flags', [(1, 0, 0), (1, 1, 1)])
+def test_disabled_native_phrase_flag_never_starts_audio(flags):
+    result = adapter.generate_phrases(
+        'unused', beat_times=[], beat_positions=[], bpm=120., duration=120.,
+        verified_grid=True, key_index=0, native_flags=flags,
+        transport=lambda *args, **kwargs: pytest.fail('Unexpected native audio run'))
+    assert result['reason'] == 'native_phrase_generation_disabled'
+
+
+def test_phrase_flags_match_native_callsite_coupling(monkeypatch):
+    monkeypatch.setenv('HPG_NATIVE_PHRASE_FLAGS', '101')
+    assert worker.configured_native_flags() is None
+    monkeypatch.setenv('HPG_NATIVE_PHRASE_FLAGS', '110')
+    assert worker.configured_native_flags() is None
+    monkeypatch.setenv('HPG_NATIVE_PHRASE_FLAGS', '011')
+    assert worker.configured_native_flags() == (0, 1, 1)
+
+
 def test_native_boundaries_reach_head_and_tail_without_filling_coverage(monkeypatch):
     from hpg_core import analysis
     from hpg_core.structure_analyzer import TrackSection, TrackStructure
@@ -151,6 +260,28 @@ def test_native_candidate_provenance_is_not_pssi():
     assert candidates
     assert all('pssi_phrase' not in item.schema for item in candidates)
     assert any(item.provenance == 'rekordbox_native_phrase_generator' for item in candidates)
+
+
+def test_playlist_retains_native_phrases_after_origin_extension():
+    from hpg_core.dj_brain import _verified_native_phrase_grid
+    snapshot = native_snapshot()
+    snapshot['input_grid'].update(
+        basis='native_verified_audio_grid', origin_extension_beats=5,
+        source_beat_count=235)
+    track = SimpleNamespace(
+        native_phrase_analysis=snapshot, phrases=[], duration=120., bpm=120.,
+        phrase_grid=phrase_grid_from_phrases(snapshot['phrases']),
+        beatgrid_status='verified', beatgrid_source='audio',
+        bar_position_usage_blocked=False, phrase_anchor=4., first_downbeat=4.,
+        downbeat_confidence=.9, bar_position_status='audio_estimate',
+        native_beat_analysis=dict(status='ok', first_downbeat=4.,
+            grid=[dict(pos=index * 22050, numBar=index % 4 + 1)
+                  for index in range(5, 240)]))
+    assert _verified_native_phrase_grid(track)
+    # Eine formal passende, aber nicht aus dem Rohgrid abgeleitete Herkunft
+    # darf die gleiche Prüfung nicht passieren.
+    snapshot['input_grid'].update(origin_extension_beats=4, source_beat_count=236)
+    assert not _verified_native_phrase_grid(track)
 
 
 def test_native_cache_contract_roundtrip_and_tampering(tmp_path):

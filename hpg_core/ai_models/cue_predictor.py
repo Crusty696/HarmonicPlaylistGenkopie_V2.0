@@ -1,4 +1,4 @@
-"""Diagnostische Cue-Rohscores für vorhandene PSSI-Kandidaten.
+"""Diagnostische Cue-Rohscores für freigegebene Phrase-Kandidaten.
 
 Keine Strukturklassifikation. HPG verwendet librosa-Resampling und einen
 expliziten Sample-Floor; Bitgleichheit zur nativen Rekordbox-Vorbereitung
@@ -16,12 +16,13 @@ from . import onnx_engine
 
 
 PREPROCESS_VERSION = 'hpg-cue-22050-librosa-soxr-hq-floor-batch4-v2'
+CUE_SCORE_SOURCE = 'rekordbox_phrase_cue_regressor'
 MODEL_HASHES = {
     'samplecnn': '3eb5d897a615d84727d48ee94ddec48370d674548fadcf8a93fafd1ff0a02bfc',
     'cue': '288305d581e941e5dbde32bace4f3f71bc651c03621d422c6b4bf17eb04e8bd7',
 }
 # Statischer Vertrag der beiden oben gepinnten Modelle: sechs Fenster,
-# 59049 Samples je Fenster, 512 Features je Fenster und 13 PSSI-Onehots.
+# 59049 Samples je Fenster, 512 Features je Fenster und 13 Phrase-Onehots.
 _RATE = 22050
 _BLOCK = 59049
 _HALF = 3 * _BLOCK
@@ -44,7 +45,8 @@ def score_phrase_candidates(audio, sample_rate, candidates, *, samplecnn_path,
     """Eine Ergebnis-Dict pro Kandidat, gleiche Reihenfolge, auch bei Duplikaten.
 
     Kandidaten sind Mappings mit start_s (absolute Sekunden), kind (1..10),
-    mood (1..3). Aufrufer bestätigt die PSSI/Beatgrid-Herkunft mit exakt True.
+    mood (1..3). Aufrufer bestaetigt die freigegebene Phrasen-/Beatgrid-
+    Herkunft mit exakt True (PSSI oder native Rekordbox-Phrase).
     Audio ist ein zusammenhängendes Mono-Float-Fenster ohne interne Lücken.
     Status: ok, invalid_input, unavailable, unsupported_model oder model_error.
     raw_score bleibt bei Ausfall None; negative Rohscores sind gültig und
@@ -58,7 +60,7 @@ def score_phrase_candidates(audio, sample_rate, candidates, *, samplecnn_path,
     except (TypeError, ValueError):
         return []
     results = [dict(index=i, status='unavailable', reason='not_scored', raw_score=None,
-                    source='rekordbox_pssi_cue_regressor', model_hashes={},
+                    source=CUE_SCORE_SOURCE, model_hashes={},
                     preprocess_version=PREPROCESS_VERSION, coverage={})
                for i in range(len(items))]
 
@@ -89,7 +91,7 @@ def score_phrase_candidates(audio, sample_rate, candidates, *, samplecnn_path,
                        or isinstance(item[key], (bool, np.bool_))
                        or not 1 <= item[key] <= limit
                        for key, limit in [('kind', 10), ('mood', 3)])):
-            result.update(status='invalid_input', reason='invalid_pssi_candidate')
+            result.update(status='invalid_input', reason='invalid_phrase_candidate')
             continue
         relative = (item['start_s'] - window_start_s) * _RATE
         if not math.isfinite(relative):

@@ -10,6 +10,28 @@ from hpg_core.ai_models import native_audio_reader as reader_module
 from tests.test_native_track_beats import snapshot
 
 
+@pytest.mark.parametrize('suffix', ['.m4a', '.mp4', '.M4A'])
+@pytest.mark.parametrize('codec,expected', [('alac', 0x2cdd630), ('mp4a.40.2', 0x2cdd760)])
+def test_mp4_native_factory_uses_codec_metadata(monkeypatch, suffix, codec, expected):
+    from pathlib import Path
+    from types import SimpleNamespace
+    import mutagen.mp4
+    monkeypatch.setattr(mutagen.mp4, 'MP4', lambda path: SimpleNamespace(
+        info=SimpleNamespace(codec=codec, channels=2, bits_per_sample=24)))
+    assert reader_module._native_factory_for_source(Path('source' + suffix)) == expected
+
+
+@pytest.mark.parametrize('channels,bits', [(6, 24), (2, 32)])
+def test_native_alac_rejects_unsupported_dimensions_before_factory(monkeypatch, channels, bits):
+    from pathlib import Path
+    from types import SimpleNamespace
+    import mutagen.mp4
+    monkeypatch.setattr(mutagen.mp4, 'MP4', lambda path: SimpleNamespace(
+        info=SimpleNamespace(codec='alac', channels=channels, bits_per_sample=bits)))
+    with pytest.raises(NativeContractError, match='ALAC dimensions'):
+        reader_module._native_factory_for_source(Path('source.m4a'))
+
+
 @pytest.mark.parametrize('mode,stored,model,chunked', [
     (4, None, 'model7', True), (3, None, 'model8', False),
     (2, True, 'model7', True), (2, False, 'model8', False)])

@@ -22,7 +22,7 @@ import uuid
 
 import numpy as np
 
-from .cue_predictor import PREPROCESS_VERSION, MODEL_HASHES
+from .cue_predictor import PREPROCESS_VERSION, MODEL_HASHES, CUE_SCORE_SOURCE
 from .process_runtime import OwnedModelProcess, ModelProcessCleanupError
 from .beat_predictor import MODEL_HASHES as BEAT_HASHES, PREPROCESS_VERSION as BEAT_PREPROCESS
 from .native_beat_decoder import ALGORITHM_VERSION as BEAT_DECODER_VERSION
@@ -87,7 +87,7 @@ def fingerprint(config=None):
                                                       enabled=native_beat_enabled(), configuration=configured_mode(),
                                                       selection=selection_version, reader=reader_contract),
                                      deep_features=deep_feature_fingerprint(),
-                                     runtimes=_runtime_versions(), wire=2,
+                                     runtimes=_runtime_versions(), wire=3,
                                      memory_limit_bytes=MODEL_PROCESS_MEMORY_LIMIT_BYTES))).hexdigest()
 
 
@@ -170,7 +170,7 @@ def decode_audio(payload):
                 or not _finite(item['start_s']) or not 0 <= item['start_s'] < header['track_duration_s']
                 or type(item['kind']) is not int or not 1 <= item['kind'] <= 10
                 or type(item['mood']) is not int or not 1 <= item['mood'] <= 3):
-            raise ValueError('Invalid PSSI candidate')
+            raise ValueError('Invalid phrase candidate')
     raw = memoryview(payload)[4+size:]
     dtype = np.dtype(header['dtype'])
     if header['samples'] * dtype.itemsize != len(raw):
@@ -360,7 +360,7 @@ def _send(sock, data, deadline, cancel):
 
 def _diagnostics(candidates, reason):
     return [dict(index=i, status='unavailable', reason=reason, raw_score=None,
-                 source='rekordbox_pssi_cue_regressor', model_hashes={},
+                 source=CUE_SCORE_SOURCE, model_hashes={},
                  preprocess_version=PREPROCESS_VERSION, coverage={}) for i in range(len(candidates))]
 
 
@@ -747,7 +747,7 @@ def _validate_results(results, count=None):
                 or type(item['status']) is not str
                 or item['status'] not in {'ok', 'unavailable', 'invalid_input', 'unsupported_model', 'model_error'}
                 or (item['reason'] is not None and type(item['reason']) is not str)
-                or item['source'] != 'rekordbox_pssi_cue_regressor'
+                or item['source'] != CUE_SCORE_SOURCE
                 or item['preprocess_version'] != PREPROCESS_VERSION
                 or type(item['model_hashes']) is not dict or type(item['coverage']) is not dict):
             raise ValueError('Invalid cue result schema')

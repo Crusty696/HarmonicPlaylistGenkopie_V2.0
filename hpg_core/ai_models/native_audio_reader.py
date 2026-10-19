@@ -18,7 +18,7 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v32'
+CONTRACT = 'rb-7.2.19-file-reader-v33'
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {
@@ -35,6 +35,7 @@ NATIVE_REKORDBOX_FACTORIES = {
 }
 # Die nativen Factorys sind für MP3, WAV/AIFF, FLAC, AAC und M4A/MP4 belegt.
 NATIVE_REKORDBOX_READER_EXTENSIONS = frozenset(NATIVE_REKORDBOX_FACTORIES)
+NATIVE_ALAC_FACTORY = 0x2cdd630
 MPG123_DLL_SHA256 = '2c3dcb9fa2a47cfd30fef8cb03d13f573457fbca5bf38abfe3b5980d6e4496df'
 MPG123_ENC_SIGNED_16 = 0xD0
 MPG123_DONE = -12
@@ -61,6 +62,29 @@ def _finite_number(value):
 def _ceil_resampled_frames(source_frames, source_rate):
     """Berechne die 44,1-kHz-Länge ohne Float-Rundungsfehler."""
     return (source_frames * RATE + source_rate - 1) // source_rate
+
+
+def _native_factory_for_source(path):
+    """Wählt ALAC anhand des MP4-Sample-Entries statt nur der Dateiendung.
+
+    RVA2cdd630/2d0d790 akzeptieren ALAC mit 16/24 Bit und Mono/Stereo.
+    Unlesbare Metadaten behalten die bisherige Containerwahl samt Fallback.
+    """
+    suffix = path.suffix.lower()
+    factory = NATIVE_REKORDBOX_FACTORIES[suffix]
+    if suffix in ('.m4a', '.mp4'):
+        try:
+            from mutagen.mp4 import MP4
+            info = MP4(str(path)).info
+            if info.codec == 'alac':
+                if info.channels not in (1, 2) or info.bits_per_sample not in (16, 24):
+                    raise NativeContractError('Unsupported native ALAC dimensions')
+                return NATIVE_ALAC_FACTORY
+        except NativeContractError:
+            raise
+        except Exception:
+            pass
+    return factory
 
 
 def _close_mpg123_decoder(library, decoder):
@@ -277,7 +301,7 @@ class NativeAudioReader:
                 raise NativeContractError('Required Rekordbox reader unavailable')
             self._open_fallback()
             return
-        factory_rva = NATIVE_REKORDBOX_FACTORIES[suffix]
+        factory_rva = _native_factory_for_source(self.path)
         self.backend = {
             '.mp3': 'rekordbox-builtin-mp3',
             '.flac': 'rekordbox-builtin-flac',
@@ -286,6 +310,8 @@ class NativeAudioReader:
             '.m4a': 'rekordbox-builtin-mp4',
             '.mp4': 'rekordbox-builtin-mp4',
         }.get(suffix, 'rekordbox-builtin')
+        if factory_rva == NATIVE_ALAC_FACTORY:
+            self.backend = 'rekordbox-builtin-alac'
         image.function(0x1104730, ct.c_void_p, ct.c_void_p)(self.owner)
         name = ct.c_void_p()
         image.function(0x2a6e420, ct.c_void_p, ct.c_void_p, ct.c_char_p)(

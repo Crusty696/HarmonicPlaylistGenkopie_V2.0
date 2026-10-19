@@ -23,7 +23,7 @@ from .reader_contract import (
 )
 from .native_beat_boundaries import VERSION as BOUNDARY_CONTRACT
 
-CONTRACT = 'hpg-native-track-beats-v17'
+CONTRACT = 'hpg-native-track-beats-v18'
 
 
 def _finite_number(value):
@@ -251,7 +251,7 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
         mode = configured_mode()
         request = dict(path=str(source), source_identity=identity, configuration=mode)
         raw = call('native_beat', 'hpg_core.ai_models.native_beat_pipeline_worker', request)
-        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v17'
+        if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v18'
                 or raw.get('executable_sha256') != SHA256 or raw.get('tensorflow_sha256') != TF_SHA256
                 or raw.get('model_id') not in MODEL_HASHES
                 or raw.get('model_hashes') != MODEL_HASHES[raw['model_id']]

@@ -746,7 +746,7 @@ def _verified_native_phrase_grid(track: Track) -> bool:
       or track.phrase_anchor is None):
     return False
   try:
-    from .ai_models.native_phrase_adapter import validate_snapshot
+    from .ai_models.native_phrase_adapter import validate_snapshot, _normalize_grid_origin
     from .rekordbox_phrases import phrase_grid_from_phrases
     from .downbeat import DOWNBEAT_RELIABLE_MIN
 
@@ -786,11 +786,20 @@ def _verified_native_phrase_grid(track: Track) -> bool:
         for row in native_beats["grid"]
         if 0.0 <= row["pos"] / 44100.0 + shift <= track.duration
       ]
-      if (not expected or abs(active_anchor(native_beats) - track.first_downbeat) > 1e-9
-          or grid["beat_count"] != len(expected)
-          or grid["bar_position"] != expected[0][1]
-          or abs(grid["first_tick_s"] - expected[0][0]) > 1e-9
-          or abs(grid["last_tick_s"] - expected[-1][0]) > 1e-9):
+      if not expected:
+        return False
+      # Die Phrasenanalyse ergänzt frühe Ticks vor dem ersten nativen Treffer.
+      # Dieselbe Ableitung prüfen, statt das ergänzte Grid mit dem kürzeren
+      # Rohgrid zu verwechseln; Quellpunkte und Herkunft bleiben unverändert.
+      expected_times, expected_positions, extension = _normalize_grid_origin(
+        [row[0] for row in expected], [row[1] for row in expected], bpm=track.bpm)
+      if (abs(active_anchor(native_beats) - track.first_downbeat) > 1e-9
+          or grid["source_beat_count"] != len(expected)
+          or grid["origin_extension_beats"] != extension
+          or grid["beat_count"] != len(expected_times)
+          or grid["bar_position"] != expected_positions[0]
+          or abs(grid["first_tick_s"] - expected_times[0]) > 1e-9
+          or abs(grid["last_tick_s"] - expected_times[-1]) > 1e-9):
         return False
 
     expected_points = phrase_grid_from_phrases(snapshot["phrases"])

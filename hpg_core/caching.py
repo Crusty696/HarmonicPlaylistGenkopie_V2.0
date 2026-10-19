@@ -310,7 +310,23 @@ logger = logging.getLogger(__name__)
 # v166: Variable lange native Beatgrids werden nicht mehr am globalen
 # Konstanttempo verworfen; HPG-FFmpeg ist Teil des gebundenen Readerpfads.
 # v167: AAC wird mit der nativen Rekordbox-Factory dekodiert.
-CACHE_VERSION = 167
+# v168: Native Phraseninitialisierung übergibt wie der Rekordbox-Caller die
+# Sample-Rate auch im sechsten Zahlenargument statt der HPG-Taktposition.
+# v169: Der native Phrasen-Snapshot bindet die drei konfigurierbaren Rohflags;
+# Cache und Modellfingerprint trennen unterschiedliche Generatoraufrufe.
+# v170: Cue-Modellbewertungen werden auch an freigegebene native Phrasen
+# gebunden und dürfen deren Kandidaten bei der bestehenden Kappung ordnen.
+# v171: Cue-Diagnostik bindet Scores an die Audiodatei, benennt den
+# Phrase-Regressor unabhängig von PSSI/native Herkunft und priorisiert
+# bestätigte PSSI-Grenzen in der Struktur.
+# v172: Native Phrasenflags verlangen jetzt die rekonstruierte Kopplung
+# zwischen Flag 2 und 3; ungültige alte Snapshots werden verworfen.
+# v173: Nativen ersten Downbeat über die Rekordbox-Tabelle in die HPG-
+# Taktposition übersetzen; alte Phrasenfreigaben/-ablehnungen nicht übernehmen.
+# v174: Der native Initialisierer erhält den ersten Downbeat statt einer
+# wiederholten Sample-Rate; Phrasenvertrag v8 bindet den tatsächlichen Aufruf.
+# v175: Nativer ALAC-Reader mit eigener Herkunft und verlustfreier Dauertoleranz.
+CACHE_VERSION = 175
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
@@ -942,7 +958,7 @@ def validate_track_dict(data: dict) -> dict:
                     or ('audio_alignment' in native_beats) != (native_method == 'native_rekordbox_audio_offset')
                     or filtered['beatgrid_status'] != 'verified'):
                 raise ValueError('Native beat provenance conflicts with active track')
-        from .ai_models.native_phrase_adapter import validate_snapshot
+        from .ai_models.native_phrase_adapter import validate_snapshot, _normalize_grid_origin
         validate_snapshot(filtered['native_phrase_analysis'], duration=filtered['duration'],
             grid_verified=(filtered['beatgrid_status'] == 'verified'
                            and (filtered['downbeat_confidence'] >= DOWNBEAT_RELIABLE_MIN
@@ -993,14 +1009,20 @@ def validate_track_dict(data: dict) -> dict:
                     for row in native_beats['grid']
                     if 0.0 <= row['pos'] / 44100.0 + shift <= filtered['duration']
                 ]
-                if (not expected_grid
-                        or abs(active_anchor(native_beats) - filtered['first_downbeat']) > 1e-9
-                        or native_grid['beat_count'] != len(expected_grid)
-                        or native_grid['bar_position'] != expected_grid[0][1]
-                        or abs(native_grid['first_tick_s'] - expected_grid[0][0]) > 1e-9
-                        or abs(native_grid['last_tick_s'] - expected_grid[-1][0]) > 1e-9
+                if not expected_grid:
+                    raise ValueError('Native phrase grid lacks source beats')
+                expected_times, expected_positions, extension = _normalize_grid_origin(
+                    [row[0] for row in expected_grid], [row[1] for row in expected_grid],
+                    bpm=filtered['bpm'])
+                if (abs(active_anchor(native_beats) - filtered['first_downbeat']) > 1e-9
+                        or native_grid['source_beat_count'] != len(expected_grid)
+                        or native_grid['origin_extension_beats'] != extension
+                        or native_grid['beat_count'] != len(expected_times)
+                        or native_grid['bar_position'] != expected_positions[0]
+                        or abs(native_grid['first_tick_s'] - expected_times[0]) > 1e-9
+                        or abs(native_grid['last_tick_s'] - expected_times[-1]) > 1e-9
                         or any(not any(abs(phrase[key] - stamp) <= 1e-9
-                                       for stamp, _ in expected_grid)
+                                       for stamp in expected_times)
                                for phrase in native['phrases']
                                for key in ('start_s', 'end_s'))):
                     raise ValueError('Native phrase boundaries do not follow accepted native beats')

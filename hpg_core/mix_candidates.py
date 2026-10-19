@@ -364,17 +364,19 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             t_richtung = 1.0 if seite == "in" else -1.0
             kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema), t_richtung * k.t))
             if cue_scores:
-                # Kollidierende PSSI-Ursprünge bleiben neutral, auch wenn nur
+                # Kollidierende Phrase-Ursprünge bleiben neutral, auch wenn nur
                 # einer einen Score besitzt. Dieselbe Quantisierung wie oben.
+                score_phrases = phrases if phrases else (native_phrases or [])
+                score_schema = 'pssi_phrase' if phrases else 'native_phrase'
                 origins = {}
-                for index, phrase in enumerate(phrases):
+                for index, phrase in enumerate(score_phrases):
                     point = _quantize(float(phrase['start_s']), seite, seite_grid, grid_sec, anchor)
                     if point is not None:
                         origins.setdefault(float(point), []).append(index)
                 groups = {}
                 for slot, candidate in enumerate(kandidaten):
                     indices = origins.get(candidate.t, [])
-                    if ('pssi_phrase' not in candidate.schema or 'benannter_cue' in candidate.schema
+                    if (score_schema not in candidate.schema or 'benannter_cue' in candidate.schema
                             or len(indices) != 1):
                         continue
                     score = cue_scores.get(indices[0])

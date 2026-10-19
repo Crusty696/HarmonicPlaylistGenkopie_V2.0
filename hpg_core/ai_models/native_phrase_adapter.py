@@ -13,7 +13,10 @@ from pathlib import Path
 import threading
 import time
 
-from .native_phrase_worker import CONTRACT_VERSION, EXE, SHA256
+from .native_phrase_worker import (
+    CONTRACT_VERSION, EXE, SHA256, configured_native_flags, valid_native_flags,
+    NATIVE_BAR_POSITION_MAP,
+)
 from .native_beat_selection import (
     MAX_NATIVE_TRACK_JOB_SECONDS, native_track_job_timeout_seconds,
 )
@@ -78,6 +81,7 @@ def enabled():
 def identity():
     global _IDENTITY_SIGNATURE, _IDENTITY_DIGEST
     active = enabled()
+    flags = configured_native_flags()
     try:
         actual = None
         if active:
@@ -96,20 +100,22 @@ def identity():
                     if after_signature != signature:
                         return dict(contract=CONTRACT_VERSION,
                             key_mapping=KEY_MAPPING_VERSION, enabled=active,
-                            expected_sha256=SHA256, actual_sha256=None)
+                            expected_sha256=SHA256, actual_sha256=None,
+                            native_flags=list(flags) if flags is not None else None)
                     _IDENTITY_SIGNATURE, _IDENTITY_DIGEST = signature, digest
                 actual = _IDENTITY_DIGEST
     except OSError:
         actual = None
     return dict(contract=CONTRACT_VERSION, key_mapping=KEY_MAPPING_VERSION,
                 enabled=active, expected_sha256=SHA256,
-                actual_sha256=actual)
+                actual_sha256=actual,
+                native_flags=list(flags) if flags is not None else None)
 
 
 def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
                      verified_grid, key_index, cancel_event=None,
                      timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
-                     transport=None):
+                     transport=None, native_flags=None):
     """Erzeugt native Kandidaten auf einem ausdrücklich bestätigten Eingangsgrid.
 
     Gibt keine neue Gridfreigabe aus. Header[6] ist die native Schlussgrenze:
@@ -124,6 +130,15 @@ def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
     unavailable = lambda reason: dict(status='unavailable', reason=reason, phrases=[])
     if verified_grid is not True:
         return unavailable('unverified_input_grid')
+    # Der Trackaufruf uebergibt seinen einmal gelesenen Konfigurationsstand;
+    # direkte Aufrufer behalten den bisherigen Umgebungsvariablen-Fallback.
+    native_flags = (configured_native_flags() if native_flags is None
+                    else tuple(native_flags)
+                    if type(native_flags) in (list, tuple) else None)
+    if not valid_native_flags(native_flags):
+        return unavailable('invalid_native_flags')
+    if native_flags[0]:
+        return unavailable('native_phrase_generation_disabled')
     if (type(beat_times) is not list or type(beat_positions) is not list
             or len(beat_times) != len(beat_positions) or len(beat_times) < 32
             or any(not _finite_number(x) for x in beat_times)
@@ -160,7 +175,8 @@ def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
         identity = [before.st_size, before.st_mtime_ns, before.st_ctime_ns,
                     before.st_dev, before.st_ino]
         request = dict(path=str(source), source_identity=identity, bpm_hundredths=bpm_hundredths,
-                       offset_ms=offset_ms, bar_position=beat_positions[0], key_index=key_index)
+                       offset_ms=offset_ms, bar_position=beat_positions[0], key_index=key_index,
+                       native_flags=list(native_flags))
         if transport is not None:
             result = transport(request, timeout_s=timeout_s)
         else:
@@ -184,11 +200,19 @@ def generate_phrases(path, *, beat_times, beat_positions, bpm, duration,
             or result.get('input_grid') != {key: request[key] for key in
                 ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index')}):
         return unavailable('native_identity_mismatch')
+    expected_native_call = dict(
+        frames=result.get('frames'), sample_rate=result.get('sample_rate'),
+        bpm_hundredths=bpm_hundredths, offset_ms=offset_ms,
+        first_downbeat=NATIVE_BAR_POSITION_MAP[beat_positions[0]], key_index=key_index,
+        flags=list(native_flags))
+    if result.get('native_call') != expected_native_call:
+        return unavailable('native_argument_mismatch')
     header, arrays = result.get('header'), result.get('arrays')
     if (type(header) is not list or len(header) != 7 or any(type(x) is not int for x in header)
             or type(arrays) is not dict or not 1 <= header[0] <= 65535
             or header[2] not in (1, 2, 3)
-            or header[1] != offset_ms or header[3] != beat_positions[0]):
+            or header[1] != offset_ms
+            or NATIVE_BAR_POSITION_MAP.get(header[3]) != beat_positions[0]):
         return unavailable('invalid_native_header_or_grid_change')
     positions, kinds, fills = (arrays.get(name) for name in ('beat_positions', 'kind', 'fill_in'))
     if (any(type(values) is not list or len(values) != header[0] for values in (positions, kinds, fills))
@@ -223,11 +247,13 @@ def analyze_track_phrases(path, **parameters):
     try:
         return _analyze_track_phrases(path, **parameters)
     except Exception as error:
-        return dict(version=5, status='unavailable', reason=type(error).__name__,
+        native_flags = configured_native_flags()
+        return dict(version=7, status='unavailable', reason=type(error).__name__,
             source='rekordbox_native_phrase_generator', contract=CONTRACT_VERSION,
             executable_sha256=SHA256, phrases=[], input_grid={},
             terminal_boundary_source='native_terminal_beat', key_source='native_unknown_fallback_zero',
-            reader_backend=None)
+            reader_backend=None,
+            native_flags=(list(native_flags) if native_flags is not None else None))
 
 
 def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
@@ -242,15 +268,23 @@ def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
     key_index = native_key_index(key_note, key_mode)
     key_source = ('hpg_key_native_table' if key_index is not None
                   else 'native_unknown_fallback_zero')
-    snapshot = dict(version=5, status='skipped', reason='imported_phrases_preferred',
+    native_flags = configured_native_flags()
+    snapshot = dict(version=7, status='skipped', reason='imported_phrases_preferred',
         source='rekordbox_native_phrase_generator', contract=CONTRACT_VERSION,
         executable_sha256=SHA256, phrases=[], input_grid={},
         terminal_boundary_source='native_terminal_beat', key_source=key_source,
-        reader_backend=None)
+        reader_backend=None,
+        native_flags=(list(native_flags) if native_flags is not None else None))
     if imported_phrases:
         return snapshot
     if not enabled():
         snapshot.update(status='disabled', reason='disabled_by_configuration')
+        return snapshot
+    if native_flags is None:
+        snapshot.update(status='unavailable', reason='invalid_native_flags')
+        return snapshot
+    if native_flags[0]:
+        snapshot.update(status='disabled', reason='native_phrase_generation_disabled')
         return snapshot
     if usage_blocked or not grid_usable:
         snapshot.update(reason='unverified_or_blocked_grid')
@@ -303,7 +337,7 @@ def _analyze_track_phrases(path, *, bpm, duration, first_downbeat, grid_usable,
             bpm=bpm, duration=duration, verified_grid=True,
             key_index=0 if key_index is None else key_index,
             timeout_s=native_track_job_timeout_seconds(duration),
-            transport=client.native_phrases)
+            transport=client.native_phrases, native_flags=native_flags)
     snapshot.update(status=result['status'], reason=result['reason'])
     if result['status'] == 'ok':
         snapshot.update(phrases=result['phrases'], input_grid=dict(
@@ -326,13 +360,16 @@ def validate_snapshot(value, *, duration, grid_verified, usage_blocked):
     if value == {}:
         return
     fields = {'version', 'status', 'reason', 'source', 'contract', 'executable_sha256',
-              'phrases', 'input_grid', 'terminal_boundary_source', 'key_source', 'reader_backend'}
+              'phrases', 'input_grid', 'terminal_boundary_source', 'key_source', 'reader_backend',
+              'native_flags'}
     if (type(value) is not dict or set(value) != fields
-            or type(value['version']) is not int or value['version'] != 5
+            or type(value['version']) is not int or value['version'] != 7
             or value['source'] != 'rekordbox_native_phrase_generator'
             or value['contract'] != CONTRACT_VERSION or value['executable_sha256'] != SHA256
             or value['terminal_boundary_source'] != 'native_terminal_beat'
             or value['key_source'] not in ('native_unknown_fallback_zero', 'hpg_key_native_table')
+            or (value['native_flags'] is not None
+                and not valid_native_flags(value['native_flags']))
             or type(value['phrases']) is not list or type(value['input_grid']) is not dict):
         raise ValueError('Invalid native phrase snapshot')
     if value['status'] != 'ok':
@@ -341,7 +378,8 @@ def validate_snapshot(value, *, duration, grid_verified, usage_blocked):
                 or value['phrases'] or value['input_grid'] or value['reader_backend'] is not None):
             raise ValueError('Invalid native phrase failure')
         return
-    if (value['reason'] is not None or not grid_verified or usage_blocked
+    if (value['native_flags'] is None or value['native_flags'][0]
+            or value['reason'] is not None or not grid_verified or usage_blocked
             or value['reader_backend'] not in READER_BACKENDS):
         raise ValueError('Native phrases require usable verified grid')
     from ..rekordbox_phrases import phrase_label

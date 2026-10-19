@@ -123,7 +123,7 @@ def test_producer_adopts_anchor(pipeline, monkeypatch, fast):
     assert phrases == [pytest.approx(.2)]
     assert track.beatgrid_source == 'audio'
     assert track.phrases == []
-    assert caching.CACHE_VERSION == 162
+    assert caching.CACHE_VERSION == 175
 
     assert track.measurement_diagnostics['version'] == 7
     active = track.measurement_diagnostics['anchor']

@@ -33,6 +33,55 @@ def test_scored_slots_reordered_before_cap_unscored_fixed(monkeypatch):
     assert all(c.confidence == baseline[0].confidence for c in selected)
 
 
+def test_native_phrase_scores_reorder_only_native_phrase_slots(monkeypatch):
+    monkeypatch.setattr(mc, 'KANDIDATEN_MAX_JE_SEITE', 4)
+    values = phrases()
+    baseline = mc.collect_candidate_times(
+        seite_grid=[], sections=[], phrases=[], native_phrases=values, cues=[],
+        analyzer_in=None, analyzer_out=None, duration=240., grid_sec=16.,
+        intro_end=0., outro_start=240., outro_covered=True, anchor=16.)[0]
+    selected = mc.collect_candidate_times(
+        seite_grid=[], sections=[], phrases=[], native_phrases=values, cues=[],
+        analyzer_in=None, analyzer_out=None, duration=240., grid_sec=16.,
+        intro_end=0., outro_start=240., outro_covered=True, anchor=16.,
+        cue_scores={i: float(i) for i in range(12)})[0]
+    assert [candidate.t for candidate in baseline] == [16., 32., 48., 64.]
+    assert [candidate.t for candidate in selected] == [144., 160., 176., 192.]
+    assert all(candidate.provenance == 'rekordbox_native_phrase_generator'
+               for candidate in selected)
+
+
+def test_structure_cue_candidates_keep_pssi_precedence_and_gate_native():
+    native = dict(status='ok', phrases=phrases())
+    selected, verified = analysis._cue_candidates_for_structure(
+        phrases=[], pssi_grid_usable=False, native_phrase_analysis=native,
+        phrase_phase_usable=True, pssi_grid_verified=False)
+    assert selected is native['phrases'] and verified is True
+    pssi = phrases()
+    selected, verified = analysis._cue_candidates_for_structure(
+        phrases=pssi, pssi_grid_usable=True, native_phrase_analysis=native,
+        phrase_phase_usable=True, pssi_grid_verified=True)
+    assert selected is pssi and verified is True
+    selected, verified = analysis._cue_candidates_for_structure(
+        phrases=pssi, pssi_grid_usable=True, native_phrase_analysis=native,
+        phrase_phase_usable=True, pssi_grid_verified=False)
+    assert selected is native['phrases'] and verified is True
+    selected, verified = analysis._cue_candidates_for_structure(
+        phrases=pssi, pssi_grid_usable=True, native_phrase_analysis=native,
+        phrase_phase_usable=False, pssi_grid_verified=False)
+    assert selected is None and verified is False
+
+
+def test_cue_source_signature_exists_without_rekordbox_and_tracks_file_change(tmp_path):
+    source = tmp_path / 'audio.wav'
+    source.write_bytes(b'first source')
+    first = analysis._cue_source_signature(source, '')
+    assert len(first) == 64
+    assert analysis._cue_source_signature(source, 'rekordbox-track') != first
+    source.write_bytes(b'changed source with different size')
+    assert analysis._cue_source_signature(source, '') != first
+
+
 def scored(values, start=0., end=240.):
     output = []
     for index, phrase in enumerate(values):
@@ -40,7 +89,7 @@ def scored(values, start=0., end=240.):
         low, high = center-3*59049, center+3*59049
         available = int((end-start)*22050)
         output.append(dict(index=index, status='ok', reason=None, raw_score=float(index),
-            source='rekordbox_pssi_cue_regressor', model_hashes=dict(cp.MODEL_HASHES),
+            source=cp.CUE_SCORE_SOURCE, model_hashes=dict(cp.MODEL_HASHES),
             preprocess_version=cp.PREPROCESS_VERSION,
             coverage=dict(window_start_s=start, window_end_s=end, track_duration_s=240.,
                 required_start_sample=low, required_end_sample=high, sample_rate=22050,
@@ -116,7 +165,7 @@ def test_both_producers_select_and_cache_bound_scores(pipeline,monkeypatch,fast)
     assert 192. in [c['t'] for c in track.mix_in_candidates]
     assert all('raw_score' not in c for c in track.mix_in_candidates)
     assert track.neural_analysis['windows'][0]['results'][-1]['raw_score'] == 11.
-    assert caching.CACHE_VERSION == 162
+    assert caching.CACHE_VERSION == 175
     key = caching.generate_cache_key(str(path),track.rekordbox_signature)
     assert caching.cache_track(key,track)
     cached = caching.get_cached_track(key,file_path=str(path))

@@ -20,6 +20,7 @@ NATIVE_BEAT_INPUT_CONVENTIONS = {
     'rekordbox-builtin-flac': 'rekordbox-builtin-flac-planar-float32',
     'rekordbox-builtin-aac': 'rekordbox-builtin-aac-planar-float32',
     'rekordbox-builtin-mp4': 'rekordbox-builtin-mp4-planar-float32',
+    'rekordbox-builtin-alac': 'rekordbox-builtin-alac-planar-float32',
     'rekordbox-mpg123': 'rekordbox-mpg123-planar-float32',
     'rekordbox-mpg123-soxr-hq': 'rekordbox-mpg123-soxr-hq-planar-float32',
     'rekordbox-mpg123-stream': 'rekordbox-mpg123-stream-planar-float32',
@@ -43,9 +44,11 @@ _BACKEND_BY_CONVENTION = {
 }
 LOSSY_READER_BACKENDS = READER_BACKENDS - frozenset({
     'rekordbox-builtin', 'rekordbox-builtin-flac',
+    'rekordbox-builtin-alac',
 })
 SOURCE_BIT_DEPTH_REQUIRED_BACKENDS = frozenset({
     'rekordbox-builtin', 'rekordbox-builtin-flac',
+    'rekordbox-builtin-alac',
 })
 
 

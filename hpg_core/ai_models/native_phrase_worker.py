@@ -15,6 +15,7 @@ import json
 import math
 import multiprocessing
 import numpy as np
+import os
 from pathlib import Path
 import struct
 import sys
@@ -24,13 +25,42 @@ from .rekordbox_runtime import REKORDBOX_EXE
 
 EXE = REKORDBOX_EXE
 SHA256 = 'c9ed23e974c51c75e2ec069fbd2679a3dbe606be9e79e9cbbd13d6418ab11c37'
-CONTRACT_VERSION = 'rb-7.2.19-native-phrase-static-v4'
+CONTRACT_VERSION = 'rb-7.2.19-native-phrase-static-v8'
+DEFAULT_NATIVE_FLAGS = (0, 1, 1)
+# RVA 0x37d0aac: dieselbe selbstinverse Tabelle übersetzt Beatposition und
+# ersten Downbeat. Caller 0x1217863 lädt diesen Wert vor dem Initialisierer.
+NATIVE_BAR_POSITION_MAP = {1: 1, 2: 4, 3: 3, 4: 2}
 _resident_images = []
 _used = False
 
 
 class NativeContractError(RuntimeError):
     pass
+
+
+def valid_native_flags(flags):
+    """Der native Caller leitet die letzten beiden Flags aus derselben Option ab."""
+    return (type(flags) in (tuple, list) and len(flags) == 3
+            and all(type(flag) is int and flag in (0, 1) for flag in flags)
+            and flags[1] == flags[2])
+
+
+def configured_native_flags():
+    """Liest drei rohe, binäre Generatorflags aus der HPG-Konfiguration.
+
+    Flag 1 unterdrückt bei 1 die Phraseninitialisierung (RVA 0x12cf990).
+    Flags 2/3 halten bei 1 den übergebenen Offset bzw. Downbeat fest
+    (RVA 0x12f4b40). Der Default erzeugt Phrasen auf HPGs bestätigtem Grid.
+    Explizite Werte kommen aus HPG_NATIVE_PHRASE_FLAGS und müssen die native
+    Kopplung einhalten; deaktivierte Phrasenerzeugung startet keinen Audiolauf.
+    """
+    default = ''.join(str(flag) for flag in DEFAULT_NATIVE_FLAGS)
+    value = os.environ.get('HPG_NATIVE_PHRASE_FLAGS', default)
+    if (type(value) is not str or len(value) != 3
+            or any(character not in '01' for character in value)):
+        return None
+    flags = tuple(int(character) for character in value)
+    return flags if valid_native_flags(flags) else None
 
 
 class _NativePcm16Stream:
@@ -239,7 +269,8 @@ def generate(request):
     """
     import numpy as np
     import soundfile as sf
-    required = {'path', 'source_identity', 'bpm_hundredths', 'offset_ms', 'bar_position', 'key_index'}
+    required = {'path', 'source_identity', 'bpm_hundredths', 'offset_ms',
+                'bar_position', 'key_index', 'native_flags'}
     if type(request) is not dict or set(request) != required:
         raise NativeContractError('Invalid request fields')
     path = Path(request['path'])
@@ -249,10 +280,15 @@ def generate(request):
         raise NativeContractError('Source identity mismatch')
     bpm, offset, position, key = (request[name] for name in
                                  ('bpm_hundredths', 'offset_ms', 'bar_position', 'key_index'))
+    flags = request['native_flags']
     if (any(type(value) is not int for value in (bpm, offset, position, key))
             or not 1 <= bpm <= 100000 or not 0 <= offset <= 6000000 / bpm
-            or not 1 <= position <= 4 or not 0 <= key < 24):
-        raise NativeContractError('Invalid native grid parameters')
+            or not 1 <= position <= 4 or not 0 <= key < 24
+            or not valid_native_flags(flags)):
+        raise NativeContractError('Invalid native grid or phrase flags')
+    if flags[0]:
+        return dict(status='unavailable', reason='native_phrase_generation_disabled',
+                    contract=CONTRACT_VERSION, executable_sha256=SHA256)
     from .native_audio_reader import MAX_SECONDS, NativeAudioStream
     from hpg_core.config import SUPPORTED_AUDIO_EXTENSIONS
     suffix = path.suffix.lower()
@@ -313,8 +349,9 @@ def generate(request):
         # überspringen Refcount/virtuelle Freigabe bei null Controlblock.
         pair = (ct.c_void_p * 2)(ct.addressof(result), None)
         constructor(ct.addressof(storage))
+        first_downbeat = NATIVE_BAR_POSITION_MAP[position]
         if not initialize(ct.addressof(storage), frames, rate, bpm, offset,
-                          position, key, 0, 1, 1, ct.addressof(pair)):
+                          first_downbeat, key, *flags, ct.addressof(pair)):
             raise NativeContractError('Generator initialization failed')
         block_size = rate * 128 // 75
         for function, expected in zip(passes, (3, 5)):
@@ -352,6 +389,9 @@ def generate(request):
         return dict(status='ok', contract=CONTRACT_VERSION, executable_sha256=SHA256,
                     header=list(result.header), arrays=arrays, frames=frames, sample_rate=rate,
                     reader_backend=reader_backend,
+                    native_call=dict(frames=frames, sample_rate=rate, bpm_hundredths=bpm,
+                                     offset_ms=offset, first_downbeat=first_downbeat,
+                                     key_index=key, flags=list(flags)),
                     input_grid=dict(bpm_hundredths=bpm, offset_ms=offset,
                                     bar_position=position, key_index=key))
 

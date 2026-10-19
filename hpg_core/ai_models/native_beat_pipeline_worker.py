@@ -83,16 +83,19 @@ def _join_overlapping_rows(previous_rows, local_rows, start_frame, previous_end_
         # Native model activations use a 100-Hz time grid; this tolerance only
         # deduplicates the same observed activation. Final grid stays at 6 ms.
         tolerance = _MODEL_TIME_QUANTUM_SECONDS + 1e-9
-    left = [row for row in previous_rows if start_s <= time(row) < previous_end_s]
-    right = [row for row in current if start_s <= time(row) < previous_end_s]
+    # Der vorherige Abschnitt besitzt auch einen Beat exakt auf seiner
+    # Endgrenze. Ihn aus der Nahtpruefung auszuschliessen und im neuen Fenster
+    # erneut anzufuegen erzeugt bei deckungsgleichen Endbeats ein Duplikat.
+    left = [row for row in previous_rows if start_s <= time(row) <= previous_end_s]
+    right = [row for row in current if start_s <= time(row) <= previous_end_s]
     if len(left) < 8 or len(left) != len(right):
         raise NativeContractError('Ambiguous native beat seam coverage')
     for old, new in zip(left, right):
         if (phase(old) != phase(new)
                 or abs(time(old) - time(new)) > tolerance):
             raise NativeContractError('Native beat seam phase mismatch')
-    # Previous window owns its complete coverage. Keep only new events beyond it.
-    return previous_rows + [row for row in current if time(row) >= previous_end_s]
+    # Previous window owns its complete coverage, including the right edge.
+    return previous_rows + [row for row in current if time(row) > previous_end_s]
 
 
 def _verify_model8_window(model8_rows, model7_rows, start_s, end_s):
@@ -355,7 +358,7 @@ def _handle(payload):
     reader_metadata = reader.metadata()
     if _source_identity(path) != request['source_identity']:
         raise NativeContractError('Source changed during native pipeline')
-    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v17',
+    payload_result = dict(contract='rb-7.2.19-native-beat-pipeline-research-v18',
         executable_sha256=SHA256, tensorflow_sha256=TF_SHA256, model_id=model_id,
         model_hashes=hashes, verified=False, beats=rows, grid=grid,
         bpm=final_bpm if segmented is not None else final_bpm/100., selection=selection, reader=reader_metadata,

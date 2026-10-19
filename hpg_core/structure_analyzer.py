@@ -6,8 +6,8 @@ Analyzes track structure to identify sections:
 
 Uses self-similarity matrices (SSM) from MFCCs to find structural boundaries,
 then labels sections based on energy profiles. DSP boundaries are quantized
-to phrase units (8, 16, or 32 bars). Verified PSSI intervals retain their
-source boundaries inside the analyzed audio windows.
+to phrase units (8, 16, or 32 bars). Verified PSSI or native phrase intervals
+retain their source boundaries inside the analyzed audio windows.
 
 No additional dependencies beyond librosa (already installed).
 
@@ -785,42 +785,45 @@ def _calculate_rms_and_phrase_boundaries(
 
 # === Main Analysis Function ===
 
-def _apply_verified_phrase_boundaries(boundaries, cue_context, duration):
-  """Verifizierte PSSI-Intervalle im aktuellen Audiofenster übernehmen.
+def _verified_phrase_intervals(cue_context, duration):
+  """Validiert Phrase-Intervalle und schneidet sie auf das Audiofenster zu.
 
-  Außerhalb gelieferter Intervalle bleibt die DSP-Struktur erhalten. Die
-  Rekordbox-Zeiten werden weder auf Genre-Phrasen gerundet noch über Lücken
-  extrapoliert. Abschnittslabels und Energie bleiben eigene Audiomessungen.
+  ``None`` bedeutet ungültigen/unbestätigten Kontext; eine leere Liste ist ein
+  gültiger Kontext ohne Intervall in diesem Fenster und bewahrt Quellenvorrang.
   """
   if not isinstance(cue_context, Mapping) or cue_context.get("verified_grid") is not True:
-    return boundaries
+    return None
   candidates = cue_context.get("candidates")
   start = cue_context.get("window_start_s")
   track_duration = cue_context.get("track_duration_s")
   def finite_number(value):
     return (isinstance(value, Real) and not isinstance(value, (bool, np.bool_))
             and np.isfinite(value))
-  if (not isinstance(candidates, (list, tuple)) or not candidates
+  if (not isinstance(candidates, (list, tuple))
       or not finite_number(start) or start < 0
       or not finite_number(track_duration) or track_duration <= start
       or start + duration > track_duration + 1e-3):
-    return boundaries
+    return None
   intervals = []
   previous_end = None
   for item in candidates:
     if not isinstance(item, Mapping):
-      return boundaries
+      return None
     low, high = item.get("start_s"), item.get("end_s")
     if (not finite_number(low) or not finite_number(high)
         or not 0 <= low < high <= track_duration
         or (previous_end is not None and low < previous_end)
         or type(item.get("kind")) is not int or not 1 <= item["kind"] <= 10
         or type(item.get("mood")) is not int or not 1 <= item["mood"] <= 3):
-      return boundaries
+      return None
     previous_end = high
     left, right = max(0.0, float(low - start)), min(duration, float(high - start))
     if left < right:
       intervals.append((left, right))
+  return intervals
+
+
+def _apply_phrase_intervals(boundaries, intervals, duration):
   if not intervals:
     return boundaries
   result = [float(value) for value in boundaries
@@ -831,6 +834,15 @@ def _apply_verified_phrase_boundaries(boundaries, cue_context, duration):
     if high < duration:
       result.append(high)
   return sorted(set(result))
+
+
+def _apply_verified_phrase_boundaries(boundaries, cue_context, duration):
+  """Übernimmt verifizierte Phrase-Grenzen ohne Rasterrundung oder Lücken.
+
+  Abschnittslabels und Energie bleiben eigene Audiomessungen.
+  """
+  intervals = _verified_phrase_intervals(cue_context, duration)
+  return boundaries if intervals is None else _apply_phrase_intervals(boundaries, intervals, duration)
 
 
 def analyze_structure(
@@ -852,16 +864,17 @@ def analyze_structure(
 
   Uses MFCC-based self-similarity for boundary detection,
   then labels sections by energy profile. DSP boundaries are quantized to
-  phrase units; verified PSSI intervals supply their original boundaries.
+  phrase units; verified PSSI or native phrase intervals supply their original boundaries.
 
   Args:
     y: Audio signal (mono, from librosa.load)
     sr: Sample rate
     bpm: Track BPM
     genre: Detected genre (affects phrase unit)
-    cue_context: Optionaler PSSI-Kontext mit absoluten Zeiten und Modellpfaden;
-      liefert Cue-Rohdiagnostik. Vollständige PSSI-Intervalle bestimmen bei
-      verified_grid=True die Grenzen innerhalb ihrer tatsächlichen Abdeckung.
+      cue_context: Optionaler verifizierter Phrase-Kontext mit absoluten Zeiten
+        und Modellpfaden; liefert Cue-Rohdiagnostik. Vollständige PSSI- oder
+        native Phrase-Intervalle bestimmen bei verified_grid=True die Grenzen
+        innerhalb ihrer tatsächlichen Abdeckung.
 
   Returns:
     TrackStructure with labeled sections
@@ -964,8 +977,11 @@ def analyze_structure(
       feature_cache=feature_cache,
     )
 
-  boundaries = _apply_verified_phrase_boundaries(boundaries, native_phrase_context, duration)
-  boundaries = _apply_verified_phrase_boundaries(boundaries, cue_context, duration)
+  cue_intervals = _verified_phrase_intervals(cue_context, duration)
+  if cue_intervals is None:
+    boundaries = _apply_verified_phrase_boundaries(boundaries, native_phrase_context, duration)
+  else:
+    boundaries = _apply_phrase_intervals(boundaries, cue_intervals, duration)
 
   # Step 4: Compute energy and trend for each section
   # Audit-Fix 2026-07-21: Grenzen, die (nach Quantisierung/Clamp) auf oder hinter
@@ -1055,7 +1071,7 @@ def analyze_structure(
         result.cue_diagnostics = [
           dict(index=index, status='model_error',
                reason=f'cue_adapter_error:{type(error).__name__}', raw_score=None,
-               source='rekordbox_pssi_cue_regressor')
+               source='rekordbox_phrase_cue_regressor')
           for index in range(len(candidates))
         ]
   return result

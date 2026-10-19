@@ -54,6 +54,31 @@ def test_no_context_no_model(dsp, monkeypatch):
   assert b.cue_diagnostics == []
 
 
+def test_verified_cue_boundaries_take_precedence_over_native_fallback(dsp, monkeypatch):
+  native_calls = []
+  cue_intervals = []
+  original = sa._apply_verified_phrase_boundaries
+  original_apply = sa._apply_phrase_intervals
+  def record_native(boundaries, phrase_context, duration):
+    native_calls.append(phrase_context)
+    return original(boundaries, phrase_context, duration)
+  def record_cue(boundaries, intervals, duration):
+    cue_intervals.append(intervals)
+    return original_apply(boundaries, intervals, duration)
+  monkeypatch.setattr(sa, '_apply_verified_phrase_boundaries', record_native)
+  monkeypatch.setattr(sa, '_apply_phrase_intervals', record_cue)
+  monkeypatch.setattr(cue_predictor, 'score_phrase_candidates',
+                      lambda *a, **k: [{'index': 0, 'status': 'unavailable', 'raw_score': None}])
+  pssi = dict(candidates=[dict(start_s=2., end_s=4., kind=1, mood=2)],
+              samplecnn_path='samplecnn', cue_model_path='cue',
+              window_start_s=0., track_duration_s=100., verified_grid=True)
+  native = dict(candidates=[dict(start_s=6., end_s=8., kind=2, mood=2)],
+                window_start_s=0., track_duration_s=100., verified_grid=True)
+  analyze(dsp, cue_context=pssi, native_phrase_context=native)
+  assert native_calls == []
+  assert cue_intervals == [[(2., 4.)]]
+
+
 def test_scorer_exception_preserves_dsp(dsp, monkeypatch):
   def bad(*a, **k):
     raise RuntimeError('probe')

@@ -1,5 +1,7 @@
 from __future__ import annotations  # Python 3.9 compatibility for | type hints
 
+import hashlib
+import json
 import logging
 import math
 import os
@@ -1883,7 +1885,7 @@ def _section_audio_slice(section, audio_windows, sr, fallback_cache=None):
 
 
 def _cue_phrase_identities(phrases):
-    """Unveränderte PSSI-Rohidentität in Originalreihenfolge, ohne Zeitrundung."""
+    """Phrase-Kandidatenidentität in Originalreihenfolge, ohne Zeitrundung."""
     try:
         result = []
         for index, phrase in enumerate(phrases):
@@ -1909,9 +1911,41 @@ def _bind_cue_scores(phrases, source_signature, verified):
                       and type(source_signature) is str and bool(source_signature))
 
 
+def _cue_source_signature(file_path, rekordbox_signature):
+    """Bindet Cue-Ergebnisse an Dateiänderungen und optionalen RB-Import."""
+    try:
+        path = os.path.normcase(os.path.abspath(os.path.normpath(str(file_path))))
+        stat = os.stat(path)
+        identity = (path, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
+                    stat.st_dev, stat.st_ino, str(rekordbox_signature or ''))
+        return hashlib.sha256(json.dumps(identity, ensure_ascii=True,
+            separators=(',', ':')).encode('utf8')).hexdigest()
+    except (OSError, TypeError, ValueError):
+        return ''
+
+
+def _cue_candidates_for_structure(*, phrases, pssi_grid_usable,
+                                  native_phrase_analysis, phrase_phase_usable,
+                                  pssi_grid_verified):
+    """Wählt verifizierte Cue-Modellkandidaten mit PSSI-Vorrang.
+
+    Native Phrase-Ausgaben sind zulässig, wenn ihr Grid bereits für die
+    Phrasenphase freigegeben wurde. Ungeprüfte Kandidaten öffnen keinen
+    Modellkontext.
+    """
+    if pssi_grid_usable and pssi_grid_verified and phrases:
+        return phrases, True
+    if (phrase_phase_usable and type(native_phrase_analysis) is dict
+            and native_phrase_analysis.get('status') == 'ok'):
+        candidates = native_phrase_analysis.get('phrases')
+        if type(candidates) is list and candidates:
+            return candidates, True
+    return None, False
+
+
 def _bound_cue_scores(phrases, source_signature, binding, windows):
-    """Nur eindeutige gebundene Erfolge nutzen; Ausfälle tragen keinen Score."""
-    from .ai_models.cue_predictor import MODEL_HASHES, PREPROCESS_VERSION
+    """Nur eindeutige gebundene Phrase-Erfolge nutzen; Ausfälle bleiben neutral."""
+    from .ai_models.cue_predictor import MODEL_HASHES, PREPROCESS_VERSION, CUE_SCORE_SOURCE
     identity = _cue_phrase_identities(phrases)
     if (not binding or binding.get('valid') is not True or identity is None
             or binding.get('phrases') != identity or binding.get('source_signature') != source_signature
@@ -1937,7 +1971,7 @@ def _bound_cue_scores(phrases, source_signature, binding, windows):
             if (counts[identity[index][1:]] != 1 or type(score) not in (int, float)
                     or not math.isfinite(score) or result.get('model_hashes') != binding['model_hashes']
                     or result.get('preprocess_version') != binding['preprocess_version']
-                    or result.get('source') != 'rekordbox_pssi_cue_regressor'):
+                    or result.get('source') != CUE_SCORE_SOURCE):
                 ambiguous.add(index)
                 continue
             if index in successes and successes[index] != score:
@@ -2360,7 +2394,7 @@ def _reanalyze_structure_for_phrase_anchor(
     phrase_unit: int,
     *,
     feature_cache,
-    cue_candidates: list[dict],
+    cue_candidates: list[dict] | None,
     cue_verified_grid: bool,
     cue_source_signature,
     cue_score_binding: dict,
@@ -2411,7 +2445,7 @@ def _analyze_structure_with_final_phrase_anchor(
     anchor_grid_usable: bool,
     phrase_usage_blocked: bool,
     feature_cache,
-    cue_candidates: list[dict],
+    cue_candidates: list[dict] | None,
     cue_verified_grid: bool,
     reanalyze_cue_verified_grid: bool,
     cue_source_signature,
@@ -3723,7 +3757,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 )
                 rekordbox_data = None
 
-    cue_source_signature = rekordbox_signature
+    cue_source_signature = _cue_source_signature(file_path, rekordbox_signature)
     try:
         neural_identity = cue_service.fingerprint()
         # Bestehende Cache-/Metadatenkonsumenten verwenden dieses Signaturfeld.
@@ -3935,6 +3969,13 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 grid_source=beatgrid_source,
                 native_beat_analysis=(native_context['analysis'] if native_context['accepted'] else None),
                 key_note=native_key_note, key_mode=native_key_mode)
+            cue_model_candidates, cue_model_grid_verified = _cue_candidates_for_structure(
+                phrases=phrases, pssi_grid_usable=pssi_grid_usable,
+                native_phrase_analysis=native_phrase_analysis,
+                phrase_phase_usable=phrase_phase_usable,
+                pssi_grid_verified=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                    and beatgrid_validation.status == "verified"),
+            )
             # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
             (
                 structure, analysis_coverage, outro_covered,
@@ -3951,11 +3992,9 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                 anchor_grid_usable=anchor_grid_usable,
                 phrase_usage_blocked=phrase_usage_blocked,
                 feature_cache=feature_cache,
-                cue_candidates=phrases,
-                cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                   and beatgrid_validation.status == "verified"),
-                reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                             and beatgrid_validation.status == "verified"),
+                cue_candidates=cue_model_candidates,
+                cue_verified_grid=cue_model_grid_verified,
+                reanalyze_cue_verified_grid=cue_model_grid_verified,
                 cue_source_signature=cue_source_signature,
                 native_phrase_analysis=native_phrase_analysis,
             )
@@ -4176,7 +4215,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
                     native_phrases=native_phrase_analysis.get('phrases', []),
                     analyzer_in=mix_in_point, analyzer_out=mix_out_point,
                     outro_covered=outro_covered,
-                    cue_scores=_bound_cue_scores(phrases, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
+                    cue_scores=_bound_cue_scores(cue_model_candidates, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
                 )
             if not phrase_usage_blocked and kandidaten is None:
                 return None
@@ -4575,6 +4614,13 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             grid_source=beatgrid_source,
             native_beat_analysis=(native_context['analysis'] if native_context['accepted'] else None),
             key_note=key_note, key_mode=key_mode)
+        cue_model_candidates, cue_model_grid_verified = _cue_candidates_for_structure(
+            phrases=phrases, pssi_grid_usable=pssi_grid_usable,
+            native_phrase_analysis=native_phrase_analysis,
+            phrase_phase_usable=phrase_phase_usable,
+            pssi_grid_verified=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                and beatgrid_validation.status == "verified"),
+        )
         # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
         (
             structure, analysis_coverage, outro_covered,
@@ -4591,11 +4637,9 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             anchor_grid_usable=anchor_grid_usable,
             phrase_usage_blocked=phrase_usage_blocked,
             feature_cache=feature_cache,
-            cue_candidates=phrases,
-            cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                               and beatgrid_validation.status == "verified"),
-            reanalyze_cue_verified_grid=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                         and beatgrid_validation.status == "verified"),
+            cue_candidates=cue_model_candidates,
+            cue_verified_grid=cue_model_grid_verified,
+            reanalyze_cue_verified_grid=cue_model_grid_verified,
             cue_source_signature=cue_source_signature,
             native_phrase_analysis=native_phrase_analysis,
         )
@@ -4768,7 +4812,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             native_phrases=native_phrase_analysis.get('phrases', []),
             analyzer_in=mix_in_point, analyzer_out=mix_out_point,
             outro_covered=outro_covered,
-            cue_scores=_bound_cue_scores(phrases, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
+            cue_scores=_bound_cue_scores(cue_model_candidates, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
         )
         if phrase_usage_blocked:
             mix_in_candidates, mix_out_candidates = [], []
