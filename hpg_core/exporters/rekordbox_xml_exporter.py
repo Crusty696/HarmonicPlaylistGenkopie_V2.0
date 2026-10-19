@@ -583,9 +583,9 @@ class RekordboxXMLExporter(BaseExporter):
                 else getattr(track, "mix_out_point", -1.0)
             )
         anchor = track.phrase_anchor
-        phrase_grid_verified = (
-            track.verified_pssi_phrase_grid or _verified_native_phrase_grid(track)
-        )
+        pssi_grid = track.verified_pssi_phrase_grid
+        native_grid = _verified_native_phrase_grid(track)
+        phrase_grid_verified = pssi_grid or native_grid
         for side, value in (("in", mix_in), ("out", mix_out)):
             if value is None:
                 continue
@@ -602,7 +602,10 @@ class RekordboxXMLExporter(BaseExporter):
                     point, track.phrase_grid,
                     "ceil" if side == "in" else "floor",
                 )
-            else:
+            # Track-Standardpunkte können weiterhin auf dem geprüften
+            # konstanten Raster liegen; Paarpläne nutzen native Grenzen.
+            if not phrase_grid_verified or (native_grid and
+                    (aligned is None or abs(float(aligned) - point) > QUANTIZE_TOLERANCE_SEC)):
                 bpm = float(track.bpm)
                 if not math.isfinite(bpm) or bpm <= 0.0:
                     return False
