@@ -35,7 +35,7 @@ def main():
     completed = set()
     render_all = '--render-all' in sys.argv[3:]
     def record(selected):
-        base, result, peaks, duration, pending = selected
+        base, result, peaks, duration, pending = selected[:5]
         index = result.boundary_index
         if index in completed:
             return
