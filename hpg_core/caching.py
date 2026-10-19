@@ -854,8 +854,6 @@ def _validate_top_level_physics(filtered: dict) -> tuple[float, float, float]:
     for name in ("spectral_flatness", "percussive_ratio", "syncopation", "sub_energy"):
         _require_real_in_range(filtered, name, 0.0, 1.0)
     _require_real_in_range(filtered, "bass_punch", 0.0, sys.float_info.max)
-    for name in TRACK_CONFIDENCE_FIELDS:
-        _require_real_in_range(filtered, name, 0.0, 1.0)
     first_downbeat = _require_real_in_range(filtered, "first_downbeat", 0.0, duration)
     first_phrase = filtered["first_phrase"]
     if not _is_finite_number(first_phrase) or (
@@ -879,6 +877,9 @@ def validate_track_dict(data: dict) -> dict:
         raise CacheValidationError(f"Pflichtfeld {missing[0]} fehlt")
 
     filtered = {key: value for key, value in data.items() if key in TRACK_REQUIRED_FIELDS}
+    # Bereichsfehler benennen, bevor Herkunftsprüfungen diese Werte vergleichen.
+    for name in TRACK_CONFIDENCE_FIELDS:
+        _require_real_in_range(filtered, name, 0.0, 1.0)
     from .measurement_contract import validate_measurement_diagnostics
     from .ai_models.cue_service import validate_neural_analysis
     from .models import bar_position_usage_blocked

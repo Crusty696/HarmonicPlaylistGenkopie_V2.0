@@ -797,6 +797,9 @@ def test_kandidaten_ueberleben_roundtrip_und_nichtliste_wird_abgewiesen():
   t = Track(
     filePath="C:/x.mp3", fileName="x.mp3", duration=300.0,
     analysis_mode="librosa_full_or_tail",
+    beatgrid_source="rekordbox", beatgrid_status="verified",
+    downbeat_confidence=1., bar_position_status="reference_verified",
+    beatgrid_windows_checked=3, beatgrid_max_phase_error_ms=1.,
   )
   t.phrases = [{"start_s": 0.0, "end_s": 15.0, "label": "Intro", "mood": 1, "kind": 1, "fill": 0}]
   t.cue_points = [{"t": 30.0, "name": "", "typ": 0, "provenance": "leer"}]

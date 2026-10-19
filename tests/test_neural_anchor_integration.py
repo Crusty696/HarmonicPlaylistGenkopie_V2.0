@@ -89,6 +89,11 @@ def setup_adoption(pipeline, monkeypatch, fast=True):
     importer.get_track_data.return_value = RekordboxTrackData(bpm=120. if fast else None, duration=48., camelot_code='8A', path_match='volume_rebind')
     monkeypatch.setattr(analysis, '_get_file_duration', lambda *a: 48.)
     monkeypatch.setattr(analysis.librosa, 'load', lambda *a, **k: (np.ones(22050*48, np.float32), 22050))
+    # Der Produktpfad lädt inzwischen über den gemeinsamen Reader. Die
+    # kontrollierten Fenster dieses Ankertests müssen diese Grenze ersetzen.
+    monkeypatch.setattr(analysis, '_load_analysis_audio', lambda *a, **k: (
+        np.ones(round(min(k.get('duration', 48.), 48. - k.get('offset', 0.))
+                      * k.get('sr', 22050)), np.float32), k.get('sr', 22050)))
     monkeypatch.setattr(analysis, 'get_cached_track', lambda *a, **k: None)
     monkeypatch.setattr(analysis, '_estimate_audio_downbeat', lambda *a, **k: (.7, .1))
     monkeypatch.setattr(analysis, 'estimate_first_downbeat', lambda *a, **k: (.2, .6))

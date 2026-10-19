@@ -187,7 +187,7 @@ def test_parent_requests_selected_mode_once(tmp_path, monkeypatch):
     calls = []
     def transport(job, request, **kwargs):
         calls.append((job, request))
-        return dict(contract='rb-7.2.19-native-beat-pipeline-research-v17',
+        return dict(contract='rb-7.2.19-native-beat-pipeline-research-v18',
             executable_sha256=native.SHA256, tensorflow_sha256=native.TF_SHA256,
             model_id='model8', model_hashes=native.MODEL_HASHES['model8'],
             selection=select_model(3), boundary_contract=native.BOUNDARY_CONTRACT, model_coverage=data['model_coverage'], reader=data['reader'], frames=data['frames'],

@@ -141,10 +141,15 @@ def test_both_producers_select_and_cache_bound_scores(pipeline,monkeypatch,fast)
     path, importer, _ = pipeline
     values = phrases()
     importer.get_phrases.return_value = values
+    importer.get_beatgrid.return_value = [dict(time=index * .5, beat=index % 4 + 1)
+                                          for index in range(480)]
     importer.get_track_data.return_value = RekordboxTrackData(bpm=120. if fast else None,
                                                              duration=240.,camelot_code='8A')
     monkeypatch.setattr(analysis,'_get_file_duration',lambda *a:240.)
     monkeypatch.setattr(analysis.librosa,'load',lambda *a,**k:(np.ones(22050*240,np.float32),22050))
+    monkeypatch.setattr(analysis, '_load_analysis_audio', lambda *a, **k: (
+        np.ones(round(min(k.get('duration', 240.), 240. - k.get('offset', 0.))
+                      * k.get('sr', 22050)), np.float32), k.get('sr', 22050)))
     monkeypatch.setattr(analysis,'get_cached_track',lambda *a,**k:None)
     monkeypatch.setattr(analysis,'_persist_analysis_result',lambda *a:True)
     monkeypatch.setattr(analysis,'_kandidaten_berechnen',_REAL_CANDIDATES)
