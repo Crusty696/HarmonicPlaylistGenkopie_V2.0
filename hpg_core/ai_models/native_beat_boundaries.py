@@ -13,7 +13,7 @@ from .native_phrase_worker import EXE, NativeContractError
 from .native_beat_worker import FloatMatrix
 from .native_beat_grid import _Json, _read_json
 
-VERSION = 'rb-7.2.19-wrapper1294100-v4'
+VERSION = 'rb-7.2.19-wrapper1294100-v5'
 
 
 class _PrivateBridges:
@@ -52,7 +52,6 @@ def run(image, reader, selection, window_start):
     from .native_beat_pipeline_worker import validate_model_rows
     errors, raw_rows = [], []
     read_frames = 0
-    read_peak = 0.0
     channels = getattr(reader, 'channels', None)
     frames = getattr(reader, 'frames', None)
     if type(channels) is not int or channels not in (1, 2):
@@ -94,7 +93,7 @@ def run(image, reader, selection, window_start):
                               ct.c_void_p, ct.c_void_p, ct.c_int32)
     @read_type
     def read(address, start, left, right, count):
-        nonlocal read_frames, read_peak
+        nonlocal read_frames
         try:
             if start < 0 or not 0 < count <= 512:
                 raise NativeContractError('Invalid wrapper read request')
@@ -103,8 +102,6 @@ def run(image, reader, selection, window_start):
                 return 0
             lvalues, rvalues = reader.read(start, count)
             read_frames += count
-            read_peak = max(read_peak, float(np.max(np.abs(lvalues))),
-                            float(np.max(np.abs(rvalues))))
             ct.memmove(left, lvalues.ctypes.data, count*4)
             ct.memmove(right, rvalues.ctypes.data, count*4)
             return count
@@ -152,7 +149,7 @@ def run(image, reader, selection, window_start):
                     f'columns={target.columns}, size={target.size}, '
                     f'data_present={bool(target.data)}, frames={frames}, '
                     f'chunked={bool(chunked)}, input_peaks={peaks}, '
-                    f'read_frames={read_frames}, read_peak={read_peak}')
+                    f'read_frames={read_frames}')
             values = np.ctypeslib.as_array(ct.cast(target.data, ct.POINTER(ct.c_float)),
                                            shape=(target.size,)).reshape(-1, 2)
             raw_rows.extend(validate_model_rows(values, frames))
@@ -197,11 +194,13 @@ def run(image, reader, selection, window_start):
         bridge.install(0x11042d0, channel_count)
         bridge.install(0x2ccfd60, read)
         bridge.install(0x1293f70, dispatch)
-        # The recovered wrapper signature is (..., int sample_rate,
-        # float window_start, char chunked, output*). Preserve its XMM ABI.
+        # RVA1294356 lädt den fünften Parameter als INT32-Sampleindex;
+        # RVA129444b reicht ihn in EDX an den Reader weiter. Der Decompiler
+        # typisiert ihn fälschlich als float. Float-Bits erzeugen einen Seek
+        # hinter das Dateiende und dadurch ausschließlich stille Modellinputs.
         image.function(0x1294100, None, ct.c_void_p, ct.c_void_p, ct.c_void_p,
-            ct.c_int32, ct.c_float, ct.c_ubyte, ct.c_void_p)(ct.byref(models[0]),
-                ct.byref(models[1]), path, 44100, float(window_start),
+            ct.c_int32, ct.c_int32, ct.c_ubyte, ct.c_void_p)(ct.byref(models[0]),
+                ct.byref(models[1]), path, 44100, int(window_start),
                 selection['chunked'], ct.byref(output))
         if errors:
             raise NativeContractError('; '.join(errors))

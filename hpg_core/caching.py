@@ -326,7 +326,8 @@ logger = logging.getLogger(__name__)
 # v174: Der native Initialisierer erhält den ersten Downbeat statt einer
 # wiederholten Sample-Rate; Phrasenvertrag v8 bindet den tatsächlichen Aufruf.
 # v175: Nativer ALAC-Reader mit eigener Herkunft und verlustfreier Dauertoleranz.
-CACHE_VERSION = 175
+# v176: Nativer Beatwrapper erhält den Fensterstart als INT32-Sampleindex.
+CACHE_VERSION = 176
 _CACHE_FILE_OVERRIDE = os.environ.get("HPG_CACHE_FILE", "").strip()
 
 
