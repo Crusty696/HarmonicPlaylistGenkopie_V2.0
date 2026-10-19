@@ -747,3 +747,22 @@ class TestKandidatenCues:
     assert merged["mix_in"] == 80.0
     assert "suppress_mix_in" not in merged
     assert conflicts == []
+
+
+@pytest.mark.parametrize('damage,expected', [('none', True), ('hash', False), ('off_grid', False)])
+def test_native_phrase_cue_export_uses_verified_boundaries(damage, expected):
+  from hpg_core.models import Track
+  from hpg_core.rekordbox_phrases import phrase_grid_from_phrases
+  from tests.test_native_phrase_integration import native_snapshot
+  native = native_snapshot()
+  native['phrases'][0]['end_s'] = 30.
+  native['phrases'][1]['start_s'] = 30.
+  track = Track(filePath='unused.wav', fileName='unused.wav', duration=120., bpm=120.,
+      first_downbeat=0., downbeat_confidence=.9, bar_position_status='audio_estimate',
+      beatgrid_source='audio', beatgrid_status='verified', phrase_unit=16,
+      outro_covered=True, native_phrase_analysis=native,
+      phrase_grid=phrase_grid_from_phrases(native['phrases']))
+  if damage == 'hash':
+    native['executable_sha256'] = '0'*64
+  point = 30.1 if damage == 'off_grid' else 30.
+  assert RekordboxXMLExporter._cue_export_allowed(track, mix_in=point, allow_partial=True) is expected

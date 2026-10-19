@@ -20,7 +20,7 @@ from typing import List, Optional
 from ..downbeat import REFERENCE_BEATGRID_CONFIDENCE
 from ..config import METER
 from ..mix_candidates import quantize_to_points
-from ..dj_brain import effective_track_phrase_unit
+from ..dj_brain import effective_track_phrase_unit, _verified_native_phrase_grid
 from ..models import (
     QUANTIZE_TOLERANCE_SEC, Track, quantize_to_grid,
 )
@@ -583,7 +583,9 @@ class RekordboxXMLExporter(BaseExporter):
                 else getattr(track, "mix_out_point", -1.0)
             )
         anchor = track.phrase_anchor
-        pssi_grid = track.verified_pssi_phrase_grid
+        phrase_grid_verified = (
+            track.verified_pssi_phrase_grid or _verified_native_phrase_grid(track)
+        )
         for side, value in (("in", mix_in), ("out", mix_out)):
             if value is None:
                 continue
@@ -593,9 +595,9 @@ class RekordboxXMLExporter(BaseExporter):
                 return False
             if not math.isfinite(point):
                 return False
-            if anchor is None and not pssi_grid:
+            if anchor is None and not phrase_grid_verified:
                 return False
-            if pssi_grid:
+            if phrase_grid_verified:
                 aligned = quantize_to_points(
                     point, track.phrase_grid,
                     "ceil" if side == "in" else "floor",
