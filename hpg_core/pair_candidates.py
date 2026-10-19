@@ -27,6 +27,7 @@ from .config import (
 )
 from .dj_brain import (
     _get_intro_end_from_sections, _get_outro_start_from_sections,
+    _verified_native_phrase_grid,
     effective_track_phrase_unit,
     get_genre_compatibility, get_mix_profile,
 )
@@ -558,7 +559,9 @@ def _ist_benannter_cue(track: Track, cand: MixCandidate, seite: str) -> bool:
         return False
     muster = CUE_IN_PATTERN if seite == "in" else CUE_OUT_PATTERN
     grid = _grid_sec(track)
-    phrase_points = list(track.phrase_grid) if track.verified_pssi_phrase_grid else []
+    phrase_points = (list(track.phrase_grid)
+                     if track.verified_pssi_phrase_grid or _verified_native_phrase_grid(track)
+                     else [])
     for cue in track.cue_points or []:
         if cue.get("provenance") != "manual":
             continue
@@ -575,7 +578,7 @@ def _auf_gitter(track: Track, t: float, seite: str) -> bool:
     Phrasenraster des Tracks."""
     if not _phrase_points_usable(track):
         return False
-    if track.verified_pssi_phrase_grid:
+    if track.verified_pssi_phrase_grid or _verified_native_phrase_grid(track):
         q = quantize_to_points(t, list(track.phrase_grid), "floor" if seite == "out" else "ceil")
     else:
         grid = _grid_sec(track)
