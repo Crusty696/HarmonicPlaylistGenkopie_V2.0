@@ -236,7 +236,7 @@ def test_snapshot_does_not_follow_source_mutation(qtbot):
 
 def test_zero_missing_sentinel_and_decode_offsets_are_distinct(qtbot):
     dialog = make(qtbot, (track(diagnosis()), track(diagnosis(None, None))))
-    assert cell(dialog.track_table, 0, 5) == "Nicht gemessen"
+    assert cell(dialog.track_table, 0, 6) == "Nicht gemessen"
     assert cell(dialog.window_table, 0, 2) == "Nicht gemessen"
     assert cell(dialog.window_table, 0, 3) == "0.000"
     assert cell(dialog.window_table, 0, 4) == "0.000"

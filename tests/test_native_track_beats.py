@@ -209,7 +209,7 @@ def test_native_render_bar_permission_preserves_strict_sync(verified):
     from hpg_core.models import Track
     from hpg_core.transition_renderer import TransitionClipSpec
     data = snapshot()
-    track = Track(filePath='unused.wav', duration=48., bpm=120.,
+    track = Track(filePath='unused.wav', fileName='unused.wav', duration=48., bpm=120.,
                   first_downbeat=data['first_downbeat'], downbeat_confidence=0.,
                   bar_position_status='native_candidate', beatgrid_source='audio',
                   beatgrid_status='verified' if verified else 'mismatch',
