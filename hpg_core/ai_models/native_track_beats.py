@@ -65,7 +65,7 @@ def validate_snapshot(value, *, duration):
               'model_id', 'model_hashes', 'source_identity', 'sample_rate', 'frames',
               'bpm', 'grid', 'first_downbeat', 'musically_verified', 'input_convention', 'selection', 'reader', 'boundary_contract', 'model_coverage'}
     if (set(value) - {'audio_alignment', 'model_beats', 'verification', 'phase_method',
-                      'model_coverage_segments'} != fields or value['reason'] is not None or value['contract'] != CONTRACT
+                      'model_coverage_segments', 'requested_configuration'} != fields or value['reason'] is not None or value['contract'] != CONTRACT
             or value['executable_sha256'] != SHA256 or value['tensorflow_sha256'] != TF_SHA256
             or value['boundary_contract'] != BOUNDARY_CONTRACT
             or value['model_id'] not in MODEL_HASHES or value['model_hashes'] != MODEL_HASHES[value['model_id']]
@@ -85,6 +85,12 @@ def validate_snapshot(value, *, duration):
     if 'phase_method' in value and value['phase_method'] != 'native_attack_v1':
         raise ValueError('Invalid native phase method')
     validate_selection(value['selection'])
+    if 'requested_configuration' in value and (
+            type(value['requested_configuration']) is not int
+            or value['requested_configuration'] != 2
+            or value['selection']['configuration'] != 4
+            or value['model_id'] != 'model7'):
+        raise ValueError('Invalid native automatic model fallback')
     if value['selection']['model_id'] != value['model_id']:
         raise ValueError('Native selected model mismatch')
     # Modell8 ist nicht gechunkt und muss die unabhängige Modell7-Folge
@@ -227,7 +233,7 @@ def validate_reader(reader, frames, duration, input_convention):
 
 
 def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
-            cancel_event=None, snapshot=None):
+            cancel_event=None, snapshot=None, verification_snapshot=None):
     if not enabled():
         return dict(status='disabled', reason='disabled')
     try:
@@ -240,7 +246,8 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
             validate_snapshot(result, duration=result['frames'] / 44100)
             if (result.get('status') != 'ok'
                     or result['source_identity'] != identity
-                    or result['selection']['configuration'] != configured_mode()
+                    or result.get('requested_configuration',
+                                  result['selection']['configuration']) != configured_mode()
                     or _source_identity(source) != identity):
                 raise ValueError('Native snapshot source/mode mismatch')
             result.pop('audio_alignment', None)
@@ -268,6 +275,8 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
             return result
         mode = configured_mode()
         request = dict(path=str(source), source_identity=identity, configuration=mode)
+        if verification_snapshot is not None:
+            request['verification_snapshot'] = verification_snapshot
         raw = call('native_beat', 'hpg_core.ai_models.native_beat_pipeline_worker', request)
         if (raw.get('contract') != 'rb-7.2.19-native-beat-pipeline-research-v18'
                 or raw.get('executable_sha256') != SHA256 or raw.get('tensorflow_sha256') != TF_SHA256
@@ -278,7 +287,7 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
                 or _source_identity(source) != identity):
             raise ValueError('Native pipeline provenance mismatch')
         validate_selection(raw['selection'])
-        if raw['selection']['configuration'] != mode or raw['selection']['model_id'] != raw['model_id']:
+        if raw.get('requested_configuration', raw['selection']['configuration']) != mode or raw['selection']['model_id'] != raw['model_id']:
             raise ValueError('Native mode response mismatch')
         frames = raw['frames']
         result = dict(status='ok', reason=None, contract=CONTRACT, executable_sha256=SHA256,
@@ -291,6 +300,8 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
             model_coverage=raw['model_coverage'])
         if 'model_coverage_segments' in raw:
             result['model_coverage_segments'] = raw['model_coverage_segments']
+        if 'requested_configuration' in raw:
+            result['requested_configuration'] = raw['requested_configuration']
         if raw.get('verification') is not None:
             result['verification'] = raw['verification']
         validate_snapshot(result, duration=frames/44100)

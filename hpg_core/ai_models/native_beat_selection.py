@@ -68,6 +68,19 @@ def configured_mode():
     return int(value)
 
 
+def full_model_disagrees(bpm, rows):
+    """Stabile Gesamtfolge widerspricht dem Tempo des kurzen Modell8-Fensters."""
+    import statistics
+    intervals = [b[0] - a[0] for a, b in zip(rows, rows[1:])]
+    if len(intervals) < 64:
+        return False
+    median = statistics.median(intervals)
+    if not 60 / 215 <= median <= 60 / 55:
+        return False
+    stable = sum(abs(value - median) <= .02 + .02 * median for value in intervals)
+    return stable >= .75 * len(intervals) and abs(median - 60 / bpm) > .04 * (60 / bpm)
+
+
 def select_model(mode, stored_mode=None):
     if type(mode) is not int or mode not in (2, 3, 4):
         raise ValueError('Native configuration uses a different analysis pipeline')

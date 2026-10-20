@@ -53,7 +53,7 @@ class _PrivateBridges:
             raise NativeContractError('Private bridge restoration failed') from errors[0]
 
 
-def run(image, reader, selection, window_start):
+def run(image, reader, selection, window_start, *, model_rows=None):
     """Grenzkorrekturen nativ; Callbackfehler sperren das gesamte Ergebnis."""
     from .native_beat_pipeline_worker import validate_model_rows
     errors, raw_rows = [], []
@@ -124,6 +124,18 @@ def run(image, reader, selection, window_start):
         try:
             if rate != 44100 or bool(chunked) != selection['chunked']:
                 raise NativeContractError('Native wrapper selected unexpected model')
+            if model_rows is not None:
+                if not chunked:
+                    raise NativeContractError('Only complete model7 rows can be resumed')
+                values = np.ascontiguousarray(model_rows, dtype=np.float32)
+                raw_rows.extend(validate_model_rows(values, frames, chunked=True))
+                # Geliehener Python-Puffer; RVA12b2c00 konvertiert in den
+                # eigenen Ausgabevektor. Kein erneuter Modellaufruf.
+                target.rows, target.columns, target.size = len(values), 2, values.size
+                target.data, target.owns_data = values.ctypes.data, 0
+                image.function(0x12b2c00, ct.c_void_p, ct.c_void_p,
+                               ct.POINTER(FloatMatrix))(output, ct.byref(target))
+                return output
             image.function(0x2a6e660, ct.c_void_p, ct.c_void_p, ct.c_void_p)(
                 ct.byref(path), model7 if chunked else model8)
             if chunked:
@@ -165,7 +177,8 @@ def run(image, reader, selection, window_start):
             errors.append(str(error))
             ct.memset(output, 0, 24)
         finally:
-            image.function(0x12add90, None, ct.POINTER(FloatMatrix))(ct.byref(target))
+            if model_rows is None:
+                image.function(0x12add90, None, ct.POINTER(FloatMatrix))(ct.byref(target))
             release_models()
         return output
 

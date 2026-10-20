@@ -18,7 +18,7 @@ from .native_audio_reader import (
     NativeAudioReader, NATIVE_REKORDBOX_READER_EXTENSIONS, bind_reader_imports,
 )
 from .native_beat_selection import (
-    MAX_NATIVE_BEAT_WINDOW_SECONDS, select_model, is_chunk_seam_pair,
+    MAX_NATIVE_BEAT_WINDOW_SECONDS, select_model, is_chunk_seam_pair, full_model_disagrees,
 )
 from .native_grid_processor import NativeGridProcessor
 
@@ -298,7 +298,7 @@ def _handle(payload):
         raise NativeContractError('Single-use native pipeline required')
     _used = True
     request = json.loads(payload)
-    if type(request) is not dict or set(request) != {'path', 'source_identity', 'configuration'}:
+    if type(request) is not dict or set(request) - {'verification_snapshot'} != {'path', 'source_identity', 'configuration'}:
         raise NativeContractError('Invalid pipeline request')
     path = Path(request['path'])
     if not path.is_absolute() or _source_identity(path) != request['source_identity']:
@@ -306,6 +306,16 @@ def _handle(payload):
     mode = request['configuration']
     if type(mode) is not int or mode not in (2, 3, 4):
         raise NativeContractError('Unsupported native configuration')
+    replay = request.get('verification_snapshot')
+    if replay is not None:
+        from .native_track_beats import validate_snapshot
+        validate_snapshot(replay, duration=replay['frames'] / _SAMPLE_RATE)
+        if (mode != 2 or replay['source_identity'] != request['source_identity']
+                or replay['selection']['configuration'] != 2
+                or not replay.get('verification')
+                or not full_model_disagrees(replay['bpm'], replay['verification']['beats'])
+                or replay['frames'] > MAX_NATIVE_BEAT_WINDOW_SECONDS * _SAMPLE_RATE):
+            raise NativeContractError('Invalid model7 verification replay')
     image = NativeImage()
     bind_reader_imports(image)
     library = _bind_tensorflow(image)
@@ -336,11 +346,13 @@ def _handle(payload):
         # Scan und bei Fehlern die Audioread-Dauerzählung unnötig wiederholen.
         reader = NativeAudioReader(image, path, use_rekordbox=False)
     frames = reader.frames
+    if replay is not None and frames != replay['frames']:
+        raise NativeContractError('Model7 replay reader duration changed')
     from .native_beat_boundaries import run as correct_boundaries, VERSION as boundary_contract
     if frames <= MAX_NATIVE_BEAT_WINDOW_SECONDS * _SAMPLE_RATE:
         # Keep existing one-window processing and its evidence shape unchanged.
         processor = NativeGridProcessor(image, reader)
-        selection = select_model(mode, processor.stored_mode)
+        selection = select_model(4) if replay is not None else select_model(mode, processor.stored_mode)
         segmented = None
     else:
         first_end = min(frames, MAX_NATIVE_BEAT_WINDOW_SECONDS * _SAMPLE_RATE)
@@ -353,7 +365,8 @@ def _handle(payload):
     hashes = _hashes(directory, model_id)
     if segmented is None:
         grid, bpm_hundredths, rows, coverage = correct_boundaries(
-            image, reader, selection, processor.window_start)
+            image, reader, selection, processor.window_start,
+            **({'model_rows': replay['verification']['beats']} if replay is not None else {}))
         grid, final_bpm = processor.refine(grid, int(bpm_hundredths), selection['chunked'])
         verification = None
         if not selection['chunked']:
@@ -361,10 +374,19 @@ def _handle(payload):
             # liefert der originale Modell7-Lauf zusätzlich die ganze Beatfolge.
             # Das ausgewählte Endgrid und seine Taktnummern bleiben unverändert.
             verification_hashes = _hashes(EXE.parent/'models'/'detect_beat'/'model7', 'model7')
-            _, _, verification_rows, verification_coverage = correct_boundaries(
+            verification_grid, verification_bpm, verification_rows, verification_coverage = correct_boundaries(
                 image, reader, select_model(4), 0)
             verification = dict(model_id='model7', model_hashes=verification_hashes,
                                 beats=verification_rows, coverage=verification_coverage)
+            if mode == 2 and full_model_disagrees(final_bpm / 100., verification_rows):
+                # Die native Gesamtfolge wurde bereits berechnet. Bei
+                # stabilem Tempowiderspruch das originale Modell7-Grid
+                # verfeinern; weder Rohbeats erfinden noch erneut inferieren.
+                selection = select_model(4)
+                grid, final_bpm = processor.refine(
+                    verification_grid, int(verification_bpm), True)
+                model_id, hashes = 'model7', verification_hashes
+                rows, coverage, verification = verification_rows, verification_coverage, None
     else:
         grid, rows = segmented['grid'], segmented['beats']
         final_bpm, verification = segmented['bpm'], segmented['verification']
@@ -379,6 +401,8 @@ def _handle(payload):
         input_convention=f"{reader.backend}-planar-float32", frames=frames,
         chunked=selection['chunked'], boundary_contract=boundary_contract,
         model_coverage=coverage, verification=verification)
+    if mode == 2 and selection['configuration'] == 4:
+        payload_result['requested_configuration'] = 2
     if segmented is not None and segmented['model_coverage_segments'] is not None:
         payload_result['model_coverage_segments'] = segmented['model_coverage_segments']
     return json.dumps(payload_result, allow_nan=False).encode('utf8')
