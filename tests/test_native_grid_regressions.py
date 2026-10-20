@@ -82,10 +82,12 @@ def test_corrected_native_producer_cache_and_render_contract(pipeline, monkeypat
     plan = SimpleNamespace(mix_out_a=20., mix_in_b=4., overlap=8.,
         transition_type='pro_eq_swap', target_sr=44100, tempo_ratio=1.)
     spec = TransitionClipSpec.from_plan(plan, track, restored)
-    # Native Audio-Offset bestätigt Beatphase. Ohne unabhängige Takt-1-Referenz
-    # bleibt die Bar-Phase gesperrt.
+    # Nutzerfreigabe: native Taktposition verwenden, unabhaengige
+    # musikalische Bestaetigung weiterhin nicht behaupten.
     assert spec.downbeat_reliable_a and spec.downbeat_reliable_b
-    assert not spec.bar_phase_reliable_a and not spec.bar_phase_reliable_b
+    assert track.bar_position_status == restored.bar_position_status == "native_candidate"
+    assert track.downbeat_confidence == restored.downbeat_confidence == 0.
+    assert spec.bar_phase_reliable_a and spec.bar_phase_reliable_b
     assert spec.strict_beat_sync
     restored.first_downbeat += .1
     corrupted = TransitionClipSpec.from_plan(plan, restored, track)

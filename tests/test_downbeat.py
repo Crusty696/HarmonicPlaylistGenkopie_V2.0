@@ -791,12 +791,7 @@ class TestKalibrierteSchwelle:
   def test_gates_der_konsumenten_stimmen_mit_der_kalibrierung_ueberein(self):
     """Kein Konsument darf eine eigene Zahlenschwelle mitfuehren."""
     from hpg_core import transition_renderer as tr
-
-    class _T:
-      filePath = "x"
-      bpm = 138.0
-      lufs = 0.0
-      first_downbeat = 0.5
+    from hpg_core.models import Track
 
     class _Plan:
       mix_out_a = 10.0
@@ -806,12 +801,17 @@ class TestKalibrierteSchwelle:
       target_sr = 44100
 
     def spec_for(conf_a, conf_b, *, reference=False):
-      a, b = _T(), _T()
+      a, b = (Track(filePath="x", fileName="x", bpm=138., duration=60.,
+                    first_downbeat=.5, beatgrid_source="audio") for _ in range(2))
       a.downbeat_confidence = conf_a
       b.downbeat_confidence = conf_b
       if reference:
         a.beatgrid_source = b.beatgrid_source = "rekordbox"
         a.beatgrid_status = b.beatgrid_status = "verified"
+        for track in (a, b):
+          track.bar_position_status = "reference_verified"
+          track.measurement_diagnostics = {
+            "anchor": {"bar_position_comparison": {"status": "aligned"}}}
       return tr.TransitionClipSpec.from_plan(_Plan(), a, b)
 
     below = spec_for(DOWNBEAT_RELIABLE_MIN - 0.01, 1.0)

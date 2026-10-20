@@ -103,6 +103,7 @@ def _strict_spec(**overrides) -> TransitionClipSpec:
 
 
 def _spec_from_track_status(*, source, status, confidence):
+    from hpg_core.models import Track
     plan = SimpleNamespace(
         mix_out_a=60.0,
         mix_in_b=30.0,
@@ -110,14 +111,18 @@ def _spec_from_track_status(*, source, status, confidence):
         transition_type="pro_eq_swap",
         target_sr=44100,
     )
-    track = SimpleNamespace(
+    track = Track(
         filePath="track.wav",
+        fileName="track.wav",
+        duration=300.,
         bpm=128.0,
         first_downbeat=0.25,
         downbeat_confidence=confidence,
         beatgrid_source=source,
         beatgrid_status=status,
         analysis_mode="librosa_full_or_tail",
+        bar_position_status="reference_verified" if source == "rekordbox" else "audio_estimate",
+        measurement_diagnostics={"anchor": {"bar_position_comparison": {"status": "aligned"}}},
         lufs=0.0,
     )
     return TransitionClipSpec.from_plan(plan, track, track)
@@ -159,7 +164,7 @@ def test_rendervertrag_verwirft_ungueltige_samplerate(target_sr):
 def test_rendervertrag_akzeptiert_alle_oeffentlichen_transition_types():
     for transition_type in SUPPORTED_TRANSITION_TYPES:
         validate_transition_clip_spec(
-            _strict_spec(transition_type=transition_type)
+            _strict_spec(transition_type=transition_type, target_sr=44100)
         )
 
 

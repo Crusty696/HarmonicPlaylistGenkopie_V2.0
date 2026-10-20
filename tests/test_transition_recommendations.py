@@ -67,11 +67,11 @@ class TestRecommendationBasics:
     assert recs[0].transition_type == "pro_eq_swap"
 
   @pytest.mark.parametrize("status", ["unknown", "mismatch", "unverifiable", "unsupported"])
-  def test_beatgrid_status_verhindert_keine_empfehlung(self, status):
+  def test_unverifiziertes_beatgrid_liefert_keine_mixempfehlung(self, status):
     tracks = _make_pair()
     tracks[1].beatgrid_status = status
 
-    assert len(compute_transition_recommendations(tracks)) == 1
+    assert compute_transition_recommendations(tracks) == []
 
   def test_n_tracks_n_minus_1_recs(self):
     """N Tracks = N-1 Empfehlungen."""
