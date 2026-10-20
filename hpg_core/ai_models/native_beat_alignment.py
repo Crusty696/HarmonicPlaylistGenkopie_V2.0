@@ -28,17 +28,19 @@ def stable_model_window(native, start, width):
             and all(abs(b-a-period) <= .02 + .02*period for a, b in zip(times, times[1:])))
 
 
-def single_window_evidence_plan(native, duration, span):
+def single_window_evidence_plan(native, duration, span, *, eligible_starts=None):
     """Sechs disjunkte Fenster vor jeder Audiomessung wählen.
 
     Modell8 beobachtet je Segment höchstens 60s. Bestätigungen liegen in
     beobachteten Bereichen; Kalibrierungen liegen außerhalb aller Bereiche.
     Keine Auswahl anhand des später gemessenen Phasenfehlers.
     """
-    if native.get('verification'):
+    if native.get('verification') or (
+            eligible_starts is not None and native.get('selection', {}).get('chunked')):
         # Alle sechs Abschnitte vor jeder Phasenmessung aus tatsächlich
         # modellbeobachteten, regelmäßigen Beats wählen; nie nach Restfehler.
         candidates = [float(start) for start in range(math.floor(duration-span)+1)
+                      if (eligible_starts is None or start in eligible_starts)
                       if stable_model_window(native, float(start), span)]
         selected = []
         # Feste innere Quantile vermeiden Fade-In/Outro als Kickreferenz.
@@ -59,6 +61,7 @@ def single_window_evidence_plan(native, duration, span):
     if not segments or duration < 6*span:
         return None
     observed_candidates = [float(start) for start in range(math.floor(duration-span)+1)
+                           if (eligible_starts is None or start in eligible_starts)
                            if any(segment['start_s'] <= start
                                   and start+span <= segment['end_s']
                                   for segment in segments)
@@ -72,6 +75,7 @@ def single_window_evidence_plan(native, duration, span):
             return None
         confirmation.append(min(available, key=lambda start: (abs(start-target), start)))
     candidates = [float(start) for start in range(math.floor(duration-span)+1)
+                  if (eligible_starts is None or start in eligible_starts)
                   if all(start+span <= segment['start_s'] or
                          start >= segment['end_s'] for segment in segments)]
     calibration = []

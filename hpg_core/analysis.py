@@ -3578,7 +3578,19 @@ def _prepare_native_beats(file_path, duration, y, sr, *, snapshot=None):
         context['decision']['reason'] = 'variable_grid_unsupported'
         return context
     from .ai_models.native_beat_alignment import single_window_evidence_plan
-    evidence_plan = single_window_evidence_plan(native, duration, _BEATGRID_WINDOW_SECONDS)
+    from .ai_models.native_evidence_energy import source_energy, eligible_starts
+    eligible = None
+    if duration >= 6 * _BEATGRID_WINDOW_SECONDS:
+        try:
+            energy = source_energy(file_path, duration, y, sr, _load_analysis_audio)
+            eligible = eligible_starts(energy, _BEATGRID_WINDOW_SECONDS)
+        except (OSError, RuntimeError, ValueError, sf.LibsndfileError):
+            # Ohne vollständige Energiebeobachtung bleibt der bisherige
+            # strikte Prüfpfad erhalten; keine Freigabe aus fehlenden Daten.
+            pass
+    evidence_plan = single_window_evidence_plan(
+        native, duration, _BEATGRID_WINDOW_SECONDS,
+        **({'eligible_starts': eligible} if eligible is not None else {}))
     details = {}
     validation = _validate_track_beatgrid(file_path, duration, native['bpm'],
         native['first_downbeat'], head_audio=y, head_sr=sr, diagnostics=details,
