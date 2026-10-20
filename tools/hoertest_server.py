@@ -492,7 +492,10 @@ def validiere_dramaturgie_satz(ordner: Path, *, pruefe_dateien: bool = True) -> 
     if strategien != set(DRAMATURGIE_STRATEGIEN):
         raise ValueError("Dramaturgie-Satz deckt nicht alle acht Strategien ab")
 
-    if bewertungsschema(ordner / "bewertung.csv") != BEWERTUNG_DREINOTEN_SPALTEN:
+    transition_schema = bewertungsschema(ordner / "bewertung.csv")
+    if transition_schema not in {
+        BEWERTUNG_DREINOTEN_SPALTEN, BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN,
+    }:
         raise ValueError("Uebergangs-Bewertung hat falsches Schema")
     transition_rows = lies_csv(ordner / "bewertung.csv")
     if [row.get("pair_id") for row in transition_rows] != transition_ids:
@@ -500,7 +503,7 @@ def validiere_dramaturgie_satz(ordner: Path, *, pruefe_dateien: bool = True) -> 
     if any(row.get("clip_id") != row.get("pair_id") for row in transition_rows):
         raise ValueError("pair_id und clip_id muessen transition_id entsprechen")
     for row in transition_rows:
-        if set(row) != set(BEWERTUNG_DREINOTEN_SPALTEN):
+        if set(row) != set(transition_schema):
             raise ValueError("Uebergangs-Bewertungszeile hat falsche Spalten")
         if any(not _bewertungswert_gueltig(row.get(name)) for name in ("track_note", "technik_note", "gesamt_note")):
             raise ValueError("Uebergangsnote ist ungueltig")

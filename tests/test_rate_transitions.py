@@ -1065,7 +1065,7 @@ def _ns_track(name, bpm=140.0, camelot="8A", genre="Psytrance"):
 
 def test_clip_id_und_spalten():
     assert clip_id_fuer("007", 3) == "007_k3"
-    assert BEWERTUNG_KANDIDATEN_SPALTEN == ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+    assert BEWERTUNG_KANDIDATEN_SPALTEN == ("pair_id", "clip_id", "note", "gewaehlt", "zeit", "mix_cluster_id")
     assert MERKMALE_KANDIDATEN_SPALTEN[:3] == ("pair_id", "clip_id", "clip")
     assert "score" in MERKMALE_KANDIDATEN_SPALTEN and "t_out" in MERKMALE_KANDIDATEN_SPALTEN
     assert "schemata_out" in MERKMALE_KANDIDATEN_SPALTEN and "bpm_a" in MERKMALE_KANDIDATEN_SPALTEN
@@ -1079,7 +1079,7 @@ def test_kandidaten_zeilen_schreiben_teilwerte_und_leer_bei_none():
         clips=["clips/007_k1.wav"], bpm_toleranz=1.5,
         energy_direction="maintain",
     )
-    assert bew == [{"pair_id": "007", "clip_id": "007_k1", "note": "", "gewaehlt": "", "zeit": ""}]
+    assert bew == [{"pair_id": "007", "clip_id": "007_k1", "note": "", "gewaehlt": "", "zeit": "", "mix_cluster_id": ""}]
     m = merk[0]
     assert m["clip"] == "clips/007_k1.wav" and m["harmonic"] == 0.9 and m["loudness"] == ""
     assert m["schema_out"] == "pssi_phrase" and m["schemata_out"] == "pssi_phrase"

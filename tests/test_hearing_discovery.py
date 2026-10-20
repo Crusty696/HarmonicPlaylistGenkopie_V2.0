@@ -54,7 +54,7 @@ def test_missing_ratings_retained(tmp_path):
 def source_manifest(folder, mode="einzel"):
     source_root = folder.parent / "offline-originals"
     a, b = str(source_root / "a.wav"), str(source_root / "b.mp3")
-    data = dict(format="hpg_hearing_source_refs", format_version=1, mode=mode,
+    data = dict(format="hpg_hearing_source_refs", format_version=3, mode=mode,
                 status="prepared", source_roots=[str(source_root)],
                 specs={"clips/p.wav": asdict(TransitionClipSpec(a, b, 20., 0., 8.))},
                 sources={p: dict(path=p, root=str(source_root), size=1, sha256="0" * 64) for p in (a, b)},
