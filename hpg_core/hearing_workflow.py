@@ -217,7 +217,12 @@ def _producer_namespace(config, staging, target, sink, token, progress, prefligh
             sink.emit(spec, destination)
             try:
                 token.checkpoint()
-                if preflight(spec, sink.sources) is not True:
+                sources = sink.sources
+                bound = [
+                    dict(sources[path], size_bytes=sources[path]["size"])
+                    for path in dict.fromkeys((spec.track_a_path, spec.track_b_path))
+                ]
+                if preflight(spec, bound) is not True:
                     raise HearingOperationError("Hörprobe nicht renderbar; Satz wird nicht veröffentlicht")
                 token.checkpoint()
             except Exception as exc:

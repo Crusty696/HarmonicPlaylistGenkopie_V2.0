@@ -119,6 +119,7 @@ def test_prepare_worker_publishes_source_metadata(config_fixture, qtbot, monkeyp
     checked = []
     def preflight(spec, sources, checkpoint):
         checkpoint()
+        hearing_playback._check_sources(sources)
         checked.append((spec, sources))
         return True
     # Diese Fixture enthält nur Quellidentitäten, kein decodierbares Audio.

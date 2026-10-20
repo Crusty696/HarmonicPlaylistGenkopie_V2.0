@@ -23,8 +23,12 @@ def test_source_sink_requires_renderability(config_fixture, tmp_path, mode, acce
     calls = []
 
     def preflight(value, sources):
+        from hpg_core.hearing_playback import _check_sources
         calls.append(value)
-        assert set(sources) == {spec.track_a_path, spec.track_b_path}
+        _check_sources(sources)
+        assert {source["path"] for source in sources} == {
+            spec.track_a_path, spec.track_b_path,
+        }
         return accepted
 
     args = _producer_namespace(config, stage, config.output_dir, sink,
