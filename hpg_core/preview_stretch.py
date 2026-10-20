@@ -12,10 +12,15 @@ def stretch(audio, sr, rate):
         return audio
     from pedalboard import time_stretch
     values = np.asarray(audio, dtype=np.float32)
-    if values.ndim != 2 or values.shape[1] not in (1, 2) or not np.isfinite(values).all():
+    if (values.ndim != 2 or not len(values) or values.shape[1] not in (1, 2)
+            or not np.isfinite(values).all()):
         raise ValueError('Invalid preview stretch audio')
+    # Gleiche Signale mit unterschiedlichem Kanalpegel sollen dieselben
+    # Phasenentscheidungen erhalten. Originalpegel danach exakt zurücksetzen.
+    channel_gain = np.max(np.abs(values), axis=0)
+    channel_gain = np.where(channel_gain > 1e-12, channel_gain, 1.)
     result = time_stretch(
-        np.ascontiguousarray(values.T), sr, stretch_factor=rate,
+        np.ascontiguousarray((values / channel_gain).T), sr, stretch_factor=rate,
         # Der alternative HQ-Modus verschiebt lokale Anschläge trotz korrekter
         # Gesamtlänge. Der Standardmodus hält die gemessenen Kickfenster ein.
         # Gemischter Modus erhält auch stationäre tonale Anteile; vollständige
@@ -25,7 +30,7 @@ def stretch(audio, sr, rate):
         # auch bei anderen Sampleraten als dem 44,1-kHz-Previewstandard.
         retain_phase_continuity=True, use_long_fft_window=True,
         use_time_domain_smoothing=False,
-    ).T
+    ).T * channel_gain
     if result.ndim != 2 or result.shape[1] != values.shape[1] or not np.isfinite(result).all():
         raise ValueError('Invalid preview stretch result')
     return np.ascontiguousarray(result)
