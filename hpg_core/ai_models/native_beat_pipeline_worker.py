@@ -275,7 +275,18 @@ def validate_model_rows(values, window_frames):
             or np.any(values[:, 0] > window_frames / 44100)
             or np.any(np.diff(values[:, 0]) <= 0)
             or not np.isin(values[:, 1], [1, 2, 3, 4]).all()):
-        raise NativeContractError('Invalid native pipeline beats')
+        # Fehlerursache mit Messwerten erhalten, ohne Audio zu protokollieren.
+        # Sonst ist ein Randereignis nicht von kaputten Modellwerten trennbar.
+        detail = f'shape={values.shape}, window_s={window_frames / 44100:.9f}'
+        if values.ndim == 2 and values.shape[1] == 2 and len(values):
+            detail += (
+                f', first={values[0].tolist()}, last={values[-1].tolist()}'
+                f', finite={bool(np.isfinite(values).all())}'
+                f', nonincreasing={int(np.count_nonzero(np.diff(values[:, 0]) <= 0))}'
+                f', positions={np.unique(values[:, 1]).tolist()}'
+                f', ordering_pairs={[values[i:i+2].tolist() for i in np.flatnonzero(np.diff(values[:, 0]) <= 0)[:8]]}'
+            )
+        raise NativeContractError(f'Invalid native pipeline beats: {detail}')
     return values.tolist()
 
 

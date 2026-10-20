@@ -2200,8 +2200,10 @@ def analyze_structure_windows(
             merged_sections.append(
                 TrackSection(
                     label="unanalysed",
-                    start_time=_round_time_within_duration(head_duration, duration),
-                    end_time=_round_time_within_duration(tail_start, duration),
+                    # Dieselben ungerundeten Grenzen wie die Nachbarsektionen:
+                    # Aufrunden erzeugt sonst eine Überlappung im Cachevertrag.
+                    start_time=min(head_duration, duration),
+                    end_time=min(tail_start, duration),
                     start_bar=int(round(head_duration / seconds_bar)) if seconds_bar else 0,
                     end_bar=int(round(tail_start / seconds_bar)) if seconds_bar else 0,
                     avg_energy=0.0,
