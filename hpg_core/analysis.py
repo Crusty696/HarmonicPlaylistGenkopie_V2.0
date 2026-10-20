@@ -1861,11 +1861,6 @@ def _offset_section(
     )
 
 
-def _round_time_within_duration(value: float, duration: float) -> float:
-    """Rundet Zeitwerte, ohne sie hinter die rohe Trackdauer zu schieben."""
-    return min(round(value, 2), duration)
-
-
 def _section_audio_slice(section, audio_windows, sr, fallback_cache=None):
     """Liefert Audio und Cache passend zum absoluten Zeitbereich einer Sektion."""
     start_s, end_s = section.get('start_time'), section.get('end_time')
@@ -2075,7 +2070,7 @@ def analyze_structure_windows(
 
         coverage = [{
             "start": 0.0,
-            "end": _round_time_within_duration(head_duration, duration),
+            "end": min(head_duration, duration),
         }]
         if duration <= head_duration + 1.0:
             return head, coverage, True
@@ -2088,7 +2083,7 @@ def analyze_structure_windows(
             head.sections.append(
                 TrackSection(
                     label="unanalysed",
-                    start_time=_round_time_within_duration(head_duration, duration),
+                    start_time=min(head_duration, duration),
                     end_time=duration,
                     start_bar=(
                         int(round(head_duration / seconds_bar)) if seconds_bar else 0
@@ -2186,8 +2181,8 @@ def analyze_structure_windows(
             for section in tail.sections
         ]
         coverage.append({
-            "start": _round_time_within_duration(tail_start, duration),
-            "end": _round_time_within_duration(tail_end, duration),
+            "start": min(tail_start, duration),
+            "end": min(tail_end, duration),
         })
 
         head_sections = [section for section in head.sections if section.start_time < tail_start]
