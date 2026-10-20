@@ -221,7 +221,10 @@ def _attach(track):
     from .feature_reuse import load
     reused = load(track, fingerprints)
     if reused is not None:
-        for field, value in reused.items():
+        for kind, field in (('stems', 'stem_analysis'), ('embedding', 'embedding_analysis')):
+            value = reused[field] if settings[kind + '_enabled'] else _empty(
+                kind, track.duration, fingerprints[kind], 'disabled',
+                'disabled_by_configuration')
             setattr(track, field, value)
         return
     found = identities(settings)

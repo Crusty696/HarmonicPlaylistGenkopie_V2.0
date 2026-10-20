@@ -181,6 +181,32 @@ def test_cache_hit_rechecks_ok_features_when_fingerprint_unavailable(monkeypatch
     assert features.needs_refresh(track)
 
 
+@pytest.mark.parametrize('disabled_kind', ['stems', 'embedding'])
+def test_explicit_feature_reuse_respects_disabled_kind(monkeypatch, disabled_kind):
+    from hpg_core.ai_models import cue_service, feature_reuse
+
+    fields = {'stems': 'stem_analysis', 'embedding': 'embedding_analysis'}
+    fingerprints = {'stems': 'a'*64, 'embedding': 'b'*64}
+    settings = {kind + '_enabled': kind != disabled_kind for kind in fields}
+    reused = {field: (dict(status='unavailable', reason='stale_feature_producer')
+                      if kind == disabled_kind else dict(status='ok', fingerprint=fingerprints[kind]))
+              for kind, field in fields.items()}
+    monkeypatch.setattr(features, 'config', lambda: settings)
+    monkeypatch.setattr(features, 'config_fingerprint', lambda _: fingerprints)
+    monkeypatch.setattr(feature_reuse, 'load', lambda *_: reused)
+    monkeypatch.setattr(cue_service, 'session',
+                        lambda: pytest.fail('Wiederverwendung startet keine Inferenz'))
+    track = Track(filePath='missing.wav', fileName='missing.wav', duration=58., bpm=120.)
+
+    features.attach(track)
+
+    disabled = getattr(track, fields[disabled_kind])
+    assert disabled == features._empty(disabled_kind, track.duration,
+        fingerprints[disabled_kind], 'disabled', 'disabled_by_configuration')
+    enabled_kind = next(kind for kind in fields if kind != disabled_kind)
+    assert getattr(track, fields[enabled_kind]) is reused[fields[enabled_kind]]
+
+
 def test_expired_optional_budget_never_connects(monkeypatch):
     from hpg_core.ai_models import cue_service as cs
     monkeypatch.setattr(cs.time, 'monotonic', lambda: 100.)
