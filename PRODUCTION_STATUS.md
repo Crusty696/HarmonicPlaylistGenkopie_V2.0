@@ -74,3 +74,7 @@ Neue Noten fuer RAM-Clips sind im nativen Dialog nun an erfolgreiches
 Rendern gebunden. Alte Noten sind dadurch aber nicht aus dem Fit entfernt;
 die abgewiesenen Varianten bleiben technisch unhoerbar. Der
 Sammlungs-Einstieg ist daher kein zuverlaessig voll nutzbarer Trainingsablauf.
+
+
+Cache-Vertrag am 20.10.2026: Cache-Version 183 gemaess hpg_core/caching.py.
+Dies ist keine neue funktionale oder musikalische Gesamtabnahme.
