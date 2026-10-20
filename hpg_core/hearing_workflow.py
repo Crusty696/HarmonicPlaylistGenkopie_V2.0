@@ -209,9 +209,22 @@ def _producer_namespace(config, staging, target, sink, token, progress, prefligh
         storage=config.storage, source_roots=sink.source_roots,
         hpg_render_sink=sink.emit, hpg_cancel=token, hpg_progress=report,
     )
-    if preflight is not None:
+    if preflight is not None and config.mode == "kandidaten":
         namespace.hpg_preflight = preflight
         namespace.hpg_source_snapshot = lambda: sink.sources
+    elif preflight is not None:
+        def checked_emit(spec, destination):
+            sink.emit(spec, destination)
+            try:
+                token.checkpoint()
+                if preflight(spec, sink.sources) is not True:
+                    raise HearingOperationError("Hörprobe nicht renderbar; Satz wird nicht veröffentlicht")
+                token.checkpoint()
+            except Exception as exc:
+                # Auch ein vom Produzenten abgefangener Fehler sperrt den Satz.
+                sink.failure = exc
+                raise
+        namespace.hpg_render_sink = checked_emit
     return namespace
 
 
@@ -224,8 +237,8 @@ def create_set(
     """Publiziert vorbereitete Referenzen; behauptet keinen Render-/Audit-Erfolg."""
     rate = importlib.import_module("tools.rate_transitions")
     _validate_config(config, rate)
-    if preflight is not None and (config.mode != "kandidaten" or not callable(preflight)):
-        raise HearingValidationError("Preflight ist nur fuer Kandidatensaetze zulaessig")
+    if preflight is not None and not callable(preflight):
+        raise HearingValidationError("Preflight muss aufrufbar sein")
     target = config.output_dir.absolute()
     if target.exists() or target.is_symlink():
         raise HearingTargetExistsError(f"Ausgabeziel existiert bereits: {target}")

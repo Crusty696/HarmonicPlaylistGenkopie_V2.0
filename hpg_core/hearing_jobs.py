@@ -104,12 +104,10 @@ class HearingPrepareWorker(QThread):
         ownership = None
         published = False
         try:
-            preflight = None
-            if self.config.mode == "kandidaten":
-                from .hearing_playback import preflight_renderability
-                preflight = lambda spec, sources: preflight_renderability(
-                    spec, sources, self.cancel.checkpoint,
-                )
+            from .hearing_playback import preflight_renderability
+            preflight = lambda spec, sources: preflight_renderability(
+                spec, sources, self.cancel.checkpoint,
+            )
             if self.managed_metadata is not None:
                 from .hearing_managed import write_snapshot
                 ownership = write_snapshot(self.config, self.managed_metadata, cancel=self.cancel)
