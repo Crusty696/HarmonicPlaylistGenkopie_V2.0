@@ -13,3 +13,9 @@ def test_skips_variable_intro_and_keeps_chunk_seams():
 def test_missing_coverage_does_not_supply_a_window():
     assert stable_full_window_start([[float(i), 1] for i in range(65)], 60 * 44100) is None
     assert stable_full_window_start([], 180 * 44100) is None
+
+
+def test_prefers_lower_jitter_over_first_barely_stable_window():
+    rows = [[i * .5 + (.009 if i % 2 else 0.), i % 4 + 1] for i in range(160)]
+    rows += [[i * .5, i % 4 + 1] for i in range(160, 400)]
+    assert stable_full_window_start(rows, 200 * 44100) >= 80 * 44100

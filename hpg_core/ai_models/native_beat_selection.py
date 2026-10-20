@@ -82,21 +82,24 @@ def full_model_disagrees(bpm, rows):
 
 
 def stable_full_window_start(rows, frames):
-    """Erstes vollständiges 60-s-Fenster mit stabiler Gesamtmodellfolge."""
+    """Vollständiges 60-s-Fenster mit geringster Modell-Intervallstreuung."""
     import statistics
     if len(rows) < 65:
         return None
     period = statistics.median(b[0] - a[0] for a, b in zip(rows, rows[1:]))
     if not 60 / 215 <= period <= 60 / 55:
         return None
+    candidates = []
     for start in range(max(0, math.floor(frames / 44100 - 60))):
         times = [row[0] for row in rows if start <= row[0] <= start + 60]
         if (len(times) >= 64 and times[0] - start <= period
                 and start + 60 - times[-1] <= period
                 and all(abs(b - a - period) <= .02 + .02 * period
                         or is_chunk_seam_pair(a, b) for a, b in zip(times, times[1:]))):
-            return start * 44100
-    return None
+            intervals = [b - a for a, b in zip(times, times[1:])
+                         if not is_chunk_seam_pair(a, b)]
+            candidates.append((statistics.pvariance(intervals), start))
+    return min(candidates)[1] * 44100 if candidates else None
 
 
 def select_model(mode, stored_mode=None):
