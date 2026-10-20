@@ -35,8 +35,13 @@ def test_raw_seams_never_relax_corrected_grid_validation(field):
     if field == "model_beats":
         data[field] = rows
     else:
+        from hpg_core.ai_models.native_beat_selection import select_model
+        data.update(model_id="model8", model_hashes=native.MODEL_HASHES["model8"],
+                    selection=select_model(3), model_coverage=dict(start_s=0., end_s=60.),
+                    model_beats=[[.5, 1], [1., 2], [1.5, 3], [2., 4]])
         data[field] = dict(model_id="model7", model_hashes=native.MODEL_HASHES["model7"],
-                           beats=rows, coverage=data["model_coverage"])
+                           beats=data["model_beats"] + rows,
+                           coverage=dict(start_s=0., end_s=180. - 1 / 44100))
     native.validate_snapshot(data, duration=180.)
     data["grid"][2]["pos"] = data["grid"][1]["pos"]
     with pytest.raises(ValueError):
