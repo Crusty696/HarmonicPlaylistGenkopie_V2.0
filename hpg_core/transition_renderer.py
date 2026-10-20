@@ -1361,6 +1361,39 @@ def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
     return compressed.astype(np.float32)
 
 
+def _bass_handover_envelopes(
+    bass_a: np.ndarray, bass_b: np.ndarray, config: EqCrossfadeConfig,
+) -> tuple[int, np.ndarray, np.ndarray]:
+    """Gemeinsame Bassuebergabe mit 50-ms-Rampe und stetigem Pegelruecklauf."""
+    half = (int(round(config.bass_swap_fraction * config.cf_frames))
+            if config.bass_swap_fraction is not None
+            else config.cf_frames // 2)
+    half = min(max(0, half), config.cf_frames - 1)
+    ramp = max(1, int(0.05 * config.sr))
+    ramp_end = min(half + ramp, config.cf_frames)
+    n_ramp = ramp_end - half
+    bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
+    bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+
+    # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
+    rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
+    rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
+    target_bass_gain = 1.0
+    if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
+        target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
+
+    if n_ramp > 0:
+        bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+        bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
+    bass_a_env[ramp_end:] = 0.0
+    tail_len = config.cf_frames - ramp_end
+    if tail_len > 0:
+        bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
+    else:
+        bass_b_env[ramp_end:] = 1.0
+    return half, bass_a_env, bass_b_env
+
+
 def _apply_eq_crossfade(
     seg_a: np.ndarray,       # (cf_frames, 2) float32 — Track A im Crossfade
     seg_b: np.ndarray,       # (cf_frames, 2) float32 — Track B im Crossfade
@@ -1410,32 +1443,7 @@ def _apply_eq_crossfade(
 
         # M6-Fix: echter Bass-Handover — harter Swap am Crossfade-Mittelpunkt
         # mit kurzer 50ms-Rampe gegen Klicks.
-        half = (int(round(config.bass_swap_fraction * config.cf_frames))
-                if config.bass_swap_fraction is not None
-                else config.cf_frames // 2)
-        half = min(max(0, half), config.cf_frames - 1)
-        ramp = max(1, int(0.05 * config.sr))
-        ramp_end = min(half + ramp, config.cf_frames)
-        n_ramp = ramp_end - half
-        bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
-        bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
-
-        # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
-        rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
-        rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
-        target_bass_gain = 1.0
-        if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
-            target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
-
-        if n_ramp > 0:
-            bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
-            bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
-        bass_a_env[ramp_end:] = 0.0
-        tail_len = config.cf_frames - ramp_end
-        if tail_len > 0:
-            bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
-        else:
-            bass_b_env[ramp_end:] = 1.0
+        half, bass_a_env, bass_b_env = _bass_handover_envelopes(bass_a, bass_b, config)
         mixed = bass_a * bass_a_env + bass_b * bass_b_env + highs_a * fo + highs_b * fi
 
     elif t_type == "pro_eq_swap":
@@ -1460,33 +1468,7 @@ def _apply_eq_crossfade(
 
         # Envelopes
         # Lows (Bass-Swap auf der Haelfte mit 50ms Rampe)
-        half = (int(round(config.bass_swap_fraction * config.cf_frames))
-                if config.bass_swap_fraction is not None
-                else config.cf_frames // 2)
-        half = min(max(0, half), config.cf_frames - 1)
-        ramp = max(1, int(0.05 * config.sr))
-        ramp_end = min(half + ramp, config.cf_frames)
-        n_ramp = ramp_end - half
-
-        bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
-        bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
-
-        # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
-        rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
-        rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
-        target_bass_gain = 1.0
-        if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
-            target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
-
-        if n_ramp > 0:
-            bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
-            bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
-        bass_a_env[ramp_end:] = 0.0
-        tail_len = config.cf_frames - ramp_end
-        if tail_len > 0:
-            bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
-        else:
-            bass_b_env[ramp_end:] = 1.0
+        half, bass_a_env, bass_b_env = _bass_handover_envelopes(bass_a, bass_b, config)
 
         # Mids: Equal-Power (cos/sin) ueber den gesamten Crossfade mit Pegel-Angleichung
         rms_mids_a = float(np.sqrt(np.mean(mids_a[:half] ** 2))) if half > 0 else 0.0
