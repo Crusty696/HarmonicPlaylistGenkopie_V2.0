@@ -23,3 +23,21 @@ def test_model7_still_rejects_other_ordering_errors(left, right):
     rows = np.array([[left, 4], [right, 3]], dtype=np.float32)
     with pytest.raises(NativeContractError):
         validate_model_rows(rows, 600 * 44100, chunked=True)
+
+
+@pytest.mark.parametrize("field", ["model_beats", "verification"])
+def test_raw_seams_never_relax_corrected_grid_validation(field):
+    from hpg_core.ai_models import native_track_beats as native
+    from tests.test_native_track_beats import snapshot
+
+    data = snapshot(180.)
+    rows = [[119.5, 3], [120., 4], [120., 3], [120.5, 4]]
+    if field == "model_beats":
+        data[field] = rows
+    else:
+        data[field] = dict(model_id="model7", model_hashes=native.MODEL_HASHES["model7"],
+                           beats=rows, coverage=data["model_coverage"])
+    native.validate_snapshot(data, duration=180.)
+    data["grid"][2]["pos"] = data["grid"][1]["pos"]
+    with pytest.raises(ValueError):
+        native.validate_snapshot(data, duration=180.)
