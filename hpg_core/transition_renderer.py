@@ -444,7 +444,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
             logger.info(f"Doubletime-Switch erkannt fuer Track B: Virtuelle BPM halbiert von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
 
         # AUDIT-FIX R-01 (2026-07-24): Rate war invertiert.
-        # librosa.effects.time_stretch: rate > 1.0 = SCHNELLER, rate < 1.0 = LANGSAMER.
+        # Tempoanpassung: rate > 1.0 = SCHNELLER, rate < 1.0 = LANGSAMER.
         # Track B (target_bpm_b) soll auf das Tempo von Track A (bpm_a) gebracht werden:
         # rate = bpm_a / target_bpm_b  (B langsamer als A -> rate > 1 -> B wird beschleunigt).
         # Die Phasen-Umrechnung in known_b (phase_b / applied_stretch_rate) folgt bereits
@@ -476,21 +476,14 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                 raise BeatSyncError("Erforderliches Zieltempo liegt ausserhalb des Stretch-Bereichs")
 
         try:
-            # librosa.effects.time_stretch arbeitet auf der LETZTEN Achse.
-            # seg_b ist (frames, 2) → transponieren auf (2, frames), stretchen,
-            # zurueck transponieren. (Das frueher genutzte axis=-Kwarg existiert
-            # in dieser librosa-Version nicht und wuerde an stft() durchgereicht.)
             if abs(rate - 1.0) < 1e-9:
                 # Half/Double: das virtuelle Zieltempo trifft Track A bereits.
-                # Der Aufruf bliebe nicht folgenlos -- time_stretch ist ein
-                # voller Phase-Vocoder-Roundtrip (STFT/ISTFT) und hinterliesse
-                # Rekonstruktionsartefakte auf Material, das unveraendert
-                # bleiben soll. Dieser Pfad ist ueberhaupt erst erreichbar,
-                # seit die Rate nicht mehr aus tempo_ratio kommt.
+                # Unverändertes Audio benötigt keinen Stretch-Roundtrip.
                 applied_stretch_rate = 1.0
                 logger.info(f"Kein Time-Stretching noetig: Track B ({spec.bpm_b:.1f} BPM) trifft ueber das virtuelle Zieltempo {target_bpm_b:.1f} BPM bereits Track A ({spec.bpm_a:.1f} BPM)")
             else:
-                seg_b = librosa.effects.time_stretch(seg_b.T, rate=rate).T
+                from .preview_stretch import stretch
+                seg_b = stretch(seg_b, sr, rate)
                 applied_stretch_rate = rate
                 logger.info(f"BPM Time-Stretching angewendet: Track B ({spec.bpm_b:.1f} BPM -> {target_bpm_b:.1f} BPM) auf Track A ({spec.bpm_a:.1f} BPM) angepasst (Rate={rate:.4f})")
         except Exception as ts_err:
