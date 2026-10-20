@@ -152,7 +152,7 @@ def run(image, reader, selection, window_start):
                     f'read_frames={read_frames}')
             values = np.ctypeslib.as_array(ct.cast(target.data, ct.POINTER(ct.c_float)),
                                            shape=(target.size,)).reshape(-1, 2)
-            raw_rows.extend(validate_model_rows(values, frames))
+            raw_rows.extend(validate_model_rows(values, frames, chunked=bool(chunked)))
             image.function(0x12b2c00, ct.c_void_p, ct.c_void_p,
                            ct.POINTER(FloatMatrix))(output, ct.byref(target))
         except Exception as error:

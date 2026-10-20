@@ -18,7 +18,7 @@ from .native_audio_reader import (
     NativeAudioReader, NATIVE_REKORDBOX_READER_EXTENSIONS, bind_reader_imports,
 )
 from .native_beat_selection import (
-    MAX_NATIVE_BEAT_WINDOW_SECONDS, select_model,
+    MAX_NATIVE_BEAT_WINDOW_SECONDS, select_model, is_chunk_seam_pair,
 )
 from .native_grid_processor import NativeGridProcessor
 
@@ -267,13 +267,15 @@ def _bind_tensorflow(image):
     return library
 
 
-def validate_model_rows(values, window_frames):
+def validate_model_rows(values, window_frames, *, chunked=False):
     # Ein Modell8-Ereignis darf genau auf dem Ende des 60s-Fensters liegen.
     # Es ist weiterhin an die Quelldauer gebunden, nachdem der Start addiert ist.
     if (values.ndim != 2 or values.shape[1] != 2
             or not np.isfinite(values).all() or np.any(values[:, 0] < 0)
             or np.any(values[:, 0] > window_frames / 44100)
-            or np.any(np.diff(values[:, 0]) <= 0)
+            or any(not (chunked and is_chunk_seam_pair(float(values[i, 0]),
+                                                       float(values[i + 1, 0])))
+                   for i in np.flatnonzero(np.diff(values[:, 0]) <= 0))
             or not np.isin(values[:, 1], [1, 2, 3, 4]).all()):
         # Fehlerursache mit Messwerten erhalten, ohne Audio zu protokollieren.
         # Sonst ist ein Randereignis nicht von kaputten Modellwerten trennbar.

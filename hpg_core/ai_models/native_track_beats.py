@@ -14,7 +14,7 @@ from .native_beat_selection import (
     MAX_NATIVE_BEAT_SECONDS, MAX_NATIVE_BEAT_WINDOW_SECONDS,
     MAX_NATIVE_TRACK_JOB_SECONDS,
     configured_mode, maximum_native_beat_rows, native_beat_segment_count,
-    validate_selection,
+    validate_selection, is_chunk_seam_pair,
 )
 from .native_audio_reader import CONTRACT as READER_CONTRACT
 from .reader_contract import (
@@ -147,7 +147,10 @@ def validate_snapshot(value, *, duration):
         for row in value['model_beats']:
             if (type(row) is not list or len(row) != 2
                     or any(not _finite_number(x) for x in row)
-                    or not previous < row[0] <= duration or row[0] < 0 or row[1] not in (1, 2, 3, 4)):
+                    or row[0] > duration or row[0] < 0
+                    or (row[0] <= previous and not (
+                        value['selection']['chunked'] and is_chunk_seam_pair(previous, row[0])))
+                    or row[1] not in (1, 2, 3, 4)):
                 raise ValueError('Invalid native model beat sequence')
             previous = row[0]
     if value.get('verification') is not None:
@@ -163,7 +166,9 @@ def validate_snapshot(value, *, duration):
         for row in verification['beats']:
             if (type(row) is not list or len(row) != 2
                     or any(not _finite_number(x) for x in row)
-                    or not previous < row[0] <= duration or row[0] < 0 or row[1] not in (1, 2, 3, 4)):
+                    or row[0] > duration or row[0] < 0
+                    or (row[0] <= previous and not is_chunk_seam_pair(previous, row[0]))
+                    or row[1] not in (1, 2, 3, 4)):
                 raise ValueError('Invalid native verification sequence')
             previous = row[0]
         if not value['selection']['chunked']:

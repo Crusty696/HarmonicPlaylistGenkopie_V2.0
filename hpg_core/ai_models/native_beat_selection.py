@@ -5,12 +5,28 @@ nicht automatisch eine Tempoheuristik. 3 und 4 wählen ausdrücklich Modell8/7.
 Die Zuordnung zu Rekordbox-Oberflächenbezeichnungen ist nicht belegt.
 """
 import os
+import math
 
 
 VERSION = 'rb-7.2.19-mode-selection-v2'
 MAX_NATIVE_BEAT_WINDOW_SECONDS = 1200
 MAX_NATIVE_BEAT_SECONDS = 7200
 MAX_NATIVE_TRACK_JOB_SECONDS = 420
+
+
+def is_chunk_seam_pair(previous, current):
+    """Doppelte Modell7-Rohereignisse an einer 60-s-Naht erkennen.
+
+    Nur Float32-Rundungsfehler an exakt derselben Naht sind erlaubt.
+    Das native korrigierte Beatgrid wird weiterhin streng validiert.
+    """
+    if not (math.isfinite(previous) and math.isfinite(current)):
+        return False
+    seam = round(current / 60.) * 60.
+    if seam <= 0 or current > previous:
+        return False
+    tolerance = math.ldexp(1., math.frexp(seam)[1] - 24) * 2
+    return abs(previous - seam) <= tolerance and abs(current - seam) <= tolerance
 
 
 def native_track_job_timeout_seconds(duration):
