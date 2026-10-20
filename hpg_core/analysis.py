@@ -3518,7 +3518,7 @@ def _offset_confirmation_starts(duration, span, reference_grid, candidate_window
     return tuple(sorted(chosen)) if len(chosen) == BEATGRID_MIN_WINDOWS else ()
 
 
-def _prepare_native_beats(file_path, duration, y, sr):
+def _prepare_native_beats(file_path, duration, y, sr, *, snapshot=None):
     """Native Gesamtanalyse vor alten Modellfenstern; Audio-Synchronsperre bleibt."""
     from .ai_models import native_track_beats
     if not native_track_beats.enabled():
@@ -3536,6 +3536,7 @@ def _prepare_native_beats(file_path, duration, y, sr):
             from .ai_models.native_beat_selection import native_track_job_timeout_seconds
             native = native_track_beats.analyze(
                 file_path, timeout_s=native_track_job_timeout_seconds(duration),
+                **({'snapshot': snapshot} if snapshot is not None else {}),
                 transport=getattr(client, 'native_beats', None))
         if type(native) is not dict:
             raise ValueError('invalid_native_result_type')
@@ -3694,7 +3695,8 @@ def _collect_beat_windows(
 
 
 @cue_service.track_session
-def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | None:
+def analyze_track(file_path: str, *, cache_policy: str = "reuse",
+                  native_snapshot=None) -> Track | None:
     """Analyzes one track; ``fresh`` bypasses both track-cache reads and writes."""
     if type(cache_policy) is not str or cache_policy not in {"reuse", "fresh"}:
         raise ValueError("cache_policy muss 'reuse' oder 'fresh' sein")
@@ -3856,7 +3858,8 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
 
             grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
             rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
-            native_context = _prepare_native_beats(file_path, duration, y, sr)
+            native_context = _prepare_native_beats(file_path, duration, y, sr,
+                **({'snapshot': native_snapshot} if native_snapshot is not None else {}))
             if native_context['accepted']:
                 bpm = native_context['analysis']['bpm']
                 reference_attempt, beat_windows = _native_reference_candidate_windows(
@@ -4460,7 +4463,8 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse") -> Track | Non
             rekordbox_grid = (
                 grid_reader(file_path) if callable(grid_reader) else []
             )
-        native_context = _prepare_native_beats(file_path, duration, y, sr)
+        native_context = _prepare_native_beats(file_path, duration, y, sr,
+            **({'snapshot': native_snapshot} if native_snapshot is not None else {}))
         if native_context['accepted']:
             bpm = native_context['analysis']['bpm']
             reference_attempt, beat_windows = _native_reference_candidate_windows(

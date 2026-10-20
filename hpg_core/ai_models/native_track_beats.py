@@ -1,4 +1,5 @@
 """Quellgebundener vollständiger nativer Beat-/Taktlauf, seriell im Broker."""
+import copy
 import json
 import math
 import os
@@ -226,12 +227,24 @@ def validate_reader(reader, frames, duration, input_convention):
 
 
 def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
-            cancel_event=None):
+            cancel_event=None, snapshot=None):
     if not enabled():
         return dict(status='disabled', reason='disabled')
     try:
         source = Path(path).resolve(strict=True)
         identity = _source_identity(source)
+        if snapshot is not None:
+            # Nur quell- und modusgebundene native Ergebnisse wiederverwenden.
+            # Audiobestätigung wird im Aufrufer frisch durchgeführt.
+            result = copy.deepcopy(snapshot)
+            validate_snapshot(result, duration=result['frames'] / 44100)
+            if (result.get('status') != 'ok'
+                    or result['source_identity'] != identity
+                    or result['selection']['configuration'] != configured_mode()
+                    or _source_identity(source) != identity):
+                raise ValueError('Native snapshot source/mode mismatch')
+            result.pop('audio_alignment', None)
+            return result
         if (type(timeout_s) not in (int, float) or not math.isfinite(timeout_s)
                 or not 0 < timeout_s <= MAX_NATIVE_TRACK_JOB_SECONDS):
             raise ValueError('Invalid native beat timeout')

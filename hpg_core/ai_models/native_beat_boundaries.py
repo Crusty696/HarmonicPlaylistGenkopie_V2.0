@@ -16,6 +16,12 @@ from .native_beat_grid import _Json, _read_json
 VERSION = 'rb-7.2.19-wrapper1294100-v5'
 
 
+def absolute_model_rows(rows, start_frame):
+    """Fenstergrenze und Modellzeit im selben Sample-Bezug umrechnen."""
+    return [[(seconds * 44100 + start_frame) / 44100, bar]
+            for seconds, bar in rows]
+
+
 class _PrivateBridges:
     def __init__(self, image):
         self.image, self.saved, self.callbacks = image, [], []
@@ -215,8 +221,7 @@ def run(image, reader, selection, window_start):
         coverage_end = (reader.frames-1 if selection['chunked']
                         else min(reader.frames, start+60*44100))
         coverage = dict(start_s=start/44100, end_s=coverage_end/44100)
-        return result['beatList'], result['bpm'], [
-            [seconds + start/44100, bar] for seconds, bar in raw_rows], coverage
+        return result['beatList'], result['bpm'], absolute_model_rows(raw_rows, start), coverage
     finally:
         try:
             release_models()
