@@ -494,7 +494,7 @@ class HearingRatingDialog(QDialog):
             card.play_button.setText("Pause" if index == self.clip_index and state == QMediaPlayer.PlaybackState.PlayingState else "Abspielen")
 
     def _playback_error(self, _error, message):
-        if self._clip().get("spec"):
+        if self._clip().get("spec") or self._clip().get("audio_bytes"):
             self._sequence_playing = False
             self._current_render_ready = False
             self._rendered_clips.discard(self._clip_key())
@@ -526,7 +526,8 @@ class HearingRatingDialog(QDialog):
 
     def _rating_allowed(self):
         return (self._source_check_worker is None
-                and (not self._clip().get("spec") or self._current_render_ready))
+                and (not (self._clip().get("spec") or self._clip().get("audio_bytes"))
+                     or self._current_render_ready))
 
     def _check_sources_before_rating(self, clips, action):
         """Prueft grosse Originaldateien vor dem Rating in einem Worker."""
@@ -586,7 +587,8 @@ class HearingRatingDialog(QDialog):
 
     def _group_rendered(self):
         return all(
-            not clip.get("spec") or (self.pair_index, index) in self._rendered_clips
+            not (clip.get("spec") or clip.get("audio_bytes"))
+            or (self.pair_index, index) in self._rendered_clips
             for index, clip in enumerate(self._group()["clips"])
         )
 
@@ -602,8 +604,14 @@ class HearingRatingDialog(QDialog):
         self._pending_render = False
         self._ensure_cards()
         path = self._clip().get("path")
-        self.player.setSource(QUrl.fromLocalFile(str(path)) if path and not self._clip().get("spec") else QUrl())
-        self.play_button.setEnabled(bool(path) or bool(self._clip().get("spec")))
+        audio = self._clip().get("audio_bytes")
+        if audio:
+            self._current_render_ready = self._install_audio_buffer(audio)
+            if self._current_render_ready:
+                self._rendered_clips.add(self._clip_key())
+        else:
+            self.player.setSource(QUrl.fromLocalFile(str(path)) if path and not self._clip().get("spec") else QUrl())
+        self.play_button.setEnabled(bool(path) or bool(audio) or bool(self._clip().get("spec")))
         self._refresh_ratings()
 
     def _refresh_ratings(self):
@@ -622,7 +630,8 @@ class HearingRatingDialog(QDialog):
                 for name, box in card.rating_boxes.items():
                     box.setCurrentIndex(int(clip["ratings"].get(name) or 0))
                     box.setEnabled(active and not self.read_only and self._rating_allowed())
-                card.play_button.setEnabled(bool(clip.get("path")) or bool(clip.get("spec")))
+                card.play_button.setEnabled(bool(clip.get("path")) or bool(clip.get("spec"))
+                                            or bool(clip.get("audio_bytes")))
                 if not active:
                     card.position_slider.setEnabled(False)
                     card.position_slider.setRange(0, 0)
@@ -740,6 +749,10 @@ class HearingRatingDialog(QDialog):
 
     def _toggle_playback(self):
         self._sequence_playing = False
+        if self._clip().get("audio_bytes") and self._audio_buffer is None:
+            self._show_clip()
+            if self._audio_buffer is None:
+                return
         if self._clip().get("spec") and self._audio_buffer is None:
             self._start_render()
             return
@@ -750,6 +763,11 @@ class HearingRatingDialog(QDialog):
 
     def _play_sequence(self):
         self._sequence_playing = True
+        if self._clip().get("audio_bytes") and self._audio_buffer is None:
+            self._show_clip()
+            if self._audio_buffer is None:
+                self._sequence_playing = False
+                return
         if self._clip().get("spec") and self._audio_buffer is None:
             self._start_render()
         else:
@@ -760,7 +778,7 @@ class HearingRatingDialog(QDialog):
             if self.clip_index + 1 < len(self._group()["clips"]):
                 self.clip_index += 1
                 self._show_clip()
-                if self._clip().get("spec"):
+                if self._clip().get("spec") and not self._clip().get("audio_bytes"):
                     self._start_render()
                 else:
                     self.player.play()
@@ -796,17 +814,25 @@ class HearingRatingDialog(QDialog):
         source.finished.connect(lambda worker=source: self._render_finished(worker))
         source.start()
 
-    def _render_ready(self, data, worker, token):
-        if worker is not self._audio_worker or token != self._render_generation or self._closing_result is not None:
-            return
+    def _install_audio_buffer(self, data):
+        """Uebernimmt fertiges Audio ohne temporaere Datei oder erneutes Rendern."""
         buffer = QBuffer(self)
         buffer.setData(data)
         if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
             buffer.deleteLater()
-            self._render_error("RAM-Audiopuffer konnte nicht geöffnet werden", worker, token)
-            return
+            self.status_label.setText("RAM-Audiopuffer konnte nicht geöffnet werden")
+            return False
         self._audio_buffer = buffer
         self.player.setSourceDevice(self._audio_buffer, QUrl("memory:preview.wav"))
+        # Auch ein synchroner Playerfehler darf den Status nicht wieder freigeben.
+        return self._audio_buffer is buffer
+
+    def _render_ready(self, data, worker, token):
+        if worker is not self._audio_worker or token != self._render_generation or self._closing_result is not None:
+            return
+        if not self._install_audio_buffer(data):
+            self._render_error("RAM-Audiopuffer konnte nicht geöffnet werden", worker, token)
+            return
         self._current_render_ready = True
         self._rendered_clips.add(self._clip_key())
         self._refresh_ratings()

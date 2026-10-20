@@ -6824,19 +6824,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Hörtest", "Zuerst den Browser-Server beenden.")
             return
         path, audio = preview_source
-        temporary_path = None
-        if not path and audio:
-            try:
-                fd, temporary_path = tempfile.mkstemp(prefix="hpg_transition_rating_", suffix=".wav")
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(audio)
-                path = temporary_path
-            except OSError as exc:
-                QMessageBox.warning(self, "Übergang bewerten", f"Vorschau nicht verfügbar: {exc}")
-                return
-        if not path or not os.path.isfile(path):
-            if temporary_path and os.path.exists(temporary_path):
-                os.unlink(temporary_path)
+        if audio:
+            audio = bytes(audio)
+        if not audio and (not path or not os.path.isfile(path)):
             QMessageBox.warning(self, "Übergang bewerten", "Gerenderte Vorschau fehlt.")
             return
 
@@ -6847,8 +6837,6 @@ class MainWindow(QMainWindow):
                 transition.plan, from_track, to_track
             ))
         except (AttributeError, TypeError, ValueError) as exc:
-            if temporary_path and os.path.exists(temporary_path):
-                os.unlink(temporary_path)
             QMessageBox.warning(self, "Übergang bewerten", f"Renderplan nicht rekonstruierbar: {exc}")
             return
 
@@ -6948,8 +6936,6 @@ class MainWindow(QMainWindow):
                     allow_nan=False).encode("utf-8")
             ).hexdigest()
         except (TypeError, ValueError):
-            if temporary_path and os.path.exists(temporary_path):
-                os.unlink(temporary_path)
             QMessageBox.warning(self, "Übergang bewerten", "Kandidatensatz enthält ungültige Werte.")
             return
         source = {
@@ -6977,16 +6963,12 @@ class MainWindow(QMainWindow):
         }
         if (source["from_file_identity"] is None or source["to_file_identity"] is None
                 or source["preview_sha256"] is None):
-            if temporary_path and os.path.exists(temporary_path):
-                os.unlink(temporary_path)
             QMessageBox.warning(self, "Übergang bewerten", "Quelldatei eines Tracks ist nicht mehr verfügbar.")
             return
         try:
             source_bytes = json.dumps(source, ensure_ascii=False, sort_keys=True,
                                       separators=(",", ":"), allow_nan=False).encode("utf-8")
         except (TypeError, ValueError):
-            if temporary_path and os.path.exists(temporary_path):
-                os.unlink(temporary_path)
             QMessageBox.warning(self, "Übergang bewerten", "Bewertungsquelle enthält ungültige Werte.")
             return
         identity = hashlib.sha256(source_bytes).hexdigest()
@@ -7068,7 +7050,8 @@ class MainWindow(QMainWindow):
                     rated_ranks.add(rank)
             rated_count = len(rated_ranks)
             session = {"mode": "einzel", "groups": [{"id": pair_id, "ratings": {}, "clips": [{
-                "pair_id": pair_id, "clip_id": pair_id, "path": Path(path),
+                "pair_id": pair_id, "clip_id": pair_id,
+                "path": Path(path) if path and not audio else None, "audio_bytes": audio,
                 "ratings": {"bewertung": prior_note}, "gewaehlt": "",
             }]}]}
             from hpg_core.hearing_panel import HearingRatingDialog
@@ -7085,11 +7068,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Übergang bewerten", f"Bewertung nicht verfügbar: {exc}")
         finally:
             self._hearing_native_active = False
-            if temporary_path and os.path.exists(temporary_path):
-                try:
-                    os.unlink(temporary_path)
-                except OSError:
-                    pass
             self._update_hearing_buttons()
 
     def _show_hearing_rating(self, session, folder, read_only=False, analysis_origin="unknown"):
