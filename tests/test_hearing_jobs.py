@@ -113,8 +113,16 @@ def test_csv_single_worker_real_spawn_preserves_none_cache(tmp_path, monkeypatch
     assert "cleanup_warning" not in result
 
 
-def test_prepare_worker_publishes_source_metadata(config_fixture, qtbot):
+def test_prepare_worker_publishes_source_metadata(config_fixture, qtbot, monkeypatch):
     from hpg_core.hearing_jobs import HearingPrepareWorker
+    from hpg_core import hearing_playback
+    checked = []
+    def preflight(spec, sources, checkpoint):
+        checkpoint()
+        checked.append((spec, sources))
+        return True
+    # Diese Fixture enthält nur Quellidentitäten, kein decodierbares Audio.
+    monkeypatch.setattr(hearing_playback, "preflight_renderability", preflight)
     worker = HearingPrepareWorker(config_fixture)
     with qtbot.waitSignal(worker.completed, timeout=5000) as signal:
         worker.start()
@@ -122,6 +130,7 @@ def test_prepare_worker_publishes_source_metadata(config_fixture, qtbot):
     result = signal.args[0]
     assert result["ok"] and result["prepared_only"]
     assert result["report_path"] == ""
+    assert len(checked) == 1
     assert not list(config_fixture.output_dir.rglob("*.wav"))
 
 
