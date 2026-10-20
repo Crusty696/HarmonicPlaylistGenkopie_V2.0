@@ -221,6 +221,31 @@ def test_rendervertrag_verwirft_unbekannten_transition_type():
         )
 
 
+@pytest.mark.parametrize("cutoff", [2500., 3000.])
+def test_pro_eq_rejects_crossed_band_boundaries(cutoff):
+    with pytest.raises(ValueError, match="Mitten-/Hoehengrenze"):
+        validate_transition_clip_spec(_strict_spec(
+            transition_type="pro_eq_swap", target_sr=44100, bass_cutoff_hz=cutoff))
+
+
+def test_pro_eq_uses_requested_bass_cutoff_before_handover():
+    # B allein: vor der Bassuebergabe muss sein eingestelltes Bassband fehlen.
+    sr = 8000
+    frames = sr * 2
+    time = np.arange(frames) / sr
+    incoming = np.repeat((0.2 * np.sin(2 * np.pi * 160 * time))[:, None], 2, axis=1)
+    outgoing = np.zeros_like(incoming)
+    narrow = _apply_eq_crossfade(outgoing, incoming,
+        EqCrossfadeConfig(frames, sr, 80., "pro_eq_swap"))
+    wide = _apply_eq_crossfade(outgoing, incoming,
+        EqCrossfadeConfig(frames, sr, 400., "pro_eq_swap"))
+    region = slice(sr // 5, sr // 2)
+    narrow_rms = np.sqrt(np.mean(narrow[region] ** 2))
+    wide_rms = np.sqrt(np.mean(wide[region] ** 2))
+    assert narrow_rms > 0.01
+    assert wide_rms < narrow_rms * 0.1
+
+
 @pytest.mark.parametrize("status", ["mismatch", "unverifiable", "unsupported"])
 def test_referenz_confidence_ohne_verifiziertes_rb_grid_vertraut_keiner_phase(status):
     spec = _spec_from_track_status(

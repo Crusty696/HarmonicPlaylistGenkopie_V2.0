@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 FILTER_RIDE_HP_HZ = 800.0    # Hochpass-Sweep beim Ausblenden (filter_ride)
 SMOOTH_BLEND_LP_HZ = 300.0   # Tiefpass auf Track A (smooth_blend)
 BREAKDOWN_HP_HZ = 250.0      # Bass-Kill auf Track A (breakdown_bridge)
+PRO_EQ_HIGH_HZ = 2500.0     # Grenze zwischen Mitten und Hoehen
 FILTER_RAMP_SECONDS = 0.05   # Kurze Rampe gegen harte Filter-Schalter
 
 # Relative Kreuzkorrelation hat keine absolute Attack-Latenz der
@@ -295,7 +296,7 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
         "smooth_blend": SMOOTH_BLEND_LP_HZ,
         "filter_ride": FILTER_RIDE_HP_HZ,
         "breakdown_bridge": BREAKDOWN_HP_HZ,
-        "pro_eq_swap": 2500.0,
+        "pro_eq_swap": PRO_EQ_HIGH_HZ,
     }.get(spec.transition_type)
     if fixed_filter_hz is not None and fixed_filter_hz >= spec.target_sr / 2.0:
         raise ValueError(
@@ -363,6 +364,8 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
     if (not math.isfinite(cutoff) or cutoff <= 0.0
             or cutoff >= spec.target_sr / 2.0):
         raise ValueError("bass_cutoff_hz muss endlich und innerhalb Nyquist liegen")
+    if spec.transition_type == "pro_eq_swap" and cutoff >= PRO_EQ_HIGH_HZ:
+        raise ValueError("bass_cutoff_hz muss unter der Mitten-/Hoehengrenze liegen")
 
     for name in ("first_downbeat_a", "first_downbeat_b", "normalize_target_db",
                  "lufs_a", "lufs_b"):
@@ -1448,8 +1451,8 @@ def _apply_eq_crossfade(
 
     elif t_type == "pro_eq_swap":
         # 3-Band Linkwitz-Riley EQ Simulation mit Zero-Phase Filtering (sosfiltfilt)
-        fc1 = 120.0   # Low-to-Mid Crossover
-        fc2 = 2500.0  # Mid-to-High Crossover
+        fc1 = config.bass_cutoff_hz
+        fc2 = PRO_EQ_HIGH_HZ
 
         # Filter design
         sos_lp_low  = _make_sos(fc1, config.sr, 'low', order=2)
