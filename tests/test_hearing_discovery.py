@@ -113,7 +113,7 @@ def test_corrupt_source_manifest_retained(tmp_path, change):
     if change == "source": data["sources"] = {}
     raw = json.dumps(data)
     if change == "nonfinite": raw = raw.replace('"mix_out_sec": 20.0', '"mix_out_sec": 1e999')
-    if change == "duplicate": raw = raw.replace('"format_version": 1', '"format_version": 1, "format_version": 1')
+    if change == "duplicate": raw = '{"format_version": 3, ' + raw[1:]
     (folder / "hearing_source_manifest.json").write_text(raw)
     row, = discover_sets(tmp_path)
     assert row.status == "error" and row.errors

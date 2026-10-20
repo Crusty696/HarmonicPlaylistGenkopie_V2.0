@@ -1069,7 +1069,9 @@ def test_clip_id_und_spalten():
     assert MERKMALE_KANDIDATEN_SPALTEN[:3] == ("pair_id", "clip_id", "clip")
     assert "score" in MERKMALE_KANDIDATEN_SPALTEN and "t_out" in MERKMALE_KANDIDATEN_SPALTEN
     assert "schemata_out" in MERKMALE_KANDIDATEN_SPALTEN and "bpm_a" in MERKMALE_KANDIDATEN_SPALTEN
-    assert MERKMALE_KANDIDATEN_SPALTEN[-2:] == ("track_a", "track_b")
+    from tools.rate_transitions import MERKMALE_KANDIDATEN_LEGACY_SPALTEN, DEEP_FEATURE_COLUMNS
+    assert MERKMALE_KANDIDATEN_LEGACY_SPALTEN[-2:] == ("track_a", "track_b")
+    assert MERKMALE_KANDIDATEN_SPALTEN == (*MERKMALE_KANDIDATEN_LEGACY_SPALTEN, *DEEP_FEATURE_COLUMNS)
 
 
 def test_kandidaten_zeilen_schreiben_teilwerte_und_leer_bei_none():
