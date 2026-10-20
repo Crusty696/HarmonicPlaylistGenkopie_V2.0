@@ -22,6 +22,7 @@ def test_main_passes_preview_bytes_to_rating_without_temporary_audio(monkeypatch
     monkeypatch.setattr(main.tempfile, "mkstemp",
                         Mock(side_effect=AssertionError("Keine temporaere Audiodatei")))
     captured = []
+    released = []
 
     class Dialog:
         def __init__(self, session, **kwargs):
@@ -32,6 +33,9 @@ def test_main_passes_preview_bytes_to_rating_without_temporary_audio(monkeypatch
 
         def exec(self):
             pass
+
+        def deleteLater(self):
+            released.append(self)
 
     monkeypatch.setattr(hearing_panel, "HearingRatingDialog", Dialog)
     window = SimpleNamespace(
@@ -46,6 +50,7 @@ def test_main_passes_preview_bytes_to_rating_without_temporary_audio(monkeypatch
     assert clip["audio_bytes"] == audio
     assert clip["path"] is None
     assert not window._hearing_native_active
+    assert len(released) == 1
     main.tempfile.mkstemp.assert_not_called()
 
 

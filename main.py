@@ -7025,6 +7025,7 @@ class MainWindow(QMainWindow):
                 if os.path.exists(temp):
                     os.unlink(temp)
 
+        dialog = None
         try:
             records = load_records()
             prior = records.get(pair_id, {})
@@ -7067,6 +7068,8 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             QMessageBox.warning(self, "Übergang bewerten", f"Bewertung nicht verfügbar: {exc}")
         finally:
+            if dialog is not None:
+                dialog.deleteLater()
             self._hearing_native_active = False
             self._update_hearing_buttons()
 
