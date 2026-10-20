@@ -93,13 +93,15 @@ def test_gui_publishes_plan_before_installing_audio():
     from main import MainWindow
     base, updated = object(), object()
     events = []
-    panel = SimpleNamespace(_ram_preview_cache={}, _preview_transitions={},
-        _show_ram_preview=lambda *args: events.append('audio'),
+    signature = ("source-a", "source-b")
+    panel = SimpleNamespace(_ram_preview_cache={}, _ram_preview_sources={}, _preview_transitions={},
+        _preview_source_signature=lambda _: signature,
+        _show_ram_preview=lambda *args, **kwargs: events.append('audio'),
         _request_preview=lambda *args: events.append('next'))
     window = SimpleNamespace(_close_pending=False, current_generation_result=base,
         mix_tips_panel=panel, _publiziere_generation_result=lambda result: events.append('plan'))
     selected = SimpleNamespace(playlist=updated, boundary_index=0, audio=b'RAM', spec=None)
-    MainWindow._on_render_reserve_ready(window, (base, selected, [], 1., (1,)))
+    MainWindow._on_render_reserve_ready(window, (base, selected, [], 1., (1,), signature))
     assert events == ['plan', 'audio', 'next']
 
 
