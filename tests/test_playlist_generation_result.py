@@ -441,10 +441,14 @@ def test_result_rankt_jede_feste_kante_einmal_und_friert_legacy_ab(monkeypatch):
     )
 
     assert choice_calls == 1
-    assert rank_calls == [
+    assert rank_calls[:2] == [
         ("a.wav", "b.wav", {"marker": "saved"}),
         ("b.wav", "c.wav", {}),
     ]
+    # Die Kettensuche darf Alternativkanten prüfen, jede gerichtete Kante nur einmal.
+    directed_edges = [(source, target) for source, target, _ in rank_calls]
+    assert len(directed_edges) == len(set(directed_edges))
+    assert len(directed_edges) <= len(tracks) * (len(tracks) - 1)
     assert len(result.boundaries) == len(result.recommendations) == 2
     assert all(boundary.selected is not None for boundary in result.boundaries)
     assert all(recommendation.plan is not None for recommendation in result.recommendations)
@@ -560,12 +564,9 @@ def test_ungeplante_kante_bleibt_mit_n_minus_eins_empfehlung_sichtbar(monkeypatc
     monkeypatch.setattr(
         candidate_choices, "snapshot", lambda: {saved_without_match: {"x": 1}}
     )
-    calls = 0
-
-    def rank(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+    def rank(source, target, **kwargs):
+        # Auch nach lokaler Umordnung bleibt dieser Track ohne Mix-Out.
+        if source.filePath == "a.wav":
             return []
         return [_candidate(180.0, 80.0)]
 
