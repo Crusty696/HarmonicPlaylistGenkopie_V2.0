@@ -18,7 +18,9 @@ def stretch(audio, sr, rate):
         np.ascontiguousarray(values.T), sr, stretch_factor=rate,
         # Der alternative HQ-Modus verschiebt lokale Anschläge trotz korrekter
         # Gesamtlänge. Der Standardmodus hält die gemessenen Kickfenster ein.
-        high_quality=False, transient_mode='crisp', transient_detector='percussive',
+        # Gemischter Modus erhält auch stationäre tonale Anteile; vollständige
+        # Phasenresets im Crisp-Modus können deren Tonhöhe verschieben.
+        high_quality=False, transient_mode='mixed', transient_detector='percussive',
         # Das lange Fenster verhindert Tonhöhendrift bei stationären Tönen,
         # auch bei anderen Sampleraten als dem 44,1-kHz-Previewstandard.
         retain_phase_continuity=True, use_long_fft_window=True,
