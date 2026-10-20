@@ -281,6 +281,9 @@ def test_pair_gates_sperren_das_gesamte_sicherheitsband():
 def test_gate_gitter_pssi():
     a, b = _track(), _track("b.mp3")
     a.phrase_grid = [0.0, 30.0, 61.0, 95.0, 130.0, 170.0, 200.0, 230.0]
+    a.beatgrid_source = "rekordbox"
+    a.phrases = [{"start_s": start, "end_s": end, "label": "Chorus"}
+                 for start, end in zip(a.phrase_grid, a.phrase_grid[1:])]
     out = _out(170.0)
     assert "gitter_out" not in pair_gate_reasons(a, b, out, _in(round(3 * _grid(), 3)), 16)
     assert "gitter_out" in pair_gate_reasons(a, b, _out(171.0), _in(round(3 * _grid(), 3)), 16)
@@ -1044,6 +1047,11 @@ def test_schema_rang_aus_praeferenzen_bricht_gleichstand(monkeypatch):
     o2 = _voll(round(6 * g, 3), kick_aktiv=False, schema=["sektion"])   # gleicher Score
     a = _track_mit_kandidaten("a.mp3", outs=[o1, o2])
     b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    for track in (a, b):
+        track.beatgrid_source = "rekordbox"
+        track.phrase_grid = [round(index * g, 3) for index in range(11)]
+        track.phrases = [{"start_s": start, "end_s": end, "label": "Chorus"}
+                         for start, end in zip(track.phrase_grid, track.phrase_grid[1:])]
     assert "pssi_phrase" in select_pair_candidate(a, b).out_a.schema
     monkeypatch.setattr(cp, "schema_rangfolge", lambda genre: ["sektion", "pssi_phrase"])
     assert "sektion" in select_pair_candidate(a, b).out_a.schema

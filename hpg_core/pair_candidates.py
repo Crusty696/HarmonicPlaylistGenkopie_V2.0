@@ -1351,7 +1351,15 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
         bpm_gueltig = False
     if not bpm_gueltig:
         return []
-    if track_a.bar_position_usage_blocked or track_b.bar_position_usage_blocked:
+    missing_anchors = [
+        side for side, track in (("a", track_a), ("b", track_b))
+        if not _phrase_points_usable(track)
+    ]
+    if missing_anchors:
+        # Den tatsächlichen Raster-Ausschluss bis zur App weiterreichen.
+        # Lokale Groove-Messwerte ersetzen keinen verwendbaren Taktanker.
+        if gate_rejections is not None:
+            gate_rejections.update(f"phrase_anchor_{side}" for side in missing_anchors)
         return []
     rang_map = {s: i for i, s in enumerate(schema_rang)} if schema_rang else None
     outs = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_a.mix_out_candidates or [])]
@@ -1574,6 +1582,17 @@ def rank_pair_candidates(track_a: Track, track_b: Track, *, bpm_tolerance: float
     if not paare:
         if rejection_reasons is not None:
             rejection_reasons.extend(_rejection_description(track_a, track_b, abgelehnt))
+            missing_anchors = [
+                track.fileName or track.filePath
+                for side, track in (("a", track_a), ("b", track_b))
+                if f"phrase_anchor_{side}" in gate_rejections
+            ]
+            if missing_anchors:
+                rejection_reasons[:] = [
+                    "Taktanfang unsicher",
+                    "Kein verwendbarer Takt-/Phrasenanker: " + ", ".join(missing_anchors) + ".",
+                    "Lokale Groove- und Bassmesswerte allein geben kein Phrasenraster frei.",
+                ]
             if "native_beat_gap" in gate_rejections:
                 native_reason = "Native Beatfolge im Übergangsfenster unregelmäßig oder unvollständig."
                 if not abgelehnt:

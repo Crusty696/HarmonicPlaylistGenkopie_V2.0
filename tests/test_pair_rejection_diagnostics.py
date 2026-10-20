@@ -32,12 +32,14 @@ def test_tempo_grund_enthaelt_effektiven_abstand_und_grenze():
     assert '8' in reasons[1] and '2' in reasons[1]
 
 
-def test_niedrige_konfidenz_allein_erfindet_keinen_ablehnungsgrund():
+def test_schwacher_audioanker_wird_nicht_durch_lokale_messwerte_freigegeben():
     a, b = tracks()
     b.downbeat_confidence = 0.01
     reasons = []
-    assert pc.rank_pair_candidates(a, b, rejection_reasons=reasons)
-    assert not reasons
+    assert not pc.rank_pair_candidates(a, b, rejection_reasons=reasons)
+    assert reasons[0] == 'Taktanfang unsicher'
+    assert 'b.wav' in '\n'.join(reasons)
+    assert 'Phrasenanker' in '\n'.join(reasons)
 
 
 def test_fehlende_beatmerkmale_erklaeren_taktunsicherheit():
