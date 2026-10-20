@@ -26,6 +26,7 @@ import pytest
 import soundfile as sf
 
 from hpg_core.playlist import TransitionPlan
+from hpg_core.models import Track
 
 from tools import rate_transitions
 from tools.rate_transitions import (
@@ -393,10 +394,10 @@ def test_crossfade_reserve_erkennt_zu_spaeten_mix_in():
     assert rest_b < CROSSFADE_SEK
 
 
-class _FakeTrack:
+class _FakeTrack(Track):
     """Minimaler Track fuer den Spec-Aufbau in rendere_paar."""
     def __init__(self, pfad, bpm, dauer, first_downbeat, confidence):
-        self.filePath = pfad
+        super().__init__(filePath=pfad, fileName=pfad)
         self.bpm = bpm
         self.duration = dauer
         self.first_downbeat = first_downbeat
@@ -410,7 +411,10 @@ class _FakeTrack:
         ]
         self.detected_genre = "Psytrance"
         self.genre = "Psytrance"
-        self.phrase_anchor = first_downbeat
+        self.bar_position_status = "reference_verified"
+        self.measurement_diagnostics = {
+            "anchor": {"bar_position_comparison": {"status": "aligned"}}
+        }
         self.beatgrid_source = "rekordbox"
         self.beatgrid_status = "verified"
         self.analysis_mode = "rekordbox_fast"

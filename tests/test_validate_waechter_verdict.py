@@ -39,6 +39,13 @@ def test_fehlendes_vertragsfeld_wird_abgelehnt():
     assert any("testbelege" in error for error in validator.validate_report(report))
 
 
+def test_leeres_vertragsfeld_verschluckt_nicht_das_naechste():
+    report = _report().replace("- auftrag: Waechtervertrag absichern", "- auftrag: ")
+    errors = validator.validate_report(report)
+    assert any("auftrag" in error for error in errors)
+    assert not any("akzeptanzkriterien" in error for error in errors)
+
+
 def test_ungueltiges_urteil_wird_abgelehnt():
     assert any("Urteil" in error for error in validator.validate_report(_report(verdict="OK")))
 

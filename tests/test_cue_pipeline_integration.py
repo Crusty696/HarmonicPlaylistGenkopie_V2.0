@@ -125,6 +125,11 @@ def pipeline(monkeypatch, tmp_path):
 def test_both_producers_cache_policy(pipeline, monkeypatch, fast, failure):
     from hpg_core.rekordbox_importer import RekordboxTrackData
     path, importer, candidates = pipeline
+    from tests.fixtures.reference_grid import aligned_comparison
+    importer.get_beatgrid.return_value = [
+        dict(time=index * .5, beat=index % 4 + 1) for index in range(64)
+    ]
+    monkeypatch.setattr(analysis, '_compare_rekordbox_bar_positions', aligned_comparison)
     importer.get_track_data.return_value = RekordboxTrackData(bpm=120. if fast else None, duration=32., camelot_code='8A')
     misses, writes, seen = [], [], []
     monkeypatch.setattr(analysis, 'get_cached_track', lambda key, **k: misses.append(key))

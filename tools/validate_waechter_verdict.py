@@ -18,7 +18,7 @@ REQUIRED_SECTIONS = (
     "Nicht geprueft",
 )
 SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-FIELD_RE = re.compile(r"^-\s*([a-z0-9_]+):\s*(\S.*)$", re.MULTILINE)
+FIELD_RE = re.compile(r"^-[ \t]*([a-z0-9_]+):[ \t]*(\S[^\r\n]*)$", re.MULTILINE)
 EVIDENCE_RE = re.compile(
     r"^-\s*Pruefpunkt:\s*\S.+?\s*\|\s*Beleg:\s*[^|\n]+:\d+\s*"
     r"\|\s*Ergebnis:\s*(erfuellt|nicht erfuellt)$",

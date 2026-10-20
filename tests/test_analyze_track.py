@@ -175,6 +175,8 @@ def silence_wav():
 
 
 def _patch_harte_pipeline_geometrie(monkeypatch, analysis, mix_in, mix_out):
+  from tests.fixtures.reference_grid import aligned_comparison
+  monkeypatch.setattr(analysis, "_compare_rekordbox_bar_positions", aligned_comparison)
   sections = [
     TrackSection("intro", 0.0, 16.0, 0, 8, 20.0),
     TrackSection("main", 16.0, 104.0, 8, 52, 70.0),
