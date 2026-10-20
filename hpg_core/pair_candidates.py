@@ -687,21 +687,22 @@ def _native_blend_supported(track, start, duration):
     native = getattr(track, 'native_beat_analysis', {})
     if native.get('status') != 'ok':
         return True
+    if 'model_beats' in native:
+        from .ai_models.native_beat_alignment import stable_model_window
+        verification = native.get('verification')
+        coverage = verification['coverage'] if verification else native.get('model_coverage')
+        # Nicht beobachtete Abschnitte weiterhin nur am Audio prüfen.
+        # Beobachtete echte Modelllücken vor dem teuren Decode verwerfen.
+        covered = not coverage or (
+            start >= coverage['start_s'] and start + duration <= coverage['end_s'])
+        if covered and not stable_model_window(native, start, duration):
+            return False
     if native.get('phase_method') == 'native_attack_v1':
         from .ai_models.native_track_beats import has_verified_grid
         from .ai_models.native_audio_phase import supports_window
         if has_verified_grid(track) and not supports_window(track, start, duration):
             return False
-    if 'model_beats' not in native:
-        return True
-    from .ai_models.native_beat_alignment import stable_model_window
-    verification = native.get('verification')
-    coverage = verification['coverage'] if verification else native.get('model_coverage')
-    if coverage and (start < coverage['start_s'] or start + duration > coverage['end_s']):
-        # Nicht analysierter Modellbereich ist keine erkannte Beatlücke.
-        # Die nachfolgende strikte Audio-Sync-Prüfung bleibt verpflichtend.
-        return True
-    return stable_model_window(native, start, duration)
+    return True
 
 
 def _blenden_gate(track_a: Track, out_a: MixCandidate, blend_bars: int, deckel: float | None = None) -> bool:

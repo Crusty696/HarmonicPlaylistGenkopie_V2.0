@@ -21,11 +21,15 @@ def stable_model_window(native, start, width):
     """
     period = 60. / native['bpm']
     verification = native.get('verification')
+    from .native_beat_selection import is_chunk_seam_pair
+    chunked = bool(verification) or native.get('selection', {}).get('chunked', False)
     rows = verification['beats'] if verification else native.get('model_beats', [])
     times = [r[0] for r in rows if start <= r[0] < start + width]
     return (len(times) >= 8 and times[0] - start <= period
             and start + width - times[-1] <= period
-            and all(abs(b-a-period) <= .02 + .02*period for a, b in zip(times, times[1:])))
+            and all(abs(b-a-period) <= .02 + .02*period
+                    or chunked and is_chunk_seam_pair(a, b)
+                    for a, b in zip(times, times[1:])))
 
 
 def single_window_evidence_plan(native, duration, span, *, eligible_starts=None):
