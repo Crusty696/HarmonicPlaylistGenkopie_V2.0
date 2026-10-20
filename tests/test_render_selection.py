@@ -108,9 +108,12 @@ def test_gui_publishes_plan_before_installing_audio():
 def test_reserve_success_is_counted_before_status_signal():
     from collections import deque
     from main import MixTipsPanel
-    worker = SimpleNamespace(selection=object(), base_result=object(), peaks=[], duration=1.,
+    signature = ("source-a", "source-b")
+    worker = SimpleNamespace(selection=SimpleNamespace(boundary_index=0),
+        preview_source_signatures={0: signature}, base_result=object(), peaks=[], duration=1.,
         get_temp_dir=lambda: None, get_temp_files=lambda: [], deleteLater=Mock())
     panel = SimpleNamespace(_render_workers=[worker], _render_worker=worker,
+        _preview_source_signature=lambda _: signature,
         _preview_batch_cancelled=False, _preview_queue=deque(), _preview_cache={},
         _preview_batch_successes=0, _preview_batch_active=True, reserve_ready=Mock())
     observed = []

@@ -165,17 +165,22 @@ def main(argv=None) -> int:
         if t is None:
             continue
         tracks.append(t)
+        anchor = t.phrase_anchor
+        anchor_text = "unbekannt" if anchor is None else f"{anchor:.3f}"
         INFO.append(
             f"  {os.path.basename(path)[:44]}: downbeat={t.first_downbeat:.3f} "
             f"(conf {t.downbeat_confidence:.2f}) phrase={t.first_phrase:.3f} "
-            f"(conf {t.phrase_confidence:.2f}) anchor={t.phrase_anchor:.3f} "
+            f"(conf {t.phrase_confidence:.2f}) anchor={anchor_text} "
             f"mix=[{t.mix_in_point:.1f}, {t.mix_out_point:.1f}] phrase_unit={t.phrase_unit}"
         )
         # A1-Invariante: Mix-Punkte liegen auf dem Phrasen-Gitter des Ankers
         if t.bpm > 0 and t.phrase_unit > 0 and t.mix_out_point > t.mix_in_point > 0:
             grid = (60.0 / t.bpm) * METER * t.phrase_unit
-            anchor = t.phrase_anchor
             for label, v in (("mix_in", t.mix_in_point), ("mix_out", t.mix_out_point)):
+                if anchor is None:
+                    check(f"A1 Gitter {label} {os.path.basename(path)[:24]}", False,
+                          "Mixpunkt ohne nutzbaren Phrasenanker")
+                    continue
                 ph = (v - anchor) % grid
                 on_grid = min(ph, grid - ph) < 1e-3  # Arbeitsplan: 1 ms Rastertoleranz
                 check(f"A1 Gitter {label} {os.path.basename(path)[:24]}", on_grid,

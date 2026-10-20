@@ -65,6 +65,8 @@ def _make_track(
     keyMode=key_mode,
     bass_intensity=bass_intensity,
     beatgrid_source="audio",
+    downbeat_confidence=0.8,
+    bar_position_status="audio_estimate",
     beatgrid_status="verified",
     beatgrid_windows_checked=3,
     beatgrid_max_phase_error_ms=0.0,
