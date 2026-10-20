@@ -93,7 +93,7 @@ def test_candidate_audio_gate_binds_cache_to_source_and_rejects_offset(tmp_path)
         audio[start:start+len(kick)] += kick
     path = tmp_path/'candidate.wav'
     sf.write(path,audio,sr)
-    track = SimpleNamespace(filePath=str(path), bpm=120., first_downbeat=.2,
+    track = SimpleNamespace(filePath=str(path), duration=10., bpm=120., first_downbeat=.2,
         native_beat_analysis=dict(source_identity=_source_identity(path)))
     assert supports_window(track,0.,8.)
     track.first_downbeat = .175

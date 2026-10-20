@@ -4,10 +4,16 @@ import pytest
 from tests.test_native_track_beats import snapshot
 from hpg_core.ai_models import native_track_beats as native
 from hpg_core.ai_models.native_beat_alignment import single_window_evidence_plan
+from hpg_core.ai_models.native_beat_selection import select_model
 
 
 def evidence():
     data = snapshot(240.)
+    data.update(model_id='model8', selection=select_model(3),
+        model_hashes=deepcopy(native.MODEL_HASHES['model8']),
+        model_coverage=dict(start_s=0., end_s=60.))
+    data['model_beats'] = [[row['pos']/44100, row['numBar']]
+                           for row in data['grid'] if row['pos']/44100 <= 60.]
     data['verification'] = dict(model_id='model7',
         model_hashes=deepcopy(native.MODEL_HASHES['model7']),
         coverage=dict(start_s=0., end_s=(data['frames']-1)/44100),

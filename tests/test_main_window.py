@@ -421,6 +421,7 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
 
     window = _window(qtbot, monkeypatch)
     config = PrepareConfig("einzel", tmp_path / "set", tmp_path / "cache.db", source_roots=(tmp_path / "sources",))
+    config.source_roots[0].mkdir()
     class AcceptedDialog:
         def __init__(self, _parent, *, folder=""):
             self.config = config
