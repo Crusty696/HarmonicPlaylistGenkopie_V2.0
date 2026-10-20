@@ -84,7 +84,7 @@ def test_echte_synthetische_audiofenster_trennen_retry_von_falschem_tempo(
         return audio[int(offset * SR):int((offset + duration) * SR)], SR
 
     monkeypatch.setattr(analysis.librosa.beat, "beat_track", tracker)
-    monkeypatch.setattr(analysis.librosa, "load", load)
+    monkeypatch.setattr(analysis, "_load_analysis_audio", load)
     diagnostics = {}
     result = analysis._estimate_audio_downbeat(
         audio, SR, target_bpm, file_path="only-ram-synthetic.wav",

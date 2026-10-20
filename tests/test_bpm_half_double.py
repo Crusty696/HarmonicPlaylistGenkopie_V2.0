@@ -86,9 +86,10 @@ class TestEffectiveBpmDiff:
     diff, relation = effective_bpm_diff(-1.0, 128.0)
     assert relation == "direct"
 
-  def test_both_zero_returns_zero(self):
+  def test_both_zero_is_not_a_known_tempo_match(self):
     diff, relation = effective_bpm_diff(0.0, 0.0)
-    assert diff == 0.0
+    assert diff == float("inf")
+    assert relation == "direct"
 
   def test_returns_tuple(self):
     result = effective_bpm_diff(128.0, 130.0)

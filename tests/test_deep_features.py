@@ -220,9 +220,9 @@ def test_expired_optional_budget_never_connects(monkeypatch):
 
 @pytest.mark.parametrize('workers,stems,embedding,beats,phrases,expected', [
     (1, '0', '0', '0', '0', 180.),
-    (1, '1', '1', '1', '1', 870.),
-    (4, '1', '1', '1', '1', 870.),
-    (4, '0', '1', '1', '1', 870.),
+    (1, '1', '1', '1', '1', 1440.),
+    (4, '1', '1', '1', '1', 1440.),
+    (4, '0', '1', '1', '1', 1440.),
 ])
 def test_track_budget_accounts_for_serial_models(
         monkeypatch, workers, stems, embedding, beats, phrases, expected):
