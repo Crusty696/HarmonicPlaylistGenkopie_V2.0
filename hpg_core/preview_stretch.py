@@ -16,7 +16,9 @@ def stretch(audio, sr, rate):
         raise ValueError('Invalid preview stretch audio')
     result = time_stretch(
         np.ascontiguousarray(values.T), sr, stretch_factor=rate,
-        high_quality=True, transient_mode='crisp', transient_detector='percussive',
+        # Der alternative HQ-Modus verschiebt lokale Anschläge trotz korrekter
+        # Gesamtlänge. Der Standardmodus hält die gemessenen Kickfenster ein.
+        high_quality=False, transient_mode='crisp', transient_detector='percussive',
         retain_phase_continuity=True, use_long_fft_window=False,
         use_time_domain_smoothing=False,
     ).T
