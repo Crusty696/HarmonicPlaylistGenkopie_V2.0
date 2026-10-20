@@ -19,7 +19,9 @@ def stretch(audio, sr, rate):
         # Der alternative HQ-Modus verschiebt lokale Anschläge trotz korrekter
         # Gesamtlänge. Der Standardmodus hält die gemessenen Kickfenster ein.
         high_quality=False, transient_mode='crisp', transient_detector='percussive',
-        retain_phase_continuity=True, use_long_fft_window=False,
+        # Das lange Fenster verhindert Tonhöhendrift bei stationären Tönen,
+        # auch bei anderen Sampleraten als dem 44,1-kHz-Previewstandard.
+        retain_phase_continuity=True, use_long_fft_window=True,
         use_time_domain_smoothing=False,
     ).T
     if result.ndim != 2 or result.shape[1] != values.shape[1] or not np.isfinite(result).all():
