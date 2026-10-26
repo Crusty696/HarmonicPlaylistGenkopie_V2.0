@@ -6,8 +6,8 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 # HPG-GUI
 
-`main.py` enthaelt die gesamte Oberflaeche — rund 5000 Zeilen, kein
-`ui/`-Paket. Du aenderst hier nur, was ausdruecklich beauftragt ist.
+`main.py` enthaelt die zentrale Oberflaeche; weitere Komponenten stehen
+unter anderem in `hpg_core/measurement_panel.py`. Es gibt kein `ui/`-Paket. Du aenderst hier nur, was ausdruecklich beauftragt ist.
 Kosmetik, umbenannte Beschriftungen und "waehrend ich schon dabei
 bin"-Verbesserungen sind Scope-Ausweitung.
 
@@ -38,12 +38,12 @@ Bevor du eine Spalte hinzufuegst: geht es auch in den Tooltip einer
 vorhandenen? Vier neue Spalten waeren 24 Aenderungspunkte und eine Tabelle
 mit 20 Spalten.
 
-## Es gibt keine Statusleiste
+## Eigene Statuskomponente
 
-`main.py` hat **kein** `QMainWindow.statusBar()`. Rueckmeldungen laufen ueber
-eigene `QLabel` im jeweiligen Bereich, Vorbild `ai_status_label`. Ein Plan,
-der `self.statusBar()` vorschlaegt, ist gegen den Code zu pruefen — das stand
-hier schon in einem Plan und existierte nie.
+`MainWindow` verwendet `self.status_bar = StatusBarWidget()` und dessen
+`set_status`, `set_progress` und weitere Methoden. Bereichslabels wie
+`ai_status_label` ergaenzen sie. `self.statusBar()` ist nicht dieser
+projektspezifische Vertrag; den konkreten Verbraucher pruefen.
 
 ## Farben
 

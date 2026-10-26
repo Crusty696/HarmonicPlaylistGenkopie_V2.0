@@ -16,7 +16,7 @@ sitzt; die Detailregeln stehen im jeweiligen Fach-Skill.
 | Mix-Out mitten im Track, Mixpoint off-grid | Anker/Gitter, Fenster-Artefakt, Notfall-Prozentpfad | `hpg-mixpoint-engineering` |
 | Lange Tracks: Outro wirkt erfunden | `LIBROSA_MAX_DURATION` + Tail-Fenster, `outro_covered` | `hpg-audio-analysis` |
 | `BrokenProcessPool` im Log | designtes Recovery. Welche Datei ist `[CRASHED/SKIPPED]`? | `hpg-parallel-performance` |
-| Analyse haengt, kein Fortschritt | Per-Task-Timeout 60 s vs. Inaktivitaets-Deadline; blockiert ein `shutdown(wait=True)`? | `hpg-parallel-performance` |
+| Analyse haengt, kein Fortschritt | Modellabhaengiges Budget aus `config.analysis_timeout_seconds` vs. Inaktivitaets-Deadline; blockiert ein `shutdown(wait=True)`? | `hpg-parallel-performance` |
 | Abbruch wirkt nicht | `cancel_callback` bis in den Pool durchgereicht? | `hpg-parallel-performance` |
 | "QThread: Destroyed while thread is still running" | Ergebnis-Signal heisst `finished`; Cleanup am falschen Signal | `hpg-qt-gui` |
 | Statuszeile springt zwischen Laeufen | Source-Guard im Slot fehlt | `hpg-qt-gui` |
@@ -32,9 +32,10 @@ sitzt; die Detailregeln stehen im jeweiligen Fach-Skill.
 
 ## Grundregeln
 
-**Worker werfen nie nach oben.** Sie melden per `status_update` und emittieren
-ein leeres Ergebnis (`analysis_done.emit([], {})`). Wer nach einer Exception im
-Terminal sucht, sucht falsch — in die Statuszeile und ins Log schauen.
+Worker sollen Fehler kontrolliert ueber ihre jeweiligen Ergebnis-/Fehlersignale
+melden. Signalnamen und Exception-Pfade am betroffenen Worker pruefen;
+`analysis_done` ist kein gemeinsames Signal aller Worker. Logs, Statusanzeige
+und gegebenenfalls Subprozess-Exitcode zusammen auswerten.
 
 **Logs:**
 - `logs/hpg.log` (`logging_config.setup_logging`, Level ueber `config.LOG_LEVEL`)
@@ -46,7 +47,7 @@ Skript festhalten, dann fixen. Bei Analyse-Themen: Cache vorher isolieren
 (`HPG_CACHE_FILE`), sonst debuggt man gegen alte Werte.
 
 **Geschuetzte Dateien:** `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`,
-`track_cache.*` — nie loeschen oder editieren ohne Ankuendigung. Zum Ansehen
+`track_cache.*` — nicht fuer Diagnose oder Tests veraendern; Schutzregeln aus AGENTS.md beachten. Zum Ansehen
 `tools/_inspect_cache.py`.
 
 ## Common Mistakes

@@ -1,5 +1,8 @@
 # Risk Officer
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 **Rolle:** Pre-Mortem. "Stell dir vor, der Plan ist gescheitert — warum?"
 
 **Vergleich:** Chief Risk Officer. Findet die Failure-Modes, bevor sie real werden.
@@ -20,9 +23,9 @@
 
 ## Pflicht-Frameworks
 
-- `frameworks/pre-mortem.md` — Pflicht
-- `frameworks/reversibility-test.md` — Pflicht bei Architektur/Stack/Tool-Entscheidungen
-- `frameworks/second-order-effects.md` — bei systemischen Themen
+- `../frameworks/pre-mortem.md` — Pflicht
+- `../frameworks/reversibility-test.md` — Pflicht bei Architektur/Stack/Tool-Entscheidungen
+- `../frameworks/second-order-effects.md` — bei systemischen Themen
 
 ## Pre-Mortem-Workflow
 

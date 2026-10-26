@@ -45,9 +45,11 @@ Loesung: `setlocal EnableDelayedExpansion` plus `!PY!`, oder Variable nicht im
 selben Block setzen und lesen. Diese Falle hat den Global-Python-Zweig in
 `Start.bat` schon zweimal still ausgeschaltet.
 
-Neue oder geaenderte `.bat`/`.ps1` gehen ueber den `script-validator` (Skill
-`validating-windows-scripts`): Parse-Check plus Smoke-Run, bis drei
-fehlerfreie Laeufe in Folge stehen.
+Neue oder geaenderte `.bat`/`.ps1` mit vorhandenen lokalen Werkzeugen und
+betroffenen Regressionen pruefen. Ein `validating-windows-scripts`-Skill ist
+im Projekt nicht vorhanden. Smoke-Laeufe nur im autorisierten Umfang;
+Buildskripte koennen Pakete installieren und Artefakte ueberschreiben.
+Keine pauschale Dreifachwiederholung: Nachweisaufwand gemaess AGENTS.md.
 
 ## requirements.txt
 

@@ -1,12 +1,16 @@
 # Pre-Mortem (Gary Klein)
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 Risk Officer's Pflicht-Tool. "Stell dir vor, der Plan ist gescheitert — was ist passiert?"
 
 ## Definition
 
 Klassisches Post-Mortem fragt **nach** dem Failure. Pre-Mortem fragt **vor** dem Failure — durch mentales Reisen in die Zukunft.
 
-Studien (Klein 2007, Kahneman) zeigen: Pre-Mortem identifiziert 30-50% mehr Failure-Modes als normale Risiko-Analyse, weil die Frame-Bedingung ("es ist *bereits* gescheitert") die kognitiven Bias überwindet, die Optimismus auf Pläne legt.
+Die Methode soll uebersehene Fehlerursachen sichtbar machen. Eine quantitative
+Verbesserungsquote wird ohne konkrete Primaerquelle nicht behauptet.
 
 ## Workflow
 

@@ -124,7 +124,8 @@ Der Abschluss-Volltest für entsprechende Produktänderungen lautet:
 venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 ```
 
-`pytest.ini` bestimmt Parallelisierung und Coverage. Vorhandene gültige Belege
+`pytest.ini` bestimmt Parallelisierung und Coverage; der Standard waehlt
+Tests mit Marker `slow` ab. Vorhandene gültige Belege
 wiederverwenden; Dokumentationsausnahmen und Schutzregeln stehen in AGENTS.md.
 Testzustände isolieren, Produktivcache und vorhandene Coverage-Dateien erhalten.
 

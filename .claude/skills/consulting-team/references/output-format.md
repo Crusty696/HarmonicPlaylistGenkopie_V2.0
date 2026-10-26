@@ -68,7 +68,7 @@ Format: "Frage? — Warum wichtig."]
 | 🟡 Medium | Verschlechtert Outcome, fixable post-launch |
 | 🟢 Low | Nice-to-fix, keine Erfolgsblockade |
 
-**Mindestens 1 🟠 High oder 🔴 Critical pro Review** — sonst war die Analyse zu oberflächlich.
+Befunde nur mit Evidenz und angemessener Schwere melden; auch kein Befund ist ein gueltiges Ergebnis.
 
 ## Confidence-Definitionen
 
@@ -102,6 +102,9 @@ Bei one-way door: höhere Beweislast für GO. Lieber MEHR-INFO als unsicheres GO
 
 ## Beispiel-Output (Mini)
 
+Hypothetisches Formatbeispiel; Zahlen und Stackbehauptungen sind keine
+aktuellen HPG-Befunde. Fuer reale Empfehlungen Quellen gesondert pruefen.
+
 ```markdown
 # Consulting Team Review
 
@@ -128,7 +131,8 @@ GO-mit-Modifikation. Async-Refactor löst das Freezing-Problem (Critical), aber 
 
 ## Steel-Man Gegenposition
 
-Ein klarer Schnitt auf asyncio würde die Codebase vereinheitlichen und langfristig Wartung vereinfachen. QThread ist Qt5-Era, asyncio ist Python-nativ und besser dokumentiert. Wenn ohnehin größerer Refactor ansteht, jetzt der richtige Moment. Aber: nur valide wenn das Vereinheitlichungs-Ziel explizit ist — sonst Doppelmigration.
+Ein klarer Schnitt auf asyncio würde die Codebase vereinheitlichen und langfristig Wartung vereinfachen. Ein einheitliches asynchrones Modell koennte fuer den hypothetischen
+Anwendungsfall Vorteile haben; diese sind gesondert nachzuweisen. Wenn ohnehin größerer Refactor ansteht, jetzt der richtige Moment. Aber: nur valide wenn das Vereinheitlichungs-Ziel explizit ist — sonst Doppelmigration.
 
 ## Open Questions
 

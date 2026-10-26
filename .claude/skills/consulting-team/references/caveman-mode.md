@@ -6,7 +6,7 @@
 
 7 Personas × volle Prosa = Token-Explosion. Lösung: Personas denken und antworten **intern** im Caveman-Full-Stil. Der Synthesizer übersetzt am Ende in lesbares Deutsch.
 
-Spart 50-70% Tokens bei gleicher Aussage-Dichte. Basiert auf Julius Brussees Caveman-Skill.
+Soll den Textumfang reduzieren; eine gemessene Einsparung ist hier nicht belegt bei gleicher Aussage-Dichte. Basiert auf Julius Brussees Caveman-Skill.
 
 ## Wer caveman, wer nicht
 

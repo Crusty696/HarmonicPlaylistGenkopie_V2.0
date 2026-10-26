@@ -38,8 +38,8 @@ ist die beste Dokumentation des Projekts — halte sie in Gang.
 
 ## Geschuetzte Dateien
 
-`hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock` — nie ohne Ankuendigung
-loeschen. Zum Ansehen gibt es `tools/_inspect_cache.py` (read-only).
+`hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock` — fuer Tests niemals veraendern oder loeschen;
+Schutzregeln aus AGENTS.md beachten. Zum Ansehen gibt es `tools/_inspect_cache.py` (read-only).
 
 Beim direkten Lesen: die Zeile mit `key='version'` ist Metadaten, kein Track.
 Der Trackpfad steht im JSON unter `filePath`, nicht zwingend in der

@@ -1,5 +1,8 @@
 # Steel-Manning
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 Devil's Advocate's Pflicht-Tool. Die *stärkste* Form der Gegenposition formulieren.
 
 ## Definition
@@ -73,11 +76,7 @@ Wenn nach ernsthaftem Steel-Man-Versuch keine starke Gegenposition möglich ist:
 
 Kein erzwungenes Meckern. Aber dieser Output ist selten — wenn er *häufig* vorkommt, ist der Devil's Advocate zu nachsichtig.
 
-## Calibration
+## Kalibrierung
 
-Über 10 Reviews verteilt sollte der Devil's Advocate:
-- ~70% einen substantiellen Steel-Man finden (🟠/🔴 Severity)
-- ~20% einen moderaten finden (🟡 Severity)
-- ~10% bestätigen, dass der Plan robust ist (🟢)
-
-Wenn die Verteilung anders aussieht: Re-Calibration nötig.
+Keine Sollquote fuer schwere Befunde vorgeben. Schwere und Ergebnis folgen
+der Evidenz; ein unbegruendeter Verdacht wird nicht zur Quote hochgestuft.

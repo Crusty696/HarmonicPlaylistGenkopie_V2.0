@@ -10,7 +10,8 @@ description: Use when working on HPG Rekordbox integration — RekordboxImporter
 **Import** (`hpg_core/rekordbox_importer.py`): liest die lokale
 Rekordbox-`master.db` ueber `pyrekordbox`. Liefert BPM, Key, Genre, Dauer,
 Cues und den ANLZ-Beatgrid. Optional — fehlt `pyrekordbox` oder die DB,
-laeuft alles ueber librosa weiter.
+bleibt die Audioanalyse mit DSP und den verfuegbaren nativen Adaptern
+moeglich; einzelne Faehigkeiten behalten ihre eigenen Modell-/Grid-Gates.
 
 **Export** (`hpg_core/exporters/rekordbox_xml_exporter.py`): schreibt
 Collection + Playlist mit BPM, Key, TEMPO-Beatgrid und POSITION_MARK-Cues.

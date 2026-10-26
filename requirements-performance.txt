@@ -1,6 +1,6 @@
 # Optional performance optimization dependencies
 
-# Parallel test execution - reduces runtime from 61s to ~20s
+# Parallele Testausfuehrung; Laufzeitgewinn am jeweiligen Lauf messen
 pytest-xdist==3.8.0
 
 # Test execution timing analysis

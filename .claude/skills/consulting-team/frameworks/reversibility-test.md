@@ -1,5 +1,8 @@
 # Reversibility Test — One-Way vs Two-Way Doors
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 Bezos' Heuristik: nicht jede Entscheidung hat gleichen Beweisbedarf.
 
 ## Definition

@@ -132,10 +132,11 @@ Bei bestaetigtem Beatgrid und schwacher erster Phrasenphase darf
 Fenster bestimmt `structure.phrase_unit`; das Tail uebernimmt diese Einheit.
 Track-Mixpunkte, Fallback-Mixpunkte, manuelle Cue-Ausrichtung, Mix-Kandidaten
 und Paar-Mixpunkte muessen dieselbe Einheit verwenden. `calculate_paired_mix_points`
-nimmt `Track.phrase_unit` fuer `audio_novelty`; sonst bleibt das Genreprofil
+nimmt ueber `effective_track_phrase_unit` gueltige Einheiten fuer
+`audio_novelty` oder `configured`; sonst bleibt das Genreprofil
 massgeblich. Gesperrte oder unbestaetigte Raster und
-starke erste Phrasenphasen behalten den Genre-Prior. Diese Aenderung ist
-unvalidiert. `Track.phrase_unit_source` persistiert, ob die Einheit aus
+starke erste Phrasenphasen behalten den Genre-Prior. Technische Tests und
+musikalische Validierung anhand ihrer jeweiligen Belege getrennt pruefen. `Track.phrase_unit_source` persistiert, ob die Einheit aus
 `audio_novelty`, `genre_prior` oder `configured` stammt. `audio_novelty`
 setzt eine erfolgte Messung voraus und darf nicht allein durch einen Aufrufer
 gesetzt werden. Optionale Werte
@@ -170,9 +171,9 @@ Klangfarbe, Energie/LUFS, Stimmung/Vocals) plus `schema`, `provenance`,
 Helfer `_kandidaten_berechnen` in `analysis.py`, **nach** den
 Track-Mixpoints; Fehler dort kippen die Analyse nie (leere Listen).
 
-**Sechs Schemata** (Nutzer-Entscheidung B), Prioritaet in
-`SCHEMA_PRIORITAET`: `benannter_cue` > `pssi_phrase` > `auto_cue` >
-`analyzer` > `sektion` > `energie_neuheit`.
+**Acht Schemata**, Prioritaet in `SCHEMA_PRIORITAET`:
+`benannter_cue` > `pssi_phrase` > `auto_cue` > `analyzer` >
+`native_phrase` > `sektion` > `energie_neuheit` > `unbenannter_cue`.
 
 **Gates** (`passes_track_gates`, je Kandidat): Intro/Outro-Guard,
 `unanalysed`-Sektionen ausgeschlossen (Coverage), Quantisierung auf das
@@ -260,7 +261,8 @@ unveraendert.
   fuenf Kandidatengewichte stammen aus Hoertestpraeferenzen oder den
   Toleranzvorgaben. Die Wahl
   liegt in `candidate_choices.json`, NICHT im `scoring_context` (Entscheidung 7).
-  Teile 1–4 sind gebaut; offen sind nur Hoerproben (Handoff Teil 4).
+  Dies beschreibt die historische Teil-4-Integration. Aktuelle offene
+  Produktnachweise stehen in PRODUCTION_STATUS.md; nicht nur Hoerproben sind offen.
 
 Der App-Regler `bpm_tolerance` (1–2 BPM) ist das aeussere Gate fuer den
 `TransitionPlan`; `PAAR_BPM_MAX = 2.0` bleibt die absolute Obergrenze. Eine

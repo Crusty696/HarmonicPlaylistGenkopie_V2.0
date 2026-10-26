@@ -105,7 +105,8 @@ beauftragt, und was bricht dadurch?
 
 ### 3. Wurde die GUI angefasst?
 
-`main.py` enthaelt die gesamte Oberflaeche. Jede Aenderung daran ohne
+`main.py` und ausgelagerte Komponenten wie `hpg_core/measurement_panel.py`
+enthalten die Oberflaeche. Jede Aenderung daran ohne
 ausdruecklichen Auftrag ist ein Befund. Besonders: neue Tabellenspalten (ein
 Spaltenindex steht an sechs Stellen), geaenderte Beschriftungen, veraenderte
 Vorgabewerte von Reglern, neue Dialoge.

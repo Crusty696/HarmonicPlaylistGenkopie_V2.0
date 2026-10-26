@@ -14,6 +14,7 @@
 
 ## Freigabegrenzen
 
-Vor Veraenderungen an realen Musikbibliotheken, Rekordbox-Datenbanken,
-Cache-Dateien, Installern, Systemkonfigurationen oder Remote-Git-Aktionen
-immer explizit nachfragen. Keine Geheimnisse auslesen oder ausgeben.
+Die Schutz- und Freigaberegeln aus AGENTS.md gelten. Bereits ausdruecklich
+beauftragte Schritte, etwa Commit und Push, ohne erneute Routinefrage
+ausfuehren. Eine Dokumentationspflege autorisiert keine Installation,
+keinen Providerwechsel und keine Sicherheitsaenderung. Keine Geheimnisse auslesen oder ausgeben.

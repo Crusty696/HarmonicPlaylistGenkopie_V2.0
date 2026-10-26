@@ -18,7 +18,7 @@ dann Workload-Skalierung:
   >= 20         -> max_workers
 ```
 
-**Die harte Obergrenze ist 4** — `PARALLEL_AUTO_MAX_WORKERS` [hpg_core/config.py], unabhaengig von der Kernzahl.
+**Die automatische Obergrenze ist 4; explizite `PARALLEL_MAX_WORKERS` werden separat bis zur CPU-Zahl begrenzt** — `PARALLEL_AUTO_MAX_WORKERS` [hpg_core/config.py], unabhaengig von der Kernzahl.
 Grund im Docstring: mehr als vier parallele native Audio-Decoder fuehren unter
 Windows zu C-Level-Abstuerzen des Pools. Beispiele: 8 Dateien / 16 Kerne -> 2
 Worker; 200 Dateien / 16 Kerne -> 4 Worker.
@@ -37,8 +37,8 @@ Zwei unabhaengige Uhren:
 
 | Uhr | Konstante | Bedeutung |
 |---|---|---|
-| Per-Task | `PARALLEL_ANALYSIS_TIMEOUT = 60` s | Laufzeit **eines** aktiven Futures. Ueberschritten -> `[TIMEOUT]`, Pool terminieren |
-| Haenger | `min(PARALLEL_HANG_DEADLINE_MAX = 900, TIMEOUT * worker + 30)` | **Inaktivitaets**-Deadline: nur wenn gar kein Future mehr fertig wird. Waechst nicht mit der Batch-Groesse (N-04) |
+| Per-Task | `config.analysis_timeout_seconds(worker_count)` | Basis 180 s plus Budgets aktiver Stem-/Embedding-/Beat-/Phrasenmodelle; maximal 1440 s. Laufzeit eines aktiven Futures einschliesslich Brokerwartezeit. |
+| Haenger | `min(PARALLEL_HANG_DEADLINE_MAX = 1470, task_timeout * worker + 30)` | **Inaktivitaets**-Deadline: nur wenn gar kein Future mehr fertig wird. Waechst nicht mit der Batch-Groesse (N-04) |
 
 ## Recovery ist Design, kein Bug
 
@@ -62,7 +62,7 @@ Pfad baut, muss das Callback durchreichen — sonst haengt Abbruch.
 ## Performance-Hebel (mit Messung, nicht mit Gefuehl)
 
 1. `FeatureCache` benutzen statt neu rechnen (HPSS/STFT waren 7-11x/Track)
-2. Rekordbox-Fast-Path nicht kaputtmachen (~12x) — Skill `hpg-rekordbox`
+2. Rekordbox-Fast-Path erhalten; Beschleunigung laufbezogen messen — Skill `hpg-rekordbox`
 3. `_COMPAT_CACHE`/`_ENHANCED_COMPAT_CACHE` in `generate_playlist`
 4. `LOOKAHEAD_TOP_K = 8` begrenzt die Harmonic-Flow-Rekursion
 5. `MAX_SSM_FRAMES = 3000` [hpg_core/structure_analyzer.py] deckelt die

@@ -27,7 +27,10 @@ Quellenwegweiser: docs/PROJECT_KNOWLEDGE.md.
 ## Was pytest.ini erzwingt
 
 `--strict-markers --strict-config -ra --durations=10 --cov=hpg_core --cov=main
---cov-fail-under=70 -n auto`
+--cov-fail-under=70 -n auto -m "not slow"`
+
+Der konfigurierte Abschlusslauf waehlt `slow` ab. Fuer einen ausdruecklichen
+Lauf einschliesslich dieser Marker ist `-m ""` noetig; Umfang vorher begruenden.
 
 - `-n auto` (xdist) ist der Standard aus pytest.ini, auch fuer den
   Abschlusslauf. `tools/check_coverage.py` ist ein gesonderter serieller

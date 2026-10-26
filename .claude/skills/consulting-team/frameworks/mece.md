@@ -1,5 +1,8 @@
 # MECE — Mutually Exclusive, Collectively Exhaustive
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 McKinsey-Standard für Problem-Zerlegung. Engagement Manager nutzt das **immer**.
 
 ## Definition

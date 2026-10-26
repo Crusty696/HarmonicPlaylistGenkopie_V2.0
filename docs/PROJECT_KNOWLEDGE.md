@@ -121,6 +121,10 @@ Hashes bleiben extern erhalten. Der zurückgezogene VERITAS-Lauf bleibt
 einschließlich seiner Ungültigkeitskennzeichnung am bisherigen Ort.
 
 [Bereinigungsnachweis und Sicherung](CLEANUP_2026-10-26.md).
+Der [lokale Inventarbericht](REPOSITORY_INVENTORY.md) grenzt die abschliessende
+Dokument-/Anweisungspruefung vom Laufzeit- und Musiknachweis ab.
+Historische HTML-Visualisierungen und memory-Sessionnotizen sind als solche
+gekennzeichnet; ihre Beispiele erzeugen keine heutigen Arbeitsauftraege.
 Die Sicherung vom 04.10. und `cleanup-manifest-2026-10-04.json` bleiben erhalten.
 
 ## Offene Fragen und Grenzen

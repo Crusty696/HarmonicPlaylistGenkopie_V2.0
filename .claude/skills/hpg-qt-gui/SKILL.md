@@ -7,8 +7,9 @@ description: Use when working on the HPG PyQt6 GUI in main.py — QThread-Worker
 
 ## Architektur
 
-`main.py` enthaelt **alles**: Worker, Widgets, Panels,
-MainWindow. Es gibt kein `ui/`-Paket (alte Doku behauptet das).
+`main.py` enthaelt MainWindow, zentrale Worker und Panels.
+Weitere GUI-Komponenten stehen unter anderem in `hpg_core/measurement_panel.py`;
+die Oberflaeche ist nicht ausschliesslich in main.py implementiert. Es gibt kein `ui/`-Paket (alte Doku behauptet das).
 
 Fuenf Panels in einem `QStackedWidget`, umgeschaltet von `SidebarWidget`
 [main.py]: LIBRARY(0) PLAYLIST(1) MIX TIPS(2) TIMELINE(3) QUALITY(4).
@@ -63,9 +64,8 @@ AI, PLAYLIST, PREVIEW, CANCELLING.
 - `_set_run_state` [main.py] koppelt die Reorder-Sperre an den Zustand (nur
   waehrend `AI` gesperrt)
 - `_run_is_active` [main.py] prueft Zustand **und** alle mutierenden Worker
-  inklusive `mix_tips_panel._render_worker` — `RunState.PREVIEW` wird nie
-  gesetzt, ohne den Worker-Check galte ein laufender Preview-Render als
-  inaktiv
+  inklusive `mix_tips_panel._render_worker`. `_on_preview_state_changed`
+  setzt `RunState.PREVIEW`; den Worker-Check fuer laufende Arbeit erhalten
 - `_finish_run` [main.py] stellt in **jedem** terminalen Pfad dieselbe UI her
 
 Neue Terminalpfade immer ueber `_finish_run` fuehren.

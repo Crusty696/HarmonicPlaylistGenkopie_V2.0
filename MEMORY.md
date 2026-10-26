@@ -15,6 +15,7 @@ Die folgenden Nutzerleitlinien sind Anforderungen, keine Implementierungsabnahme
 - Abschlussbeleg:
   `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`.
   Die Suite verwendet bereits `-n auto`; keine parallelen vollen Testlaeufe.
+  Dokumentationsausnahmen und Wiederverwendung gueltiger Belege gemaess AGENTS.md.
 - Geschuetzt sind Cache-/DB-/Lock-/Coverage-Dateien, reale Musikbibliotheken,
   Rekordbox-Daten und vorhandene `Claude-Autopilot-*`-Artefakte.
 

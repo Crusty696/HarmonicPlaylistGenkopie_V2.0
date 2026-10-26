@@ -65,54 +65,17 @@ def transport_proposal(tmp_path, monkeypatch):
     weights = {key: (index + 1) / 55 for index, key in enumerate(cp.GEWICHT_SCHLUESSEL)}
     assert len(weights) == 10 and sum(weights.values()) == pytest.approx(1.)
     updates = cp._normalisiere_updates({"Psytrance": weights})
-    # Transporttest ohne Audio: gebundene Original-Manifeste, synthetisches PCM.
-    # Der strikte v2-Receipt-Validator bleibt aktiv und wird nicht gemockt.
-    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME
+    # Transporttest ohne Audio: strikten Validator auf die gemeinsame Fixture anwenden.
     from tools import audit_candidate_set as audit
 
-    manifest_text = (result.output_dir / audit.KANDIDATEN_MANIFEST_NAME).read_text(encoding="utf-8")
-    source_text = (result.output_dir / SOURCE_MANIFEST_NAME).read_text(encoding="utf-8")
-    manifest = json.loads(manifest_text)
-    specs = json.loads(source_text)["specs"]
-    candidates = []
-    for pair in manifest["pairs"]:
-        for clip in pair["clips"]:
-            cid = clip["clip_id"]
-            spec_digest = audit._sha(audit._json_bytes(specs[f"clips/{cid}.wav"]))
-            candidates.append({
-                "pair_id": pair["pair_id"], "clip_id": cid, "rank": clip["rank"],
-                "replay_spec_sha256": spec_digest, "source_spec_sha256": spec_digest,
-                "replay_pcm_sha256": audit._sha(b"synthetic transport fixture; no DSP"),
-                "pcm": {"samplerate": 8000, "channels": 2, "frames": 800,
-                        "format": "WAV", "subtype": "PCM_16"},
-                "kick_lag_seconds": [0.0, 0.0, 0.0],
-            })
-    binding_digest = audit._sha(audit._json_bytes(binding))
-    receipt = {
-        "format": "hpg_candidate_ram_audit", "version": 2,
-        "transport": "source_refs_ram", "evidence_kind": "spec_verified_ram_replay",
-        "purpose": "regular", "status": "passed", "ok": True,
-        "binding": deepcopy(binding),
-        "before_sha256": binding_digest, "after_sha256": binding_digest,
-        "manifest_text": manifest_text, "source_manifest_text": source_text,
-        "manifest_sha256": audit._sha(manifest_text.encode("utf-8")),
-        "pairs": len(manifest["pairs"]), "clips": len(candidates),
-        "candidates": candidates,
-    }
+    receipt = _synthetic_transport_receipt(binding)
     audit.validate_ram_receipt(receipt, binding)
     proposal = {
- maintenance/2026-10-10-hpg-repair
-        "format": "hpg_calibration_proposal", "version": 2,
-        "operation_id": "a" * 32, "binding": binding,
-        "audit_passed": True, "audit": receipt, "fit_status": "passed",
-        "gate_updates": updates,
-
         "format": "hpg_calibration_proposal", "version": 2, "operation_id": "a" * 32,
         "binding": binding, "audit_passed": True,
         # Struktureller v2-Transportbeleg; kein ausgefuehrter Replay-Audit.
-        "audit": _synthetic_transport_receipt(binding),
+        "audit": receipt,
         "fit_status": "passed", "gate_updates": updates,
- main
         "diagnose": {"transport_contract_fixture": True, "numerical_audit_proven": False},
         "single_proposal": None, "live_applied": False,
         "output": "Synthetic transport fixture; no replay audit or fit executed.",

@@ -22,20 +22,20 @@ Einrueckungsfehler im Fast-Path hat hier schon Tracks ohne Key still
 verschwinden lassen. Nach dem Aendern zaehlen:
 
 ```
-python -c "s=open('hpg_core/analysis.py',encoding='utf-8').read(); print(s.count('Track('))"
+venv312\Scripts\python.exe -c "s=open('hpg_core/analysis.py',encoding='utf-8').read(); print(s.count('Track('))"
 ```
 
 ## Der Decode-Deckel
 
-`y` enthaelt **nie** den ganzen Track. Ein 12-Minuten-Track wird bei 600 s
+`y` enthaelt bei langen Tracks nur das begrenzte DSP-Fenster. Ein 12-Minuten-Track wird bei 600 s
 abgeschnitten. Fuer Outro und Mix-Out gibt es ein zweites Fenster
 (`analyze_structure_windows`): Head plus separater Tail-Load der letzten
 `LIBROSA_TAIL_DURATION` Sekunden. Die Luecke dazwischen bleibt als Section
 `label="unanalysed"` sichtbar — sie wird nicht weginterpoliert.
 
 `outro_covered` sagt, ob das Track-Ende analysiert wurde. Wer einen neuen
-Mix-Out-Konsumenten baut, muss den Guard selbst setzen; er wird nur an zwei
-Stellen geprueft.
+Mix-Out-Konsumenten baut, muss den Guard selbst setzen oder seinen vorgeschalteten
+Kandidatenvertrag nachweisen. Konsumenten im Audio-Analysis-Skill nachlesen.
 
 ## Native Analyse
 
@@ -66,8 +66,8 @@ blieb unbemerkt, weil es nur Zeit kostet, keine Korrektheit.
 
 `mix_in_point`/`mix_out_point` nicht gesetzt: `-1.0`; `0.0` ist **gueltig**.
 `first_phrase` nicht geschaetzt: `-1.0`. `key_confidence` unbekannt: `0.0`,
-`1.0` heisst Rekordbox. `downbeat_confidence` `1.0` ist dem ANLZ-Beatgrid
-vorbehalten; die Eigenschaetzung ist hart darunter gedeckelt.
+`1.0` heisst Rekordbox. `downbeat_confidence` allein bestaetigt weder Herkunft noch Taktposition.
+Native und importierte Grids anhand des aktuellen Herkunftsvertrags pruefen.
 
 ## Bevor du fertig meldest
 

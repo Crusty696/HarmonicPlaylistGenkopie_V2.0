@@ -143,8 +143,8 @@ Bei bestaetigtem Beatgrid und schwacher erster Phrasenphase darf die
 Audio-Novelty-Messung im Head-Fenster die Genre-Prior-Phrasenlaenge ersetzen.
 Das Raster bleibt am bestaetigten Downbeat verankert; das Tail verwendet die
 vom Head gewaehlte Einheit. Gesperrte oder unbestaetigte Raster behalten den
-Genre-Prior. Diese Aenderung ist im Quellvertrag beschrieben, aber derzeit
-nicht durch Tests oder Laufzeitnachweise validiert.
+Genre-Prior. Die Implementierung ist im Quellvertrag beschrieben. Vor einer
+Laufzeit- oder Qualitaetsaussage passende datierte Nachweise pruefen.
 Wenn Novelty eine andere Einheit als den Genre-Prior waehlt, berechnen beide
 Analysepfade Phrasenphase und -konfidenz mit dieser finalen Einheit neu. Nur
 ausreichende Konfidenz verschiebt den Anker vom bestaetigten Downbeat.
@@ -209,7 +209,7 @@ passte — sichtbar nur als `invalid` mit `lufs = 0.0`, ohne Fehlermeldung. Wer
 an der Blockschleife arbeitet: jeder gezaehlte Block muss vollstaendig im
 Signal liegen, und das Ergebnis gegen `pyloudnorm.Meter.integrated_loudness`
 gegenpruefen (Abweichung sollte <0.01 dB sein).
-| `downbeat_confidence` | `0.0` | `1.0` = ANLZ-Beatgrid |
+| `downbeat_confidence` | `0.0` | Herkunft und verifiziertes Grid separat pruefen; 1.0 allein ist keine Freigabe |
 
 ## Fehlerpfad
 
@@ -220,7 +220,7 @@ Muell-Track dauerhaft gecacht).
 
 ## Common Mistakes
 
-- Annehmen, `y` enthalte den ganzen Track. Tut es nie.
+- Annehmen, `y` enthalte bei langen Tracks den ganzen Track; DSP-Deckel beachten.
 - Tail-Fenster beim Aendern der Struktur-Logik vergessen.
 - Feature direkt neu berechnen statt `FeatureCache` zu fragen.
 - Nur einen der beiden Analyse-Pfade anfassen.

@@ -26,7 +26,7 @@ aus der Übergabe vom 20.10. nicht erneut berechnen.
 Den aktuellen Wert von `CACHE_VERSION` in **`hpg_core/caching.py`** lesen — nicht in `config.py`. Die folgenden Versionsangaben erklären historische Vertragsänderungen; sie sind keine Zielversion. Cache 85 umfasst die bestätigte reine Rekordbox-Phasenoffset-Korrektur ohne Bar-Rotation. Cache 86 verwirft Rotation-0-Korrekturen, die den Anker über eine Bar-Grenze wickeln würden. Cache 87 berücksichtigt die wirksame Phrase-Unit bereits in der internen Mix-In/Out-Kandidatensuche und deren Guards. Cache 88 verwendet den Median aller sechs konsistenten Tempoausgaben statt des ersten Werts. Cache 89 persistiert strukturierte Tempoentscheidungsdiagnosen im Messschema v7. Cache 90 erhält alle sechs Modell-BPM-Werte samt Modell-ID und Fensterstart; die v7-Validierung leitet bei sechs Werten Median und Spread daraus neu ab, verwirft widersprüchliche Payloads und bindet akzeptierte Tempi an die bestehende 2%-Grenze.
 Das ist ein haeufiger Fehlgriff.
 
-Die Version steckt im **Dateinamen**: `hpg_cache_v96.db`. Ein Bump erzeugt
+Die Version steckt im **Dateinamen**: `hpg_cache_v<CACHE_VERSION>.db`. Ein Bump erzeugt
 also eine neue DB; zusaetzlich filtert der Read auf die Version und raeumt
 stale Rows auf.
 
@@ -185,9 +185,9 @@ Taktpositionshinweisen, kein Nachweis musikalischer Richtigkeit.
 
 ```
 CACHE_FILE = HPG_CACHE_FILE                       # Env, hoechste Prioritaet
-           | HPG_CACHE_DIR/hpg_cache_v77.db       # Env
-           | %LOCALAPPDATA%\HPG\hpg_cache_v77.db  # Standard Windows
-           | ~/.hpg/hpg_cache_v77.db              # Fallback
+           | HPG_CACHE_DIR/hpg_cache_v<CACHE_VERSION>.db       # Env
+           | %LOCALAPPDATA%\HPG\hpg_cache_v<CACHE_VERSION>.db  # Standard Windows
+           | ~/.hpg/hpg_cache_v<CACHE_VERSION>.db              # Fallback
 LOCK_FILE  = <cache ohne .db> + ".lock"
 ```
 
@@ -217,8 +217,9 @@ Bump der einzige Weg, Code-Aenderungen zu invalidieren.
 
 - SQLite mit WAL, `PRAGMA foreign_keys=ON`, Retry auf BUSY/LOCKED
   (`SQLITE_RETRY_DELAYS`), `file_lock` mit `CACHE_LOCK_TIMEOUT = 15.0`
-- `validate_track_dict` prueft alle 60 Pflichtfelder; jeder Mix-Kandidat muss
-  alle 28 Vertragsfelder mit gueltigen Typen, Wertebereichen und Listen haben
+- `validate_track_dict` prueft die aktuellen Pflichtfelder und Kandidatenvertraege
+  mit Typen, Wertebereichen und Herkunft. Feldlisten aus caching.py lesen;
+  keine historische Feldanzahl als aktuellen Vertrag verwenden
 - `track_to_dict` erstellt ausschliesslich den tief losgeloesten Snapshot
 - `cache_track` ruft danach `_normalize_cache_snapshot` fuer die explizit
   tolerierte feldabhaengige NaN/Inf-Semantik und `validate_track_dict` fuer
@@ -232,7 +233,7 @@ Bump der einzige Weg, Code-Aenderungen zu invalidieren.
 ## Geschuetzte Dateien
 
 `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`, `track_cache.*` — **nie
-editieren oder loeschen ohne Ankuendigung**. Zum Inspizieren gibt es
+fuer Tests editieren oder loeschen; AGENTS.md ist massgeblich**. Zum Inspizieren gibt es
 `tools/_inspect_cache.py` und `tools/_check_cache.py` (read-only).
 
 ## Neues Track-Feld hinzufuegen
@@ -251,6 +252,9 @@ editieren oder loeschen ohne Ankuendigung**. Zum Inspizieren gibt es
 - Bump vergessen -> "Fix wirkt nicht", stundenlanges Falschdebuggen.
 - Produktiv-DB im Test benutzen statt `HPG_CACHE_FILE`.
 - Sentinel `0.0` waehlen fuer ein Feld, bei dem `0.0` ein gueltiger Wert ist.
+
+Die folgenden Abschnitte beschreiben historische Versionen, keine aktuellen
+Zielversionen oder Freigaben.
 
 Cache 100 behaelt die Cache99-Rasterrettung bei. Vorhandene erfolgreiche Modell-Decoderfenster werden auch bei hoher DSP-Phrasenkonfidenz gegen Audio geprueft; der bisherige vorzeitige baseline_preferred-Abbruch gilt nur noch ohne solche Kandidaten. Uebernahme weiterhin nur mit allen bestehenden Konsistenz-/Audiogates. Alte Analysewerte werden nicht als neu geprueft wiederverwendet.
 

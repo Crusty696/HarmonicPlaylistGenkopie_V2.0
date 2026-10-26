@@ -1,5 +1,8 @@
 # Devil's Advocate
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 **Rolle:** Steel-Manning der Gegenposition. Die *stärkste* Form des "Nein" formulieren.
 
 **Vergleich:** Adversarial Reviewer. Argumentiert *für* das Gegenteil, so überzeugend wie möglich.
@@ -40,7 +43,7 @@ Praktisch: Devil's Advocate führt seine Analyse **bevor** er die anderen Output
 
 ## Pflicht-Framework
 
-`frameworks/steel-manning.md` — Pflicht
+`../frameworks/steel-manning.md` — Pflicht
 
 ## Output (Caveman-Full, max. 100 Tokens)
 

@@ -1,5 +1,8 @@
 # Porter's Five Forces
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 Klassisches Strategie-Framework für Markt-/Business-Themen. Nur laden wenn relevant.
 
 ## Definition

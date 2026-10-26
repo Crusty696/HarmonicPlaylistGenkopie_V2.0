@@ -1,89 +1,58 @@
-# HPG Repository-Dateiinventar und sichere Bereinigung
+# Repository-Inventar und Pruefumfang
 
-Statischer GitHub-Quellenstand: 10.10.2026. Die Bestandszahlen beziehen sich
-auf `main` vor dieser Bereinigungsrunde (Commit `63ea758a`).
-Dies ist ein Inventar, **keine Laufzeit-, Funktions- oder Vollabnahme**.
+Lokaler Gesamtbestand vom 26.10.2026 nach Zusammenfuehrung der GitHub-Arbeit,
+Ausgangscommit `2ca3b64cfd52553b801955815a82fd3d18851dc1`.
+Die anschliessenden Dokumentkorrekturen sind im Bereinigungsbericht beschrieben.
 
-## Gepruefter Bestand
+## Vollstaendigkeit der lokalen Erfassung
 
-- 428 versionierte Dateien in 497 Git-Baumeintraegen (Ordner eingeschlossen).
-- 59 Gruppen identischer Git-Blobs. Davon 58 bewusste Spiegelpaare
-  `.agents/` und `.claude/` fuer unterschiedliche Agenten.
-- Die zwei bytegleichen leeren JSON-Grundlagen
-  `hpg_core/data/candidate_preferences.json` und
-  `hpg_core/data/transition_tolerances.json` haben verschiedene Verbraucher.
-  **Nicht deduplizieren**.
-- `docs/`: 30 Dateien mit ca. 5,5 MB. Die grossen visuellen Hilfen
-  `hpg-trackauswahl-mixpoints.html` und `trackauswahl-mixpoints-systemkarte.png`
-  sind nicht allein wegen ihrer Groesse entbehrlich.
-- `tests/`: 132 Dateien, `hpg_core/`: 61 Dateien, `tools/`: 31 Dateien;
-  diese Zahlen schliessen jeweilige Unterordner ein.
-- `memory/`, `docs/audit/`, `docs/superpowers/` und
-  `validation/` enthalten historische Nachweise, Anforderungen oder Vorlagen,
-  keine bewiesenen Wegwerfdateien.
+- 43664 Dateieintraege und 10130 besuchte Verzeichnisse.
+- Keine Fehler beim Lesen der Metadaten; keine Begrenzung/Abschneidung des Scans.
+- 2579 Verzeichnisverknuepfungen/Junctions erfasst,
+  deren Ziele nicht verfolgt wurden; `.git` als eigener Metadatenbereich ausgeschlossen.
+- 522 versionierte Dateien. Die detaillierten relativen Pfade und
+  Metadaten stehen in der externen `inventory.json`.
+- 188 versionierte Dokument-, Anweisungs-, Starter-, Konfigurations- und
+  Buildtextdateien wurden als Pruefkorpus erfasst, einschliesslich beider
+  Skillspiegel, Codex-Rollen, HTML, BAT, PS1, YAML und TOML.
 
-## Sofortige, begruendete Bereinigung
+Verzeichniszahlen dieses Scans sind keine Anzahl fachlich gepruefter Dokumente.
+Dateimetadaten, Quellenabgleich, Tests und musikalische Abnahme bleiben getrennt.
 
-- `benchmark_rekordbox.py` war ein altes synthetisches Dictionary-Timing.
-  Es ersetzte Cache-Eintraege durch Dummy-Strings und lieferte **keinen**
-  Nachweis ueber reale Rekordbox-DB- oder Audio-Performance. Aus dem aktiven
-  Baum entfernt; im Git-Commitverlauf wiederherstellbar. Die vier Referenzen
-  in den beiden gespiegelten Skills sind aktualisiert.
-- Zwei ungesammelte Dateien unter `tests/` entfernt:
-  `example_cached_fixture_tests.py` hatte einen nicht registrierten `fast`-Marker
-  und fachlich inkonsistente Beispielerwartungen; `verify_m3u8_logic.py` lief
-  nur als ad-hoc-Skript. Sein Schutz gegen M3U8-Zeileneinschleusung wurde als
-  regulaerer Regressionstest in `tests/test_exporters.py` uebernommen.
-- `.gitignore` schliesst neu SQLite-WAL/SHM/Journal-Nebendateien und
-  kurzlebige `.tmp`/`.temp` aus, damit sie nicht versehentlich versioniert
-  werden. Bereits versionierte Dateien und lokale Daten bleiben unangetastet.
-- Neues Lesewerkzeug: `tools/repo_inventory.py`. Es liest Git-Metadaten und
-  Dateigroessen, zeigt unversionierte/ignorierte Eintraege sowie echte
-  Blob-Duplikate. **Keine Loesch- oder Schreibfunktion.**
+## Erhaltene Bereiche
 
-## Bewusst nicht automatisch geloescht
+Projektquellen und eigene Anweisungen wurden rekursiv geprueft. Der lokale
+Bestand umfasst ausserdem die virtuelle Umgebung, generierte Bytecode-Dateien,
+Testtemporaerdateien, historische Auditlaeufe und Validierungsartefakte.
+Diese werden im Inventar erfasst, nicht als aktuelle Produktanleitung behandelt.
+Ihre Fremd-/Rohinhalte werden nicht umgeschrieben. Originalmusik, DB-/Cache-,
+WAL-/SHM-, Lock-/Coverage-Dateien und Claude-Autopilot-Artefakte sind geschuetzt.
 
-- Gespiegelte Agenten-Skills/Agenten: eigenstaendige Zielpfade fuer Codex und
-  Claude; ihre Gleichheit ist ein gepflegter Vertrag.
-- `openclaw-workspace-state.json`: ein kleiner, getrackter Setupmarker.
-  Die Wirkung des Entfernens auf lokale Agenten muss vor Migration geklaert
-  sein. Keine automatische Loeschung oder Aenderung.
-- Alte Designbilder, HTML-Prototypen, Audits, Handoffs, Trainingsbewertungen,
-  Benutzer-Memory, Testdaten und Vorlagen: Referenzen und Wiederherstellungswert
-  sind vor Loeschung zu bewerten.
-- `tools/manual_test.py` verwendet einen historischen Standardordner
-  `D:\beatport_tracks_2025-08`. Vor Aenderung den tatsaechlich gewuenschten
-  lokalen Standard klaeren; kein Eingriff in Musikordner.
-- Cache-/DB-Dateien, Arbeitslogs, nicht getrackte Builds, virtuelle Umgebungen
-  und alle Originalmusikquellen: niemals blind mit `git clean`, `rmdir`
-  oder `del` entfernen.
+Die drei HTML-Visualisierungen sind am sichtbaren Einstieg als historische
+Entwuerfe gekennzeichnet. Die PNG-Systemkarte ist im aktuellen Flussdokument
+als historische Illustration eingeordnet. Die zwei Sessionnotizen unter
+memory/ sind datierte Quellen, keine aktuellen Ausfuehrungsanweisungen.
+Zurueckgezogene VERITAS-Berichte und deren UNGUELTIG-Kennzeichnung bleiben erhalten.
 
-## Vollstaendige lokale Bestandsaufnahme auf Windows
+## Aktuelle Quellen und Werkzeuge
 
-GitHub kann **keine lokalen unversionierten oder ignorierten Ordner sehen**.
-Ein lokaler Agent kann den folgenden rein lesenden Bericht im bestehenden
-Projektordner ausfuehren:
+- [README](../README.md): Benutzeranleitung und fuenf vorhandene BAT-Einstiege.
+- [Projektwissen](PROJECT_KNOWLEDGE.md): Nutzervertraege und Archivwegweiser.
+- [Bereinigungsbericht](CLEANUP_2026-10-26.md): Schritte, Sicherungen und Grenzen.
+- `tools/repo_inventory.py`: lesender Git-/Dateimetadatenbericht;
+  `--deep-local` erfasst auch lokale ignorierte Unterordner. Bei Verwendung
+  die Ausgabe `truncated` und Fehlerliste pruefen. Die aktuelle Abschluss-
+  erfassung wurde separat ohne Mengenlimit und mit expliziter Windows-
+  Reparse-Erkennung ausgefuehrt; das ist kein Laufzeitnachweis dieses Werkzeugs.
 
-```powershell
-.\venv312\Scripts\python.exe tools\repo_inventory.py --deep-local --json > "$env:TEMP\hpg-repo-inventory.json"
-```
+Die zuvor genannten Bestandszahlen von Commit 63ea758a waren historisch.
+Die GitHub-Bereinigung entfernte benchmark_rekordbox.py und zwei alte
+Testbeispiele; die M3U8-Regression liegt in tests/test_exporters.py.
+Der Bericht vom 04.10. ist extern archiviert, sein damaliges JSON-Manifest
+bleibt datierter Nachweis. Kein Link auf eine nicht mehr vorhandene Anleitung.
 
-Ohne `--json` wird eine kurze Liste ausgegeben. Die Inventar-Funktion
-liest keine Audiodateien, loescht nichts und folgt keinen Dateisystemlinks.
-Ohne `--deep-local` werden ignorierte Verzeichnisse nur gruppiert.
-Mit `--deep-local` werden auch Unterordner rekursiv ueber ihre Dateimetadaten
-inventarisiert (Obergrenze: 100.000 Eintraege, `truncated` im JSON pruefen).
-Dateinamen mit Alter ueber 90 Tage sind ausschliesslich **Pruefkandidaten**.
-Erst nach Sichtung und Sicherung der wertvollen Daten ist eine gezielte
-Bereinigung einzelner lokaler Artefakte vertretbar.
+## Pruefunterlagen
 
-## Gueltige Schutzregeln und Testgrenzen
-
-Die fruehere Bereinigung vom 04.10.2026 ist unter
-`docs/CLEANUP_2026-10-04.md` und
-`docs/cleanup-manifest-2026-10-04.json` dokumentiert.
-Sie wird nicht rueckgaengig gemacht. Musik, Rekordbox-Datenbank, Cache,
-Benutzerbewertungen und bestehende Sicherungen bleiben unveraendert.
-Die GitHub-CI-Gesamtsuite war vor dieser Runde fehlgeschlagen;
-Dokumentations- und Dateiorganisationsarbeit wird nicht als gruene
-Produktions- oder musikalische Abnahme ausgegeben.
+`E:\AI\HPG-cleanup-recovery\2026-10-26-final-audit` enthaelt Inventar,
+Dokumentliste, Originalsicherungen, Aenderungsmanifest und Pruefergebnisse.
+Diese Bestandsaufnahme ist keine Fehlerfreiheits-, Laufzeit- oder Musikabnahme.

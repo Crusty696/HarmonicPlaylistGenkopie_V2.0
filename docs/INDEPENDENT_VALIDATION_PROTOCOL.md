@@ -1,6 +1,12 @@
 # Unabhängiges Validierungs- und DJ-Blindtest-Protokoll
 
-Stand: 2026-07-20
+Methodenentwurf vom 20.07.2026, eingeordnet am 26.10.2026.
+Der Track-Referenzvertrag bleibt ein Sollvertrag, kein ausgefuehrter Nachweis.
+Der unten beschriebene dateibasierte Blindtest ist ein historisches
+Werkzeugformat. Fuer aktuelle HPG-Originaltrack-Hoertests gelten AGENTS.md
+und der source-direct/RAM-Vertrag: keine Originalaudio-Kopien oder
+persistierten Hoerclips erzeugen. Die Beispielbefehle im Blindtestabschnitt
+sind daher keine aktuelle Ausfuehrungsanweisung.
 
 ## Beweisgrenze
 

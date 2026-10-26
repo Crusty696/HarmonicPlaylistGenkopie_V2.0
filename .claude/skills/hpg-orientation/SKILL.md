@@ -50,7 +50,7 @@ main.AnalysisWorker.run              [main.py]
 
 | Thema | Datei | Einstieg |
 |---|---|---|
-| GUI, alle Worker, Panels | `main.py` | `MainWindow.init_ui` |
+| Zentrale GUI, Worker, Panels | `main.py` | `MainWindow.init_ui` |
 | Track-Datenmodell, Camelot, Anker | `hpg_core/models.py` | `class Track` |
 | Audio-Analyse | `hpg_core/analysis.py` | `analyze_track` |
 | Mixpoints, DJ-Empfehlungen | `hpg_core/dj_brain.py` | `calculate_genre_aware_mix_points`, `generate_dj_recommendation`, `calculate_paired_mix_points` |

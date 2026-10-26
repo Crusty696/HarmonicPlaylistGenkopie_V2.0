@@ -59,7 +59,7 @@ Ein erfolgreicher Nulltensor-Smoke-Test beweist keine Audioqualität.
 Rekordbox-EXE-Ausschnitt über einen separaten Einmalprozess ein. Der bestehende
 serielle Cue-Broker beendet vorher seine ONNX/TF-Lane; keine gleichzeitigen
 4-GiB-Modellbudgets. Fast-/Vollpfad teilen diesen Aufruf. `native_phrase_analysis`
-bleibt getrennt von importiertem PSSI; Cache 99 validiert Herkunft und aktive
+bleibt getrennt von importiertem PSSI; der aktuelle Cachevalidator prueft Herkunft und aktive
 `phrase_grid`-Quelle. Native Kandidaten heißen `native_phrase`, erhalten keinen
 PSSI-Konfidenzbonus. PSSI hat Vorrang. Nur technisch bestätigte und nicht
 Takt-gesperrte Grids; bestehende Synchron-/Coverage-Gates bleiben erforderlich.

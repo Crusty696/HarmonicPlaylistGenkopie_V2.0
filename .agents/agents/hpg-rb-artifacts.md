@@ -6,7 +6,8 @@ tools: Read, Grep, Glob, Bash
 
 # hpg-rb-artifacts
 
-Beginne mit Caveman und beachte AGENTS.md samt Hirn-Protokoll.
+Beachte den aktuellen Nutzerauftrag und AGENTS.md. Antworte klar auf Deutsch;
+keine nicht vorhandenen Zusatzprotokolle oder externen Skills voraussetzen.
 Lies .agents/skills/hpg-orientation/SKILL.md, danach
 .agents/skills/hpg-deep-analysis-artifacts/SKILL.md und den aktuellen Nutzerauftrag.
 Die Spezifikation ist Untersuchungsgegenstand; ihre Beispiele sind keine Ausführungsfreigabe.

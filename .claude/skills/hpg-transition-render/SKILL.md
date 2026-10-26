@@ -107,15 +107,12 @@ Renderer aber mit anfassen wuerde.
 
 ## Pegel
 
-Reihenfolge in `render_transition_clip` (seit 2026-08-21 HINTER dem
-Beat-Alignment und `_ensure_len`, nicht mehr direkt nach dem Time-Stretch):
-`_rms_normalize(seg_a, reference=seg_a[:pre_frames])` ->
-`_rms_normalize(seg_b, reference=seg_b[cf_frames:])` ->
-`_apply_lufs_delta(...)` mit LUFS der beiden Solo-Teile.
-Referenz fuer den Gain sind die SOLO-Teile (Vorlauf nur A, Nachlauf nur B),
-nicht das ganze Segment — sonst hebt ein Breakdown in der Blende das ganze
-Segment an und Vorlauf/Nachlauf springen um mehrere dB. Leere/stille/zu
-kurze Referenz (< `MIN_ACTIVE_FRAMES`) faellt auf den Segment-Pfad zurueck.
+Aktuelle Reihenfolge in `render_transition_clip` nach Beat-Alignment und
+Laengenanpassung: `_rms_normalize` fuer die ganzen aktiven Segmente A und B,
+danach `_apply_lufs_delta` mit frisch gemessenen LUFS der bereits
+normalisierten Segmente (`_measure_segment_loudness`). Nach Zusammenbau
+glaettet `_level_mix_loudness` bei aktivem `normalize_rms` den gesamten Mix.
+Die fruehere Beschraenkung auf kurze Solo-Referenzen gilt nicht mehr.
 
 - `normalize_rms` mit `normalize_target_db = -14.0` (dBRMS ueber die aktiven
   Frames, Gain geklemmt auf +12/-20 dB)
@@ -124,7 +121,11 @@ kurze Referenz (< `MIN_ACTIVE_FRAMES`) faellt auf den Segment-Pfad zurueck.
 - Limiter am Ende; auf Channel-Link und `nan_to_num` achten, sonst
   Stereo-Verzug bzw. NaN im Export.
 
-### Gemessener Defekt: LUFS-Delta doppelt gezaehlt (2026-08-14)
+### Historischer Defekt: LUFS-Delta doppelt gezaehlt (2026-08-14)
+
+Der folgende Altbefund beschreibt den damaligen Code. Der aktuelle Aufruf
+misst die Restdifferenz nach Normalisierung wie oben beschrieben; die alten
+Messwerte sind kein Befund des aktuellen Renderers.
 
 `_apply_lufs_delta` bekommt die **Ganztrack**-LUFS. Zu diesem Zeitpunkt hat
 `_rms_normalize` die beiden Segmente aber schon angeglichen — der Lautheits-

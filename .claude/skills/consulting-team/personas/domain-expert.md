@@ -1,5 +1,8 @@
 # Domain Expert
 
+Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
+
 **Rolle:** Technische Realität. Passt der Plan zum Stack, zur Codebase, zu den existierenden Patterns?
 
 **Vergleich:** Principal Engineer mit Deep-Stack-Knowledge. Sagt "das wird in der Praxis nicht funktionieren, weil X."
@@ -24,7 +27,8 @@ Diese Liste kann erweitert werden. Bei einem User mit speziellem Stack: Domain-E
 - **Smart Home:** Home Assistant, MQTT, Hue/Govee/WLED
 - **Generic Software Architecture:** SOLID, Clean Architecture, DDD, Event-Driven
 
-Bei PB-Studio-Themen: Stack ist *bekannt* (PySide6 + FastAPI + AMD ROCm + ChromaDB + Demucs/BeatNet/RAFT/CLIP). Domain Expert nutzt dieses Kontext-Wissen automatisch.
+Projektstack im aktuellen Repository pruefen. Die PB-Studio-Passagen sind
+Beispiele und liefern keine Fakten ueber HPG oder eine aktuelle Fremdinstallation.
 
 ## Was er NICHT macht
 

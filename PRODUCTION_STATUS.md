@@ -1,9 +1,10 @@
 # HPG — Quellen- und Nachweisstand
 
 Abgleich am 26.10.2026 mit dem lokalen Code und den Projektchats.
-Quellstand: `9edc88029b2f85c911367760e2b701989e298210`; App v3.7.2,
-Cache-Version 183 gemäß `hpg_core/caching.py`. Lokale Dokumentänderungen
-sind zusätzlich vorhanden. Dies ist keine Release- oder musikalische Freigabe.
+Ausgangsstand der Abschlusspruefung: `2ca3b64cfd52553b801955815a82fd3d18851dc1`
+nach Integration der GitHub-Commits 196e5b59 und 27cb40b2; App v3.7.2,
+Cache-Version 183 gemäß `hpg_core/caching.py`. Die Dokumentkorrekturen dieser
+Pruefung kommen hinzu. Commit-IDs hier kennzeichnen datierte Belegstaende. Dies ist keine Release- oder musikalische Freigabe.
 
 ## Implementierung laut Code
 
@@ -61,3 +62,27 @@ eine zu genau diesem Stand geprüfte EXE sind weiterhin nicht belegt.
 
 Wächterprüfungen erfolgen auf Anforderung. Fehlende frühere Tore erzeugen
 keine Nachholpflicht. Diese Regel ersetzt keine fachlichen Nachweise.
+
+## Abschlusspruefung der Dokumente und Anweisungen vom 26.10.
+
+Auf dem zusammengefuehrten Stand wurden veraltete Rollen-/Skillvertraege,
+Fixture-Beispiele, Inventar- und Quellenverweise korrigiert. Historische
+Visualisierungen und Sessionnotizen sind explizit eingeordnet.
+
+- 40 Release-Metadaten-/Inventartests bestanden (2,72 s).
+- Der aus 27cb40b2 uebernommene Test test_hearing_apply.py enthielt
+  syntaktisch ungueltige Merge-Reste. Fehler bei pytest-Collection
+  reproduziert; doppelte Fixture-Konstruktion konsolidiert, Assertions und
+  strikte Validatoren erhalten. Danach 128 Apply-/Producer-/Kalibrierungs-
+  Tests bestanden (19,06 s), ausschliesslich isolierte Testdaten.
+- Gesamte Testsammlung ohne Import-/Sammlungsfehler: 6499 gefunden,
+  davon 6453 ausgewaehlt und 46 gemaess pytest.ini abgewaehlt (1,77 s).
+  Collection fuehrt die Testfaelle nicht aus.
+- 318 Python-/Spec-Dateien syntaktisch geprueft; Dokumentlinks und
+  Agentenspiegel ohne verbleibenden Befund im ausgefuehrten Check.
+
+Die 168 gezielten bestandenen Tests sind kein Abschluss-Volltest und
+kein Coverage-Nachweis. Produktlogik und Paketpins blieben unveraendert.
+Keine neue native Audio-, EXE- oder musikalische Abnahme. Die offenen
+Produktnachweise oben werden dadurch nicht nachtraeglich erfuellt.
+Rohbelege und Dateimatrix: E:\AI\HPG-cleanup-recovery\2026-10-26-final-audit.

@@ -28,7 +28,7 @@ Aktuelle Codewegweiser: `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md`.
 
 | Funktion | Skala | Rolle |
 |---|---|---|
-| `calculate_compatibility` [hpg_core/playlist.py] | 0-100 | **reine Harmonik** |
+| `calculate_compatibility` [hpg_core/playlist.py] | 0-100 | Harmonik mit vorgelagertem BPM-Gate |
 | `calculate_enhanced_compatibility` [hpg_core/playlist.py] | `TransitionMetrics` | ausschliesslich ein voll qualifizierter lokaler `PairCandidate` |
 
 Aktuelle oder gecachte KI-Mood-/Subgenre-Metadaten sind nur erklaerende
@@ -158,50 +158,26 @@ Mixpoint-Cues.
 Genre-Prior darf nicht als gemessene Novelty ausgegeben werden. Novelty-Score
 und Ranking-Margin sind Rohwerte, keine Wahrscheinlichkeiten.
 
-## Kandidatenpfad in der App (Teil 4, gebaut 2026-08-22)
+## Kandidatenpfad in der App
 
-Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.
-- `calculate_enhanced_compatibility`: tragen beide Tracks Kandidaten und liegt
-  das Paar im BPM-Gate, liefert `_kandidaten_fuer_paar` (Modul-Cache
-  `_PAIR_CANDIDATE_CACHE`, dauerhaft; `reset_pair_candidate_cache()` wird von
-  `candidate_choices`, `candidate_preferences.reset_cache`, `tolerances.reset_cache`
-  gerufen) die `PairCandidate`s in App-Reihenfolge; Rang 1 traegt
-  `overall_score` (= lokaler `kandidat.score`) und `ai_bonus = 0.0`,
-  `groove/bass/timbre/mood_match` = lokale Teilwerte, neue Felder
-  `loudness_match`, `structure_match`, `kandidat` (Dict). Ohne Kandidaten:
-  heutiger Pfad unveraendert.
-- `compute_transition_recommendations`: nach DJ-Brain, vor Clamp setzt der
-  aktive Kandidat `mix_out_a/mix_in_b/overlap`; `transition_type = "bass_swap"`
-  bei `flags.bass_swap_pflicht`; `TransitionRecommendation.kandidaten` (alle,
-  to_dict), `kandidat_aktiv` (Rang, 0 = keiner) und `kandidat_konsistent`.
-  **Kettenwahl** `_kette_waehlen` (DP ueber die Paare): je Track muss der
-  Mix-Out (Paar i) mindestens zwei Phrasen hinter dem Mix-In (Paar i−1) liegen
-  (Toleranz `QUANTIZE_TOLERANCE_SEC`); maximale Score-Summe, gespeicherte Wahl
-  mit `_WAHL_BONUS` = 10; ohne konsistenten Anschluss Neustart mit
-  `kandidat_konsistent = False`. Der aktive Kandidat ist daher nicht zwingend
-  Rang 1; sichtbare Resultmetriken und Karten-Score folgen dem aktiven
-  Kandidaten der Result-Kette.
-  Messung 2026-08-22 (231 Tracks): Cue-Gate-Verletzungen 73 → 2. **Track-Felder werden nicht
-  mutiert** — die aktive Result-Wahl lebt im Plan; Leser: Preview, Timeline, Tabelle Mix-In/
-  Out (`mixpunkte_fuer_tabelle`), `on_ai_finished`, Export.
-- `rank_pair_candidates`/`select_pair_candidate` (pair_candidates): gespeicherte
-  Wahl (`candidate_choices.hole`) nach vorn, Tiebreak `schema_rang` aus dem
-  Hoertest, `bass_swap_geplant=True` (kein `KICK_KONFLIKT_ABZUG`, Flag bleibt).
-- HPG-001: die Wahl liegt NICHT im `scoring_context`, sondern in der Datei —
-  alle Konsumenten lesen sie auf demselben Weg (Abweichung vom Spec-Wortlaut,
-  benannt im Handoff Teil 4). Sechster Konsument: Kandidatentabelle.
-- Laufzeit: `build_pair_candidates` 3,3 ms Median je Paar (500 Paare, 2026-08-22,
-  nach Optimierung; vorher 8,7 ms) — deshalb Cache + BPM-Gate vor dem
-  Kandidatenpfad; Generierung Harmonic Flow 231 Tracks ~52 s (2 s ohne Kandidaten).
-- Paar-Gates seit Teil 4 zusaetzlich `blende_ueber_b_ende`; `_outro_overlap_limit`
-  rechnet mit `QUANTIZE_TOLERANCE_SEC` Spielraum vor dem Takt-Floor.
-- Messwerkzeug: `tools/playlist_kandidaten_messen.py --cache` (vergleicht den
-  aktiven Ketten-Kandidaten, Kennzahl `kette_neustarts`).
-- App-BPM-Default 2.0 (main.py: Slider, `current_bpm_tolerance`,
-  `AnalysisWorker`, `PlaylistPanel`), GUI-Bereich 1–2. Der Wert ist das Gate
-  fuer einen `TransitionPlan`; eine Nachbarkante ausserhalb des Gates bleibt
-  als `UNGEPLANT` mit Score 0 sichtbar und wird nicht gerendert.
-  `playlist.py`-API-Defaults bleiben 3.0.
+`generate_playlist_result` erzeugt unveraenderliche Kandidatensnapshots und
+haelt die gewaehlten Plaene im Result fest. `_select_snapshot_path` prueft
+die gemeinsame Kette, `_refine_order_with_chain` kann die Reihenfolge daran
+verfeinern. `_kette_waehlen` ist eine Legacy-Sicht auf denselben V6-DP,
+ausdruecklich ohne den frueheren numerischen Wahlbonus.
+
+Die aktive Wahl ist nicht automatisch der lokal erste Kandidat. Sichtbare
+Metriken, Empfehlungen, Preview, Timeline und Export verwenden die aktive
+Result-Kette. Die urspruenglichen Track-Mixpunkte werden nicht mutiert.
+Wahl-/Praeferenz-/Toleranzkontext am jeweiligen Aufrufer pruefen; keine
+historische Beschreibung eines staendig gelesenen Auswahlfiles als
+Ersatz fuer den eingefrorenen Ergebnisvertrag verwenden.
+
+App-BPM-Default 2.0, GUI-Bereich 1 bis 2. Eine Nachbarkante ausserhalb des
+Gates bleibt ungeplant und wird nicht durch einen Renderer-Fallback gerettet.
+API-Defaults am jeweiligen Einstieg lesen; sie sind nicht pauschal identisch.
+Vergangene Laufzeiten aus der alten Kandidatenimplementierung sind keine
+Messung dieser Result-/Verfeinerungskette.
 
 ## Common Mistakes
 

@@ -82,7 +82,7 @@ Kein "definitely" / "definitiv" ohne Beleg in Kategorie 1-4.
 
 Praktisch:
 1. Formuliere die stärkste Form der entgegengesetzten Position (2 Sätze)
-2. Falls diese überzeugender wirkt → das ist ein 🔴 Critical Finding
+2. Falls diese ueberzeugender wirkt: Befund nach konkretem Schaden und Evidenz einstufen, nicht automatisch Critical
 3. Falls nicht → erkläre konkret, *warum* die ursprüngliche Position trotzdem stärker ist
 
 ---
@@ -122,4 +122,4 @@ Nicht: "Tolle Idee!"
 
 Sondern: "Plan ist solide aus 3 Gründen: [A], [B], [C]. Schwächste Stelle ist [X], aber nicht kritisch weil [Y]. Recommendation: GO mit Modifikation [Z]."
 
-Auch ein "GO" Recommendation muss mindestens 1 🟠 High oder 🟡 Medium Finding enthalten — sonst war die Analyse zu oberflächlich.
+Befunde nur mit Evidenz und angemessener Schwere melden; auch kein Befund ist ein gueltiges Ergebnis.
