@@ -20,9 +20,9 @@ Vorbereitung harmonischer DJ-Sets.
 ## Qualitaet
 
 Ein Auftrag ist erst abgeschlossen, wenn die betroffenen Tests erfolgreich
-waren und relevante Invarianten geprueft sind. Bei groesseren Aenderungen
-holt der Hauptagent eine unabhaengige, schreibgeschuetzte Bewertung durch
-`hpg-waechter` ein.
+waren und relevante Invarianten geprueft sind; die Dokumentationsausnahmen
+aus AGENTS.md gelten. Eine unabhaengige, schreibgeschuetzte Bewertung durch
+`hpg-waechter` erfolgt auf Anforderung, ohne obligatorisches Freigabegate.
 
 ## Grenzen
 

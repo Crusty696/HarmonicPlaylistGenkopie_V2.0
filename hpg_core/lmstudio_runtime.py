@@ -119,7 +119,8 @@ def runtime_target(host="127.0.0.1", port=1234):
 def requested_load_config(target):
     # LM Studio 0.4.25+1 uebersetzt Survey-Geraete-IDs selbst durch die
     # visibleDevices- und disabledGpus-Abbildungen. Nicht doppelt umnummerieren.
-    # Quellcodebeleg und Runtime-Grenze: docs/IMPLEMENTATION_2026-10-04.md.
+    # Historischer Quellcodebeleg und Runtime-Grenze: Archivwegweiser
+    # in docs/PROJECT_KNOWLEDGE.md (Implementierungsbericht vom 04.10.).
     if target.get("runtime_version") != "2.51.0":
         raise ValueError("GPU-Indexzuordnung dieser Runtime-Version nicht nachgewiesen; kein Modell geladen")
     visible, ids = target.get("visible_devices", []), target.get("survey_ids", [])

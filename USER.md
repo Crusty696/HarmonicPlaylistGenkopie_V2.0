@@ -9,7 +9,8 @@
 - **Arbeitsstil:** autonom innerhalb des Auftrags, kleinster sinnvoller Scope,
   deutsche Kommentare, echte Tests und eindeutige Abschlussbelege.
 - **Erwartung:** erst analysieren und planen, dann implementieren, testen,
-  Fehler beheben und abschliessend unabhaengig pruefen.
+  Fehler beheben und passend verifizieren; unabhaengiger Waechter auf Anforderung.
+  Aktueller Auftrag und AGENTS.md bestimmen Umfang und Nachweisausnahmen.
 
 ## Freigabegrenzen
 

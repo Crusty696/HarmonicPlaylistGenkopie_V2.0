@@ -1,0 +1,490 @@
+{
+  "date": "2026-10-26",
+  "recovery_root": "E:\\AI\\HPG-cleanup-recovery\\2026-10-26-project-cleanup",
+  "inventory": "inventory-before.json",
+  "source_commit": "9edc88029b2f85c911367760e2b701989e298210",
+  "counts": {
+    "update": 57,
+    "archive": 10,
+    "create": 1
+  },
+  "note": "Manifest selbst von Hashliste ausgenommen; vorhandene fremde Aenderungen siehe git-status-before.txt",
+  "entries": [
+    {
+      "path": "docs/PROJECT_KNOWLEDGE.md",
+      "action": "update",
+      "reason": "Veraltete Cache-/Statuschronik durch aktuelle Codewegweiser und erhaltene Chatentscheidungen ersetzen",
+      "before_sha256": "5bafa4beeda51ec532720a1d1f8215d39e8aa2edf467b3547253136ce0d6fc56",
+      "after_sha256": "f05c485857322e65eefa0e963bb7b5b60697c59f45b26b7ad7ba8c20c0c60306"
+    },
+    {
+      "path": "PRODUCTION_STATUS.md",
+      "action": "update",
+      "reason": "Statuskopf auf aktuellen Quellstand bringen, alte Laufbelege datieren und offene Fehler erhalten",
+      "before_sha256": "15984b6728a5542d2be01ea5fd2d093b672995f40ecbf4006bdcdafb0e117dbc",
+      "after_sha256": "f48d700439821d045cf21387d85242c2a284c494a4177cd35f9a67516fdf311e"
+    },
+    {
+      "path": "specs/AGENT_EXECUTION_INSTRUCTIONS.md",
+      "action": "update",
+      "reason": "Historische Installations- und Cache53-Routine durch geltenden Arbeitsvertrag ersetzen",
+      "before_sha256": "f977a35bad599cdb34e5403189c6c482dec9a0d0444f4755ea8f266ef089d0e5",
+      "after_sha256": "92dbf1175b757c8fe829f19941c9918a19bd961f72a69eadf069055abf1ce193"
+    },
+    {
+      "path": "specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md",
+      "action": "update",
+      "reason": "Neueste Chatuebergabe vor historische Implementierungsphasen stellen; vorhandene fremde Inhalte bewahren",
+      "before_sha256": "be5e9f70698ee33ac2f55eddefe150727b6924872610647fd11f7fab13409a44",
+      "after_sha256": "593f0f602132cce3145c172159add926245df27df272794ccafdcb0dea7ce890"
+    },
+    {
+      "path": "MEMORY.md",
+      "action": "update",
+      "reason": "Aufgehobene Waechterpflicht in Projektleitlinie korrigieren",
+      "before_sha256": "efb7ec8c63d0f744d09e95b9b2f4527dad17c4e92fd92ed7854cba6e49b031b3",
+      "after_sha256": "6abc9e4bb2afa8d2543afc79b19d01b4074c1e9c382b694b2524495c26b3b9ec"
+    },
+    {
+      "path": "OPENCLAW_HPG_SETUP.md",
+      "action": "update",
+      "reason": "Ungepruefte Runtime-/Modellangaben und Pflichtdelegation entfernen",
+      "before_sha256": "e33208f457b95c57e33cad57b8dd12672cd38dbcfc579b94333c3d2419c7ddb9",
+      "after_sha256": "55649538df818ae5407a0aa24adbcbb7314307dbbcf717d51599c2574f13d203"
+    },
+    {
+      "path": "docs/IMPLEMENTATION_2026-10-04.md",
+      "action": "update",
+      "reason": "Historische Belege erhalten, entfernte Handoffs und alte Prozesspflichten richtig einordnen",
+      "before_sha256": "cef996cfb23d248b8550a981220b64a396eab64fb633fd0d92ea6b2d5a35bfed",
+      "after_sha256": "712417068cc197e8a735d8cc59362f9b4063507ac3c908d8bd3241c88cea3862"
+    },
+    {
+      "path": "docs/HOERTEST_NATIVE_2026-10-04.md",
+      "action": "update",
+      "reason": "Historische Belege erhalten, entfernte Handoffs und alte Prozesspflichten richtig einordnen",
+      "before_sha256": "4c333e2d3b4cf9105aa3efb209fdba6db3eccbae87ea0ed9707afdfccb9f2e40",
+      "after_sha256": "79179e385a0eab4093e4172e60a82c087337f849772e8f218fe6e33230feaa03"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-04-sammlung-training.md",
+      "action": "update",
+      "reason": "Historische Belege erhalten, entfernte Handoffs und alte Prozesspflichten richtig einordnen",
+      "before_sha256": "e5e185cdebe8520cb178e7e0c5354abe75835c617084eb530b6ea117df2b0750",
+      "after_sha256": "a1c4832aa749daeee220bbca6fde01a7adda4a7cbd9fae534c60cfe79c768447"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md",
+      "action": "update",
+      "reason": "Historische Belege erhalten, entfernte Handoffs und alte Prozesspflichten richtig einordnen",
+      "before_sha256": "29c64cfb5b1392a0c490659c84a1c313a1d1e2a1602fa104b4542999b92df43d",
+      "after_sha256": "581bf6bb463ea3f5b6343fea251cd31fe68bbb492641f9cf09678d246c78d380"
+    },
+    {
+      "path": "docs/qualitaet/JOURNAL.md",
+      "action": "update",
+      "reason": "Historische Belege erhalten, entfernte Handoffs und alte Prozesspflichten richtig einordnen",
+      "before_sha256": "a84e019bf19b33ca1ba00b18b93bad6f23d067d001e56c5f285a4b055a8facaf",
+      "after_sha256": "584fb484e8899b0b00c20487f2cdc4fa1d4e2423cdf272104cf20807b42d7e21"
+    },
+    {
+      "path": "verify_fixes.py",
+      "action": "archive",
+      "reason": "Historische Welle-1-Reproduktion mit fremdem Linux-Pfad; Szenarien und Original extern erhalten",
+      "before_sha256": "e922c7c57a84a205fa52033285a399bcb07d510549679d3aac85f5aa45b0423d",
+      "after_sha256": null
+    },
+    {
+      "path": "verify_wave2.py",
+      "action": "archive",
+      "reason": "Historische Welle-2-Reproduktion; keine aktuelle Regression oder CI-Einbindung, Original erhalten",
+      "before_sha256": "bf658e773f1dc51277385995cb1b8b1c48c67d72cd7d0203b887c456e8de3234",
+      "after_sha256": null
+    },
+    {
+      "path": "verify_wave4.py",
+      "action": "archive",
+      "reason": "Historische Welle-4-Reproduktion; aktuelle Renderer-Tests bleiben unveraendert, Original erhalten",
+      "before_sha256": "5663d4baea234fbe9c15ed0eb6102d04f9ec818abb0342db9ef5ed4a36e1a13f",
+      "after_sha256": null
+    },
+    {
+      "path": "benchmark_rekordbox.py",
+      "action": "archive",
+      "reason": "Mikrobenchmark mit Mock-DB und String-Records ist kein echter Rekordbox-Lauf",
+      "before_sha256": "72d0c5fbed96350945571305935cf38e246c5351b7815b9663422f303ebb5e36",
+      "after_sha256": null
+    },
+    {
+      "path": "docs/status_audit_2026-08-27/C_mixpoints.md",
+      "action": "archive",
+      "reason": "Historische lokale Auditkopie; Erkenntnisse im Projektwissen, Original unveraendert gesichert",
+      "before_sha256": "c2662013607732d28d1455e3f470066808c7a30568a50a1ff82426e93fcdf691",
+      "after_sha256": null
+    },
+    {
+      "path": "docs/status_audit_2026-08-27/E_persistenz_infra.md",
+      "action": "archive",
+      "reason": "Historische lokale Auditkopie; Erkenntnisse im Projektwissen, Original unveraendert gesichert",
+      "before_sha256": "acbc6670315dadf81cb17fe803289460e9e4530e7c976102d3e2f709416788df",
+      "after_sha256": null
+    },
+    {
+      "path": "docs/status_audit_2026-08-27/H_tests_tools_build_doku.md",
+      "action": "archive",
+      "reason": "Historische lokale Auditkopie mit ueberholten Zahlen/Pfaden; Original unveraendert gesichert",
+      "before_sha256": "cbf29deb89af84127d2f3a9d8fd4c062769e3913cd9fe5ba476c542f443db52c",
+      "after_sha256": null
+    },
+    {
+      "path": ".superpowers/sdd/2026-09-27-hoertest-werkzeuge-in-app/plan-path",
+      "action": "archive",
+      "reason": "Veralteter Sessionzeiger, kein aktiver Auftrag; zugehoeriger historischer Plan bleibt erhalten",
+      "before_sha256": "aea579141cfb522450540de9654c7dce3f93a2dfb3b8e4bca7d2c29e67895998",
+      "after_sha256": null
+    },
+    {
+      "path": ".superpowers/sdd/2026-09-27-hoertest-werkzeuge-in-app/progress.md",
+      "action": "archive",
+      "reason": "Veralteter Sessionfortschritt ohne aktuellen Auftrag; Original gesichert",
+      "before_sha256": "0d0a386eaf08f9b79b3c4eaf1a7d737c9a139bb5de58192a3917a6238deb4d15",
+      "after_sha256": null
+    },
+    {
+      "path": ".superpowers/sdd/2026-09-27-hoertest-werkzeuge-in-app/task-1-brief.md",
+      "action": "archive",
+      "reason": "Veralteter Teilauftrag; keine automatische Wiederaufnahme, Original gesichert",
+      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after_sha256": null
+    },
+    {
+      "path": ".agents/skills/hpg-audit-optimize/SKILL.md",
+      "action": "update",
+      "reason": "Aufgehobene Pflichtgates aus beiden aktiven Skillspiegeln entfernen",
+      "before_sha256": "aada24244155898bb5697ef8b4913dc77d3d60986915c5920fd271538f47a9fe",
+      "after_sha256": "c330f945a50edc71a340be22231ccdb9dfc53aafd95bd4419b5841a383b51357"
+    },
+    {
+      "path": ".claude/skills/hpg-audit-optimize/SKILL.md",
+      "action": "update",
+      "reason": "Aufgehobene Pflichtgates aus beiden aktiven Skillspiegeln entfernen",
+      "before_sha256": "aada24244155898bb5697ef8b4913dc77d3d60986915c5920fd271538f47a9fe",
+      "after_sha256": "c330f945a50edc71a340be22231ccdb9dfc53aafd95bd4419b5841a383b51357"
+    },
+    {
+      "path": ".agents/skills/hpg-deep-analysis/SKILL.md",
+      "action": "update",
+      "reason": "Optionalen Review und aktuelle native Pipeline einordnen",
+      "before_sha256": "94e9a04b129373b891781a60a03a10ef2aa120eee7c6e951162efee550530ca1",
+      "after_sha256": "19ddb9e530d81dae81db59bad8030598bd95962134f59a0887809f4cfd082735"
+    },
+    {
+      "path": ".claude/skills/hpg-deep-analysis/SKILL.md",
+      "action": "update",
+      "reason": "Optionalen Review und aktuelle native Pipeline einordnen",
+      "before_sha256": "94e9a04b129373b891781a60a03a10ef2aa120eee7c6e951162efee550530ca1",
+      "after_sha256": "19ddb9e530d81dae81db59bad8030598bd95962134f59a0887809f4cfd082735"
+    },
+    {
+      "path": ".agents/skills/hpg-cache-persistence/SKILL.md",
+      "action": "update",
+      "reason": "Feste veraltete Cacheversion entfernen und nativen Provenienzvertrag verlinken",
+      "before_sha256": "8185e507008d2374686be161b4fe0d3643899c9befca97f96f9c964f02f4dc71",
+      "after_sha256": "7a685ce536b7a012d8a721a22a9f9661e54d7c0e156e2b7accb55f42f3274134"
+    },
+    {
+      "path": ".claude/skills/hpg-cache-persistence/SKILL.md",
+      "action": "update",
+      "reason": "Feste veraltete Cacheversion entfernen und nativen Provenienzvertrag verlinken",
+      "before_sha256": "8185e507008d2374686be161b4fe0d3643899c9befca97f96f9c964f02f4dc71",
+      "after_sha256": "7a685ce536b7a012d8a721a22a9f9661e54d7c0e156e2b7accb55f42f3274134"
+    },
+    {
+      "path": ".agents/skills/hpg-orientation/SKILL.md",
+      "action": "update",
+      "reason": "Orientierung auf native Pipeline und unveraenderliches Playlist-Ergebnis aktualisieren",
+      "before_sha256": "8fe85e945517527068a348ac47850acd97dd511e9844714942e4dde5c36f7b03",
+      "after_sha256": "42663ca156a745ef41bd46c496a7653fd2e41a9e2942e59b53ebd3cc31ba5532"
+    },
+    {
+      "path": ".claude/skills/hpg-orientation/SKILL.md",
+      "action": "update",
+      "reason": "Orientierung auf native Pipeline und unveraenderliches Playlist-Ergebnis aktualisieren",
+      "before_sha256": "8fe85e945517527068a348ac47850acd97dd511e9844714942e4dde5c36f7b03",
+      "after_sha256": "42663ca156a745ef41bd46c496a7653fd2e41a9e2942e59b53ebd3cc31ba5532"
+    },
+    {
+      "path": ".agents/skills/hpg-audio-analysis/SKILL.md",
+      "action": "update",
+      "reason": "Native Analyse von begrenzten DSP-Fenstern und historischen Speedangaben trennen",
+      "before_sha256": "e392178adf6e9e29e93762b3539dc0e6f6a4a63863ccf2f7bce242b63f12276c",
+      "after_sha256": "12af0dacfd3498cb6e83db12c21aa6be12ce6d4b9d9eb70349143b395a91064d"
+    },
+    {
+      "path": ".claude/skills/hpg-audio-analysis/SKILL.md",
+      "action": "update",
+      "reason": "Native Analyse von begrenzten DSP-Fenstern und historischen Speedangaben trennen",
+      "before_sha256": "e392178adf6e9e29e93762b3539dc0e6f6a4a63863ccf2f7bce242b63f12276c",
+      "after_sha256": "12af0dacfd3498cb6e83db12c21aa6be12ce6d4b9d9eb70349143b395a91064d"
+    },
+    {
+      "path": ".agents/skills/hpg-transition-render/SKILL.md",
+      "action": "update",
+      "reason": "Aktuelles Stretchverfahren und native Taktphasenfreigabe statt alter Confidence-Heuristik",
+      "before_sha256": "9036cb7592ae7a1d82b398bd48b1b8eb7bde82d0c9910b529b5ed7ace75d2a79",
+      "after_sha256": "84cc6c4f129c732c8bd4d0906172e3eccb49e66cc836e8034f9cc5e35ca5d0f7"
+    },
+    {
+      "path": ".claude/skills/hpg-transition-render/SKILL.md",
+      "action": "update",
+      "reason": "Aktuelles Stretchverfahren und native Taktphasenfreigabe statt alter Confidence-Heuristik",
+      "before_sha256": "9036cb7592ae7a1d82b398bd48b1b8eb7bde82d0c9910b529b5ed7ace75d2a79",
+      "after_sha256": "84cc6c4f129c732c8bd4d0906172e3eccb49e66cc836e8034f9cc5e35ca5d0f7"
+    },
+    {
+      "path": ".agents/skills/hpg-testing-verification/SKILL.md",
+      "action": "update",
+      "reason": "Archivierte Skripte austragen und Testausnahmen ohne widerspruechliche Pflichtschleifen formulieren; Unbelegte pauschale xdist-Coverage-Einschraenkung entfernen",
+      "before_sha256": "0b606c244b73332e1d8526c82ef9c409bad9a8a97bfbdca14ee5ad9bf881690b",
+      "after_sha256": "fc6c391211248951d2bc75da16ee9593c8092f1212155887472554056622c05f"
+    },
+    {
+      "path": ".claude/skills/hpg-testing-verification/SKILL.md",
+      "action": "update",
+      "reason": "Archivierte Skripte austragen und Testausnahmen ohne widerspruechliche Pflichtschleifen formulieren; Unbelegte pauschale xdist-Coverage-Einschraenkung entfernen",
+      "before_sha256": "0b606c244b73332e1d8526c82ef9c409bad9a8a97bfbdca14ee5ad9bf881690b",
+      "after_sha256": "fc6c391211248951d2bc75da16ee9593c8092f1212155887472554056622c05f"
+    },
+    {
+      "path": ".agents/skills/hpg-parallel-performance/SKILL.md",
+      "action": "update",
+      "reason": "Archivierten Mockbenchmark nicht mehr als Messweg empfehlen",
+      "before_sha256": "d82ccf0d7ad56ca9ba52c95b6403b26f18cc61f612b9b92d200e1583e94cec8b",
+      "after_sha256": "8ef8be47105af58fc29bd66af6132bd995925ab1b6357c4dcb0319c3253a0f2f"
+    },
+    {
+      "path": ".claude/skills/hpg-parallel-performance/SKILL.md",
+      "action": "update",
+      "reason": "Archivierten Mockbenchmark nicht mehr als Messweg empfehlen",
+      "before_sha256": "d82ccf0d7ad56ca9ba52c95b6403b26f18cc61f612b9b92d200e1583e94cec8b",
+      "after_sha256": "8ef8be47105af58fc29bd66af6132bd995925ab1b6357c4dcb0319c3253a0f2f"
+    },
+    {
+      "path": ".agents/skills/hpg-rekordbox/SKILL.md",
+      "action": "update",
+      "reason": "Veralteten Testzaehler und falschen DB-Benchmark-Verweis entfernen",
+      "before_sha256": "c6b8777ba6e8fd56f9499da8903c52d0f0d3a9949343775318d2579058a6a642",
+      "after_sha256": "4e0c564be59f9ae6f235535b747009c2c155787d02c027996a35fddb0fe7c0bf"
+    },
+    {
+      "path": ".claude/skills/hpg-rekordbox/SKILL.md",
+      "action": "update",
+      "reason": "Veralteten Testzaehler und falschen DB-Benchmark-Verweis entfernen",
+      "before_sha256": "c6b8777ba6e8fd56f9499da8903c52d0f0d3a9949343775318d2579058a6a642",
+      "after_sha256": "4e0c564be59f9ae6f235535b747009c2c155787d02c027996a35fddb0fe7c0bf"
+    },
+    {
+      "path": ".agents/skills/hpg-release-build/SKILL.md",
+      "action": "update",
+      "reason": "Releasebeschreibung mit aktuellem CI-Artefaktvertrag abgleichen; Vor-Build-Funktionsnachweise und tatsaechliche Metadatentestabdeckung korrigieren",
+      "before_sha256": "f9991a5ab5d49fda3d2bc8bd28792cb98960da457cfe83be8d2e2be72a533e10",
+      "after_sha256": "ab1d94870a56ccb851bfa8c5f210c2da8fa7a89bcdcc7208f37c8a6c1742d51e"
+    },
+    {
+      "path": ".claude/skills/hpg-release-build/SKILL.md",
+      "action": "update",
+      "reason": "Releasebeschreibung mit aktuellem CI-Artefaktvertrag abgleichen; Vor-Build-Funktionsnachweise und tatsaechliche Metadatentestabdeckung korrigieren",
+      "before_sha256": "f9991a5ab5d49fda3d2bc8bd28792cb98960da457cfe83be8d2e2be72a533e10",
+      "after_sha256": "ab1d94870a56ccb851bfa8c5f210c2da8fa7a89bcdcc7208f37c8a6c1742d51e"
+    },
+    {
+      "path": ".agents/agents/hpg-render.md",
+      "action": "update",
+      "reason": "Fachrolle auf native Pipeline und aktuelle Rendererfreigabe ergaenzen",
+      "before_sha256": "9149a3fbce02b61e3edac1069322725da3398caeeaeff421cbbd69881e82f593",
+      "after_sha256": "b388f2e764384a9225220ddaa6b48d5ea7683baeeeea9a679a372dad5549fdc1"
+    },
+    {
+      "path": ".claude/agents/hpg-render.md",
+      "action": "update",
+      "reason": "Fachrolle auf native Pipeline und aktuelle Rendererfreigabe ergaenzen",
+      "before_sha256": "9149a3fbce02b61e3edac1069322725da3398caeeaeff421cbbd69881e82f593",
+      "after_sha256": "b388f2e764384a9225220ddaa6b48d5ea7683baeeeea9a679a372dad5549fdc1"
+    },
+    {
+      "path": ".agents/agents/hpg-analyse.md",
+      "action": "update",
+      "reason": "Fachrolle auf native Pipeline und aktuelle Rendererfreigabe ergaenzen",
+      "before_sha256": "b5e297c70a9d59b19b3c3a8d447da1f93a0bcea448548b5821b1b4bfd04483e0",
+      "after_sha256": "407525284d19f999e8f538c07cb878549469ecbefa6aee5c69e5c60e3730c64d"
+    },
+    {
+      "path": ".claude/agents/hpg-analyse.md",
+      "action": "update",
+      "reason": "Fachrolle auf native Pipeline und aktuelle Rendererfreigabe ergaenzen",
+      "before_sha256": "b5e297c70a9d59b19b3c3a8d447da1f93a0bcea448548b5821b1b4bfd04483e0",
+      "after_sha256": "407525284d19f999e8f538c07cb878549469ecbefa6aee5c69e5c60e3730c64d"
+    },
+    {
+      "path": ".codex/agents/hpg-analyse.toml",
+      "action": "update",
+      "reason": "Codex-Rollentext aus aktueller Markdown-Fachrolle synchronisieren, keine Runtimeaenderung; Mehrzeiliger lesbarer TOML-Text, semantisch identisch",
+      "before_sha256": "2029f233a2ba634e4990a8ada5b3f3b52cc64bacf49cd5a913a2683d238ff01e",
+      "after_sha256": "12f94db3bb1ec89c2059bf5607631ada6d0bd732f763226acf369a7eed69134f"
+    },
+    {
+      "path": ".codex/agents/hpg-rekordbox.toml",
+      "action": "update",
+      "reason": "Codex-Rollentext aus aktueller Markdown-Fachrolle synchronisieren, keine Runtimeaenderung; Mehrzeiliger lesbarer TOML-Text, semantisch identisch",
+      "before_sha256": "c5aca13884aeb7565464b8adb78446333b4b833a5abdd0b25f5c628ac76ac6b5",
+      "after_sha256": "c5655abfa508e2497b2daa334d51d23016a7a2186d8c6b99edd954972e625d15"
+    },
+    {
+      "path": ".codex/agents/hpg-render.toml",
+      "action": "update",
+      "reason": "Codex-Rollentext aus aktueller Markdown-Fachrolle synchronisieren, keine Runtimeaenderung; Mehrzeiliger lesbarer TOML-Text, semantisch identisch",
+      "before_sha256": "94bb2aa5d1a6eedb0ea54af980def7773cead00ee214978bb11901a6051694f7",
+      "after_sha256": "8ca0d4b4ce987697faa6f8c8d68900eb1c4ab95482c6364258525b392adf6f32"
+    },
+    {
+      "path": ".codex/agents/hpg-waechter.toml",
+      "action": "update",
+      "reason": "Codex-Rollentext aus aktueller Markdown-Fachrolle synchronisieren, keine Runtimeaenderung; Mehrzeiliger lesbarer TOML-Text, semantisch identisch",
+      "before_sha256": "07053a3df0695490c7778a7869aa16b6fa48a0b0d99e36d6fbbd5d7758ce764e",
+      "after_sha256": "d32ae7a0a86903dad54cb85f83d5cfd50e2ed9098b1f4a019d9ece65a98c6464"
+    },
+    {
+      "path": "README.md",
+      "action": "update",
+      "reason": "README ohne veraltete Release-/Qualitaetsbehauptungen an aktuelle Quellen anbinden",
+      "before_sha256": "f7ed8562307388159fb661a38525cc97af333e6e2d8a1a24521ae29ba5281f13",
+      "after_sha256": "7cb34b44eed9f574d9fdd27d63a8307a922b7abe7afc5810d53549929eece703"
+    },
+    {
+      "path": "PRODUCTION_README.md",
+      "action": "update",
+      "reason": "Doppelte veraltete Installations-/Workflowanleitung auf kanonische Quellen reduzieren",
+      "before_sha256": "cbb12dbfa21a450d903e768af06c507cfabbca7de81099818dc1dbbc94297599",
+      "after_sha256": "0d2a601e180d9a35d82b80a748e1b203a9d26aae886af848f163bb54269bd121"
+    },
+    {
+      "path": "docs/QUICK_START.txt",
+      "action": "update",
+      "reason": "Veraltete Volltestzahlen, falsche Intro/Outro-Regel und pauschale Nutzungsfreigabe entfernen",
+      "before_sha256": "fc422c10ce7f85c7f7bfa7112844c822e36c08e5e173b6a4f76a18e87322bdfb",
+      "after_sha256": "2c03a69e3eab8b3c4c6c073de30464663303c0ef9c604238f720d37921cc1fc7"
+    },
+    {
+      "path": "docs/PLAYLIST_ALGORITHMEN_ERKLAERUNG.md",
+      "action": "update",
+      "reason": "Veraltete Parameterzahlen und illustrative Pseudofunktionen durch aktuelle reale Einstiegspunkte ersetzen",
+      "before_sha256": "4141c62e3b76abea7138cd0685f338ace5c5a8bdcffa1cdfa3271886076bce75",
+      "after_sha256": "273a9fa1af02cb6562734a79cf853ba3fd7d3f25471ea69d6624adc559f7ca33"
+    },
+    {
+      "path": "docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md",
+      "action": "update",
+      "reason": "Unstimmige Datierung und veralteten Ablauf auf aktuellen Kettenvertrag aktualisieren",
+      "before_sha256": "b2b98a9c0f7d7d481401d4856b1bc50b1b5183eb8c589e802bc77c9aba9227a7",
+      "after_sha256": "eb958dad333a5eced1dd7c8faac39d6c4d8f154f7b59268e59d23c57b6bd5d88"
+    },
+    {
+      "path": "AI_README.md",
+      "action": "update",
+      "reason": "LLM-Konfigurationswerte gegen aktuellen config.py bestaetigt",
+      "before_sha256": "fc00fc270aa3e2b13e4b6a5d33c8dfbdf3a33ff2676e42030ac6b9b48969b5a9",
+      "after_sha256": "5b094e0d0192690f151d523110a59d160781b25cee2d0ebb3974560da6bed9c0"
+    },
+    {
+      "path": "SOUL.md",
+      "action": "update",
+      "reason": "Optionalen Review auch im OpenClaw-Identitaetsvertrag angleichen",
+      "before_sha256": "395c7811b920190bc8b0f061f6accca5586382430aa1e6e8f733e74bd3457f2a",
+      "after_sha256": "87e50259327d234918e893c6af6fc1f5b45c82eac2282453f2f0bb9bf48f8cd7"
+    },
+    {
+      "path": "USER.md",
+      "action": "update",
+      "reason": "Nutzerkontext an ausdruecklich aufgehobene Pflichtreviews angleichen",
+      "before_sha256": "00f1d92017149304b4ab6d3e6c2acfd3b4de3934a88ebbbd9933de746d85fc24",
+      "after_sha256": "7c719d2364671d5670a960ef4d653e16ba2cb046484ed5e14164d544018c5248"
+    },
+    {
+      "path": ".agents/skills/hpg-mixpoint-engineering/SKILL.md",
+      "action": "update",
+      "reason": "Veraltete Dreifachbedingung durch aktuellen Track.phrase_anchor-Vertrag ersetzen",
+      "before_sha256": "f912295e7ad1befb982e7af1f7bd72e5173ec2dd226717d6334f30eea7d52829",
+      "after_sha256": "c796a86c93875219471568fba816575b571d0e3054fa3231334e0967734d92a9"
+    },
+    {
+      "path": ".claude/skills/hpg-mixpoint-engineering/SKILL.md",
+      "action": "update",
+      "reason": "Veraltete Dreifachbedingung durch aktuellen Track.phrase_anchor-Vertrag ersetzen",
+      "before_sha256": "f912295e7ad1befb982e7af1f7bd72e5173ec2dd226717d6334f30eea7d52829",
+      "after_sha256": "c796a86c93875219471568fba816575b571d0e3054fa3231334e0967734d92a9"
+    },
+    {
+      "path": ".agents/skills/hpg-playlist-scoring/SKILL.md",
+      "action": "update",
+      "reason": "Aktuellen gemeinsamen Ergebnis- und Kettenverfeinerungsvertrag ergaenzen",
+      "before_sha256": "1d9776aa5998af559719714e62abe24edad2c01a62c9d13b5bb76a5356661941",
+      "after_sha256": "3ff7645c1145671c4e8dc7ebd4950de6eac30dfe4d59cf4dcab25de4e0cd600b"
+    },
+    {
+      "path": ".claude/skills/hpg-playlist-scoring/SKILL.md",
+      "action": "update",
+      "reason": "Aktuellen gemeinsamen Ergebnis- und Kettenverfeinerungsvertrag ergaenzen",
+      "before_sha256": "1d9776aa5998af559719714e62abe24edad2c01a62c9d13b5bb76a5356661941",
+      "after_sha256": "3ff7645c1145671c4e8dc7ebd4950de6eac30dfe4d59cf4dcab25de4e0cd600b"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md",
+      "action": "update",
+      "reason": "Alte Designs erhalten und von aktuellen Arbeitsauftraegen trennen",
+      "before_sha256": "c884eefdb1f61051d4cdf3cbb25cdf302560b74c7b4e6f2569b34c9f7be29b69",
+      "after_sha256": "217642cd26fda5315ebd79b0ef6046fc6b6a34d67ae24b347df231507bc65fa7"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-19-groove-bass-timbre-scoring-design.md",
+      "action": "update",
+      "reason": "Alte Designs erhalten und von aktuellen Arbeitsauftraegen trennen",
+      "before_sha256": "42f7cc951bf96ef9353a979172b95934d17a192557fda3d4203e0bad859acd5b",
+      "after_sha256": "832bee3d311cfd2135ec81721b12287002be36cf9b7bda80e8f735b0d5119690"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-03-11-mix-point-intro-outro-guard-design.md",
+      "action": "update",
+      "reason": "Alte Designs erhalten und von aktuellen Arbeitsauftraegen trennen",
+      "before_sha256": "936694244a97c74b05cdc12e8b82001d3066d3f5c85eba2d9215a768b63a7fdc",
+      "after_sha256": "621e4f059e5b689414fda9c5eeb1c187fc96450572010b16ba5386f7606db941"
+    },
+    {
+      "path": "manual_test.bat",
+      "action": "update",
+      "reason": "Veralteten Musikordner nicht als aktuellen Bestand ausgeben; Aufrufverhalten erhalten",
+      "before_sha256": "17865f8c06f4c297964c85c3a32ab9bbbf707a648f10909015ea4012ee9878a9",
+      "after_sha256": "73f9b5becf96f74ba79d6d327e1bc2f0c8370d25413bfdc5ebf5c4b96f7fbb07"
+    },
+    {
+      "path": "TOOLS.md",
+      "action": "update",
+      "reason": "Direkte Audio-Testaufforderung durch quellgebundenen isolierten Werkzeugvertrag ersetzen",
+      "before_sha256": "fad1c9962c314e523af6b03a19b73b36339ea20120c7d3e665072a2a1cb2917d",
+      "after_sha256": "cbf8e1f664e64969bd7440b3d7399412b9d9eefe02a789e37d862759e5553143"
+    },
+    {
+      "path": "HEARTBEAT.md",
+      "action": "update",
+      "reason": "Fehlerhaften doppelten Erinnerungstext als begrenzte Projektleitlinie formulieren",
+      "before_sha256": "a0746283380d6b298bd8db5866b66d76ed877f072916c2dd14bf66227ca79c7f",
+      "after_sha256": "13116d8fe58b07802e93374258e9ee341eb1f6b8100766ec9d6b3aaf739d8696"
+    },
+    {
+      "path": "docs/CLEANUP_2026-10-26.md",
+      "action": "create",
+      "reason": "Nachvollziehbarer Bereinigungsnachweis mit Umfang, Sicherung, Tests und Grenzen",
+      "before_sha256": null,
+      "after_sha256": "13def230d2ae3ede61cdd45a9c977a235125eac0e41b323629eff04960e7b27a"
+    }
+  ]
+}

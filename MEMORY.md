@@ -75,9 +75,9 @@ Referenzen. Vor einer solchen Verwendung die vorhandenen Inhalte pruefen.
 
 ## Betriebswissen
 
-- Vor und nach nichttrivialen Aenderungen prueft `hpg-waechter` unabhaengig
-  und schreibgeschuetzt. Nur mit `DURCHGEWUNKEN` abschliessen; Auflagen zuerst
-  erledigen.
+- `hpg-waechter` prueft auf Anforderung unabhaengig und schreibgeschuetzt.
+  Kein obligatorisches Vorab-/Commitgate und keine Nachholpflicht fuer alte Tore.
+  Fachliche Befunde und geltende Nachweisregeln bleiben zu beachten.
 - In Memory gehoeren nur stabile, wiederverwendbare Fakten, Entscheidungen und
   bewaehrte Reparaturwege. Keine Zugangsdaten, personenbezogenen Details oder
   fluechtigen Debug-Ausgaben speichern.

@@ -1,164 +1,140 @@
 # Harmonic Playlist Generator (HPG) v3.7.2
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.12.1+](https://img.shields.io/badge/python-3.12.1+-blue.svg)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)]()
+Windows-App auf Basis von PyQt6 zur Vorbereitung harmonischer DJ-Sets.
+HPG analysiert ausgewählte Musik, bewertet Trackpaarungen und Mixpunkte,
+erstellt eine Playlist und macht geplante Übergänge als Vorschau hörbar.
+Die Ergebnisse lassen sich als M3U8 oder Rekordbox-XML exportieren.
 
-> **DJ tool for harmonic playlist preparation**
+Quellenabgleich: 26.10.2026. **Der Entwicklungsstand besitzt keine vollständige
+Produkt- oder musikalische Abnahme.** Offene Fehler, Testresultate und datierte
+App-Belege stehen im [Quellen- und Nachweisstand](PRODUCTION_STATUS.md).
 
-Aktueller Quellenwegweiser: [Projektwissen](docs/PROJECT_KNOWLEDGE.md).
-Datierte Tests sind keine automatische Freigabe spaeterer Builds.
+## Start aus dem Projekt
 
----
+Voraussetzung: Python 3.12.1+ innerhalb der 3.12-Serie und die vorhandene
+Projektumgebung `venv312`. Keine automatische Installation durch diese Anleitung.
 
-## Download
-
-### Windows Standalone Executable
-
-**Latest Release: v3.7.2**
-
-[**DOWNLOAD HarmonicPlaylistGenerator.exe**](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/releases/latest/download/HarmonicPlaylistGenerator.exe)
-
-**No installation required - Just download and run!**
-
----
-
-## Features
-
-### Audio Analysis
-- **BPM Detection**: Precise tempo detection via librosa or Rekordbox
-- **Musical Key & Camelot Code**: Harmonic key detection with Camelot wheel
-- **Energy Analysis**: RMS energy calculation for dynamic playlist progression
-- **Bass Intensity**: 20-200Hz band extraction for genre-specific sorting
-- **Genre Classification**: Rule-based genre detection from audio features
-- **Structure Analysis**: Track section detection (Intro, Breakdown, Drop, Outro)
-- **DJ Brain**: Genre-specific mix point calculation with phrase alignment
-- **Mix Points**: Intelligent intro/outro detection for seamless transitions
-- **ID3 Metadata**: Artist, Title, Genre, Album extraction via mutagen
-- **Rekordbox Import**: Optional fast import from Rekordbox 6/7 database
-
-### Playlist Strategies
-8 sorting strategies:
-
-1. **Harmonic Flow** - Greedy harmonic compatibility (Camelot wheel)
-2. **Warm-Up** - Ascending BPM progression
-3. **Cool-Down** - Descending BPM progression
-4. **Peak-Time** - Adjustable peak placement with harmonic smoothing
-5. **Energy Wave** - Alternating high/low energy pattern
-6. **Genre Flow** - Genre clustering with smooth transitions
-7. **Consistent** - Minimal BPM/energy jumps with harmonic preference
-8. **Context Flow** - Phase-aware energy, trend and genre-fatigue objective
-
-### Optional local LLM enrichment
-
-Ollama or LM Studio can optionally add validated Mood/Subgenre metadata after the deterministic playlist is ready. This feature is disabled by default, does not analyze audio, and is not required for playlist generation.
-
-### Performance
-- **Scales automatically** with CPU capabilities (up to 50% of cores, capped at 4 worker processes — `config.PARALLEL_AUTO_MAX_WORKERS`)
-- Thread-safe caching with file-locking for parallel processing
-
-### Export
-- **M3U8 Playlist** - Universal compatibility (Rekordbox, Serato, Traktor, iTunes)
-- **Rekordbox XML** - Professional DJ format with full metadata (BPM, Key, Genre)
-
----
-
-## Installation (Developers)
-
-### Prerequisites
-- Python 3.12.1+ — 3.12.x only, **not** 3.13+ (numba). 3.12.10 tested.
-- Windows 10/11
-
-### Setup
-
-```bash
-git clone https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0.git
-cd HarmonicPlaylistGenkopie_V2.0
-pip install -r requirements.txt
-python main.py
+```bat
+venv312\Scripts\python.exe main.py
 ```
 
-Rekordbox integration is optional at runtime. The full developer requirements
-include its package; a lean installation can omit that line from
-`requirements.txt` and the app will continue with the librosa path:
-```bash
-pip install pyrekordbox
+Alternativ `Start.bat` verwenden. Neue Umgebungen werden mit Python 3.12
+angelegt und den Pins in [requirements.txt](requirements.txt) entsprechend
+eingerichtet; Installationen benötigen im Agentenauftrag eine ausdrückliche Freigabe.
+
+## Arbeitsablauf
+
+1. Musikordner auswählen; Originaldateien bleiben am Quellort.
+2. Analysieren oder passende vorhandene Analysen wiederverwenden. Frische
+   Analyse und Cache-Nutzung sind unterschiedliche Abläufe.
+3. Strategie und Toleranzen wählen, Playlist erzeugen.
+4. Geplante Übergänge, Messdiagnosen und hörbare Vorschauen in der App prüfen.
+   Nicht jedes Nachbarpaar besitzt automatisch einen zulässigen Übergang.
+5. Playlist und freigegebene Mixpunktdaten exportieren.
+
+## Analyse und Vorschau
+
+- Tempo, Tonart/Camelot, Energie, Lautheit, Groove, Bass und Klangmerkmale.
+- Native Beat-/Takt-/Phrasenanalyse mit geprüfter Herkunft und Audio-Rasterprüfung;
+  DSP-Merkmalsfenster und optionale Rekordbox-Metadaten ergänzen den Ablauf.
+- Lokale Mixpunkt-Kandidaten und gemeinsame Kettenwahl für benachbarte Tracks.
+- Ein gemeinsames `PlaylistGenerationResult` mit `TransitionPlan`-Daten für
+  Oberfläche, Vorschau und Export.
+- Tempoanpassung der Vorschau über das vorhandene Pedalboard; strikte
+  Kick-/Beat-Synchronprüfung bleibt erhalten.
+- Optionale LLM-Metadaten über LM Studio/Ollama sind standardmäßig deaktiviert.
+  Dieser Text-LLM-Pfad hört kein Audio; native Audioanalyse ist davon getrennt.
+
+Technische Freigabe einer nativen Taktposition ist keine unabhängige musikalische
+Bestätigung. Interne Scores sind keine Wahrscheinlichkeiten für einen guten Mix.
+
+## Optionale lokale LLM-Metadaten
+
+Die KI-Auswahl ist beim GUI-Start deaktiviert. Die Voreinstellungen in
+`hpg_core/config.py` sind LM Studio, `granite-4.0-h-tiny`, maximal 400 Tokens
+und 120 Sekunden Timeout (Quellenabgleich 26.10.2026). Diese Einstellungen
+beweisen weder einen laufenden Server noch lokale Modellverfügbarkeit.
+Providerstart und Antwortverarbeitung stehen in `hpg_core/ai_launcher.py`
+und `hpg_core/ai_engine.py`. Der [Datenvertrag](docs/DATA_AND_VALIDATION_CONTRACT.md)
+trennt Metadaten von Audioanalyse und musikalischer Qualität.
+
+## Starter und Entwicklungswerkzeuge
+
+| Datei | Zweck |
+|---|---|
+| `Start.bat` | App aus der Projektumgebung starten |
+| `build.bat` | EXE bauen; auch von CI verwendet |
+| `build_installer.bat` | Installer aus der vorhandenen EXE bauen; auch von CI verwendet |
+| `Start_Hoertest.bat` | optionaler separater Hörtest-Manager |
+| `manual_test.bat` | optionaler technischer Einzeltrack-Bericht; aktuellen Quellordner mit `--folder` angeben und Testcache isolieren |
+
+Die beiden Zusatzstarter sind für den normalen App-Start nicht erforderlich.
+Der native Hörtest verwendet Quellreferenzen und RAM-Wiedergabe. Kein
+Kopieren von Originalmusik und keine musikalische Abnahme allein durch Qt-Laden.
+
+## Strategien
+
+8 sorting strategies — kanonische Namen aus `hpg_core/playlist.py::STRATEGIES`:
+
+| Strategie | Zielrichtung |
+|---|---|
+| Harmonic Flow | harmonische Paarungen und nutzbare Übergangskette |
+| Warm-Up | steigendes Tempo |
+| Cool-Down | fallendes Tempo |
+| Peak-Time | Verlauf mit einstellbarer Peak-Position |
+| Energy Wave | wechselnder Energieverlauf |
+| Genre Flow | Genregruppen und passende Verbindungen |
+| Consistent | geringe Tempo-/Energiesprünge |
+| Context Flow | Energieziel, Verlauf und Genrekontext |
+
+Details: [Playlist-Entscheidungen und Mixpunkte](docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md).
+
+## Formate und native Voraussetzungen
+
+Die Dateiauswahl wird durch `SUPPORTED_AUDIO_EXTENSIONS` in `hpg_core/config.py`
+festgelegt: WAV/WAVE, AIFF/AIF, MP3, FLAC/FLA, MP4/M4A/AAC, OGG und WMA.
+Eine akzeptierte Endung garantiert keinen erfolgreichen Decoder für jede Datei.
+Die nativen Rekordbox-Factorys besitzen einen engeren, separat geprüften Vertrag
+in `hpg_core/ai_models/native_audio_reader.py`; OGG/WMA gehören nicht zu dieser
+Factoryliste. Modell-/DLL-Artefakte müssen zur geprüften lokalen Umgebung passen.
+
+## Quellen finden
+
+| Bereich | Quelle |
+|---|---|
+| GUI und Worker | `main.py` |
+| Analyse und Datenmodell | `hpg_core/analysis.py`, `models.py` |
+| Native Modelle, Reader und Prozesse | `hpg_core/ai_models/` |
+| Persistenz und Cacheversion | `hpg_core/caching.py` |
+| Playlist und Mixpunktbewertung | `playlist.py`, `pair_candidates.py`, `dj_brain.py` in `hpg_core/` |
+| Vorschau | `hpg_core/transition_renderer.py`, `preview_stretch.py` |
+| Export | `hpg_core/exporters/` |
+| Prüfungen und Hilfswerkzeuge | `tests/`, `tools/` |
+| Arbeitsregeln und Fachskills | `AGENTS.md`, `.agents/skills/` |
+
+[Projektwissen](docs/PROJECT_KNOWLEDGE.md) enthält erhaltene Entscheidungen.
+[Jüngste fachliche Übergabe](docs/CHAT_UEBERGABE_2026-10-20.md) enthält die offenen
+Deep-Sky-/W- und Gesamtplaylist-Fragen. Historische Aufträge nicht automatisch starten.
+
+## Tests und Builds
+
+Der Abschluss-Volltest für entsprechende Produktänderungen lautet:
+
+```bat
+venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 ```
 
----
+`pytest.ini` bestimmt Parallelisierung und Coverage. Vorhandene gültige Belege
+wiederverwenden; Dokumentationsausnahmen und Schutzregeln stehen in AGENTS.md.
+Testzustände isolieren, Produktivcache und vorhandene Coverage-Dateien erhalten.
 
-## Project Structure
+`build.bat`, `HPG.spec` und `build_installer.bat` beschreiben die Buildwege.
+Ein Build erfolgt erst nach Funktionsnachweisen und im beauftragten Umfang.
+Die vorhandene EXE ist durch ihre bloße Existenz nicht diesem Quellstand zugeordnet;
+Abnahme benötigt absoluten EXE-Pfad, SHA-256 und ausgeführten EXE-Nachweis.
 
-```
-HarmonicPlaylistGenkopie_V2.0/
-├── main.py                          # PyQt6 GUI application
-├── Start.bat                        # App-Starter (Doppelklick)
-├── hpg_core/                        # Core analysis modules
-│   ├── analysis.py                  # Audio analysis engine
-│   ├── caching.py                   # Cache with file-locking
-│   ├── config.py                    # Configurable constants
-│   ├── dj_brain.py                  # Genre-specific mix logic
-│   ├── genre_classifier.py          # Rule-based genre detection
-│   ├── models.py                    # Track data model & Camelot map
-│   ├── parallel_analyzer.py         # Multi-core processing
-│   ├── playlist.py                  # Playlist generation algorithms
-│   ├── rekordbox_importer.py        # Rekordbox integration
-│   ├── structure_analyzer.py        # Track structure detection
-│   └── exporters/                   # Export modules
-│       ├── base_exporter.py
-│       ├── m3u8_exporter.py
-│       └── rekordbox_xml_exporter.py
-├── tests/                           # pytest unit/integration suite
-├── requirements.txt                 # Python dependencies
-├── pytest.ini                       # Test configuration
-├── build.bat                        # Build standalone .exe
-├── build_installer.bat              # Build Windows installer
-├── HPG.spec                         # PyInstaller spec
-├── installer.iss                    # Inno Setup script
-├── icon.ico                         # Application icon
-├── version_info.txt                 # Windows version info
-├── LICENSE                          # MIT License
-└── README.md                        # This file
-```
+## Lizenz
 
----
-
-## Running Tests
-
-```bash
-pytest
-```
-
----
-
-## Building from Source
-
-### Standalone Executable (Windows)
-
-```bash
-build.bat
-```
-
-### Windows Installer
-
-Requires [Inno Setup 6](https://jrsoftware.org/isdl.php):
-
-```bash
-build.bat
-build_installer.bat
-```
-
----
-
-## Supported Audio Formats
-
-- **MP3** - Via librosa
-- **WAV** - Native, fastest
-- **FLAC** - Free Lossless Audio Codec
-- **AIFF** - Audio Interchange File Format
-
----
-
-## License
-
-MIT License - See [LICENSE](LICENSE) for details.
+[MIT License](LICENSE). Veröffentlichungen und deren zugehörige Belege sind im
+[Repository](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0) zu prüfen;
+diese lokale Quellenpflege bestätigt keine aktuelle Online-Releaseversion.

@@ -5,20 +5,15 @@ description: Use when running or writing HPG tests, or before claiming HPG work 
 
 # HPG Testing & Verification
 
-## Der Befehl
-
-```bat
-.\venv312\Scripts\python.exe -m pytest tests/ --no-cov -q
-```
-
-**Nur `venv312`.** Python 3.12.10, weil numba (librosa-Stack) kein 3.13+ kann.
-System-Python liefert numba-Fehler, die wie Code-Bugs aussehen.
-
-Volllauf mit Coverage (langsamer, aber das ist das echte Gate):
+## Projektinterpreter und Abschlussbefehl
 
 ```bat
 .\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 ```
+
+Python 3.12 gemäß `hpg_core/app_metadata.py`, kein System-Python oder 3.13+.
+Gezielte Entwicklungstests dürfen `--no-cov` verwenden; sie sind kein Volltest.
+Ausnahmen für reine Dokumentation und gültige vorhandene Belege stehen in AGENTS.md.
 
 ## Nachweise wiederverwenden
 
@@ -34,8 +29,9 @@ Quellenwegweiser: docs/PROJECT_KNOWLEDGE.md.
 `--strict-markers --strict-config -ra --durations=10 --cov=hpg_core --cov=main
 --cov-fail-under=70 -n auto`
 
-- `-n auto` (xdist) ist Standard. Fuer korrekte Coverage-Messung deaktivieren
-  (`tools/check_coverage.py` macht genau das).
+- `-n auto` (xdist) ist der Standard aus pytest.ini, auch fuer den
+  Abschlusslauf. `tools/check_coverage.py` ist ein gesonderter serieller
+  Diagnoseweg; dessen abweichende Auswahl und Optionen getrennt ausweisen.
 - `error::UserWarning:hpg_core.*` — eine `UserWarning` aus `hpg_core` ist ein
   **Testfehler**, kein Rauschen.
 - `--no-cov` nur fuer schnelle Einzellaeufe waehrend der Entwicklung, nie als
@@ -66,9 +62,6 @@ Tests duerfen nie die Produktiv-DB anfassen. `HPG_CACHE_FILE` bzw.
 
 | Skript | Prueft |
 |---|---|
-| `verify_fixes.py` | Welle-1-Audit-Szenarien (Mixpoint-Grenzen) |
-| `verify_wave2.py` | Welle-2-Szenarien |
-| `verify_wave4.py` | Welle-4-Szenarien, u. a. EQ-Mittelpunkt-Pegel |
 | `e2e_check.py` | echtes Audio: Analyse zu Playlist zu Empfehlungen zu Render, mit Invarianten (Peak, Pegel, Grid) |
 | `tools/check_coverage.py` | Coverage ohne xdist |
 | `tools/validation_run.py` | reale Library gegen Ground Truth |
@@ -77,13 +70,22 @@ Tests duerfen nie die Produktiv-DB anfassen. `HPG_CACHE_FILE` bzw.
 | `tools/prepare_dj_blind_test.py` | anonymisierte A/B-Clips fuer Hoertests |
 | `tools/release_manifest.py` | SHA256 + Commit, verweigert dirty Worktree |
 
+Die historischen Welle-1/2/4-Einmalskripte wurden am 26.10. extern gesichert.
+Aktuelle Regressionen liegen in `tests/`, unter anderem Mixpoint-, BPM-,
+Kompatibilitaets- und Renderer-Tests; keine vollstaendige Gleichwertigkeit behaupten.
+
 `e2e_check.py` sucht Audio unter `tests/`, `validation/` und
 `HPG_TEST_AUDIO_DIR`. Ohne echte Dateien laeuft es ins Leere — das ist kein
 Erfolg.
 
 Hilfsskripte aus `tools/` muessen den Parent-Pfad zu `sys.path` haengen.
 
-## Hoertest Kandidatenmodus (Teil 3, gebaut 2026-08-22)
+## Historischer Hoertest-Kandidatenmodus (Teil 3, 2026-08-22)
+
+Die folgende Beschreibung ist ein Altformat, keine aktuelle Handlungsanweisung.
+Heute Quellreferenzen, RAM-Wiedergabe und `hpg_core/hearing_*` sowie die aktuelle
+CLI pruefen. Keine Audio-Kopien/persistierten Clips aus dieser Altbeschreibung
+erzeugen. Fuer aktuelle offene App-Nachweise die Uebergabe vom 20.10. lesen.
 
 Spec Abschnitt 3; Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.
 - `tools/rate_transitions.py prepare --modus kandidaten --anzahl N --out <Satz>`:
@@ -124,16 +126,14 @@ Spec Abschnitt 3; Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.
   HPG-K-Cues) auf echten Cache-Daten: `tools/e2e_kandidaten_app.py --out <Ordner>`
   (schreibt Wahl/Regler nur in Dateien unter --out). Ersetzt nicht das Hoeren.
 
-## Was "fertig" heisst
+## Was ein Abschluss belegt
 
-1. Volle Suite gruen, Zahl **selbst gesehen**
-2. Coverage-Gate 70 % gehalten
-3. bei DSP-/Analyse-Aenderungen: `e2e_check.py` auf echtem Audio
-4. bei geaendertem Analyse-Output: `CACHE_VERSION` gebumpt
-   (Skill `hpg-cache-persistence`)
-5. keine neue `UserWarning` aus `hpg_core`
-
-Ohne Punkt 1 gibt es keine Erfolgsmeldung — auch nicht "sollte gruen sein".
+Den Nachweisumfang vor dem Lauf aus dem Auftrag und AGENTS.md ableiten.
+Bei Produktänderungen gelten Abschluss-Volltest und Coverage-Gate sowie die
+betroffenen nativen Abläufe; bei reiner Dokumentation gelten die dortigen Ausnahmen.
+Gezielte Nachtests getrennt vom Volltest nennen. Ein fehlgeschlagener Volltest
+bleibt fehlgeschlagen. Syntaxprüfung oder grüne Tests sind keine musikalische Abnahme.
+Frische Originaltrack-Analyse, Cache-Reuse, App-Nutzung und Hörurteil einzeln berichten.
 
 ## Common Mistakes
 

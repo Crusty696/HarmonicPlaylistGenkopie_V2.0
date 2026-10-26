@@ -10,7 +10,7 @@ description: Use when working on HPG audio analysis — librosa loading, BPM/Key
 `analysis.analyze_track(file_path) -> Track | None` [hpg_core/analysis.py] ist die
 **einzige** oeffentliche Analyse-Funktion. Sie macht Limits, Cache, Decode,
 Features, Struktur und Mixpoints in einem Zug. Rueckgabe `None` heisst
-"uebersprungen" — nie eine Exception nach oben.
+"uebersprungen"; ungueltige Aufrufparameter koennen dagegen Exceptions ausloesen.
 
 `analyze_track(file_path, *, cache_policy="reuse")` und
 `ParallelAnalyzer.analyze_files(..., cache_policy="reuse")` akzeptieren
@@ -25,17 +25,27 @@ Policies sind Aufruffehler und werfen `ValueError`.
 | | Fast-Path | Voll-Path |
 |---|---|---|
 | Bedingung | `rekordbox_data and rekordbox_data.bpm` | sonst |
-| BPM/Key | aus Rekordbox-DB, `key_confidence = 1.0` | BPM aus ID3-/AIFF-Tag mit Audio-Faktorpruefung, sonst librosa; Key aus Chroma |
+| BPM/Key-Basis | Rekordbox-Metadaten | Tag-BPM mit Audio-Faktorpruefung oder DSP; Key aus Chroma |
+| Native Uebernahme | `_prepare_native_beats` und `analyze_track_phrases` | dieselben nativen Vertraege |
 | Decode | `LIBROSA_FAST_PATH_DURATION = 360` s | `LIBROSA_MAX_DURATION = 600` s |
-| Speed | ~12x schneller | Referenz |
+| Geschwindigkeit | laufabhaengig, separat messen | laufabhaengig, separat messen |
 
 Beide muenden in dieselbe Struktur-/Mixpoint-Kette. **Wer einen Pfad aendert,
 muss den anderen mitaendern** — historisch die haeufigste Fehlerquelle
 (Fast-Path-Einrueckungsbug liess Tracks ohne Key still verschwinden).
 
-## Der Decode-Deckel ist der wichtigste Fakt
+## Native Analyse und DSP-Fenster
 
-`y` deckt **nie** den ganzen Track ab. Ein 12-Minuten-Track wird bei 600 s
+Native Analyse ist in beiden Pfaden angebunden und kann nach bestandenen
+Vertraegen Tempo/Anker liefern. Quellgebundene native Snapshots koennen
+wiederverwendet werden; Audioausrichtung und Konfiguration erneut validieren.
+Native Reader-Factorys und Modellfenster stehen in `hpg_core/ai_models/`.
+Die folgenden Decode-Grenzen betreffen die librosa-Merkmalsfenster, nicht
+pauschal alle nativen Analyseergebnisse oder die vollstaendige LUFS-Messung.
+
+## DSP-Decode-Deckel
+
+`y` deckt bei langen Tracks nur das begrenzte DSP-Fenster ab. Ein 12-Minuten-Track wird bei 600 s
 abgeschnitten. Damit Outro und Mix-Out trotzdem echt sind, gibt es ein
 **zweites Fenster**:
 
@@ -94,7 +104,13 @@ dann ist die gecachte HPSS wirklich die desselben Signals.
 Fuer das Tail-Fenster wird bewusst ein **eigener** `FeatureCache(tail_audio,
 sr)` gebaut — Head-Matrizen passen nicht auf Tail-Samples.
 
-## Anker-Kette (Reihenfolge zwingend)
+## Anker-Kette
+
+Aktueller Einstieg: `_prepare_native_beats` und `_resolve_track_anchor` in
+`analysis.py`. Native Uebernahme und ihre Provenienz sind zusaetzlich zur
+unten beschriebenen DSP-/Referenz-Arbitration zu beachten. Native Taktposition
+ist mit verifiziertem nativen Grid nutzbar, bleibt aber unabhaengig musikalisch
+unbestaetigt; Details im Projektwissen und aktuellen Verbraucher-Code.
 
 ```
 Genre -> phrase_unit (GENRE_PHRASE_UNITS, bei schwacher Phrase durch Novelty-Messung ersetzbar)

@@ -1,3 +1,14 @@
+# Wiederverwendbare Erkenntnisse
 
+Nutzerleitlinie: Aus abgeschlossenen Arbeiten wiederverwendbare Erkenntnisse
+ableiten, anhand geeigneter Quellen prüfen und gezielt in die Projektquellen
+übernehmen. Umfang und Thema sollen zur tatsächlich ausgeführten Arbeit passen.
 
-NAch jeder session  achst du ein Learning das du später und jeder anderer zeit wieder verwenden und einsetzten kannst und dieses wissen prüfst du gegen mit renommierten und nachweislich korrekten quellen  seicherst das ergebnis abb und wertestes aus . danach auf basis dieser erkenntnisse verbesserst oder gleichst den agenten und  die Kerndateien  an und verbssterst in soe in allen bereichen imer wieder ein kleines bischien  nicht an allen stelllen zur gleichen zeit oder auch  gleichviel das kammt imer individuel auf die mänge und die themen die in der session bearbeitet worden sind. das selbe auch mit den skills und anderen Tool 
+Maßgeblich bleiben der aktuelle Auftrag und AGENTS.md. Für Implementierungs-
+aussagen den Code, für Laufzeitaussagen datierte Rohbelege prüfen. Erkenntnisse
+im bestehenden `docs/PROJECT_KNOWLEDGE.md` konsolidieren; keine parallelen
+Statuskopien oder unbegründeten automatischen Promotions erzeugen.
+
+Diese Datei ist kein neuer periodischer Auftrag, keine Erlaubnis für
+unbeauftragte Systemänderungen und keine Freigabe zur Wiederholung alter Läufe.
+Externe Agentengedächtnisse nur auf ausdrücklichen aktuellen Nutzerauftrag ändern.

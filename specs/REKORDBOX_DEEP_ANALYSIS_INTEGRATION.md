@@ -1,5 +1,18 @@
 # Rekordbox Deep Analysis und Taktzuverlaessigkeit – integrierter Implementierungsplan
 
+> **Quellenabgleich 26.10.2026:** Der aktuelle Code nutzt Cache-Version 183.
+> Neuester fachlicher Chatstand: [Übergabe vom 20.10.](../docs/CHAT_UEBERGABE_2026-10-20.md).
+> Aktuelle Zusammenfassung: [Quellen- und Nachweisstand](../PRODUCTION_STATUS.md).
+> Die folgenden Phasen, Codebeispiele und Einträge bis 16.10. sind historischer
+> Verlauf. Insbesondere Cache109, WAV/AIFF-only, alte Installationsschritte und
+> frühere TOR-Auflagen sind keine heutigen Vorgaben. Native Codec-Factorys,
+> Snapshot-Wiederverwendung und Pedalboard-Stretch sind inzwischen erweitert.
+> Offene Deep-Sky-Provenienz, Gesamtplaylist-Lücken, fehlgeschlagener Volltest
+> und ausstehende musikalische Abnahme bleiben ausdrücklich offen.
+> Aktueller Auftrag und AGENTS.md gehen alten Fortsetzungsbefehlen vor.
+
+## Historischer Plan und datierte Umsetzung bis 16.10.2026
+
 > **Stand 16.10.2026: Umsetzung beauftragt und technisch integriert; keine vollständige Produkt- oder musikalische Abnahme.** Der folgende Vorbereitungstext ist historisch. Aktuelle Nachweise und Grenzen stehen am Dokumentende. Nutzerauftrag umfasst inzwischen native Beat-/Takt-/Phrasenverarbeitung, Stems, Embeddings und Produktanbindung. Keine Stem-Wiederholung, keine Wiederholung gültiger Tests und kein EXE-Build vor Funktionsnachweisen.
 > Diese Fassung fuehrt den urspruenglichen Plan aus diesem Dokument mit der laufenden Takt-/Downbeat-Diagnose zusammen. Der Plan verbindet die Taktkorrektur mit der verbindlichen Integration von Rekordbox-Analyse, ONNX/DirectML, neuronalen Phrasen, Stems und Audio-Embeddings. Produktcode, Cache und EXE wurden fuer diese Planrevision nicht geaendert.
 >
@@ -76,7 +89,7 @@ Der Nutzer hat inzwischen die vollständige funktionale Umsetzung autorisiert.
 Priorität 1 ist der Analyse-/Rekordbox-Umbau; Playlistverbesserung und zuverlässige
 Hörproben-Erstellung/Bewertung gehören zum Gesamtziel. Der frühere Status
 „Vorbereitung“ beschreibt den vorherigen Arbeitsschritt, nicht die aktuelle Freigabe.
-Zusätzlicher Ausführungsvertrag: `AGENT_EXECUTION_INSTRUCTIONS.md`.
+Ausführungsvertrag: `AGENTS.md` im Projektroot und `.agents/skills/hpg-deep-analysis/SKILL.md`; die frühere separate Regeldatei wurde konsolidiert.
 
 **Aktuelle Nutzerpriorisierung (14.10.2026, nach Statusbericht):** Stems und
 Embeddings werden für die erste Ausbaustufe zurückgestellt, sofern sie keine
@@ -1289,8 +1302,31 @@ TOR1 wurde auf ausdrücklichen Nutzerwunsch auf den Abschluss verschoben;
 eine historische Vorabfreigabe wird nicht nachträglich behauptet.
 
 Nachprüfung: beide Erstbefunde behoben; kein konkretes Risiko im geprüften
-Commitumfang. Bericht: docs/WAECHTER_CACHE109_2026-10-16.md. Urteil MIT AUFLAGEN
+Commitumfang. Bericht: Cache109-Wächterbericht im externen Archiv; Zuordnung in docs/PROJECT_KNOWLEDGE.md, Abschnitt Historisches Archiv. Urteil MIT AUFLAGEN
 wegen fehlendem TOR1 nach Nutzeraufschub. Der Formularvalidator meldet nur
 dieses fehlende TOR1-Urteil; keine formal vollständige Wächterfreigabe behauptet.
 Der aktuelle Nutzerauftrag autorisiert Commit und Push des Entwicklungsstands.
 Musikalische Abnahme, Gesamtfreigabe und EXE bleiben davon getrennt offen.
+
+### Fortsetzung 16.10.2026: Codecgrenze und Prozessstatus
+
+Der aktuelle Readercode (`hpg_core/ai_models/native_audio_reader.py`) nimmt
+`.wav`, `.aif` und `.aiff` an; für diese Dateien sind Rekordbox-Dateistream,
+Decoder und Resampler angebunden. Er initialisiert keine externen
+Rekordbox-Codecplugins. In der installierten Rekordbox-Umgebung wurde
+`libmpg123.dll` samt Decoder-Strings/Exportnamen beobachtet. Das belegt weder
+den Rekordbox-Aufrufvertrag noch Decoderparameter, Speicherlayout, Lifecycle
+oder samplegenaue Gleichheit. Daher ist keine MP3-/FLAC-/AAC-Anbindung daraus
+abgeleitet und kein Readercode dafür geändert.
+
+Die für Callsite-/ABI-Rekonstruktion vorgesehene REA-Analyse konnte in dieser
+Umgebung keinen geeigneten Disassembler-Provider starten (Ghidra/JDK nicht
+konfiguriert; Hopper auf diesem Windows-System nicht unterstützt). Dieser
+Forschungsstand ist der konkrete nächste Engpass für weitere native Codecformate;
+die vorhandene WAV/AIFF-Unterstützung bleibt davon unabhängig. Die alte Aussage
+oben, eine Wächter-Abschlussprüfung sei noch erforderlich, ist historisch und
+durch die spätere Nutzeranweisung zur Entfernung beider Tore überholt.
+
+In diesem Fortsetzungsschritt wurden nur Auftragstext und Statusdatei aktualisiert.
+Keine Tests, Builds, Stem-Läufe oder Audioanalysen ausgeführt. Kein neuer
+Funktions- oder musikalischer Nachweis.

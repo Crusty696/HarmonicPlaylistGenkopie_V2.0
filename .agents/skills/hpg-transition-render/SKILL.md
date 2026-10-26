@@ -43,7 +43,10 @@ negative Frame-Zahlen und einen `sosfiltfilt`-Crash.
 
 ## Time-Stretch — Semantik merken
 
-`librosa.effects.time_stretch`: **rate > 1.0 = schneller.**
+`hpg_core.preview_stretch.stretch` verwendet das vorhandene Pedalboard:
+**rate > 1.0 = schneller.** Gemischter Transientenmodus, langes FFT-Fenster,
+Phasenkontinuitaet und Kanalpegel-Normalisierung mit Rueckskalierung stehen im
+Helper. Keine Rueckkehr zur alten librosa-Stretch-Annahme ohne neuen Nachweis.
 
 ```python
 rate = spec.bpm_a / target_bpm_b     # B wird auf A gezogen
@@ -59,34 +62,17 @@ derselben Semantik — wer `rate` aendert, muss sie mitdenken.
 `first_downbeat_a/b` kommen aus der Analyse. `0.0` ist dabei ein **legitimer**
 Anker (Track startet auf der "1"), kein "unbekannt".
 
-**Zwei getrennte Zuverlaessigkeiten (Stand 2026-08-14):**
+Der aktuelle Vertrag steht in `TransitionClipSpec.from_plan`:
 
-- `downbeat_reliable_*` = `downbeat_confidence >= DOWNBEAT_RELIABLE_MIN` (0.30).
-  Erlaubt **Beat**-Phasen-Alignment auch fuer die Eigenschaetzung. Die Schwelle
-  ist an 35 Tracks mit ANLZ-Ground-Truth kalibriert: alle Verletzer der
-  1/8-Beat-Grenze liegen bei <= 0.241, der schlechteste Zugelassene bei 0.391.
-- `bar_phase_reliable_*` = `downbeat_confidence == 1.0`, also ausschliesslich
-  Rekordbox-Beatgrid. Nur damit ist **Takt**-Alignment erlaubt.
-
-Der Split ist gemessen noetig: die Eigenschaetzung trifft die Beat-Phase gut
-(0 von 12 ueber 1/8 Beat), die TAKT-Phase lag aber bei 4 von 12 um ganze Beats
-  daneben — und die Konfidenz trennt das nicht. Die Renderer-Taktphase braucht
-  deshalb weiterhin das Rekordbox-Referenzgrid.
-
-Bei einer schema-v5-validierten `candidate_rotation` bleibt
-`downbeat_reliable_*` aus dem belegten Beat-Raster ableitbar, waehrend
-`bar_phase_reliable_*` erzwungen `False` ist. Die Renderer-Sperre betrifft
-nur Takt-1-Alignment; `strict_beat_sync` und Beat-Alignment bleiben bestehen.
-
-Ein Version-78-`model_audio_rotation`-Anker kann die Beatphase fuer den
-Renderer liefern, bleibt aber Audioherkunft. Er setzt
-`bar_phase_reliable_*` nicht frei: die Modell-/Audio-Bestaetigung korrigiert
-den Analyseanker, ist jedoch keine unabhaengige musikalische Ground Truth fuer
-Takt-1-Alignment. `strict_beat_sync` bleibt aktiv.
-
-Ohne verlaesslichen Anker schaetzt `_estimate_first_beat` [hpg_core/transition_renderer.py] aus dem
-Segment. Die eigene Downbeat-Schaetzung ist fuer sample-genaues Alignment zu
-ungenau (30-380 ms Phasenfehler) und wird hier bewusst nicht verwendet.
+- Beatphase: verifiziertes Rekordbox-Referenzgrid, verifiziertes natives Grid
+  oder ein nutzbarer Audioanker mit ausreichender Messkonfidenz.
+- Taktphase: verifiziertes natives Grid oder ein Referenzgrid mit
+  `reference_bar_position_verified`; `bar_position_usage_blocked` sperrt weiter.
+- `native_candidate` ist nach Nutzerfreigabe nutzbar, aber keine unabhängige
+  musikalische Bestätigung. Native Herkunft wird mit `has_verified_grid` geprüft.
+- Eine alte Audio-Modellrotation allein gibt keine Renderer-Taktphase frei.
+- `strict_beat_sync` und die 6-ms-Prüfung bleiben erhalten. RAM-Render, Qt-Laden
+  und musikalisches Anhören sind unterschiedliche Nachweise.
 
 ## Uebergangstypen
 

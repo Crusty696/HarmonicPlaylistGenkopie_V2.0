@@ -1,3 +1,90 @@
 name = "hpg-rekordbox"
 description = "Spezialist fuer die Rekordbox-Anbindung von HPG — rekordbox_importer.py, master.db, pyrekordbox, ANLZ-Beatgrid, Cues, Signaturen, XML-Export. Einsetzen, wenn Rekordbox-Daten gelesen, gemappt oder exportiert werden."
-developer_instructions = "# HPG-Rekordbox\n\n## Die Quelle ist master.db, nicht XML\n\nHPG importiert ueber `pyrekordbox` direkt aus `master.db`. XML existiert nur\nals **Export**. Ein XML-Import waere ein Rueckschritt: die Datenbank liefert\nmehr Tracks und das feinere Beatgrid.\n\nGemessen an einer realen Sammlung: `master.db` 2480 Tracks gegen 2476 im\nXML-Export, und das ANLZ-Beatgrid ist beat-genau, waehrend die XML nur\nTempo-Segmente kennt. Diese Frage kommt wieder — die Antwort ist belegt.\n\n## Das Beatgrid\n\n`get_first_downbeat(file_path)` liest die erste Eins aus den\nANLZ-Dateien (PQTZ-Tag), lazy und memoisiert. Der Treffer ist ein\nReferenzkandidat. Beide Pfade in `analysis.py` setzen ihn nur bei\n`beatgrid_validation.status == \"verified\"` auf `downbeat_confidence = 1.0`.\nPSSI braucht zusaetzlich Rekordbox-Herkunft und denselben verifizierten Status.\nAudio-Anker und Referenzanker nicht gleichsetzen. Technisch verifiziertes Grid\nbeweist keine unabhaengig gelabelte musikalische Takt-1.\n\n## Rekordbox laeuft\n\n`is_rekordbox_running()` pruefen. Solange die App laeuft, haelt sie Aenderungen\nim SQLite-WAL und checkpointet erst beim Beenden — HPG liest dann\nmoeglicherweise einen aelteren Stand. Fuer BPM und Beatgrid unkritisch, fuer\nfrisch analysierte Tracks relevant. Dem Nutzer sagen, nicht stillschweigend\nweiterlesen.\n\n## Signatur\n\n`rekordbox_signature` geht in den Cache-Key. BPM, Key und Cues koennen sich\naendern, **ohne** dass die Audiodatei sich aendert — deshalb wird die Signatur\nvor dem Cache-Lookup geholt.\n\nMehrdeutige Zuordnungen: mehrere DB-Records koennen auf dieselbe Datei zeigen.\nWo die Zuordnung nicht eindeutig ist, lieber nichts liefern als raten. Falsche\nBPM sind schlimmer als fehlende.\n\n## Karteileichen\n\nRechne damit, dass ein erheblicher Teil der DB-Eintraege auf nicht mehr\nexistierende Dateien zeigt — in einer realen Sammlung 643 von 2480. Immer\n`os.path.isfile` pruefen, bevor du zaehlst oder analysierst. Wer das\nvergisst, meldet Trackzahlen, die es nicht gibt.\n\n## Cues\n\nMemory- und Hot-Cues kommen ueber `content.Cues`. `InMsec = -1` heisst \"keine\nPosition\" — nicht als Cue bei -0,001 s durchreichen.\n\nBenannte Cues (`MIX-IN`, `MIX-OUT`, `OUTRO`) ueberschreiben berechnete\nMixpunkte ueber einen Wortgrenzen-Regex, sofern die normalisierte Provenienz\n`manual` ist. Ausrichtung und harter Mixpunktvertrag bleiben bindend.\nUnbenannte Cues liefern Kandidaten; keine allgemeine positionsbasierte\nOverride-Heuristik wieder einfuehren. Den aktuellen Vertrag in\n`_apply_manual_mixpoint_cues` und `mix_candidates.py` lesen.\n\n## Deep-Analysis-Auftrag\n\nLies `hpg-orientation`, `hpg-rekordbox` und `hpg-deep-analysis`.\nOptimiere oder ersetze die bestehende Anbindung entsprechend dem aktuellen\nNutzerauftrag; halte DB-, ANLZ-, Signatur-, Cue- und Exportvertrag konsistent.\nArtefakt-/ABI-Untersuchung an `hpg-rb-artifacts`, Runtime an `hpg-inference`\nuebergeben. Modellsemantik und Beispielcode der Spezifikation nicht ungeprueft\nuebernehmen. Vorhandene Fachrollen weiterverwenden, fremde Aenderungen bewahren.\n\n## Taktphase und Taktrotation\n\nEin signierter Audio-minus-Grid-Zeitversatz ist Beatphasenmessung, nicht Taktpositionsrotation. Persistierte candidate_rotation bleibt in Diagnoseschema v5 und v6 gesperrt, ausser beide Modelle stimmen in allen drei Fenstern ueberein, sechs Audiofenster bestaetigen die Kandidatenphase innerhalb 6 ms und das Gesamtgrid ist verifiziert. Eine so uebernommene Korrektur bleibt Audioherkunft und gibt weder PSSI noch Rekordbox-Render-Sync frei. Neuronale Audioanker brauchen mindestens drei getrennte, audio-bestaetigte Fenster von jedem Modell sowie das bestehende 6-ms-Gesamtgrid-Gate.\n\n## Bevor du fertig meldest\n\n- An echten Pfaden geprueft, nicht an konstruierten?\n- Verhalten bei laufendem Rekordbox bedacht?\n- Fehlende Dateien abgefangen?\n"
+developer_instructions = '''
+# HPG-Rekordbox
+
+## Die Quelle ist master.db, nicht XML
+
+HPG importiert ueber `pyrekordbox` direkt aus `master.db`. XML existiert nur
+als **Export**. Ein XML-Import waere ein Rueckschritt: die Datenbank liefert
+mehr Tracks und das feinere Beatgrid.
+
+Gemessen an einer realen Sammlung: `master.db` 2480 Tracks gegen 2476 im
+XML-Export, und das ANLZ-Beatgrid ist beat-genau, waehrend die XML nur
+Tempo-Segmente kennt. Diese Frage kommt wieder — die Antwort ist belegt.
+
+## Das Beatgrid
+
+`get_first_downbeat(file_path)` liest die erste Eins aus den
+ANLZ-Dateien (PQTZ-Tag), lazy und memoisiert. Der Treffer ist ein
+Referenzkandidat. Beide Pfade in `analysis.py` setzen ihn nur bei
+`beatgrid_validation.status == "verified"` auf `downbeat_confidence = 1.0`.
+PSSI braucht zusaetzlich Rekordbox-Herkunft und denselben verifizierten Status.
+Audio-Anker und Referenzanker nicht gleichsetzen. Technisch verifiziertes Grid
+beweist keine unabhaengig gelabelte musikalische Takt-1.
+
+## Rekordbox laeuft
+
+`is_rekordbox_running()` pruefen. Solange die App laeuft, haelt sie Aenderungen
+im SQLite-WAL und checkpointet erst beim Beenden — HPG liest dann
+moeglicherweise einen aelteren Stand. Fuer BPM und Beatgrid unkritisch, fuer
+frisch analysierte Tracks relevant. Dem Nutzer sagen, nicht stillschweigend
+weiterlesen.
+
+## Signatur
+
+`rekordbox_signature` geht in den Cache-Key. BPM, Key und Cues koennen sich
+aendern, **ohne** dass die Audiodatei sich aendert — deshalb wird die Signatur
+vor dem Cache-Lookup geholt.
+
+Mehrdeutige Zuordnungen: mehrere DB-Records koennen auf dieselbe Datei zeigen.
+Wo die Zuordnung nicht eindeutig ist, lieber nichts liefern als raten. Falsche
+BPM sind schlimmer als fehlende.
+
+## Karteileichen
+
+Rechne damit, dass ein erheblicher Teil der DB-Eintraege auf nicht mehr
+existierende Dateien zeigt — in einer realen Sammlung 643 von 2480. Immer
+`os.path.isfile` pruefen, bevor du zaehlst oder analysierst. Wer das
+vergisst, meldet Trackzahlen, die es nicht gibt.
+
+## Cues
+
+Memory- und Hot-Cues kommen ueber `content.Cues`. `InMsec = -1` heisst "keine
+Position" — nicht als Cue bei -0,001 s durchreichen.
+
+Benannte Cues (`MIX-IN`, `MIX-OUT`, `OUTRO`) ueberschreiben berechnete
+Mixpunkte ueber einen Wortgrenzen-Regex, sofern die normalisierte Provenienz
+`manual` ist. Ausrichtung und harter Mixpunktvertrag bleiben bindend.
+Unbenannte Cues liefern Kandidaten; keine allgemeine positionsbasierte
+Override-Heuristik wieder einfuehren. Den aktuellen Vertrag in
+`_apply_manual_mixpoint_cues` und `mix_candidates.py` lesen.
+
+## Deep-Analysis-Auftrag
+
+Lies `hpg-orientation`, `hpg-rekordbox` und `hpg-deep-analysis`.
+Optimiere oder ersetze die bestehende Anbindung entsprechend dem aktuellen
+Nutzerauftrag; halte DB-, ANLZ-, Signatur-, Cue- und Exportvertrag konsistent.
+Artefakt-/ABI-Untersuchung an `hpg-rb-artifacts`, Runtime an `hpg-inference`
+uebergeben. Modellsemantik und Beispielcode der Spezifikation nicht ungeprueft
+uebernehmen. Vorhandene Fachrollen weiterverwenden, fremde Aenderungen bewahren.
+
+## Bevor du fertig meldest
+
+## Taktphase und Taktrotation
+
+Ein signierter Audio-minus-Grid-Zeitversatz ist eine Beatphasenmessung, keine
+Taktpositionsrotation und kein Auftrag zur automatischen Gridkorrektur. Die
+persistierte `candidate_rotation` bleibt in Diagnoseschema v5 und v6 wirksam:
+bei einer einheitlich gemessenen Nichtnullrotation keine PSSI-/Phrasen- oder
+Mixnutzung, ausser beide Modelle stimmen in allen drei Fenstern ueberein, sechs
+Audiofenster bestaetigen die Kandidatenphase innerhalb 6 ms und das Gesamtgrid
+ist verifiziert. Eine so uebernommene Korrektur bleibt Audioherkunft und gibt
+weder PSSI noch Rekordbox-Render-Sync frei. Neuronale Audioanker brauchen
+mindestens drei getrennte, audio-bestaetigte Fenster von **jedem** Modell sowie
+das bestehende 6-ms-Gesamtgrid-Gate.
+
+- An echten Pfaden geprueft, nicht an konstruierten?
+- Verhalten bei laufendem Rekordbox bedacht?
+- Fehlende Dateien abgefangen?
+'''

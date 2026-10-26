@@ -1,54 +1,31 @@
-# OpenClaw fuer Harmonic Playlist Generator
+# OpenClaw für Harmonic Playlist Generator
 
-## Aktiver Agent
+Projektlokale Hinweise, abgeglichen am 26.10.2026. Der frühere Agentenname
+`hpg` ist eine dokumentierte Konfiguration; laufendes Modell, Provider,
+Gateway, Berechtigungen und Agentenzahl müssen in der jeweiligen Installation
+geprüft werden. Dieses Dokument behauptet keinen aktiven Runtimezustand.
 
-```powershell
-openclaw agent --agent hpg --message "<dein HPG-Auftrag>"
-```
+## Projektvertrag
 
-Der Agent arbeitet im Repository-Workspace mit `openai/gpt-5.6-sol` ueber den
-offiziellen Codex-Harness. Seine Identitaet im Dashboard ist **HPG Engineering**
-mit dem Projekt-Icon.
+[AGENTS.md](AGENTS.md) und der aktuelle Auftrag bestimmen die Arbeit.
+Die verfügbaren Fachskills liegen unter `.agents/skills/`, Fachrollen unter
+`.agents/agents/`; keine feste historische Anzahl als Iststand übernehmen.
+Die Claude-Spiegel und Codex-Rollenbeschreibungen sollen denselben Inhalt tragen.
+Wächterprüfungen erfolgen auf Anforderung, ohne obligatorische Freigabetore.
 
-## Eingebaute Projektanpassungen
+`SOUL.md`, `TOOLS.md`, `USER.md`, `IDENTITY.md` und `MEMORY.md` ergänzen
+Produktleitlinie und Arbeitsumgebung. Schutzregeln und Testausnahmen aus
+AGENTS.md gelten auch für OpenClaw. Installationen, Modell-/Providerwechsel
+oder Berechtigungsänderungen werden durch dieses Dokument nicht beauftragt.
 
-- Alle 14 Skills aus `.agents/skills/` werden projektlokal entdeckt und haben
-  Vorrang vor allgemeineren Skills.
-- `AGENTS.md` erzwingt Orientierung, passende Fachrolle, schreibgeschuetzten
-  Waechter vor/nach nichttrivialen Aenderungen und den HPG-Testvertrag.
-- `SOUL.md`, `TOOLS.md`, `USER.md` und `IDENTITY.md` beschreiben den
-  Engineering-Auftrag, die Python-3.12-Umgebung, Sicherheitsgrenzen und die
-  Dashboard-Identitaet.
-- `MEMORY.md` haelt nur langlebige HPG-Invarianten und Betriebswissen fest.
-- Der Agent verwendet das Coding-Profil, keine Elevated-Tools und die globale
-  Multi-Agent-Delegation mit maximal fuenf gleichzeitig aktiven Agenten.
+## Auftrag formulieren
 
-## Empfohlene Auftragsform
+> Prüfe den betroffenen Codepfad und gültige vorhandene Nachweise. Bearbeite
+> den beauftragten Umfang, bewahre fremde Änderungen und prüfe die Änderung
+> mit dem kleinsten geeigneten Umfang. Berichte Implementierung, Tests,
+> nativen Originaltrack-Ablauf und musikalische Bewertung getrennt.
 
-```text
-Analysiere zuerst den betroffenen Codepfad. Erstelle einen kleinen Plan.
-Lass ihn vor der Umsetzung von hpg-waechter gegen den Code pruefen.
-Implementiere nur den beauftragten Scope, fuehre die passenden Tests aus,
-lasse den Diff erneut durch hpg-waechter pruefen und melde nur belegte Resultate.
-```
-
-## Wichtige Befehle
-
-```powershell
-# Status und Projektagent pruefen
-openclaw agents list
-openclaw skills list --agent hpg
-openclaw memory status --deep --agent hpg
-
-# HPG-Tests
-.\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
-
-# GUI
-.\venv312\Scripts\python.exe main.py
-```
-
-## Grenzen
-
-Keine realen Musikbibliotheken, Rekordbox-Datenbanken, Cache-Dateien,
-Installer, Release-Artefakte, Remote-Git-Aktionen oder ungetrackten
-`Claude-Autopilot-*`-Dateien ohne ausdruecklichen Auftrag bearbeiten.
+Historischer CLI-Einstieg: `openclaw agent --agent hpg --message "<Auftrag>"`.
+Syntax und Verfügbarkeit vor Nutzung anhand der installierten CLI-Hilfe prüfen.
+HPG startet mit `venv312\Scripts\python.exe main.py`; die Prüfregeln stehen
+im [Testskill](.agents/skills/hpg-testing-verification/SKILL.md).

@@ -1,80 +1,63 @@
-# HPG — Quellenstand statt pauschaler Produktionsfreigabe
+# HPG — Quellen- und Nachweisstand
 
-Aktueller Arbeitsstand: 16.10.2026, Cache109. Maßgebliche Umsetzungsmatrix und
-datierte Belege: [Deep-Analysis-Auftrag](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md).
-Native Beats/Takt/Phrasen, Stem-/Embedding-Metadaten, Playlist-Vorschau und
-XML-Export sind angebunden. Der aktuelle GUI-Nachweis steht unten. Weitere native
-Codecplugins, vollständige Wrapperparität, unabhängige Qualitätsreferenzen bleiben offen.
-WAV/AIFF-Reader, native Sampleratenwandlung und Modellwahl2/3/4 sind angebunden.
-Original-Beatläufe beider Modelle erfolgreich; neue musikalische Freigabe fehlt.
-Kein neuer EXE-Build und keine vollständige Produktfreigabe.
+Abgleich am 26.10.2026 mit dem lokalen Code und den Projektchats.
+Quellstand: `9edc88029b2f85c911367760e2b701989e298210`; App v3.7.2,
+Cache-Version 183 gemäß `hpg_core/caching.py`. Lokale Dokumentänderungen
+sind zusätzlich vorhanden. Dies ist keine Release- oder musikalische Freigabe.
 
-Aktueller Originalnachweis: `TEMP/hpg-original109-completed/report.json`.
-Alle drei Tracks: native Übernahme, Grid verified und native Phrasen erfolgreich.
-You Never Alone und Harmonise stammen aus dem erfolgreichen Analyselauf108;
-Never Die wurde nach der Fensterkorrektur frisch analysiert. Herkunft getrennt
-im Bericht. Kein erneuter Stem-Lauf. Alle Original-SHA256 unverändert.
-Playlist: You Never Alone → Never Die → Harmonise. Beide Übergänge ohne
-Reservefehler als RAM-Clips erzeugt (115,652s und73,913s).
-`TEMP/hpg-native109-gui/gui-events.json` belegt beide Clips im GUI-RAM-Cache;
-Qt meldet beide geladenen WAV-Streams. Kein frischer GUI-Ordnerimport behauptet.
-Hörproben-Quellformat2 erhält die neue Messmethode, Format1 bleibt lesbar.
-Unabhängiger Wächterbericht vom 16.10.: zwei Produktbefunde wurden korrigiert,
-der neue Regressionsfall bestand nach vorherigem Fehlschlag. Das Urteil MIT
-AUFLAGEN bezog sich auf das damals fehlende TOR1. Auf ausdrückliche Nutzeranweisung
-ist die Pflicht zu beiden Toren inzwischen aus dem Prozess entfernt; fehlendes
-Vorabreview blockiert daher nicht mehr. Historischer Bericht:
-docs/WAECHTER_CACHE109_2026-10-16.md. Musikalische Hörabnahme und Gesamtfreigabe offen.
-Entwicklungsstand zur versionierten Sicherung; keine Releasefreigabe und kein EXE-Build.
+## Implementierung laut Code
 
-## Historische Befunde bis zur nativen Gesamtpipeline
+Native Beat-/Takt-/Phrasenverarbeitung, Audio-Rasterprüfung, Snapshot-
+Wiederverwendung und lokale Kandidaten sind in die Analyse eingebunden.
+Native Reader-Factorys umfassen WAV/AIFF, MP3, FLAC, AAC und M4A/MP4;
+ALAC wird gesondert erkannt. Die alte WAV/AIFF-only-Aussage vom 16.10. gilt
+nicht mehr als aktuelle Implementierungsbeschreibung. Codecvarianten und
+vollständige Wrapperparität benötigen weiterhin ihre jeweiligen Nachweise.
 
-Cache-Nachtrag vom 13.10.2026: Cache-Version 96 in hpg_core/caching.py.
-Die Feintempokorrektur im Vollpfad verwendet einen festen 32-s-Abschnitt
-und drei getrennte 16-s-Prueffenster. Nur ein bestaetigter Kandidat darf ein
-nicht bestaetigtes bisheriges Tempo ersetzen; der Rekordbox-Fast-Path bleibt
-unveraendert. Das ist keine unabhaengige Bestaetigung der musikalischen Eins.
-Vollstaendige Beat-Energiefenster mit anteiligen Rand-Samples und gueltigen
-lokalen Nachbarn verhindern die belegten kuenstlichen Lautheitsakzente.
-Downbeat-Merkmale verwenden bei eindeutiger Beatzuordnung dieselbe Fold-Phase
-wie der abschliessende Anker. Widerspruechliche Zuordnungen behalten die
-bisherigen Featurezeiten; Synchronpruefungen und Grenzwerte bleiben erhalten.
-Die Struktur im Vollpfad verwendet das gemeinsame BPM-Raster statt des
-abweichenden Medians hopgerasterter Beatintervalle. Die korrigierte Zuordnung
-physischer Beats zur Taktphase bleibt erhalten.
-Der begrenzte Downbeat-Tempo-Retry bleibt bestehen. Er wird nur
-bei inkommensurablem Erstversuch und nach unveraenderter Konfidenz- und
-Drei-Fenster-Pruefung uebernommen. Alte Cachedateien bleiben erhalten.
+Native Taktposition kann mit verifiziertem nativen Grid für Playlist und
+Hörproben verwendet werden; unabhängige musikalische Bestätigung wird dadurch
+nicht behauptet. Tempoanpassung läuft über `hpg_core/preview_stretch.py`
+mit dem vorhandenen Pedalboard. Die 6-ms-Kick-/Beatprüfung bleibt erhalten.
 
-## Einstieg
+## Datierte Tests und Originaltrack-Belege
 
-- [Quellen und dauerhaftes Wissen](docs/PROJECT_KNOWLEDGE.md)
-- [Aktueller Auftrag und offene Grenzen](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md)
-- [Verbindliche Arbeits- und Nachweisregeln](AGENTS.md)
-- [Datierter nativer Hoertest-Bericht](docs/HOERTEST_NATIVE_2026-10-04.md)
-- [Bereinigungsnachweis](docs/CLEANUP_2026-10-04.md)
+Der jüngste fachliche Chatstand ist in der
+[Übergabe vom 20.10.2026](docs/CHAT_UEBERGABE_2026-10-20.md) erhalten.
 
-Historische Testzahlen, Serverzustaende, Cache-Zeilen und Branch-Hashes wurden
-hier entfernt. Den aktuellen Git- und Laufzustand direkt pruefen. Vorhandene
-Testbelege nur innerhalb ihrer nachgewiesenen Eingaben und Hashes verwenden.
-Der native Bericht trennt einen fehlgeschlagenen Gesamtlauf von gezielten
-Nachtests; daraus darf kein neuer gruener Gesamtlauf gemacht werden.
+- Volltest vom 20.10.: **76 fehlgeschlagen, 6319 bestanden**, 735,73 s.
+  Die Schlusszeile in `%TEMP%/hpg-final-code-20261020-pytest.log` wurde am
+  26.10. erneut gelesen. Dieser Lauf ist fehlgeschlagen und liegt vor späteren
+  Rendereränderungen; er ist kein Abschlussbeleg des aktuellen Quellstands.
+- Sechs gezielte Pitch-/Stereo-Stretch-Fälle bestanden laut Chatübergabe nach
+  der letzten Rendereränderung. Hier nicht erneut ausgeführt und nicht als
+  vollständige Suite ausgegeben.
+- Laut Übergabe: 26/26 technische Beatgrids und native Phrasenanalysen;
+  mindestens eine App-Hörprobe für 16/17 ursprünglich gesperrte Tracks.
+  Die Gesamtplaylist enthält 18 geplante von 25 Grenzen.
+- Existenz der 26er-Herkunftsdatei sowie der finalen Stretch-/Paarungs-GUI-
+  Events am 26.10. geprüft. Keine erneute Audioanalyse oder musikalische Abnahme.
+- Die drei Originaltracks aus Cache108/109 und ihre GUI-Events vom 16.10.
+  bleiben ältere Teilbelege; Details in der Deep-Analysis-Spezifikation.
 
-Die fruehere Bereinigung aenderte keine Produktlogik. Die anschliessende
-Implementierung hat den Quellstand erweitert; genaue Paketbelege und offene
-Luecken stehen in der Session-Uebergabe. Keine aktuelle Gesamtabnahme oder
-neue EXE-Freigabe behauptet. Ein gespeicherter Zwischenstand ist kein Release.
-Die Mehrordner-Hoertest-Persistenz und der native Einstieg aus dem
-Sammlungsdialog sind inzwischen implementiert und gezielt getestet. Der
-vollstaendige Originalmusik-Hoertest samt menschlicher Bewertung und die
-Abnahme der weiteren Planpakete stehen weiter aus. Ein isolierter Pilot mit
-zwei unveraenderten Originaltracks erzeugte einen Satz mit fuenf Varianten;
-zwei lieferten WAV-Bytes im RAM, drei scheiterten an der Kickphasenpruefung.
-Neue Noten fuer RAM-Clips sind im nativen Dialog nun an erfolgreiches
-Rendern gebunden. Alte Noten sind dadurch aber nicht aus dem Fit entfernt;
-die abgewiesenen Varianten bleiben technisch unhoerbar. Der
-Sammlungs-Einstieg ist daher kein zuverlaessig voll nutzbarer Trainingsablauf.
+## Offene Arbeit
 
+Deep Sky besitzt laut Übergabe native Ergebnisse, aber sein zusammengesetzter
+Trackdatensatz scheiterte an der Diagnoseprovenienz. W hat deshalb noch keine
+belegte neue Paarvorschau. Sieben Grenzen der Gesamtplaylist bleiben ungeplant;
+separate erfolgreiche Paare beweisen keine lückenlose Gesamtplaylist.
+Die 2-BPM-Grenze bleibt erhalten. Keine abgeschlossenen Analysen wiederholen.
 
-Cache-Vertrag am 20.10.2026: Cache-Version 183 gemaess hpg_core/caching.py.
-Dies ist keine neue funktionale oder musikalische Gesamtabnahme.
+Ein grüner Abschluss-Volltest des finalen Produktcodes, vollständige frische
+native App-Abnahme samt Cache-Reuse, unabhängige musikalische Bewertung und
+eine zu genau diesem Stand geprüfte EXE sind weiterhin nicht belegt.
+
+## Quellen und Arbeitsregeln
+
+- [Projektwissen](docs/PROJECT_KNOWLEDGE.md)
+- [AGENTS.md](AGENTS.md)
+- [Deep-Analysis-Spezifikation und Verlauf](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md)
+- [Historisches Archiv einschließlich Wächterbericht](docs/PROJECT_KNOWLEDGE.md#historisches-archiv)
+- [Bereinigung vom 26.10.2026](docs/CLEANUP_2026-10-26.md)
+
+Wächterprüfungen erfolgen auf Anforderung. Fehlende frühere Tore erzeugen
+keine Nachholpflicht. Diese Regel ersetzt keine fachlichen Nachweise.

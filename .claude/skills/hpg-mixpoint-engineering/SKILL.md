@@ -32,23 +32,20 @@ Kette — gerundet wird erst an der Anzeige-/Exportgrenze (R9/N15).
 | Takt-Anker | `Track.first_downbeat` | wo die "1" liegt; Untergrenze `min_mix_in` |
 | Phrasen-Anker | `Track.phrase_anchor` | das **Gitter** (`anchor`-Parameter) |
 
-`phrase_anchor` [hpg_core/models.py] liefert `first_phrase` nur, wenn **alle drei**
-Gates halten:
+`Track.phrase_anchor` in `hpg_core/models.py` prüft den aktuellen Vertrag:
 
-```python
-first_phrase >= 0.0                          # -1.0 = nicht geschaetzt
-and downbeat_confidence > 0.0                # kein erfundenes Raster
-and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # hpg_core/config.py, = 0.25
-```
+1. Eine validierte Taktpositionssperre liefert `None`.
+2. Ein verifiziertes PSSI-Phrasenraster liefert seinen ersten Phrasenpunkt.
+3. Sonst braucht es ein verifiziertes Beatgrid und ausreichende Audio-Konfidenz
+   oder ein mit `native_track_beats.has_verified_grid` bestätigtes natives Grid.
+4. Unbestätigte Referenzkandidaten und Referenzgrids ohne gesonderte Taktbestätigung
+   bleiben gesperrt. `native_candidate` ist nur mit verifiziertem nativen Grid nutzbar.
+5. Erst danach darf ein gültiges `first_phrase` mit ausreichender
+   `phrase_confidence` den Phrasenanker liefern; andernfalls `first_downbeat`.
 
-sonst `first_downbeat`.
-
-Ausnahme bei validierter Schema-v5-Diagnose
-`anchor.bar_position_comparison.status == "candidate_rotation"`: `Track.phrase_anchor`
-ist nicht verfuegbar (`None`), und beide Analysepfade erzeugen weder Phrase-Grid,
-Mixpunkte noch Kandidaten. Pairing und `calculate_paired_mix_points` muessen vor
-Quantisierung abbrechen; `None` darf nicht auf ein Raster ab `0.0` zurueckfallen.
-Der Beat-Anker und Beat-Sync bleiben davon unberuehrt.
+`None` darf niemals zu einem erfundenen Raster ab 0.0 werden. Technische
+Nutzbarkeit der nativen Taktposition bleibt von unabhängiger musikalischer
+Bestätigung getrennt. Beatphase und Taktphase sind unterschiedliche Nachweise.
 
 **Warum getrennt (AUDIT-FIX R3):** `phrase_anchor` kann bis zu
 `phrase_unit - 1` Bars hinter dem ersten Downbeat liegen (~28 s bei 16-Bar-
@@ -116,7 +113,7 @@ negativem Wert.
    `< outro_start - QUANTIZE_TOLERANCE_SEC`; Grenze und Sicherheitsband sind
    ausgeschlossen
 5. Mixpoints nie innerhalb Intro/Outro, auch nicht bei manuellen Cues (Spec:
-   `docs/superpowers/specs/2026-03-11-mix-point-intro-outro-guard-design.md`)
+   `docs/PROJECT_KNOWLEDGE.md#historisches-archiv`)
 6. Einheiten: Sekunden intern, Bars nur zur Anzeige
    (`mix_in_bars`/`mix_out_bars`), Samples nur im Renderer
 
@@ -164,7 +161,7 @@ Uplifting Trance 32-64+. Nie zwei Basslines gleichzeitig. Pitch max +-3-4 %.
 
 ## Kandidaten Teil 1 (gebaut 2026-08-21)
 
-Spec: `docs/superpowers/specs/2026-08-21-mixpunkt-kandidaten-design.md`.
+Spec: `docs/PROJECT_KNOWLEDGE.md#historisches-archiv`.
 Pro Track `mix_in_candidates` / `mix_out_candidates`: Listen von
 `MixCandidate` (`hpg_core/mix_candidates.py`) mit lokalen Messwerten im
 Fenster +-1 Phrase um `t` (Struktur/Neuheit, Rhythmus, Bass, Harmonie,

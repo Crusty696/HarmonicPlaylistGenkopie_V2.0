@@ -147,8 +147,9 @@ Kommentar eine Messung behauptet, muss die Stichprobengroesse dabeistehen.
 
 ### 7. Ist etwas angefangen und liegengeblieben?
 
-Vergleiche gegen die Plaene unter `docs/superpowers/plans/` und die Spec unter
-`docs/superpowers/specs/`. Aufgaben, die als erledigt gelten, aber im Code
+Vergleiche gegen den aktuellen Auftrag und `docs/PROJECT_KNOWLEDGE.md`.
+Historische Plaene sind ueber dessen Archivwegweiser auffindbar; sie werden
+nicht automatisch zu offenen Arbeitsauftraegen. Aufgaben, die als erledigt gelten, aber im Code
 fehlen, sind der Befund mit der laengsten Halbwertszeit — genau so ist die
 Nahtstellen-Messung monatelang unbemerkt geblieben.
 

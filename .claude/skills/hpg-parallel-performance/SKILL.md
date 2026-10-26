@@ -69,7 +69,8 @@ Pfad baut, muss das Callback durchreichen — sonst haengt Abbruch.
    Self-Similarity-Matrix (~72 MB); ohne das gab es 1,3 GB/Track
 
 Messen: `tests/performance_fixtures.py` (vor-analysierte Tracks, kein Audio
-noetig) und `benchmark_rekordbox.py`. Fuer echte Audio-Laeufe
+noetig). Der ehemalige Root-Mikrobenchmark wurde als historischer
+Mockversuch archiviert und ist kein echter DB-Nachweis. Fuer echte Audio-Laeufe
 `tools/validation_run.py`.
 
 ## Vor jeder Speicher-Optimierung

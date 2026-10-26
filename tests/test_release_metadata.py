@@ -61,7 +61,8 @@ def test_living_docs_reference_current_cache_contract():
   for relative_path in (
     "AGENTS.md",
     "CLAUDE.md",
-    "docs/QUICK_START.txt",
+    # Der Schnellstart ist seit der Dokumentkonsolidierung Teil der README.
+    "README.md",
     "docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md",
   ):
     content = (ROOT / relative_path).read_text(encoding="utf-8")

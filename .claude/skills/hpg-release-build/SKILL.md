@@ -11,7 +11,7 @@ description: Use when building or releasing HPG — build.bat, HPG.spec/PyInstal
 |---|---|
 | Standalone-EXE | `build.bat` → venv312 → `pip install -r requirements.txt` → `pyinstaller --clean --noconfirm HPG.spec` → `HarmonicPlaylistGenerator.exe` im Root |
 | Windows-Installer | Inno Setup: `ISCC.exe installer.iss` → `installer_output\HPG_v<version>_Setup.exe` |
-| GitHub-Release | `.github/workflows/release.yml`, Trigger Tag `v*.*.*`, Python 3.12.10, ruft `build.bat`, veroeffentlicht die **rohe EXE** (keinen Installer) |
+| GitHub-Release | `.github/workflows/release.yml`, Trigger Tag `v*.*.*`, Python 3.12.10, ruft `build.bat`, veroeffentlicht nach Pruefgates EXE, Installer und Release-Manifest |
 
 `build_installer.bat` ist der Inno-Setup-Wrapper. **Vor jedem Release pruefen,
 ob es wirklich `ISCC.exe` aufruft** — es gab einen Stand, in dem das Skript nur
@@ -79,12 +79,14 @@ Von `tests/test_release_metadata.py` abgesichert:
 - `version_info.txt` → die `ProductVersion`-Zeile
 - `build.bat` → `v<version>`
 
-**Nicht** abgesichert, trotzdem Pflicht:
+Ebenfalls durch Release-Metadatentests abgesichert:
 
-- `hpg_core/__init__.py` → `__version__`
+- `hpg_core/__init__.py` → `__version__` aus der Metadatenquelle
 - `installer.iss` → `OutputBaseFilename` und der MsgBox-Text
+
+Zusaetzlich im konkreten Releaseumfang pruefen:
 - `version_info.txt` → `filevers`, `prodvers`, `FileVersion`
-- `docs/QUICK_START.txt`
+- Schnellstart in `README.md` (keine separate Versionskopie)
 
 Derselbe Test prueft ausserdem, dass die README die echte Strategie-Anzahl
 (`len(STRATEGIES)`) und `MIN_PYTHON` nennt — README-Aenderungen koennen die
@@ -107,9 +109,11 @@ loeschbar.
 
 ## Release-Reihenfolge
 
-1. Volle Suite gruen (Skill `hpg-testing-verification`)
-2. Version an allen Stellen gebumpt
-3. `build.bat`, EXE starten und einen echten Ordner analysieren
+1. Betroffene Funktionsnachweise einschliesslich nativer Originaltrack-Ablaeufe
+   und gueltiger Abschluss-Suite vorlegen (Skill `hpg-testing-verification`)
+2. Version bei beauftragtem Versionswechsel konsistent aktualisieren
+3. Beauftragten Build ausfuehren; genau diese EXE mit absolutem Pfad und
+   SHA-256 zuordnen, starten und betroffenen Ablauf pruefen
 4. `ISCC.exe installer.iss`, Installer auf sauberem System testen
 5. `tools/release_manifest.py` (verweigert dirty Worktree)
 6. Tag `v<version>` pushen → Workflow

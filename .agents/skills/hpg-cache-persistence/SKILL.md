@@ -13,9 +13,17 @@ Rekordbox-Daten samt Signatur in `analyze_track` [hpg_core/analysis.py]. Ein gea
 Algorithmus liefert weiter die alten Werte, solange Cache-Key und Version
 passen.
 
+## Aktueller Persistenzvertrag
+
+Der Codevalidator ist maßgeblich. Native Beat-/Phrasenherkunft, Audioausrichtung
+und Taktpositionsstatus müssen zusammenpassen. `native_candidate` erfordert
+seinen echten nativen Diagnoseanker; fehlende Diagnosen nicht durch erfundene
+Werte oder gelockerte Validierung ersetzen. Vorhandene Deep-Sky-Ergebnisse
+aus der Übergabe vom 20.10. nicht erneut berechnen.
+
 ## CACHE_VERSION — wo und wann
 
-`CACHE_VERSION = 109` in **`hpg_core/caching.py`** — nicht in `config.py`. Cache 85 umfasst die bestätigte reine Rekordbox-Phasenoffset-Korrektur ohne Bar-Rotation. Cache 86 verwirft Rotation-0-Korrekturen, die den Anker über eine Bar-Grenze wickeln würden. Cache 87 berücksichtigt die wirksame Phrase-Unit bereits in der internen Mix-In/Out-Kandidatensuche und deren Guards. Cache 88 verwendet den Median aller sechs konsistenten Tempoausgaben statt des ersten Werts. Cache 89 persistiert strukturierte Tempoentscheidungsdiagnosen im Messschema v7. Cache 90 erhält alle sechs Modell-BPM-Werte samt Modell-ID und Fensterstart; die v7-Validierung leitet bei sechs Werten Median und Spread daraus neu ab, verwirft widersprüchliche Payloads und bindet akzeptierte Tempi an die bestehende 2%-Grenze.
+Den aktuellen Wert von `CACHE_VERSION` in **`hpg_core/caching.py`** lesen — nicht in `config.py`. Die folgenden Versionsangaben erklären historische Vertragsänderungen; sie sind keine Zielversion. Cache 85 umfasst die bestätigte reine Rekordbox-Phasenoffset-Korrektur ohne Bar-Rotation. Cache 86 verwirft Rotation-0-Korrekturen, die den Anker über eine Bar-Grenze wickeln würden. Cache 87 berücksichtigt die wirksame Phrase-Unit bereits in der internen Mix-In/Out-Kandidatensuche und deren Guards. Cache 88 verwendet den Median aller sechs konsistenten Tempoausgaben statt des ersten Werts. Cache 89 persistiert strukturierte Tempoentscheidungsdiagnosen im Messschema v7. Cache 90 erhält alle sechs Modell-BPM-Werte samt Modell-ID und Fensterstart; die v7-Validierung leitet bei sechs Werten Median und Spread daraus neu ab, verwirft widersprüchliche Payloads und bindet akzeptierte Tempi an die bestehende 2%-Grenze.
 Das ist ein haeufiger Fehlgriff.
 
 Die Version steckt im **Dateinamen**: `hpg_cache_v96.db`. Ein Bump erzeugt

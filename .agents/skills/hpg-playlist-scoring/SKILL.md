@@ -12,8 +12,17 @@ Peak-Time · Energy Wave · Genre Flow · Consistent · Context Flow.
 
 `STRATEGY_ALIASES` [hpg_core/playlist.py] haelt alte Namen gueltig:
 `Harmonic Flow Enhanced` -> `Harmonic Flow`, `Peak-Time Enhanced` ->
-`Peak-Time`, `Emotional Journey` -> `Context Flow`. `generate_playlist` loest
-sie auf. Alte Doku nennt 10-11 Strategien — das ist ueberholt.
+`Peak-Time`, `Emotional Journey` -> `Context Flow`. `generate_playlist_result`
+loest sie auf; `generate_playlist` ist der kompatible Listeneinstieg. Alte Doku nennt 10-11 Strategien — das ist ueberholt.
+
+## Ergebnisvertrag und Suchumfang
+
+`generate_playlist_result` liefert das gemeinsame `PlaylistGenerationResult`.
+Die Kandidatenkette kann über `_refine_order_with_chain` in die Reihenfolge
+zurückwirken. Harmonic Flow permutiert Pools bis sechs Tracks vollständig;
+das begrenzte Suchverfahren für größere Pools nicht mit diesem Pfad verwechseln.
+GUI, Preview und Export verwenden dieselben festgehaltenen Übergangspläne.
+Aktuelle Codewegweiser: `docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md`.
 
 ## Zwei Score-Ebenen
 

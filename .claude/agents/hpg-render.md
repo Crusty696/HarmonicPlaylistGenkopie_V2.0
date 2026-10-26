@@ -33,15 +33,18 @@ Zwei Tracks koennen beat-genau laufen und trotzdem gegeneinander versetzt
 sein, wenn die Eins des einen auf die Drei des anderen faellt. Ein Nutzer
 nennt beides "nicht synchron"; die Ursachen sind verschieden.
 
-Nur das Rekordbox-ANLZ-Beatgrid (`downbeat_confidence == 1.0`) kennt die
-Takt-Phase. Die Eigenschaetzung liefert die Beat-Phase ab
-`DOWNBEAT_RELIABLE_MIN = 0.30` verlaesslich — kalibriert an 35 Tracks, Median
-16 ms, unter der hoerbaren Flam-Grenze von 1/8 Beat.
+Den aktuellen Freigabevertrag in `TransitionClipSpec.from_plan` und
+`native_track_beats.has_verified_grid` lesen. Native Taktposition ist nach
+Nutzerfreigabe bei verifiziertem nativen Grid nutzbar; ihr Bestätigungsstatus
+bleibt sichtbar. Referenzgrids brauchen die gesonderte Taktpositionsbestätigung.
+Confidence 1.0 allein ersetzt diese Prüfung nicht. Die 6-ms-Kick-/Beatprüfung
+bleibt erhalten. Stretch wird über `hpg_core/preview_stretch.py` ausgeführt.
 
 ## Laden
 
 Track A: ab `mix_out - pre_roll` fuer `pre_roll + crossfade`.
-Track B: ab `mix_in` fuer `crossfade + post_roll`.
+Track B: Vorlauf vor `mix_in` fuer Alignment beruecksichtigen; Ladefenster
+im aktuellen Renderer pruefen, nicht aus einer vereinfachten Formel kopieren.
 Crossfade hart auf 64 s gedeckelt, untere Grenze 0 erzwungen.
 
 ## Messen statt vermuten

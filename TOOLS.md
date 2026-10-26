@@ -9,13 +9,16 @@
 # Schneller Entwicklungszyklus; kein Abschlussbeleg
 .\venv312\Scripts\python.exe -m pytest tests/ --tb=short -q --no-cov
 
-# GUI und bestehende Ende-zu-Ende-Pruefung
+# GUI
 .\venv312\Scripts\python.exe main.py
-.\venv312\Scripts\python.exe e2e_check.py
 ```
 
 - Kein System-Python und kein Python 3.13+; numba ist an Python 3.12 gebunden.
 - Keine parallelen vollen pytest-Laeufe, da die Suite bereits `-n auto` nutzt.
+- Audio-/E2E-Werkzeuge nur im beauftragten Umfang mit expliziter Quelle und
+  isolierten Ausgabe-/Cachepfaden starten. `e2e_check.py` ersetzt keine native
+  App-Abnahme. `manual_test.bat --folder "<Quellordner>"` vermeidet den
+  historischen Default-Pfad; Cache vorher isolieren.
 - Laufzeitcache nur ueber `HPG_CACHE_DIR` oder `HPG_CACHE_FILE` isolieren;
   niemals die Benutzer-Cache-Datei direkt bearbeiten.
 - Vor Build oder Installer zuerst Tests und Versionsquellen pruefen. Keine

@@ -18,12 +18,14 @@ und offene Fragen. Historische Audits sind keine aktuelle Fehlerliste.
    Wiederholung nur mit dokumentiertem Grund und kleinstem passenden Umfang.
 3. Verbraucher und Referenzen vor Entfernen pruefen. Fehlende lokale
    Referenzen allein beweisen nicht, dass ein Werkzeug unbenutzt ist.
-4. Vor Umsetzung unabhaengigen hpg-waechter mit genauem Dateivertrag einsetzen.
+4. Unabhaengigen hpg-waechter auf Anforderung mit genauem Pruefumfang einsetzen.
+   Kein Pflichtgate vor Umsetzung oder Commit; AGENTS.md hat Vorrang.
 5. Reproduzierbaren Fehler vor Korrektur nachweisen und denselben Test danach
    bestehen lassen. Nicht reproduzierbare Diagnose klar begrenzen.
 6. Bei Produktaenderungen Fachinvarianten und Testvertrag anwenden. Fuer reine
    Dokumentation kein neuer Volltest, Build oder Audioanalyselauf (AGENTS.md).
-7. Vor Commit Diff und genaue Stagingliste unabhaengig pruefen lassen.
+7. Vor einem beauftragten Commit Diff und genaue Stagingliste pruefen.
+   Ein unabhaengiger Review erfolgt auf Anforderung, nicht als Pflichtgate.
 
 ## Bereinigung
 

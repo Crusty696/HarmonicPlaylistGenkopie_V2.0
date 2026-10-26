@@ -6,7 +6,8 @@ title HPG - DJ Manueller Test
 echo.
 echo =============================================
 echo   HPG - Manueller DJ Test
-echo   Tracks aus: D:\beatport_tracks_2025-08
+echo   Standardpfad im Hilfsskript ist historisch.
+echo   Aktuellen Ordner mit --folder angeben.
 echo =============================================
 echo.
 echo Aufruf-Optionen:

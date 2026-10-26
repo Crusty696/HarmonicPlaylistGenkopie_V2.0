@@ -13,6 +13,13 @@ Produktimplementierung. Wenn der aktuelle Nutzer die vollständige Umsetzung
 ausdrücklich freigibt, ist das der Arbeitsauftrag: autonom im spezifizierten
 Umfang implementieren und den Status der Nachweise getrennt ausweisen.
 
+## Aktueller Quellenwegweiser
+
+`docs/PROJECT_KNOWLEDGE.md` beschreibt die inzwischen integrierte native
+Beat-/Phrasenpipeline, Codec-Factorys und die freigegebene native Taktposition.
+Die frühere Modell-/Referenz-Arbitration unten ist davon zu unterscheiden.
+Aktuelle offene Arbeit und Belege: `docs/CHAT_UEBERGABE_2026-10-20.md`.
+
 ## Bestand gezielt weiterentwickeln
 
 Der Rekordbox-Referenzanker wird nur bei `verified` aus der Drei-Fenster-
@@ -44,7 +51,8 @@ festlegen und ungeklärte Anforderungen als offen ausweisen.
   `hpg-mixpoints` für Zeitpunkte, `hpg-scoring` für Reihenfolge,
   `hpg-render` für Preview, `hpg-statistik` für Messrechnung,
   `hpg-tests` für Regression, `hpg-gui` für ausdrücklich beauftragte Oberfläche.
-- `hpg-waechter` prüft unabhängig vor Umsetzung und am abschließenden Diff.
+- `hpg-waechter` prüft auf Anforderung unabhängig Vorhaben, Diff oder beides;
+  keine obligatorische Vorab-/Commitfreigabe.
 
 Jeder Schreibauftrag nennt exakte Dateien und Akzeptanzkriterien.
 Agenten teilen denselben Workspace: fremde Änderungen bewahren, keine Reverts.
@@ -76,3 +84,18 @@ frisch mit Originaltracks nativ geprüft, Cache-Reuse geprüft, musikalisch bewe
 EXE-Build und EXE-Lauf erst nach funktionalen Nachweisen separat behandeln.
 Für reine Skill-/Dokumentationsarbeit reichen passende Struktur-/Verhaltensprüfungen;
 keinen Produktvolltest oder Audioholdout allein dafür starten.
+
+## Ergänzungen aus dem konsolidierten Ausführungsleitfaden
+
+AGENTS.md enthält die allgemeinen Arbeits-, Schutz- und Nachweisregeln.
+Bestehende Paketpins erhalten; Installationen, Provider- und Sicherheitswechsel
+nur mit ausdrücklicher Freigabe. Keine alte Installationsroutine oder feste
+Cache-Zielversion erneut ausführen. Keine unbeauftragten GUI-/Genre-Umbauten.
+
+Die vereinbarte 2-BPM-Grenze des laufenden W-/Deep-Sky-Auftrags und die
+6-ms-Synchronprüfung nicht für eine erfolgreiche Ausgabe abschwächen.
+Fertige Analysen, Stems/Embeddings und gültige Tests wiederverwenden.
+Der einmalige Testaufschub vom 15.10. ist keine dauerhafte Testsperre.
+Die frühere Chatvorgabe zu normaler Geschwindigkeit und höchstens mittlerem
+Agentenaufwand bei erneut beauftragter Delegation berücksichtigen; dafür keine
+nur mit Priority-Service verfügbaren Subagenten starten.

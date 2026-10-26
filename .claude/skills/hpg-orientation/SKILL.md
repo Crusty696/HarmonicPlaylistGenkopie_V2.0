@@ -19,7 +19,8 @@ Melodic Techno, Techno, Deep House, Trance, Drum & Bass, Minimal.
 
 ## Der echte Datenfluss
 
-Cache-Lookup passiert **vor** der Analyse, nicht danach. Mixpoints entstehen
+Bei `cache_policy="reuse"` passiert der Cache-Lookup **vor** der Analyse.
+`fresh` umgeht das Lesen und Schreiben des persistenten Track-Caches. Mixpoints entstehen
 **innerhalb** von `analyze_track`, nicht in einem spaeteren Schritt.
 
 ```
@@ -32,14 +33,15 @@ main.AnalysisWorker.run              [main.py]
         b Rekordbox-Signatur -> Cache-Key -> SQLite-Lookup   << CACHE HIER
         c Miss -> Fast-Path (Rekordbox-BPM/Key, librosa 360 s)
                   oder Voll-Path (librosa 600 s + 180 s Tail)
-        d Downbeat -> Phrasen-Anker -> Struktur -> Mixpoints
+        d Native Beats + Audio-Rasterpruefung in beiden Pfaden
+          -> Anker -> native Phrasen/PSSI -> Struktur -> Mixpoints
         e Cue-Override (nur benannte Cues, Rekordbox)
-        f Mixpunkt-Kandidaten (PSSI-Phrasen, Cues, Sektionen, Analyzer)
-          -> cachen
+        f Mixpunkt-Kandidaten (native Phrasen, PSSI, Cues, Sektionen, Analyzer)
+          -> gemaess Cachepolitik persistieren
   3 apply_resource_limits (Ressourcenfilter)
   4 analysis_done -> MainWindow.analysis_finished  [main.py]
-  5 playlist.generate_playlist (8 Strategien)
-  6 playlist.compute_transition_recommendations -> TransitionPlan
+  5 playlist.generate_playlist_result (8 Strategien)
+  6 PlaylistGenerationResult mit Kandidatenkette und TransitionPlans
   7 optional AIAnalysisWorker (LLM, nur Mood/Subgenre, kein Audio)
   8 TransitionRenderWorker -> Preview-WAV / Exporter
 ```
@@ -57,7 +59,8 @@ main.AnalysisWorker.run              [main.py]
 | Cache | `hpg_core/caching.py` | `CACHE_VERSION` |
 | PSSI-Phrasen | `hpg_core/rekordbox_phrases.py` | `phrases_from_anlz` |
 | Mixpunkt-Kandidaten | `hpg_core/mix_candidates.py` | `build_track_candidates` |
-| Preview-DSP | `hpg_core/transition_renderer.py` | `render_transition_clip` |
+| Preview-DSP | `hpg_core/transition_renderer.py`, `preview_stretch.py` | `render_transition_clip`, `stretch` |
+| Native Analyse | `hpg_core/ai_models/` | `native_track_beats`, `native_phrase_adapter`, `native_audio_reader` |
 | Rekordbox-Import | `hpg_core/rekordbox_importer.py` | `class RekordboxImporter` |
 | Export | `hpg_core/exporters/` | m3u8, Rekordbox-XML |
 
@@ -91,6 +94,8 @@ PLAYLIST · MIX TIPS · TIMELINE · QUALITY, Umschalten per Ctrl+1..5.
 `docs/PROJECT_KNOWLEDGE.md` enthaelt den Quellenwegweiser, erhaltene
 Nutzervertraege und offene historische Fragen. Alte Status-, Handoff- und
 Auditkopien wurden nach Wissensextraktion aus dem Workspace entfernt.
+Neueste fachliche Chatuebergabe: `docs/CHAT_UEBERGABE_2026-10-20.md`.
+`PRODUCTION_STATUS.md` trennt aktuellen Code und datierte Nachweise.
 Markdown liefert Hinweise; Code und passende ausgefuehrte Tests liefern
 Belege. Historische Auftraege nicht erneut ausfuehren. Vor Testwiederholungen
 AGENTS.md beachten: vorhandene gueltige Nachweise wiederverwenden.

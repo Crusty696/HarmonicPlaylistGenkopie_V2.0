@@ -37,6 +37,14 @@ abgeschnitten. Fuer Outro und Mix-Out gibt es ein zweites Fenster
 Mix-Out-Konsumenten baut, muss den Guard selbst setzen; er wird nur an zwei
 Stellen geprueft.
 
+## Native Analyse
+
+Beide Analysepfade verwenden native Beats und Phrasen aus `hpg_core/ai_models/`.
+Die DSP-Head-/Tail-Fenster beschreiben nicht die gesamte native Abdeckung.
+Quellgebundene Snapshots wiederverwenden; Konfiguration und Audioausrichtung
+pruefen. `native_candidate` bleibt von unabhaengiger musikalischer Bestaetigung
+getrennt. Aktueller Verbraucher- und Cachevertrag steht im Code.
+
 ## FeatureCache benutzen, nicht neu rechnen
 
 Der Cache haelt MFCC, RMS, STFT, Chroma, Centroid, Flatness, Contrast, Onset
