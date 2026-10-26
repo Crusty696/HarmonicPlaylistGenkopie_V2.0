@@ -104,9 +104,12 @@ def test_source_smoke_actual_qt_spawn_ram_dsp_from_unrelated_directory(tmp_path)
     environment = dict(os.environ, HPG_SMOKE_ROOT=str(root))
     run = subprocess.run([sys.executable, str(ROOT / "main.py"), "--hpg-native-smoke", str(report)],
                          cwd=tmp_path, env=environment, capture_output=True, timeout=180)
-    assert run.returncode == 0, (run.stdout, run.stderr)
-    result = json.loads(report.read_bytes())
-    assert result["ok"] is True
+    # Bei einem fehlgeschlagenen Start den vom Prozess erzeugten Diagnosebericht
+    # anzeigen. Stderr alleine enthaelt haeufig nur eine Rekordbox-Warnung.
+    report_details = report.read_text(encoding="utf-8") if report.is_file() else "Bericht fehlt"
+    assert run.returncode == 0, (run.stdout, run.stderr, report_details)
+    result = json.loads(report_details)
+    assert result["ok"] is True, result
     assert result["checks"]["spawn_ram_render"] == {
         "frames": 16000, "samplerate": 8000, "channels": 2,
         "new_disk_audio": False, "sources_unchanged": True,
