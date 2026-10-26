@@ -77,8 +77,10 @@ def producer_fixture(root, *, count=64):
             track = Track(filePath=str(path), fileName=path.name)
             track.bpm, track.duration, track.camelotCode = 120., float(duration), "8A"
             track.detected_genre, track.phrase_unit = "Psytrance", 8
+            track.phrase_unit_source = "configured"
             track.first_downbeat, track.downbeat_confidence = 0., 1.
-            track.beatgrid_source, track.beatgrid_status = "rekordbox", "verified"
+            track.beatgrid_source, track.beatgrid_status = "audio", "verified"
+            track.bar_position_status = "audio_estimate"
             track.beatgrid_windows_checked, track.beatgrid_max_phase_error_ms = 3, 0.
             track.analysis_mode, track.outro_covered = "librosa_full_or_tail", True
             track.energy = 70
@@ -92,7 +94,7 @@ def producer_fixture(root, *, count=64):
                                end_bar=int(section["end_time"] / 2), analysis_status="analyzed")
             track.analysis_coverage = [{"start": 0., "end": 120.}]
             def candidate(t, lufs, alone, camelot="8A"):
-                return MixCandidate(t=t, schema=["pssi_phrase"], provenance="synthetic_fixture", confidence=.9,
+                return MixCandidate(t=t, schema=["sektion"], provenance="synthetic_fixture", confidence=.9,
                     section_label="main", phrase_label="Chorus",
                     neuheit=.6, traegt_allein=alone,
                     groove_pattern_lokal=[.25 if s % 4 == 0 else 0. for s in range(16)],

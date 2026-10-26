@@ -254,6 +254,13 @@ class TestCacheIntegration:
 
   def test_track_to_dict_and_back(self, sample_track):
     """Prueft die JSON-Serialisierung/Deserialisierung fuer den SQLite-Cache."""
+    from hpg_core.measurement_contract import measurement_snapshot
+    from hpg_core.downbeat import BeatgridValidation
+
+    sample_track.measurement_diagnostics = measurement_snapshot(
+      {"reason": "incommensurate", "stage": "beat_tracking", "retry_reason": "fold_alignment"},
+      BeatgridValidation("unverifiable", 0, -1.0, "fewwindows"),
+    )
     d = track_to_dict(sample_track)
     restored = dict_to_track(d)
     assert restored.bpm == sample_track.bpm
@@ -265,6 +272,7 @@ class TestCacheIntegration:
     assert restored.duration == sample_track.duration
     assert restored.energy == sample_track.energy
     assert restored.mix_in_point == sample_track.mix_in_point
+    assert restored.measurement_diagnostics["downbeat"]["retry_reason"] == "fold_alignment"
 
   def test_track_is_picklable_for_multiprocessing(self, sample_track):
     """Stellt sicher, dass das Track-Objekt fuer Multiprocessing picklable ist."""
@@ -696,8 +704,8 @@ def test_cache_version_ist_bewusst_gesetzt():
   """
   from hpg_core import caching
 
-  # Neues gespeichertes Diagnosefeld invalidiert den v45-Analysevertrag.
-  assert caching.CACHE_VERSION == 46
+  # Version 172 bindet Cue-Quelle/Dateisignatur und koppelt native Phraseflags.
+  assert caching.CACHE_VERSION == 183
 
 
 def test_alter_cache_marker_wird_invalidiert():
@@ -712,12 +720,12 @@ def test_alter_cache_marker_wird_invalidiert():
     assert name in caching.TRACK_LIST_FIELDS
 
 
-def test_track_pflichtsatz_ist_exakt_die_61_felder_der_dataclass():
+def test_track_pflichtsatz_ist_exakt_die_71_felder_der_dataclass():
   from dataclasses import fields
 
   dataclass_fields = {field.name for field in fields(TrackModel)}
 
-  assert len(TRACK_REQUIRED_FIELDS) == 61
+  assert len(TRACK_REQUIRED_FIELDS) == 71
   assert TRACK_REQUIRED_FIELDS == dataclass_fields
 
 
@@ -789,6 +797,9 @@ def test_kandidaten_ueberleben_roundtrip_und_nichtliste_wird_abgewiesen():
   t = Track(
     filePath="C:/x.mp3", fileName="x.mp3", duration=300.0,
     analysis_mode="librosa_full_or_tail",
+    beatgrid_source="rekordbox", beatgrid_status="verified",
+    downbeat_confidence=1., bar_position_status="reference_candidate",
+    beatgrid_windows_checked=3, beatgrid_max_phase_error_ms=1.,
   )
   t.phrases = [{"start_s": 0.0, "end_s": 15.0, "label": "Intro", "mood": 1, "kind": 1, "fill": 0}]
   t.cue_points = [{"t": 30.0, "name": "", "typ": 0, "provenance": "leer"}]
@@ -1263,6 +1274,8 @@ def test_verifiziertes_cache_grid_akzeptiert_exakt_sechs_ms():
     "beatgrid_windows_checked": 3,
     "beatgrid_max_phase_error_ms": 6.0,
     "downbeat_confidence": 1.0,
+    # Beatgrid verifiziert, Bar-1-Abgleich bleibt mangels Diagnose Kandidat.
+    "bar_position_status": "reference_candidate",
   })
 
   assert validate_track_dict(data)["beatgrid_max_phase_error_ms"] == 6.0
@@ -1311,10 +1324,47 @@ def test_record_ohne_beatgrid_pflichtkey_wird_abgewiesen():
 
 
 def _track_dict_mit_gueltigen_nested_daten():
+  from hpg_core.downbeat import BeatgridValidation
+  from hpg_core.measurement_contract import measurement_snapshot
+
   track = Track(
     filePath="C:/x.mp3", fileName="x.mp3", duration=300.0,
     analysis_mode="librosa_full_or_tail",
   )
+  track.beatgrid_source = "rekordbox"
+  track.beatgrid_status = "verified"
+  track.beatgrid_windows_checked = 3
+  track.beatgrid_max_phase_error_ms = 0.0
+  track.downbeat_confidence = 1.0
+  track.bar_position_status = "reference_candidate"
+  grid = BeatgridValidation("verified", 3, 0.0, "verified")
+  reference_measurement = measurement_snapshot(
+    {"reason": "fewbeats", "stage": "trim"}, grid,
+  )
+  track.measurement_diagnostics = {
+    "version": 2,
+    "downbeat": reference_measurement["downbeat"],
+    # Schema v2 predates phase-pattern fields; keep this legacy payload exact.
+    "grid": {
+      key: reference_measurement["grid"][key]
+      for key in (
+        "status", "windows_checked", "max_phase_error_ms", "reason",
+        "window_diagnostics", "decode_failures",
+      )
+    },
+    "anchor": {
+      "source": "rekordbox", "method": "rekordbox",
+      "anchor_s": track.first_downbeat, "confidence": 1.0,
+      "reference": {
+        "anchor_s": track.first_downbeat, "bpm": track.bpm,
+        "target_bpm": track.bpm, "measurement": reference_measurement,
+      },
+      "neural": {
+        "reason": "reference_preferred", "transient": False,
+        "windows": [], "candidate_anchor_s": None,
+      },
+    },
+  }
   track.sections = [{
     "label": "intro", "start_time": 0.0, "end_time": 30.0,
     "start_bar": 0, "end_bar": 16, "avg_energy": 20.0,
@@ -2104,3 +2154,10 @@ def test_korruptionsquarantaene_nimmt_rollback_journal_bytegleich_mit(
   moved = list((tmp_path / "quarantine").glob("journal.db-journal.*.corrupt"))
   assert len(moved) == 1
   assert moved[0].read_bytes() == b"rollback journal"
+
+
+def test_runtime_origin_is_not_persisted():
+  track = Track(filePath="C:/x.mp3", fileName="x.mp3")
+  track.analysis_origin = "fresh"
+  assert set(track_to_dict(track)) == TRACK_REQUIRED_FIELDS
+  assert track.analysis_origin == "fresh"

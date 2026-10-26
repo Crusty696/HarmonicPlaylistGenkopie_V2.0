@@ -43,6 +43,12 @@ def _track(name, bpm=140.0, camelot="8A", outs=(), ins=()):
     t.downbeat_confidence = 1.0
     t.beatgrid_source = "rekordbox"
     t.beatgrid_status = "verified"
+    t.bar_position_status = "reference_verified"
+    t.measurement_diagnostics = {"anchor": {"bar_position_comparison": {"status": "aligned"}}}
+    # PSSI-Kandidaten brauchen im Test wie im Produkt ihr zugeordnetes Gitter.
+    t.phrase_grid = [round(index * g, 3) for index in range(int(t.duration / g) + 1)]
+    t.phrases = [{"start_s": start, "end_s": end, "label": "Chorus"}
+                 for start, end in zip(t.phrase_grid, t.phrase_grid[1:])]
     t.beatgrid_windows_checked = 3
     t.beatgrid_max_phase_error_ms = 0.0
     t.analysis_mode = "test_fixture"

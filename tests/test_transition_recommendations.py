@@ -67,11 +67,11 @@ class TestRecommendationBasics:
     assert recs[0].transition_type == "pro_eq_swap"
 
   @pytest.mark.parametrize("status", ["unknown", "mismatch", "unverifiable", "unsupported"])
-  def test_beatgrid_status_verhindert_keine_empfehlung(self, status):
+  def test_unverifiziertes_beatgrid_liefert_keine_mixempfehlung(self, status):
     tracks = _make_pair()
     tracks[1].beatgrid_status = status
 
-    assert len(compute_transition_recommendations(tracks)) == 1
+    assert compute_transition_recommendations(tracks) == []
 
   def test_n_tracks_n_minus_1_recs(self):
     """N Tracks = N-1 Empfehlungen."""
@@ -261,11 +261,13 @@ class TestTimingValues:
     current = make_track(
       camelotCode="8A", bpm=143.0, duration=420.0, energy=75,
       detected_genre="Psytrance", mix_in_point=60.0, mix_out_point=360.0,
+      phrase_unit=8, phrase_unit_source="configured",
       sections=_sections(),
     )
     upcoming = make_track(
       camelotCode="8A", bpm=143.0, duration=420.0, energy=78,
       detected_genre="Psytrance", mix_in_point=0.0, mix_out_point=360.0,
+      phrase_unit=8, phrase_unit_source="configured",
       sections=_sections(),
     )
 

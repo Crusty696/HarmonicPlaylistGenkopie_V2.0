@@ -1,8 +1,7 @@
-"""Gebundene Kohorte durch vorhandenen Analyzer verarbeiten, ohne eigene Persistenz.
+"""Gebundene Kohorte durch den vorhandenen Analyzer verarbeiten.
 
-Die vorhandene Analyse nutzt ihren Cache unveraendert. Dieser Dienst schreibt
-keine Datenbank und erzeugt keine Audiodateien. Stat-Pruefungen sind weder
-Inhalts-SHA-Nachweis noch atomare Quellsperre, Cachehits werden nicht erfunden.
+Die Herkunftspolitik wird explizit an den Analyzer uebergeben. Dieser Dienst
+schreibt selbst keine Datenbank und erzeugt keine Audiodateien.
 """
 from dataclasses import asdict, dataclass, replace
 import json
@@ -31,7 +30,8 @@ class CohortAnalysisResult:
     issues: tuple[CohortAnalysisIssue, ...]
     complete: bool
     source_proof: str = "stat_checked_before_after"
-    analysis_origin: str = "existing_analyzer_fresh_or_cache_unreported"
+    analysis_origin: str = "unknown"
+    analysis_origins: tuple[tuple[str, str], ...] = ()
 
 
 def _checkpoint(cancel):
@@ -62,8 +62,11 @@ def _checked_source(entry):
         raise ValueError("Kohortenquelle stimmt nicht mit dem Inventar ueberein")
 
 
-def analyze_cohort(index, selection, *, context, features=(), analyzer=None, cancel=None, progress=None):
+def analyze_cohort(index, selection, *, context, features=(), analyzer=None, cancel=None,
+                   progress=None, cache_policy="reuse"):
     """Keine Nachzieh-Tracks oder Positionsannahmen bei Analyseausfaellen."""
+    if type(cache_policy) is not str or cache_policy not in {"reuse", "fresh"}:
+        raise ValueError("cache_policy muss 'reuse' oder 'fresh' sein")
     if type(selection) is not CohortSelection or type(selection.selection_reused) is not bool:
         raise ValueError("Gebundene Kohortenauswahl erforderlich")
     expected = select_cohort(index, count=selection.count, seed=selection.seed,
@@ -97,7 +100,8 @@ def analyze_cohort(index, selection, *, context, features=(), analyzer=None, can
         from .parallel_analyzer import ParallelAnalyzer
         analyzer = ParallelAnalyzer()
     returned = analyzer.analyze_files(list(selection.paths), progress_callback=report,
-                                      cancel_callback=lambda: _checkpoint(cancel))
+                                      cancel_callback=lambda: _checkpoint(cancel),
+                                      cache_policy=cache_policy)
     _checkpoint(cancel)
     if type(returned) not in (tuple, list):
         raise ValueError("Analyzer-Ergebnis muss eine Trackliste sein")
@@ -113,19 +117,26 @@ def analyze_cohort(index, selection, *, context, features=(), analyzer=None, can
         if key not in requested or key in tracks_by_path or path != entries[key].path:
             raise ValueError("Fremdes, doppeltes oder nichtkanonisches Analyzer-Ergebnis")
         tracks_by_path[key] = track
-    issues, snapshots = [], []
+    issues, snapshots, origins = [], [], []
     for entry in selected:
         _checkpoint(cancel)
         track = tracks_by_path.get(_key(entry.path))
+        origin = getattr(track, "analysis_origin", "unknown") if track is not None else "unknown"
+        if origin not in {"fresh", "cache"}:
+            origin = "unknown"
+        origins.append((entry.path, origin))
         if track is None:
             issues.append(CohortAnalysisIssue(entry.path, "analysis_result_missing"))
+        elif cache_policy == "fresh" and origin != "fresh":
+            issues.append(CohortAnalysisIssue(entry.path, "analysis_origin_not_fresh"))
         elif getattr(track, "analysis_mode", None) not in VALID_ANALYSIS_MODES:
             issues.append(CohortAnalysisIssue(entry.path, "invalid_analysis_mode"))
         elif not sanitize_playlist([track]):
             issues.append(CohortAnalysisIssue(entry.path, "resource_limit_excluded"))
         else:
             try:
-                snapshots.append(_encoded(validate_track_dict(track_to_dict(track))))
+                data = validate_track_dict(track_to_dict(track))
+                snapshots.append(_encoded({"track": data, "analysis_origin": origin}))
             except (TypeError, ValueError, OverflowError):
                 issues.append(CohortAnalysisIssue(entry.path, "snapshot_invalid"))
     # Auch fehlgeschlagene Quellen nochmals pruefen: keine Teilfreigabe nach Aenderung.
@@ -133,5 +144,12 @@ def analyze_cohort(index, selection, *, context, features=(), analyzer=None, can
         _checkpoint(cancel)
         _checked_source(entry)
     _checkpoint(cancel)
+    origin_values = {origin for _, origin in origins}
+    analysis_origin = (
+        next(iter(origin_values)) if len(origin_values) == 1
+        else "mixed" if origin_values == {"fresh", "cache"}
+        else "unknown"
+    )
     return CohortAnalysisResult(1, selection.binding_digest, selection.paths, tuple(snapshots),
-                                roots, tuple(issues), not issues and len(snapshots) == len(selected))
+                                roots, tuple(issues), not issues and len(snapshots) == len(selected),
+                                analysis_origin=analysis_origin, analysis_origins=tuple(origins))

@@ -17,7 +17,7 @@ from .transition_renderer import TransitionClipSpec, SUPPORTED_TRANSITION_TYPES
 
 SOURCE_MANIFEST_NAME = "hearing_source_manifest.json"
 SOURCE_FORMAT = "hpg_hearing_source_refs"
-SOURCE_VERSION = 1
+SOURCE_VERSION = 3
 # Explizites v1-Schema: neue Rendererfelder duerfen alte Referenzen nicht umdeuten.
 _STRING_FIELDS = frozenset({
     "track_a_path", "track_b_path", "transition_type", "beatgrid_status_a", "beatgrid_status_b",
@@ -33,6 +33,8 @@ _NUMBER_FIELDS = frozenset({
     "normalize_target_db", "lufs_a", "lufs_b",
 })
 SPEC_V1_FIELDS = _STRING_FIELDS | _BOOL_FIELDS | _NUMBER_FIELDS | {"target_sr", "tempo_ratio"}
+SPEC_V2_FIELDS = SPEC_V1_FIELDS | {'phase_method_a', 'phase_method_b'}
+SPEC_V3_FIELDS = SPEC_V2_FIELDS | {'bass_swap_fraction'}
 _MANIFEST_KEYS = {
     "format", "format_version", "mode", "status", "source_roots", "specs", "sources", "immutable_metadata",
 }
@@ -144,8 +146,6 @@ def _fingerprint_schema(value, label):
 
 def validate_spec_v1(spec: dict) -> dict:
     _exact(spec, SPEC_V1_FIELDS, "TransitionClipSpec v1")
-    if {field.name for field in fields(TransitionClipSpec)} != SPEC_V1_FIELDS:
-        raise SourceValidationError("Renderer-Feldschema passt nicht mehr zu source_refs v1")
     for name in _STRING_FIELDS:
         if type(spec[name]) is not str or not spec[name]:
             raise SourceValidationError(f"{name}: nichtleerer Text erforderlich")
@@ -173,6 +173,34 @@ def validate_spec_v1(spec: dict) -> dict:
     for name in ("track_a_path", "track_b_path"):
         if not Path(spec[name]).is_absolute():
             raise SourceValidationError("Quellpfade muessen absolut sein")
+    return spec
+
+
+def validate_spec_v2(spec: dict) -> dict:
+    _exact(spec, SPEC_V2_FIELDS, 'TransitionClipSpec v2')
+    validate_spec_v1({key: value for key, value in spec.items() if key in SPEC_V1_FIELDS})
+    for key in ('phase_method_a', 'phase_method_b'):
+        if spec[key] not in ('bass_fold', 'native_attack_v1'):
+            raise SourceValidationError('Unbekannte Phasenmessung')
+    return spec
+
+
+def validate_spec_v3(spec: dict) -> dict:
+    """Validate the optional stem-derived bass handover in a new source set."""
+    _exact(spec, SPEC_V3_FIELDS, 'TransitionClipSpec v3')
+    validate_spec_v2({key: value for key, value in spec.items() if key in SPEC_V2_FIELDS})
+    value = spec['bass_swap_fraction']
+    if value is not None:
+        if spec['transition_type'] not in ('bass_swap', 'pro_eq_swap'):
+            raise SourceValidationError('bass_swap_fraction erfordert einen EQ-Basswechsel')
+        if type(value) not in (int, float):
+            raise SourceValidationError('bass_swap_fraction muss Zahl oder null sein')
+        try:
+            finite = math.isfinite(value)
+        except (OverflowError, ValueError):
+            finite = False
+        if not finite or not 0 < value < 1:
+            raise SourceValidationError('bass_swap_fraction muss innerhalb der Blende liegen')
     return spec
 
 
@@ -214,7 +242,7 @@ class SourceRenderSink:
                 raise SourceValidationError("Vorheriger Quellfehler; gesamter Satz wird abgebrochen")
             if not isinstance(spec, TransitionClipSpec):
                 raise SourceValidationError("TransitionClipSpec erforderlich")
-            payload = validate_spec_v1(asdict(spec))
+            payload = validate_spec_v3(asdict(spec))
             target = Path(target)
             if ".." in target.parts:
                 raise SourceValidationError("Clip-Ziel enthaelt Traversal")
@@ -269,10 +297,16 @@ def _inventory(root: Path, mode: str, *, with_manifest: bool) -> dict[str, Path]
     return files
 
 
-def _read_csv(path: Path, columns) -> list[dict]:
+def _read_csv(path: Path, columns, *, schema_resolver=None) -> list[dict]:
     try:
         reader = csv.DictReader(io.StringIO(path.read_bytes().decode("utf-8-sig"), newline=""))
-        if tuple(reader.fieldnames or ()) != tuple(columns):
+        actual = tuple(reader.fieldnames or ())
+        if schema_resolver:
+            resolved = schema_resolver(actual)
+            accepted = resolved is True or (type(resolved) is tuple and resolved == actual)
+        else:
+            accepted = actual == tuple(columns)
+        if not accepted:
             raise SourceValidationError(f"{path.name}: falsche Spalten")
         rows = list(reader)
         if not rows or any(None in row or any(v is None for v in row.values()) for row in rows):
@@ -339,9 +373,13 @@ def _candidate_metadata(root, specs, rt):
         producer = _load_manifest(root / rt.KANDIDATEN_MANIFEST_NAME)
     except ValueError as exc:
         raise SourceValidationError(str(exc)) from exc
-    rows = _read_csv(root / "merkmale.csv", rt.MERKMALE_KANDIDATEN_SPALTEN)
-    columns = rt.BEWERTUNG_DREINOTEN_SPALTEN if producer.get("rating_schema") == "three_notes_v1" else rt.BEWERTUNG_KANDIDATEN_SPALTEN
-    ratings = _read_csv(root / "bewertung.csv", columns)
+    rows = _read_csv(root / "merkmale.csv", rt.MERKMALE_KANDIDATEN_SPALTEN,
+                     schema_resolver=rt.kandidaten_merkmale_schema)
+    def rating_schema_resolver(actual):
+        if producer.get("rating_schema") == "three_notes_v1":
+            return actual == rt.BEWERTUNG_DREINOTEN_SPALTEN
+        return actual == rt.BEWERTUNG_KANDIDATEN_SPALTEN
+    ratings = _read_csv(root / "bewertung.csv", (), schema_resolver=rating_schema_resolver)
     expected = [(p["pair_id"], c["clip_id"]) for p in producer["pairs"] for c in p["clips"]]
     if ([(r["pair_id"], r["clip_id"]) for r in rows] != expected
             or [(r["pair_id"], r["clip_id"]) for r in ratings] != expected):
@@ -527,7 +565,7 @@ def _validate_manifest(root: Path, manifest: dict, *, with_manifest: bool,
                        verify_source_contents: bool = True) -> SourceSession:
     _exact(manifest, _MANIFEST_KEYS, "Quellmanifest")
     if (manifest["format"] != SOURCE_FORMAT or type(manifest["format_version"]) is not int
-            or manifest["format_version"] != SOURCE_VERSION or manifest["status"] != "prepared"
+            or manifest["format_version"] not in (1, 2, SOURCE_VERSION) or manifest["status"] != "prepared"
             or type(manifest["mode"]) is not str or manifest["mode"] not in _MODE_FILES):
         raise SourceValidationError("Unbekannter Quellmanifestvertrag oder Status")
     mode = manifest["mode"]
@@ -551,7 +589,12 @@ def _validate_manifest(root: Path, manifest: dict, *, with_manifest: bool,
     referenced = set()
     for ref, spec in specs.items():
         _virtual_path(ref)
-        validate_spec_v1(spec)
+        spec_validator = {
+            1: validate_spec_v1,
+            2: validate_spec_v2,
+            SOURCE_VERSION: validate_spec_v3,
+        }[manifest['format_version']]
+        spec_validator(spec)
         referenced.update((spec["track_a_path"], spec["track_b_path"]))
     if referenced != set(sources):
         raise SourceValidationError("Spec-Pfade und Quellen sind nicht exakt 1:1")

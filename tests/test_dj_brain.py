@@ -65,6 +65,8 @@ def _make_track(
     keyMode=key_mode,
     bass_intensity=bass_intensity,
     beatgrid_source="audio",
+    downbeat_confidence=0.8,
+    bar_position_status="audio_estimate",
     beatgrid_status="verified",
     beatgrid_windows_checked=3,
     beatgrid_max_phase_error_ms=0.0,
@@ -404,6 +406,19 @@ class TestMixPointCalculation:
       first_downbeat=None,
     )
     assert legacy == explicit
+
+  def test_mix_in_wird_nicht_vor_ersten_downbeat_gesetzt(self):
+    sections = _standard_sections()
+    bpm, duration, genre = 140.0, 420.0, "Psytrance"
+    phrase_grid = (60.0 / bpm) * 4 * 16
+    first_downbeat = 60.0
+    mix_in, _, _, _ = calculate_genre_aware_mix_points(
+      sections, bpm, duration, genre, anchor=0.0,
+      first_downbeat=first_downbeat,
+    )
+
+    assert mix_in >= first_downbeat
+    assert mix_in % phrase_grid == pytest.approx(0.0, abs=0.05)
 
 
 # === DJ Empfehlungen ===

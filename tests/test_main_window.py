@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -420,6 +421,7 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
 
     window = _window(qtbot, monkeypatch)
     config = PrepareConfig("einzel", tmp_path / "set", tmp_path / "cache.db", source_roots=(tmp_path / "sources",))
+    config.source_roots[0].mkdir()
     class AcceptedDialog:
         def __init__(self, _parent, *, folder=""):
             self.config = config
@@ -430,15 +432,21 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
     monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
     # Kein DSP in diesem Steuerungstest; Start muss eine neue Analyse binden.
     source = SimpleNamespace(isRunning=lambda: False)
-    def start_analysis():
+    def start_analysis(*, cache_policy="reuse", _hearing_config=None):
+        assert cache_policy == "fresh"
         window.worker = source
         window._run_id = "hearing-test-run"
+        window._hearing_analysis_pending = (_hearing_config, source, window._run_id)
+        return True
     monkeypatch.setattr(window, "start_analysis", start_analysis)
     window._prepare_hearing_set()
     assert not starts
     assert window._hearing_analysis_pending == (config, source, "hearing-test-run")
     window.worker = None
-    window._hearing_analysis_snapshot = (str(config.source_roots[0]), ("metadata",), window._run_id)
+    snapshot_folder = str(config.source_roots[0])
+    if os.name == "nt":
+        snapshot_folder = snapshot_folder.upper()
+    window._hearing_analysis_snapshot = (snapshot_folder, ("metadata",), window._run_id)
     window._set_run_state(main.RunState.SUCCESS)
     window._resume_hearing_analysis(source)
     worker, action = starts[0]

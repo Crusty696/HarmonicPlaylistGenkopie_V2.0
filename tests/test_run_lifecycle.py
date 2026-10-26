@@ -327,6 +327,28 @@ def test_preview_error_keeps_widget_and_retry_clears_it(qtbot):
   assert widget._waveform._placeholder == "Wellenform wird geladen …"
 
 
+def test_preview_rating_rejects_changed_source_signature(qtbot, monkeypatch):
+  transition = SimpleNamespace(
+    from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
+    to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
+    plan=SimpleNamespace(mix_out_a=30.0, mix_in_b=0.0, overlap=8.0),
+    transition_type="blend",
+  )
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = TransitionPreviewWidget(0, transition, panel)
+  qtbot.addWidget(widget)
+  widget._source_signature = ("old-source",)
+  monkeypatch.setattr(panel, "_preview_source_signature", lambda index: ("new-source",))
+  requested = []
+  widget.rating_requested.connect(lambda *args: requested.append(args))
+
+  widget._request_rating()
+
+  assert requested == []
+  assert widget._error_msg == "Trackquelle hat sich seit dem Rendern geändert; bitte erneut rendern."
+
+
 def test_reorder_uses_full_track_identity_for_duplicate_basenames(qtbot):
   panel = PlaylistPanel()
   qtbot.addWidget(panel)
@@ -438,7 +460,7 @@ def test_playlist_shows_unplanned_transition_without_executable_plan(qtbot):
   score_item = panel.table.item(1, 14)
   score = score_item.data(Qt.ItemDataRole.UserRole)
   assert score == 0.0
-  assert score_item.text() == "0% · UNGEPLANT"
+  assert score_item.text() == "Kein Übergang: Keine Übergangsfreigabe"
   accent_color, _, _ = transition_score_style(0.0)
   assert score_item.background().color().name() == QColor(accent_color).name()
 
@@ -598,3 +620,32 @@ def test_bass_header_tooltip_beschreibt_anzeige_und_eq_sektionskontext(qtbot):
   assert "Trackweiter Mittelwert" in tooltip
   assert "Mix-Out-/Mix-In-Sektionen" in tooltip
   assert "Genre-Flow" not in tooltip
+
+
+@pytest.mark.parametrize('action', ['play', 'rating'])
+@pytest.mark.parametrize('changed', [False, True])
+def test_preview_source_guard_survives_card_reparenting(qtbot, monkeypatch, action, changed):
+  from PyQt6.QtWidgets import QWidget, QVBoxLayout
+  from PyQt6.QtMultimedia import QMediaPlayer
+  transition = SimpleNamespace(
+    from_track=Track(filePath='C:/a.wav', fileName='a.wav'),
+    to_track=Track(filePath='C:/b.wav', fileName='b.wav'),
+    plan=SimpleNamespace(mix_out_a=30., mix_in_b=0., overlap=8.), transition_type='blend')
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = TransitionPreviewWidget(0, transition, panel)
+  card = QWidget(panel)
+  QVBoxLayout(card).addWidget(widget)
+  assert widget.parent() is card
+  widget._source_signature = ('original',)
+  monkeypatch.setattr(panel, '_preview_source_signature', lambda index: ('changed' if changed else 'original',))
+  played, rated = [], []
+  monkeypatch.setattr(widget._player, 'play', lambda: played.append(True))
+  monkeypatch.setattr(widget._player, 'playbackState', lambda: QMediaPlayer.PlaybackState.StoppedState)
+  widget.rating_requested.connect(lambda *args: rated.append(args))
+  if action == 'play':
+    widget._toggle_play()
+  else:
+    widget._request_rating()
+  assert bool(played if action == 'play' else rated) is (not changed)
+  assert (widget._error_msg is not None) is changed

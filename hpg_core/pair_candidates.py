@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import os
 import unicodedata
 from dataclasses import asdict, dataclass, field, fields
 
@@ -26,11 +27,13 @@ from .config import (
 )
 from .dj_brain import (
     _get_intro_end_from_sections, _get_outro_start_from_sections,
+    _verified_native_phrase_grid,
+    effective_track_phrase_unit,
     get_genre_compatibility, get_mix_profile,
 )
 from .mix_candidates import (
-    CUE_IN_PATTERN, CUE_OUT_PATTERN, SCHEMA_PRIORITAET, MixCandidate, _quantize,
-    quantize_to_points,
+    CUE_IN_PATTERN, CUE_OUT_PATTERN, PROVENANCE_JE_SCHEMA, SCHEMA_PRIORITAET,
+    MixCandidate, _quantize, quantize_to_points,
 )
 from .genres import CANONICAL_GENRES
 from .models import (
@@ -46,6 +49,17 @@ from .transition_features import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Nur fuer eine explizite, begrenzte Renderreserve; Standardauswahl bleibt sechs.
+MAX_RESERVE_COMBINATIONS = 30
+
+
+def _combination_limit(value):
+    if value is None:
+        return PAAR_MAX_KOMBINATIONEN
+    if type(value) is not int or not 1 <= value <= MAX_RESERVE_COMBINATIONS:
+        raise ValueError('Kombinationsgrenze muss zwischen 1 und 30 liegen')
+    return value
 
 # Reihenfolge der Faktoren = Reihenfolge in Teilwerten/Begruendung.
 FAKTOREN = ("harmonic", "bpm", "energy", "genre", "groove", "bass", "timbre",
@@ -325,10 +339,7 @@ def pair_quality_reasons(
     gruende: list[str] = []
     for faktor in FAKTOREN:
         wert = teilwerte.get(faktor)
-        try:
-            messbar = wert is not None and math.isfinite(float(wert))
-        except (TypeError, ValueError):
-            messbar = False
+        messbar = _finite_measurement(wert)
         if not messbar or not 0.0 <= float(wert) <= 1.0:
             gruende.append(f"faktor_fehlt:{faktor}")
 
@@ -336,10 +347,7 @@ def pair_quality_reasons(
         a, b = kandidat.out_a, kandidat.in_b
 
         def endlich(*werte) -> bool:
-            try:
-                return all(v is not None and math.isfinite(float(v)) for v in werte)
-            except (TypeError, ValueError):
-                return False
+            return all(_finite_measurement(value) for value in werte)
 
         def normiert(*werte) -> bool:
             return endlich(*werte) and all(0.0 <= float(v) <= 1.0 for v in werte)
@@ -364,10 +372,10 @@ def pair_quality_reasons(
                 and endlich(*(list(a.timbre_fingerprint_lokal) + list(b.timbre_fingerprint_lokal)))
             ),
             "mood": (
-                endlich((a.mood or {}).get("brightness", a.brightness_lokal),
-                        (b.mood or {}).get("brightness", b.brightness_lokal))
-                or endlich((a.mood or {}).get("flatness", a.flatness_lokal),
-                           (b.mood or {}).get("flatness", b.flatness_lokal))
+                endlich(_candidate_mood_value(a, "brightness", "brightness_lokal"),
+                        _candidate_mood_value(b, "brightness", "brightness_lokal"))
+                or endlich(_candidate_mood_value(a, "flatness", "flatness_lokal"),
+                           _candidate_mood_value(b, "flatness", "flatness_lokal"))
             ),
             "loudness": endlich(a.lufs_lokal, b.lufs_lokal),
             "structure": (
@@ -403,12 +411,12 @@ def pair_quality_reasons(
                 gruende.append(f"quellmessung_ungueltig:{name}")
 
         mood_hell = (
-            (a.mood or {}).get("brightness", a.brightness_lokal),
-            (b.mood or {}).get("brightness", b.brightness_lokal),
+            _candidate_mood_value(a, "brightness", "brightness_lokal"),
+            _candidate_mood_value(b, "brightness", "brightness_lokal"),
         )
         mood_flach = (
-            (a.mood or {}).get("flatness", a.flatness_lokal),
-            (b.mood or {}).get("flatness", b.flatness_lokal),
+            _candidate_mood_value(a, "flatness", "flatness_lokal"),
+            _candidate_mood_value(b, "flatness", "flatness_lokal"),
         )
         if all(v is not None for v in mood_hell) and not endlich(*mood_hell):
             gruende.append("quellmessung_ungueltig:brightness")
@@ -441,23 +449,126 @@ def _genre(track: Track) -> str:
 
 
 def _grid_sec(track: Track) -> float:
-    unit = int(track.phrase_unit) if track.phrase_unit else get_mix_profile(_genre(track)).phrase_unit
-    return seconds_per_bar(track.bpm) * unit
+    return seconds_per_bar(track.bpm) * effective_track_phrase_unit(track)
+
+
+def _phrase_points_usable(track: Track) -> bool:
+    """Nur aktive Anker oder verifizierte Rekordbox-PSSI-Punkte quantisieren."""
+    if track.bar_position_usage_blocked:
+        return False
+    if track.phrase_anchor is not None:
+        return True
+    # beatgrid_status ist eine Diagnose zur Rekordbox-/Beatgrid-Uebereinstimmung.
+    # Ein separat validierter Audio-Anker bleibt fuer Audio-Gitter nutzbar.
+    if _active_audio_phrase_anchor(track) is not None:
+        return True
+    return track.verified_pssi_phrase_grid
+
+
+def _active_audio_phrase_anchor(track: Track) -> float | None:
+    """Liefert nur den separat konfidenten Audioanker, unabhaengig vom Statuslabel."""
+    if (
+        track.bar_position_usage_blocked
+        or track.beatgrid_source != "audio"
+        or track.bar_position_status in {"reference_candidate", "native_candidate"}
+    ):
+        return None
+    from .downbeat import (
+        BEATGRID_MAX_PHASE_ERROR_SECONDS,
+        BEATGRID_MIN_WINDOWS,
+        DOWNBEAT_RELIABLE_MIN,
+    )
+    try:
+        anchor = float(track.first_downbeat)
+        confidence = float(track.downbeat_confidence)
+        max_phase_error_ms = float(track.beatgrid_max_phase_error_ms)
+        windows_checked = track.beatgrid_windows_checked
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (
+        math.isfinite(anchor)
+        and anchor >= 0.0
+        and math.isfinite(confidence)
+        and confidence >= DOWNBEAT_RELIABLE_MIN
+        and type(windows_checked) is int
+        and windows_checked >= BEATGRID_MIN_WINDOWS
+        and math.isfinite(max_phase_error_ms)
+        and 0.0 <= max_phase_error_ms
+        and max_phase_error_ms
+        <= BEATGRID_MAX_PHASE_ERROR_SECONDS * 1000.0 + 1e-9
+    ):
+        return anchor
+    return None
+
+
+def _trusted_candidates(track: Track, candidates: list[MixCandidate]) -> list[MixCandidate]:
+    """Entfernt PSSI-Rang/Label ohne Gridbeleg; sichere Ankerpunkte bleiben nutzbar.
+
+    Ein unbestaetigtes PSSI-Schema darf keine Phrase behaupten. Liegt sein
+    Zeitpunkt aber auf einem unabhaengig aktiven Track-Anker, ist der
+    Mixpunkt-Zeitstempel selbst rastergeprueft und kann neutral weiterlaufen.
+    """
+    if track.verified_pssi_phrase_grid:
+        return candidates
+    trusted = []
+    for candidate in candidates:
+        schemas = [schema for schema in (candidate.schema or []) if schema != "pssi_phrase"]
+        if not schemas and "pssi_phrase" in (candidate.schema or []):
+            anchor = track.phrase_anchor
+            if anchor is None:
+                anchor = _active_audio_phrase_anchor(track)
+            try:
+                grid = _grid_sec(track)
+                aligned = (
+                    anchor is not None
+                    and math.isfinite(float(candidate.t))
+                    and grid > 0.0
+                    and abs(
+                        quantize_to_grid(
+                            float(candidate.t), grid, float(anchor), "round"
+                        )
+                        - float(candidate.t)
+                    ) <= QUANTIZE_TOLERANCE_SEC
+                )
+            except (TypeError, ValueError, OverflowError):
+                aligned = False
+            if not aligned:
+                continue
+        if len(schemas) != len(candidate.schema or []):
+            # Track.mix_*_candidates kann bereits MixCandidate-Objekte enthalten.
+            # Die Vertrauensfilterung ist eine Sicht fuer dieses Ranking und darf
+            # deren gespeicherte Provenienz nicht dauerhaft am Track umschreiben.
+            candidate = copy.copy(candidate)
+            candidate.schema = schemas
+            candidate.provenance = PROVENANCE_JE_SCHEMA.get(schemas[0], "") if schemas else ""
+            candidate.phrase_label = ""
+        trusted.append(candidate)
+    return trusted
 
 
 def _ist_benannter_cue(track: Track, cand: MixCandidate, seite: str) -> bool:
     """Erkennt einen gerichteten manuellen Cue nur fuer Herkunftsdiagnose."""
     if "benannter_cue" not in (cand.schema or []):
         return False
+    phrase_anchor = track.phrase_anchor
+    if not _phrase_points_usable(track):
+        return False
+    if phrase_anchor is None:
+        phrase_anchor = _active_audio_phrase_anchor(track)
+    if phrase_anchor is None and not track.verified_pssi_phrase_grid:
+        return False
     muster = CUE_IN_PATTERN if seite == "in" else CUE_OUT_PATTERN
     grid = _grid_sec(track)
+    phrase_points = (list(track.phrase_grid)
+                     if track.verified_pssi_phrase_grid or _verified_native_phrase_grid(track)
+                     else [])
     for cue in track.cue_points or []:
         if cue.get("provenance") != "manual":
             continue
         if not muster.search((cue.get("name") or "").upper()):
             continue
-        q = _quantize(float(cue["t"]), seite, list(track.phrase_grid or []), grid, track.phrase_anchor)
-        if q is not None and abs(round(float(q), 3) - cand.t) <= QUANTIZE_TOLERANCE_SEC:
+        q = _quantize(float(cue["t"]), seite, phrase_points, grid, phrase_anchor)
+        if q is not None and abs(float(q) - cand.t) <= QUANTIZE_TOLERANCE_SEC:
             return True
     return False
 
@@ -465,13 +576,18 @@ def _ist_benannter_cue(track: Track, cand: MixCandidate, seite: str) -> bool:
 def _auf_gitter(track: Track, t: float, seite: str) -> bool:
     """Punkt liegt (mit QUANTIZE_TOLERANCE_SEC) auf dem PSSI-Gitter bzw. dem
     Phrasenraster des Tracks."""
-    if track.phrase_grid:
+    if not _phrase_points_usable(track):
+        return False
+    if track.verified_pssi_phrase_grid or _verified_native_phrase_grid(track):
         q = quantize_to_points(t, list(track.phrase_grid), "floor" if seite == "out" else "ceil")
     else:
         grid = _grid_sec(track)
-        if grid <= 0.0:
+        anchor = track.phrase_anchor
+        if anchor is None:
+            anchor = _active_audio_phrase_anchor(track)
+        if grid <= 0.0 or anchor is None:
             return False
-        q = quantize_to_grid(t, grid, track.phrase_anchor, "round")
+        q = quantize_to_grid(t, grid, anchor, "round")
     return q is not None and abs(q - t) <= QUANTIZE_TOLERANCE_SEC
 
 
@@ -562,12 +678,43 @@ def _gate_gruende_basis(track_a: Track, track_b: Track, out_a: MixCandidate,
     return reasons
 
 
+def _native_blend_supported(track, start, duration):
+    """Native Modelllücken vor der teuren strikten Kickprüfung ausschließen.
+
+    Ohne native Modellfolge bleibt der bisherige Kandidatenvertrag erhalten.
+    Regelmäßige Modellbeats ersetzen keine anschließende Audio-Sync-Prüfung.
+    """
+    native = getattr(track, 'native_beat_analysis', {})
+    if native.get('status') != 'ok':
+        return True
+    if 'model_beats' in native:
+        from .ai_models.native_beat_alignment import stable_model_window
+        verification = native.get('verification')
+        coverage = verification['coverage'] if verification else native.get('model_coverage')
+        # Nicht beobachtete Abschnitte weiterhin nur am Audio prüfen.
+        # Beobachtete echte Modelllücken vor dem teuren Decode verwerfen.
+        covered = not coverage or (
+            start >= coverage['start_s'] and start + duration <= coverage['end_s'])
+        if covered and not stable_model_window(native, start, duration):
+            return False
+    if native.get('phase_method') == 'native_attack_v1':
+        from .ai_models.native_track_beats import has_verified_grid
+        from .ai_models.native_audio_phase import supports_window
+        if has_verified_grid(track) and not supports_window(track, start, duration):
+            return False
+    return True
+
+
 def _blenden_gate(track_a: Track, out_a: MixCandidate, blend_bars: int, deckel: float | None = None) -> bool:
-    """True, wenn die Blende ueber den effektiven Outro-Deckel hinauslaeuft."""
+    """Physische A-Restdauer strikt, strukturellen Outro-Deckel mit Rastertoleranz pruefen."""
     spb = seconds_per_bar(track_a.bpm)
+    overlap = blend_bars * spb
+    # Rastertoleranz erlaubt kein fehlendes Audio am tatsaechlichen Trackende.
+    if overlap > max(0.0, float(track_a.duration) - out_a.t):
+        return True
     if deckel is None:
         deckel = _outro_deckel(track_a, out_a)
-    return out_a.t + blend_bars * spb > deckel + QUANTIZE_TOLERANCE_SEC
+    return out_a.t + overlap > deckel + QUANTIZE_TOLERANCE_SEC
 
 
 def _blende_passt_in_b(track_b: Track, in_b: MixCandidate, blend_bars: int, spb_a: float) -> bool:
@@ -593,6 +740,14 @@ def pair_gate_reasons(track_a: Track, track_b: Track, out_a: MixCandidate,
         reasons.append("blende_im_outro")
     if not _blende_passt_in_b(track_b, in_b, blend_bars, seconds_per_bar(track_a.bpm)):
         reasons.append("blende_ueber_b_ende")
+    _, relation = effective_bpm_diff(track_a.bpm, track_b.bpm)
+    rendered_overlap = blend_bars * seconds_per_bar(track_a.bpm)
+    source_b_duration = rendered_overlap * _renderer_source_b_rate(
+        track_a.bpm, track_b.bpm, relation,
+    )
+    if (not _native_blend_supported(track_a, out_a.t, rendered_overlap)
+            or not _native_blend_supported(track_b, in_b.t, source_b_duration)):
+        reasons.append("native_beat_gap")
     reasons += [g for g in basis if g in ("in_im_intro", "in_ausserhalb", "gitter_out", "gitter_in")]
     return reasons
 
@@ -608,7 +763,13 @@ def blend_bars_options(track_a: Track, out_a: MixCandidate, bpm_relation: str) -
         return []
     max_bars = int(math.floor((_outro_deckel(track_a, out_a) - out_a.t + QUANTIZE_TOLERANCE_SEC) / spb))
     out: list[int] = []
-    for bars in (int(kurz), int(lang)):
+    lengths = [int(kurz), int(lang)]
+    if getattr(track_a, 'native_beat_analysis', {}).get('status') == 'ok':
+        # Native Referenzen erlauben zusätzlich die bereits geltende untere
+        # Blenddauer. Lange Genre-Blenden können Breaks/Fills überschreiten;
+        # kein Grund, deswegen jede kürzere gültige Überblendung zu verlieren.
+        lengths.append(MIN_TRANSITION_BARS)
+    for bars in lengths:
         b = min(bars, max_bars)
         if bpm_relation != "direct":
             b = min(b, PAAR_HALF_DOUBLE_MAX_BARS)
@@ -618,7 +779,23 @@ def blend_bars_options(track_a: Track, out_a: MixCandidate, bpm_relation: str) -
 
 
 def _beide(a, b) -> bool:
-    return a is not None and b is not None
+    return _finite_measurement(a) and _finite_measurement(b)
+
+
+def _finite_measurement(value) -> bool:
+    if isinstance(value, (bool, str, bytes, bytearray)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _candidate_mood_value(candidate: MixCandidate, key: str, fallback: str):
+    """Nutze das lokale Rohmerkmal, wenn der optionale Mood-Wert fehlt."""
+    mood = candidate.mood
+    value = mood.get(key) if isinstance(mood, dict) else None
+    return getattr(candidate, fallback) if value is None else value
 
 
 def _teil_harmonie(out_a: MixCandidate, in_b: MixCandidate, *, harmonic_strictness: int,
@@ -671,8 +848,13 @@ def _teil_groove(out_a: MixCandidate, in_b: MixCandidate, tol: dict, flags: dict
     else:
         roh = BASS_PATTERN_SHARE * bass_sim + (1.0 - BASS_PATTERN_SHARE) * onset_sim
     wert = _spreize(roh, tol.get("groove_sim_floor", DEFAULT_GROOVE_SIM_FLOOR))
+    if wert is None:
+        return None
     if _beide(out_a.syncopation_lokal, in_b.syncopation_lokal):
-        wert *= _normiert(in_b.syncopation_lokal - out_a.syncopation_lokal, SYNCOPATION_DELTA_MAX)
+        sync = _normiert(in_b.syncopation_lokal - out_a.syncopation_lokal, SYNCOPATION_DELTA_MAX)
+        if sync is None:
+            return None
+        wert *= sync
     pa, pb = out_a.percussive_ratio_lokal, in_b.percussive_ratio_lokal
     if _beide(pa, pb):
         if pa > PERCUSSIVE_HOCH and pb > PERCUSSIVE_HOCH:
@@ -696,7 +878,10 @@ def _teil_bass(out_a: MixCandidate, in_b: MixCandidate, tol: dict, flags: dict,
     else:
         wert = 0.6 * sub + 0.4 * punch
     if _beide(out_a.bass_rms_dbfs, in_b.bass_rms_dbfs):
-        wert *= _normiert(in_b.bass_rms_dbfs - out_a.bass_rms_dbfs, BASS_RMS_DELTA_MAX_DB)
+        rms = _normiert(in_b.bass_rms_dbfs - out_a.bass_rms_dbfs, BASS_RMS_DELTA_MAX_DB)
+        if rms is None:
+            return None
+        wert *= rms
     konflikt = bool(out_a.kick_aktiv and in_b.kick_aktiv)
     flags["bass_swap_pflicht"] = konflikt
     # Plant der Aufrufer einen Bass-/EQ-Swap (App bei bass_swap_pflicht, Hoertest
@@ -716,16 +901,20 @@ def _teil_timbre(out_a: MixCandidate, in_b: MixCandidate) -> float | None:
     if _beide(out_a.avg_highs_lokal, in_b.avg_highs_lokal):
         deltas.append(abs(in_b.avg_highs_lokal - out_a.avg_highs_lokal))
     if deltas:
-        wert *= _normiert(sum(deltas) / len(deltas), MIDS_HIGHS_DELTA_MAX)
+        similarity = _normiert(sum(deltas) / len(deltas), MIDS_HIGHS_DELTA_MAX)
+        if similarity is None:
+            return None
+        wert *= similarity
     return max(0.0, min(1.0, wert))
 
 
 def _teil_mood(out_a: MixCandidate, in_b: MixCandidate, tol: dict) -> float | None:
-    ma, mb = out_a.mood or {}, in_b.mood or {}
-    ha = ma.get("brightness", out_a.brightness_lokal)
-    hb = mb.get("brightness", in_b.brightness_lokal)
-    fa = ma.get("flatness", out_a.flatness_lokal)
-    fb = mb.get("flatness", in_b.flatness_lokal)
+    ma = out_a.mood if isinstance(out_a.mood, dict) else {}
+    mb = in_b.mood if isinstance(in_b.mood, dict) else {}
+    ha = _candidate_mood_value(out_a, "brightness", "brightness_lokal")
+    hb = _candidate_mood_value(in_b, "brightness", "brightness_lokal")
+    fa = _candidate_mood_value(out_a, "flatness", "flatness_lokal")
+    fb = _candidate_mood_value(in_b, "flatness", "flatness_lokal")
     hell = (_normiert(float(hb) - float(ha), tol.get("brightness_delta_max", DEFAULT_BRIGHTNESS_DELTA_MAX))
             if _beide(ha, hb) else None)
     flach = _normiert(float(fb) - float(fa), DEFAULT_FLATNESS_DELTA_MAX) if _beide(fa, fb) else None
@@ -808,6 +997,27 @@ def _gewichte(tol: dict, genre: str, explizit: bool) -> dict[str, float]:
     return {f: float(quelle[f"kandidaten_{f}_weight"]) for f in FAKTOREN}
 
 
+def _ablation_weight(name: str) -> float:
+    raw = os.environ.get(name, "0")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} muss eine Zahl in 0..1 sein") from error
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} muss eine Zahl in 0..1 sein")
+    return value
+
+
+def _embedding_ablation_weight() -> float:
+    """Standard bleibt das bisherige Scoring."""
+    return _ablation_weight("HPG_EMBEDDING_SCORE_WEIGHT")
+
+
+def _stem_bass_ablation_weight() -> float:
+    """Standard bleibt das bisherige Scoring."""
+    return _ablation_weight("HPG_STEM_BASS_SCORE_WEIGHT")
+
+
 def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCandidate,
                blend_bars: int, *, energy_direction=None, harmonic_strictness: int = 7,
                allow_experimental: bool = True, tolerances: dict | None = None,
@@ -818,6 +1028,9 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     Half/Double: Gesamtscore x BPM_HALF_DOUBLE_PENALTY. Vocals beidseitig: -0.06.
     `blend_bars` ist bewusst KEIN Score-Merkmal (Spec Abschnitt 1: Blendenlaenge
     als Qualitaetsmerkmal widerlegt, rho -0.08); es dient nur den Gates/Flags.
+    CNN-Embeddings und Stem-Bass koennen nur als explizite Ablationen mit
+    HPG_EMBEDDING_SCORE_WEIGHT bzw. HPG_STEM_BASS_SCORE_WEIGHT einfliessen;
+    Standardgewichte sind null.
     `bass_swap_geplant`: der Aufrufer rendert/plant einen Bass-/EQ-Swap — der
     Kick-Konflikt ist damit geloest, KICK_KONFLIKT_ABZUG entfaellt, das Flag
     `bass_swap_pflicht` bleibt gesetzt."""
@@ -831,6 +1044,43 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     flags = {"half_double": rel != "direct", "bass_swap_pflicht": False,
              "lange_blende_erlaubt": False,
              "benannter_cue": _ist_benannter_cue(track_a, out_a, "out") or _ist_benannter_cue(track_b, in_b, "in")}
+    overlap_sec = blend_bars * seconds_per_bar(track_a.bpm)
+    source_b_rate = _renderer_source_b_rate(track_a.bpm, track_b.bpm, rel)
+    additional = _optionale_pair_diagnostics(
+        track_a, track_b, out_a.t, in_b.t, blend_bars,
+        overlap_sec=overlap_sec, source_b_rate=source_b_rate,
+    )
+    if additional:
+        additional = dict(additional)
+    embedding_weight = _embedding_ablation_weight()
+    stem_bass_weight = _stem_bass_ablation_weight()
+    embedding_cosine = additional.get("embedding_cosine")
+    timbre_score = _teil_timbre(out_a, in_b)
+    bass_score = _teil_bass(out_a, in_b, tol, flags, bass_swap_geplant)
+    if (embedding_weight > 0.0 and type(embedding_cosine) in (int, float)
+            and math.isfinite(embedding_cosine) and -1.0 <= embedding_cosine <= 1.0
+            and timbre_score is not None):
+        embedding_score = (embedding_cosine + 1.0) / 2.0
+        teil_timbre = ((1.0 - embedding_weight) * timbre_score
+                       + embedding_weight * embedding_score)
+        additional["embedding_ablation_weight"] = embedding_weight
+        additional["affects_score"] = True
+    else:
+        teil_timbre = timbre_score
+    stems_a, stems_b = additional.get("stems_a"), additional.get("stems_b")
+    bass_a = stems_a.get("bass") if type(stems_a) is dict else None
+    bass_b = stems_b.get("bass") if type(stems_b) is dict else None
+    if (stem_bass_weight > 0.0 and type(bass_a) in (int, float)
+            and type(bass_b) in (int, float) and math.isfinite(bass_a)
+            and math.isfinite(bass_b) and bass_a >= 0.0 and bass_b >= 0.0
+            and max(bass_a, bass_b) > 0.0 and bass_score is not None):
+        stem_bass_score = min(bass_a, bass_b) / max(bass_a, bass_b)
+        bass_score = ((1.0 - stem_bass_weight) * bass_score
+                      + stem_bass_weight * stem_bass_score)
+        additional["stem_bass_ablation_weight"] = stem_bass_weight
+        additional["affects_score"] = True
+    if additional:
+        flags['deep_features'] = additional
     teil = {
         "harmonic": _teil_harmonie(out_a, in_b, harmonic_strictness=harmonic_strictness,
                                    allow_experimental=allow_experimental),
@@ -838,8 +1088,8 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
         "energy": _teil_energie(out_a, in_b, richtung),
         "genre": _teil_genre(genre_a, genre_b),
         "groove": _teil_groove(out_a, in_b, tol, flags),
-        "bass": _teil_bass(out_a, in_b, tol, flags, bass_swap_geplant),
-        "timbre": _teil_timbre(out_a, in_b),
+        "bass": bass_score,
+        "timbre": teil_timbre,
         "mood": _teil_mood(out_a, in_b, tol),
         "loudness": _teil_lautheit(out_a, in_b),
         "structure": _teil_struktur(
@@ -874,6 +1124,35 @@ def _stufe(wert: float | None) -> str:
     return "schwach"
 
 
+def _deep_feature_reason(flags: dict) -> str:
+    """Zeigt optionale Zusatzmessungen und eine aktivierte Ablation."""
+    diagnostic = flags.get("deep_features")
+    if type(diagnostic) is not dict or diagnostic.get("calibrated") is not False:
+        return ""
+    details = []
+    stems_a, stems_b = diagnostic.get("stems_a"), diagnostic.get("stems_b")
+    if isinstance(stems_a, dict) or isinstance(stems_b, dict):
+        coverage = "A+B" if isinstance(stems_a, dict) and isinstance(stems_b, dict) else (
+            "A" if isinstance(stems_a, dict) else "B")
+        details.append(f"Stems Mixfenster {coverage} vorhanden")
+    similarity = diagnostic.get("embedding_cosine")
+    if type(similarity) in (int, float) and math.isfinite(similarity):
+        details.append(f"Embedding-Rohähnlichkeit {similarity:.2f}")
+    if diagnostic.get("affects_score") is True:
+        for key, label in (("embedding_ablation_weight", "Embedding"),
+                           ("stem_bass_ablation_weight", "Stem-Bass")):
+            weight = diagnostic.get(key)
+            if type(weight) in (int, float) and math.isfinite(weight):
+                details.append(f"{label}-Ablationsgewicht {weight:.2f}")
+        return "Unkalibrierte Deep-Feature-Ablation aktiv: " + ", ".join(details)
+    bass_swap = diagnostic.get("bass_swap")
+    if type(bass_swap) is dict and type(bass_swap.get("relative_bar")) is int:
+        details.append(f"Bass-Swap-Kandidat Takt {bass_swap['relative_bar']}")
+    if not details:
+        return ""
+    return "Zusatzmerkmale unkalibriert, ohne Score-Einfluss: " + ", ".join(details)
+
+
 def begruendung_aus_teilwerten(teilwerte: dict, flags: dict, blend_bars: int) -> str:
     """Begruendung ausschliesslich aus Teilwerten und Flags (kein freier Text)."""
     teile = [f"{_FAKTOR_NAMEN.get(k, k)} {_stufe(teilwerte.get(k))}" for k in FAKTOREN if k in teilwerte]
@@ -885,6 +1164,9 @@ def begruendung_aus_teilwerten(teilwerte: dict, flags: dict, blend_bars: int) ->
         teile.append("lange Blende erlaubt")
     if flags.get("benannter_cue"):
         teile.append("benannter Cue")
+    deep_features = _deep_feature_reason(flags)
+    if deep_features:
+        teile.append(deep_features)
     teile.append(f"Blende {blend_bars} Takte")
     return "; ".join(teile)
 
@@ -923,12 +1205,44 @@ def _sortschluessel(p: PairCandidate, rang_map: dict | None = None):
             rm.get(_hauptschema(p.in_b, rm), unbekannt), p.blend_bars)
 
 
+def _renderer_source_b_rate(bpm_a, bpm_b, relation):
+    """Quellsekunden von B pro Rendersekunde gemaess Renderer-Stretch."""
+    if not all(math.isfinite(value) and value > 0 for value in (bpm_a, bpm_b)):
+        return 1.0
+    target_b = bpm_b * 2.0 if relation == "half" else bpm_b / 2.0 if relation == "double" else bpm_b
+    if abs(bpm_a - bpm_b) <= 0.05 and relation == "direct":
+        return 1.0
+    return max(0.92, min(1.08, bpm_a / target_b))
+
+
+def _optionale_pair_diagnostics(track_a, track_b, out_s, in_s, blend_bars,
+                                *, overlap_sec=None, source_b_rate=1.0):
+    """Unkalibrierte Zusatzmerkmale duerfen Pair-Ranking nie abbrechen."""
+    try:
+        from .ai_models.deep_features import pair_diagnostics
+        result = pair_diagnostics(
+            track_a, track_b, out_s, in_s, blend_bars,
+            overlap_sec=overlap_sec, source_b_rate=source_b_rate,
+        )
+        if (type(result) is not dict or result.get('calibrated') is not False
+                or result.get('affects_score') is not False):
+            return {}
+        return result
+    except Exception as error:
+        logger.debug("Optionale Stem-/Embedding-Paarmerkmale ausgelassen: %s",
+                     type(error).__name__)
+        return {}
+
+
 def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
-                   schemata_vorhanden: set[str], rang_map: dict | None = None) -> list[PairCandidate]:
+                   schemata_vorhanden: set[str], rang_map: dict | None = None,
+                   preserve_choice: dict | None = None,
+                   max_combinations: int | None = None) -> list[PairCandidate]:
     """Schritt 4: nahe Kombinationen gleichen Schemas zusammenlegen (bester Score
     bleibt, Schemata vereinigt), Kappung auf PAAR_MAX_KOMBINATIONEN Zeitpunkt-
     Kombinationen (je bis zu 2 Blenden), mindestens eine Kombination je
     vorhandenem Schema."""
+    limit = _combination_limit(max_combinations)
     paare = sorted(paare, key=lambda p: _sortschluessel(p, rang_map))
     # Dedupe ueber Kombinationen (ohne Blende): Vertreter = bester Score.
     vertreter: list[PairCandidate] = []
@@ -951,7 +1265,7 @@ def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
         key = (v.t_out, v.t_in)
         if key not in kombis:
             kombis.append(key)
-    gewaehlt = kombis[:PAAR_MAX_KOMBINATIONEN]
+    gewaehlt = kombis[:limit]
 
     def schemata_in(auswahl):
         s = set()
@@ -971,7 +1285,7 @@ def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
                        if schema in p.out_a.schema or schema in p.in_b.schema), None)
         if ersatz is None or ersatz in gewaehlt:
             continue
-        if len(gewaehlt) < PAAR_MAX_KOMBINATIONEN:
+        if len(gewaehlt) < limit:
             gewaehlt.append(ersatz)
             continue
         for k in reversed(gewaehlt):
@@ -980,6 +1294,19 @@ def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
             if not verloren:
                 gewaehlt = rest + [ersatz]
                 break
+    # Eine explizite, weiterhin vorhandene Wahl darf nicht schon vor der
+    # Qualitaets-/Auditpruefung allein durch die Score-Kappung verschwinden.
+    # Hoechstens eine zusaetzliche Kombination; keine neuen Mixpunkte erfinden.
+    if preserve_choice:
+        try:
+            selected = next((p for p in vertreter
+                if abs(p.t_out - float(preserve_choice['t_out'])) <= QUANTIZE_TOLERANCE_SEC
+                and abs(p.t_in - float(preserve_choice['t_in'])) <= QUANTIZE_TOLERANCE_SEC
+                and p.blend_bars == int(preserve_choice['blend_bars'])), None)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            selected = None
+        if selected is not None and (selected.t_out, selected.t_in) not in gewaehlt:
+            gewaehlt.append((selected.t_out, selected.t_in))
     # Dedupe-Opfer (zuordnung != p) sind raus. Je (Kombination, Blende) bleibt
     # der beste Vertreter; liegen zwei Vertreter verschiedener Hauptschemata auf
     # demselben Punkt, werden ihre Schemata vereinigt (kein Kandidat geht verloren).
@@ -1003,11 +1330,19 @@ def dedupe_and_cap(paare: list[PairCandidate], grid_a: float, grid_b: float,
 def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=None,
                           harmonic_strictness: int = 7, allow_experimental: bool = True,
                           tolerances: dict | None = None, bass_swap_geplant: bool = False,
-                          schema_rang: list[str] | None = None) -> list[PairCandidate]:
+                          schema_rang: list[str] | None = None,
+                          preserve_choice: dict | None = None,
+                          max_combinations: int | None = None,
+                          gate_rejections: set[str] | None = None) -> list[PairCandidate]:
     """Schritte 1–5 der Spec: Gates, Score, Blendenlaengen, Dedupe/Kappung,
     Rang + Begruendung. Liefert [] wenn keine Kombination die Gates besteht.
     `schema_rang`: Rangfolge der Schemata (Hoertest, Teil 3) als Tiebreak bei
     gleichem Score; None = SCHEMA_PRIORITAET."""
+    _combination_limit(max_combinations)
+    if tolerances is not None:
+        # Fehlkonfigurierte Gewichte sind ein API-Fehler, auch wenn Gates spaeter
+        # alle Kandidaten verwerfen wuerden.
+        _gewichte(tolerances, _genre(track_a), explizit=True)
     try:
         bpm_gueltig = all(
             math.isfinite(float(track.bpm)) and float(track.bpm) > 0.0
@@ -1017,9 +1352,21 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
         bpm_gueltig = False
     if not bpm_gueltig:
         return []
+    missing_anchors = [
+        side for side, track in (("a", track_a), ("b", track_b))
+        if not _phrase_points_usable(track)
+    ]
+    if missing_anchors:
+        # Den tatsächlichen Raster-Ausschluss bis zur App weiterreichen.
+        # Lokale Groove-Messwerte ersetzen keinen verwendbaren Taktanker.
+        if gate_rejections is not None:
+            gate_rejections.update(f"phrase_anchor_{side}" for side in missing_anchors)
+        return []
     rang_map = {s: i for i, s in enumerate(schema_rang)} if schema_rang else None
     outs = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_a.mix_out_candidates or [])]
     ins = [MixCandidate.from_dict(d) if isinstance(d, dict) else d for d in (track_b.mix_in_candidates or [])]
+    outs = _trusted_candidates(track_a, outs)
+    ins = _trusted_candidates(track_b, ins)
     if not outs or not ins:
         return []
     _, rel = effective_bpm_diff(track_a.bpm, track_b.bpm)
@@ -1028,6 +1375,9 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
     for c in outs + ins:
         schemata_vorhanden.update(c.schema or [])
     paare: list[PairCandidate] = []
+    deep_ablation_requested = (
+        _embedding_ablation_weight() > 0.0 or _stem_bass_ablation_weight() > 0.0
+    )
     # Laufzeit (gemessen 2026-08-22: ~9 ms je Paar bei 128 Kombinationen): der
     # Score haengt nicht von der Blende ab (Docstring score_pair), die Gates nur
     # ueber blende_im_outro — deshalb je (out, in) EINMAL Gates + Score, dann die
@@ -1073,6 +1423,15 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
                 and not _blenden_gate(track_a, o, b, deckel)
                 and _blende_passt_in_b(track_b, i, b, spb)
             ]
+            native_bars = [b for b in bars_ok
+                           if _native_blend_supported(track_a, o.t, b * spb)
+                           and _native_blend_supported(
+                               track_b, i.t,
+                               b * spb * _renderer_source_b_rate(track_a.bpm, track_b.bpm, rel),
+                           )]
+            if len(native_bars) < len(bars_ok) and gate_rejections is not None:
+                gate_rejections.add("native_beat_gap")
+            bars_ok = native_bars
             if not bars_ok:
                 continue
             score, teil, flags = score_pair(
@@ -1081,6 +1440,30 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
                 allow_experimental=allow_experimental, tolerances=tolerances,
                 bass_swap_geplant=bass_swap_geplant)
             for bars in bars_ok:
+                # Ohne explizite Ablation bleibt der Score laengenunabhaengig;
+                # Fenstermerkmale und Bass-Swap-Hinweise folgen jeder Laenge.
+                variant_flags = dict(flags)
+                variant_score, variant_teil = score, teil
+                if bars != bars_ok[0] and deep_ablation_requested:
+                    # Aktivierte fensterlokale Gewichte brauchen auch den
+                    # Score und Teilwerte des jeweiligen Blendenfensters.
+                    variant_score, variant_teil, variant_flags = score_pair(
+                        track_a, track_b, o, i, bars,
+                        energy_direction=energy_direction,
+                        harmonic_strictness=harmonic_strictness,
+                        allow_experimental=allow_experimental,
+                        tolerances=tolerances,
+                        bass_swap_geplant=bass_swap_geplant,
+                    )
+                elif bars != bars_ok[0]:
+                    variant_flags.pop('deep_features', None)
+                    additional = _optionale_pair_diagnostics(
+                        track_a, track_b, o.t, i.t, bars,
+                        overlap_sec=bars * spb,
+                        source_b_rate=_renderer_source_b_rate(track_a.bpm, track_b.bpm, rel),
+                    )
+                    if additional:
+                        variant_flags['deep_features'] = additional
                 # Flache Kopien statt to_dict()/from_dict() (asdict kostete die
                 # Haelfte der Laufzeit); die Schema-Listen werden eigenstaendig,
                 # weil dedupe_and_cap sie vereinigt.
@@ -1089,34 +1472,89 @@ def build_pair_candidates(track_a: Track, track_b: Track, *, energy_direction=No
                 o_k.section_label, i_k.section_label = out_section_label, in_section_label
                 paare.append(PairCandidate(
                     out_a=o_k, in_b=i_k,
-                    blend_bars=bars, overlap_sec=bars * spb, score=score, teilwerte=dict(teil),
-                    flags=dict(flags), begruendung=begruendung_aus_teilwerten(teil, flags, bars),
+                    blend_bars=bars, overlap_sec=bars * spb, score=variant_score,
+                    teilwerte=dict(variant_teil), flags=variant_flags,
+                    begruendung=begruendung_aus_teilwerten(variant_teil, variant_flags, bars),
                     bpm_relation=rel))
     if not paare:
         return []
-    final = dedupe_and_cap(paare, _grid_sec(track_a), _grid_sec(track_b), schemata_vorhanden, rang_map)
+    final = dedupe_and_cap(paare, _grid_sec(track_a), _grid_sec(track_b), schemata_vorhanden,
+                           rang_map, preserve_choice=preserve_choice,
+                           max_combinations=max_combinations)
     for rang, p in enumerate(final, start=1):
         p.rang = rang
     return final
+
+
+def _rejection_description(track_a, track_b, abgelehnt) -> list[str]:
+    """Erklaert nur die im selben Rankinglauf tatsaechlich verworfenen Kandidaten."""
+    if not abgelehnt:
+        return ["Keine zulässigen Mixpunkte", "Für dieses Paar wurde kein Kandidat innerhalb der Mixpunkt- und Zeitvorgaben gefunden."]
+    codes = {grund for _, gruende in abgelehnt for grund in gruende}
+    namen = {"harmonic": "Tonart", "bpm": "Tempo", "energy": "Energie",
+             "genre": "Genre", "groove": "Groove", "bass": "Bass/Kick",
+             "timbre": "Klangfarbe", "mood": "Stimmung", "loudness": "Lautheit",
+             "structure": "Struktur/Tragfähigkeit"}
+    fehlend = sorted({namen.get(code.split(":", 1)[1], code.split(":", 1)[1])
+                      for code in codes if ":" in code})
+    unsicher = set()
+    from .downbeat import DOWNBEAT_RELIABLE_MIN
+    for p, _ in abgelehnt:
+        for track, c in ((track_a, p.out_a), (track_b, p.in_b)):
+            try:
+                niedrig = float(track.downbeat_confidence) < DOWNBEAT_RELIABLE_MIN
+            except (TypeError, ValueError):
+                niedrig = False
+            if niedrig and (not (c.groove_pattern_lokal or c.bass_pattern_lokal)
+                            or not isinstance(c.kick_aktiv, bool)
+                            or not isinstance(c.traegt_allein, bool)):
+                unsicher.add(track.fileName or track.filePath)
+    if unsicher:
+        return ["Taktanfang unsicher",
+                "Betroffen: " + ", ".join(sorted(unsicher)) + ".",
+                "Beatabhängige Messwerte fehlen an den Mixpunkten. Fehlend oder ungültig: " + ", ".join(fehlend) + ".",
+                "Kein Übergang freigegeben; dies ist keine Bewertung der musikalischen Qualität."]
+    if fehlend:
+        return ["Messwerte fehlen", "An den geprüften Mixpunkten fehlen gültige Werte für: " + ", ".join(fehlend) + "."]
+    return ["Passung unter Mindestwert", "Kein geprüfter Kandidat erfüllt die lokalen Qualitätsanforderungen für Score und Groove."]
 
 
 def rank_pair_candidates(track_a: Track, track_b: Track, *, bpm_tolerance: float = PAAR_BPM_MAX,
                          energy_direction=None,
                          harmonic_strictness: int = 7, allow_experimental: bool = True,
                          tolerances: dict | None = None, wahl: dict | None = None,
-                         schema_rang: list[str] | None = None) -> list[PairCandidate]:
+                         schema_rang: list[str] | None = None,
+                         rejection_reasons: list[str] | None = None,
+                         max_combinations: int | None = None) -> list[PairCandidate]:
     """Kandidaten des Paars in App-Reihenfolge (Spec Abschnitt 4): eine
     gespeicherte Wahl (candidate_choices, oder `wahl`) kommt nach vorn, sonst
     Score; Tiebreak die Schema-Rangfolge aus dem Hoertest
     (candidate_preferences), sonst SCHEMA_PRIORITAET. Flag `gespeicherte_wahl`
     auf jedem Kandidaten. bass_swap_geplant=True: die App waehlt bei
     bass_swap_pflicht den Uebergangstyp bass_swap."""
+    _combination_limit(max_combinations)
+    if rejection_reasons is not None:
+        rejection_reasons.clear()
     try:
+        if type(bpm_tolerance) is bool:
+            raise ValueError('Boolean BPM tolerance is invalid')
         tolerance = float(bpm_tolerance)
         bpm_diff, _ = effective_bpm_diff(track_a.bpm, track_b.bpm)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        if rejection_reasons is not None:
+            rejection_reasons.extend(["Tempodaten ungültig", "Der Tempovergleich konnte nicht berechnet werden."])
         return []
-    if not math.isfinite(tolerance) or tolerance < 0.0 or bpm_diff > tolerance:
+    if (
+        not math.isfinite(tolerance)
+        or tolerance < 0.0
+        or not math.isfinite(bpm_diff)
+        or bpm_diff > tolerance
+    ):
+        if rejection_reasons is not None:
+            if math.isfinite(tolerance) and tolerance >= 0.0:
+                rejection_reasons.extend(["Tempoabstand zu groß", f"Effektiver Abstand: {bpm_diff:.2f} BPM; erlaubt: {tolerance:.2f} BPM."])
+            else:
+                rejection_reasons.extend(["Tempogrenze ungültig", "Die eingestellte BPM-Toleranz ist nicht verwendbar."])
         return []
     genre_a = _genre(track_a)
     effektiver_schema_rang = (
@@ -1124,14 +1562,45 @@ def rank_pair_candidates(track_a: Track, track_b: Track, *, bpm_tolerance: float
         if schema_rang is None
         else list(schema_rang)
     )
+    w = wahl if wahl is not None else candidate_choices.hole(track_a.filePath, track_b.filePath)
+    gate_rejections = set()
     paare = build_pair_candidates(
         track_a, track_b, energy_direction=energy_direction, harmonic_strictness=harmonic_strictness,
         allow_experimental=allow_experimental, tolerances=tolerances, bass_swap_geplant=True,
-        schema_rang=effektiver_schema_rang)
-    paare = [p for p in paare if not pair_quality_reasons(p.score, p.teilwerte, p)]
+        schema_rang=effektiver_schema_rang,
+        **({'gate_rejections': gate_rejections} if rejection_reasons is not None else {}),
+        **({'preserve_choice': w} if w else {}),
+        **({'max_combinations': max_combinations} if max_combinations is not None else {}))
+    abgelehnt = []
+    qualifiziert = []
+    for p in paare:
+        gruende = pair_quality_reasons(p.score, p.teilwerte, p)
+        if gruende:
+            abgelehnt.append((p, gruende))
+        else:
+            qualifiziert.append(p)
+    paare = qualifiziert
     if not paare:
+        if rejection_reasons is not None:
+            rejection_reasons.extend(_rejection_description(track_a, track_b, abgelehnt))
+            missing_anchors = [
+                track.fileName or track.filePath
+                for side, track in (("a", track_a), ("b", track_b))
+                if f"phrase_anchor_{side}" in gate_rejections
+            ]
+            if missing_anchors:
+                rejection_reasons[:] = [
+                    "Taktanfang unsicher",
+                    "Kein verwendbarer Takt-/Phrasenanker: " + ", ".join(missing_anchors) + ".",
+                    "Lokale Groove- und Bassmesswerte allein geben kein Phrasenraster frei.",
+                ]
+            if "native_beat_gap" in gate_rejections:
+                native_reason = "Native Beatfolge im Übergangsfenster unregelmäßig oder unvollständig."
+                if not abgelehnt:
+                    rejection_reasons[:] = ["Keine durchgehend belegte Beatfolge", native_reason]
+                else:
+                    rejection_reasons.append(native_reason)
         return []
-    w = wahl if wahl is not None else candidate_choices.hole(track_a.filePath, track_b.filePath)
     treffer = None
     wahl_ungueltig_grund = ""
     if w:

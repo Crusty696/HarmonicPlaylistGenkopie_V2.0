@@ -70,8 +70,19 @@ Anker (Track startet auf der "1"), kein "unbekannt".
 
 Der Split ist gemessen noetig: die Eigenschaetzung trifft die Beat-Phase gut
 (0 von 12 ueber 1/8 Beat), die TAKT-Phase lag aber bei 4 von 12 um ganze Beats
-daneben — und die Konfidenz trennt das nicht. Wer behauptet, auf Takt 1 zu
-liegen, braucht das Referenz-Beatgrid.
+  daneben — und die Konfidenz trennt das nicht. Die Renderer-Taktphase braucht
+  deshalb weiterhin das Rekordbox-Referenzgrid.
+
+Bei einer schema-v5-validierten `candidate_rotation` bleibt
+`downbeat_reliable_*` aus dem belegten Beat-Raster ableitbar, waehrend
+`bar_phase_reliable_*` erzwungen `False` ist. Die Renderer-Sperre betrifft
+nur Takt-1-Alignment; `strict_beat_sync` und Beat-Alignment bleiben bestehen.
+
+Ein Version-78-`model_audio_rotation`-Anker kann die Beatphase fuer den
+Renderer liefern, bleibt aber Audioherkunft. Er setzt
+`bar_phase_reliable_*` nicht frei: die Modell-/Audio-Bestaetigung korrigiert
+den Analyseanker, ist jedoch keine unabhaengige musikalische Ground Truth fuer
+Takt-1-Alignment. `strict_beat_sync` bleibt aktiv.
 
 Ohne verlaesslichen Anker schaetzt `_estimate_first_beat` [hpg_core/transition_renderer.py] aus dem
 Segment. Die eigene Downbeat-Schaetzung ist fuer sample-genaues Alignment zu
@@ -171,3 +182,29 @@ sind nicht verifiziert.
 - LUFS als Absolutpegel verwenden.
 - `crossfade_sec` ungeklemmt aus dem Plan uebernehmen.
 - Timing im Renderer nachrechnen statt `from_plan` zu nutzen.
+
+## Korrektur nach negativer Originaltrack-Hoerabnahme (16.10.2026)
+
+Die drei Kickfenster dienen weiterhin der globalen Korrektur. Danach prueft
+_synchronize_and_verify_kicks zusaetzlich lueckenlos Fenster ueber die gesamte
+Blende; unmessbare Abschnitte oder Restfehler ueber 6 ms werden abgelehnt.
+Grund: Der vom Nutzer abgelehnte Originalclip bestand die drei Stichproben,
+hatte dazwischen aber abweichende Korrelationslagen. Dies ist weiterhin kein
+Beleg fuer musikalische Takt-Eins oder eine gute Paarung.
+
+_level_mix_loudness begrenzt jeden Fenster-Gain kanalgekoppelt auf Headroom
+bis 0.95 Peak. Die positive gewichtete Mittelung erhaelt diese Grenze auch
+zwischen Fenstern. So treibt die Lautheitsanhebung Transienten nicht erst
+in den nachgeschalteten Limiter. Kurze Clips verwenden dieselbe Begrenzung.
+
+Native Gesamtanalyse (Cache104): Die gepinnte Rekordbox-Beatpipeline und Endkorrektur liefern Taktzahlen separat vom DB-Import. `native_beat_analysis` bewahrt das Rohgrid. Ein optionaler, separat belegter Audio-Zeitversatz ändert keine Taktzahlen. `TransitionClipSpec.from_plan` akzeptiert native Taktreferenzen erst nach Snapshot-/Ankerprüfung und verifiziertem Grid. Lokale6ms-Renderprüfungen bleiben aktiv. Das ist keine unabhängige musikalische Qualitätsabnahme.
+
+## Native Gesamtanalyse und Export (16.10.2026)
+
+`native_track_beats.has_verified_grid` prüft den nativen Snapshot samt optionaler
+Audio-Zeitkorrektur sowie die Übereinstimmung mit aktivem Tempo und Anker.
+Renderer und XML-Export verwenden dieselbe Freigabe; Taktpositionssperren bleiben
+wirksam. Native Herkunft wird nicht als DB-Import oder musikalische Ground Truth
+bezeichnet. Die bestehende Messdiagnose zeigt Herkunft und Zusatzmerkmalsabdeckung.
+Details und Nachweisgrenzen stehen im Deep-Analysis-Auftrag, nicht in einer zweiten
+Statusliste. Originalquellen und native Modellartefakte werden nicht versioniert.

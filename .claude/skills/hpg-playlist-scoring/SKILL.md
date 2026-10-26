@@ -130,6 +130,25 @@ Das macht einen Kandidaten aber nicht ausfuehrbar: `rank_pair_candidates`
 verwirft ihn, sobald einer der zehn lokalen Faktoren fehlt, nicht endlich ist
 oder ausserhalb [0, 1] liegt.
 
+## Analyse-Phrasenraster (2026-10-15)
+
+`Track.phrase_unit` kann aus Audio-Novelty stammen. `phrase_unit_source`
+unterscheidet `audio_novelty`, `genre_prior` und `configured`.
+`effective_track_phrase_unit` ist gemeinsame Quelle fuer Paar-Mixpoints,
+Kandidatenraster und Playlist-Kettenkonsistenz. Gueltige Einheiten 8, 16 oder
+32 Bars gelten bei Herkunft `audio_novelty` oder `configured`; `genre_prior`,
+fehlende Herkunft und ungueltige Werte fallen auf das wirksame Genreprofil
+zurueck.
+`calculate_genre_aware_mix_points` muss dieselbe wirksame Einheit schon in
+`_find_mix_in_point`/`_find_mix_out_point` und deren Intro-/Outro-Guards nutzen;
+eine spaetere Abschlussquantisierung allein reicht nicht. CACHE_VERSION 87
+haelt die daraus geaenderten Mixpunktwerte von alten Cacheeintraegen getrennt.
+Die erlaubten Werte kommen aus `models.SUPPORTED_PHRASE_UNITS`; ungueltige
+Einheiten erzeugen keine Track-Kandidaten und qualifizieren keine manuellen
+Mixpoint-Cues.
+Genre-Prior darf nicht als gemessene Novelty ausgegeben werden. Novelty-Score
+und Ranking-Margin sind Rohwerte, keine Wahrscheinlichkeiten.
+
 ## Kandidatenpfad in der App (Teil 4, gebaut 2026-08-22)
 
 Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.

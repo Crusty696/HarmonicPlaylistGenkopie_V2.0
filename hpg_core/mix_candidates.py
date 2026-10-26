@@ -10,19 +10,23 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from dataclasses import asdict, dataclass, field, fields
 
 import numpy as np
 
 from .config import (
-    CUE_DEDUPE_SEC, ENERGIE_NEUHEIT_MIN, ENERGIE_TREND_SCHWELLE, KANDIDATEN_AUDIO_SR,
+    SUPPORTED_AUDIO_EXTENSIONS, CUE_DEDUPE_SEC, ENERGIE_NEUHEIT_MIN, ENERGIE_TREND_SCHWELLE, KANDIDATEN_AUDIO_SR,
     KANDIDATEN_FENSTER_PHRASEN, KANDIDATEN_MAX_JE_SEITE, KANDIDATEN_MIN_JE_SEITE,
     KICK_AKTIV_MIN_DBFS, KICK_AKTIV_ONBEAT_MIN, METER,
 )
 from .downbeat import DOWNBEAT_RELIABLE_MIN
 from .groove import ON_BEAT_SLOTS, bass_kennwerte, extract_groove, syncopation_from_pattern
-from .models import CAMELOT_MAP, QUANTIZE_TOLERANCE_SEC, quantize_to_grid
+from .models import (
+    CAMELOT_MAP, QUANTIZE_TOLERANCE_SEC, is_supported_phrase_unit,
+    quantize_to_grid,
+)
 from .rekordbox_phrases import phrase_grid_from_phrases
 
 logger = logging.getLogger(__name__)
@@ -33,13 +37,16 @@ CUE_IN_PATTERN = re.compile(r"\b(MIX[- ]?IN|IN|START)\b")
 CUE_OUT_PATTERN = re.compile(r"\b(MIX[- ]?OUT|OUT|OUTRO|END)\b")
 
 SCHEMA_PRIORITAET = (
-    "benannter_cue", "pssi_phrase", "auto_cue", "analyzer", "sektion", "energie_neuheit",
+    "benannter_cue", "pssi_phrase", "auto_cue", "analyzer", "native_phrase", "sektion",
+    "energie_neuheit", "unbenannter_cue",
 )
 
 PROVENANCE_JE_SCHEMA = {
     "benannter_cue": "rekordbox_manual", "auto_cue": "rekordbox_auto",
     "pssi_phrase": "rekordbox_pssi", "analyzer": "hpg_analyzer",
     "sektion": "hpg_analyzer", "energie_neuheit": "hpg_analyzer",
+    "native_phrase": "rekordbox_native_phrase_generator",
+    "unbenannter_cue": "rekordbox_unnamed_cue",
 }
 
 
@@ -140,10 +147,9 @@ def normalize_cues(
             prov = "auto"
         else:
             prov = "manual"
-        normalized_t = round(t, 3)
+        normalized_t = t
         if duration_limit is not None:
-            # Nur Rundung darf einen physisch gueltigen Cue nicht ueber die
-            # ungerundete Dateigrenze schieben.
+            # Clamping verhindert, dass ein Cue hinter der Dateigrenze bleibt.
             normalized_t = min(normalized_t, duration_limit)
         out.append({
             "t": normalized_t, "name": name, "typ": cue.get("type"),
@@ -226,6 +232,32 @@ def _phrase_at(phrases: list[dict], t: float) -> dict | None:
     return None
 
 
+def _native_phrase_grid(phrases: list[dict] | None) -> list[float] | None:
+    """Return validated native phrase boundaries; ``None`` means fail closed.
+
+    Native phrase snapshots are accepted upstream, but candidate generation is
+    also a public boundary (and may receive cached/legacy values). Never turn a
+    malformed or partial native grid into a constant HPG grid silently.
+    """
+    if not phrases:
+        return []
+    points: list[float] = []
+    previous_end: float | None = None
+    for phrase in phrases:
+        if type(phrase) is not dict:
+            return None
+        start, end = phrase.get("start_s"), phrase.get("end_s")
+        if (type(start) not in (int, float) or type(end) not in (int, float)
+                or not math.isfinite(start) or not math.isfinite(end)
+                or start < 0.0 or end <= start
+                or (previous_end is not None and start != previous_end)):
+            return None
+        points.append(float(start))
+        previous_end = float(end)
+    points.append(float(previous_end))
+    return points
+
+
 def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict[str, list[tuple[float, str, bool]]]:
     """Je Seite: ``(t_roh, schema, gerichteter_cue)``.
 
@@ -243,8 +275,12 @@ def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict
             rohe["out"].append((c["t"], "benannter_cue", True))
         elif c["provenance"] == "manual":
             beide.append((c["t"], "benannter_cue", False))
-        else:
+        elif c["provenance"] == "auto":
             beide.append((c["t"], "auto_cue", False))
+        elif c["provenance"] == "leer":
+            # Unbenannte Marker bleiben Kandidaten, erhalten aber weder
+            # Auto-Cue-Rang noch die manuelle IN-/OUT-Interpretation.
+            beide.append((c["t"], "unbenannter_cue", False))
     for p in phrases:
         beide.append((float(p["start_s"]), "pssi_phrase", False))
     vorher = None
@@ -268,12 +304,25 @@ def _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out) -> dict
 def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], phrases: list[dict],
                             cues: list[dict], analyzer_in: float | None, analyzer_out: float | None,
                             duration: float, grid_sec: float, intro_end: float, outro_start: float,
-                            outro_covered: bool, anchor: float = 0.0,
+                            outro_covered: bool, anchor: float = 0.0, cue_scores: dict | None = None,
+                            native_phrases: list[dict] | None = None,
                             ) -> tuple[list[MixCandidate], list[MixCandidate]]:
     """Kandidaten-Zeitpunkte je Seite: quantisieren, Gates, Dedupe (gleicher
     Gitterpunkt → Schemata vereinigen), Kappung auf KANDIDATEN_MAX_JE_SEITE
     nach SCHEMA_PRIORITAET, dann zeitlich sortiert. Noch OHNE Messwerte."""
     rohe = _rohe_zeitpunkte(sections, phrases, cues, analyzer_in, analyzer_out)
+    native_selected = not phrases and bool(native_phrases)
+    if native_selected:
+        native_grid = _native_phrase_grid(native_phrases)
+        if native_grid is None:
+            logger.warning("Ungueltiges natives Phrasengitter — Mixkandidaten fail-closed verworfen")
+            return [], []
+        # PSSI (including Rekordbox-imported PSSI) retains source precedence.
+        # Native boundaries are used only when no PSSI phrases are available.
+        for side in ('in', 'out'):
+            rohe[side].extend((float(phrase['start_s']), 'native_phrase', False)
+                             for phrase in native_phrases)
+        seite_grid = native_grid
     ergebnis: dict[str, list[MixCandidate]] = {}
     for seite in ("in", "out"):
         if seite == "out" and not outro_covered:
@@ -284,7 +333,9 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             tq = _quantize(t_roh, seite, seite_grid, grid_sec, anchor)
             if tq is None:
                 continue
-            tq = round(float(tq), 3)
+            # Mixzeit intern unveraendert vom kanonischen Raster uebernehmen;
+            # Anzeige-Rundung darf die Rasterlage nicht verschieben.
+            tq = float(tq)
             gate_ok = passes_track_gates(
                 tq, seite, intro_end=intro_end, outro_start=outro_start,
                 duration=duration, grid=grid_sec,
@@ -304,7 +355,7 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             k.provenance = PROVENANCE_JE_SCHEMA[k.schema[0]]
             sek = _section_at(sections, k.t)
             k.section_label = sek.get("label", "") if sek else ""
-            ph = _phrase_at(phrases, k.t)
+            ph = _phrase_at(phrases or native_phrases or [], k.t)
             k.phrase_label = ph["label"] if ph else ""
         if len(kandidaten) > KANDIDATEN_MAX_JE_SEITE:
             # Tiebreak explizit ueber die Zeit, nicht ueber die Einfuegereihenfolge.
@@ -312,6 +363,33 @@ def collect_candidate_times(*, seite_grid: list[float], sections: list[dict], ph
             # musikalischen Rolle der Seite (Out-Punkte nahe am Outro ueberleben).
             t_richtung = 1.0 if seite == "in" else -1.0
             kandidaten.sort(key=lambda k: (SCHEMA_PRIORITAET.index(k.schema[0]), -len(k.schema), t_richtung * k.t))
+            if cue_scores:
+                # Kollidierende Phrase-Ursprünge bleiben neutral, auch wenn nur
+                # einer einen Score besitzt. Dieselbe Quantisierung wie oben.
+                score_phrases = phrases if phrases else (native_phrases or [])
+                score_schema = 'pssi_phrase' if phrases else 'native_phrase'
+                origins = {}
+                for index, phrase in enumerate(score_phrases):
+                    point = _quantize(float(phrase['start_s']), seite, seite_grid, grid_sec, anchor)
+                    if point is not None:
+                        origins.setdefault(float(point), []).append(index)
+                groups = {}
+                for slot, candidate in enumerate(kandidaten):
+                    indices = origins.get(candidate.t, [])
+                    if (score_schema not in candidate.schema or 'benannter_cue' in candidate.schema
+                            or len(indices) != 1):
+                        continue
+                    score = cue_scores.get(indices[0])
+                    if type(score) not in (int, float) or not math.isfinite(score):
+                        continue
+                    group = (candidate.schema[0], len(candidate.schema))
+                    groups.setdefault(group, []).append((slot, candidate, score))
+                for scored in groups.values():
+                    # Nur bereits gescorte Slots tauschen. Unbekannte und
+                    # manuelle Kandidaten behalten ihre bisherige Position.
+                    ranked = sorted(scored, key=lambda row: -row[2])
+                    for (slot, _, _), (_, candidate, _) in zip(scored, ranked):
+                        kandidaten[slot] = candidate
             kandidaten = kandidaten[:KANDIDATEN_MAX_JE_SEITE]
         kandidaten.sort(key=lambda k: k.t)
         if 0 < len(kandidaten) < KANDIDATEN_MIN_JE_SEITE:
@@ -334,8 +412,27 @@ NEUHEIT_LAUT_DB = 20.0       # RMS-Sprung (dB) fuer vollen Lautheitsbruch; Start
 
 def _lade_fenster(file_path: str, start: float, ende: float, sr: int):
     import librosa
+    offset = max(0.0, start)
+    duration = max(0.0, ende - offset)
+    if os.path.splitext(file_path)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS:
+        from .ai_models.native_audio_reader import MAX_SECONDS, NativeAudioStream
+        if duration <= 0 or offset + duration > MAX_SECONDS:
+            raise ValueError("Kandidatenfenster außerhalb des gemeinsamen Readerlimits")
+        with NativeAudioStream(file_path, duration=duration, offset=offset) as stream:
+            audio = stream.read(stream.frames, dtype="float32", always_2d=True)
+            source_rate = stream.samplerate
+        mono = audio[:, 0] if audio.shape[1] == 1 else np.mean(
+            audio, axis=1, dtype=np.float32
+        )
+        if source_rate != sr:
+            mono = librosa.resample(
+                mono, orig_sr=source_rate, target_sr=sr, res_type="soxr_hq"
+            )
+        return np.ascontiguousarray(mono, dtype=np.float32)
+    from .audio_decoder import configure_audioread_ffmpeg
+    configure_audioread_ffmpeg()
     y, _ = librosa.load(file_path, sr=sr, mono=True, offset=max(0.0, start),
-                        duration=max(0.0, ende - max(0.0, start)))
+                        duration=duration)
     return y
 
 
@@ -344,10 +441,28 @@ def _lufs_short_term(file_path: str, t: float, duration: float) -> float | None:
     try:
         import soundfile as sf
         import pyloudnorm as pyln
-        info = sf.info(file_path)
         halb = LUFS_SHORT_TERM_SEC / 2.0
         start = max(0.0, t - halb)
         ende = min(float(duration), t + halb) if duration > 0 else t + halb
+        if (os.path.splitext(file_path)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS
+                and 0 < ende - start):
+            from .ai_models.native_audio_reader import MAX_SECONDS, NativeAudioStream
+            span = max(0.0, ende - start)
+            if ende <= MAX_SECONDS:
+                with NativeAudioStream(file_path, duration=span, offset=start) as stream:
+                    source_channels = stream.reader.metadata()["source_channels"]
+                    sr = stream.samplerate
+                    if source_channels in (1, 2):
+                        data = stream.read(stream.frames, dtype="float32", always_2d=True)
+                    else:
+                        data = None
+                if data is not None and len(data) >= sr:
+                    meter = pyln.Meter(sr, filter_class="DeMan")
+                    v = float(meter.integrated_loudness(data.astype(np.float64)))
+                    if np.isfinite(v) and -70.0 <= v < 0.0:
+                        return round(v, 2)
+
+        info = sf.info(file_path)
         a = int(start * info.samplerate)
         b = int(ende * info.samplerate)
         if b - a < info.samplerate:
@@ -435,7 +550,8 @@ def _neuheit(y_vor, y_nach, sr, fc_vor, fc_nach) -> float | None:
 
 def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, first_downbeat: float,
                              downbeat_confidence: float, grid_sec: float, duration: float,
-                             sections: list[dict], pssi_mood: int | None = None) -> MixCandidate:
+                             sections: list[dict], pssi_mood: int | None = None,
+                             native_grid_verified: bool = False) -> MixCandidate:
     """Fuellt die lokalen Messwerte eines Kandidaten (Fenster +-1 Phrase).
     Fehler einzelner Messungen lassen das Feld auf None; die Analyse kippt nie."""
     # Lazy-Import: analysis importiert dieses Modul (Importzyklus vermeiden).
@@ -497,7 +613,7 @@ def measure_candidate_window(file_path: str, cand: MixCandidate, *, bpm: float, 
         cand.bass_rms_dbfs = _bass_rms_dbfs(y, sr)
         sub, punch = bass_kennwerte(y, sr)
         cand.sub_energy, cand.bass_punch = round(sub, 4), round(punch, 4)
-        if downbeat_confidence >= DOWNBEAT_RELIABLE_MIN and bpm > 0:
+        if (downbeat_confidence >= DOWNBEAT_RELIABLE_MIN or native_grid_verified) and bpm > 0:
             g = extract_groove(y, sr, bpm, first_downbeat - start, feature_cache=fc)
             cand.groove_pattern_lokal = g.groove_pattern
             cand.bass_pattern_lokal = g.bass_pattern
@@ -533,33 +649,73 @@ def build_track_candidates(file_path: str, *, bpm: float, duration: float, first
                            downbeat_confidence: float, phrase_confidence: float, phrase_anchor: float,
                            phrase_unit: int, sections: list[dict], phrases: list[dict], cues: list[dict],
                            analyzer_in: float | None, analyzer_out: float | None, outro_covered: bool,
+                           cue_scores: dict | None = None,
+                           native_phrases: list[dict] | None = None,
+                           native_grid_verified: bool = False,
                            ) -> tuple[list[dict], list[dict]]:
     """Vollstaendige Kandidaten beider Seiten als Dict-Listen (fuer Track/Cache)."""
     # Lazy nur aus Konsistenz mit dem analysis-Import; dj_brain importiert weder
     # analysis noch mix_candidates (kein Zyklus).
     from .dj_brain import _get_intro_end_from_sections, _get_outro_start_from_sections
-    if bpm <= 0 or duration <= 0:
+    if (not isinstance(bpm, (int, float)) or isinstance(bpm, bool)
+            or not math.isfinite(bpm)
+            or not isinstance(duration, (int, float)) or isinstance(duration, bool)
+            or not math.isfinite(duration)
+            or bpm <= 0 or duration <= 0
+            or not isinstance(phrase_anchor, (int, float))
+            or isinstance(phrase_anchor, bool) or not math.isfinite(phrase_anchor)
+            or not 0 <= phrase_anchor < duration
+            or type(native_grid_verified) is not bool
+            or not is_supported_phrase_unit(phrase_unit)):
         return [], []
-    grid_sec = (60.0 / bpm) * METER * (phrase_unit if phrase_unit > 0 else 8)
-    seite_grid = phrase_grid_from_phrases(phrases)
+    grid_sec = (60.0 / bpm) * METER * phrase_unit
+    native_grid = []
+    if not phrases and native_phrases:
+        # Ein formal gültiges natives Raster genügt nicht: Kandidaten müssen
+        # an denselben freigegebenen Takt-/Phrasenanker gebunden bleiben.
+        if not native_grid_verified:
+            return [], []
+        native_grid = _native_phrase_grid(native_phrases)
+        if (native_grid is None or not native_grid
+                or native_grid[-1] > duration):
+            logger.warning("Ungueltiges natives Phrasengitter — keine Mixkandidaten erzeugt")
+            return [], []
+        # Nur die Startphase gegen den aktiven Anker vergleichen. Spätere
+        # native Grenzen folgen dem zeitvariablen Beatgrid; ein konstantes
+        # BPM-Raster würde über lange Tracks selbst Drift erzeugen.
+        bar_seconds = 240.0 / bpm
+        # Der erste Abschnitt kann vor der ersten Takt-Eins beginnen
+        # (Auftakt). Er ist kein Beleg für eine verschobene Phrasenphase.
+        # Die erste folgende Abschnittsgrenze muss weiterhin zur Taktphase passen.
+        phase_start = next((float(p['start_s']) for p in native_phrases
+                            if float(p['start_s']) >= first_downbeat), None)
+        if phase_start is None:
+            return [], []
+        bar_offset = (phase_start - phrase_anchor) / bar_seconds
+        if abs(bar_offset - round(bar_offset)) * bar_seconds > 0.006:
+            logger.warning("Natives Phrasengitter weicht mehr als 6 ms vom aktiven Anker ab")
+            return [], []
+    seite_grid = phrase_grid_from_phrases(phrases) if phrases else native_grid
     intro_end = _get_intro_end_from_sections(sections)
     outro_start = _get_outro_start_from_sections(sections, duration)
     ins, outs = collect_candidate_times(
         seite_grid=seite_grid, sections=sections, phrases=phrases, cues=cues,
         analyzer_in=analyzer_in, analyzer_out=analyzer_out, duration=duration, grid_sec=grid_sec,
-        intro_end=intro_end, outro_start=outro_start, outro_covered=outro_covered, anchor=phrase_anchor,
+        intro_end=intro_end, outro_start=outro_start, outro_covered=outro_covered, anchor=phrase_anchor, cue_scores=cue_scores,
+        native_phrases=native_phrases,
     )
     for cand in ins + outs:
         measure_candidate_window(file_path, cand, bpm=bpm, first_downbeat=first_downbeat,
                                  downbeat_confidence=downbeat_confidence, grid_sec=grid_sec,
                                  duration=duration, sections=sections,
-                                 pssi_mood=int(phrases[0]["mood"]) if phrases else None)
+                                 pssi_mood=int(phrases[0]["mood"]) if phrases else None,
+                                 native_grid_verified=native_grid_verified)
         sek = _section_at(sections, cand.t)
         # Coverage: die `unanalysed`-Sektionen SIND die Luecken aus
         # analyze_structure_windows (Head 360 s / Tail 180 s); Out-Kandidaten
         # ohne outro_covered entstehen in collect_candidate_times gar nicht erst.
         covered = sek is not None and sek.get("label") != "unanalysed"
         cand.confidence = candidate_confidence(
-            downbeat_confidence=downbeat_confidence, pssi_grid=bool(seite_grid),
+            downbeat_confidence=downbeat_confidence, pssi_grid=bool(phrases),
             phrase_confidence=phrase_confidence, key_confidence_lokal=cand.key_confidence_lokal, covered=covered)
     return [c.to_dict() for c in ins], [c.to_dict() for c in outs]

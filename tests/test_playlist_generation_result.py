@@ -43,6 +43,10 @@ def test_scoring_cache_trennt_pfadgleiche_trackinstanzen():
 
 def test_partieller_scoring_context_behaelt_kandidatenvertrag(monkeypatch):
     monkeypatch.setattr(candidate_choices, "snapshot", lambda: {})
+    monkeypatch.setattr(
+        pc, "rank_pair_candidates",
+        lambda *args, **kwargs: [_candidate(140.0, 70.0)],
+    )
     tracks = [
         make_track(
             filePath="a.wav", fileName="a.wav",
@@ -437,10 +441,14 @@ def test_result_rankt_jede_feste_kante_einmal_und_friert_legacy_ab(monkeypatch):
     )
 
     assert choice_calls == 1
-    assert rank_calls == [
+    assert rank_calls[:2] == [
         ("a.wav", "b.wav", {"marker": "saved"}),
         ("b.wav", "c.wav", {}),
     ]
+    # Die Kettensuche darf Alternativkanten prüfen, jede gerichtete Kante nur einmal.
+    directed_edges = [(source, target) for source, target, _ in rank_calls]
+    assert len(directed_edges) == len(set(directed_edges))
+    assert len(directed_edges) <= len(tracks) * (len(tracks) - 1)
     assert len(result.boundaries) == len(result.recommendations) == 2
     assert all(boundary.selected is not None for boundary in result.boundaries)
     assert all(recommendation.plan is not None for recommendation in result.recommendations)
@@ -556,12 +564,9 @@ def test_ungeplante_kante_bleibt_mit_n_minus_eins_empfehlung_sichtbar(monkeypatc
     monkeypatch.setattr(
         candidate_choices, "snapshot", lambda: {saved_without_match: {"x": 1}}
     )
-    calls = 0
-
-    def rank(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+    def rank(source, target, **kwargs):
+        # Auch nach lokaler Umordnung bleibt dieser Track ohne Mix-Out.
+        if source.filePath == "a.wav":
             return []
         return [_candidate(180.0, 80.0)]
 
@@ -584,7 +589,8 @@ def test_ungeplante_kante_bleibt_mit_n_minus_eins_empfehlung_sichtbar(monkeypatc
     assert first.recommendation.compatibility_score == 0
     assert first.recommendation.active_candidate_key is None
     assert first.recommendation.candidate_consistent is False
-    assert "UNGEPLANT" in first.recommendation.notes
+    # Nutzervertrag: konkrete Gruende statt des unverstaendlichen Sammelworts.
+    assert "Keine zulässigen Mixpunkte" in first.recommendation.notes
     assert result.boundaries[1].consistent is True
     expected_quality = (
         round(result.boundaries[1].metrics.overall_score * 100) / 2 / 100.0

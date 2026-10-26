@@ -103,6 +103,7 @@ def _strict_spec(**overrides) -> TransitionClipSpec:
 
 
 def _spec_from_track_status(*, source, status, confidence):
+    from hpg_core.models import Track
     plan = SimpleNamespace(
         mix_out_a=60.0,
         mix_in_b=30.0,
@@ -110,14 +111,18 @@ def _spec_from_track_status(*, source, status, confidence):
         transition_type="pro_eq_swap",
         target_sr=44100,
     )
-    track = SimpleNamespace(
+    track = Track(
         filePath="track.wav",
+        fileName="track.wav",
+        duration=300.,
         bpm=128.0,
         first_downbeat=0.25,
         downbeat_confidence=confidence,
         beatgrid_source=source,
         beatgrid_status=status,
         analysis_mode="librosa_full_or_tail",
+        bar_position_status="reference_verified" if source == "rekordbox" else "audio_estimate",
+        measurement_diagnostics={"anchor": {"bar_position_comparison": {"status": "aligned"}}},
         lufs=0.0,
     )
     return TransitionClipSpec.from_plan(plan, track, track)
@@ -159,7 +164,7 @@ def test_rendervertrag_verwirft_ungueltige_samplerate(target_sr):
 def test_rendervertrag_akzeptiert_alle_oeffentlichen_transition_types():
     for transition_type in SUPPORTED_TRANSITION_TYPES:
         validate_transition_clip_spec(
-            _strict_spec(transition_type=transition_type)
+            _strict_spec(transition_type=transition_type, target_sr=44100)
         )
 
 
@@ -219,6 +224,31 @@ def test_rendervertrag_verwirft_unbekannten_transition_type():
         validate_transition_clip_spec(
             _strict_spec(transition_type="smooth_blend_typo")
         )
+
+
+@pytest.mark.parametrize("cutoff", [2500., 3000.])
+def test_pro_eq_rejects_crossed_band_boundaries(cutoff):
+    with pytest.raises(ValueError, match="Mitten-/Hoehengrenze"):
+        validate_transition_clip_spec(_strict_spec(
+            transition_type="pro_eq_swap", target_sr=44100, bass_cutoff_hz=cutoff))
+
+
+def test_pro_eq_uses_requested_bass_cutoff_before_handover():
+    # B allein: vor der Bassuebergabe muss sein eingestelltes Bassband fehlen.
+    sr = 8000
+    frames = sr * 2
+    time = np.arange(frames) / sr
+    incoming = np.repeat((0.2 * np.sin(2 * np.pi * 160 * time))[:, None], 2, axis=1)
+    outgoing = np.zeros_like(incoming)
+    narrow = _apply_eq_crossfade(outgoing, incoming,
+        EqCrossfadeConfig(frames, sr, 80., "pro_eq_swap"))
+    wide = _apply_eq_crossfade(outgoing, incoming,
+        EqCrossfadeConfig(frames, sr, 400., "pro_eq_swap"))
+    region = slice(sr // 5, sr // 2)
+    narrow_rms = np.sqrt(np.mean(narrow[region] ** 2))
+    wide_rms = np.sqrt(np.mean(wide[region] ** 2))
+    assert narrow_rms > 0.01
+    assert wide_rms < narrow_rms * 0.1
 
 
 @pytest.mark.parametrize("status", ["mismatch", "unverifiable", "unsupported"])
@@ -1047,7 +1077,7 @@ class TestRenderTransitionClip:
         monkeypatch.setattr("hpg_core.transition_renderer._align_beat_phase", align)
         monkeypatch.setattr(
             "hpg_core.transition_renderer._synchronize_and_verify_kicks",
-            lambda _a, b, *_args: b,
+            lambda _a, b, *_args, **_kwargs: b,
         )
         spec = _strict_spec(
             mix_in_sec=10.0,
@@ -1787,7 +1817,7 @@ class TestTor1GridRegression:
         )
         monkeypatch.setattr(
             "hpg_core.transition_renderer._synchronize_and_verify_kicks",
-            lambda _a, b, *_args: b,
+            lambda _a, b, *_args, **_kwargs: b,
         )
         monkeypatch.setattr("hpg_core.transition_renderer.sf.write", Mock())
         output_grid = 240.0 / bpm_a * factor

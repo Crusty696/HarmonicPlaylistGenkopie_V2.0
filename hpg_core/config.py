@@ -4,7 +4,10 @@ Centralizes all magic numbers and configurable parameters.
 """
 
 # === Audio Processing Parameters ===
-SUPPORTED_AUDIO_EXTENSIONS = (".wav", ".aiff", ".aif", ".mp3", ".flac")
+SUPPORTED_AUDIO_EXTENSIONS = (
+    ".wav", ".wave", ".aiff", ".aif", ".mp3", ".flac", ".fla",
+    ".mp4", ".m4a", ".aac", ".ogg", ".wma",
+)
 HOP_LENGTH = 1024  # Frame hop for feature extraction
 METER = 4  # 4/4 time signature (beats per bar)
 MAX_TRANSITION_OVERLAP_SECONDS = 64.0
@@ -190,11 +193,33 @@ PARALLEL_MAX_WORKERS = None  # None = automatisch (cpu_count basiert), oder fest
 # Windows fuehren mehr als vier parallele Decoder bei grossen AIFF/WAV-Dateien
 # zu C-Level-Abstuerzen des ProcessPools; explizite Nutzerlimits bleiben moeglich.
 PARALLEL_AUTO_MAX_WORKERS = 4
-# AUDIT-FIX N-04 (2026-07-26): Obergrenze fuer die Haenger-Deadline im
-# Parallel-Analyzer. Die Deadline ist eine INAKTIVITAETS-Deadline pro
-# Wartezyklus (TIMEOUT * worker_count + 30) und wird hier auf ~15 Minuten
-# gedeckelt — sie waechst NICHT mehr mit der Batch-Groesse.
-PARALLEL_HANG_DEADLINE_MAX = 900  # Sekunden (15 Minuten)
+# Gemeinsamer Cue-/Beat-Modellprozess: Obergrenze für zugesicherten Windows-
+# Job-Speicher, kein VRAM-Limit. Startbudget; Eignung erst im Abschlusstest messen.
+MODEL_PROCESS_MEMORY_LIMIT_BYTES = 4 * 1024 * 1024 * 1024
+# Obergrenze fuer die Inaktivitaets-Deadline im Parallel-Analyzer. Sie muss
+# mindestens das groesste konfigurierte Einzeltrackbudget plus Cleanupreserve
+# abdecken; Batchgroesse verlaengert sie weiterhin nicht.
+PARALLEL_HANG_DEADLINE_MAX = 1470  # Sekunden (24 Minuten 30 Sekunden)
+
+
+def analysis_timeout_seconds(worker_count: int = 1) -> float:
+    """Begrenztes Trackbudget inklusive serieller Zusatzmodell-Warteschlange."""
+    import os
+
+    if type(worker_count) is not int or worker_count < 1:
+        raise ValueError("worker_count muss eine positive Ganzzahl sein")
+    # Native Beat-/Phrasenjobs skalieren separat bis 420 s; hier ist Reservierung.
+    # Bis zu worker_count
+    # aktive Tracks teilen denselben Broker; Wartezeit zählt zum Gesamtbudget.
+    extra = (240. if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
+    # Embeddings bleiben auf 180 s begrenzt und werden vor Stems ausgeführt.
+    extra += 180. if os.environ.get("HPG_EMBEDDINGS", "1") == "1" else 0.
+    extra += 420. if os.environ.get("HPG_NATIVE_BEAT", "1") != "0" else 0.
+    extra += 420. if os.environ.get("HPG_NATIVE_PHRASE", "1") == "1" else 0.
+    if not extra:
+        return float(PARALLEL_ANALYSIS_TIMEOUT)
+    return min(float(PARALLEL_ANALYSIS_TIMEOUT) + worker_count * extra,
+               max(float(PARALLEL_ANALYSIS_TIMEOUT), PARALLEL_HANG_DEADLINE_MAX - 30.))
 
 # === Structure Analysis ===
 SECTION_ENERGY_THRESHOLD = 0.3  # Novelty-Peak Threshold fuer Sektions-Erkennung (0.1-0.5)

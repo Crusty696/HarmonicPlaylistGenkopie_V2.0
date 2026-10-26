@@ -20,11 +20,15 @@ import webbrowser
 from pathlib import Path
 
 DEFAULT_PORT = 8767
-# Muss den drei von hoertest_server.py akzeptierten CSV-Schemas entsprechen.
+# Alte und aktuelle Kandidaten-Schemas einschließlich Clusterzuordnung.
 BEWERTUNG_SCHEMAS = {
     ("pair_id", "clip", "bewertung"),
     ("pair_id", "clip_id", "note", "gewaehlt", "zeit"),
     ("pair_id", "clip_id", "track_note", "technik_note", "gesamt_note", "gewaehlt", "zeit"),
+}
+BEWERTUNG_SCHEMAS |= {
+    (*schema, "mix_cluster_id") for schema in BEWERTUNG_SCHEMAS
+    if "clip_id" in schema
 }
 DRAMATURGIE_SCHEMA = (
     "variant_id", "dramaturgie_gesamt", "energieverlauf", "peak_platzierung", "kohaerenz", "zeit",

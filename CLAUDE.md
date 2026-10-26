@@ -24,29 +24,15 @@ Delta- oder Release-Audits laden, nie fuer normale Bugfixes.
 Regel: Statusdokumente sind Hypothesen, der Code ist die Wahrheit. Jede
 Behauptung aus einem Markdown vor Gebrauch im Code nachpruefen.
 
-## Waechter vor jedem Commit (PFLICHT)
+## Unabhaengige Waechterpruefung
 
-Der Subagent `hpg-waechter` (`.claude/agents/hpg-waechter.md`) prueft an
-ZWEI Toren. Er prueft ausschliesslich und schreibt nie Code.
+Der read-only Subagent `hpg-waechter` (`.claude/agents/hpg-waechter.md`)
+kann auf Anforderung ein Vorhaben, einen Diff oder beides pruefen. Es gibt
+keine verpflichtende Vorab- oder Commitpruefung und kein frueheres
+Waechterurteil als Voraussetzung fuer Umsetzung oder Commit.
 
-**Tor 1, VOR der Umsetzung**: das Vorhaben — welche Dateien, welche
-Funktionen, welche Konstanten, welcher Anlass. Hier faellt auf, was es gar
-nicht gibt, was es schon gibt und was ueber den Auftrag hinausgeht. Das ist
-das wichtigere Tor: eine Rueckweisung kostet hier Minuten, nach der Umsetzung
-kostet sie die Umsetzung.
-
-**Tor 2, VOR dem Commit**: der Diff gegen das, was an Tor 1 vereinbart wurde.
-
-Er faengt genau die Fehlerklassen, die in diesem Projekt an Tests
-vorbeigelaufen sind: erfundene Code-Referenzen, Scope-Ausweitung,
-unbeauftragte Umbenennungen und GUI-Aenderungen, an den Code angepasste
-Tests, verletzte Invarianten (HPG-001, Mixpoint-Regeln, beide Analysepfade,
-CACHE_VERSION), unbelegte Behauptungen in Kommentaren und Commit-Texten,
-sowie zurueckgestellte und dann vergessene Aufgaben.
-
-Sein Urteil lautet DURCHGEWUNKEN, MIT AUFLAGEN oder ZURUECKGEWIESEN. Bei
-ZURUECKGEWIESEN wird nicht committet, sondern nachgebessert. Berichte eines
-Subagenten gelten als Hypothese, nicht als Beleg — auch seine.
+Der Bericht kann Codebefunde und offene Nachweise benennen. Er ersetzt keine
+Tests oder Laufzeitbelege und ist keine automatische Prozesssperre.
 
 
 ## Projektarchitektur
@@ -59,7 +45,7 @@ hpg_core/                  # Core analysis modules
   downbeat.py              # Downbeat- und Phrasen-Anker
   config.py                # Alle konfigurierbaren Konstanten
   genres.py                # Single Source of Truth: 9 kanonische Genres + Drift-Validierung
-  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 46
+  caching.py               # SQLite-Cache (WAL), CACHE_VERSION 96
   parallel_analyzer.py     # ProcessPoolExecutor fuer Multi-Core Analyse
   genre_classifier.py      # Genre-Erkennung (regelbasiert, kein ML)
   structure_analyzer.py    # Track-Struktur (Intro/Breakdown/Drop/Outro)
@@ -137,7 +123,7 @@ sowie `--cov-fail-under=70`. Fuer schnelle Laeufe `--no-cov` anhaengen.
 
 - `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`, `*.coverage` —
   Cache-/System-Dateien. Der Laufzeit-Cache liegt ausserhalb des Repos unter
-  `%LOCALAPPDATA%\HPG\hpg_cache_v46.db` (ueberschreibbar mit `HPG_CACHE_DIR`
+  `%LOCALAPPDATA%\HPG\hpg_cache_v96.db` (ueberschreibbar mit `HPG_CACHE_DIR`
   bzw. `HPG_CACHE_FILE`).
 
 ## Analyse-Pipeline

@@ -452,7 +452,7 @@ class TestParallelAnalyzerInit:
       def __exit__(self, *args):
         return False
 
-      def submit(self, func, path):
+      def submit(self, func, path, deadline=None, cache_policy="reuse"):
         return ImmediateFuture()
 
       def shutdown(self, wait=True, cancel_futures=False):
@@ -517,7 +517,7 @@ def test_keyboard_interrupt_from_normal_shutdown_survives_cleanup_errors(monkeyp
       self.shutdown_calls = []
       created.append(self)
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       return _FakeFuture()
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -571,7 +571,7 @@ def test_recovery_shutdown_interrupt_survives_best_effort_cleanup(monkeypatch):
       self.shutdown_calls = []
       created.append(self)
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       return NoneFuture() if self.is_recovery else BrokenFuture()
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -616,7 +616,7 @@ def test_keyboard_interrupt_terminates_pool_without_wait_true(monkeypatch):
       self.shutdown_calls = []
       created.append(self)
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       return _FakeFuture()
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -655,7 +655,7 @@ def test_nichtkanonisches_ergebnis_wird_im_hauptpool_abgewiesen(
     def __init__(self, max_workers, initializer=None, **kwargs):
       self._processes = {}
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       return DegradedFuture()
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -709,7 +709,7 @@ def test_nichtkanonisches_ergebnis_wird_auch_im_recovery_abgewiesen(monkeypatch)
       self._processes = {}
       created.append(self)
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       return InvalidFuture() if self.is_recovery else BrokenFuture()
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -769,7 +769,7 @@ def _make_fake_executor(created_workers, broken_main_pool=False):
     def __exit__(self, *args):
       return False
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       return _FakeFuture(fail=self._fail)
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -848,7 +848,7 @@ def test_per_task_timeout_limits_inflight_submissions(monkeypatch):
     def __exit__(self, *args):
       return False
 
-    def submit(self, func, path):
+    def submit(self, func, path, deadline=None, cache_policy="reuse"):
       submitted.append((self.max_workers, path))
       return NeverFuture()
 
@@ -946,7 +946,7 @@ class TestRecoveryExecutorReuse:
         self._processes = {1: recovery_process} if self.index == 1 else {}
         created.append(self)
 
-      def submit(self, func, path):
+      def submit(self, func, path, deadline=None, cache_policy="reuse"):
         if self.index in (0, 1):
           return CrashFuture()
         return NoneFuture()

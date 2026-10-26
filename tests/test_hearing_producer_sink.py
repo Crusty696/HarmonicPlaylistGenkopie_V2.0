@@ -131,6 +131,182 @@ def test_candidates_final_paths_ohne_wav_move(monkeypatch, tmp_path):
     assert not list(args.out.rglob("*.wav"))
 
 
+def _preflight_candidates(monkeypatch, tmp_path):
+    args = _candidates(monkeypatch, tmp_path)
+    music = tmp_path / "originals"
+    music.mkdir()
+    for track, name in zip(("a", "b"), ("a.wav", "b.wav")):
+        path = music / name
+        path.write_bytes(track.encode("ascii"))
+    # _candidates nutzt zwei identische Reservepaare; Pfade der Tracks binden.
+    originals = rt.lade_tracks_aus_cache(None)
+    originals[0].filePath = str(music / "a.wav")
+    originals[1].filePath = str(music / "b.wav")
+    args.source_roots = (music,)
+    return args
+
+
+def _attach_preflight_sink(args, emitted):
+    from hpg_core.hearing_sources import SourceRenderSink
+    args.out.mkdir(parents=True, exist_ok=True)
+    sink = SourceRenderSink(args.out, args.source_roots)
+    def emit(spec, target):
+        sink.emit(spec, target)
+        emitted.append((spec, target))
+    args.hpg_render_sink = emit
+    args.hpg_source_snapshot = lambda: sink.sources
+    return sink
+
+
+def test_native_preflight_rejects_whole_pair_then_uses_reserve(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    calls, emitted = [], []
+    _attach_preflight_sink(args, emitted)
+    def preflight(spec, sources):
+        calls.append((spec, sources))
+        return len(calls) != 2
+    args.hpg_preflight = preflight
+
+    assert rt._befehl_prepare_kandidaten_intern(args) == 0
+    assert len(calls) == 4
+    assert len(emitted) == 2
+    assert [target.name for _spec, target in emitted] == ["001_k1.wav", "001_k2.wav"]
+    assert all(len(bound) == 2 for _spec, bound in calls)
+    assert not list(args.out.rglob("*.wav"))
+
+
+def test_native_preflight_all_rejected_publishes_no_partial_pair(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    emitted = []
+    _attach_preflight_sink(args, emitted)
+    args.hpg_preflight = lambda _spec, _sources: False
+
+    assert rt._befehl_prepare_kandidaten_intern(args) == 1
+    assert emitted == []
+    assert not (args.out / "bewertung.csv").exists()
+
+
+@pytest.mark.parametrize("missing_postroll", [0.01, 0.0])
+def test_native_preflight_prueft_nachlauf_vor_jedem_sink_emit(monkeypatch, tmp_path, missing_postroll):
+    from hpg_core.hearing_sources import SourceRenderSink
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    a, b = rt.lade_tracks_aus_cache(None)
+    pairs = rt.sammle_kandidaten_parallel([a, b])
+    a.bpm = b.bpm = 120.0
+    for pc in pairs[0]["pair_candidates"]:
+        pc.overlap_sec = 32.0
+    b.duration = 90.0 + 32.0 + rt.POST_ROLL_SEK - missing_postroll
+    emitted, preflights, staged = [], [], []
+    _attach_preflight_sink(args, emitted)
+    real_emit = SourceRenderSink.emit
+    def emit(sink, spec, target):
+        staged.append(target)
+        real_emit(sink, spec, target)
+    monkeypatch.setattr(SourceRenderSink, "emit", emit)
+    def preflight(spec, sources):
+        preflights.append(spec)
+        return True
+    args.hpg_preflight = preflight
+    assert rt._befehl_prepare_kandidaten_intern(args) == (1 if missing_postroll else 0)
+    if missing_postroll:
+        assert staged == emitted == preflights == []
+        assert not (args.out / "bewertung.csv").exists()
+    else:
+        assert len(emitted) == len(preflights) == 2
+
+
+def test_native_preflight_nachlauffehler_verwirft_ganzes_paar_und_nutzt_reserve(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    a, b = rt.lade_tracks_aus_cache(None)
+    valid = rt.sammle_kandidaten_parallel([a, b])[0]
+    short_b = SimpleNamespace(**vars(b))
+    pc = valid["pair_candidates"][-1]
+    short_b.duration = pc.t_in + pc.overlap_sec + rt.POST_ROLL_SEK - 0.01
+    invalid = dict(valid, track_b=short_b)
+    monkeypatch.setattr(rt, "sammle_kandidaten_parallel", lambda *a, **k: [invalid, valid])
+    emitted, preflights = [], []
+    _attach_preflight_sink(args, emitted)
+    def preflight(spec, sources):
+        preflights.append(spec)
+        return True
+    args.hpg_preflight = preflight
+    assert rt._befehl_prepare_kandidaten_intern(args) == 0
+    assert len(emitted) == len(preflights) == 2
+    assert [p.name for _, p in emitted] == ["001_k1.wav", "001_k2.wav"]
+
+
+def test_native_preflight_unrelated_error_aborts_not_skips(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    emitted = []
+    _attach_preflight_sink(args, emitted)
+    def fail(_spec, _sources):
+        raise RuntimeError("decode kaputt")
+    args.hpg_preflight = fail
+
+    with pytest.raises(RuntimeError, match="decode kaputt"):
+        rt._befehl_prepare_kandidaten_intern(args)
+    assert emitted == []
+    assert not (args.out / "bewertung.csv").exists()
+
+
+def test_native_preflight_rejects_changed_source_at_global_emit(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    emitted = []
+    _attach_preflight_sink(args, emitted)
+    original_emit = args.hpg_render_sink
+    source = args.source_roots[0] / "a.wav"
+    def racing_emit(spec, target):
+        source.write_bytes(b"changed after preflight")
+        original_emit(spec, target)
+    args.hpg_render_sink = racing_emit
+    args.hpg_preflight = lambda _spec, _sources: True
+
+    with pytest.raises(RuntimeError, match="andere Quellbytes"):
+        rt._befehl_prepare_kandidaten_intern(args)
+    assert len(emitted) == 1
+    assert not (args.out / "bewertung.csv").exists()
+
+
+def test_native_preflight_cancel_after_last_variant_emits_nothing(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    emitted = []
+    _attach_preflight_sink(args, emitted)
+    state = {"calls": 0, "cancel": False}
+    def checkpoint():
+        if state["cancel"]:
+            raise InterruptedError("cancelled")
+    def preflight(_spec, _sources):
+        state["calls"] += 1
+        if state["calls"] == 2:
+            state["cancel"] = True
+        return True
+    args.hpg_cancel = SimpleNamespace(checkpoint=checkpoint)
+    args.hpg_preflight = preflight
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        rt._befehl_prepare_kandidaten_intern(args)
+    assert emitted == []
+    assert not (args.out / "bewertung.csv").exists()
+
+
+def test_native_preflight_global_emit_error_aborts_whole_set(monkeypatch, tmp_path):
+    args = _preflight_candidates(monkeypatch, tmp_path)
+    emitted = []
+    _attach_preflight_sink(args, emitted)
+    original_emit = args.hpg_render_sink
+    def fail_second(spec, target):
+        if len(emitted) == 1:
+            raise RuntimeError("globaler Sink kaputt")
+        original_emit(spec, target)
+    args.hpg_render_sink = fail_second
+    args.hpg_preflight = lambda _spec, _sources: True
+
+    with pytest.raises(RuntimeError, match="globaler Sink kaputt"):
+        rt._befehl_prepare_kandidaten_intern(args)
+    assert len(emitted) == 1
+    assert not (args.out / "bewertung.csv").exists()
+
+
 @pytest.mark.parametrize("error", [ValueError("sink failure"), InterruptedError("cancelled")])
 def test_candidates_sink_failure_abort(monkeypatch, tmp_path, error):
     args = _candidates(monkeypatch, tmp_path)
@@ -309,7 +485,7 @@ def _source_service_config(monkeypatch, tmp_path, mode):
 @pytest.mark.parametrize("mode", ["einzel", "kandidaten", "dramaturgie"])
 @pytest.mark.parametrize("outcome", ["success", "sink_failure", "cancel_after_emit", "invalid_metadata"])
 def test_source_producer_service_allmode_e2e(monkeypatch, tmp_path, mode, outcome):
-    from hpg_core.hearing_sources import SourceRenderSink, load_source_session
+    from hpg_core.hearing_sources import SOURCE_VERSION, SourceRenderSink, load_source_session
     from hpg_core.hearing_workflow import (
         CancellationToken, HearingCancelledError, HearingOperationError,
         HearingValidationError, create_set,
@@ -351,7 +527,7 @@ def test_source_producer_service_allmode_e2e(monkeypatch, tmp_path, mode, outcom
                           "dramaturgie": len(rt.dramaturgie_varianten()) * 5}[mode]
         assert result.clip_count == session.clip_count == expected_clips
         assert session.specs == emitted
-        assert session.manifest["format_version"] == 1
+        assert session.manifest["format_version"] == SOURCE_VERSION
         assert session.status == result.status == "prepared"
         assert published == [config.output_dir]
         assert token.state == token.COMPLETE

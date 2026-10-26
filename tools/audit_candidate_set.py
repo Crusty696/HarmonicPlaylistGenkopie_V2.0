@@ -33,6 +33,7 @@ from tools.rate_transitions import (
     BEWERTUNG_DREINOTEN_SPALTEN,
     BEWERTUNG_KANDIDATEN_SPALTEN,
     DREINOTEN_MANIFEST_VERSION,
+    DEEP_FEATURE_COLUMNS,
     KANDIDATEN_MANIFEST_NAME,
     ALGORITHM_BUILD_SCHEME,
     HARMONIC_GATE_SCOPE,
@@ -41,6 +42,7 @@ from tools.rate_transitions import (
     MIN_HARMONIC_SCORE,
     MIN_OVERALL_SCORE,
     MERKMALE_KANDIDATEN_SPALTEN,
+    kandidaten_merkmale_schema,
     _hauptschema,
     _algorithm_build_fingerprint,
     _fingerprint_kandidatensatz,
@@ -148,10 +150,13 @@ def _fingerprint_cache_family(cache: Path) -> dict[str, tuple[int, str] | None]:
     }
 
 
-def _read_csv(path: Path, expected: tuple[str, ...]) -> list[dict[str, str]]:
+def _read_csv(path: Path, expected: tuple[str, ...], *, schema_resolver=None) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        if tuple(reader.fieldnames or ()) != expected:
+        actual = tuple(reader.fieldnames or ())
+        accepted = (schema_resolver(actual) is not None if schema_resolver
+                    else actual == expected)
+        if not accepted:
             raise AuditError(f"Falsche Spalten in {path.name}")
         return list(reader)
 
@@ -401,7 +406,8 @@ def _parse_set(set_dir: Path, cache: Path | None = None, *, source_session=None)
         raise AuditError("clips ist kein Verzeichnis")
     if any(not path.is_file() for name, path in required.items() if name != "clips"):
         raise AuditError("Satzwurzel enthaelt einen ungueltigen Pflichtdateityp")
-    merkmale = _read_csv(required["merkmale.csv"], MERKMALE_KANDIDATEN_SPALTEN)
+    merkmale = _read_csv(required["merkmale.csv"], MERKMALE_KANDIDATEN_SPALTEN,
+                         schema_resolver=kandidaten_merkmale_schema)
     try:
         order = json.loads(required["reihenfolge.json"].read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -440,6 +446,14 @@ def _parse_set(set_dir: Path, cache: Path | None = None, *, source_session=None)
             raise AuditError(f"{pair_id}: Kandidaten verweisen auf verschiedene Track-Paare")
         pair_tracks[pair_id] = tracks
         values = {field: _finite(row, field, clip_id) for field in NUMERIC_FIELDS}
+        for field in DEEP_FEATURE_COLUMNS:
+            raw = str(row.get(field, "")).strip()
+            if not raw:
+                continue
+            value = _finite(row, field, clip_id)
+            if ((field == "deep_embedding_cosine" and not -1.0 <= value <= 1.0)
+                    or (field != "deep_embedding_cosine" and value < 0.0)):
+                raise AuditError(f"{clip_id}: optional {field} liegt ausserhalb des Wertebereichs")
         direction = str(row.get("energy_direction", "")).strip().casefold()
         if direction not in ENERGY_DIRECTIONS:
             raise AuditError(f"{clip_id}: energy_direction ist ungueltig")
@@ -680,8 +694,8 @@ def _render_with_diagnostics(
     rendered = []
     original = transition_renderer._synchronize_and_verify_kicks
 
-    def wrapped(ref_segment, segment_b, sr, bpm, cf_frames):
-        corrected = original(ref_segment, segment_b, sr, bpm, cf_frames)
+    def wrapped(ref_segment, segment_b, sr, bpm, cf_frames, **kwargs):
+        corrected = original(ref_segment, segment_b, sr, bpm, cf_frames, **kwargs)
         captured[:] = transition_renderer._kick_lags_across_overlap(
             ref_segment, corrected, sr, bpm, cf_frames
         )
@@ -904,8 +918,8 @@ def _ram_render(spec, sources, *, capture_lags=False):
     captured = []
     original = transition_renderer._synchronize_and_verify_kicks
 
-    def wrapped(ref, segment_b, sr, bpm, cf_frames):
-        corrected = original(ref, segment_b, sr, bpm, cf_frames)
+    def wrapped(ref, segment_b, sr, bpm, cf_frames, **kwargs):
+        corrected = original(ref, segment_b, sr, bpm, cf_frames, **kwargs)
         captured[:] = transition_renderer._kick_lags_across_overlap(ref, corrected, sr, bpm, cf_frames)
         return corrected
 
@@ -1012,7 +1026,10 @@ def audit_candidates(inputs):
 
 def validate_ram_receipt(report, binding):
     """Gleiche strikte Receiptpruefung fuer Fit, Vorschau, Export und Uebernahme."""
-    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME, SOURCE_FORMAT, SOURCE_VERSION
+    from hpg_core.hearing_sources import (
+        SOURCE_MANIFEST_NAME, SOURCE_FORMAT, SOURCE_VERSION,
+        validate_spec_v1, validate_spec_v2, validate_spec_v3,
+    )
     _validate_regular_binding(binding)
     _exact_dict(report, {"format", "version", "transport", "evidence_kind", "purpose", "status", "ok", "binding", "before_sha256",
                         "after_sha256", "manifest_text", "source_manifest_text", "manifest_sha256", "pairs", "clips", "candidates"}, "RAM-Audit")
@@ -1041,21 +1058,26 @@ def validate_ram_receipt(report, binding):
     source_text = report["source_manifest_text"]
     source_specs = {}
     if transport == "source_refs_ram":
-        from hpg_core.hearing_sources import strict_json_bytes, validate_spec_v1
+        from hpg_core.hearing_sources import strict_json_bytes
         if type(source_text) is not str or {"size": len(source_text.encode("utf-8")), "sha256": _sha(source_text.encode("utf-8"))} != binding["files"][SOURCE_MANIFEST_NAME]:
             raise AuditError("RAM-Audit-Quellmanifest ist nicht gebunden")
         source_manifest = strict_json_bytes(source_text.encode("utf-8"))
         _exact_dict(source_manifest, {"format", "format_version", "mode", "status", "source_roots",
                                       "specs", "sources", "immutable_metadata"}, "Quellmanifest")
         if (source_manifest["format"] != SOURCE_FORMAT or type(source_manifest["format_version"]) is not int
-                or source_manifest["format_version"] != SOURCE_VERSION or source_manifest["mode"] != "kandidaten"
+                or source_manifest["format_version"] not in (1, 2, SOURCE_VERSION) or source_manifest["mode"] != "kandidaten"
                 or source_manifest["status"] != "prepared"):
             raise AuditError("Kein exakt validierter regulaerer Quellmanifestvertrag")
         if source_manifest.get("sources") != binding["sources"] or type(source_manifest.get("specs")) is not dict:
             raise AuditError("RAM-Audit-Quellen stimmen nicht")
         source_specs = source_manifest["specs"]
         for spec in source_specs.values():
-            validate_spec_v1(spec)
+            spec_validator = {
+                1: validate_spec_v1,
+                2: validate_spec_v2,
+                SOURCE_VERSION: validate_spec_v3,
+            }[source_manifest['format_version']]
+            spec_validator(spec)
     elif source_text is not None:
         raise AuditError("Legacy-Audit darf kein natives Quellmanifest vortaeuschen")
     expected = [(p["pair_id"], c["clip_id"], c["rank"]) for p in manifest["pairs"] for c in p["clips"]]

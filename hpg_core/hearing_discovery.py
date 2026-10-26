@@ -59,7 +59,7 @@ def _source_metadata(directory: Path) -> dict:
     mode = manifest["mode"]
     if (manifest["format"] != sources.SOURCE_FORMAT
             or type(manifest["format_version"]) is not int
-            or manifest["format_version"] != sources.SOURCE_VERSION
+            or manifest["format_version"] not in (1, 2, sources.SOURCE_VERSION)
             or manifest["status"] != "prepared"
             or type(mode) is not str or mode not in sources._MODE_FILES):
         raise ValueError("Unsupported source format/version/mode/status")
@@ -73,7 +73,12 @@ def _source_metadata(directory: Path) -> dict:
     referenced = set()
     for ref, spec in specs.items():
         sources._virtual_path(ref)
-        sources.validate_spec_v1(spec)
+        spec_validator = {
+            1: sources.validate_spec_v1,
+            2: sources.validate_spec_v2,
+            sources.SOURCE_VERSION: sources.validate_spec_v3,
+        }[manifest['format_version']]
+        spec_validator(spec)
         referenced.update((spec["track_a_path"], spec["track_b_path"]))
     if referenced != set(originals):
         raise ValueError("Specs and sources differ")
@@ -113,6 +118,77 @@ def _source_dramaturgy_progress(directory: Path, manifest: dict) -> tuple[int, i
     return rated, total, "Dramaturgie"
 
 
+def _source_progress(directory: Path, manifest: dict) -> tuple[int, int, str]:
+    """Bewertungsfortschritt aus Source-Metadaten; greift nie auf Clips zu."""
+    path = directory / "bewertung.csv"
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            columns = tuple(reader.fieldnames or ())
+            rows = list(reader)
+    except (OSError, csv.Error, UnicodeError) as exc:
+        raise ValueError("Source rating CSV cannot be read") from exc
+    if any(set(row) != set(columns) or any(value is None for value in row.values()) for row in rows):
+        raise ValueError("Source rating CSV has malformed rows")
+
+    mode = manifest["mode"]
+    if mode == "einzel":
+        if columns != ("pair_id", "clip", "bewertung"):
+            raise ValueError("Single source rating schema mismatch")
+        if not rows:
+            raise ValueError("Source rating CSV is empty")
+        for row in rows:
+            note = (row.get("bewertung") or "").strip()
+            if note and note not in {"1", "2", "3", "4", "5"}:
+                raise ValueError("Single source rating is outside 1..5")
+        return sum(bool((row.get("bewertung") or "").strip()) for row in rows), len(rows), "Standard"
+
+    if mode != "kandidaten":
+        raise ValueError("Unsupported source progress mode")
+    from tools import rate_transitions as rt
+    if columns == rt.BEWERTUNG_KANDIDATEN_SPALTEN:
+        notes = ("note",)
+        schema = "Standard-Kandidaten"
+    elif columns == rt.BEWERTUNG_DREINOTEN_SPALTEN:
+        notes = ("track_note", "technik_note", "gesamt_note")
+        schema = "Dreinoten-Kandidaten"
+    else:
+        raise ValueError("Candidate source rating schema mismatch")
+    if not rows:
+        raise ValueError("Source rating CSV is empty")
+
+    groups: dict[str, list[tuple[dict, bool]]] = {}
+    clip_ids: set[str] = set()
+    for row in rows:
+        pair_id = (row.get("pair_id") or "").strip()
+        clip_id = (row.get("clip_id") or "").strip()
+        if not pair_id or not clip_id or clip_id in clip_ids:
+            raise ValueError("Candidate source rating identifiers are missing or duplicated")
+        clip_ids.add(clip_id)
+        if schema == "Standard-Kandidaten" and (row.get("gewaehlt") or "").strip() not in {"", "0", "1"}:
+            raise ValueError("Candidate selection must be empty, 0, or 1")
+        values = [(row.get(name) or "").strip() for name in notes]
+        if any(value and value not in {"1", "2", "3", "4", "5"} for value in values):
+            raise ValueError("Candidate source rating is outside 1..5")
+        if schema == "Standard-Kandidaten" and (row.get("gewaehlt") or "").strip() == "1" and int(values[0] or "0") < 2:
+            raise ValueError("A selected candidate must have a rating of at least 2")
+        groups.setdefault(pair_id, []).append((row, all(values)))
+
+    rated = 0
+    for group in groups.values():
+        decided = True
+        if schema == "Standard-Kandidaten" and len(group) > 1:
+            choices = [(row.get("gewaehlt") or "").strip() for row, _ in group]
+            no_winner = all(choice == "0" for choice in choices)
+            one_winner = choices.count("1") == 1
+            if any(choices) and not (no_winner or one_winner):
+                raise ValueError("Candidate pair has an invalid winner selection")
+            decided = no_winner or one_winner
+        if all(complete for _, complete in group) and decided:
+            rated += 1
+    return rated, len(groups), schema
+
+
 def _summary(directory: Path) -> SetSummary:
     try:
         _metadata_boundary(directory)
@@ -121,6 +197,8 @@ def _summary(directory: Path) -> SetSummary:
             manifest = _source_metadata(directory)
         if manifest is not None and manifest["mode"] == "dramaturgie":
             rated, total, schema = _source_dramaturgy_progress(directory, manifest)
+        elif manifest is not None:
+            rated, total, schema = _source_progress(directory, manifest)
         else:
             rated, total, schema = launcher.lese_fortschritt(directory)
         if schema in {"fehler", "unbekannt"}:

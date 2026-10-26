@@ -48,7 +48,7 @@ from hpg_core.mix_candidates import MixCandidate
 from hpg_core.models import QUANTIZE_TOLERANCE_SEC, Track
 from hpg_core.pair_candidates import (
     PairCandidate, blend_bars_options, build_pair_candidates, pair_gate_reasons,
-    pair_quality_reasons,
+    pair_quality_reasons, _trusted_candidates,
 )
 
 
@@ -68,7 +68,9 @@ def _track(name="a.mp3", bpm=140.0, duration=300.0, genre="Psytrance", **kw) -> 
     t.phrase_unit = 16
     t.first_downbeat = 0.0
     t.downbeat_confidence = 1.0
-    t.beatgrid_source = "rekordbox"
+    # Diese Testtracks sind synthetische Audio-Referenzen, keine Rekordbox-
+    # Referenzen mit unabhängig bestätigter Taktposition.
+    t.beatgrid_source = "audio"
     t.beatgrid_status = "verified"
     t.beatgrid_windows_checked = 3
     t.beatgrid_max_phase_error_ms = 5.0
@@ -82,6 +84,21 @@ def _track(name="a.mp3", bpm=140.0, duration=300.0, genre="Psytrance", **kw) -> 
 
 def _grid(bpm=140.0, phrase_unit=16):
     return (60.0 / bpm) * 4 * phrase_unit   # 27.428 s
+
+
+def test_unverified_pssi_filter_does_not_mutate_stored_candidate():
+    track = _track()
+    stored = MixCandidate(t=60.0, schema=['sektion', 'pssi_phrase'],
+        provenance='rekordbox_pssi', phrase_label='intro')
+
+    ranked = _trusted_candidates(track, [stored])
+
+    assert stored.schema == ['sektion', 'pssi_phrase']
+    assert stored.provenance == 'rekordbox_pssi'
+    assert stored.phrase_label == 'intro'
+    assert ranked[0] is not stored
+    assert ranked[0].schema == ['sektion']
+    assert ranked[0].phrase_label == ''
 
 
 def _out(t, **kw):
@@ -264,6 +281,9 @@ def test_pair_gates_sperren_das_gesamte_sicherheitsband():
 def test_gate_gitter_pssi():
     a, b = _track(), _track("b.mp3")
     a.phrase_grid = [0.0, 30.0, 61.0, 95.0, 130.0, 170.0, 200.0, 230.0]
+    a.beatgrid_source = "rekordbox"
+    a.phrases = [{"start_s": start, "end_s": end, "label": "Chorus"}
+                 for start, end in zip(a.phrase_grid, a.phrase_grid[1:])]
     out = _out(170.0)
     assert "gitter_out" not in pair_gate_reasons(a, b, out, _in(round(3 * _grid(), 3)), 16)
     assert "gitter_out" in pair_gate_reasons(a, b, _out(171.0), _in(round(3 * _grid(), 3)), 16)
@@ -608,6 +628,34 @@ def test_build_liefert_sortierte_raenge_und_zwei_blenden():
     assert {p.blend_bars for p in res} == {16, 32}
     assert all(p.begruendung for p in res)
     assert all(p.overlap_sec == pytest.approx(p.blend_bars * (60.0 / 140.0) * 4) for p in res)
+
+
+def test_a_blende_verwirft_reproduzierten_physischen_ueberhang():
+    """Originalfall: 21,57 ms Ueberhang darf keine strukturelle Toleranz nutzen."""
+    from hpg_core.pair_candidates import _blenden_gate
+    a = _track(duration=378.85714285714283)
+    out = _out(356.593)
+    assert _blenden_gate(a, out, 13, deckel=a.duration)
+
+
+@pytest.mark.parametrize("mix_out", [0.0, 100.5])
+def test_a_blende_behaelt_exakte_physische_grenze(mix_out):
+    from hpg_core.pair_candidates import _blenden_gate
+    a = _track(bpm=120.0, duration=mix_out + 26.0)
+    assert not _blenden_gate(a, _out(mix_out), 13, deckel=a.duration)
+
+
+def test_build_verwirft_a_ueberhang_vor_kandidatenaufnahme(monkeypatch):
+    """Ein gueltiger lokaler Score darf fehlendes Audio nicht ersetzen."""
+    bpm = 120.0
+    out_t, in_t = 128.0, 96.0
+    a = _track_mit_kandidaten("a.mp3", bpm=bpm, outs=[_voll(out_t)])
+    b = _track_mit_kandidaten("b.mp3", bpm=bpm, ins=[_voll(in_t)])
+    a.duration = out_t + 32.0 - 0.021571428571469653
+    a.sections = _sections(a.duration, intro_end=32.0, outro_start=a.duration)
+    a.analysis_coverage = [{"start": 0.0, "end": a.duration}]
+    monkeypatch.setattr("hpg_core.pair_candidates.blend_bars_options", lambda *_args: [16])
+    assert build_pair_candidates(a, b) == []
 
 
 def test_build_akzeptiert_exakt_64_sekunden_overlap(monkeypatch):
@@ -999,6 +1047,11 @@ def test_schema_rang_aus_praeferenzen_bricht_gleichstand(monkeypatch):
     o2 = _voll(round(6 * g, 3), kick_aktiv=False, schema=["sektion"])   # gleicher Score
     a = _track_mit_kandidaten("a.mp3", outs=[o1, o2])
     b = _track_mit_kandidaten("b.mp3", ins=[_voll(round(3 * g, 3), kick_aktiv=False)])
+    for track in (a, b):
+        track.beatgrid_source = "rekordbox"
+        track.phrase_grid = [round(index * g, 3) for index in range(11)]
+        track.phrases = [{"start_s": start, "end_s": end, "label": "Chorus"}
+                         for start, end in zip(track.phrase_grid, track.phrase_grid[1:])]
     assert "pssi_phrase" in select_pair_candidate(a, b).out_a.schema
     monkeypatch.setattr(cp, "schema_rangfolge", lambda genre: ["sektion", "pssi_phrase"])
     assert "sektion" in select_pair_candidate(a, b).out_a.schema

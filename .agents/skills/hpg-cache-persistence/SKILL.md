@@ -15,10 +15,10 @@ passen.
 
 ## CACHE_VERSION — wo und wann
 
-`CACHE_VERSION = 46` in **`hpg_core/caching.py`** — nicht in `config.py`.
+`CACHE_VERSION = 109` in **`hpg_core/caching.py`** — nicht in `config.py`. Cache 85 umfasst die bestätigte reine Rekordbox-Phasenoffset-Korrektur ohne Bar-Rotation. Cache 86 verwirft Rotation-0-Korrekturen, die den Anker über eine Bar-Grenze wickeln würden. Cache 87 berücksichtigt die wirksame Phrase-Unit bereits in der internen Mix-In/Out-Kandidatensuche und deren Guards. Cache 88 verwendet den Median aller sechs konsistenten Tempoausgaben statt des ersten Werts. Cache 89 persistiert strukturierte Tempoentscheidungsdiagnosen im Messschema v7. Cache 90 erhält alle sechs Modell-BPM-Werte samt Modell-ID und Fensterstart; die v7-Validierung leitet bei sechs Werten Median und Spread daraus neu ab, verwirft widersprüchliche Payloads und bindet akzeptierte Tempi an die bestehende 2%-Grenze.
 Das ist ein haeufiger Fehlgriff.
 
-Die Version steckt im **Dateinamen**: `hpg_cache_v46.db`. Ein Bump erzeugt
+Die Version steckt im **Dateinamen**: `hpg_cache_v96.db`. Ein Bump erzeugt
 also eine neue DB; zusaetzlich filtert der Read auf die Version und raeumt
 stale Rows auf.
 
@@ -87,13 +87,99 @@ Reviewer sieht gruene Tests bei kaputtem Produktivverhalten.
 Die Kommentarhistorie ueber der Konstante dokumentiert jeden Bump mit Grund.
 Neue Bumps in diesem Stil ergaenzen.
 
+**Stand 58 (2026-10-14):** Rekordbox-Metadaten ohne exakten Pfadtreffer werden
+nicht mehr per eindeutigem Basename in die Analyse uebernommen. Aeltere
+Fallback-Zeilen koennen falsche BPM, Keys und Cues enthalten.
+
+**Stand 59 (2026-10-14):** Bei belastbarer Fold-Phase wird ein widerspruechliches
+oder unvollstaendiges internes Beat-Alignment verworfen; alte ungleichphasige
+Trackerzeiten duerfen keinen Downbeat-Anker mehr erzeugen.
+
+**Stand 60 (2026-10-14):** Mixpunkte und Mix-Kandidaten werden nur ausgegeben,
+wenn die Taktphase belastbar ist. Alte Cache-Zeilen mit Mix-Ausgaben auf einem
+Fallback-Anker muessen neu analysiert werden.
+
+**Stand 61 (2026-10-14):** Abgeleitete Phrase-, Struktur-, Groove- und
+Mixwerte werden nur mit ausreichender Konfidenz und bestaetigter Beatgridphase
+erzeugt. Alte Zeilen koennen solche Rasterwerte trotz unbestaetigtem Gesamtgrid
+enthalten.
+
+**Stand 62 (2026-10-14):** `Track.phrase_anchor` liefert bei Konfidenz unter
+der Mindestschwelle oder nicht verifiziertem Beatgrid keinen rohen
+`first_downbeat` an Pairing und Uebergangsplanung.
+
+**Stand 65 (2026-10-14):** Bei schwacher Phrase-Konfidenz darf die vorhandene
+Audio-Beatmodell-Arbitration eine verifizierte DSP-Baseline herausfordern.
+Verifizierte Rekordbox-Referenzen bleiben priorisiert; bei Modellablehnung
+werden Baseline-Anker und -Phrasenpaar wiederverwendet.
+
+**Stand 66 (2026-10-14):** Eine abgewiesene Fixed-BPM-Downbeatkorrektur behaelt
+ihren primaeren Diagnosegrund und speichert den Retrygrund separat. Das macht
+Beattracking- und Fold/Grid-Ablehnungen in der RAM-Messansicht unterscheidbar.
+
+**Stand 67 (2026-10-14):** Diagnose-Schema v4 und Rekordbox-Signatur erfassen
+`exact_path` gegen `volume_rebind`; alte Cacheeintraege werden durch den
+Versionswechsel getrennt.
+
+**Stand 68 (2026-10-14):** Diagnose-Schema v5 speichert den rein diagnostischen
+Modulo-4-Vergleich der PQTZ-Taktpositionen mit vorhandenen Modellbeats. Ein
+Modellkandidat ändert weder den aktiven Rekordbox-Anker noch Phrase-/PSSI-
+Auswahl oder Freigabegates. Alte Cacheeinträge enthalten diesen Vergleich nicht.
+
+**Stand 69 (2026-10-14):** `audio_confirmation` protokolliert zusätzliche
+DSP-Votierungen in sechs Modellfenstern und die abschließende Gridprüfung eines
+Rotationskandidaten. Auch `audio_confirmed` ersetzt weder den aktiven
+Rekordbox-Anker noch bestehende Freigaben und beweist keine musikalische Takt-1-Wahrheit.
+
+**Stand 71 (2026-10-14):** PSSI/PQTZ-Phrasen werden nur aus eindeutig
+zugeordneten ANLZ-Dateigruppen gebildet. Fehlender Dateistamm ist nur bei je
+einem passenden EXT- und DAT-Kandidaten zulaessig; Mehrdeutigkeit liefert keine
+Phrasen. Alte Phrase-/Mix-Ergebnisse werden durch den Cache-Bump verworfen.
+
+**Stand 72 (2026-10-14):** Bei schwacher Phrasenphasen-Konfidenz darf die
+Audio-Novelty-Messung im bestaetigten Beatgrid die Genre-Prior-Phrasenlaenge
+bestimmen. Fast- und Vollpfad muessen dieselbe gemessene Einheit bis
+Mixpunkten und Kandidaten verwenden; gesperrte oder unbestaetigte Raster
+behalten den Genre-Prior.
+
+**Stand 73 (2026-10-15):** `Track.phrase_unit_source` persistiert, ob die
+Phrasenlaenge aus Audio-Novelty, dem Genre-Prior oder einer konfigurierten
+Vorgabe stammt. Alte Cachezeilen enthalten dieses Provenienzfeld nicht.
+
+**Stand 74 (2026-10-15):** Der beste Novelty-Kandidat, dessen rohe Korrelation
+und der prior-adjustierte Abstand zum Zweitkandidaten werden gespeichert.
+Die Werte sind keine Wahrscheinlichkeiten. Ungueltige Werte werden vom Cache-
+Vertrag abgelehnt.
+
+**Stand 75 (2026-10-15):** Diagnose-Schema v6 bindet Phrasenlaenge, Quelle,
+Kandidat, Rohscore und Margin; Cachevalidierung verlangt Gleichheit mit den
+entsprechenden Trackfeldern.
+
+**Stand 76 (2026-10-15):** Genreprofil-Phrasenlaengen werden in beiden
+Analysepfaden als `genre_prior` gespeichert, auch wenn die interne API sie
+explizit weitergibt. Externe explizite Einheiten bleiben `configured`.
+Messschema v6 bleibt unveraendert; die Cacheversion verhindert alte
+fehlklassifizierte Provenienzwerte.
+
+**Stand 79 (2026-10-15):** Die persistierte Rekordbox-Taktpositionsdiagnose
+speichert `reference_constant_offset`, wenn sie einen konstanten Grid-Offset
+erkennt. Das ist nur ein Diagnosegrund: Grid und Anker bleiben unveraendert;
+Sync-Gates erhalten keine Freigabe. Alte Cachezeilen enthalten diesen Grund
+nicht und werden durch den Versionswechsel neu analysiert.
+
+**Stand 70 (2026-10-14):** Ein schema-v5-validierter, einheitlicher
+`candidate_rotation`-Befund sperrt vorsorglich PSSI-/Phrasenausgaben,
+Mixpunkte und -kandidaten sowie Takt-1-/Cue-Export. Beat-Anker und Beat-Sync
+bleiben erhalten. Die Sperre ist eine Nutzungsentscheidung bei widersprüchlichen
+Taktpositionshinweisen, kein Nachweis musikalischer Richtigkeit.
+
 ## Speicherort
 
 ```
 CACHE_FILE = HPG_CACHE_FILE                       # Env, hoechste Prioritaet
-           | HPG_CACHE_DIR/hpg_cache_v46.db       # Env
-           | %LOCALAPPDATA%\HPG\hpg_cache_v46.db  # Standard Windows
-           | ~/.hpg/hpg_cache_v46.db              # Fallback
+           | HPG_CACHE_DIR/hpg_cache_v77.db       # Env
+           | %LOCALAPPDATA%\HPG\hpg_cache_v77.db  # Standard Windows
+           | ~/.hpg/hpg_cache_v77.db              # Fallback
 LOCK_FILE  = <cache ohne .db> + ".lock"
 ```
 
@@ -157,3 +243,15 @@ editieren oder loeschen ohne Ankuendigung**. Zum Inspizieren gibt es
 - Bump vergessen -> "Fix wirkt nicht", stundenlanges Falschdebuggen.
 - Produktiv-DB im Test benutzen statt `HPG_CACHE_FILE`.
 - Sentinel `0.0` waehlen fuer ein Feld, bei dem `0.0` ein gueltiger Wert ist.
+
+Cache 100 behaelt die Cache99-Rasterrettung bei. Vorhandene erfolgreiche Modell-Decoderfenster werden auch bei hoher DSP-Phrasenkonfidenz gegen Audio geprueft; der bisherige vorzeitige baseline_preferred-Abbruch gilt nur noch ohne solche Kandidaten. Uebernahme weiterhin nur mit allen bestehenden Konsistenz-/Audiogates. Alte Analysewerte werden nicht als neu geprueft wiederverwendet.
+
+Cache 101: nativer Rekordbox-Beatdecoder mit eigenem Herkunftsvertrag; alte HPG-Rotationsscores werden nicht als native Ergebnisse gelesen.
+
+Cache 102: native Beatzeiten aus Samplepositionen statt nativen msec-Hilfsfeldern; diese können bei nativen Endergänzungen widersprüchlich sein. Produktivcache nicht manuell ändern.
+
+Cache 103: native_beat_analysis speichert den vollständigen nativen Modell-/Endgrid-Lauf samt Herkunft. Aktive Übernahme verlangt unveränderte BPM/Takt-Eins und bestätigte Audio-Synchronität.
+
+Version104: native Rohgrids unverändert; optionale Audio-Zeitkorrektur mit sechs disjunkten Messfenstern und eigener Ankerherkunft persistieren.
+
+Version105: nativer WAV/AIFF-Reader mit eigener Quell-/Ausgabezeitbasis und rekonstruierter Modus-/Modellwahl; Endgrid im selben Einmalprozess. Native Herkunft bleibt getrennt von Audio- und musikalischer Freigabe.

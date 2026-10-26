@@ -45,10 +45,13 @@ class Analyzer:
         self.paths = None
         self.transform = transform
 
-    def analyze_files(self, paths, progress_callback, cancel_callback):
+    def analyze_files(self, paths, progress_callback, cancel_callback, cache_policy="reuse"):
+        assert cache_policy in {"reuse", "fresh"}
         self.paths = tuple(paths)
         tracks = [Track(p, Path(p).name, duration=120., bpm=120.,
                         analysis_mode="librosa_full_or_tail") for p in paths]
+        for track in tracks:
+            track.analysis_origin = "fresh"
         return self.transform(tracks) if self.transform else tracks
 
 
@@ -107,7 +110,7 @@ def test_exact_selected_paths_multiroot_snapshots(request_data):
     result = analyze_cohort(index, selection, context=context, analyzer=analyzer)
     assert analyzer.paths == selection.paths
     assert result.complete
-    assert tuple(json.loads(raw)["filePath"] for raw in result.track_snapshots) == selection.paths
+    assert tuple(json.loads(raw)["track"]["filePath"] for raw in result.track_snapshots) == selection.paths
     assert result.selected_roots == index.roots
     assert result.source_proof == "stat_checked_before_after"
 
@@ -181,12 +184,12 @@ def test_cancel_never_returns_partial_snapshot(request_data, monkeypatch, stage)
     index, context, selection = request_data
     cancelled = stage == "before"
     class CancellingAnalyzer(Analyzer):
-        def analyze_files(self, paths, progress_callback, cancel_callback):
+        def analyze_files(self, paths, progress_callback, cancel_callback, cache_policy="reuse"):
             nonlocal cancelled
             if stage == "during":
                 cancelled = True
                 cancel_callback()
-            tracks = super().analyze_files(paths, progress_callback, cancel_callback)
+            tracks = super().analyze_files(paths, progress_callback, cancel_callback, cache_policy=cache_policy)
             if stage == "after":
                 cancelled = True
             return tracks
@@ -208,7 +211,7 @@ def test_cancel_never_returns_partial_snapshot(request_data, monkeypatch, stage)
 def test_callback_error_aborts_without_recovery(request_data):
     index, context, selection = request_data
     class ReportingAnalyzer(Analyzer):
-        def analyze_files(self, paths, progress_callback, cancel_callback):
+        def analyze_files(self, paths, progress_callback, cancel_callback, cache_policy="reuse"):
             progress_callback(0, len(paths), "start")
             pytest.fail("Nach Callbackfehler darf keine Analyse starten")
     def failed(*args):
@@ -244,4 +247,4 @@ def test_snapshots_detached_and_no_audio_decoder_or_own_writer(request_data, mon
     monkeypatch.setattr(io, "open", forbidden)
     result = analyze_cohort(index, selection, context=context, analyzer=Analyzer(retain))
     retained[0].fileName = "changed"
-    assert json.loads(result.track_snapshots[0])["fileName"] == "track.mp3"
+    assert json.loads(result.track_snapshots[0])["track"]["fileName"] == "track.mp3"

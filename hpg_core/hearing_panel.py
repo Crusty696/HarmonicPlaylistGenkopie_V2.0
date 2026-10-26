@@ -3,14 +3,16 @@
 import csv
 from pathlib import Path
 
-from PyQt6.QtCore import QBuffer, QIODevice, QUrl
+from PyQt6.QtCore import QBuffer, QIODevice, QUrl, Qt, pyqtSignal
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QSpinBox, QVBoxLayout, QPlainTextEdit, QWidget, QScrollArea,
-    QTableWidget, QTableWidgetItem, QAbstractItemView,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QFrame, QGridLayout,
+    QSlider,
 )
+from hpg_core.theme import COLORS
 
 
 NOTE_LABELS = {
@@ -20,6 +22,86 @@ NOTE_LABELS = {
     "energieverlauf": "Energieverlauf", "peak_platzierung": "Peak-Platzierung",
     "kohaerenz": "Kohärenz",
 }
+
+
+class NoteScale(QWidget):
+    """Sichtbare Notenbuttons mit der bisherigen Index-Schnittstelle."""
+
+    currentIndexChanged = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._index = 0
+        self.buttons = {}
+        self.setStyleSheet(
+            f"QPushButton:checked {{ background-color: {COLORS['accent_primary']}; "
+            f"color: {COLORS['bg_main']}; border: 1px solid {COLORS['accent_primary']}; font-weight: 700; }}"
+            f"QPushButton:checked:disabled {{ background-color: {COLORS['accent_primary_bg']}; "
+            f"color: {COLORS['accent_primary']}; border: 1px solid {COLORS['accent_primary']}; }}"
+        )
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        for note in range(1, 6):
+            button = QPushButton(str(note))
+            button.setCheckable(True)
+            button.setToolTip("1 – geht gar nicht" if note == 1 else "5 – sehr gut" if note == 5 else str(note))
+            button.setAccessibleName(f"Note {note}")
+            button.clicked.connect(lambda _checked=False, value=note: self.setCurrentIndex(value))
+            row.addWidget(button)
+            self.buttons[note] = button
+        self.clear_button = QPushButton("Löschen")
+        self.clear_button.setToolTip("Nur diese Note löschen")
+        self.clear_button.clicked.connect(lambda: self.setCurrentIndex(0))
+        row.addWidget(self.clear_button)
+
+    def currentIndex(self):
+        return self._index
+
+    def setCurrentIndex(self, index):
+        index = int(index)
+        if not 0 <= index <= 5:
+            raise ValueError("Note muss zwischen 0 und 5 liegen")
+        changed = index != self._index
+        self._index = index
+        for note, button in self.buttons.items():
+            button.setChecked(note == index)
+        if changed:
+            self.currentIndexChanged.emit(index)
+
+
+class HearingTimeline(QWidget):
+    """Schematische Zeitaufteilung aus dem Plan, keine gemessene Wellenform."""
+
+    sections = ("A", "Anfang", "Mitte", "Ende", "B")
+
+    def __init__(self, spec, parent=None):
+        super().__init__(parent)
+        self.durations = ()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        if not spec:
+            row.addWidget(QLabel("Zeitaufteilung nicht verfügbar"))
+            return
+        def field(name):
+            return float(spec[name] if isinstance(spec, dict) else getattr(spec, name))
+        try:
+            pre = min(max(0.0, field("mix_out_sec")), max(0.0, field("pre_roll_sec")))
+            fade = field("crossfade_sec")
+            post = max(0.0, field("post_roll_sec"))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            row.addWidget(QLabel("Zeitaufteilung nicht verfügbar"))
+            return
+        self.durations = (pre, fade / 3, fade / 3, fade / 3, post)
+        colors = ("accent_secondary", "accent_success", "accent_warning", "accent_danger", "accent_primary")
+        for section, duration, color in zip(self.sections, self.durations, colors):
+            label = QLabel(section)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setMinimumHeight(28)
+            label.setToolTip(f"{section}: {duration:.2f} s · Zeitaufteilung aus Übergangsplan")
+            label.setStyleSheet(f"background: {COLORS[color]}; color: {COLORS['bg_main']}; border-radius: 3px;")
+            row.addWidget(label, max(1, int(round(duration * 1000))))
+        self.setToolTip("Zeitaufteilung aus Übergangsplan: A vor der Blende, drei gleiche Blendenabschnitte, B nach der Blende.")
 
 
 class HearingPrepareDialog(QDialog):
@@ -192,7 +274,8 @@ class HearingPrepareDialog(QDialog):
 class HearingRatingDialog(QDialog):
     """Speichert jede Eingabe durch den gemeinsamen Bewertungsservice."""
 
-    def __init__(self, session, save, parent=None, *, read_only=False):
+    def __init__(self, session, save, parent=None, *, read_only=False,
+                 analysis_origin="unknown"):
         super().__init__(parent)
         if session.get("mode") not in {"einzel", "kandidaten", "dreinoten", "dramaturgie"}:
             raise ValueError("Unbekannter Bewertungsmodus")
@@ -201,9 +284,14 @@ class HearingRatingDialog(QDialog):
         self.session = session
         self.save = save
         self.read_only = bool(read_only)
+        if analysis_origin not in {"fresh", "cache", "mixed", "unknown"}:
+            analysis_origin = "unknown"
+        self.analysis_origin = analysis_origin
         self.pair_index = self.clip_index = 0
         self._loading = False
         self._audio_worker = None
+        self._source_check_worker = None
+        self._pending_source_action = None
         self._render_generation = 0
         self._audio_buffer = None
         self._pending_render = False
@@ -212,47 +300,53 @@ class HearingRatingDialog(QDialog):
         self._rendered_clips = set()
         self.rating_boxes = {}
         self.sequence_boxes = {}
+        self.variant_cards = []
+        self._cards_pair_index = None
+        self._cards_generation = 0
+        self._player_duration = 0
         self.setWindowTitle("Hörtest – in der App bewerten")
-        self.resize(580, 460)
+        self.resize(1100, 700)
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
-        self.player.errorOccurred.connect(lambda _error, message: self.status_label.setText(f"Audiofehler: {message}"))
+        self.player.errorOccurred.connect(self._playback_error)
         self.player.mediaStatusChanged.connect(self._media_status)
+        self.player.durationChanged.connect(self._update_player_duration)
+        self.player.positionChanged.connect(self._update_player_position)
+        self.player.playbackStateChanged.connect(self._update_playback_state)
         self.finished.connect(self._stop_player)
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Verdeckte Bewertung. Strukturprüfung ist keine Audit-Prüfung."))
+        origin_label = {
+            "fresh": "frisch analysiert", "cache": "Cache",
+            "mixed": "gemischt", "unknown": "unbekannt",
+        }[self.analysis_origin]
+        layout.addWidget(QLabel(f"Analyseherkunft der Trackdaten: {origin_label}."))
         self.pair_label = QLabel()
         self.clip_label = QLabel()
+        self.progress_label = QLabel()
         layout.addWidget(self.pair_label)
         layout.addWidget(self.clip_label)
+        layout.addWidget(self.progress_label)
         row = QHBoxLayout()
         self.previous_clip_button = QPushButton("Vorherige Variante")
-        self.play_button = QPushButton("Abspielen / Pause")
         self.next_clip_button = QPushButton("Nächste Variante")
-        for button in (self.previous_clip_button, self.play_button, self.next_clip_button):
+        for button in (self.previous_clip_button, self.next_clip_button):
             row.addWidget(button)
         layout.addLayout(row)
-        form = QFormLayout()
         mode = session["mode"]
-        dimensions = ("bewertung",) if mode == "einzel" else (
+        self._dimensions = ("bewertung",) if mode == "einzel" else (
             ("note",) if mode == "kandidaten" else
             ("track_note", "technik_note", "gesamt_note")
         )
-        for dimension in dimensions:
-            box = self._note_box()
-            self.rating_boxes[dimension] = box
-            form.addRow(NOTE_LABELS[dimension], box)
-            box.currentIndexChanged.connect(lambda index, name=dimension: self._rate(name, index))
-        layout.addLayout(form)
+        self.cards_scroll = QScrollArea()
+        self.cards_scroll.setWidgetResizable(True)
+        layout.addWidget(self.cards_scroll, 1)
         if mode in {"kandidaten", "dreinoten"}:
             choices = QHBoxLayout()
-            self.best_button = QPushButton("Diese Variante ist die beste")
             self.no_best_button = QPushButton("Keine beste Variante")
-            self.best_button.clicked.connect(lambda: self._choose(True))
             self.no_best_button.clicked.connect(lambda: self._choose(False))
-            choices.addWidget(self.best_button)
             choices.addWidget(self.no_best_button)
             layout.addLayout(choices)
             self.choice_label = QLabel()
@@ -283,14 +377,143 @@ class HearingRatingDialog(QDialog):
         self.next_clip_button.clicked.connect(lambda: self._move_clip(1))
         self.previous_pair_button.clicked.connect(lambda: self._move_pair(-1))
         self.next_pair_button.clicked.connect(lambda: self._move_pair(1))
-        self.play_button.clicked.connect(self._toggle_playback)
         self._show_clip()
 
     @staticmethod
     def _note_box():
-        box = QComboBox()
-        box.addItems(["Nicht bewertet / Note löschen", "1 – geht gar nicht", "2", "3", "4", "5 – sehr gut"])
-        return box
+        return NoteScale()
+
+    def _ensure_cards(self):
+        if self._cards_pair_index != self.pair_index:
+            old = self.cards_scroll.takeWidget()
+            if old is not None:
+                old.deleteLater()
+            self.variant_cards = []
+            self._cards_generation += 1
+            card_token = self._cards_generation
+            container = QWidget()
+            grid = QGridLayout(container)
+            pair = self.pair_index
+            for index, clip in enumerate(self._group()["clips"]):
+                card = QFrame()
+                card.setObjectName("hearingVariantCard")
+                column = QVBoxLayout(card)
+                card.title_label = QLabel(f"Variante {index + 1}")
+                column.addWidget(card.title_label)
+                card.play_button = QPushButton("Abspielen / Pause")
+                card.play_button.clicked.connect(lambda _checked=False, p=pair, c=index, t=card_token: self._card_play(p, c, t))
+                column.addWidget(card.play_button)
+                card.position_label = QLabel("0:00 / —")
+                column.addWidget(card.position_label)
+                card.position_slider = QSlider(Qt.Orientation.Horizontal)
+                card.seek_slider = card.position_slider
+                card.position_slider.setRange(0, 0)
+                card.position_slider.setEnabled(False)
+                card.position_slider.sliderMoved.connect(lambda position, p=pair, c=index, t=card_token: self._card_seek(p, c, position, t))
+                column.addWidget(card.position_slider)
+                card.timeline = HearingTimeline(clip.get("spec"))
+                column.addWidget(card.timeline)
+                column.addWidget(QLabel("1 = geht gar nicht · 5 = sehr gut"))
+                card.rating_boxes = {}
+                for dimension in self._dimensions:
+                    column.addWidget(QLabel(NOTE_LABELS[dimension]))
+                    box = self._note_box()
+                    card.rating_boxes[dimension] = box
+                    box.currentIndexChanged.connect(lambda value, p=pair, c=index, name=dimension, t=card_token: self._card_rate(p, c, name, value, t))
+                    column.addWidget(box)
+                if self.session["mode"] in {"kandidaten", "dreinoten"}:
+                    card.best_button = QPushButton("Diese Variante ist die beste")
+                    card.best_button.clicked.connect(lambda _checked=False, p=pair, c=index, t=card_token: self._card_choose(p, c, t))
+                    column.addWidget(card.best_button)
+                card.choice_label = QLabel()
+                column.addWidget(card.choice_label)
+                column.addStretch()
+                grid.addWidget(card, index // 2, index % 2)
+                self.variant_cards.append(card)
+            self.cards_scroll.setWidget(container)
+            self._cards_pair_index = pair
+        active = self.variant_cards[self.clip_index]
+        self.rating_boxes = active.rating_boxes
+        self.play_button = active.play_button
+        if hasattr(active, "best_button"):
+            self.best_button = active.best_button
+
+    def _card_play(self, pair, clip, card_token=None):
+        if (self._source_check_worker is not None or pair != self.pair_index
+                or self._closing_result is not None
+                or card_token is not None and card_token != self._cards_generation):
+            return
+        if clip != self.clip_index:
+            self._sequence_playing = False
+            self.clip_index = clip
+            self._show_clip()
+        self._toggle_playback()
+
+    def _card_rate(self, pair, clip, dimension, index, card_token=None):
+        if card_token is not None and card_token != self._cards_generation:
+            return
+        if pair != self.pair_index or clip != self.clip_index:
+            self._refresh_ratings()
+            return
+        self._rate(dimension, index)
+
+    def _card_choose(self, pair, clip, card_token=None):
+        if pair == self.pair_index and clip == self.clip_index and (card_token is None or card_token == self._cards_generation):
+            self._choose(True)
+
+    def _card_seek(self, pair, clip, position, card_token=None):
+        if pair == self.pair_index and clip == self.clip_index and (card_token is None or card_token == self._cards_generation) and self._rating_allowed() and self._player_duration > 0:
+            self.player.setPosition(max(0, min(int(position), self._player_duration)))
+
+    @staticmethod
+    def _time_label(milliseconds):
+        seconds = max(0, int(milliseconds) // 1000)
+        return f"{seconds // 60}:{seconds % 60:02d}"
+
+    def _update_player_duration(self, duration):
+        self._player_duration = max(0, int(duration))
+        if not self.variant_cards:
+            return
+        card = self.variant_cards[self.clip_index]
+        card.position_slider.setRange(0, self._player_duration)
+        card.position_slider.setEnabled(self._player_duration > 0 and self._rating_allowed())
+        self._update_player_position(self.player.position())
+
+    def _update_player_position(self, position):
+        if not self.variant_cards:
+            return
+        card = self.variant_cards[self.clip_index]
+        if not card.position_slider.isSliderDown():
+            card.position_slider.setValue(int(position))
+        card.position_label.setText(f"{self._time_label(position)} / {self._time_label(self._player_duration)}")
+
+    def _update_playback_state(self, state):
+        if not self.variant_cards:
+            return
+        for index, card in enumerate(self.variant_cards):
+            card.play_button.setText("Pause" if index == self.clip_index and state == QMediaPlayer.PlaybackState.PlayingState else "Abspielen")
+
+    def _playback_error(self, _error, message):
+        if self._clip().get("spec") or self._clip().get("audio_bytes"):
+            self._sequence_playing = False
+            self._current_render_ready = False
+            self._rendered_clips.discard(self._clip_key())
+            self._player_duration = 0
+            self.player.stop()
+            self.player.setSource(QUrl())
+            self._release_audio_buffer()
+            self._refresh_ratings()
+            self.status_label.setText(
+                f"Audio nicht abspielbar: {message}. Keine neue Bewertung möglich; vorhandene Noten bleiben unverändert."
+            )
+            return
+        self.status_label.setText(f"Audiofehler: {message}")
+
+    def _release_audio_buffer(self):
+        buffer, self._audio_buffer = self._audio_buffer, None
+        if buffer is not None:
+            buffer.close()
+            buffer.deleteLater()
 
     def _group(self):
         return self.session["groups"][self.pair_index]
@@ -302,29 +525,93 @@ class HearingRatingDialog(QDialog):
         return self.pair_index, self.clip_index
 
     def _rating_allowed(self):
-        return not self._clip().get("spec") or self._current_render_ready
+        return (self._source_check_worker is None
+                and (not (self._clip().get("spec") or self._clip().get("audio_bytes"))
+                     or self._current_render_ready))
+
+    def _check_sources_before_rating(self, clips, action):
+        """Prueft grosse Originaldateien vor dem Rating in einem Worker."""
+        sources = {
+            (source["path"], source["size_bytes"], source["sha256"], source.get("root")): source
+            for clip in clips
+            for source in clip.get("sources", ())
+        }
+        if not sources:
+            action()
+            return True
+        if self._source_check_worker is not None:
+            return False
+        from .hearing_jobs import HearingSourceCheckWorker
+        worker = HearingSourceCheckWorker(tuple(sources.values()), parent=self)
+        self._source_check_worker = worker
+        self._pending_source_action = (self._clip_key(), action)
+        worker.completed.connect(
+            lambda result, source=worker: self._source_check_done(source, result)
+        )
+        worker.finished.connect(
+            lambda source=worker: self._source_check_finished(source)
+        )
+        self.status_label.setText("Prüfe Originaldateien im Hintergrund vor dem Speichern …")
+        self._refresh_ratings()
+        worker.start()
+        return False
+
+    def _source_check_done(self, worker, result):
+        if worker is not self._source_check_worker:
+            return
+        pending, self._pending_source_action = self._pending_source_action, None
+        if not result.get("ok"):
+            for index in range(len(self._group()["clips"])):
+                self._rendered_clips.discard((self.pair_index, index))
+            self._current_render_ready = False
+            self._refresh_ratings()
+            self.status_label.setText(
+                f"Originalquelle seit dem Rendern geändert; Bewertung verworfen: "
+                f"{result.get('output', 'Prüfung fehlgeschlagen')}"
+            )
+            return
+        if pending is None or pending[0] != self._clip_key():
+            self.status_label.setText("Auswahl während der Quellenprüfung geändert; Bewertung nicht gespeichert.")
+            return
+        pending[1]()
+
+    def _source_check_finished(self, worker):
+        if worker is not self._source_check_worker:
+            return
+        self._source_check_worker = None
+        worker.deleteLater()
+        if self._closing_result is not None:
+            super().done(self._closing_result)
+        else:
+            self._refresh_ratings()
 
     def _group_rendered(self):
         return all(
-            not clip.get("spec") or (self.pair_index, index) in self._rendered_clips
+            not (clip.get("spec") or clip.get("audio_bytes"))
+            or (self.pair_index, index) in self._rendered_clips
             for index, clip in enumerate(self._group()["clips"])
         )
 
     def _show_clip(self):
         self._render_generation += 1
         self._current_render_ready = False
+        self._player_duration = 0
         self.player.stop()
         self.player.setSource(QUrl())
-        if self._audio_buffer is not None:
-            self._audio_buffer.close()
-            self._audio_buffer.deleteLater()
-            self._audio_buffer = None
+        self._release_audio_buffer()
         if self._audio_worker is not None:
             self._audio_worker.request_cancel()
         self._pending_render = False
+        self._ensure_cards()
         path = self._clip().get("path")
-        self.player.setSource(QUrl.fromLocalFile(str(path)) if path and not self._clip().get("spec") else QUrl())
-        self.play_button.setEnabled(bool(path) or bool(self._clip().get("spec")))
+        audio = self._clip().get("audio_bytes")
+        if audio:
+            self._current_render_ready = self._install_audio_buffer(audio)
+            if self._current_render_ready:
+                self._rendered_clips.add(self._clip_key())
+        else:
+            self.player.setSource(QUrl.fromLocalFile(str(path)) if path and not self._clip().get("spec") else QUrl())
+        self.play_button.setEnabled(bool(path) or bool(audio) or bool(self._clip().get("spec")))
         self._refresh_ratings()
 
     def _refresh_ratings(self):
@@ -334,12 +621,43 @@ class HearingRatingDialog(QDialog):
             kind = "Sequenz" if self.session["mode"] == "dramaturgie" else "Paar"
             self.pair_label.setText(f"{kind} {self.pair_index + 1}/{len(self.session['groups'])}")
             self.clip_label.setText(f"Variante {self.clip_index + 1}/{len(self._group()['clips'])}")
-            for name, box in self.rating_boxes.items():
-                box.setCurrentIndex(int(self._clip()["ratings"].get(name) or 0))
-                box.setEnabled(not self.read_only and self._rating_allowed())
+            for index, card in enumerate(self.variant_cards):
+                clip = self._group()["clips"][index]
+                active = index == self.clip_index
+                border = COLORS["border_active"] if active else COLORS["border"]
+                card.setStyleSheet(f"QFrame#hearingVariantCard {{ background: {COLORS['bg_card']}; border: 1px solid {border}; border-radius: 8px; }}")
+                card.title_label.setText(f"Variante {index + 1}" + (" · aktiv" if active else ""))
+                for name, box in card.rating_boxes.items():
+                    box.setCurrentIndex(int(clip["ratings"].get(name) or 0))
+                    box.setEnabled(active and not self.read_only and self._rating_allowed())
+                card.play_button.setEnabled(bool(clip.get("path")) or bool(clip.get("spec"))
+                                            or bool(clip.get("audio_bytes")))
+                if not active:
+                    card.position_slider.setEnabled(False)
+                    card.position_slider.setRange(0, 0)
+                    card.position_label.setText("0:00 / —")
+                else:
+                    card.position_slider.setEnabled(self._player_duration > 0 and self._rating_allowed())
+                card.choice_label.setText("Als beste gewählt" if clip.get("gewaehlt") == "1" else "")
+                if hasattr(card, "best_button"):
+                    card.best_button.setEnabled(active and not self.read_only and self._rating_allowed() and self._group_rendered() and
+                        (self.session["mode"] == "dreinoten" or int(clip["ratings"].get("note") or 0) >= 2))
+            clips = [clip for group in self.session["groups"] for clip in group["clips"]]
+            complete = sum(all(clip["ratings"].get(name) for name in self._dimensions) for clip in clips)
+            self.progress_label.setText(f"Bewertet: {complete}/{len(clips)} Varianten vollständig")
+            checking_sources = self._source_check_worker is not None
+            for button in (
+                self.previous_clip_button, self.next_clip_button,
+                self.previous_pair_button, self.next_pair_button,
+            ):
+                button.setEnabled(not checking_sources)
+            self._update_playback_state(self.player.playbackState())
             for name, box in self.sequence_boxes.items():
                 box.setCurrentIndex(int(self._group()["ratings"].get(name) or 0))
-                box.setEnabled(not self.read_only and self._group_rendered())
+                box.setEnabled(
+                    not self.read_only and self._source_check_worker is None
+                    and self._group_rendered()
+                )
             if hasattr(self, "choice_label"):
                 chosen = self._clip().get("gewaehlt", "")
                 self.choice_label.setText("Als beste gewählt" if chosen == "1" else (
@@ -373,6 +691,7 @@ class HearingRatingDialog(QDialog):
             self.status_label.setText("Erst nach erfolgreichem Rendern bewerten. Vorhandene Noten bleiben unverändert.")
             self._refresh_ratings()
             return
+        clips_to_check = self._group()["clips"] if sequence else (self._clip(),)
         note = index if index else None
         clip, group = self._clip(), self._group()
         if sequence:
@@ -383,12 +702,15 @@ class HearingRatingDialog(QDialog):
             route, payload = "/note", {"pair_id": clip["pair_id"], "note": note}
             if self.session["mode"] != "einzel":
                 payload.update(clip_id=clip["clip_id"], dimension=dimension)
-        if self._persist(route, payload):
-            target = group["ratings"] if sequence else clip["ratings"]
-            target[dimension] = str(note) if note is not None else ""
-            if dimension == "note" and note in (None, 1) and clip.get("gewaehlt") == "1":
-                clip["gewaehlt"] = ""
-            self._refresh_ratings()
+        def save_rating():
+            if self._persist(route, payload):
+                target = group["ratings"] if sequence else clip["ratings"]
+                target[dimension] = str(note) if note is not None else ""
+                if dimension == "note" and note in (None, 1) and clip.get("gewaehlt") == "1":
+                    clip["gewaehlt"] = ""
+                self._refresh_ratings()
+
+        self._check_sources_before_rating(clips_to_check, save_rating)
 
     def _choose(self, best):
         if self.read_only:
@@ -399,17 +721,27 @@ class HearingRatingDialog(QDialog):
             self._refresh_ratings()
             return
         payload = {"pair_id": self._clip()["pair_id"], "clip_id": self._clip()["clip_id"] if best else ""}
-        if self._persist("/bester", payload):
-            for clip in self._group()["clips"]:
-                clip["gewaehlt"] = ("1" if clip is self._clip() else "") if best else "0"
-            self._refresh_ratings()
+        group = self._group()
+        selected_clip = self._clip()
+
+        def save_choice():
+            if self._persist("/bester", payload):
+                for clip in group["clips"]:
+                    clip["gewaehlt"] = ("1" if clip is selected_clip else "") if best else "0"
+                self._refresh_ratings()
+
+        self._check_sources_before_rating(group["clips"], save_choice)
 
     def _move_clip(self, step):
+        if self._source_check_worker is not None:
+            return
         self._sequence_playing = False
         self.clip_index = (self.clip_index + step) % len(self._group()["clips"])
         self._show_clip()
 
     def _move_pair(self, step):
+        if self._source_check_worker is not None:
+            return
         self._sequence_playing = False
         self.pair_index = (self.pair_index + step) % len(self.session["groups"])
         self.clip_index = 0
@@ -417,6 +749,10 @@ class HearingRatingDialog(QDialog):
 
     def _toggle_playback(self):
         self._sequence_playing = False
+        if self._clip().get("audio_bytes") and self._audio_buffer is None:
+            self._show_clip()
+            if self._audio_buffer is None:
+                return
         if self._clip().get("spec") and self._audio_buffer is None:
             self._start_render()
             return
@@ -427,6 +763,11 @@ class HearingRatingDialog(QDialog):
 
     def _play_sequence(self):
         self._sequence_playing = True
+        if self._clip().get("audio_bytes") and self._audio_buffer is None:
+            self._show_clip()
+            if self._audio_buffer is None:
+                self._sequence_playing = False
+                return
         if self._clip().get("spec") and self._audio_buffer is None:
             self._start_render()
         else:
@@ -437,7 +778,7 @@ class HearingRatingDialog(QDialog):
             if self.clip_index + 1 < len(self._group()["clips"]):
                 self.clip_index += 1
                 self._show_clip()
-                if self._clip().get("spec"):
+                if self._clip().get("spec") and not self._clip().get("audio_bytes"):
                     self._start_render()
                 else:
                     self.player.play()
@@ -450,10 +791,7 @@ class HearingRatingDialog(QDialog):
         self._sequence_playing = False
         self.player.stop()
         self.player.setSource(QUrl())
-        if self._audio_buffer is not None:
-            self._audio_buffer.close()
-            self._audio_buffer.deleteLater()
-            self._audio_buffer = None
+        self._release_audio_buffer()
 
     def _start_render(self):
         if self._audio_worker is not None:
@@ -476,16 +814,28 @@ class HearingRatingDialog(QDialog):
         source.finished.connect(lambda worker=source: self._render_finished(worker))
         source.start()
 
+    def _install_audio_buffer(self, data):
+        """Uebernimmt fertiges Audio ohne temporaere Datei oder erneutes Rendern."""
+        buffer = QBuffer(self)
+        buffer.setData(data)
+        if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+            buffer.deleteLater()
+            self.status_label.setText("RAM-Audiopuffer konnte nicht geöffnet werden")
+            return False
+        self._audio_buffer = buffer
+        self.player.setSourceDevice(self._audio_buffer, QUrl("memory:preview.wav"))
+        # Auch ein synchroner Playerfehler darf den Status nicht wieder freigeben.
+        return self._audio_buffer is buffer
+
     def _render_ready(self, data, worker, token):
         if worker is not self._audio_worker or token != self._render_generation or self._closing_result is not None:
+            return
+        if not self._install_audio_buffer(data):
+            self._render_error("RAM-Audiopuffer konnte nicht geöffnet werden", worker, token)
             return
         self._current_render_ready = True
         self._rendered_clips.add(self._clip_key())
         self._refresh_ratings()
-        self._audio_buffer = QBuffer(self)
-        self._audio_buffer.setData(data)
-        self._audio_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-        self.player.setSourceDevice(self._audio_buffer, QUrl("memory:preview.wav"))
         self.player.play()
         self.status_label.setText("Übergang bereit. Nur im Speicher; kein Audit-Nachweis.")
 
@@ -493,6 +843,9 @@ class HearingRatingDialog(QDialog):
         if worker is self._audio_worker and token == self._render_generation and self._closing_result is None:
             self._current_render_ready = False
             self._rendered_clips.discard(self._clip_key())
+            self.player.stop()
+            self.player.setSource(QUrl())
+            self._release_audio_buffer()
             self._refresh_ratings()
             self.status_label.setText(
                 f"Übergang nicht abspielbar: {error}. Keine neue Bewertung möglich; vorhandene Noten bleiben unverändert."
@@ -512,6 +865,13 @@ class HearingRatingDialog(QDialog):
     def done(self, result):
         self._current_render_ready = False
         self._rendered_clips.clear()
+        if self._source_check_worker is not None:
+            self._closing_result = result
+            self._pending_source_action = None
+            self._stop_player()
+            self._source_check_worker.requestInterruption()
+            self.status_label.setText("Beende Quellenprüfung …")
+            return
         if self._audio_worker is not None:
             self._closing_result = result
             self._pending_render = False
@@ -522,7 +882,8 @@ class HearingRatingDialog(QDialog):
         super().done(result)
 
     def closeEvent(self, event):
-        if self._audio_worker is not None:
+        if (self._audio_worker is not None
+                or self._source_check_worker is not None):
             self.done(QDialog.DialogCode.Rejected)
             event.ignore()
             return

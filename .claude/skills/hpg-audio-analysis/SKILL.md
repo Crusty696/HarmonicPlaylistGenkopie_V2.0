@@ -12,6 +12,14 @@ description: Use when working on HPG audio analysis — librosa loading, BPM/Key
 Features, Struktur und Mixpoints in einem Zug. Rueckgabe `None` heisst
 "uebersprungen" — nie eine Exception nach oben.
 
+`analyze_track(file_path, *, cache_policy="reuse")` und
+`ParallelAnalyzer.analyze_files(..., cache_policy="reuse")` akzeptieren
+`reuse` oder `fresh`. `fresh` umgeht den persistenten Track-Cache beim Lesen und
+Schreiben; `analysis_origin` ist nur ein Laufzeitattribut (`fresh`/`cache`) und
+wird nicht als Trackfeld serialisiert. Verwaltete Hoertests uebergeben es separat
+und speichern Herkunft in der privaten `hpg_analysis_origin`-Tabelle. Ungueltige
+Policies sind Aufruffehler und werfen `ValueError`.
+
 ## Zwei Pfade, ein Vertrag
 
 | | Fast-Path | Voll-Path |
@@ -89,15 +97,55 @@ sr)` gebaut — Head-Matrizen passen nicht auf Tail-Samples.
 ## Anker-Kette (Reihenfolge zwingend)
 
 ```
-Genre -> phrase_unit (GENRE_PHRASE_UNITS)
-  -> first_downbeat  (Rekordbox-ANLZ conf 1.0, sonst estimate_first_downbeat)
+Genre -> phrase_unit (GENRE_PHRASE_UNITS, bei schwacher Phrase durch Novelty-Messung ersetzbar)
+  -> first_downbeat  (verifiziertes Rekordbox-ANLZ oder Audio-DSP/Modellvertrag)
   -> first_phrase    (nur wenn downbeat_confidence > 0.0)
   -> phrase_anchor   (Track-Property, Gate PHRASE_CONFIDENCE_MIN = 0.25)
   -> analyze_structure_windows(anchor=phrase_anchor)
   -> Mixpoints
 ```
 
+Bei einer Rekordbox-Taktrotation bleibt der Kandidat gesperrt, bis Model7 und
+Model8 in drei getrennten Fenstern uebereinstimmen, sechs Audiofenster die
+Kandidatenphase innerhalb 6 ms bestaetigen und das Gesamtgrid verifiziert ist.
+Nur dann verwendet der gemeinsame Resolver den korrigierten Anker als
+Audioherkunft. Beide Analysepfade muessen diese Herkunft weiterreichen;
+Rekordbox-PSSI und Rekordbox-Render-Sync duerfen sie nicht als unveraenderten
+ANLZ-Anker behandeln. Alle unbestaetigten Rotationen bleiben gesperrt.
+
+Ein konstanter Rekordbox-Zeitversatz über 6 ms wird als
+`reference_constant_offset` diagnostiziert. Der phasenbereinigte Modellvergleich
+liefert nur einen Taktrotationskandidaten. Seit Cache 81 darf der aktive
+HPG-Audioanker nach drei disjunkten Zusatzfenstern je Modell, separater
+Audiophasenbestätigung und verifiziertem Gesamtgrid angepasst werden. Der
+Rekordbox-Import bleibt unverändert; Beatphase allein beweist keine musikalische
+Takt-1.
+
 Details zu Quantisierung und Sentinels: Skill `hpg-mixpoint-engineering`.
+
+Bei bestaetigtem Beatgrid und schwacher erster Phrasenphase darf die
+Audio-Novelty-Messung im Head-Fenster die Genre-Prior-Phrasenlaenge ersetzen.
+Das Raster bleibt am bestaetigten Downbeat verankert; das Tail verwendet die
+vom Head gewaehlte Einheit. Gesperrte oder unbestaetigte Raster behalten den
+Genre-Prior. Diese Aenderung ist im Quellvertrag beschrieben, aber derzeit
+nicht durch Tests oder Laufzeitnachweise validiert.
+Wenn Novelty eine andere Einheit als den Genre-Prior waehlt, berechnen beide
+Analysepfade Phrasenphase und -konfidenz mit dieser finalen Einheit neu. Nur
+ausreichende Konfidenz verschiebt den Anker vom bestaetigten Downbeat.
+Bei einem solchen Ankerwechsel quantisieren beide Pfade ihre Strukturfenster
+mit der finalen Einheit und Phase erneut; scheitert diese Neuberechnung, bleibt
+der vorherige Anker aktiv.
+`Track.phrase_unit_source` persistiert anschliessend die Herkunft als
+`audio_novelty`, `genre_prior` oder `configured`.
+Interne Genreprofil-Einheiten muessen auch bei expliziter Weitergabe als
+`genre_prior` gekennzeichnet werden. Externe explizite Einheiten behalten den
+Default `configured`. `audio_novelty` wird nur nach erfolgter Messung gesetzt;
+ein Aufrufer kann diese Herkunft nicht per Parameter behaupten. Das Tail erbt
+`genre_prior`; die zusammengefuehrte Struktur behaelt die Herkunft des Head.
+Bei einer Kandidatenmessung speichert Track ausserdem besten Kandidaten,
+Novelty-Rohkorrelation und Ranking-Abstand. Diese Werte sind nicht kalibriert.
+Messdiagnose-Schema v6 fuehrt dieselben Werte und die Cachevalidierung gleicht
+sie gegen die Trackfelder ab.
 
 ## BPM aus ID3-Tags: der Faktor ist das Problem, nicht die Praezision
 
@@ -162,3 +210,6 @@ Muell-Track dauerhaft gecacht).
 - Nur einen der beiden Analyse-Pfade anfassen.
 - Analyse-Output aendern, ohne `CACHE_VERSION` zu bumpen -> Skill
   `hpg-cache-persistence`.
+
+
+Tempo-Arbitration: Alle sechs model7/model8-BPM-Werte muessen die bestehende Intervalltoleranz erfuellen. Der Kandidat ist ihr Median; DSP-Refinement, Fold-Lock und verifiziertes Gesamtgrid bleiben Uebernahme-Gates. Messschema v7 speichert Status, Ablehnungsgrund, Modellmedian, verfeinertes Tempo, Spread und Einzelwerte mit Fensterherkunft.

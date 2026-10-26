@@ -5,8 +5,9 @@ Analyzes track structure to identify sections:
 - Intro, Build, Drop, Breakdown, Outro, Main
 
 Uses self-similarity matrices (SSM) from MFCCs to find structural boundaries,
-then labels sections based on energy profiles. All boundaries are quantized
-to genre-specific phrase units (8, 16, or 32 bars).
+then labels sections based on energy profiles. DSP boundaries are quantized
+to phrase units (8, 16, or 32 bars). Verified PSSI or native phrase intervals
+retain their source boundaries inside the analyzed audio windows.
 
 No additional dependencies beyond librosa (already installed).
 
@@ -21,12 +22,15 @@ Algorithm:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from numbers import Real
 from dataclasses import dataclass, field, asdict
 import numpy as np
 import librosa
 
 from .config import HOP_LENGTH, METER, SECTION_ENERGY_THRESHOLD
 from .genres import DEFAULT_MIX_PROFILE, GENRE_MIX_PROFILES
+from .models import SUPPORTED_PHRASE_UNITS, is_supported_phrase_unit
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,11 @@ class TrackStructure:
   sections: list[TrackSection] = field(default_factory=list)
   total_bars: int = 0
   phrase_unit: int = 8  # 8, 16, or 32 bars
+  phrase_unit_source: str = "genre_prior"
+  phrase_unit_candidate: int | None = None
+  phrase_unit_score: float | None = None
+  phrase_unit_margin: float | None = None
+  cue_diagnostics: list[dict] = field(default_factory=list)
 
 
 # === Genre-specific Phrase Units ===
@@ -84,7 +93,7 @@ ENERGY_LOW_THRESHOLD = 0.6      # <60% of avg = low energy (intro/outro)
 ENERGY_BREAKDOWN_THRESHOLD = 0.8  # Sudden drop after high = breakdown
 
 # Phrase-Messung bleibt absichtlich auf den bereits unterstuetzten Werten.
-PHRASE_UNIT_CANDIDATES = (8, 16, 32)
+PHRASE_UNIT_CANDIDATES = SUPPORTED_PHRASE_UNITS
 PHRASE_ESTIMATE_MIN_SCORE = 0.18
 PHRASE_ESTIMATE_MIN_MARGIN = 0.08
 PHRASE_PRIOR_BONUS = 0.03
@@ -319,32 +328,46 @@ def _estimate_phrase_unit_from_novelty(
   genre: str = "Unknown",
   anchor: float = 0.0,
 ) -> int | None:
-  """Misst eine Phrase aus Bar-Novelty/Autokorrelation, sonst ``None``.
+  """Compatibility wrapper; returns only the accepted phrase unit."""
+  selected, _candidate, _score, _margin = _estimate_phrase_unit_diagnostics(
+    novelty, times, bpm, genre=genre, anchor=anchor
+  )
+  return selected
 
-  Die Rueckgabe ``None`` ist bewusst der Unsicherheitskanal: Der Aufrufer
-  verwendet dann unveraendert den Genre-Prior.
+
+def _estimate_phrase_unit_diagnostics(
+  novelty: np.ndarray,
+  times: np.ndarray,
+  bpm: float,
+  genre: str = "Unknown",
+  anchor: float = 0.0,
+) -> tuple[int | None, int | None, float | None, float | None]:
+  """Returns accepted unit plus raw best-candidate correlation and margin.
+
+  The values are diagnostics, not calibrated probabilities. A rejected best
+  candidate remains visible while the caller keeps the genre prior.
   """
   prior = GENRE_PHRASE_UNITS.get(genre, 8)
   if bpm <= 0:
-    return None
+    return None, None, None, None
 
   seconds_per_bar = (60.0 / bpm) * METER
   bars = _bar_novelty(novelty, times, seconds_per_bar, anchor)
   if len(bars) < 16:
-    return None
+    return None, None, None, None
 
   bars = _normalize_novelty(bars)
   centered = bars - np.mean(bars)
   variance = float(np.dot(centered, centered))
   if variance <= np.finfo(float).eps:
-    return None
+    return None, None, None, None
 
   candidates = [
     unit for unit in PHRASE_UNIT_CANDIDATES
     if len(bars) >= (2 * unit + 8)
   ]
   if not candidates:
-    return None
+    return None, None, None, None
 
   scores: dict[int, float] = {}
   for unit in candidates:
@@ -370,15 +393,17 @@ def _estimate_phrase_unit_from_novelty(
   ranked = sorted(
     posterior_scores.items(), key=lambda item: item[1], reverse=True
   )
-  if len(ranked) < 2:
-    return None
   best_unit, best_score = ranked[0]
+  best_raw_score = scores[best_unit]
+  if len(ranked) < 2:
+    return None, best_unit, best_raw_score, None
   second_score = ranked[1][1] if len(ranked) > 1 else -1.0
-  if scores[best_unit] < PHRASE_ESTIMATE_MIN_SCORE:
-    return None
-  if len(ranked) > 1 and best_score - second_score < PHRASE_ESTIMATE_MIN_MARGIN:
-    return None
-  return best_unit
+  margin = best_score - second_score
+  if best_raw_score < PHRASE_ESTIMATE_MIN_SCORE:
+    return None, best_unit, best_raw_score, margin
+  if margin < PHRASE_ESTIMATE_MIN_MARGIN:
+    return None, best_unit, best_raw_score, margin
+  return best_unit, best_unit, best_raw_score, margin
 
 
 def _pick_boundaries(
@@ -760,6 +785,66 @@ def _calculate_rms_and_phrase_boundaries(
 
 # === Main Analysis Function ===
 
+def _verified_phrase_intervals(cue_context, duration):
+  """Validiert Phrase-Intervalle und schneidet sie auf das Audiofenster zu.
+
+  ``None`` bedeutet ungültigen/unbestätigten Kontext; eine leere Liste ist ein
+  gültiger Kontext ohne Intervall in diesem Fenster und bewahrt Quellenvorrang.
+  """
+  if not isinstance(cue_context, Mapping) or cue_context.get("verified_grid") is not True:
+    return None
+  candidates = cue_context.get("candidates")
+  start = cue_context.get("window_start_s")
+  track_duration = cue_context.get("track_duration_s")
+  def finite_number(value):
+    return (isinstance(value, Real) and not isinstance(value, (bool, np.bool_))
+            and np.isfinite(value))
+  if (not isinstance(candidates, (list, tuple))
+      or not finite_number(start) or start < 0
+      or not finite_number(track_duration) or track_duration <= start
+      or start + duration > track_duration + 1e-3):
+    return None
+  intervals = []
+  previous_end = None
+  for item in candidates:
+    if not isinstance(item, Mapping):
+      return None
+    low, high = item.get("start_s"), item.get("end_s")
+    if (not finite_number(low) or not finite_number(high)
+        or not 0 <= low < high <= track_duration
+        or (previous_end is not None and low < previous_end)
+        or type(item.get("kind")) is not int or not 1 <= item["kind"] <= 10
+        or type(item.get("mood")) is not int or not 1 <= item["mood"] <= 3):
+      return None
+    previous_end = high
+    left, right = max(0.0, float(low - start)), min(duration, float(high - start))
+    if left < right:
+      intervals.append((left, right))
+  return intervals
+
+
+def _apply_phrase_intervals(boundaries, intervals, duration):
+  if not intervals:
+    return boundaries
+  result = [float(value) for value in boundaries
+            if not any(low <= value < high for low, high in intervals)]
+  result.append(0.0)
+  for low, high in intervals:
+    result.append(low)
+    if high < duration:
+      result.append(high)
+  return sorted(set(result))
+
+
+def _apply_verified_phrase_boundaries(boundaries, cue_context, duration):
+  """Übernimmt verifizierte Phrase-Grenzen ohne Rasterrundung oder Lücken.
+
+  Abschnittslabels und Energie bleiben eigene Audiomessungen.
+  """
+  intervals = _verified_phrase_intervals(cue_context, duration)
+  return boundaries if intervals is None else _apply_phrase_intervals(boundaries, intervals, duration)
+
+
 def analyze_structure(
   y: np.ndarray,
   sr: int,
@@ -769,19 +854,27 @@ def analyze_structure(
   phrase_unit: int | None = None,
   seconds_per_bar: float | None = None,
   feature_cache=None,
+  *,
+  phrase_unit_source: str | None = None,
+  cue_context: Mapping | None = None,
+  native_phrase_context: Mapping | None = None,
 ) -> TrackStructure:
   """
   Analyze track structure to identify sections.
 
   Uses MFCC-based self-similarity for boundary detection,
-  then labels sections by energy profile. All boundaries
-  are quantized to genre-specific phrase units.
+  then labels sections by energy profile. DSP boundaries are quantized to
+  phrase units; verified PSSI or native phrase intervals supply their original boundaries.
 
   Args:
     y: Audio signal (mono, from librosa.load)
     sr: Sample rate
     bpm: Track BPM
     genre: Detected genre (affects phrase unit)
+      cue_context: Optionaler verifizierter Phrase-Kontext mit absoluten Zeiten
+        und Modellpfaden; liefert Cue-Rohdiagnostik. Vollständige PSSI- oder
+        native Phrase-Intervalle bestimmen bei verified_grid=True die Grenzen
+        innerhalb ihrer tatsächlichen Abdeckung.
 
   Returns:
     TrackStructure with labeled sections
@@ -789,7 +882,12 @@ def analyze_structure(
   # MED-Fix: sr vor get_duration pruefen — librosa.get_duration rechnet
   # n_samples/sr und wuerfe bei sr<=0 einen ungefangenen ZeroDivisionError, der
   # im Non-Rekordbox-Volllauf die komplette Track-Auswertung reisst.
-  if sr is None or sr <= 0:
+  if (not isinstance(sr, Real) or isinstance(sr, (bool, np.bool_))
+      or not np.isfinite(sr) or sr <= 0
+      or not isinstance(bpm, Real) or isinstance(bpm, (bool, np.bool_))
+      or not np.isfinite(bpm) or bpm <= 0
+      or not isinstance(y, np.ndarray) or y.ndim != 1
+      or y.dtype.kind not in 'fiu' or not np.isfinite(y).all()):
     return TrackStructure()
   duration = librosa.get_duration(y=y, sr=sr)
   if duration <= 0 or bpm <= 0:
@@ -799,7 +897,28 @@ def analyze_structure(
   # share one explicit phrase definition.
   genre_phrase_unit = GENRE_PHRASE_UNITS.get(genre, 8)
   phrase_unit_was_explicit = phrase_unit is not None
+  if phrase_unit_was_explicit and not is_supported_phrase_unit(phrase_unit):
+    logger.warning(
+      "Ungueltige konfigurierte Phrasenlaenge %r; Audio-Novelty darf sie "
+      "ersetzen, sonst gilt das Genreprofil",
+      phrase_unit,
+    )
+    phrase_unit = None
+    phrase_unit_was_explicit = False
   phrase_unit = phrase_unit or genre_phrase_unit
+  # Nur Genre-Prior darf von einem Aufrufer als Herkunft gesetzt werden.
+  # audio_novelty wird ausschliesslich unten nach erfolgter Messung vergeben.
+  valid_phrase_sources = {"genre_prior"}
+  phrase_unit_source = (
+    phrase_unit_source
+    if phrase_unit_was_explicit
+    and isinstance(phrase_unit_source, str)
+    and phrase_unit_source in valid_phrase_sources
+    else "configured" if phrase_unit_was_explicit else "genre_prior"
+  )
+  phrase_unit_candidate = None
+  phrase_unit_score = None
+  phrase_unit_margin = None
 
   bar_length = seconds_per_bar or ((60.0 / bpm) * METER)
   total_bars = int(duration / bar_length)
@@ -813,7 +932,8 @@ def analyze_structure(
     # Die Messung darf den expliziten API-Wert nie ueberschreiben. Ohne
     # Messwert bleibt exakt der bisherige Genre-Prior erhalten.
     if not phrase_unit_was_explicit:
-      measured_phrase_unit = _estimate_phrase_unit_from_novelty(
+      (measured_phrase_unit, phrase_unit_candidate, phrase_unit_score,
+       phrase_unit_margin) = _estimate_phrase_unit_diagnostics(
         novelty,
         times,
         bpm,
@@ -822,6 +942,7 @@ def analyze_structure(
       )
       if measured_phrase_unit is not None:
         phrase_unit = measured_phrase_unit
+        phrase_unit_source = "audio_novelty"
 
     # Step 2: Pick section boundaries
     boundaries = _pick_boundaries(
@@ -855,6 +976,12 @@ def analyze_structure(
       seconds_per_bar=bar_length,
       feature_cache=feature_cache,
     )
+
+  cue_intervals = _verified_phrase_intervals(cue_context, duration)
+  if cue_intervals is None:
+    boundaries = _apply_verified_phrase_boundaries(boundaries, native_phrase_context, duration)
+  else:
+    boundaries = _apply_phrase_intervals(boundaries, cue_intervals, duration)
 
   # Step 4: Compute energy and trend for each section
   # Audit-Fix 2026-07-21: Grenzen, die (nach Quantisierung/Clamp) auf oder hinter
@@ -900,15 +1027,51 @@ def analyze_structure(
 
     sections.append(TrackSection(
       label=labels[i] if i < len(labels) else "main",
-      start_time=round(start, 2),
-      end_time=round(end, 2),
+      start_time=float(start),
+      end_time=float(end),
       start_bar=start_bar,
       end_bar=end_bar,
       avg_energy=round(energies[i], 1) if i < len(energies) else 50.0,
     ))
 
-  return TrackStructure(
+  result = TrackStructure(
     sections=sections,
     total_bars=total_bars,
     phrase_unit=phrase_unit,
+    phrase_unit_source=phrase_unit_source,
+    phrase_unit_candidate=phrase_unit_candidate,
+    phrase_unit_score=phrase_unit_score,
+    phrase_unit_margin=phrase_unit_margin,
   )
+  if cue_context is not None:
+    # Nur ein vorhandener Kandidatencontainer erlaubt eindeutige Fehlerindizes.
+    candidates = cue_context.get('candidates') if isinstance(cue_context, Mapping) else None
+    required = ('samplecnn_path', 'cue_model_path', 'window_start_s', 'track_duration_s')
+    if (not isinstance(candidates, (list, tuple))
+        or not all(key in cue_context for key in required)):
+      result.cue_diagnostics = [dict(index=None, status='invalid_input',
+                                    reason='invalid_cue_context', raw_score=None)]
+      logger.warning('Cue-Diagnostik: ungültiger Cue-Kontext')
+    else:
+      try:
+        # Lazy: Ohne Kontext werden weder Adapter noch Modelle angefordert.
+        from .ai_models.cue_predictor import score_phrase_candidates
+        scorer = cue_context['_client'].score if '_client' in cue_context else score_phrase_candidates
+        result.cue_diagnostics = scorer(
+          y, sr, candidates,
+          samplecnn_path=cue_context['samplecnn_path'],
+          cue_model_path=cue_context['cue_model_path'],
+          window_start_s=cue_context['window_start_s'],
+          track_duration_s=cue_context['track_duration_s'],
+          verified_grid=cue_context.get('verified_grid'),
+          prefer_directml=cue_context.get('prefer_directml', True),
+        )
+      except Exception as error:
+        logger.warning('Cue-Diagnostik fehlgeschlagen: %s', type(error).__name__)
+        result.cue_diagnostics = [
+          dict(index=index, status='model_error',
+               reason=f'cue_adapter_error:{type(error).__name__}', raw_score=None,
+               source='rekordbox_phrase_cue_regressor')
+          for index in range(len(candidates))
+        ]
+  return result

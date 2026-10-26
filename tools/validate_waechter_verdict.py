@@ -10,16 +10,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 VALID_VERDICTS = {"DURCHGEWUNKEN", "MIT AUFLAGEN", "ZURUECKGEWIESEN"}
 COMMON_CONTRACT_FIELDS = (
-    "tor", "auftrag", "akzeptanzkriterien", "erlaubte_dateien",
+    "auftrag", "akzeptanzkriterien", "erlaubte_dateien",
     "verbotene_dateien", "referenzen", "invarianten", "testbelege",
 )
-TOR_2_CONTRACT_FIELDS = ("tor_1_urteil", "diff_bereich")
 REQUIRED_SECTIONS = (
     "Pruefvertrag", "Urteil", "Vertragspruefung", "Belegmatrix", "Befunde",
     "Nicht geprueft",
 )
 SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-FIELD_RE = re.compile(r"^-\s*([a-z0-9_]+):\s*(\S.*)$", re.MULTILINE)
+FIELD_RE = re.compile(r"^-[ \t]*([a-z0-9_]+):[ \t]*(\S[^\r\n]*)$", re.MULTILINE)
 EVIDENCE_RE = re.compile(
     r"^-\s*Pruefpunkt:\s*\S.+?\s*\|\s*Beleg:\s*[^|\n]+:\d+\s*"
     r"\|\s*Ergebnis:\s*(erfuellt|nicht erfuellt)$",
@@ -57,17 +56,12 @@ def validate_report(text: str) -> list[str]:
 
     contract = dict(FIELD_RE.findall(sections["Pruefvertrag"]))
     missing_fields = [field for field in COMMON_CONTRACT_FIELDS if not contract.get(field)]
-    tor = contract.get("tor", "")
-    if tor not in {"TOR 1", "TOR 2"}:
-        errors.append("Pruefvertrag: tor muss exakt TOR 1 oder TOR 2 sein")
-    if tor == "TOR 2":
-        missing_fields.extend(field for field in TOR_2_CONTRACT_FIELDS if not contract.get(field))
-        tor_1_urteil = contract.get("tor_1_urteil", "")
-        if tor_1_urteil != "DURCHGEWUNKEN":
-            errors.append("Pruefvertrag: TOR 2 verlangt ein DURCHGEWUNKENES Tor-1-Urteil")
-        diff_bereich = contract.get("diff_bereich", "")
-        if diff_bereich and not DIFF_BEREICH_RE.fullmatch(diff_bereich):
-            errors.append("Pruefvertrag: diff_bereich muss Git-Range oder 'WORKING TREE: <Beschreibung>' sein")
+    scope = contract.get("pruefumfang") or contract.get("tor", "")
+    if not scope:
+        missing_fields.append("pruefumfang")
+    diff_bereich = contract.get("diff_bereich", "")
+    if diff_bereich and not DIFF_BEREICH_RE.fullmatch(diff_bereich):
+        errors.append("Pruefvertrag: diff_bereich muss Git-Range oder 'WORKING TREE: <Beschreibung>' sein")
     if missing_fields:
         errors.append("Pruefvertrag: fehlende Pflichtfelder: " + ", ".join(sorted(set(missing_fields))))
 

@@ -81,6 +81,10 @@ PLAYLIST · MIX TIPS · TIMELINE · QUALITY, Umschalten per Ctrl+1..5.
 | EXE, Installer, Versions-Bump, CI | `hpg-release-build` |
 | Audit, tote/doppelte Strukturen | `hpg-audit-optimize` |
 | Voll-/Delta-/Release-Audit mit Evidenzpflicht | `hpg-veritas` |
+| Bestehende Analyse durch Rekordbox-Modelle optimieren/ersetzen | `hpg-deep-analysis` |
+| Modellartefakte, DLL-ABI, Tensor-/Semantikbelege | `hpg-deep-analysis-artifacts` |
+| DirectML/CPU, Modell-Lifecycle und Prozessgrenzen | `hpg-deep-analysis-runtime` |
+| Unabhaengige Referenzen, Holdout, Ablation und Abloesekriterien | `hpg-deep-analysis-evaluation` |
 
 ## Quellen vor Statuskopien
 

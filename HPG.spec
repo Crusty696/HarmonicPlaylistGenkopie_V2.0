@@ -65,6 +65,9 @@ hidden_imports = [
     'scipy.special',
     'scipy.special.cython_special',
     'librosa',
+    'audioread',
+    'audioread.ffdec',
+    'imageio_ffmpeg',
     'librosa.effects',
     'librosa.feature',
     'librosa.beat',
@@ -84,6 +87,7 @@ hidden_imports += collect_submodules('pedalboard')
 
 # Daten- und DLL-Dateien für Librosa und Rekordbox sammeln
 datas = collect_data_files('librosa')
+datas += collect_data_files('imageio_ffmpeg', includes=['binaries/**'])
 datas += collect_data_files('pyrekordbox')
 # Mitgelieferte JSON-Daten (transition_tolerances.json, candidate_preferences.json):
 # tolerances.py / candidate_preferences.py lesen Path(__file__).parent / 'data'

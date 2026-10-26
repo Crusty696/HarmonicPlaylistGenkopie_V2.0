@@ -12,6 +12,7 @@ from .models import (
 from typing import TYPE_CHECKING
 from .dj_brain import (
     _get_outro_start_from_sections,
+    effective_track_phrase_unit,
     get_genre_compatibility,
     generate_dj_recommendation,
 )
@@ -307,6 +308,9 @@ class TransitionPlan:
     eq_mode: str = "default"
     tempo_ratio: float = 1.0
     target_sr: int = 44100
+    # Optionaler, lokaler Stem-Kandidat als Anteil der Blende (0..1).
+    # Er steuert nur die Preview-Rampe und ist keine kalibrierte Aussage.
+    bass_swap_fraction: float | None = None
 
     @property
     def crossfade_frames(self) -> int:
@@ -680,10 +684,29 @@ def _kandidaten_fuer_paar(
     else:
         wahl = None
     # Lazy: pair_candidates importiert playlist-Teile lazy — kein Zyklus auf Modulebene.
-    from .pair_candidates import rank_pair_candidates
+    from .pair_candidates import (
+        _embedding_ablation_weight,
+        _stem_bass_ablation_weight,
+        rank_pair_candidates,
+    )
+
+    def _deep_feature_key(track):
+        """Provenienzwechsel muessen bereits gecachte Paar-Scores erneuern."""
+        result = []
+        for field_name in ("stem_analysis", "embedding_analysis"):
+            snapshot = getattr(track, field_name, None)
+            if type(snapshot) is not dict:
+                result.append(None)
+                continue
+            result.append((snapshot.get("version"), snapshot.get("status"),
+                           snapshot.get("fingerprint"), snapshot.get("reason")))
+        return tuple(result)
+
     key = (
         id(track1), id(track2), _track_cache_key(track1), _track_cache_key(track2),
         tolerance, direction.value if direction is not None else None,
+        _embedding_ablation_weight(), _stem_bass_ablation_weight(),
+        _deep_feature_key(track1), _deep_feature_key(track2),
         _stable_fingerprint({
             k: v for k, v in kwargs.items()
             if k not in {
@@ -986,7 +1009,20 @@ def _calculate_compatibility_inner(
     allow_experimental = kwargs.get("allow_experimental", True)
 
     bpm_diff, bpm_relation = effective_bpm_diff(track1.bpm, track2.bpm)
-    if bpm_diff > bpm_tolerance:
+    # Ein NaN verfehlt ``>`` und wuerde dadurch trotz ungueltigem Tempo die
+    # harmonische Punktetabelle erreichen. Das BPM-Hard-Gate muss auch bei
+    # nicht endlicher Differenz fail-closed bleiben.
+    try:
+        tolerance = float(bpm_tolerance)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if (
+        type(bpm_tolerance) is bool
+        or not math.isfinite(tolerance)
+        or tolerance < 0.0
+        or not math.isfinite(bpm_diff)
+        or bpm_diff > tolerance
+    ):
         return 0  # No compatibility if BPM difference is too high
     penalty = BPM_HALF_DOUBLE_PENALTY if bpm_relation != "direct" else 1.0
     # Camelot-Tabelle zentral in models.camelot_relation_score (2026-08-22),
@@ -1107,10 +1143,22 @@ def _sort_harmonic_flow(
     """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
     cancel_check = kwargs.get("cancel_check")
     _check_cancel(cancel_check)
-    if len(tracks) <= 2:
+    if len(tracks) <= 6:
+        # Kleine Pools vollständig lösen: ein lokal guter Start kann eine
+        # Sackgasse erzeugen, obwohl eine lückenlose gerichtete Kette existiert.
+        # Jedes Paar nur einmal bewerten, auch bei bis zu 720 Reihenfolgen.
+        edge_scores = {}
+        def complete_path_score(order):
+            scores = []
+            for a, b in zip(order, order[1:]):
+                key = (id(a), id(b))
+                if key not in edge_scores:
+                    edge_scores[key] = calculate_transition_objective(a, b, bpm_tolerance, **kwargs)
+                scores.append(edge_scores[key])
+            return sum(score > 0 for score in scores), sum(scores)
         return _small_pool_order(
             tracks,
-            lambda order: _transition_path_score(order, bpm_tolerance, kwargs),
+            complete_path_score,
             cancel_check,
         )
 
@@ -2103,9 +2151,11 @@ def predict_transition_type(
     if eff_diff > bpm_tolerance:
         # Die normale Kompatibilitaet ist hier wegen ihres BPM-Hard-Gates
         # definitionsgemaess 0. Fuer die Breakdown-Entscheidung die reine
-        # Harmonie deshalb ohne dieses Gate bewerten.
+        # Harmonie deshalb ohne dieses Gate bewerten. Die endliche gemessene
+        # Differenz reicht als Toleranz; ``inf`` wird vom zentralen Vertrag
+        # absichtlich als ungueltige Toleranz fail-closed abgewiesen.
         harmonic_without_bpm_gate = calculate_compatibility(
-            from_track, to_track, float("inf"), **kwargs
+            from_track, to_track, eff_diff, **kwargs
         )
         if harmonic_without_bpm_gate >= 50:
             return "breakdown_bridge"
@@ -2172,19 +2222,36 @@ def transition_type_for_candidate(
         _resolve_track_genre(from_track) == "Psytrance"
         or _resolve_track_genre(to_track) == "Psytrance"
     )
-    if (
-        kandidat is not None
-        and kandidat.flags.get("bass_swap_pflicht")
-        and not psytrance
-    ):
-        return "bass_swap"
-    return predict_transition_type(
+    predicted = predict_transition_type(
         from_track,
         to_track,
         bpm_tolerance,
         kandidat=kandidat,
         **dict(scoring_context or {}),
     )
+    if (
+        kandidat is not None
+        and kandidat.flags.get("bass_swap_pflicht")
+        and not psytrance
+        and predicted != "halftime_switch"
+    ):
+        return "bass_swap"
+    return predicted
+
+
+def _bass_swap_fraction(candidate) -> float | None:
+    """Mappe nur einen gültigen Stem-Kandidaten ins relative Blendenraster."""
+    flags = getattr(candidate, "flags", None)
+    deep = flags.get("deep_features") if type(flags) is dict else None
+    swap = deep.get("bass_swap") if type(deep) is dict else None
+    bars = getattr(candidate, "blend_bars", None)
+    if (type(swap) is not dict or swap.get("recommendation_only") is not True
+            or swap.get("observed_bass_stop") is not False
+            or type(bars) is not int or bars <= 1
+            or type(swap.get("relative_bar")) is not int
+            or not 1 <= swap["relative_bar"] < bars):
+        return None
+    return swap["relative_bar"] / bars
 
 
 def _build_transition_description(
@@ -2549,7 +2616,11 @@ def compute_transition_recommendations(
         if kandidaten:
             aktiv, kandidat_konsistent = kette[index]
             if aktiv is None:
-                aktiv = kandidaten[0]
+                logger.warning(
+                    "Uebergang %s verworfen: kein physisch spielbarer Kandidat in Kette",
+                    index,
+                )
+                continue
             compatibility_score = int(round(metrics.overall_score * 100))
             energy_delta = int(round(float(metrics.energy_delta or 0.0)))
             risk_level = _categorise_risk_level(
@@ -2664,6 +2735,10 @@ def compute_transition_recommendations(
             transition_type=transition_type,
             eq_mode=transition_type,
             tempo_ratio=tempo_ratio,
+            bass_swap_fraction=(
+                _bass_swap_fraction(aktiv)
+                if transition_type in {"bass_swap", "pro_eq_swap"} else None
+            ),
         )
         recommendations.append(
             TransitionRecommendation(
@@ -3379,9 +3454,7 @@ def _snapshot_flag(snapshot: "CandidateSnapshot", name: str, default=False):
 def _candidate_link_consistent(
     previous: "CandidateSnapshot", current: "CandidateSnapshot", middle: Track
 ) -> bool:
-    grid = seconds_per_bar(middle.bpm) * int(
-        getattr(middle, "phrase_unit", 8) or 8
-    )
+    grid = seconds_per_bar(middle.bpm) * effective_track_phrase_unit(middle)
     return (
         current.t_out
         >= previous.t_in + 2.0 * grid - QUANTIZE_TOLERANCE_SEC
@@ -3546,6 +3619,14 @@ def legacy_transition_recommendations(
     return legacy
 
 
+class _BoundaryCandidateMap(dict):
+    """Kandidaten und Ablehnungsbeleg aus genau demselben Rankinglauf."""
+
+    def __init__(self, values, rejection_reasons=()):
+        super().__init__(values)
+        self.rejection_reasons = tuple(rejection_reasons)
+
+
 def _rank_fixed_boundaries(
     occurrences: tuple[TrackOccurrence, ...],
     bpm_tolerance: float,
@@ -3580,6 +3661,7 @@ def _rank_fixed_boundaries(
         schema_rank = schema_profiles.get(
             genre, schema_profiles.get("Unknown", [])
         ) if isinstance(schema_profiles, Mapping) else None
+        rejection_reasons = []
         mutable = rank_pair_candidates(
             track_a,
             track_b,
@@ -3592,6 +3674,7 @@ def _rank_fixed_boundaries(
             tolerances=tolerances,
             wahl=persisted,
             schema_rang=schema_rank,
+            rejection_reasons=rejection_reasons,
         )[:12]
         _check_cancel(cancel_check)
         snapshots = tuple(
@@ -3600,7 +3683,10 @@ def _rank_fixed_boundaries(
         )
         all_snapshots.append(snapshots)
         mutable_maps.append(
-            {snapshot.key: candidate for snapshot, candidate in zip(snapshots, mutable)}
+            _BoundaryCandidateMap(
+                {snapshot.key: candidate for snapshot, candidate in zip(snapshots, mutable)},
+                rejection_reasons,
+            )
         )
     return tuple(all_snapshots), tuple(mutable_maps), saved_present
 
@@ -3620,6 +3706,12 @@ def _recommendation_snapshot(
     upcoming = occurrences[index + 1]
     bpm_delta = float(upcoming.track.bpm) - float(current.track.bpm)
     if selected is None:
+        reasons = (
+            ("Mixpunkte passen nicht zur Kette", "Einzelne Paar-Kandidaten sind vorhanden, lassen sich aber nicht zu einer durchgängigen Folge verbinden.")
+            if candidates else getattr(mutable_by_key, "rejection_reasons", ())
+        )
+        if not reasons:
+            reasons = ("Keine zulässigen Mixpunkte", "Für dieses Paar liegt kein ausführbarer Übergangsplan vor.")
         return ImmutableRecommendationSnapshot(
             index=index,
             from_occurrence_id=current.occurrence_id,
@@ -3633,7 +3725,7 @@ def _recommendation_snapshot(
             energy_delta=0,
             compatibility_score=0,
             risk_level="unplanned",
-            notes="UNGEPLANT — kein ausführbarer TransitionPlan",
+            notes="\n".join(reasons),
             transition_type="unplanned",
             plan=None,
             candidates=candidates,
@@ -3667,6 +3759,10 @@ def _recommendation_snapshot(
         transition_type=transition_type,
         eq_mode=transition_type,
         tempo_ratio=tempo_ratio,
+        bass_swap_fraction=(
+            _bass_swap_fraction(candidate)
+            if transition_type in {"bass_swap", "pro_eq_swap"} else None
+        ),
     )
     score = int(round(metrics.overall_score * 100))
     energy_delta = int(round(float(metrics.energy_delta or 0.0)))
@@ -3804,7 +3900,7 @@ def _refine_order_with_chain(occurrences, mode, bpm_tolerance, context,
         data = [pair(a, b) for a, b in zip(items, items[1:])]
         return (tuple(x[0] for x in data), tuple(x[1] for x in data), sum(x[2] for x in data))
     current_ranked = ranked(order)
-    if len(order) < 4:
+    if len(order) < 3:
         return order, current_ranked
     selected = _select_snapshot_path(current_ranked[0], order, cancel_check)[0]
     def wave_replay(trial):

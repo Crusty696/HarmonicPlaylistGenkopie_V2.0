@@ -59,10 +59,11 @@ def test_all_strategies_preserve_occurrences_and_publish_local_scores(mode):
             assert metrics.overall_score == 0.
 
 
-def test_chain_refinement_repairs_an_unplanned_boundary_without_losing_tracks(monkeypatch):
+@pytest.mark.parametrize('names', ['abc', 'abcd'])
+def test_chain_refinement_repairs_an_unplanned_boundary_without_losing_tracks(monkeypatch, names):
     from hpg_core.pair_candidates import CandidateSnapshot
     from tests.test_playlist_generation_result import _candidate
-    items = [track(name) for name in "abcd"]
+    items = [track(name) for name in names]
     occurrences = tuple(p.TrackOccurrence("run", i, t) for i, t in enumerate(items))
     calls = []
     def rank(occ, *args):
@@ -77,7 +78,7 @@ def test_chain_refinement_repairs_an_unplanned_boundary_without_losing_tracks(mo
         return tuple(snapshots), tuple(maps), 0
     monkeypatch.setattr(p, "_rank_fixed_boundaries", rank)
     refined, ranked = p._refine_order_with_chain(occurrences, "Harmonic Flow", 2., {}, {}, None)
-    assert [o.track.fileName for o in refined] == ["a", "c", "b", "d"]
+    assert [o.track.fileName for o in refined] == (["a", "c", "b"] + (["d"] if len(names) == 4 else []))
     assert {o.occurrence_id for o in refined} == {o.occurrence_id for o in occurrences}
     assert len(calls) <= 3 + 32 * 4
 

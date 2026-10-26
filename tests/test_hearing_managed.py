@@ -16,7 +16,7 @@ def test_snapshot_is_detached_and_filters_other_folders(tmp_path):
     snapshots = freeze_tracks([track, other], root)
     track.fileName = "changed"
     assert len(snapshots) == 1
-    assert json.loads(snapshots[0])["fileName"] == "a.wav"
+    assert json.loads(snapshots[0])["track"]["fileName"] == "a.wav"
 
 
 def test_private_database_strict_reader_and_reopen_binding(tmp_path, monkeypatch):
@@ -147,6 +147,7 @@ def test_pending_hearing_analysis_skips_llm_and_playlist(qtbot, tmp_path, monkey
     monkeypatch.setattr(main, "AIAnalysisWorker", lambda *a, **k: pytest.fail("Unnoetiger LLM-Lauf"))
     monkeypatch.setattr(window, "on_ai_worker_finished", lambda *a, **k: pytest.fail("Unnoetige Playlist-Suche"))
     track = Track(str(root / "a.wav"), "a.wav", duration=120., bpm=120., analysis_mode="librosa_full_or_tail")
+    track.analysis_origin = "fresh"
     window.analysis_finished([track], {}, source)
     assert window.run_state == main.RunState.SUCCESS
     assert window.playlist is old_playlist
@@ -156,7 +157,7 @@ def test_pending_hearing_analysis_skips_llm_and_playlist(qtbot, tmp_path, monkey
     window.worker = None
     window._resume_hearing_analysis(source)
     assert len(starts) == 1 and starts[0][1] == "prepare"
-    assert json.loads(starts[0][0].managed_metadata[0])["filePath"] == track.filePath
+    assert json.loads(starts[0][0].managed_metadata[0])["track"]["filePath"] == track.filePath
 
 
 def test_cleanup_validation_failure_still_reports_original_error(tmp_path, monkeypatch):

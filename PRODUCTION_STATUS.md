@@ -1,13 +1,55 @@
 # HPG — Quellenstand statt pauschaler Produktionsfreigabe
 
-Statischer Quellenabgleich: 04.10.2026. App-Version 3.7.2 aus
-hpg_core/app_metadata.py, Cache-Version 46 aus hpg_core/caching.py.
-Diese Angaben sind keine Laufzeit-, Build- oder musikalische Abnahme.
+Aktueller Arbeitsstand: 16.10.2026, Cache109. Maßgebliche Umsetzungsmatrix und
+datierte Belege: [Deep-Analysis-Auftrag](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md).
+Native Beats/Takt/Phrasen, Stem-/Embedding-Metadaten, Playlist-Vorschau und
+XML-Export sind angebunden. Der aktuelle GUI-Nachweis steht unten. Weitere native
+Codecplugins, vollständige Wrapperparität, unabhängige Qualitätsreferenzen bleiben offen.
+WAV/AIFF-Reader, native Sampleratenwandlung und Modellwahl2/3/4 sind angebunden.
+Original-Beatläufe beider Modelle erfolgreich; neue musikalische Freigabe fehlt.
+Kein neuer EXE-Build und keine vollständige Produktfreigabe.
+
+Aktueller Originalnachweis: `TEMP/hpg-original109-completed/report.json`.
+Alle drei Tracks: native Übernahme, Grid verified und native Phrasen erfolgreich.
+You Never Alone und Harmonise stammen aus dem erfolgreichen Analyselauf108;
+Never Die wurde nach der Fensterkorrektur frisch analysiert. Herkunft getrennt
+im Bericht. Kein erneuter Stem-Lauf. Alle Original-SHA256 unverändert.
+Playlist: You Never Alone → Never Die → Harmonise. Beide Übergänge ohne
+Reservefehler als RAM-Clips erzeugt (115,652s und73,913s).
+`TEMP/hpg-native109-gui/gui-events.json` belegt beide Clips im GUI-RAM-Cache;
+Qt meldet beide geladenen WAV-Streams. Kein frischer GUI-Ordnerimport behauptet.
+Hörproben-Quellformat2 erhält die neue Messmethode, Format1 bleibt lesbar.
+Unabhängiger Wächterbericht vom 16.10.: zwei Produktbefunde wurden korrigiert,
+der neue Regressionsfall bestand nach vorherigem Fehlschlag. Das Urteil MIT
+AUFLAGEN bezog sich auf das damals fehlende TOR1. Auf ausdrückliche Nutzeranweisung
+ist die Pflicht zu beiden Toren inzwischen aus dem Prozess entfernt; fehlendes
+Vorabreview blockiert daher nicht mehr. Historischer Bericht:
+docs/WAECHTER_CACHE109_2026-10-16.md. Musikalische Hörabnahme und Gesamtfreigabe offen.
+Entwicklungsstand zur versionierten Sicherung; keine Releasefreigabe und kein EXE-Build.
+
+## Historische Befunde bis zur nativen Gesamtpipeline
+
+Cache-Nachtrag vom 13.10.2026: Cache-Version 96 in hpg_core/caching.py.
+Die Feintempokorrektur im Vollpfad verwendet einen festen 32-s-Abschnitt
+und drei getrennte 16-s-Prueffenster. Nur ein bestaetigter Kandidat darf ein
+nicht bestaetigtes bisheriges Tempo ersetzen; der Rekordbox-Fast-Path bleibt
+unveraendert. Das ist keine unabhaengige Bestaetigung der musikalischen Eins.
+Vollstaendige Beat-Energiefenster mit anteiligen Rand-Samples und gueltigen
+lokalen Nachbarn verhindern die belegten kuenstlichen Lautheitsakzente.
+Downbeat-Merkmale verwenden bei eindeutiger Beatzuordnung dieselbe Fold-Phase
+wie der abschliessende Anker. Widerspruechliche Zuordnungen behalten die
+bisherigen Featurezeiten; Synchronpruefungen und Grenzwerte bleiben erhalten.
+Die Struktur im Vollpfad verwendet das gemeinsame BPM-Raster statt des
+abweichenden Medians hopgerasterter Beatintervalle. Die korrigierte Zuordnung
+physischer Beats zur Taktphase bleibt erhalten.
+Der begrenzte Downbeat-Tempo-Retry bleibt bestehen. Er wird nur
+bei inkommensurablem Erstversuch und nach unveraenderter Konfidenz- und
+Drei-Fenster-Pruefung uebernommen. Alte Cachedateien bleiben erhalten.
 
 ## Einstieg
 
 - [Quellen und dauerhaftes Wissen](docs/PROJECT_KNOWLEDGE.md)
-- [Aktuelle Session-Uebergabe und offene Arbeit](docs/SESSION_HANDOFF_2026-10-04.md)
+- [Aktueller Auftrag und offene Grenzen](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md)
 - [Verbindliche Arbeits- und Nachweisregeln](AGENTS.md)
 - [Datierter nativer Hoertest-Bericht](docs/HOERTEST_NATIVE_2026-10-04.md)
 - [Bereinigungsnachweis](docs/CLEANUP_2026-10-04.md)
@@ -32,3 +74,7 @@ Neue Noten fuer RAM-Clips sind im nativen Dialog nun an erfolgreiches
 Rendern gebunden. Alte Noten sind dadurch aber nicht aus dem Fit entfernt;
 die abgewiesenen Varianten bleiben technisch unhoerbar. Der
 Sammlungs-Einstieg ist daher kein zuverlaessig voll nutzbarer Trainingsablauf.
+
+
+Cache-Vertrag am 20.10.2026: Cache-Version 183 gemaess hpg_core/caching.py.
+Dies ist keine neue funktionale oder musikalische Gesamtabnahme.

@@ -24,13 +24,15 @@ OWN_DETECTION = "--no-rekordbox" in sys.argv
 if OWN_DETECTION:
     os.environ["HPG_DISABLE_REKORDBOX"] = "1"
 
+from hpg_core.config import SUPPORTED_AUDIO_EXTENSIONS
+
 FOLDERS = {
     "Techno": r"D:\neue techno sammlung nur beatport musik",
     "Psytrance": r"D:\neue Psy-Trance, Progressive nur Beatport musik",
 }
 SAMPLE_PER_FOLDER = 20
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "validation_output")
-AUDIO_EXT = (".mp3", ".wav", ".flac", ".aiff", ".aif", ".m4a")
+AUDIO_EXT = tuple(SUPPORTED_AUDIO_EXTENSIONS)
 
 # Beatport-Dateiname: ..._122__(Tech_House)_E_Minor_17_10.aiff
 GT_RE = re.compile(r"_(\d{2,3})__\(([^)]+)\)_([A-G][#b]?)_(Minor|Major)_")

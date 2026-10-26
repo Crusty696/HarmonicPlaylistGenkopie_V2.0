@@ -54,7 +54,7 @@ def test_missing_ratings_retained(tmp_path):
 def source_manifest(folder, mode="einzel"):
     source_root = folder.parent / "offline-originals"
     a, b = str(source_root / "a.wav"), str(source_root / "b.mp3")
-    data = dict(format="hpg_hearing_source_refs", format_version=1, mode=mode,
+    data = dict(format="hpg_hearing_source_refs", format_version=3, mode=mode,
                 status="prepared", source_roots=[str(source_root)],
                 specs={"clips/p.wav": asdict(TransitionClipSpec(a, b, 20., 0., 8.))},
                 sources={p: dict(path=p, root=str(source_root), size=1, sha256="0" * 64) for p in (a, b)},
@@ -113,7 +113,7 @@ def test_corrupt_source_manifest_retained(tmp_path, change):
     if change == "source": data["sources"] = {}
     raw = json.dumps(data)
     if change == "nonfinite": raw = raw.replace('"mix_out_sec": 20.0', '"mix_out_sec": 1e999')
-    if change == "duplicate": raw = raw.replace('"format_version": 1', '"format_version": 1, "format_version": 1')
+    if change == "duplicate": raw = '{"format_version": 3, ' + raw[1:]
     (folder / "hearing_source_manifest.json").write_text(raw)
     row, = discover_sets(tmp_path)
     assert row.status == "error" and row.errors

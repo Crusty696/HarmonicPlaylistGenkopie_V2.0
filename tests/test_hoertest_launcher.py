@@ -449,6 +449,8 @@ def test_launcher_schema_stimmt_mit_server_ueberein():
         hoertest_server.BEWERTUNG_SPALTEN,
         hoertest_server.BEWERTUNG_KANDIDATEN_SPALTEN,
         hoertest_server.BEWERTUNG_DREINOTEN_SPALTEN,
+        hoertest_server.BEWERTUNG_KANDIDATEN_CLUSTER_SPALTEN,
+        hoertest_server.BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN,
     }
     assert hoertest_launcher.DRAMATURGIE_SCHEMA == hoertest_server.DRAMATURGIE_BEWERTUNG_SPALTEN
 

@@ -18,7 +18,12 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import List, Optional
 from ..downbeat import REFERENCE_BEATGRID_CONFIDENCE
-from ..models import QUANTIZE_TOLERANCE_SEC, Track
+from ..config import METER
+from ..mix_candidates import quantize_to_points
+from ..dj_brain import effective_track_phrase_unit, _verified_native_phrase_grid
+from ..models import (
+    QUANTIZE_TOLERANCE_SEC, Track, quantize_to_grid,
+)
 from .base_exporter import BaseExporter, ExportReport
 
 logger = logging.getLogger(__name__)
@@ -405,7 +410,7 @@ class RekordboxXMLExporter(BaseExporter):
         (Track.first_downbeat). Ein unsicherer Anker wird nicht als Beatgrid
         exportiert.
 
-        AUDIT-FIX D-03 (2026-08-14): Hier ist WIRKLICH nur das
+        AUDIT-FIX D-03 (2026-08-14): Ursprünglich war hier nur das
         Referenz-Beatgrid gemeint, deshalb steht die Bedingung jetzt explizit
         als `== REFERENCE_BEATGRID_CONFIDENCE` statt als Zahlenschwelle. Ein
         TEMPO-Element traegt `Battito=1`, behauptet also die TAKT-Phase — und
@@ -413,17 +418,36 @@ class RekordboxXMLExporter(BaseExporter):
         35 ANLZ-Referenzen: 9 von 19 Schaetzungen um ganze Beats daneben).
         Ein falsches Beatgrid landet in der Rekordbox-Bibliothek des Nutzers
         und ist dort schlimmer als gar keines.
+
+        Native Analysegrids verwenden dieselbe Herkunfts-, Zeitkorrektur- und
+        Ankerprüfung wie der Renderer. Das ist technische Freigabe, keine
+        unabhängige musikalische Takt-1-Abnahme.
         """
+        if getattr(track, "bar_position_usage_blocked", False):
+            return 0, [
+                f"{track.filePath}: Beatgrid ausgelassen (Taktpositionshinweis; Takt-1 nicht freigegeben)"
+            ]
         if not track.bpm or track.bpm <= 0:
             return 0, [f"{track.filePath}: Beatgrid fehlt wegen ungueltiger BPM"]
         try:
+            from ..ai_models.native_track_beats import has_verified_grid
             first_downbeat = float(getattr(track, "first_downbeat", 0.0) or 0.0)
-            if (
-                hasattr(rb_track, "add_tempo")
-                and getattr(track, "beatgrid_source", "unknown") == "rekordbox"
+            source = getattr(track, "beatgrid_source", "unknown")
+            # Native Snapshots belegen BPM, Anker und Herkunft selbst. Sie
+            # bleiben Audioherkunft und koennen daher die nur fuer
+            # Rekordbox-Referenzen geltende Taktpositionsfreigabe nicht erfuellen.
+            native_grid = source == "audio" and has_verified_grid(track)
+            reference_grid = (
+                source == "rekordbox"
                 and getattr(track, "beatgrid_status", "unknown") == "verified"
+                and getattr(track, "reference_bar_position_verified", False)
                 and getattr(track, "downbeat_confidence", 0.0)
                 == REFERENCE_BEATGRID_CONFIDENCE
+            )
+            if (
+                hasattr(rb_track, "add_tempo")
+                and (reference_grid or native_grid)
+                and getattr(track, "beatgrid_status", "unknown") == "verified"
                 and math.isfinite(first_downbeat)
                 and 0.0 <= first_downbeat < float(track.duration)
             ):
@@ -545,8 +569,53 @@ class RekordboxXMLExporter(BaseExporter):
         geprueft auf den effektiven Punkten (Kandidat oder Track)."""
         import math
 
+        if getattr(track, "bar_position_usage_blocked", False):
+            return False
         if not getattr(track, "outro_covered", False) or track.duration <= 0:
             return False
+        if not allow_partial:
+            mix_in = (
+                mix_in if mix_in is not None
+                else getattr(track, "mix_in_point", -1.0)
+            )
+            mix_out = (
+                mix_out if mix_out is not None
+                else getattr(track, "mix_out_point", -1.0)
+            )
+        anchor = track.phrase_anchor
+        pssi_grid = track.verified_pssi_phrase_grid
+        native_grid = _verified_native_phrase_grid(track)
+        phrase_grid_verified = pssi_grid or native_grid
+        for side, value in (("in", mix_in), ("out", mix_out)):
+            if value is None:
+                continue
+            try:
+                point = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if not math.isfinite(point):
+                return False
+            if anchor is None and not phrase_grid_verified:
+                return False
+            if phrase_grid_verified:
+                aligned = quantize_to_points(
+                    point, track.phrase_grid,
+                    "ceil" if side == "in" else "floor",
+                )
+            # Track-Standardpunkte können weiterhin auf dem geprüften
+            # konstanten Raster liegen; Paarpläne nutzen native Grenzen.
+            if not phrase_grid_verified or (native_grid and
+                    (aligned is None or abs(float(aligned) - point) > QUANTIZE_TOLERANCE_SEC)):
+                bpm = float(track.bpm)
+                if not math.isfinite(bpm) or bpm <= 0.0:
+                    return False
+                phrase_seconds = (60.0 / bpm) * METER * effective_track_phrase_unit(track)
+                aligned = quantize_to_grid(
+                    point, phrase_seconds, anchor,
+                    "ceil" if side == "in" else "floor",
+                )
+            if aligned is None or abs(float(aligned) - point) > QUANTIZE_TOLERANCE_SEC:
+                return False
         if allow_partial:
             values = [
                 float(value) for value in (mix_in, mix_out) if value is not None

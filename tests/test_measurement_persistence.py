@@ -83,7 +83,7 @@ def test_actual_decode_failure_is_separate_from_measured_windows(monkeypatch):
         calls.append(kwargs["offset"])
         raise OSError("sensitive diagnostic text must not persist")
 
-    monkeypatch.setattr(analysis.librosa, "load", load)
+    monkeypatch.setattr(analysis, "_load_analysis_audio", load)
     monkeypatch.setattr(downbeat, "_beat_phase_from_fold", lambda *args: (0.0, 0.8))
     diagnostics = {}
     result = analysis._validate_track_beatgrid(

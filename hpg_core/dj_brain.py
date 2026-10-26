@@ -12,12 +12,12 @@ Basiert auf Research von Pioneer DJ, Club Ready DJ School, DJ Tech Tools u.a.
 from __future__ import annotations
 
 import math
+import numbers
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from .config import (
-  DEFAULT_BPM,
   DEFAULT_SECTION_ENERGY,
   GAIN_DIFF_SHOW_DB,
   GAIN_DIFF_WARN_DB,
@@ -39,9 +39,11 @@ from .models import (
   Track,
   effective_bpm_diff,
   get_camelot_components,
+  is_supported_phrase_unit,
   quantize_to_grid,
   seconds_to_bars,
 )
+from .mix_candidates import quantize_to_points
 
 
 # === Genre-Wissen ===
@@ -105,6 +107,15 @@ def get_mix_profile(genre: str) -> GenreMixProfile:
   return profile if profile is not None else DEFAULT_MIX_PROFILE
 
 
+def effective_track_phrase_unit(track: Track) -> int:
+  """Liefert einheitliches Phrasenraster aus Messwert oder Genreprofil."""
+  source = getattr(track, "phrase_unit_source", "genre_prior")
+  unit = getattr(track, "phrase_unit", None)
+  if (source == "audio_novelty" or source == "configured") and is_supported_phrase_unit(unit):
+    return unit
+  return get_mix_profile(resolve_track_genre(track)).phrase_unit
+
+
 # === Mix-Punkt-Berechnung ===
 
 def calculate_genre_aware_mix_points(
@@ -114,6 +125,7 @@ def calculate_genre_aware_mix_points(
   genre: str,
   anchor: float = 0.0,
   first_downbeat: float | None = None,
+  phrase_unit: int | None = None,
 ) -> tuple[float, float, int, int]:
   """
   Berechnet genre-spezifische Mix-In/Out-Punkte basierend auf Track-Struktur.
@@ -153,16 +165,24 @@ def calculate_genre_aware_mix_points(
   profile = get_mix_profile(genre)
   seconds_per_beat = 60.0 / bpm
   seconds_per_bar = seconds_per_beat * METER
+  effective_phrase_unit = (
+    phrase_unit if is_supported_phrase_unit(phrase_unit)
+    else profile.phrase_unit
+  )
 
   # --- Mix-In: Wo faengt der optimale Mix-Bereich an? ---
-  mix_in_time = _find_mix_in_point(sections, profile, seconds_per_bar, anchor)
+  mix_in_time = _find_mix_in_point(
+    sections, profile, seconds_per_bar, anchor, effective_phrase_unit
+  )
 
   # --- Mix-Out: Wo faengt der Track an auszuklingen? ---
-  mix_out_time = _find_mix_out_point(sections, profile, seconds_per_bar, duration, anchor)
+  mix_out_time = _find_mix_out_point(
+    sections, profile, seconds_per_bar, duration, anchor, effective_phrase_unit
+  )
 
   # Genre-spezifisches Phrase-Gitter fuer musikalisches Phrase-Alignment
   # (Downbeat-Feature 2026-07-17: Gitter am ersten Downbeat verankert)
-  grid_seconds = seconds_per_bar * profile.phrase_unit
+  grid_seconds = seconds_per_bar * effective_phrase_unit
   if grid_seconds > 0:
     mix_in_time = quantize_to_grid(mix_in_time, grid_seconds, anchor, "ceil")
     mix_out_time = quantize_to_grid(mix_out_time, grid_seconds, anchor, "floor")
@@ -185,6 +205,17 @@ def calculate_genre_aware_mix_points(
   strict_intro_floor = quantize_to_grid(
     intro_end + strict_boundary_step, grid_seconds, anchor, "ceil"
   )
+  # first_downbeat ist die Untergrenze fuer den Mix-In, waehrend anchor
+  # ausschliesslich die Phase des Phrasengitters bestimmt. Die Signatur und
+  # der Vertrag nennen diesen Downbeat explizit; bisher blieb der Parameter
+  # unbenutzt und ein frueher Sektionskandidat konnte vor der musikalischen 1
+  # landen. Auf das bestehende Phrase-Gitter anheben, nicht ein zweites Raster
+  # einfuehren.
+  if first_downbeat is not None and math.isfinite(first_downbeat):
+    downbeat_floor = quantize_to_grid(
+      first_downbeat - grid_epsilon, grid_seconds, anchor, "ceil"
+    )
+    strict_intro_floor = max(strict_intro_floor, downbeat_floor)
   strict_outro_ceiling = quantize_to_grid(
     outro_start - strict_boundary_step, grid_seconds, anchor, "floor"
   )
@@ -263,6 +294,7 @@ def _find_mix_in_point(
   profile: GenreMixProfile,
   seconds_per_bar: float,
   anchor: float = 0.0,
+  phrase_unit: int | None = None,
 ) -> float:
   """
   ADAPTIVES MIX-IN: Sucht den musikalisch sinnvollsten Einstiegspunkt.
@@ -276,6 +308,11 @@ def _find_mix_in_point(
   """
   if not sections:
     return 0.0
+
+  effective_phrase_unit = (
+    phrase_unit if is_supported_phrase_unit(phrase_unit)
+    else profile.phrase_unit
+  )
 
   # --- Intro-Ende bestimmen ---
   intro_end = _get_intro_end_from_sections(sections)
@@ -298,7 +335,7 @@ def _find_mix_in_point(
 
   if not candidates:
     # Kein nutzbarer Bereich nach Intro gefunden
-    phrase_seconds = seconds_per_bar * profile.phrase_unit
+    phrase_seconds = seconds_per_bar * effective_phrase_unit
     if phrase_seconds > 0:
       return quantize_to_grid(
         intro_end + QUANTIZE_TOLERANCE_SEC + 1e-9,
@@ -333,7 +370,7 @@ def _find_mix_in_point(
   mix_in = best.get("start_time", intro_end)
 
   # --- Quantisierung auf Phrasen-Grenze (ceil = NACH Intro), downbeat-verankert ---
-  phrase_seconds = seconds_per_bar * profile.phrase_unit
+  phrase_seconds = seconds_per_bar * effective_phrase_unit
   if phrase_seconds > 0:
     mix_in = quantize_to_grid(mix_in, phrase_seconds, anchor, "ceil")
 
@@ -355,6 +392,7 @@ def _find_mix_out_point(
   seconds_per_bar: float,
   duration: float,
   anchor: float = 0.0,
+  phrase_unit: int | None = None,
 ) -> float:
   """
   ADAPTIVES MIX-OUT: Findet den optimalen Ausstiegspunkt.
@@ -370,6 +408,11 @@ def _find_mix_out_point(
     avg_outro_bars = (profile.outro_bars[0] + profile.outro_bars[1]) / 2.0
     return duration - (avg_outro_bars * seconds_per_bar)
 
+  effective_phrase_unit = (
+    phrase_unit if is_supported_phrase_unit(phrase_unit)
+    else profile.phrase_unit
+  )
+
   # --- Outro-Start bestimmen ---
   outro_start = _get_outro_start_from_sections(sections, duration)
 
@@ -383,7 +426,7 @@ def _find_mix_out_point(
 
   if not candidates:
     # Kein nutzbarer Bereich vor Outro
-    phrase_seconds = seconds_per_bar * profile.phrase_unit
+    phrase_seconds = seconds_per_bar * effective_phrase_unit
     if phrase_seconds > 0:
       mix_out = quantize_to_grid(
         outro_start - QUANTIZE_TOLERANCE_SEC - 1e-9,
@@ -411,7 +454,7 @@ def _find_mix_out_point(
   mix_out = best.get("end_time", outro_start)
 
   # --- Quantisierung auf Phrasen-Grenze (floor = VOR Outro), downbeat-verankert ---
-  phrase_seconds = seconds_per_bar * profile.phrase_unit
+  phrase_seconds = seconds_per_bar * effective_phrase_unit
   if phrase_seconds > 0:
     mix_out = quantize_to_grid(mix_out, phrase_seconds, anchor, "floor")
 
@@ -694,6 +737,79 @@ def _get_outro_start_from_sections(sections: list[dict], duration: float) -> flo
   return first_outro_start if found_outro else duration
 
 
+def _verified_native_phrase_grid(track: Track) -> bool:
+  """Accept only a native phrase snapshot whose boundaries still match Track."""
+  snapshot = track.native_phrase_analysis
+  if (track.phrases or type(snapshot) is not dict
+      or snapshot.get("status") != "ok" or not track.phrase_grid
+      or track.beatgrid_status != "verified" or track.bar_position_usage_blocked
+      or track.phrase_anchor is None):
+    return False
+  try:
+    from .ai_models.native_phrase_adapter import validate_snapshot, _normalize_grid_origin
+    from .rekordbox_phrases import phrase_grid_from_phrases
+    from .downbeat import DOWNBEAT_RELIABLE_MIN
+
+    validate_snapshot(
+      snapshot,
+      duration=track.duration,
+      grid_verified=(track.downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
+                     or track.bar_position_status == "native_candidate"),
+      usage_blocked=track.bar_position_usage_blocked,
+    )
+    grid = snapshot["input_grid"]
+    expected_source = ("rekordbox" if grid["basis"] == "verified_rekordbox_grid"
+                       else "audio")
+    if (grid["bpm_hundredths"] != int(math.floor(track.bpm * 100 + 0.5))
+        or track.beatgrid_source != expected_source
+        or (grid["basis"] == "verified_rekordbox_grid"
+            and not track.reference_bar_position_verified)):
+      return False
+
+    # The native input's first bar-1 must still resolve to this Track's anchor.
+    beat_period = 60.0 / (grid["bpm_hundredths"] / 100.0)
+    beat_delta = (track.first_downbeat - grid["first_tick_s"]) / beat_period
+    beat_steps = round(beat_delta)
+    if (abs(beat_delta - beat_steps) * beat_period > 0.006
+        or (grid["bar_position"] + beat_steps - 1) % 4 != 0):
+      return False
+
+    if grid["basis"] == "native_verified_audio_grid":
+      native_beats = track.native_beat_analysis
+      if type(native_beats) is not dict or native_beats.get("status") != "ok":
+        return False
+      from .ai_models.native_beat_alignment import active_anchor
+      shift = (native_beats["audio_alignment"]["offset_seconds"]
+               if "audio_alignment" in native_beats else 0.0)
+      expected = [
+        (row["pos"] / 44100.0 + shift, row["numBar"])
+        for row in native_beats["grid"]
+        if 0.0 <= row["pos"] / 44100.0 + shift <= track.duration
+      ]
+      if not expected:
+        return False
+      # Die Phrasenanalyse ergänzt frühe Ticks vor dem ersten nativen Treffer.
+      # Dieselbe Ableitung prüfen, statt das ergänzte Grid mit dem kürzeren
+      # Rohgrid zu verwechseln; Quellpunkte und Herkunft bleiben unverändert.
+      expected_times, expected_positions, extension = _normalize_grid_origin(
+        [row[0] for row in expected], [row[1] for row in expected], bpm=track.bpm)
+      if (abs(active_anchor(native_beats) - track.first_downbeat) > 1e-9
+          or grid["source_beat_count"] != len(expected)
+          or grid["origin_extension_beats"] != extension
+          or grid["beat_count"] != len(expected_times)
+          or grid["bar_position"] != expected_positions[0]
+          or abs(grid["first_tick_s"] - expected_times[0]) > 1e-9
+          or abs(grid["last_tick_s"] - expected_times[-1]) > 1e-9):
+        return False
+
+    expected_points = phrase_grid_from_phrases(snapshot["phrases"])
+    return (len(expected_points) == len(track.phrase_grid)
+            and all(abs(float(expected) - float(actual)) <= 1e-9
+                    for expected, actual in zip(expected_points, track.phrase_grid)))
+  except (KeyError, TypeError, ValueError, OverflowError):
+    return False
+
+
 def calculate_paired_mix_points(
   track_a: Track,
   track_b: Track,
@@ -731,14 +847,46 @@ def calculate_paired_mix_points(
   Returns:
     (adjusted_mix_out_a, adjusted_mix_in_b) in Sekunden
   """
+  native_a = _verified_native_phrase_grid(track_a)
+  native_b = _verified_native_phrase_grid(track_b)
+  if track_a.bar_position_usage_blocked or track_b.bar_position_usage_blocked:
+    return MIX_POINT_UNSET, MIX_POINT_UNSET
+  # Mixpunktzeiten dürfen kein fehlendes Tempo durch den Anzeige-/DSP-Default
+  # ersetzen. Der Renderer verlangt für denselben Paarplan endliche BPM; hier
+  # deshalb bereits vor Overlap- und Rasterrechnung geschlossen ablehnen.
+  for track in (track_a, track_b):
+    bpm = track.bpm
+    if (isinstance(bpm, bool) or not isinstance(bpm, numbers.Real)
+        or not math.isfinite(bpm) or bpm <= 0):
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+    duration = track.duration
+    if (isinstance(duration, bool) or not isinstance(duration, numbers.Real)
+        or not math.isfinite(duration) or duration < 0):
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+  pssi_a = track_a.verified_pssi_phrase_grid
+  pssi_b = track_b.verified_pssi_phrase_grid
+  # Nur Grenzen mit geprüfter Herkunft verwenden: die gefilterte PSSI-Liste
+  # oder das zuvor gegen den nativen Snapshot validierte Track-Raster. Ein
+  # boolescher Native-Status allein ist keine Punktliste und darf keine rohen
+  # PSSI-Grenzen freigeben.
+  points_a = pssi_a or (track_a.phrase_grid if native_a else [])
+  points_b = pssi_b or (track_b.phrase_grid if native_b else [])
+  if (track_a.phrase_anchor is None and not points_a) or (
+      track_b.phrase_anchor is None and not points_b
+  ):
+    return MIX_POINT_UNSET, MIX_POINT_UNSET
   # AUDIT-FIX N4 (2026-07-24): Guard fuer fehlgeschlagene Analysen — bei
   # duration <= 0 kollabiert die Overlap-Rechnung (Mix-Out hinter Track-Ende,
   # unquantisierte Rohwerte). Dann lieber die Track-Werte unveraendert lassen.
   if track_a.duration <= 0 or track_b.duration <= 0:
-    return (
-      round(max(track_a.mix_out_point, 0.0), 2),
-      round(max(track_b.mix_in_point, 0.0), 2),
-    )
+    if points_a or points_b:
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+    values = (track_a.mix_out_point, track_b.mix_in_point)
+    if any(isinstance(value, bool) or not isinstance(value, numbers.Real)
+           or not math.isfinite(value)
+           or (value < 0 and value != MIX_POINT_UNSET) for value in values):
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+    return values
 
   profile_b = get_mix_profile(resolve_track_genre(track_b))
 
@@ -747,12 +895,12 @@ def calculate_paired_mix_points(
 
   # --- Outro-Dauer von Track A ---
   outro_start_a = track_a.mix_out_point
-  if outro_start_a <= 0:
+  if outro_start_a < 0.0:
     outro_start_a = track_a.duration * 0.8  # Fallback: letzte 20%
   outro_duration_a = max(0.0, track_a.duration - outro_start_a)
 
   # --- Minimaler Overlap: genre-spezifisch nach Startwert des Transition-Bereichs ---
-  bpm_b = track_b.bpm if track_b.bpm > 0 else DEFAULT_BPM
+  bpm_b = float(track_b.bpm)
   seconds_per_bar_b = (60.0 / bpm_b) * METER
   min_overlap_bars = max(8, int(profile_b.transition_bars[0]))
   min_overlap = seconds_per_bar_b * min_overlap_bars
@@ -785,47 +933,73 @@ def calculate_paired_mix_points(
   # (mix_in_point - target_overlap) schob den Mix-In faktisch an den
   # Track-Anfang (gemessen 85.7 s -> 3.4 s, mitten in den ersten Drop).
   intro_end_sections_b = _get_intro_end_from_sections(track_b.sections or [])
-  phrase_seconds_b = seconds_per_bar_b * profile_b.phrase_unit
-  anchor_b = getattr(track_b, "phrase_anchor", getattr(track_b, "first_downbeat", 0.0)) or 0.0  # A1
+  phrase_unit_b = effective_track_phrase_unit(track_b)
+  phrase_seconds_b = seconds_per_bar_b * phrase_unit_b
+  anchor_b = track_b.phrase_anchor
+  if anchor_b is None:
+    anchor_b = track_b.first_downbeat
   if intro_end_sections_b > 0:
     # ceil auf naechste Phrasengrenze nach Intro-Ende (downbeat-verankert).
     # Invariante 2: PHRASEN-Gitter (seconds_per_bar * phrase_unit), nicht ein
     # einzelner Bar — sonst weicht der Punkt bei Trance/Psytrance
     # (phrase_unit=16) bis zu 15 Bars von der Phrasengrenze ab (H2-Fix).
-    adjusted_mix_in_b = quantize_to_grid(
-      intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9,
-      phrase_seconds_b, anchor_b, "ceil"
+    threshold = intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9
+    adjusted_mix_in_b = (
+      quantize_to_points(threshold, points_b, "ceil")
+      if points_b else quantize_to_grid(threshold, phrase_seconds_b, anchor_b, "ceil")
     )
+    if adjusted_mix_in_b is None:
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
   else:
     # Kein Intro erkannt: der per-Track berechnete Mix-In ist der beste
     # verfuegbare Schaetzwert und wird nicht nach vorn verschoben.
     adjusted_mix_in_b = max(0.0, track_b.mix_in_point)
 
   # --- Guard: Mix-Out A NIEMALS im Outro ---
-  profile_a = get_mix_profile(resolve_track_genre(track_a))
   outro_start_sections_a = _get_outro_start_from_sections(
     track_a.sections or [], track_a.duration
   )
-  bpm_a = track_a.bpm if track_a.bpm > 0 else DEFAULT_BPM
+  bpm_a = float(track_a.bpm)
   seconds_per_bar_a = (60.0 / bpm_a) * METER
-  phrase_seconds_a = seconds_per_bar_a * profile_a.phrase_unit
+  phrase_unit_a = effective_track_phrase_unit(track_a)
+  phrase_seconds_a = seconds_per_bar_a * phrase_unit_a
   if adjusted_mix_out_a >= outro_start_sections_a:
     # floor auf Phrasengrenze VOR dem Outro (Invariante 1, downbeat-verankert)
-    anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
+    anchor_a = track_a.phrase_anchor
+    if anchor_a is None:
+      anchor_a = track_a.first_downbeat
     if phrase_seconds_a > 0:
-      adjusted_mix_out_a = quantize_to_grid(
-        outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
-        phrase_seconds_a, anchor_a, "floor"
+      threshold = outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9
+      adjusted_mix_out_a = (
+        quantize_to_points(threshold, points_a, "floor")
+        if points_a else quantize_to_grid(threshold, phrase_seconds_a, anchor_a, "floor")
       )
+      if adjusted_mix_out_a is None:
+        return MIX_POINT_UNSET, MIX_POINT_UNSET
       # floor kann exakt auf outro_start landen -> eine Phrase zurueck, damit
       # der Mix-Out garantiert VOR dem Outro liegt
       if adjusted_mix_out_a >= outro_start_sections_a:
-        adjusted_mix_out_a -= phrase_seconds_a
+        adjusted_mix_out_a = (
+          quantize_to_points(
+            outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
+            points_a, "floor",
+          )
+          if points_a else adjusted_mix_out_a - phrase_seconds_a
+        )
+        if adjusted_mix_out_a is None:
+          return MIX_POINT_UNSET, MIX_POINT_UNSET
     else:
       adjusted_mix_out_a = outro_start_sections_a - seconds_per_bar_a
 
   # Sicherheitscheck: Mix-Out vor Track-Ende
-  adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
+  if points_a and adjusted_mix_out_a > track_a.duration - seconds_per_bar_a:
+    adjusted_mix_out_a = quantize_to_points(
+      track_a.duration - seconds_per_bar_a, points_a, "floor"
+    )
+    if adjusted_mix_out_a is None:
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
+  else:
+    adjusted_mix_out_a = min(adjusted_mix_out_a, track_a.duration - seconds_per_bar_a)
   # M2-Fix: Lower-Bound — Outro-Guard kann den Wert sonst negativ/nahe 0
   # druecken; negativer Wert wuerde den Sentinel-Check (>= 0.0) fehlleiten
   adjusted_mix_out_a = max(adjusted_mix_out_a, 0.0)
@@ -839,25 +1013,41 @@ def calculate_paired_mix_points(
   # Konvention: Mix-Out floor (nie NACH dem musikalischen Ereignis),
   # Mix-In ceil (nie davor). Quantisierte Werte nur uebernehmen, wenn sie
   # die Sicherheitsgrenzen nicht verletzen.
-  anchor_a = getattr(track_a, "phrase_anchor", getattr(track_a, "first_downbeat", 0.0)) or 0.0  # A1
+  anchor_a = track_a.phrase_anchor
+  if anchor_a is None:
+    anchor_a = track_a.first_downbeat
   # AUDIT-FIX N3b (2026-08-14): Epsilon gegen Float-Rauschen. Ein Wert, der
   # bereits exakt auf dem Gitter liegt, darf durch ceil/floor nicht eine
   # ganze Phrase weit springen (bei Psytrance ~27 s) — dieselbe Konvention
   # wie in align_ai_mix_points und calculate_genre_aware_mix_points.
   grid_epsilon = 1e-9
   if phrase_seconds_a > 0:
-    q_out = quantize_to_grid(
-      adjusted_mix_out_a + grid_epsilon, phrase_seconds_a, anchor_a, "floor"
+    q_out = (
+      quantize_to_points(adjusted_mix_out_a + grid_epsilon, points_a, "floor")
+      if points_a else quantize_to_grid(
+        adjusted_mix_out_a + grid_epsilon, phrase_seconds_a, anchor_a, "floor"
+      )
     )
+    if q_out is None:
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
     if seconds_per_bar_a <= q_out <= track_a.duration - seconds_per_bar_a:
       adjusted_mix_out_a = q_out
+    elif points_a:
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
   if phrase_seconds_b > 0:
-    q_in = quantize_to_grid(
-      adjusted_mix_in_b - grid_epsilon, phrase_seconds_b, anchor_b, "ceil"
+    q_in = (
+      quantize_to_points(adjusted_mix_in_b - grid_epsilon, points_b, "ceil")
+      if points_b else quantize_to_grid(
+        adjusted_mix_in_b - grid_epsilon, phrase_seconds_b, anchor_b, "ceil"
+      )
     )
+    if q_in is None:
+      return MIX_POINT_UNSET, MIX_POINT_UNSET
     if 0.0 <= q_in < track_b.duration:
       adjusted_mix_in_b = q_in
     elif q_in >= track_b.duration:
+      if points_b:
+        return MIX_POINT_UNSET, MIX_POINT_UNSET
       # Bei sehr kurzen Tracks kann die naechste Phrase hinter dem Ende liegen.
       # Der rohe Wert darf dann nicht als ungueltiger Off-Track-Mixpunkt
       # zurueckbleiben. Fallback: letzter gueltiger Takt, mindestens nach dem
@@ -865,15 +1055,19 @@ def calculate_paired_mix_points(
       last_bar = max(0.0, track_b.duration - seconds_per_bar_b)
       adjusted_mix_in_b = max(last_bar, intro_end_sections_b)
 
-  # Letzter, bindender Vertrag: Strukturgrenzen sind ausgeschlossen. Reicht
-  # das Phrasengitter nicht, wird einmal das Taktgitter versucht.
+  # Letzter, bindender Vertrag: Strukturgrenzen sind ausgeschlossen. Fehlt ein
+  # passender Punkt auf dem aktiven nativen Phrasengitter, fail closed.
   outro_limit_a = outro_start_sections_a - QUANTIZE_TOLERANCE_SEC
   if not (0.0 <= adjusted_mix_out_a < outro_limit_a):
-    adjusted_mix_out_a = quantize_to_grid(
-      outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
-      seconds_per_bar_a,
-      anchor_a,
-      "floor",
+    # Ein natives Phrase-Gitter ist unregelmaessig. Ein Takt-Raster-Fallback
+    # kann eine Grenze erfinden, die Rekordbox nie als Phrase markiert hat.
+    adjusted_mix_out_a = (
+      MIX_POINT_UNSET if points_a else quantize_to_grid(
+        outro_start_sections_a - QUANTIZE_TOLERANCE_SEC - 1e-9,
+        seconds_per_bar_a,
+        anchor_a,
+        "floor",
+      )
     )
   if not (0.0 <= adjusted_mix_out_a < outro_limit_a):
     adjusted_mix_out_a = MIX_POINT_UNSET
@@ -883,11 +1077,15 @@ def calculate_paired_mix_points(
     and adjusted_mix_in_b > intro_end_sections_b + QUANTIZE_TOLERANCE_SEC
   )
   if not intro_ok and intro_end_sections_b < track_b.duration:
-    adjusted_mix_in_b = quantize_to_grid(
-      intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9,
-      seconds_per_bar_b,
-      anchor_b,
-      "ceil",
+    # Wie beim Mix-Out darf ein fehlender nativer Phrase-Punkt nicht durch eine
+    # synthetische Taktgrenze ersetzt werden.
+    adjusted_mix_in_b = (
+      MIX_POINT_UNSET if points_b else quantize_to_grid(
+        intro_end_sections_b + QUANTIZE_TOLERANCE_SEC + 1e-9,
+        seconds_per_bar_b,
+        anchor_b,
+        "ceil",
+      )
     )
     intro_ok = (
       0.0 <= adjusted_mix_in_b < track_b.duration
@@ -922,9 +1120,11 @@ def align_ai_mix_points(
   """
   if bpm <= 0 or duration <= 0 or not (0 <= mix_in < mix_out <= duration):
     return mix_in, mix_out
+  if not is_supported_phrase_unit(phrase_unit):
+    return mix_in, mix_out
 
   seconds_per_bar = (60.0 / bpm) * METER
-  unit = phrase_unit if phrase_unit > 0 else 8
+  unit = phrase_unit
 
   # Epsilon gegen Float-Rauschen: 30.000001s darf nicht eine volle Phrase
   # nach hinten springen
@@ -1020,7 +1220,14 @@ def _bpm_advice(bpm_a: float, bpm_b: float) -> str:
   Keine generischen Phrasen -- immer die echten Zahlen nennen.
   Wird als Prefix "BPM: ..." in die Transition-Notes injiziert.
   """
-  if bpm_a <= 0 or bpm_b <= 0:
+  try:
+    if type(bpm_a) is bool or type(bpm_b) is bool:
+      return ""
+    bpm_a, bpm_b = float(bpm_a), float(bpm_b)
+  except (TypeError, ValueError, OverflowError):
+    return ""
+  if (not math.isfinite(bpm_a) or not math.isfinite(bpm_b)
+      or bpm_a <= 0 or bpm_b <= 0):
     return ""
 
   diff = bpm_b - bpm_a
@@ -1367,16 +1574,26 @@ def _assess_transition_risks(
   # BPM-Check mit Half/Double-Time-Erkennung
   # Audit-Fix 2026-07-21: Half/Double UNABHAENGIG von der 2.0-Grenze melden —
   # sonst blieb ein Half/Double-Uebergang mit eff. Diff 2-4 BPM voellig ohne Hinweis.
-  bpm_diff, bpm_relation = _effective_bpm_diff(track_a.bpm, track_b.bpm)
-  if bpm_relation in ("half", "double"):
-    suffix = "" if bpm_diff <= 2.0 else f", eff. {bpm_diff:.1f} BPM angleichen"
-    risks.append(
-      f"Half/Double-Time ({track_a.bpm:.1f}↔{track_b.bpm:.1f}) -- exakt auf Phrase/Downbeat cutten{suffix}"
-    )
-  elif bpm_diff > 8:
-    risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")
-  elif bpm_diff > 4:
-    risks.append(f"BPM-Differenz {bpm_diff:.1f} -- langsam angleichen")
+  try:
+    if type(track_a.bpm) is bool or type(track_b.bpm) is bool:
+      raise ValueError("Boolean BPM is invalid")
+    bpm_a, bpm_b = float(track_a.bpm), float(track_b.bpm)
+  except (TypeError, ValueError, OverflowError):
+    bpm_a = bpm_b = float("nan")
+  if (not math.isfinite(bpm_a) or not math.isfinite(bpm_b)
+      or bpm_a <= 0 or bpm_b <= 0):
+    risks.append("Tempo fehlt oder ist ungültig -- Übergang nicht bewertbar")
+  else:
+    bpm_diff, bpm_relation = _effective_bpm_diff(bpm_a, bpm_b)
+    if bpm_relation in ("half", "double"):
+      suffix = "" if bpm_diff <= 2.0 else f", eff. {bpm_diff:.1f} BPM angleichen"
+      risks.append(
+        f"Half/Double-Time ({bpm_a:.1f}↔{bpm_b:.1f}) -- exakt auf Phrase/Downbeat cutten{suffix}"
+      )
+    elif bpm_diff > 8:
+      risks.append(f"Grosser BPM-Sprung ({bpm_diff:.1f}) -- Pitch-Anpassung noetig")
+    elif bpm_diff > 4:
+      risks.append(f"BPM-Differenz {bpm_diff:.1f} -- langsam angleichen")
 
   # Energie-Check
   energy_diff = abs(track_a.energy - track_b.energy)

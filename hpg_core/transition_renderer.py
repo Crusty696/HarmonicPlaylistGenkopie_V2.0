@@ -14,6 +14,7 @@ Aufbau eines gerenderten Clips:
 import os
 import logging
 import math
+import numbers
 import tempfile
 from dataclasses import dataclass
 
@@ -22,11 +23,10 @@ import soundfile as sf
 from scipy.signal import butter, correlate, correlation_lags, sosfiltfilt
 import librosa
 
-from .config import MAX_TRANSITION_OVERLAP_SECONDS, METER
+from .config import MAX_TRANSITION_OVERLAP_SECONDS, METER, SUPPORTED_AUDIO_EXTENSIONS
 from .downbeat import (
     DOWNBEAT_RELIABLE_MIN,
     EXACT_BEAT_SYNC_TOLERANCE_SECONDS,
-    REFERENCE_BEATGRID_CONFIDENCE,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 FILTER_RIDE_HP_HZ = 800.0    # Hochpass-Sweep beim Ausblenden (filter_ride)
 SMOOTH_BLEND_LP_HZ = 300.0   # Tiefpass auf Track A (smooth_blend)
 BREAKDOWN_HP_HZ = 250.0      # Bass-Kill auf Track A (breakdown_bridge)
+PRO_EQ_HIGH_HZ = 2500.0     # Grenze zwischen Mitten und Hoehen
 FILTER_RAMP_SECONDS = 0.05   # Kurze Rampe gegen harte Filter-Schalter
 
 # Relative Kreuzkorrelation hat keine absolute Attack-Latenz der
@@ -75,6 +76,7 @@ class EqCrossfadeConfig:
     bass_cutoff_hz: float
     transition_type: str
     bpm_a: float = 120.0  # AUDIT-FIX R-04: fuer beat-synchrone echo_out-Delays
+    bass_swap_fraction: float | None = None
 
 
 @dataclass
@@ -118,6 +120,8 @@ class TransitionClipSpec:
     downbeat_reliable_b: bool = False
     bar_phase_reliable_a: bool = False
     bar_phase_reliable_b: bool = False
+    phase_method_a: str = 'bass_fold'
+    phase_method_b: str = 'bass_fold'
     beatgrid_status_a: str = "unknown"
     beatgrid_status_b: str = "unknown"
     analysis_mode_a: str = "unknown"
@@ -132,32 +136,82 @@ class TransitionClipSpec:
     # des Renderers. 0.0 = nicht gemessen (Sentinel) -> RMS-Fallback.
     lufs_a: float = 0.0
     lufs_b: float = 0.0
+    # Optionaler Stem-Kandidat aus TransitionPlan; fehlend = Mittelpunkt.
+    bass_swap_fraction: float | None = None
 
     @classmethod
     def from_plan(cls, plan, from_track, to_track):
         """Erzeugt eine Render-Spezifikation ohne zweite Timing-Berechnung."""
+        def usable_downbeat(track) -> float | None:
+            anchor = getattr(track, "first_downbeat", None)
+            duration = getattr(track, "duration", None)
+            if (isinstance(anchor, bool) or not isinstance(anchor, numbers.Real)
+                    or isinstance(duration, bool) or not isinstance(duration, numbers.Real)):
+                return None
+            anchor, duration = float(anchor), float(duration)
+            if not math.isfinite(anchor) or not math.isfinite(duration) or duration <= 0.0:
+                return None
+            return anchor if 0.0 <= anchor < duration else None
+
         def _phase_reliability(track) -> tuple[bool, bool]:
             confidence = float(getattr(track, "downbeat_confidence", 0.0) or 0.0)
             source = getattr(track, "beatgrid_source", "unknown")
             status = getattr(track, "beatgrid_status", "unknown")
+            has_anchor = usable_downbeat(track) is not None
             reference_grid = (
                 source == "rekordbox"
                 and status == "verified"
-                and confidence == REFERENCE_BEATGRID_CONFIDENCE
+                and has_anchor
             )
-            # Audio-Schaetzungen unterhalb 1.0 duerfen die gemessene Beatphase
-            # trotz eines Diagnose-Mismatch liefern. Confidence 1.0 ist dagegen
-            # dem Rekordbox-Referenzgrid vorbehalten und braucht dessen Status.
+            # Native Rekordbox-Taktzahlen kommen aus dem separaten Analyselauf,
+            # nicht aus dem Datenbankimport. Herkunft und ggf. Audio-Zeitkorrektur
+            # vollständig prüfen, bevor dieselben Taktzahlen zum Renderer gehen.
+            from .ai_models.native_track_beats import has_verified_grid
+            native_grid = has_verified_grid(track)
+            # Beatgrid-Herkunft und Bar-1-Status bleiben getrennt: ein
+            # technisch bestaetigtes Rekordbox-Grid erlaubt Beat-Sync; Takt-1
+            # nutzt die ausdrücklich freigegebene native Position oder reference_verified.
+            # Auch model_audio_rotation bleibt Audioherkunft: Sie kann den
+            # Beatanker fuer Beat-Alignment liefern, belegt aber keine
+            # unabhaengige musikalische Takt-1 und setzt bar_phase nicht frei.
+            # Ein Diagnose-Mismatch sperrt diese Audio-Beatphase nicht: die
+            # Messkonfidenz qualifiziert den Anker; der strikte Renderpfad
+            # misst und korrigiert die Kicklage anschliessend erneut.
             measured_audio = (
-                DOWNBEAT_RELIABLE_MIN <= confidence
-                < REFERENCE_BEATGRID_CONFIDENCE
+                source == "audio"
+                and confidence >= DOWNBEAT_RELIABLE_MIN
+                and has_anchor
             )
-            return reference_grid or measured_audio, reference_grid
+            return (
+                reference_grid or native_grid or measured_audio,
+                (native_grid or (reference_grid
+                 and getattr(track, "reference_bar_position_verified", False)))
+                and not getattr(track, "bar_position_usage_blocked", False),
+            )
 
         downbeat_a, bar_a = _phase_reliability(from_track)
         downbeat_b, bar_b = _phase_reliability(to_track)
-        bpm_a = float(from_track.bpm or 120.0)
-        bpm_b = float(to_track.bpm or 120.0)
+        def phase_method(track):
+            from .ai_models.native_track_beats import has_verified_grid
+            return (track.native_beat_analysis.get('phase_method', 'bass_fold')
+                    if has_verified_grid(track) else 'bass_fold')
+        # Ein Plan-Render ist strikt beat-synchron. Fehlende/Null-BPM duerfen
+        # deshalb nicht still als 120 BPM behandelt werden: das wuerde einen
+        # plausibel aussehenden, aber auf einem erfundenen Raster ausgerichteten
+        # Preview erzeugen.
+        raw_bpm_a = getattr(from_track, "bpm", None)
+        raw_bpm_b = getattr(to_track, "bpm", None)
+        if (isinstance(raw_bpm_a, bool) or not isinstance(raw_bpm_a, numbers.Real)
+                or isinstance(raw_bpm_b, bool) or not isinstance(raw_bpm_b, numbers.Real)):
+            raise ValueError("TransitionPlan braucht numerische BPM fuer beide Tracks")
+        try:
+            bpm_a = float(raw_bpm_a)
+            bpm_b = float(raw_bpm_b)
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("TransitionPlan braucht gueltige BPM fuer beide Tracks") from exc
+        if (not math.isfinite(bpm_a) or bpm_a <= 0.0
+                or not math.isfinite(bpm_b) or bpm_b <= 0.0):
+            raise ValueError("TransitionPlan braucht endliche positive BPM fuer beide Tracks")
         tempo_ratio = getattr(plan, "tempo_ratio", bpm_b / bpm_a)
         if tempo_ratio is None:
             raise ValueError("TransitionPlan.tempo_ratio darf nicht None sein")
@@ -172,12 +226,15 @@ class TransitionClipSpec:
             bpm_a=bpm_a,
             bpm_b=bpm_b,
             tempo_ratio=tempo_ratio,
-            first_downbeat_a=float(getattr(from_track, "first_downbeat", 0.0) or 0.0),
-            first_downbeat_b=float(getattr(to_track, "first_downbeat", 0.0) or 0.0),
+            bass_swap_fraction=getattr(plan, "bass_swap_fraction", None),
+            first_downbeat_a=usable_downbeat(from_track) or 0.0,
+            first_downbeat_b=usable_downbeat(to_track) or 0.0,
             downbeat_reliable_a=downbeat_a,
             downbeat_reliable_b=downbeat_b,
             bar_phase_reliable_a=bar_a,
             bar_phase_reliable_b=bar_b,
+            phase_method_a=phase_method(from_track),
+            phase_method_b=phase_method(to_track),
             beatgrid_status_a=getattr(from_track, "beatgrid_status", "unknown"),
             beatgrid_status_b=getattr(to_track, "beatgrid_status", "unknown"),
             analysis_mode_a=getattr(from_track, "analysis_mode", "unknown"),
@@ -194,7 +251,7 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
     """Validiert den Rendervertrag, ohne Timingwerte still zu veraendern."""
     for name in ("mix_out_sec", "mix_in_sec"):
         value = getattr(spec, name)
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
         try:
             numeric = float(value)
@@ -206,7 +263,7 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
 
     overlap = spec.crossfade_sec
-    if isinstance(overlap, bool):
+    if isinstance(overlap, bool) or not isinstance(overlap, numbers.Real):
         raise ValueError("crossfade_sec muss endlich und positiv sein")
     try:
         overlap = float(overlap)
@@ -232,9 +289,37 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             f"Nicht unterstuetzter transition_type: {spec.transition_type!r}"
         )
 
+    # Diese Uebergangspfade verwenden feste Filtergrenzen. Eine positive,
+    # aber zu niedrige Ziel-Samplerate liess scipy erst waehrend des Renderns
+    # mit einer schwer zuzuordnenden Nyquist-Fehlermeldung abbrechen.
+    fixed_filter_hz = {
+        "smooth_blend": SMOOTH_BLEND_LP_HZ,
+        "filter_ride": FILTER_RIDE_HP_HZ,
+        "breakdown_bridge": BREAKDOWN_HP_HZ,
+        "pro_eq_swap": PRO_EQ_HIGH_HZ,
+    }.get(spec.transition_type)
+    if fixed_filter_hz is not None and fixed_filter_hz >= spec.target_sr / 2.0:
+        raise ValueError(
+            f"target_sr muss fuer {spec.transition_type} groesser als "
+            f"{fixed_filter_hz * 2:g} Hz sein"
+        )
+
+    for name in ("pre_roll_sec", "post_roll_sec"):
+        value = getattr(spec, name)
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
+        try:
+            numeric = float(value)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{name} muss eine endliche nichtnegative Zahl sein"
+            ) from exc
+        if not math.isfinite(numeric) or numeric < 0.0:
+            raise ValueError(f"{name} muss eine endliche nichtnegative Zahl sein")
+
     for name in ("bpm_a", "bpm_b"):
         value = getattr(spec, name)
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             raise ValueError(f"{name} muss eine endliche positive Zahl sein")
         try:
             numeric = float(value)
@@ -244,7 +329,8 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(f"{name} muss eine endliche positive Zahl sein")
 
     if spec.tempo_ratio is not None:
-        if isinstance(spec.tempo_ratio, bool):
+        if (isinstance(spec.tempo_ratio, bool)
+                or not isinstance(spec.tempo_ratio, numbers.Real)):
             raise ValueError("tempo_ratio muss eine endliche positive Zahl sein")
         try:
             tempo_ratio = float(spec.tempo_ratio)
@@ -257,6 +343,47 @@ def validate_transition_clip_spec(spec: TransitionClipSpec) -> None:
             raise ValueError(
                 "tempo_ratio widerspricht den BPM-Werten des Rendervertrags"
             )
+
+    if spec.bass_swap_fraction is not None:
+        value = spec.bass_swap_fraction
+        if (isinstance(value, bool) or not isinstance(value, numbers.Real)
+                or not math.isfinite(float(value)) or not 0.0 < float(value) < 1.0):
+            raise ValueError("bass_swap_fraction muss innerhalb der Blende liegen")
+        if spec.transition_type not in {"bass_swap", "pro_eq_swap"}:
+            raise ValueError("bass_swap_fraction erfordert bass_swap oder pro_eq_swap")
+
+    cutoff = spec.bass_cutoff_hz
+    if isinstance(cutoff, bool) or not isinstance(cutoff, numbers.Real):
+        raise ValueError("bass_cutoff_hz muss endlich und innerhalb Nyquist liegen")
+    try:
+        cutoff = float(cutoff)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "bass_cutoff_hz muss endlich und innerhalb Nyquist liegen"
+        ) from exc
+    if (not math.isfinite(cutoff) or cutoff <= 0.0
+            or cutoff >= spec.target_sr / 2.0):
+        raise ValueError("bass_cutoff_hz muss endlich und innerhalb Nyquist liegen")
+    if spec.transition_type == "pro_eq_swap" and cutoff >= PRO_EQ_HIGH_HZ:
+        raise ValueError("bass_cutoff_hz muss unter der Mitten-/Hoehengrenze liegen")
+
+    for name in ("first_downbeat_a", "first_downbeat_b", "normalize_target_db",
+                 "lufs_a", "lufs_b"):
+        value = getattr(spec, name)
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise ValueError(f"{name} muss eine endliche Zahl sein")
+        try:
+            numeric = float(value)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(f"{name} muss eine endliche Zahl sein") from exc
+        if not math.isfinite(numeric):
+            raise ValueError(f"{name} muss eine endliche Zahl sein")
+
+    for name in ("downbeat_reliable_a", "downbeat_reliable_b",
+                 "bar_phase_reliable_a", "bar_phase_reliable_b",
+                 "strict_beat_sync", "normalize_rms", "use_compressor"):
+        if type(getattr(spec, name)) is not bool:
+            raise ValueError(f"{name} muss boolesch sein")
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +444,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
             logger.info(f"Doubletime-Switch erkannt fuer Track B: Virtuelle BPM halbiert von {spec.bpm_b:.1f} auf {target_bpm_b:.1f}")
 
         # AUDIT-FIX R-01 (2026-07-24): Rate war invertiert.
-        # librosa.effects.time_stretch: rate > 1.0 = SCHNELLER, rate < 1.0 = LANGSAMER.
+        # Tempoanpassung: rate > 1.0 = SCHNELLER, rate < 1.0 = LANGSAMER.
         # Track B (target_bpm_b) soll auf das Tempo von Track A (bpm_a) gebracht werden:
         # rate = bpm_a / target_bpm_b  (B langsamer als A -> rate > 1 -> B wird beschleunigt).
         # Die Phasen-Umrechnung in known_b (phase_b / applied_stretch_rate) folgt bereits
@@ -349,21 +476,14 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                 raise BeatSyncError("Erforderliches Zieltempo liegt ausserhalb des Stretch-Bereichs")
 
         try:
-            # librosa.effects.time_stretch arbeitet auf der LETZTEN Achse.
-            # seg_b ist (frames, 2) → transponieren auf (2, frames), stretchen,
-            # zurueck transponieren. (Das frueher genutzte axis=-Kwarg existiert
-            # in dieser librosa-Version nicht und wuerde an stft() durchgereicht.)
             if abs(rate - 1.0) < 1e-9:
                 # Half/Double: das virtuelle Zieltempo trifft Track A bereits.
-                # Der Aufruf bliebe nicht folgenlos -- time_stretch ist ein
-                # voller Phase-Vocoder-Roundtrip (STFT/ISTFT) und hinterliesse
-                # Rekonstruktionsartefakte auf Material, das unveraendert
-                # bleiben soll. Dieser Pfad ist ueberhaupt erst erreichbar,
-                # seit die Rate nicht mehr aus tempo_ratio kommt.
+                # Unverändertes Audio benötigt keinen Stretch-Roundtrip.
                 applied_stretch_rate = 1.0
                 logger.info(f"Kein Time-Stretching noetig: Track B ({spec.bpm_b:.1f} BPM) trifft ueber das virtuelle Zieltempo {target_bpm_b:.1f} BPM bereits Track A ({spec.bpm_a:.1f} BPM)")
             else:
-                seg_b = librosa.effects.time_stretch(seg_b.T, rate=rate).T
+                from .preview_stretch import stretch
+                seg_b = stretch(seg_b, sr, rate)
                 applied_stretch_rate = rate
                 logger.info(f"BPM Time-Stretching angewendet: Track B ({spec.bpm_b:.1f} BPM -> {target_bpm_b:.1f} BPM) auf Track A ({spec.bpm_a:.1f} BPM) angepasst (Rate={rate:.4f})")
         except Exception as ts_err:
@@ -395,6 +515,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     # Ausgabe- und Quellraster getrennt halten: Stretch skaliert Zeiten mit 1/rate.
     output_grid_sec = bar_sec_a * (2.0 if half_double == "half" else 1.0)
     source_grid_b_sec = output_grid_sec * applied_stretch_rate
+    reference_phases = None
     if spec.bpm_a > 0 and len(seg_a) > pre_frames:
         try:
             known_a = known_b = None
@@ -419,6 +540,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                 phase_b = (spec.first_downbeat_b - b_start) % source_grid_b_sec
                 # Track B wurde ggf. gestretcht: Zeitpunkte skalieren mit 1/rate
                 known_b = phase_b / applied_stretch_rate
+            before_alignment_frames = len(seg_b)
             seg_b = _align_beat_phase(
                 seg_a[pre_frames:], seg_b, spec.bpm_a, sr,
                 known_first_beat_a=known_a, known_first_beat_b=known_b,
@@ -427,6 +549,8 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
                     int(round(output_grid_sec * sr)) if half_double else None
                 ),
             )
+            if bar_aligned:
+                reference_phases = (known_a, known_b - (before_alignment_frames-len(seg_b))/sr)
         except Exception as align_err:
             if spec.strict_beat_sync:
                 raise BeatSyncError("Beat-Phase-Alignment fehlgeschlagen") from align_err
@@ -445,7 +569,8 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
     if spec.strict_beat_sync:
         seg_b = _synchronize_and_verify_kicks(
             seg_a[pre_frames:pre_frames + cf_frames], seg_b, sr, spec.bpm_a,
-            cf_frames,
+            cf_frames, reference_phases=reference_phases,
+            reference_methods=(spec.phase_method_a, spec.phase_method_b),
         )
 
     # Lautheits-Normalisierung: absolute Pegel ausschliesslich aus dem
@@ -487,6 +612,7 @@ def render_transition_clip(spec: TransitionClipSpec, output_path: str) -> str:
         bass_cutoff_hz=spec.bass_cutoff_hz,
         transition_type=spec.transition_type,
         bpm_a=float(spec.bpm_a or 120.0),
+        bass_swap_fraction=spec.bass_swap_fraction,
     )
     part_cf   = _apply_eq_crossfade(a_cf, b_cf, config)
     part_post = seg_b[cf_frames:]              # Nur Track B nach dem Mix
@@ -633,8 +759,12 @@ def _synchronize_and_verify_kicks(
     sr: int,
     bpm: float,
     cf_frames: int,
+    *, reference_phases=None, reference_methods=('bass_fold', 'bass_fold'),
 ) -> np.ndarray:
     """Korrigiert globalen Kickversatz und lehnt Restfehler/Drift hart ab."""
+    if reference_phases is not None:
+        return _synchronize_reference_kicks(ref_segment, segment_b, sr, bpm,
+                                            cf_frames, reference_phases, reference_methods)
     before = _kick_lags_across_overlap(ref_segment, segment_b, sr, bpm, cf_frames)
     if len(before) != 3 or any(value is None for value in before):
         raise BeatSyncError(
@@ -656,6 +786,60 @@ def _synchronize_and_verify_kicks(
         raise BeatSyncError(
             "Kickphasen driften nach Korrektur um mehr als 6 ms auseinander"
         )
+    # Drei Stichproben uebersehen lokale Abweichungen innerhalb langer
+    # Blenden. Nach der globalen Korrektur deshalb lueckenlos nachmessen.
+    window = min(KICK_SYNC_WINDOW_BEATS * max(1, int(round(60.0 / bpm * sr))),
+                 cf_frames // 3)
+    starts = list(range(0, cf_frames - window + 1, window))
+    if starts[-1] != cf_frames - window:
+        starts.append(cf_frames - window)
+    for start in starts:
+        stop = start + window
+        measured = _relative_kick_lag(ref_segment[start:stop], corrected[start:stop], sr, bpm)
+        if measured is None or not np.isfinite(measured[0]):
+            raise BeatSyncError(f'Kickphase im Blendenabschnitt ab {start / sr:.3f} s nicht messbar')
+        if abs(measured[0]) > KICK_SYNC_MAX_ERROR_SECONDS:
+            raise BeatSyncError(f'Kickphasenfehler im Blendenabschnitt ab {start / sr:.3f} s ueber 6 ms')
+    return corrected
+
+
+def _synchronize_reference_kicks(a, b, sr, bpm, frames, phases, methods=('bass_fold', 'bass_fold')):
+    """Bekannte Taktreferenzen an lokalen Audio-Attacks prüfen, nicht Bassklänge gleichsetzen."""
+    from .downbeat import _beat_phase_from_fold, BEATGRID_MIN_FOLD_LOCK
+    period = 60./bpm
+    if len(methods) != 2 or any(m not in ('bass_fold', 'native_attack_v1') for m in methods):
+        raise BeatSyncError('Unbekannte Referenz-Phasenmessung')
+    window = math.ceil(4*period*sr)
+    if frames < window or len(phases) != 2 or not all(math.isfinite(x) for x in phases):
+        raise BeatSyncError('Referenz-Kickprüfung hat zu wenig Audio oder ungültige Phasen')
+    starts = list(range(0, frames-window+1, window))
+    if starts[-1] != frames-window:
+        starts.append(frames-window)
+    def difference(x, y):
+        return (x-y+period/2) % period-period/2
+    def measured(segment, reference, method):
+        values = []
+        for start in starts:
+            expected = (reference-start/sr) % period
+            mono = np.asarray(segment[start:start+window]).mean(axis=1)
+            if method == 'native_attack_v1':
+                from .ai_models.native_audio_phase import measure
+                phase, lock = measure(mono, sr, period, expected, minimum_beats=4)
+            else:
+                phase, lock = _beat_phase_from_fold(mono, sr, period,
+                    expected_phase=expected, minimum_beats=4)
+            if phase is None or lock < BEATGRID_MIN_FOLD_LOCK:
+                raise BeatSyncError(f'Referenz-Kickphase ab {start/sr:.3f} s nicht messbar')
+            if abs(difference(phase, expected)) > KICK_SYNC_MAX_ERROR_SECONDS:
+                raise BeatSyncError(f'Referenz-Kickphase ab {start/sr:.3f} s über 6 ms')
+            values.append(phase)
+        return values
+    phases_a, phases_b = measured(a, phases[0], methods[0]), measured(b, phases[1], methods[1])
+    shift = round(float(np.median([difference(y, x) for x, y in zip(phases_a, phases_b)]))*sr)
+    corrected = _ensure_len(_shift_segment(b, shift), len(b))
+    after = measured(corrected, phases[1]-shift/sr, methods[1])
+    if any(abs(difference(y, x)) > KICK_SYNC_MAX_ERROR_SECONDS for x, y in zip(phases_a, after)):
+        raise BeatSyncError('Relative Referenz-Kickphasen überschreiten 6 ms')
     return corrected
 
 
@@ -740,6 +924,16 @@ def _align_beat_phase(ref_seg: np.ndarray, seg_b: np.ndarray,
     # des Ergebnis-Anfangs auf dem Raster von A liegt.
     raw = int(round((t_b - t_a) * sr))
     if lead_frames > 0:
+        # Mixkandidaten sind auf Millisekunden gerundet, Gridphasen dagegen
+        # samplegenau. Ein kleiner positiver Rundungsrest darf nicht durch
+        # floor-Division einen ganzen Takt aus dem Vorlauf zur Blende machen.
+        # Nominalen Einsatz behalten; die nachfolgende strikte Audioprüfung
+        # misst/korrigiert den Rest weiterhin. Zwei Samples decken die beiden
+        # zusätzlichen Frame-Rundungen ab, keine neue musikalische Toleranz.
+        nearest = raw + grid_len * round((lead_frames - raw) / grid_len)
+        rounding_frames = int(math.ceil(.001 * sr)) + 2
+        if abs(nearest - lead_frames) <= rounding_frames:
+            return seg_b[lead_frames:]
         # N-02: groesster phasengleicher Schnitt <= lead_frames — der Einsatz
         # (bei lead_frames) bleibt vollstaendig erhalten und landet maximal
         # grid_len-1 Samples hinter dem Crossfade-Start.
@@ -789,45 +983,71 @@ def _load_segment(path: str, start_sec: float, duration_sec: float,
     """
     Laedt nur den benoetigten Abschnitt einer Audio-Datei.
 
-    soundfile unterstuetzt: WAV, FLAC, AIFF, OGG (nativ, schnell, offset-seeking).
-    MP3 wird von soundfile NICHT unterstuetzt → Fallback via librosa.load().
+    Unterstützte Formate verwenden den gemeinsamen Reader. Ein Readerfehler
+    wird weitergegeben, damit Analyse und Vorschau nicht still Decoder mischen.
 
     Gibt immer ein (frames, 2) float32 Array zurueck.
     Mono wird auf Stereo verdoppelt.
     """
     path = str(path)
-    audio = None
-
-    # Erster Versuch: soundfile (schnell, unterstuetzt offset-seeking)
-    try:
-        with sf.SoundFile(path) as f:
-            sr_file    = f.samplerate
-            start_frame = int(start_sec * sr_file)
-            num_frames  = int(duration_sec * sr_file)
-            # Seek jenseits Dateiende → leeres Array zurueckgeben (kein Fehler)
-            if start_frame >= f.frames:
-                # L5-Fix: hoerbar stiller Preview braucht eine sichtbare Ursache im Log
-                logger.warning(
-                    f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
-                    f"stilles Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
-                )
-                return np.zeros((0, 2), dtype=np.float32)
-            f.seek(max(0, start_frame))
-            audio = f.read(num_frames, dtype='float32', always_2d=True)
-            sr_loaded = sr_file
-    except (sf.LibsndfileError, RuntimeError):
-        # Fallback fuer MP3 und andere nicht-unterstuetzte Formate
+    from .ai_models.native_audio_reader import MAX_SECONDS, NativeAudioStream
+    if os.path.splitext(path)[1].lower() in SUPPORTED_AUDIO_EXTENSIONS:
+        if (type(start_sec) not in (int, float) or type(duration_sec) not in (int, float)
+                or not math.isfinite(start_sec) or not math.isfinite(duration_sec)
+                or start_sec < 0 or duration_sec <= 0
+                or start_sec + duration_sec > MAX_SECONDS):
+            raise ValueError("Renderfenster außerhalb des gemeinsamen Readerlimits")
+        # Der gemeinsame native Reader lehnt Offsets hinter dem Dateiende ab.
+        # Für Renderfenster gilt weiterhin der Renderer-Vertrag: dort gibt es
+        # schlicht kein Segment. Vor dem nativen Decoderstart prüfen, damit ein
+        # ungültiger Mixpunkt weder einen Readerfehler auslöst noch native
+        # Decoderressourcen unnötig anlegt.
+        if start_sec > 0:
+            try:
+                info = sf.info(path)
+                if (info.samplerate > 0 and info.frames >= 0
+                        and start_sec * info.samplerate >= info.frames):
+                    logger.warning(
+                        f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
+                        f"leeres Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
+                    )
+                    return np.zeros((0, 2), dtype=np.float32)
+            except (OSError, RuntimeError, ValueError, sf.LibsndfileError):
+                # Formate ohne SoundFile-Metadaten laufen weiter über den
+                # zuständigen nativen Reader; dessen Fehler bleibt sichtbar.
+                pass
+        with NativeAudioStream(path, duration=duration_sec, offset=start_sec) as stream:
+            audio = stream.read(stream.frames, dtype='float32', always_2d=True)
+            sr_loaded = stream.samplerate
+    else:
+        # Erhaltener HPG-Pfad für nicht in der Anwendung unterstützte Endungen.
         try:
-            import librosa
-            y, sr_loaded = librosa.load(
-                path, sr=None, mono=False,
-                offset=start_sec, duration=duration_sec
-            )
-            if y.ndim == 1:
-                y = np.stack([y, y], axis=0)   # Mono → (2, frames)
-            audio = y.T.astype(np.float32)      # → (frames, 2)
-        except Exception as e:
-            raise RuntimeError(f"Konnte Datei nicht laden: {path!r} — {e}") from e
+            with sf.SoundFile(path) as f:
+                sr_file = f.samplerate
+                start_frame = int(start_sec * sr_file)
+                num_frames = int(duration_sec * sr_file)
+                if start_frame >= f.frames:
+                    logger.warning(
+                        f"Segment-Start {start_sec:.1f}s liegt hinter dem Dateiende — "
+                        f"stilles Segment fuer {os.path.basename(path)} (Mix-Punkt pruefen)"
+                    )
+                    return np.zeros((0, 2), dtype=np.float32)
+                f.seek(max(0, start_frame))
+                audio = f.read(num_frames, dtype='float32', always_2d=True)
+                sr_loaded = sr_file
+        except (sf.LibsndfileError, RuntimeError, OSError, ValueError):
+            try:
+                import librosa
+                from .audio_decoder import configure_audioread_ffmpeg
+                configure_audioread_ffmpeg()
+                y, sr_loaded = librosa.load(
+                    path, sr=None, mono=False, offset=start_sec, duration=duration_sec
+                )
+                if y.ndim == 1:
+                    y = np.stack([y, y], axis=0)
+                audio = y.T.astype(np.float32)
+            except Exception as e:
+                raise RuntimeError(f"Konnte Datei nicht laden: {path!r} — {e}") from e
 
     # Kanal-Normalisierung: immer (frames, 2)
     if audio.ndim == 1:
@@ -1031,6 +1251,10 @@ def _level_mix_loudness(
             if curr_db > -32.0:
                 diff_db = float(np.clip(target_db - curr_db, -8.0, 8.0))
                 gain = float(10.0 ** (diff_db / 20.0))
+                # Transienten erhalten statt sie erst im Limiter abzuschneiden.
+                peak = float(np.max(np.abs(audio)))
+                if peak > 0.0:
+                    gain = min(gain, 0.95 / peak)
                 return (audio * gain).astype(np.float32)
         return audio
 
@@ -1060,6 +1284,12 @@ def _level_mix_loudness(
         else:
             gain = 1.0
 
+        # Jedes Fenster begrenzt seinen Gain anhand beider Kanaele. Die
+        # positive gewichtete Mittelung bleibt dadurch auch zwischen den
+        # Fenstern unter der Limiter-Schwelle; Stereo bleibt gekoppelt.
+        peak = float(np.max(np.abs(chunk)))
+        if peak > 0.0:
+            gain = min(gain, 0.95 / peak)
         envelope[start:end] += gain * w
         weights[start:end] += w
 
@@ -1127,6 +1357,39 @@ def _apply_compressor(mixed: np.ndarray, sr: int) -> np.ndarray:
     return compressed.astype(np.float32)
 
 
+def _bass_handover_envelopes(
+    bass_a: np.ndarray, bass_b: np.ndarray, config: EqCrossfadeConfig,
+) -> tuple[int, np.ndarray, np.ndarray]:
+    """Gemeinsame Bassuebergabe mit 50-ms-Rampe und stetigem Pegelruecklauf."""
+    half = (int(round(config.bass_swap_fraction * config.cf_frames))
+            if config.bass_swap_fraction is not None
+            else config.cf_frames // 2)
+    half = min(max(0, half), config.cf_frames - 1)
+    ramp = max(1, int(0.05 * config.sr))
+    ramp_end = min(half + ramp, config.cf_frames)
+    n_ramp = ramp_end - half
+    bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
+    bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
+
+    # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
+    rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
+    rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
+    target_bass_gain = 1.0
+    if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
+        target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
+
+    if n_ramp > 0:
+        bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
+        bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
+    bass_a_env[ramp_end:] = 0.0
+    tail_len = config.cf_frames - ramp_end
+    if tail_len > 0:
+        bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
+    else:
+        bass_b_env[ramp_end:] = 1.0
+    return half, bass_a_env, bass_b_env
+
+
 def _apply_eq_crossfade(
     seg_a: np.ndarray,       # (cf_frames, 2) float32 — Track A im Crossfade
     seg_b: np.ndarray,       # (cf_frames, 2) float32 — Track B im Crossfade
@@ -1148,16 +1411,16 @@ def _apply_eq_crossfade(
     _t = np.linspace(0.0, 1.0, config.cf_frames, dtype=np.float32)
     fo = np.cos(_t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
     fi = np.sin(_t * (np.pi / 2.0)).astype(np.float32)[:, np.newaxis]
+    t_type = str(config.transition_type).lower()
 
     # Audit-Fix 2026-07-21: sosfiltfilt verlangt Segmentlaenge > padlen (~30-60
     # Samples). Bei extrem kurzem Crossfade (< ~1.5ms) crasht der Filter mit
-    # "input vector x must be greater than padlen". Solche Winz-Crossfades sind
-    # ohnehin degeneriert -> sauberer linearer Crossfade ohne EQ-Filter.
+    # "input vector x must be greater than padlen". Filtertypen erhalten dann
+    # einen linearen Fallback; Cuttypen brauchen keinen Filter und bleiben als
+    # Cut verdrahtet, auch bei sehr kurzen Übergängen.
     min_frames = min(len(seg_a), len(seg_b))
-    if min_frames < 64:
+    if min_frames < 64 and t_type not in {"cold_cut", "drop_cut", "halftime_switch"}:
         return (seg_a * fo + seg_b * fi).astype(np.float32)
-
-    t_type = str(config.transition_type).lower()
 
     if t_type == "bass_swap":
         # Bass (Tief) und Hoehen separat faden (klassischer EQ-Bass-Swap)
@@ -1176,35 +1439,13 @@ def _apply_eq_crossfade(
 
         # M6-Fix: echter Bass-Handover — harter Swap am Crossfade-Mittelpunkt
         # mit kurzer 50ms-Rampe gegen Klicks.
-        half = config.cf_frames // 2
-        ramp = max(1, int(0.05 * config.sr))
-        ramp_end = min(half + ramp, config.cf_frames)
-        n_ramp = ramp_end - half
-        bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
-        bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
-
-        # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
-        rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
-        rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
-        target_bass_gain = 1.0
-        if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
-            target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
-
-        if n_ramp > 0:
-            bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
-            bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
-        bass_a_env[ramp_end:] = 0.0
-        tail_len = config.cf_frames - ramp_end
-        if tail_len > 0:
-            bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
-        else:
-            bass_b_env[ramp_end:] = 1.0
+        half, bass_a_env, bass_b_env = _bass_handover_envelopes(bass_a, bass_b, config)
         mixed = bass_a * bass_a_env + bass_b * bass_b_env + highs_a * fo + highs_b * fi
 
     elif t_type == "pro_eq_swap":
         # 3-Band Linkwitz-Riley EQ Simulation mit Zero-Phase Filtering (sosfiltfilt)
-        fc1 = 120.0   # Low-to-Mid Crossover
-        fc2 = 2500.0  # Mid-to-High Crossover
+        fc1 = config.bass_cutoff_hz
+        fc2 = PRO_EQ_HIGH_HZ
 
         # Filter design
         sos_lp_low  = _make_sos(fc1, config.sr, 'low', order=2)
@@ -1223,30 +1464,7 @@ def _apply_eq_crossfade(
 
         # Envelopes
         # Lows (Bass-Swap auf der Haelfte mit 50ms Rampe)
-        half = config.cf_frames // 2
-        ramp = max(1, int(0.05 * config.sr))
-        ramp_end = min(half + ramp, config.cf_frames)
-        n_ramp = ramp_end - half
-
-        bass_a_env = np.ones((config.cf_frames, 1), dtype=np.float32)
-        bass_b_env = np.zeros((config.cf_frames, 1), dtype=np.float32)
-
-        # Befund 3: Bass-Pegel-Angleichung mit stetigem Ruecklauf gegen 1.0
-        rms_bass_a = float(np.sqrt(np.mean(bass_a[:half] ** 2))) if half > 0 else 0.0
-        rms_bass_b = float(np.sqrt(np.mean(bass_b[half:] ** 2))) if half < config.cf_frames else 0.0
-        target_bass_gain = 1.0
-        if rms_bass_a > 1e-4 and rms_bass_b > 1e-4:
-            target_bass_gain = float(np.clip(rms_bass_a / rms_bass_b, 0.63, 1.58))
-
-        if n_ramp > 0:
-            bass_a_env[half:ramp_end] = np.linspace(1.0, 0.0, n_ramp, dtype=np.float32)[:, np.newaxis]
-            bass_b_env[half:ramp_end] = np.linspace(0.0, target_bass_gain, n_ramp, dtype=np.float32)[:, np.newaxis]
-        bass_a_env[ramp_end:] = 0.0
-        tail_len = config.cf_frames - ramp_end
-        if tail_len > 0:
-            bass_b_env[ramp_end:] = np.linspace(target_bass_gain, 1.0, tail_len, dtype=np.float32)[:, np.newaxis]
-        else:
-            bass_b_env[ramp_end:] = 1.0
+        half, bass_a_env, bass_b_env = _bass_handover_envelopes(bass_a, bass_b, config)
 
         # Mids: Equal-Power (cos/sin) ueber den gesamten Crossfade mit Pegel-Angleichung
         rms_mids_a = float(np.sqrt(np.mean(mids_a[:half] ** 2))) if half > 0 else 0.0
@@ -1299,11 +1517,12 @@ def _apply_eq_crossfade(
             filtered_a = _apply_filter_ramp(seg_a, filtered_a, config.sr)
             mixed = filtered_a * fo + seg_b * fi
 
-    elif t_type == "cold_cut":
+    elif t_type in {"cold_cut", "halftime_switch"}:
         # Harter Cut in der Mitte — AUDIT-FIX R-06 (2026-07-24): mit 3ms
         # Mikro-Fade um die Schnittstelle gegen den sonst garantierten Klick
-        # (Amplitudensprung A->B = breitbandiger Impuls). Bleibt hoerbar ein
-        # harter Cut.
+        # (Amplitudensprung A->B = breitbandiger Impuls). Half/Double wird nach
+        # dem bereits angewendeten Tempo-Stretch hier als Taktwechsel geschnitten;
+        # ein Equal-Power-Blend würde die Kick überlagern.
         half = config.cf_frames // 2
         mixed = np.zeros_like(seg_a)
         mixed[:half] = seg_a[:half]

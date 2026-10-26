@@ -135,7 +135,7 @@ def test_collect_candidate_times_alle_schemata_mit_pssi_gitter():
     assert 30.0 not in t_in
     assert all(c.t > 30.0 + QUANTIZE_TOLERANCE_SEC for c in ins)
     t_out = {c.t: c for c in outs}
-    assert 225.0 in t_out and "auto_cue" in t_out[225.0].schema          # 233 floor → 225
+    assert 225.0 in t_out and "unbenannter_cue" in t_out[225.0].schema  # 233 floor → 225
     assert 240.0 not in t_out
     assert all(c.t < 240.0 - QUANTIZE_TOLERANCE_SEC for c in outs)
     assert len(ins) <= 8 and len(outs) <= 8
@@ -187,8 +187,8 @@ def test_kappung_auf_acht_mit_prioritaet():
     assert any("analyzer" in c.schema for c in ins)
     # Tiebreak bei gleichem Top-Schema und gleicher Schema-Anzahl: die FRUEHEREN
     # Zeitpunkte ueberleben (explizit ueber k.t, nicht Einfuegereihenfolge)
-    nur_auto = sorted(c.t for c in ins if c.schema == ["auto_cue"])
-    assert nur_auto and nur_auto[0] == 45.0 and nur_auto[-1] < 225.0
+    unbenannte = sorted(c.t for c in ins if c.schema == ["unbenannter_cue"])
+    assert unbenannte and unbenannte[0] == 45.0 and unbenannte[-1] < 225.0
 
 
 def test_kappung_out_seite_behaelt_spaete_punkte():
@@ -198,10 +198,10 @@ def test_kappung_out_seite_behaelt_spaete_punkte():
         analyzer_in=60.0, analyzer_out=240.0, duration=300.0, grid_sec=15.0,
         intro_end=30.0, outro_start=240.0, outro_covered=True, anchor=0.0,
     )
-    nur_auto_out = [c.t for c in outs if c.schema == ["auto_cue"]]
-    assert nur_auto_out and nur_auto_out[-1] >= 195.0 and nur_auto_out[0] > 45.0   # spaete ueberleben, fruehe fallen
-    nur_auto_in = [c.t for c in ins if c.schema == ["auto_cue"]]
-    assert nur_auto_in and nur_auto_in[0] == 45.0                                   # In unveraendert: fruehe zuerst
+    unbenannte_out = [c.t for c in outs if c.schema == ["unbenannter_cue"]]
+    assert unbenannte_out and unbenannte_out[-1] >= 195.0 and unbenannte_out[0] > 45.0
+    unbenannte_in = [c.t for c in ins if c.schema == ["unbenannter_cue"]]
+    assert unbenannte_in and unbenannte_in[0] == 45.0
 
 
 def _kick_track(tmp_path, bpm=128.0, sekunden=60.0, sr=22050, kick_ab=0.0, kick_bis=None):
@@ -331,3 +331,19 @@ def test_build_track_candidates_kandidat_in_unanalysed_ist_nicht_covered(tmp_pat
     )
     assert all(not (60.0 <= c["t"] < 90.0) for c in ins + outs)
     assert ins and all(c["confidence"] > 0.0 for c in ins)
+
+
+@pytest.mark.parametrize('shift,expected', [(0., True), (.02, False)])
+def test_native_pickup_before_first_downbeat_preserves_bar_gate(monkeypatch, shift, expected):
+    from hpg_core import mix_candidates
+    monkeypatch.setattr(mix_candidates, 'measure_candidate_window', lambda *a, **k: None)
+    boundaries = [.5, 10.+shift, 42.+shift, 74.+shift, 106.+shift, 120.]
+    phrases = [dict(start_s=a, end_s=b, label='Intro' if i == 0 else 'Chorus',
+                    kind=1, mood=1, fill=0)
+               for i, (a, b) in enumerate(zip(boundaries, boundaries[1:]))]
+    ins, outs = build_track_candidates('unused', bpm=120., duration=120.,
+        first_downbeat=2., downbeat_confidence=0., phrase_confidence=0.,
+        phrase_anchor=2., phrase_unit=8, sections=[dict(start_time=0., end_time=120., label='main')],
+        phrases=[], cues=[], analyzer_in=42.+shift, analyzer_out=74.+shift,
+        outro_covered=True, native_phrases=phrases, native_grid_verified=True)
+    assert bool(ins and outs) is expected

@@ -123,16 +123,20 @@ PLAN_AUDIT_SPALTEN: tuple[str, ...] = (
 )
 
 # --- Kandidatenmodus (Spec 2026-08-21 Abschnitt 3) -------------------------
-# bewertung.csv je Clip eines Paars: Note 1-5 und exklusive Wahl "bester".
-BEWERTUNG_KANDIDATEN_SPALTEN: tuple[str, ...] = ("pair_id", "clip_id", "note", "gewaehlt", "zeit")
+# bewertung.csv je Clip eines Paars: Note 1-5, exklusive Wahl "bester" und
+# optionale Nutzerkennung für einen unabhängigen Mix-/Set-Cluster.
+BEWERTUNG_KANDIDATEN_SPALTEN: tuple[str, ...] = (
+    "pair_id", "clip_id", "note", "gewaehlt", "zeit", "mix_cluster_id",
+)
 BEWERTUNG_DREINOTEN_SPALTEN: tuple[str, ...] = (
     "pair_id", "clip_id", "track_note", "technik_note", "gesamt_note",
-    "gewaehlt", "zeit",
+    "gewaehlt", "zeit", "mix_cluster_id",
 )
 # merkmale.csv je Clip: die zehn Teilwerte aus pair_candidates.score_pair, der
 # Score (nie angezeigt), Schema/Provenienz/Confidence je Seite, Blende und
-# Anzeige-Kontext (bpm/genre/key — kein Score, kein Schema).
-MERKMALE_KANDIDATEN_SPALTEN: tuple[str, ...] = (
+# Anzeige-Kontext (bpm/genre/key — kein Score, kein Schema). Deep-Features
+# bleiben optionale Offline-Diagnostik und nie Teil der Live-Gewichtung.
+MERKMALE_KANDIDATEN_LEGACY_SPALTEN: tuple[str, ...] = (
     "pair_id", "clip_id", "clip", *KANDIDATEN_TEILWERTE, "score",
     "schema_out", "schema_in", "schemata_out", "schemata_in", "blend_bars", "t_out", "t_in",
     "provenance_out", "provenance_in", "confidence_out", "confidence_in",
@@ -141,6 +145,23 @@ MERKMALE_KANDIDATEN_SPALTEN: tuple[str, ...] = (
     "rendered_transition_type", "transition_type_mode",
     "track_a", "track_b",
 )
+DEEP_FEATURE_COLUMNS: tuple[str, ...] = tuple(
+    f"deep_stems_{side}_{stem}"
+    for side in ("a", "b")
+    for stem in ("vocals", "bass", "drums", "other")
+) + ("deep_embedding_cosine",)
+MERKMALE_KANDIDATEN_SPALTEN: tuple[str, ...] = (
+    *MERKMALE_KANDIDATEN_LEGACY_SPALTEN, *DEEP_FEATURE_COLUMNS,
+)
+
+
+def kandidaten_merkmale_schema(fieldnames) -> tuple[str, ...] | None:
+    """Akzeptiert alte Hörsatz-CSV und neue CSV mit optionalen Deep-Features."""
+    actual = tuple(fieldnames or ())
+    if actual in (MERKMALE_KANDIDATEN_LEGACY_SPALTEN,
+                  MERKMALE_KANDIDATEN_SPALTEN):
+        return actual
+    return None
 # Holdout nach Tracks: Anteil der Tracks, deren Clips NICHT in die Schaetzung
 # gehen (ein Clip ist Holdout, wenn Track A ODER B dazugehoert — bei 30 % Tracks
 # sind das rund 51 % der Clips). STARTWERT.
@@ -2144,6 +2165,437 @@ def _hauptschema(cand) -> str:
     return min(s, key=SCHEMA_PRIORITAET.index) if s else ""
 
 
+def _deep_feature_csv_values(candidate) -> dict[str, str | float]:
+    """Kopiert nur endliche, vertragstreue Deep-Feature-Skalare in Hörsatz-CSV."""
+    flags = getattr(candidate, "flags", {})
+    deep = flags.get("deep_features") if type(flags) is dict else None
+    empty = {name: "" for name in DEEP_FEATURE_COLUMNS}
+    if (type(deep) is not dict or deep.get("calibrated") is not False
+            or deep.get("affects_score") is not False):
+        return empty
+    for side in ("a", "b"):
+        stems = deep.get(f"stems_{side}")
+        if type(stems) is not dict or set(stems) != {"vocals", "bass", "drums", "other"}:
+            continue
+        for stem, raw in stems.items():
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value) and value >= 0.0:
+                empty[f"deep_stems_{side}_{stem}"] = round(value, 8)
+    raw_cosine = deep.get("embedding_cosine")
+    try:
+        cosine = float(raw_cosine)
+    except (TypeError, ValueError):
+        cosine = math.nan
+    if math.isfinite(cosine) and -1.0 <= cosine <= 1.0:
+        empty["deep_embedding_cosine"] = round(cosine, 8)
+    return empty
+
+
+def transition_ratings_as_candidate_rows(path):
+    """Map fully rated in-app candidate sets to the offline feature-report schema."""
+    document = _lade_json_strikt(Path(path), "transition_ratings.json")
+    if (type(document) is not dict or set(document) != {"format", "ratings"}
+            or document["format"] != "hpg_transition_ratings_v1"
+            or type(document["ratings"]) is not dict):
+        raise ValueError("transition_ratings.json hat kein bekanntes Schema")
+    grouped = {}
+    for rating_id, entry in document["ratings"].items():
+        if type(rating_id) is not str or type(entry) is not dict:
+            continue
+        source = entry.get("source")
+        if type(source) is not dict:
+            continue
+        set_id = source.get("candidate_set_id")
+        candidates = source.get("candidate_set")
+        snapshot = source.get("candidate_snapshot")
+        rank = snapshot.get("rank") if type(snapshot) is dict else None
+        note = entry.get("note")
+        if (type(set_id) is not str or re.fullmatch(r"[0-9a-f]{64}", set_id) is None
+                or type(candidates) is not list or not candidates
+                or type(rank) is not int or rank <= 0
+                or type(note) is not int or note not in range(1, 6)):
+            continue
+        try:
+            expected_set_id = hashlib.sha256(json.dumps({
+                "from_file_identity": source.get("from_file_identity"),
+                "to_file_identity": source.get("to_file_identity"),
+                "from_genre": source.get("from_genre"),
+                "to_genre": source.get("to_genre"),
+                "from_bpm": source.get("from_bpm"),
+                "to_bpm": source.get("to_bpm"),
+                "scoring_context": source.get("scoring_context"),
+                "candidates": candidates,
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                allow_nan=False).encode("utf-8")).hexdigest()
+        except (TypeError, ValueError):
+            continue
+        if expected_set_id != set_id:
+            continue
+        matching_candidates = [candidate for candidate in candidates
+                               if type(candidate) is dict and candidate.get("rank") == rank]
+        if len(matching_candidates) != 1:
+            continue
+        candidate = matching_candidates[0]
+        candidate_snapshot = source.get("candidate_snapshot")
+        render_spec = source.get("render_spec")
+        if (type(candidate_snapshot) is not dict
+                or any(candidate_snapshot.get(field) != candidate.get(field)
+                       for field in ("rank", "t_out", "t_in", "blend_bars", "score",
+                                     "components", "deep_features"))
+                or type(render_spec) is not dict
+                or render_spec.get("track_a_path") != source.get("from_path")
+                or render_spec.get("track_b_path") != source.get("to_path")
+                or render_spec.get("mix_out_sec") != candidate.get("t_out")
+                or render_spec.get("mix_in_sec") != candidate.get("t_in")
+                or type(source.get("preview_sha256")) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", source["preview_sha256"]) is None):
+            continue
+        record = grouped.setdefault(set_id, {"candidates": candidates, "source": source,
+                                              "ratings": {}, "ambiguous": False})
+        if (record["candidates"] != candidates
+                or record["source"].get("from_path") != source.get("from_path")
+                or record["source"].get("to_path") != source.get("to_path")
+                or record["source"].get("from_file_identity") != source.get("from_file_identity")
+                or record["source"].get("to_file_identity") != source.get("to_file_identity")
+                or record["source"].get("scoring_context") != source.get("scoring_context")):
+            record["ambiguous"] = True
+            continue
+        if rank in record["ratings"]:
+            record["ambiguous"] = True
+            continue
+        if not any(type(candidate) is dict and candidate.get("rank") == rank
+                   for candidate in candidates):
+            record["ambiguous"] = True
+            continue
+        record["ratings"][rank] = (note, rating_id)
+
+    feature_rows, rating_rows = [], []
+    complete_sets, incomplete_sets, ambiguous_sets = 0, 0, 0
+    for set_id, group in sorted(grouped.items()):
+        candidates = group["candidates"]
+        ranks = [candidate.get("rank") if type(candidate) is dict else None
+                 for candidate in candidates]
+        if (group["ambiguous"] or any(type(rank) is not int or rank <= 0 for rank in ranks)
+                or len(ranks) != len(set(ranks))):
+            ambiguous_sets += 1
+            continue
+        if set(group["ratings"]) != set(ranks):
+            incomplete_sets += 1
+            continue
+        source = group["source"]
+        track_a, track_b = str(source.get("from_path", "")), str(source.get("to_path", ""))
+        if not track_a or not track_b or track_a == track_b:
+            ambiguous_sets += 1
+            continue
+        notes = {rank: item[0] for rank, item in group["ratings"].items()}
+        highest = max(notes.values())
+        winners = [rank for rank, note in notes.items() if note == highest]
+        for candidate in candidates:
+            rank = candidate["rank"]
+            components = candidate.get("components")
+            if type(components) is not dict or set(components) != set(KANDIDATEN_TEILWERTE):
+                group["ambiguous"] = True
+                break
+            try:
+                components = {
+                    name: _endliche_zahl(components[name], f"{name} im Kandidatensatz")
+                    for name in KANDIDATEN_TEILWERTE
+                }
+            except ValueError:
+                group["ambiguous"] = True
+                break
+            clip_id = f"{set_id}_k{rank}"
+            features = {name: components[name] for name in KANDIDATEN_TEILWERTE}
+            features.update(pair_id=set_id, clip_id=clip_id, track_a=track_a, track_b=track_b)
+            deep = candidate.get("deep_features")
+            for name in DEEP_FEATURE_COLUMNS:
+                features[name] = ""
+            if type(deep) is dict and deep.get("calibrated") is False and deep.get("affects_score") is False:
+                for side in ("a", "b"):
+                    stems = deep.get(f"stems_{side}")
+                    if type(stems) is dict and set(stems) == {"vocals", "bass", "drums", "other"}:
+                        for stem, value in stems.items():
+                            features[f"deep_stems_{side}_{stem}"] = value
+                features["deep_embedding_cosine"] = deep.get("embedding_cosine", "")
+            feature_rows.append(features)
+            rating_rows.append({
+                "pair_id": set_id, "clip_id": clip_id, "note": str(notes[rank]),
+                "gewaehlt": "1" if len(winners) == 1 and rank == winners[0] else "0",
+                "candidate_set_id": set_id, "mix_cluster_id": "",
+            })
+        if group["ambiguous"]:
+            feature_rows = [row for row in feature_rows if row["pair_id"] != set_id]
+            rating_rows = [row for row in rating_rows if row["pair_id"] != set_id]
+            ambiguous_sets += 1
+            continue
+        complete_sets += 1
+    return feature_rows, rating_rows, {
+        "complete_candidate_sets": complete_sets,
+        "incomplete_candidate_sets": incomplete_sets,
+        "ambiguous_candidate_sets": ambiguous_sets,
+    }
+
+
+def _transition_ratings_report(args: argparse.Namespace) -> int:
+    """Erstellt nur einen Konsolenbericht aus gespeicherten In-App-Bewertungen."""
+    path = args.file.resolve()
+    feature_rows, rating_rows, counts = transition_ratings_as_candidate_rows(path)
+    report = _deep_feature_calibration_report(feature_rows, rating_rows, seed=args.seed)
+    report.update({
+        "source": "transition_ratings.json",
+        "ratings_file": str(path),
+        "ratings_file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "candidate_set_grouping": "candidate_set_id",
+        "weights_applied": False,
+        **counts,
+    })
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def _deep_feature_calibration_report(feature_rows, rating_rows, *, seed=STANDARD_SEED) -> dict:
+    """Berichtet Abdeckung und Track-Holdout-Ablation; nie Produktgewichte."""
+    has_columns = bool(feature_rows) and all(
+        all(name in row for name in DEEP_FEATURE_COLUMNS) for row in feature_rows
+    )
+    # Bindet Labels an genau die exportierten Clipmerkmale. Ein Eintrag ohne
+    # passenden pair_id/clip_id darf die Kalibrierungsabdeckung nicht erhöhen.
+    feature_ids = {
+        (str(row.get("pair_id", "")).strip(), str(row.get("clip_id", "")).strip())
+        for row in feature_rows
+        if str(row.get("pair_id", "")).strip() and str(row.get("clip_id", "")).strip()
+    }
+    seen_rating_ids = set()
+    labeled_ids = set()
+    declared_mix_clusters = set()
+    duplicate_rating_ids = 0
+    unmatched_rating_rows = 0
+    for rating in rating_rows:
+        key = (str(rating.get("pair_id", "")).strip(),
+               str(rating.get("clip_id", "")).strip())
+        valid_label = (
+            any(str(rating.get(field, "")).strip() in {"1", "2", "3", "4", "5"}
+                for field in ("note", "track_note", "technik_note", "gesamt_note"))
+            or str(rating.get("gewaehlt", "")).strip() in {"0", "1"}
+        )
+        if not all(key) or key not in feature_ids:
+            unmatched_rating_rows += int(valid_label)
+            continue
+        if key in seen_rating_ids:
+            duplicate_rating_ids += 1
+            continue
+        seen_rating_ids.add(key)
+        if not valid_label:
+            continue
+        labeled_ids.add(key)
+        cluster = str(rating.get("mix_cluster_id", "")).strip()
+        if cluster:
+            declared_mix_clusters.add(cluster)
+    track_pairs = {
+        tuple(sorted((str(row.get("track_a", "")), str(row.get("track_b", "")))))
+        for row in feature_rows
+        if str(row.get("track_a", "")).strip() and str(row.get("track_b", "")).strip()
+    }
+    per_feature = {}
+    for name in DEEP_FEATURE_COLUMNS:
+        valid = 0
+        for row in feature_rows:
+            try:
+                value = float(row.get(name, ""))
+            except (TypeError, ValueError):
+                continue
+            in_range = (
+                -1.0 <= value <= 1.0
+                if name == "deep_embedding_cosine"
+                else value >= 0.0
+            )
+            if math.isfinite(value) and in_range:
+                valid += 1
+        per_feature[name] = {"available_clips": valid, "complete": bool(feature_rows) and valid == len(feature_rows)}
+    groups = {
+        "stems": tuple(name for name in DEEP_FEATURE_COLUMNS if name.startswith("deep_stems_")),
+        "embedding": ("deep_embedding_cosine",),
+    }
+    group_report = {}
+    for group, names in groups.items():
+        present = has_columns and any(per_feature[name]["available_clips"] for name in names)
+        complete = has_columns and all(per_feature[name]["complete"] for name in names)
+        group_report[group] = {"available": present, "complete": complete}
+    any_available = any(item["available"] for item in group_report.values())
+    all_complete = any_available and all(
+        item["complete"] for item in group_report.values() if item["available"]
+    )
+    if not any_available:
+        status = "not_available"
+        reason = "Hörsatz enthält keine nutzbaren Deep-Feature-Werte (Legacy-Satz oder kein Export)."
+    elif not all_complete:
+        status = "incomplete"
+        reason = "Mindestens ein vorhandener Stem-/Embedding-Satz ist unvollständig; keine Kalibrierung."
+    elif not labeled_ids:
+        status = "no_human_labels"
+        reason = "Deep-Features vollständig; keine passenden menschlichen Clip-Labels vorhanden."
+    elif len(declared_mix_clusters) < 2:
+        status = "insufficient_mix_clusters"
+        reason = ("Passende menschliche Clip-Labels vorhanden; mindestens zwei verschiedene Mix-/Set-Cluster-IDs "
+                  "in bewertung.csv erforderlich. Produktgewicht bleibt unverändert.")
+    else:
+        status = "uncalibrated"
+        reason = ("Labels sind an Clipmerkmale gebunden und mehrere Mix-/Set-Cluster-IDs sind angegeben; "
+                  "Ablation und Holdout-Bewertung bleiben erforderlich. Produktgewicht bleibt unverändert.")
+    ablation = _deep_feature_holdout_ablation(feature_rows, rating_rows, seed=seed)
+    return {
+        "status": status, "calibrated": False, "affects_score": False,
+        "clips": len(feature_rows), "labeled_clips": len(labeled_ids),
+        "distinct_track_pairs": len(track_pairs),
+        "independent_mix_clusters": None,
+        "declared_mix_clusters": len(declared_mix_clusters),
+        "unmatched_rating_rows": unmatched_rating_rows,
+        "duplicate_rating_rows": duplicate_rating_ids,
+        "reason": reason, "groups": group_report, "features": per_feature,
+        "track_holdout_ablation": ablation,
+    }
+
+
+def _deep_feature_holdout_ablation(feature_rows, rating_rows, *, seed):
+    """Vergleicht DSP-Baseline gegen Zusatzmerkmale ohne sie live zu aktivieren."""
+    ratings = {}
+    duplicate_rating_ids = set()
+    for row in rating_rows:
+        key = (str(row.get("pair_id", "")).strip(), str(row.get("clip_id", "")).strip())
+        if not all(key):
+            continue
+        if key in ratings:
+            duplicate_rating_ids.add(key)
+        else:
+            ratings[key] = row
+    feature_groups = {
+        "stems": tuple(name for name in DEEP_FEATURE_COLUMNS if name.startswith("deep_stems_")),
+        "embedding": ("deep_embedding_cosine",),
+    }
+    joined = []
+    for row in feature_rows:
+        key = (str(row.get("pair_id", "")).strip(), str(row.get("clip_id", "")).strip())
+        if key in duplicate_rating_ids:
+            continue
+        rating = ratings.get(key)
+        if not rating:
+            continue
+        raw_note = str(rating.get("note", "") or rating.get("gesamt_note", "")).strip()
+        if not raw_note.isdecimal() or not BEWERTUNG_MIN <= int(raw_note) <= BEWERTUNG_MAX:
+            continue
+        tracks = (str(row.get("track_a", "")).strip(), str(row.get("track_b", "")).strip())
+        if not all(tracks) or tracks[0] == tracks[1]:
+            continue
+        cluster = str(rating.get("mix_cluster_id", "") or
+                      rating.get("candidate_set_id", "")).strip()
+        values = {}
+        try:
+            values = {name: float(row[name]) for name in KANDIDATEN_TEILWERTE}
+        except (KeyError, TypeError, ValueError):
+            continue
+        if any(not math.isfinite(value) for value in values.values()):
+            continue
+        deep_values = {}
+        for name in DEEP_FEATURE_COLUMNS:
+            try:
+                value = float(row.get(name, ""))
+            except (TypeError, ValueError):
+                continue
+            if (math.isfinite(value) and
+                    (name == "deep_embedding_cosine" and -1.0 <= value <= 1.0
+                     or name != "deep_embedding_cosine" and value >= 0.0)):
+                deep_values[name] = value
+        joined.append({"pair_id": key[0], "tracks": tracks, "cluster": cluster,
+                       "group_basis": ("declared_mix_cluster"
+                                       if str(rating.get("mix_cluster_id", "")).strip()
+                                       else "candidate_set_id"),
+                       "note": int(raw_note), "base": values, "deep": deep_values})
+
+    output = {}
+    for group, names in feature_groups.items():
+        rows = [row for row in joined if all(name in row["deep"] for name in names)]
+        clusters = {row["cluster"] for row in rows if row["cluster"]}
+        if not rows or any(not row["cluster"] for row in rows) or len(clusters) < 2:
+            output[group] = {"status": "insufficient_labels_or_clusters", "clips": len(rows),
+                             "declared_clusters": len(clusters), "affects_score": False}
+            continue
+        samples = [{"pair_id": row["pair_id"], "tracks": row["tracks"],
+                    "bewertung": row["note"], "gewaehlt": False,
+                    "merkmale": {**row["base"], **row["deep"]}, "cluster": row["cluster"],
+                    "group_basis": row["group_basis"]}
+                   for row in rows]
+        train, holdout, boundary_pairs, boundary_clips = holdout_nach_tracks_mit_diagnose(
+            samples, HOLDOUT_ANTEIL, seed
+        )
+        baseline_names = [name for name in KANDIDATEN_TEILWERTE if train and
+                          np.std([sample["merkmale"][name] for sample in train]) >= MIN_KONTROLL_STREUUNG]
+        deep_names = [name for name in names if train and
+                      np.std([sample["merkmale"][name] for sample in train]) >= MIN_KONTROLL_STREUUNG]
+        model_names = baseline_names + deep_names
+        labels_train = np.asarray([sample["bewertung"] >= GUT_AB for sample in train], dtype=float)
+        labels_holdout = np.asarray([sample["bewertung"] >= GUT_AB for sample in holdout], dtype=float)
+        train_good = int(labels_train.sum())
+        train_bad = int(len(labels_train) - train_good)
+        clusters_train = {sample["cluster"] for sample in train}
+        clusters_holdout = {sample["cluster"] for sample in holdout}
+        report = {"status": "insufficient_track_holdout", "clips": len(rows),
+                  "train_clips": len(train), "holdout_clips": len(holdout),
+                  "boundary_pairs_dropped": boundary_pairs, "boundary_clips_dropped": boundary_clips,
+                  "train_good": train_good, "train_not_good": train_bad,
+                  "holdout_good": int(labels_holdout.sum()),
+                  "holdout_not_good": int(len(labels_holdout) - labels_holdout.sum()),
+                  "train_clusters": len(clusters_train), "holdout_clusters": len(clusters_holdout),
+                  "cluster_overlap": len(clusters_train & clusters_holdout),
+                  "holdout_group_basis": (
+                      "declared_mix_cluster"
+                      if any(sample["group_basis"] == "declared_mix_cluster" for sample in train + holdout)
+                      else "candidate_set_id"
+                  ),
+                  "baseline_features": baseline_names, "deep_features": deep_names,
+                  "affects_score": False}
+        if clusters_train & clusters_holdout:
+            report["status"] = "mix_cluster_leakage"
+            output[group] = report
+            continue
+        if (not baseline_names or not deep_names or labels_holdout.size == 0
+                or len(np.unique(labels_train)) < 2
+                or len(np.unique(labels_holdout)) < 2):
+            output[group] = report
+            continue
+        supported, reason = datenlage_urteil(train_good, train_bad, len(model_names))
+        if not supported:
+            report["status"] = "insufficient_training_events"
+            report["reason"] = reason
+            output[group] = report
+            continue
+        train_base = np.asarray([[sample["merkmale"][name] for name in baseline_names]
+                                 for sample in train], dtype=float)
+        test_base = np.asarray([[sample["merkmale"][name] for name in baseline_names]
+                                for sample in holdout], dtype=float)
+        train_full = np.asarray([[sample["merkmale"][name] for name in model_names]
+                                 for sample in train], dtype=float)
+        test_full = np.asarray([[sample["merkmale"][name] for name in model_names]
+                                for sample in holdout], dtype=float)
+        beta_base = fit_logistic(train_base, labels_train, L2_STAERKE)
+        beta_full = fit_logistic(train_full, labels_train, L2_STAERKE)
+        mean_base, std_base = train_base.mean(axis=0), np.where(train_base.std(axis=0) > 1e-12, train_base.std(axis=0), 1.)
+        mean_full, std_full = train_full.mean(axis=0), np.where(train_full.std(axis=0) > 1e-12, train_full.std(axis=0), 1.)
+        score_base = _standardisiere_mit(test_base, mean_base, std_base) @ beta_base[1:] + beta_base[0]
+        score_full = _standardisiere_mit(test_full, mean_full, std_full) @ beta_full[1:] + beta_full[0]
+        auc_base, auc_full = auc(labels_holdout, score_base), auc(labels_holdout, score_full)
+        report.update(status="exploratory_holdout", baseline_auc=auc_base, augmented_auc=auc_full,
+                      auc_delta=None if auc_base is None or auc_full is None else auc_full-auc_base,
+                      calibrated=False, reason="Ein Track-Holdout ist explorativ; keine Produktgewichte abgeleitet.")
+        output[group] = report
+    if duplicate_rating_ids:
+        for report in output.values():
+            report["ambiguous_rating_rows_excluded"] = len(duplicate_rating_ids)
+    return output
+
+
 def kandidaten_zeilen(
     pair_id: str,
     paare,
@@ -2189,7 +2641,7 @@ def kandidaten_zeilen(
                 "pair_id": pair_id, "clip_id": cid,
             })
         else:
-            bewertung.append({"pair_id": pair_id, "clip_id": cid, "note": "", "gewaehlt": "", "zeit": ""})
+            bewertung.append({"pair_id": pair_id, "clip_id": cid, "note": "", "gewaehlt": "", "zeit": "", "mix_cluster_id": ""})
         zeile = {"pair_id": pair_id, "clip_id": cid, "clip": clip}
         for name in KANDIDATEN_TEILWERTE:
             wert = pc.teilwerte.get(name)
@@ -2213,6 +2665,7 @@ def kandidaten_zeilen(
             "transition_type_mode": transition_type_mode,
             "track_a": track_a.filePath, "track_b": track_b.filePath,
         })
+        zeile.update(_deep_feature_csv_values(pc))
         merkmale.append(zeile)
     return bewertung, merkmale
 
@@ -2305,6 +2758,14 @@ Algorithmus-/Build-Digest sichern den lokal verwendeten Python-Code ab.
 def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
     _producer_checkpoint(args)
     render_sink = _producer_sink(args)
+    preflight = getattr(args, "hpg_preflight", None)
+    if preflight is not None and (render_sink is None or not callable(preflight)):
+        raise ValueError("Preflight erfordert den Quellreferenz-Sink")
+    source_snapshot = getattr(args, "hpg_source_snapshot", None)
+    if preflight is not None and not callable(source_snapshot):
+        raise ValueError("Preflight erfordert pruefbaren globalen Quell-Snapshot")
+    class PreflightPairRejected(Exception):
+        """Nur echter BeatSync-Ausschluss vor globalem Sink-Commit."""
     out = Path(args.out)
     anzeige_out = Path(getattr(args, "anzeige_out", out))
     clips_dir = out / "clips"
@@ -2404,6 +2865,16 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
             continue
         if [int(pc.rang) for pc in pcs] != list(range(1, len(pcs) + 1)):
             raise ValueError("Kandidaten sind kein exakter Top-N-Rangprefix")
+        if preflight is not None and any(
+            min(crossfade_reserve(
+                float(pc.t_out), float(a.duration), float(b.duration), float(pc.t_in),
+            )) < float(pc.overlap_sec)
+            for pc in pcs
+        ):
+            # Den ganzen Rangprefix vor jedem Emit pruefen, inklusive B-Nachlauf.
+            logger.warning("Paar wegen unzureichender Audio-/Nachlaufreserve vollstaendig verworfen")
+            uebersprungen += 1
+            continue
         pair_id = f"{paare_fertig + 1:03d}"
         print(f"[{paare_fertig + 1}/{args.anzahl}] Paar {pair_id}: {len(pcs)} Kandidaten ...", flush=True)
         pair_temp = (
@@ -2413,6 +2884,16 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
         clips: list[str] = []
         gerenderte_typen: list[str] = []
         verschoben: list[Path] = []
+        pending_specs = []
+        pair_sink = None
+        if preflight is not None:
+            from hpg_core.hearing_sources import SourceRenderSink
+            pair_sink = SourceRenderSink(
+                out, tuple(args.source_roots), checkpoint=lambda: _producer_checkpoint(args),
+            )
+            def stage_spec(spec, target):
+                pair_sink.emit(spec, target)
+                pending_specs.append((spec, target))
         try:
             for n, pc in enumerate(pcs, start=1):
                 _producer_checkpoint(args)
@@ -2428,11 +2909,37 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
                     ),
                     bpm_toleranz=args.bpm_toleranz,
                     energy_direction=energy_direction,
-                    **({"render_sink": render_sink} if render_sink is not None else {}),
+                    **({"render_sink": stage_spec if pair_sink is not None else render_sink}
+                       if render_sink is not None else {}),
                 )
                 _producer_checkpoint(args)
                 clips.append(clip)
                 gerenderte_typen.append(_validiere_transition_type(gerenderter_typ))
+            if pair_sink is not None:
+                if len(pending_specs) != len(pcs):
+                    raise RuntimeError("Preflight-Specs unvollstaendig")
+                sources = pair_sink.sources
+                for spec, _target in pending_specs:
+                    _producer_checkpoint(args)
+                    bound = [dict(sources[path], size_bytes=sources[path]["size"])
+                             for path in dict.fromkeys((spec.track_a_path, spec.track_b_path))]
+                    verdict = preflight(spec, bound)
+                    _producer_checkpoint(args)
+                    if type(verdict) is not bool:
+                        raise RuntimeError("Ungueltiges Preflight-Ergebnis")
+                    if not verdict:
+                        raise PreflightPairRejected()
+                if _algorithm_build_fingerprint() != algorithm_build:
+                    raise RuntimeError("Algorithmus-/Build-Dateien im Preflight veraendert")
+                for spec, target in pending_specs:
+                    _producer_checkpoint(args)
+                    render_sink(spec, target)
+                    global_sources = source_snapshot()
+                    if type(global_sources) is not dict or any(
+                        global_sources.get(path) != expected
+                        for path, expected in sources.items()
+                    ):
+                        raise RuntimeError("Globaler Sink hat andere Quellbytes als der Preflight gebunden")
             if render_sink is None:
                 for n in range(1, len(pcs) + 1):
                     quelle = pair_temp / f"{pair_id}_k{n}.wav"
@@ -2443,6 +2950,10 @@ def _befehl_prepare_kandidaten_intern(args: argparse.Namespace) -> int:
                     verschoben.append(ziel)
         except InterruptedError:
             raise
+        except PreflightPairRejected:
+            logger.warning("Paar %s wegen BeatSyncError vollstaendig verworfen", pair_id)
+            uebersprungen += 1
+            continue
         except Exception as exc:  # noqa: BLE001 — Reservepaar statt Teilsatz
             if render_sink is not None:
                 # Der Sink kann schon Referenzen besitzen: ganzen Dienstlauf abbrechen.
@@ -3196,6 +3707,18 @@ def validiere_kandidaten_csvs(
                 raise ValueError(
                     f"merkmale.csv: {name} fuer {schluessel[1]} liegt nicht endlich in 0..1"
                 )
+        for name in DEEP_FEATURE_COLUMNS:
+            raw = str(zeile.get(name, "")).strip()
+            if not raw:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"merkmale.csv: optionales {name} fuer {schluessel[1]} ungueltig") from exc
+            upper_ok = name != "deep_embedding_cosine" or value <= 1.0
+            lower_ok = value >= -1.0 if name == "deep_embedding_cosine" else value >= 0.0
+            if not math.isfinite(value) or not lower_ok or not upper_ok:
+                raise ValueError(f"merkmale.csv: optionales {name} fuer {schluessel[1]} ausserhalb des Wertebereichs")
 
 
 def validiere_vollstaendige_kandidatenbewertung(
@@ -3977,6 +4500,8 @@ def _compute_candidate_fit(merkmale_roh, bewertung_roh, manifest, genres_je_pfad
             "rating_schema": "three_notes_v1", "seed": seed, "genres": {}, "ausgeschlossen": ausschluss,
             "hinweis_technik": ("Techniknoten sind ein Freigabegate fuer Kandidatengewichte; "
                                 "sie veraendern weder Renderer noch EQ-Parameter."),
+            "deep_feature_calibration": _deep_feature_calibration_report(
+                merkmale_roh, bewertung_roh, seed=seed),
         }
     else:
         diagnose = {
@@ -3985,6 +4510,8 @@ def _compute_candidate_fit(merkmale_roh, bewertung_roh, manifest, genres_je_pfad
             "ohne_note": ohne, "verworfen": verworfen, "ausgeschlossen": ausschluss,
             "l2_staerke": L2_STAERKE, "bootstrap_ziehungen": BOOTSTRAP_ZIEHUNGEN,
             "seed": seed, "genres": {},
+            "deep_feature_calibration": _deep_feature_calibration_report(
+                merkmale_roh, bewertung_roh, seed=seed),
         }
     gewichte_je_genre, rangfolge = {}, {}
     # --genre wurde im Kandidaten-Fit bisher ignoriert; dieser Vertrag bleibt bestehen.
@@ -4297,6 +4824,15 @@ def main(argv=None) -> int:
         help="Pflicht in --modus kandidaten: erfolgreicher audit_candidate_set-Report",
     )
     f.set_defaults(funktion=_fit)
+
+    r = unter.add_parser(
+        "transition-ratings-report",
+        help="Read-only Deep-Feature-Bericht aus In-App-Bewertungen ausgeben",
+    )
+    r.add_argument("--file", required=True, type=Path,
+                   help="Pfad zur von HPG gespeicherten transition_ratings.json")
+    r.add_argument("--seed", type=int, default=STANDARD_SEED)
+    r.set_defaults(funktion=_transition_ratings_report)
 
     args = parser.parse_args(argv)
     try:

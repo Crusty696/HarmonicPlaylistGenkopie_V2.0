@@ -11,7 +11,8 @@ from hpg_core.mix_candidates import MixCandidate
 def _lokaler_kandidat(t: float, camelot: str, energy: int) -> MixCandidate:
   muster = [0.8 if index % 4 == 0 else 0.0 for index in range(16)]
   return MixCandidate(
-    t=t, schema=["pssi_phrase"], section_label="main", phrase_label="Chorus",
+    # Generische Testtracks besitzen keine native Rekordbox-PSSI-Herkunft.
+    t=t, schema=["sektion"], section_label="main", phrase_label="Chorus",
     neuheit=0.7, traegt_allein=True, groove_pattern_lokal=muster,
     bass_pattern_lokal=muster, syncopation_lokal=0.2,
     percussive_ratio_lokal=0.5, sub_energy=0.5, bass_punch=2.0,
@@ -71,8 +72,15 @@ def make_track(**overrides) -> Track:
       track.outro_covered = True
     if "analysis_coverage" not in overrides:
       track.analysis_coverage = [{"start": 0.0, "end": track.duration}]
-    track.first_downbeat = 0.0
-    track.downbeat_confidence = 1.0
+    for name, value in (
+      ("first_downbeat", 0.0),
+      ("downbeat_confidence", 1.0),
+      ("beatgrid_source", "audio"),
+      ("beatgrid_status", "verified"),
+      ("beatgrid_windows_checked", 3),
+    ):
+      if name not in overrides:
+        setattr(track, name, value)
     intro_end = max(
       (float(section.get("end_time", 0.0)) for section in track.sections
        if str(section.get("label", "")).lower() == "intro"),

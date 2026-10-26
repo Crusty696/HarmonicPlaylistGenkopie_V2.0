@@ -12,7 +12,7 @@ Ein Track hat **einen Anker** und **ein Gitter**. Jeder Zeitpunkt, der in
 muss auf diesem Gitter liegen.
 
 ```
-grid  = seconds_per_bar(bpm) * profile.phrase_unit      # METER = 4
+  grid  = seconds_per_bar(bpm) * effective_phrase_unit   # METER = 4
 mix_in  = quantize_to_grid(t, grid, anchor, "ceil")     # nie VOR dem Ereignis
 mix_out = quantize_to_grid(t, grid, anchor, "floor")    # nie NACH dem Ereignis
 ```
@@ -42,6 +42,13 @@ and phrase_confidence >= PHRASE_CONFIDENCE_MIN   # hpg_core/config.py, = 0.25
 ```
 
 sonst `first_downbeat`.
+
+Ausnahme bei validierter Schema-v5-Diagnose
+`anchor.bar_position_comparison.status == "candidate_rotation"`: `Track.phrase_anchor`
+ist nicht verfuegbar (`None`), und beide Analysepfade erzeugen weder Phrase-Grid,
+Mixpunkte noch Kandidaten. Pairing und `calculate_paired_mix_points` muessen vor
+Quantisierung abbrechen; `None` darf nicht auf ein Raster ab `0.0` zurueckfallen.
+Der Beat-Anker und Beat-Sync bleiben davon unberuehrt.
 
 **Warum getrennt (AUDIT-FIX R3):** `phrase_anchor` kann bis zu
 `phrase_unit - 1` Bars hinter dem ersten Downbeat liegen (~28 s bei 16-Bar-
@@ -122,6 +129,25 @@ Kommt aus `GENRE_MIX_PROFILES[genre].phrase_unit`, erlaubt sind nur 8/16/32
 (erzwungen von `_validate_genre_tables`). Psytrance/Trance = 16, sonst
 ueberwiegend 8. Ableitung fuer den Struktur-Analyzer:
 `GENRE_PHRASE_UNITS` [hpg_core/structure_analyzer.py]. Details: Skill `hpg-genres`.
+
+Bei bestaetigtem Beatgrid und schwacher erster Phrasenphase darf
+`analyze_structure` die Phrasenlaenge aus Audio-Novelty ermitteln. Das Head-
+Fenster bestimmt `structure.phrase_unit`; das Tail uebernimmt diese Einheit.
+Track-Mixpunkte, Fallback-Mixpunkte, manuelle Cue-Ausrichtung, Mix-Kandidaten
+und Paar-Mixpunkte muessen dieselbe Einheit verwenden. `calculate_paired_mix_points`
+nimmt `Track.phrase_unit` fuer `audio_novelty`; sonst bleibt das Genreprofil
+massgeblich. Gesperrte oder unbestaetigte Raster und
+starke erste Phrasenphasen behalten den Genre-Prior. Diese Aenderung ist
+unvalidiert. `Track.phrase_unit_source` persistiert, ob die Einheit aus
+`audio_novelty`, `genre_prior` oder `configured` stammt. `audio_novelty`
+setzt eine erfolgte Messung voraus und darf nicht allein durch einen Aufrufer
+gesetzt werden. Optionale Werte
+`phrase_unit_candidate`, `phrase_unit_score` und `phrase_unit_margin` zeigen
+besten Kandidaten, rohe Korrelation und Ranking-Abstand; sie sind keine
+Wahrscheinlichkeiten. Diagnose-Schema v6 und Cachevertrag muessen dieselben
+Werte wie die Trackfelder fuehren.
+Interne Genreprofil-Einheiten tragen `genre_prior`, auch wenn `analysis.py` sie
+explizit weitergibt; Paar-Mixpoints bleiben fuer diese Herkunft profilgesteuert.
 
 ## Notfall-Pfade
 
