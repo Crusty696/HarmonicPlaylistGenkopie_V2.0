@@ -1,5 +1,43 @@
 # Gesamtrefaktorierung Implementation Plan
 
+## EXE-Originaltrack-Lauf vom 07.11.2026, native Beats deaktiviert
+
+Die exakt gebaute EXE unter
+`C:/Users/david/AppData/Local/Temp/hpg-exe-dist-vcfix-final-20261107/HarmonicPlaylistGenerator.exe`
+hatte SHA-256 `FB46812453B4A62B771E2283FAFDF30E23630DD7ED8AABF6E5D8D92BADEA225A`.
+Sie wurde mit isoliertem Zustand unter `%TEMP%/hpg-exe-26-final-20261107`
+und 26 Originaldateien aus `F:/beatport_tracks_2026-04` gestartet. Das
+Run-Manifest hält Pfade, Größen und Änderungszeiten fest; alle 26 Größen und
+Änderungszeiten stimmten nach dem Lauf noch überein. `HPG_NATIVE_BEAT=0`
+hielt die native Rekordbox-Beatpipeline wegen der iGPU-Vorgabe aus.
+Optionale KI-Metadaten waren aus; Harmonic Flow und ±2 BPM waren in der EXE
+sichtbar eingestellt.
+
+Das App-Protokoll meldete um 13:25:54 `Analyse fertig: 26/26 erfolgreich`.
+Die anschließende Playlist-Berechnung meldete um 13:25:56 `Score=0.00`,
+`Harmonic=0.00`, `Energy=0.00`, `BPM=0.00`. Im Laufzeitfenster lag kein
+Windows-Absturzereignis für diese EXE vor. Nach dem physischen Escape-Stopp
+der Computersteuerung war die App nicht mehr offen; deshalb wurden
+Veröffentlichung, konkrete Übergangspläne und
+Vorschau in diesem EXE-Lauf nicht mehr sichtbar geprüft. Der Score ist ein
+Logwert, keine musikalische Bewertung. Ein weiterer nativer Beat-Lauf würde
+nach den bisherigen Gerätedaten die iGPU vorübergehend nutzen und erfordert
+eine neue Entscheidung des Nutzers zur früheren iGPU-Sperre. Der Nutzer
+bestätigte am 07.11.2026 ausdrücklich, dass die iGPU weiter frei bleiben
+soll; ein erneuter nativer EXE-Beatlauf wurde deshalb nicht gestartet.
+
+Als unabhängige Hörvorbereitung wurden die bereits gespeicherten 26
+Source-App-Track-Snapshots ohne Modellinferenz erneut mit dem eingefrorenen
+Scoring-Kontext bewertet. Das reproduzierte 19 geplante Übergänge und
+`overall_score=0.6088`. Übergang 10 (Sonic Arps „Spring“ zu Zen Mechanics &
+Protonica „Flowstate“) wurde über `TransitionClipSpec.from_plan` und den
+aktuellen Renderer als WAV unter `%TEMP%/hpg-listening-20261107/uebergang-10.wav`
+erzeugt. Der Clip ist 87,43 s lang, 44,1 kHz Stereo, Peak 0,736, RMS 0,179,
+ohne NaN/Inf oder Stille; SHA-256
+`4F095C99F01E6227E7E732CB768A22FBD7AD99728F5ED969E49F68F140EDAC93`.
+Dieser Clip stammt aus den früheren Source-App-Analysen, nicht aus dem
+aktuellen EXE-Nullscore-Lauf. Menschliches Hörurteil steht noch aus.
+
 ## Fortsetzung 07.11.2026: 26-Track-App-Lauf nach iGPU-Korrektur
 
 Der isolierte App-Lauf `%TEMP%/hpg-full-fresh-app-fixed-20261107` wurde mit
