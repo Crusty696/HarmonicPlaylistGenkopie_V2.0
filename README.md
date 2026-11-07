@@ -7,9 +7,11 @@ Die Ergebnisse lassen sich als M3U8 oder Rekordbox-XML exportieren.
 
 **Stand 07.11.2026:** Ein isolierter App-Lauf analysierte 26 Originaltracks
 frisch und veröffentlichte eine Playlist mit 19 geplanten von 25 Übergängen.
-Der aktuelle Quellstand bestand 6705 Tests; ein Originaltrack lieferte danach
-einen isolierten Cachetreffer. Das sind technische Nachweise, keine vollständige
-musikalische oder EXE-Abnahme. Aktuelle Grenzen und Rohbelege stehen im
+Der aktuelle Quellstand bestand 6706 Tests; ein Originaltrack lieferte danach
+einen isolierten Cachetreffer. Ein neuer EXE-Build bestand einen gezielten
+Originaltrack-Workerlauf nach Korrektur der gebündelten VC-Laufzeit; der
+vollständige EXE-App-Ablauf und die musikalische Abnahme bleiben offen.
+Aktuelle Grenzen und Rohbelege stehen im
 [laufenden Arbeitsplan](docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md).
 Der [Quellen- und Nachweisstand](PRODUCTION_STATUS.md) bewahrt den historischen
 Abgleich vom 26.10.2026.

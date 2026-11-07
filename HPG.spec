@@ -40,6 +40,17 @@ def _hpg_build_path(system_root, executable, base_prefix, qt_bin):
     return os.pathsep.join(result)
 
 
+def _without_qt_vc_runtime(binaries):
+    """Veraltete VC-Laufzeit-Kopien aus dem PyQt6-Verzeichnis entfernen."""
+    names = {'MSVCP140.DLL', 'MSVCP140_1.DLL', 'MSVCP140_2.DLL',
+             'VCRUNTIME140.DLL', 'VCRUNTIME140_1.DLL'}
+    return type(binaries)(
+        entry for entry in binaries
+        if not (Path(entry[0].replace('\\', '/')).parent.as_posix().lower() == 'pyqt6/qt6/bin'
+                and Path(entry[0]).name.upper() in names)
+    )
+
+
 # Nur die Build-Prozessumgebung aendern, vor Hooks und jeder Collector-Ausfuehrung.
 # Qt-Pfad aus dem installierten Paket ableiten, ohne eine Qt-DLL zu laden.
 _hpg_qt_spec = importlib.util.find_spec('PyQt6')
@@ -131,6 +142,12 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# PyQt6 liefert hier VC-Laufzeit-DLLs von 2019 (14.26). Im Frozen-Worker
+# kollidieren sie mit neueren nativen Paketen und verursachen 0xc0000005.
+# Die installierte Windows-VC-Laufzeit verwenden; keine veraltete Qt-Kopie
+# neben Qt6Core.dll auspacken.
+a.binaries = _without_qt_vc_runtime(a.binaries)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

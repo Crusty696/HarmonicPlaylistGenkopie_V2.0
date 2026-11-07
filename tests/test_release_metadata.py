@@ -81,6 +81,25 @@ def test_pyinstaller_embeds_windows_version_resource():
   assert "version='version_info.txt'" in (ROOT / "HPG.spec").read_text(encoding="utf-8")
 
 
+def test_pyinstaller_excludes_old_qt_vc_runtime_copies():
+  import ast
+  tree = ast.parse((ROOT / "HPG.spec").read_text(encoding="utf-8"))
+  function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "_without_qt_vc_runtime")
+  namespace = {"Path": Path}
+  exec(compile(ast.Module(body=[function], type_ignores=[]), "HPG.spec", "exec"), namespace)
+  binaries = [
+    (r"PyQt6\Qt6\bin\MSVCP140.dll", "old", "BINARY"),
+    (r"PyQt6\Qt6\bin\MSVCP140_1.dll", "old", "BINARY"),
+    (r"PyQt6\Qt6\bin\MSVCP140_2.dll", "old", "BINARY"),
+    (r"PyQt6\Qt6\bin\VCRUNTIME140.dll", "old", "BINARY"),
+    (r"PyQt6\Qt6\bin\VCRUNTIME140_1.dll", "old", "BINARY"),
+    (r"VCRUNTIME140.dll", "python", "BINARY"),
+    (r"another\MSVCP140.dll", "other", "BINARY"),
+  ]
+  assert namespace["_without_qt_vc_runtime"](binaries) == binaries[-2:]
+
+
 def test_pyinstaller_bundles_hpg_core_data_json():
   """tolerances.py / candidate_preferences.py lesen Path(__file__).parent / 'data';
   der gefrorene Build muss hpg_core/data/*.json mitbringen."""

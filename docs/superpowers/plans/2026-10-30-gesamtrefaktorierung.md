@@ -1182,3 +1182,32 @@ sind Kennzahlen, Tabelle und Bedienelemente lesbar. Die beiden roten Grenzen
 bleiben als „Kein Übergang“ sichtbar. Es ist weiterhin eine virtuelle
 Offscreen-Ansicht mit bestehenden Analysen, kein frischer Audio-/Cache-Lauf,
 keine physische Nutzerbedienung und kein musikalisches Urteil.
+
+## EXE-Laufzeitkorrektur vom 07.11.2026
+
+Der erste gebaute EXE-Stand `ce2e978f` startete die GUI, aber seine
+Analyse-Worker stürzten in der 26-Track-Analyse mit `0xc0000005` ab.
+Windows-Fehlerereignis 1000 nannte bei einem gezielten Ein-Track-Lauf
+`MSVCP140.dll` aus dem gebündelten PyQt6-Verzeichnis (Version 14.26).
+Dieser Ein-Track-Lauf scheiterte auch mit `HPG_STEMS=0` und
+`HPG_NATIVE_BEAT=0` (Exit 1). Der synthetische EXE-Smoke-Test bestand;
+damit war nur der einfache Spawn- und DSP-Transport belegt.
+
+`HPG.spec` filtert nun die fünf alten VC-Laufzeitkopien aus
+`PyQt6/Qt6/bin`. Auf diesem Windows-Rechner steht die neuere installierte
+VC-Laufzeit 14.51 zur Verfügung. Der zweite Build enthält laut
+`EXE-00.toc` keine dieser PyQt6-Kopien. Derselbe Originaltrack-Workerlauf
+bestand sowohl mit deaktivierten als auch mit den normalen nativen
+Analysefunktionen (je Exit 0); in den letzten drei Minuten des zweiten
+Laufs wurde kein zugehöriges Windows-Absturzereignis gefunden.
+Der gemeinsame Abschlusslauf bestand 6706 Tests bei 80,99 % Coverage:
+`%TEMP%/hpg-vc-runtime-full-20261107/vc_runtime_full_20261107.log`.
+Die abschließend neu gebaute und separat geprüfte EXE liegt unter
+`%TEMP%/hpg-exe-dist-vcfix-final-20261107/HarmonicPlaylistGenerator.exe`,
+SHA-256 `FB46812453B4A62B771E2283FAFDF30E23630DD7ED8AABF6E5D8D92BADEA225A`.
+Ihr synthetischer EXE-Smoke-Test und der Originaltrack-Workerlauf mit normaler
+Analyse endeten je mit Exit 0. Windows meldete im Zeitfenster des letzten
+Laufs keinen zugehörigen Absturz. Das finale `EXE-00.toc` enthält keine
+PyQt6-VC-Laufzeitkopien.
+Dies ist ein gezielter Worker-Nachweis, kein erneuter 26-Track-EXE-App-Lauf
+und keine Prüfung auf Windows-Systemen ohne installierte VC-Laufzeit.
