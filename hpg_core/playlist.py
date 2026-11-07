@@ -1,5 +1,53 @@
 from __future__ import annotations
 
+from .transition_notes import bind_candidate_recommendation, format_dj_notes, local_key_note
+
+from .candidate_path import (
+    _PathState,
+    _path_order,
+    _snapshot_flag,
+    _candidate_link_consistent,
+    _select_snapshot_path,
+    _check_cancel,
+)
+
+# Kompatible Fassade für bestehende Verbraucher.
+from .scoring_primitives import (
+    combine_weighted,
+)
+from .playlist_results import (
+    _FrozenMapping,
+    _FrozenSequence,
+    _freeze_immutable,
+    _thaw_immutable,
+    _freeze_choice_snapshot,
+    _thaw_choice_key,
+    _thaw_choice_snapshot,
+    TransitionMetrics,
+    TransitionRecommendation,
+    TransitionPlan,
+    TrackOccurrence,
+    ImmutableMetricsSnapshot,
+    ImmutableRecommendationSnapshot,
+    BoundaryResult,
+    GraphStats,
+    PathStats,
+    PlaylistGenerationResult,
+    TransitionDescriptionParams,
+    EnergyDirection,
+)
+from .set_timeline import (
+    SetTimeline,
+    SetTimelineEntry,
+    _timeline_track_duration,
+    _validated_timeline_plan,
+    _calculate_timeline_entries,
+    _identify_peak_track,
+    _assign_energy_phases,
+    compute_set_timeline,
+    get_set_timing_summary,
+)
+
 from .models import (
     Track,
     key_to_camelot,
@@ -53,96 +101,38 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
+from .playlist_strategies import PlaylistStrategies, StrategyServices
+
 logger = logging.getLogger(__name__)
 
+def _strategy_engine():
+    return PlaylistStrategies(StrategyServices(
+        ENERGY_WAVE_FENSTER=ENERGY_WAVE_FENSTER,
+        LOOKAHEAD_FUTURE_WEIGHT=LOOKAHEAD_FUTURE_WEIGHT,
+        LOOKAHEAD_TOP_K=LOOKAHEAD_TOP_K,
+        _apply_harmonic_smoothing=_apply_harmonic_smoothing,
+        _check_cancel=_check_cancel,
+        _context_target_energy=_context_target_energy,
+        _find_best_starting_track=_find_best_starting_track,
+        _peak_time_curve=_peak_time_curve,
+        _prepare_track_metrics=_prepare_track_metrics,
+        _remove_track=_remove_track,
+        _resolve_track_genre=_resolve_track_genre,
+        _small_pool_order=_small_pool_order,
+        _track_cache_key=_track_cache_key,
+        _transition_path_score=_transition_path_score,
+        calculate_transition_objective=calculate_transition_objective,
+        get_genre_compatibility=get_genre_compatibility,
+        _sort_harmonic_flow=_sort_harmonic_flow,
+    ))
 
-class _FrozenMapping(tuple):
-    """Markiert eingefrorene Mappings, auch wenn sie leer sind."""
-
-
-class _FrozenSequence(tuple):
-    """Markiert eingefrorene Sequenzen, auch wenn sie leer sind."""
 
 # AUDIT-FIX D6/F28 (2026-07-24): vormals hartkodierte Scoring-Konstanten
 # (Magic Numbers) zentralisiert. Bei Bedarf spaeter nach config.py heben.
 SMOOTHING_ENERGY_DISRUPTION_MAX = 20  # max. Energiesprung fuer harmonischen Swap
 SMOOTHING_MAX_ITERATIONS = 3          # Passes im harmonic-smoothing-Loop
 LOOKAHEAD_FUTURE_WEIGHT = 0.7         # Gewicht des Lookahead-Zukunftsterms
-VOCAL_CLASH_PENALTY = 0.06            # Abzug wenn BEIDE Tracks vocal sind (D2-light)
-
-
-def _freeze_immutable(value):
-    """Kanonische, tief unveraenderliche Result-Repräsentation."""
-    if value is None or isinstance(value, (bool, int)):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("Result-Wert muss endlich sein")
-        return value
-    if isinstance(value, str):
-        return unicodedata.normalize("NFC", value)
-    if isinstance(value, Enum):
-        return _freeze_immutable(value.value)
-    if isinstance(value, Mapping):
-        return _FrozenMapping(
-            (
-                unicodedata.normalize("NFC", str(key)),
-                _freeze_immutable(item),
-            )
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        )
-    if isinstance(value, (list, tuple)):
-        return _FrozenSequence(_freeze_immutable(item) for item in value)
-    if isinstance(value, (set, frozenset)):
-        frozen = [_freeze_immutable(item) for item in value]
-        return _FrozenSequence(sorted(frozen, key=repr))
-    raise ValueError(f"Result-Werttyp nicht unterstuetzt: {type(value).__name__}")
-
-
-def _thaw_immutable(value):
-    """Defensive Legacy-Kopie einer eingefrorenen Result-Struktur."""
-    if isinstance(value, _FrozenMapping):
-        return {key: _thaw_immutable(item) for key, item in value}
-    if isinstance(value, _FrozenSequence):
-        return [_thaw_immutable(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _thaw_immutable(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        if all(
-            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
-            for item in value
-        ):
-            return {key: _thaw_immutable(item) for key, item in value}
-        return [_thaw_immutable(item) for item in value]
-    return value
-
-
-def _freeze_choice_snapshot(value: Mapping) -> tuple:
-    """Friert Kandidatenwahlen ein, ohne ihre Tupel-Schluessel zu verlieren."""
-    if not isinstance(value, Mapping):
-        raise ValueError("candidate_choice_snapshot muss ein Mapping sein")
-    return tuple(
-        sorted(
-            (
-                (_freeze_immutable(key), _freeze_immutable(item))
-                for key, item in value.items()
-            ),
-            key=lambda pair: repr(pair[0]),
-        )
-    )
-
-
-def _thaw_choice_key(value):
-    if isinstance(value, tuple):
-        return tuple(_thaw_choice_key(item) for item in value)
-    return value
-
-
-def _thaw_choice_snapshot(value: tuple) -> dict:
-    return {
-        _thaw_choice_key(key): _thaw_immutable(item)
-        for key, item in value
-    }
+from .scoring_primitives import VOCAL_CLASH_PENALTY
 
 
 @dataclass(frozen=True)
@@ -240,235 +230,6 @@ class StrategyConfig:
         return {key: value for key, value in values.items() if key in supported}
 
 
-@dataclass
-class TransitionMetrics:
-    """Metrics for evaluating track transitions."""
-
-    harmonic_score: int
-    bpm_smoothness: float
-    energy_flow: float
-    genre_compatibility: float
-    overall_score: float
-    ai_bonus: float = 0.0
-    # Lokale Faktoren des konkreten Mixfenster-Paars. None bedeutet, dass kein
-    # vollstaendig bewertbarer lokaler Uebergang vorhanden ist.
-    groove_match: Optional[float] = None
-    bass_continuity: Optional[float] = None
-    timbre_match: Optional[float] = None
-    mood_match: Optional[float] = None
-    # Kandidatenpfad (Spec 2026-08-21 Abschnitt 4): lokale Teilwerte des besten
-    # PairCandidate; None, wenn das Paar ohne Kandidaten bewertet wurde.
-    loudness_match: Optional[float] = None
-    structure_match: Optional[float] = None
-    energy_delta: Optional[float] = None
-    lufs_delta: Optional[float] = None
-    kandidat: Optional[dict] = None   # PairCandidate.to_dict() der aktiven Result-Kette
-
-
-@dataclass
-class TransitionRecommendation:
-    """Suggested mix window details for consecutive tracks."""
-
-    index: int
-    from_track: Track
-    to_track: Track
-    fade_out_start: float
-    fade_out_end: float
-    fade_in_start: float
-    mix_entry: float
-    overlap: float
-    bpm_delta: float
-    energy_delta: int
-    compatibility_score: int
-    risk_level: str
-    notes: str
-    transition_type: str = "blend"  # Vorhergesagter Transition-Typ
-    dj_rec: Optional["DJRecommendation"] = None  # Paar-spezifische DJ-Brain-Empfehlung
-    plan: Optional["TransitionPlan"] = None
-    # Alle PairCandidates des Paars (to_dict) in App-Reihenfolge und der Rang des
-    # aktiven Kandidaten (0 = keiner; dann tragen Plan/Track die Zeitpunkte).
-    kandidaten: List[dict] = field(default_factory=list)
-    kandidat_aktiv: int = 0
-    # False, wenn kein Kandidat hinter dem Mix-In des vorigen Paars lag und
-    # deshalb Rang 1 genommen wurde (Invariante 1 je Track dann verletzt).
-    kandidat_konsistent: bool = True
-
-
-@dataclass(frozen=True)
-class TransitionPlan:
-    """Unveraenderlicher Zeit- und Rendervertrag eines Uebergangs."""
-
-    mix_out_a: float
-    mix_in_b: float
-    fade_out_start: float
-    fade_out_end: float
-    overlap: float
-    transition_type: str
-    curve: str = "linear"
-    eq_mode: str = "default"
-    tempo_ratio: float = 1.0
-    target_sr: int = 44100
-    # Optionaler, lokaler Stem-Kandidat als Anteil der Blende (0..1).
-    # Er steuert nur die Preview-Rampe und ist keine kalibrierte Aussage.
-    bass_swap_fraction: float | None = None
-
-    @property
-    def crossfade_frames(self) -> int:
-        return int(round(self.overlap * self.target_sr))
-
-
-@dataclass(frozen=True, slots=True)
-class TrackOccurrence:
-    run_id: str
-    ordinal: int
-    track: Track
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.run_id, str) or not self.run_id:
-            raise ValueError("run_id muss eine nichtleere Zeichenkette sein")
-        if (
-            isinstance(self.ordinal, bool)
-            or not isinstance(self.ordinal, int)
-            or self.ordinal < 0
-        ):
-            raise ValueError("ordinal muss eine nichtnegative ganze Zahl sein")
-        if not isinstance(self.track, Track):
-            raise ValueError("track muss ein Track sein")
-
-    @property
-    def occurrence_id(self) -> tuple[str, int]:
-        return (self.run_id, self.ordinal)
-
-
-@dataclass(frozen=True, slots=True)
-class ImmutableMetricsSnapshot:
-    harmonic_score: int
-    bpm_smoothness: float
-    energy_flow: float
-    genre_compatibility: float
-    overall_score: float
-    ai_bonus: float = 0.0
-    groove_match: Optional[float] = None
-    bass_continuity: Optional[float] = None
-    timbre_match: Optional[float] = None
-    mood_match: Optional[float] = None
-    loudness_match: Optional[float] = None
-    structure_match: Optional[float] = None
-    energy_delta: Optional[float] = None
-    lufs_delta: Optional[float] = None
-    kandidat: Optional["CandidateSnapshot"] = None
-
-
-@dataclass(frozen=True, slots=True)
-class ImmutableRecommendationSnapshot:
-    index: int
-    from_occurrence_id: tuple[str, int]
-    to_occurrence_id: tuple[str, int]
-    fade_out_start: float
-    fade_out_end: float
-    fade_in_start: float
-    mix_entry: float
-    overlap: float
-    bpm_delta: float
-    energy_delta: int
-    compatibility_score: int
-    risk_level: str
-    notes: str
-    transition_type: str
-    plan: Optional[TransitionPlan]
-    candidates: tuple["CandidateSnapshot", ...]
-    active_candidate_key: Optional[tuple]
-    candidate_consistent: bool
-
-
-@dataclass(frozen=True, slots=True)
-class BoundaryResult:
-    index: int
-    from_occurrence_id: tuple[str, int]
-    to_occurrence_id: tuple[str, int]
-    snapshots: tuple["CandidateSnapshot", ...]
-    selected: Optional["CandidateSnapshot"]
-    metrics: ImmutableMetricsSnapshot
-    recommendation: ImmutableRecommendationSnapshot
-    consistent: bool
-
-
-@dataclass(frozen=True, slots=True)
-class GraphStats:
-    input_tracks: int
-    valid_tracks: int
-    invalid_bpm_excluded: int
-    boundaries_total: int
-    boundaries_with_candidates: int
-    boundaries_without_candidates: int
-    candidate_snapshots: int
-    saved_present: int
-
-
-@dataclass(frozen=True, slots=True)
-class PathStats:
-    boundaries_total: int
-    with_candidates: int
-    planned: int
-    unplanned: int
-    saved_present: int
-    saved_honored: int
-    link_checks: int
-    consistent_links: int
-    segments: int
-    segment_restarts: int
-    states_retained: int
-    total_score: float
-
-
-@dataclass(frozen=True, slots=True)
-class PlaylistGenerationResult:
-    run_id: str
-    mode: str
-    tracks: tuple[Track, ...]
-    occurrences: tuple[TrackOccurrence, ...]
-    boundaries: tuple[BoundaryResult, ...]
-    metrics: tuple[ImmutableMetricsSnapshot, ...]
-    recommendations: tuple[ImmutableRecommendationSnapshot, ...]
-    quality: tuple[tuple[str, float], ...]
-    scoring_context: tuple[tuple[str, object], ...]
-    candidate_choice_snapshot: tuple
-    graph_stats: GraphStats
-    path_stats: PathStats
-    bpm_tolerance: float
-
-    def quality_dict(self) -> dict[str, float]:
-        return dict(self.quality)
-
-    def scoring_context_dict(self) -> dict:
-        return _thaw_immutable(dict(self.scoring_context))
-
-    def candidate_choice_snapshot_dict(self) -> dict:
-        return _thaw_choice_snapshot(self.candidate_choice_snapshot)
-
-
-@dataclass
-class TransitionDescriptionParams:
-    """Parameters for building a transition description."""
-
-    compatibility_score: int
-    bpm_delta: float
-    bpm_tolerance: float
-    energy_delta: int
-    metrics: "TransitionMetrics"
-    from_track: Track
-    to_track: Track
-    has_dj_brain: bool = False
-
-
-class EnergyDirection(Enum):
-    """Direction of energy flow in transitions."""
-
-    UP = "up"
-    DOWN = "down"
-    MAINTAIN = "maintain"
-
-
 def _normalize_energy_direction(value) -> Optional[EnergyDirection]:
     """Normalisiert GUI-Presets und API-Werte auf den einen Scoring-Vertrag."""
     if isinstance(value, EnergyDirection):
@@ -482,12 +243,6 @@ def _normalize_energy_direction(value) -> Optional[EnergyDirection]:
         "down": EnergyDirection.DOWN,
         "maintain": EnergyDirection.MAINTAIN,
     }.get(value.strip().casefold())
-
-
-def _check_cancel(cancel_check) -> None:
-    """Bricht kooperativ ab; Aufrufer publizieren dadurch kein Teilergebnis."""
-    if cancel_check is not None and cancel_check():
-        raise InterruptedError("Playlist-Generierung abgebrochen")
 
 
 def _track_cache_key(track: Track) -> int:
@@ -600,26 +355,6 @@ def _get_camelot_components(camelot_code: str) -> tuple[int, str]:
     Delegiert an die zentrale Definition in models (Audit 2026-07-17).
     """
     return get_camelot_components(camelot_code)
-
-
-def combine_weighted(
-    components: dict[str, float | None], weights: dict[str, float]
-) -> float:
-    """Gewichtete Summe; fehlende Komponenten werden umverteilt.
-
-    Ein Faktor mit Wert None ist "nicht bestimmbar" und wird NICHT mit 0
-    bewertet — das waere eine stille Bestrafung fuer Tracks ohne Groove-Daten.
-    Stattdessen faellt er samt Gewicht aus der Summe, und die verbleibenden
-    Gewichte werden auf 1.0 renormiert.
-    """
-    verfuegbar = {k: v for k, v in components.items() if v is not None}
-    if not verfuegbar:
-        return 0.0
-    gewicht_summe = sum(weights.get(k, 0.0) for k in verfuegbar)
-    if gewicht_summe <= 0.0:
-        return 0.0
-    roh = sum(weights.get(k, 0.0) * float(v) for k, v in verfuegbar.items())
-    return roh / gewicht_summe
 
 
 def _resolve_track_genre(track: Track) -> str:
@@ -1137,124 +872,9 @@ def _transition_path_score(order, bpm_tolerance: float, kwargs: dict) -> tuple:
     return sum(score > 0 for score in scores), sum(scores)
 
 
-def _sort_harmonic_flow(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """Enhanced harmonic flow using look-ahead and backtracking to avoid local optima."""
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    if len(tracks) <= 6:
-        # Kleine Pools vollständig lösen: ein lokal guter Start kann eine
-        # Sackgasse erzeugen, obwohl eine lückenlose gerichtete Kette existiert.
-        # Jedes Paar nur einmal bewerten, auch bei bis zu 720 Reihenfolgen.
-        edge_scores = {}
-        def complete_path_score(order):
-            scores = []
-            for a, b in zip(order, order[1:]):
-                key = (id(a), id(b))
-                if key not in edge_scores:
-                    edge_scores[key] = calculate_transition_objective(a, b, bpm_tolerance, **kwargs)
-                scores.append(edge_scores[key])
-            return sum(score > 0 for score in scores), sum(scores)
-        return _small_pool_order(
-            tracks,
-            complete_path_score,
-            cancel_check,
-        )
-
-    # Create a local cache specifically to avoid repeated function calls during lookahead
-    # and pass it to _find_best_starting_track as well.
-    compat_cache = {}
-
-    # Capture kwargs in closure for nested function
-    compat_kwargs = kwargs.copy()
-    compat_kwargs["compat_cache"] = compat_cache
-
-    def _lookahead_score(
-        current: Track, remaining: List[Track], depth: int = 2
-    ) -> Tuple[Track, float]:
-        """Look ahead to find the best path with given depth."""
-        if not remaining or depth <= 0:
-            return None, 0.0
-
-        # H6-Fix: Immediate-Scores zuerst berechnen, Rekursion nur fuer die
-        # Top-K Kandidaten — reduziert O(n^3) auf O(n^2 * K) bei grossen Listen
-        scored = []
-        for candidate in remaining:
-            _check_cancel(cancel_check)
-            cache_key = (_track_cache_key(current), _track_cache_key(candidate))
-            if cache_key in compat_cache:
-                immediate_score = compat_cache[cache_key]
-            else:
-                immediate_score = calculate_transition_objective(
-                    current, candidate, bpm_tolerance, **kwargs
-                )
-                compat_cache[cache_key] = immediate_score
-
-            if immediate_score == 0:  # Skip incompatible tracks
-                continue
-            scored.append((immediate_score, candidate))
-
-        if not scored:
-            return None, -1
-
-        scored = heapq.nlargest(
-            LOOKAHEAD_TOP_K,
-            scored,
-            key=lambda item: item[0],
-        )
-
-        best_candidate = None
-        best_total_score = -1
-        for immediate_score, candidate in scored[:LOOKAHEAD_TOP_K]:
-            _check_cancel(cancel_check)
-            future_score = 0.0
-            if depth > 1 and len(remaining) > 1:
-                next_remaining = [t for t in remaining if t is not candidate]
-                _, future_score = _lookahead_score(candidate, next_remaining, depth - 1)
-
-            # Konstante statt Literal: derselbe Wert stand hier doppelt, ein
-            # Aendern von LOOKAHEAD_FUTURE_WEIGHT haette nur die andere
-            # Fundstelle erwischt und die Gewichtung still auseinanderlaufen
-            # lassen. Sofort-Score wiegt schwerer als die Vorausschau.
-            total_score = immediate_score + LOOKAHEAD_FUTURE_WEIGHT * future_score
-            if total_score > best_total_score:
-                best_total_score = total_score
-                best_candidate = candidate
-
-        return best_candidate, best_total_score
-
-    unprocessed = list(tracks)
-    # Start with a track that has good overall connectivity
-    start_track = _find_best_starting_track(tracks, bpm_tolerance, **compat_kwargs)
-    final_playlist = [start_track]
-    _remove_track(unprocessed, start_track)
-
-    current_track = start_track
-    while unprocessed:
-        _check_cancel(cancel_check)
-        best_next, score = _lookahead_score(
-            current_track, unprocessed, depth=2
-        )  # Optimized: depth=2 (was 3)
-
-        if best_next and score > 0:
-            final_playlist.append(best_next)
-            _remove_track(unprocessed, best_next)
-            current_track = best_next
-        else:
-            # Fallback (Strategien-Merge 2026-07-17, portiert aus der frueheren
-            # Plain-Variante): kein harmonisch kompatibler Kandidat mehr —
-            # waehle den Track mit der kleinsten EFFEKTIVEN BPM-Differenz
-            # (Half/Double-Time-bewusst) statt roher Kompatibilitaets-Maxima
-            fallback = min(
-                unprocessed,
-                key=lambda t: effective_bpm_diff(t.bpm, current_track.bpm)[0],
-            )
-            final_playlist.append(fallback)
-            _remove_track(unprocessed, fallback)
-            current_track = fallback
-
-    return final_playlist
+def _sort_harmonic_flow(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
 
 
 def _find_best_starting_track(
@@ -1325,94 +945,19 @@ def _find_best_starting_track(
     return best_track
 
 
-def _sort_directional_bpm(
-    tracks: list[Track],
-    bpm_tolerance: float,
-    reverse: bool,
-    **kwargs,
-) -> list[Track]:
-    """Sortiert nach BPM und nutzt bei Gleichstand das volle Uebergangsziel."""
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    if len(tracks) <= 1:
-        return list(tracks)
-
-    bpm_ordered = sorted(tracks, key=lambda track: track.bpm, reverse=reverse)
-    result: list[Track] = []
-    position = 0
-
-    while position < len(bpm_ordered):
-        _check_cancel(cancel_check)
-        reference_bpm = bpm_ordered[position].bpm
-        group = []
-        while position < len(bpm_ordered) and math.isclose(
-            bpm_ordered[position].bpm, reference_bpm, abs_tol=1e-9
-        ):
-            group.append(bpm_ordered[position])
-            position += 1
-
-        if len(group) == 1:
-            result.extend(group)
-            continue
-
-        remaining = list(group)
-        if result:
-            current = result[-1]
-        else:
-            current = max(
-                remaining,
-                key=lambda candidate: sum(
-                    calculate_transition_objective(
-                        candidate, other, bpm_tolerance, **kwargs
-                    )
-                    for other in remaining
-                    if other is not candidate
-                ),
-            )
-            result.append(current)
-            _remove_track(remaining, current)
-
-        while remaining:
-            _check_cancel(cancel_check)
-            def _tie_break_score(candidate: Track) -> float:
-                immediate = calculate_transition_objective(
-                    current, candidate, bpm_tolerance, **kwargs
-                )
-                # AUDIT-FIX 2026-08-14: Guard (len(remaining) > 1) passte nicht
-                # zum Filter (other is not candidate). Steht DASSELBE Track-
-                # Objekt mehrfach in der BPM-Gruppe (Nutzer laedt eine Datei
-                # doppelt), filtert der Generator alle Kopien heraus und max()
-                # lief auf einer leeren Sequenz -> ValueError mitten in
-                # Warm-Up/Cool-Down. default=0.0 ist bei nicht-leerer Sequenz
-                # verhaltensgleich.
-                future = max(
-                    (
-                        calculate_transition_objective(
-                            candidate, other, bpm_tolerance, **kwargs
-                        )
-                        for other in remaining
-                        if other is not candidate
-                    ),
-                    default=0.0,
-                )
-                return immediate + LOOKAHEAD_FUTURE_WEIGHT * future
-
-            next_track = max(remaining, key=_tie_break_score)
-            result.append(next_track)
-            _remove_track(remaining, next_track)
-            current = next_track
-
-    return result
+def _sort_directional_bpm(tracks: list[Track], bpm_tolerance: float, reverse: bool, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_directional_bpm(tracks, bpm_tolerance, reverse, **kwargs)
 
 
-def _sort_warm_up(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
-    """BPM aufsteigend, Harmonik als Tiebreaker innerhalb gleicher BPM."""
-    return _sort_directional_bpm(tracks, bpm_tolerance, reverse=False, **kwargs)
+def _sort_warm_up(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_warm_up(tracks, bpm_tolerance, **kwargs)
 
 
-def _sort_cool_down(tracks: list[Track], bpm_tolerance: float, **kwargs) -> list[Track]:
-    """BPM absteigend, Harmonik als Tiebreaker innerhalb gleicher BPM."""
-    return _sort_directional_bpm(tracks, bpm_tolerance, reverse=True, **kwargs)
+def _sort_cool_down(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_cool_down(tracks, bpm_tolerance, **kwargs)
 
 
 def _normalize_series(values: list[float]) -> list[float]:
@@ -1467,139 +1012,14 @@ def _prepare_track_metrics(
 ENERGY_WAVE_FENSTER = 8
 
 
-def _sort_energy_wave(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """Wellenfoermige Reise: abwechselnd hoehere und niedrigere Energie,
-    vom Zentrum aus mit wachsendem Ausschlag.
-
-    Die Reihenfolge der Seiten und der wachsende Ausschlag sind unveraendert.
-    Neu ist nur die AUSWAHL innerhalb einer Seite: statt immer den
-    zentrumsnaechsten Track zu nehmen, wird unter den naechsten
-    ENERGY_WAVE_FENSTER Kandidaten der mit der kleinsten effektiven
-    BPM-Differenz zum zuletzt gesetzten Track gewaehlt.
-
-    Anlass: die Strategie nahm `bpm_tolerance` entgegen und benutzte sie nie.
-    Gemessen an 80 Tracks mit 93-146 BPM waren dadurch 63 % der Nachbarpaare
-    unmixbar (Median-BPM-Differenz 10,0) — zum Vergleich liegen Harmonic
-    Flow, Warm-Up, Cool-Down und Consistent bei 2-5 %. Bei einem engen Pool
-    (137-141 BPM) trat das Problem nicht auf; es trifft, wer die Strategie
-    auf einen gemischten Bestand anwendet.
-
-    Innerhalb des Seitenfensters entscheidet zuerst die lokale Uebergangsguete,
-    danach BPM-Naehe und Energiesprung. Auch ohne planbare Kante bleiben alle
-    Tracks erhalten; die spaetere Kettenplanung kennzeichnet diese UNGEPLANT.
-    """
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    if not tracks:
-        return []
-
-    ordered_by_energy = sorted(tracks, key=lambda track: track.energy)
-    count = len(ordered_by_energy)
-    if count <= 2:
-        return ordered_by_energy
-
-    center_index = (count - 1) // 2
-    result: list[Track] = [ordered_by_energy[center_index]]
-
-    # Zentrumsnaechster Kandidat steht in beiden Listen vorne
-    nach_unten = list(reversed(ordered_by_energy[:center_index]))
-    nach_oben = ordered_by_energy[center_index + 1:]
-    take_high = True
-
-    while nach_unten or nach_oben:
-        _check_cancel(cancel_check)
-        seite = nach_oben if (take_high and nach_oben) else (
-            nach_unten if nach_unten else nach_oben
-        )
-        if not seite:
-            break
-        aktuell = result[-1]
-        grenze = min(len(seite), max(1, ENERGY_WAVE_FENSTER))
-        # Ueber den INDEX waehlen, nicht ueber den Wert: Track vergleicht
-        # sich ueber `track_id`, also den normalisierten Dateipfad
-        # (models.py, `__eq__`). Zwei Objekte mit demselben Pfad sind gleich,
-        # unabhaengig von BPM und Energie. `list.remove(track)` entfernte
-        # deshalb den erstbesten Treffer statt des gewaehlten — im Test mit
-        # der Fixture `make_track`, die allen Tracks denselben Default-Pfad
-        # gibt, verschwanden dadurch Tracks aus der Playlist.
-        #
-        # Tie-Break bewusst gegen den ZULETZT GESETZTEN Track, nicht gegen das
-        # Zentrum: bei gleicher BPM-Naehe gewinnt der sanftere Energiesprung.
-        index = min(
-            range(grenze),
-            key=lambda i: (
-                -calculate_transition_objective(aktuell, seite[i], bpm_tolerance, **kwargs),
-                effective_bpm_diff(aktuell.bpm, seite[i].bpm)[0],
-                abs(seite[i].energy - aktuell.energy),
-            ),
-        )
-        result.append(seite.pop(index))
-        take_high = not take_high
-
-    return result
+def _sort_energy_wave(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_energy_wave(tracks, bpm_tolerance, **kwargs)
 
 
-def _sort_peak_time(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """Enhanced peak-time arrangement with harmonic considerations and multiple peaks."""
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    if not tracks:
-        return []
-
-    peak_position = kwargs.get("peak_position", 70) / 100.0
-    if len(tracks) <= 3:
-        combined_by_track = {
-            id(track): combined
-            for track, combined, _norm_bpm, _norm_energy
-            in _prepare_track_metrics(tracks)
-        }
-        peak_curve = _peak_time_curve(len(tracks), peak_position)
-
-        def small_score(order) -> tuple:
-            valid, transition_score = _transition_path_score(
-                order, bpm_tolerance, kwargs
-            )
-            curve_fit = -sum(
-                abs(combined_by_track[id(track)] - peak_curve[index])
-                for index, track in enumerate(order)
-            )
-            return valid, curve_fit, transition_score
-
-        return _small_pool_order(tracks, small_score, cancel_check)
-
-    scored_tracks = _prepare_track_metrics(tracks)
-    count = len(scored_tracks)
-
-    # Create a double-peak curve for longer sets
-    peak_curve = _peak_time_curve(count, peak_position)
-
-    # Sort tracks by curve position preference
-    waveform_positions = sorted(range(count), key=lambda idx: peak_curve[idx])
-
-    # Assign tracks to positions with harmonic consideration
-    ordered_tracks: list[Optional[Track]] = [None] * count
-
-    # Audit-Fix 2026-07-21: Tracks nach combined_score (Energie+BPM) sortieren,
-    # BEVOR sie auf die Peak-Kurve gelegt werden. Vorher lief die Zuweisung ueber
-    # den Eingabe-Index -> die Peak-Dramaturgie (ruhige Tracks an Start/Ende,
-    # energiereiche am Peak) entstand nie und das Ergebnis haing an der Ladereihenfolge.
-    scored_by_energy = sorted(scored_tracks, key=lambda item: item[1])
-
-    for track_idx in zip(scored_by_energy, waveform_positions):
-        _check_cancel(cancel_check)
-        track, score, norm_bpm, norm_energy = track_idx[0]
-        position = track_idx[1]
-
-        if position < len(ordered_tracks):
-            ordered_tracks[position] = track
-
-    # Apply harmonic smoothing pass
-    result = [track for track in ordered_tracks if track is not None]
-    return _apply_harmonic_smoothing(result, bpm_tolerance, **kwargs)
+def _sort_peak_time(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_peak_time(tracks, bpm_tolerance, **kwargs)
 
 
 def _peak_time_curve(count: int, peak_position: float) -> list[float]:
@@ -1685,193 +1105,14 @@ def _apply_harmonic_smoothing(
     return result
 
 
-def _sort_genre_flow(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """Arrange tracks to create smooth genre transitions while maintaining energy."""
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    # Get genre parameters
-    genre_mixing_enabled = kwargs.get("genre_mixing", True)
-    genre_weight = kwargs.get("genre_weight", 0.3)  # 0.0-1.0
-
-    if len(tracks) <= 2:
-        # For 2 oder weniger Tracks wird die Richtung per Vergleich der
-        # paarweisen Verträglichkeit eindeutig aufgelöst. ``_sort_harmonic_flow``
-        # ist für kleine Pools zu passiv und würde bei [B, A] die Reihenfolge
-        # nicht stabil in Richtung des erwarteten Contracts ändern.
-        def small_score(order) -> tuple:
-            harmonic_scores = [
-                calculate_transition_objective(a, b, bpm_tolerance, **kwargs)
-                for a, b in zip(order, order[1:])
-            ]
-            if not genre_mixing_enabled:
-                blended_scores = [
-                    harmonic / 100.0 for harmonic in harmonic_scores
-                ]
-            else:
-                blended_scores = [
-                    (1.0 - genre_weight) * harmonic / 100.0
-                    + genre_weight * get_genre_compatibility(
-                        _resolve_track_genre(a), _resolve_track_genre(b)
-                    )
-                    for (a, b), harmonic in zip(
-                        zip(order, order[1:]), harmonic_scores
-                    )
-                ]
-            return (
-                sum(score > 0 for score in harmonic_scores),
-                sum(blended_scores),
-                sum(harmonic_scores),
-            )
-
-        return _small_pool_order(tracks, small_score, cancel_check)
-
-    if not genre_mixing_enabled or genre_weight <= 0.0:
-        return _sort_harmonic_flow(tracks, bpm_tolerance, **kwargs)
-
-    # Group tracks by genre (bevorzuge eine echte Klassifikation, sonst ID3)
-    genre_groups = {}
-    for track in tracks:
-        _check_cancel(cancel_check)
-        genre = _resolve_track_genre(track)
-        if genre == "Unknown":
-            genre = "Mixed"
-        if genre not in genre_groups:
-            genre_groups[genre] = []
-        genre_groups[genre].append(track)
-
-    # Audit-Fix 2026-07-17 (Runde 2): die frühere lokale Fallback-Tabelle
-    # (base_genre_compatibility) war ein zweites, teils widersprüchliches
-    # Duplikat der DJ-Brain-Matrix — entfernt. Einzige Quelle ist jetzt
-    # get_genre_compatibility (dj_brain), skaliert mit genre_weight.
-
-    # Create transitions between genres
-    result = []
-    processed_genres = set()
-
-    # Start with the genre that has the most tracks
-    current_genre = max(genre_groups.keys(), key=lambda g: len(genre_groups[g]))
-
-    while len(processed_genres) < len(genre_groups):
-        _check_cancel(cancel_check)
-        if current_genre in genre_groups and current_genre not in processed_genres:
-            # Arrange tracks within current genre (pass kwargs for harmonic params)
-            genre_tracks = _sort_consistent(
-                genre_groups[current_genre], bpm_tolerance, **kwargs
-            )
-            result.extend(genre_tracks)
-            processed_genres.add(current_genre)
-
-        # Find best next genre
-        best_next_genre = None
-        best_compatibility = 0
-
-        for genre in genre_groups:
-            _check_cancel(cancel_check)
-            if genre not in processed_genres:
-                # genre_weight blendet zwischen dem besten realen Uebergang
-                # in die Gruppe (0 = Genre ignorieren) und der DJ-Brain-Matrix
-                # (1 = Genre ist ausschlaggebend). Die fruehere affine Formel
-                # war fuer alle Gewichte < 1 streng monoton und konnte deshalb
-                # die Rangfolge niemals veraendern.
-                dj_compat = get_genre_compatibility(current_genre, genre)
-                current_track = result[-1]
-                transition_compat = 0
-                for candidate in genre_groups[genre]:
-                    _check_cancel(cancel_check)
-                    transition_compat = max(
-                        transition_compat,
-                        calculate_transition_objective(
-                            current_track, candidate, bpm_tolerance, **kwargs
-                        ),
-                    )
-                transition_compat /= 100.0
-                compatibility = (
-                    (1.0 - genre_weight) * transition_compat
-                    + genre_weight * dj_compat
-                )
-                if compatibility > best_compatibility:
-                    best_compatibility = compatibility
-                    best_next_genre = genre
-
-        if best_next_genre:
-            current_genre = best_next_genre
-        else:
-            # If no compatible genre found, pick any remaining genre.
-            # sorted() statt list(set(...)): Set-Iteration haengt vom
-            # PYTHONHASHSEED ab -> sonst nichtdeterministische Playlist-Reihenfolge
-            # ueber Programmlaeufe hinweg bei identischem Track-Pool.
-            remaining_genres = set(genre_groups.keys()) - processed_genres
-            if remaining_genres:
-                current_genre = sorted(remaining_genres)[0]
-            else:
-                break  # All genres processed
-
-    return result
+def _sort_genre_flow(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_genre_flow(tracks, bpm_tolerance, **kwargs)
 
 
-def _sort_consistent(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """Keep transitions smooth by minimising BPM/Energy jumps while preferring harmonic compatibility."""
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    if not tracks:
-        return []
-
-    # Capture kwargs for nested function
-    compat_kwargs = kwargs
-
-    remaining = list(tracks)
-    average_bpm = sum(getattr(track, "bpm", 0.0) for track in remaining) / len(
-        remaining
-    )
-    average_energy = sum(getattr(track, "energy", 0) for track in remaining) / len(
-        remaining
-    )
-
-    def _center_distance(track: Track) -> float:
-        bpm_deviation = effective_bpm_diff(
-            getattr(track, "bpm", average_bpm), average_bpm
-        )[0]
-        energy_deviation = (
-            abs(getattr(track, "energy", average_energy) - average_energy) / 5.0
-        )
-        return bpm_deviation + energy_deviation
-
-    current = min(remaining, key=_center_distance)
-    playlist = [current]
-    _remove_track(remaining, current)
-
-    while remaining:
-        _check_cancel(cancel_check)
-
-        def _transition_cost(candidate: Track) -> float:
-            bpm_delta, _ = effective_bpm_diff(
-                getattr(candidate, "bpm", current.bpm), getattr(current, "bpm", 0.0)
-            )
-            energy_delta = (
-                abs(
-                    getattr(candidate, "energy", current.energy)
-                    - getattr(current, "energy", 0)
-                )
-                / 5.0
-            )
-            compatibility = calculate_transition_objective(
-                current, candidate, bpm_tolerance, **compat_kwargs
-            )
-            compatibility_penalty = (100 - compatibility) / 8.0
-            if compatibility == 0:
-                compatibility_penalty += 10.0
-            return bpm_delta + energy_delta + compatibility_penalty
-
-        next_track = min(remaining, key=_transition_cost)
-        playlist.append(next_track)
-        _remove_track(remaining, next_track)
-        current = next_track
-
-    return playlist
+def _sort_consistent(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_consistent(tracks, bpm_tolerance, **kwargs)
 
 
 def _resolve_mix_points(track: Track, fallback_overlap: float) -> tuple[float, float]:
@@ -2256,6 +1497,7 @@ def _bass_swap_fraction(candidate) -> float | None:
 
 def _build_transition_description(
     params: TransitionDescriptionParams,
+    *, candidate=None,
 ) -> str:
     """
     Erzeugt eine aussagekraeftige DJ-Beschreibung der Transition.
@@ -2266,29 +1508,13 @@ def _build_transition_description(
     """
     parts: list[str] = []
 
-    # --- 1. Harmonic Bewertung ---
-    harmonic = params.metrics.harmonic_score
-    key_a = getattr(params.from_track, "camelotCode", "") or ""
-    key_b = getattr(params.to_track, "camelotCode", "") or ""
-    key_info = f" ({key_a}->{key_b})" if key_a and key_b else ""
-
-    if params.has_dj_brain:
-        # DJ Brain liefert Key-Risks -- nur Kurzform mit Camelot-Codes
-        if harmonic >= 90:
-            parts.append(f"Perfekte Tonart{key_info}")
-        elif harmonic >= 70:
-            parts.append(f"Harmonisch{key_info}")
-        # Bei schlechter Harmonie nichts: DJ Brain warnt schon
-    else:
-        # Kein DJ Brain -- vollstaendige Tonart-Bewertung
-        if harmonic >= 90:
-            parts.append(f"Perfekte Tonart{key_info}")
-        elif harmonic >= 70:
-            parts.append(f"Harmonisch kompatibel{key_info}")
-        elif harmonic >= 50:
-            parts.append(f"Tonart geht, kurz mixen{key_info}")
-        else:
-            parts.append(f"Tonart-Clash{key_info} -- EQ-Filter nutzen")
+    # DJ-Hinweise und Beschreibung verwenden dieselbe lokale Kandidatenquelle.
+    # Ohne diese Quelle darf ein lokaler Score keine Trackmetadaten bestätigen.
+    if not params.has_dj_brain:
+        parts.append(local_key_note(
+            params.from_track, params.to_track,
+            candidate if candidate is not None else params.metrics.kandidat,
+        ))
 
     # --- 2. BPM Situation ---
     # Ueberspringe wenn DJ Brain schon BPM-Risk liefert
@@ -2357,37 +1583,7 @@ def _process_dj_brain_recommendations(
     if has_dj_data:
         try:
             dj_rec = generate_dj_recommendation(current, upcoming)
-            if dj_rec.mix_technique:
-                notes_parts.append(f"Mix: {dj_rec.mix_technique}")
-            if dj_rec.eq_advice:
-                notes_parts.append(f"EQ: {dj_rec.eq_advice}")
-            if dj_rec.transition_bars > 0:
-                notes_parts.append(f"Transition: {dj_rec.transition_bars} bars")
-            # Nur anzeigen wenn echte Struktur-Daten vorhanden
-            if dj_rec.structure_note:
-                notes_parts.append(dj_rec.structure_note)
-            if dj_rec.genre_pair:
-                notes_parts.append(f"[{dj_rec.genre_pair}]")
-            for risk in dj_rec.risk_notes:
-                notes_parts.append(f"! {risk}")
-            # Konkrete Track-Empfehlungen mit echten Messwerten
-            if dj_rec.bpm_advice:
-                notes_parts.append(f"BPM: {dj_rec.bpm_advice}")
-            if dj_rec.key_advice:
-                notes_parts.append(f"Key: {dj_rec.key_advice}")
-            if dj_rec.energy_advice:
-                notes_parts.append(f"Energy: {dj_rec.energy_advice}")
-            if getattr(dj_rec, "gain_advice", ""):
-                notes_parts.append(f"Gain: {dj_rec.gain_advice}")
-            # rhythm_advice wurde in dj_brain.py:537-544 berechnet und
-            # gesetzt, aber nie in die Notes uebernommen — das einzige
-            # GESETZTE advice-Feld, das fehlte (bass_match_advice fehlt auch,
-            # wird aber nirgends befuellt). Landet in der GUI wie "Gain:" in
-            # der grauen Meta-Zeile (main.py else-Zweig nach der
-            # Schluesselwortliste), nicht im DJ-Brain-Block; die Praefixliste
-            # dort anzufassen waere eine GUI-Aenderung.
-            if getattr(dj_rec, "rhythm_advice", ""):
-                notes_parts.append(f"Rhythmus: {dj_rec.rhythm_advice}")
+            notes_parts = format_dj_notes(dj_rec)
 
             # DJ Brain Transition-Laenge uebernehmen
             if dj_rec.transition_bars > 0 and current.bpm > 0:
@@ -2666,8 +1862,15 @@ def compute_transition_recommendations(
         overlap = validated_overlap
         fade_out_start = current_mix_out
 
+        transition_type = transition_type_for_candidate(
+            current, upcoming, aktiv, bpm_tolerance=bpm_tolerance,
+            scoring_context=ctx,
+        )
         if dj_rec is not None:
-            dj_rec.overlap_seconds = overlap
+            bind_candidate_recommendation(
+                dj_rec, current, upcoming, aktiv, transition_type
+            )
+            notes_parts = format_dj_notes(dj_rec)
             notes_parts = _handoff_pair_point_risks(
                 dj_rec,
                 current,
@@ -2701,18 +1904,11 @@ def compute_transition_recommendations(
             to_track=upcoming,
             has_dj_brain=(dj_rec is not None),
         )
-        transition_desc = _build_transition_description(desc_params)
+        transition_desc = _build_transition_description(desc_params, candidate=aktiv)
         notes_parts.append(transition_desc)
 
         notes = "; ".join(notes_parts)
 
-        transition_type = transition_type_for_candidate(
-            current,
-            upcoming,
-            aktiv,
-            bpm_tolerance=bpm_tolerance,
-            scoring_context=ctx,
-        )
         tempo_ratio = (
             float(upcoming.bpm / current.bpm)
             if current.bpm > 0 and upcoming.bpm > 0
@@ -2863,177 +2059,9 @@ def _context_target_energy(
     return 85.0 - 45.0 * decline
 
 
-def _sort_context_flow(
-    tracks: list[Track], bpm_tolerance: float, **kwargs
-) -> list[Track]:
-    """
-    Kontext-bewusster Greedy-Sort. Basis ist calculate_transition_objective
-    (lokale Kandidatenwerte mit unveraenderten Gates); darauf DJ-Kontext-Modifikatoren,
-    portiert aus der frueheren Intelligent-Scoring-Schicht:
-      - Set-Phase mit Ziel-Energie (Warm-up 30 / Build 60 / Peak 85 / Cool-down 40)
-      - Energie-Trend-Fortfuehrung (steigende Kurve nicht abwuergen)
-      - Genre-Fatigue (nach 4 gleichen Genres Wechsel belohnen)
-      - Repetition-Penalty (Beinahe-Klone nicht back-to-back)
-      - Energie-Cliff-Penalty (Spruenge > 35 Punkte vermeiden)
-
-    Strategien-Merge 2026-07-17: uebernimmt die energy_direction-Presets der
-    frueheren "Emotional Journey"-Strategie — "Build Up"/"Cool Down"/"Maintain"
-    formen die Zielenergie-Kurve, "Auto" = klassische Set-Dramaturgie.
-    """
-    cancel_check = kwargs.get("cancel_check")
-    _check_cancel(cancel_check)
-    if not tracks:
-        return []
-
-    raw_energy_dir = str(kwargs.get("energy_direction", "Auto"))
-    energy_dir = {
-        "auto": "Auto",
-        "up": "Build Up",
-        "down": "Cool Down",
-        "maintain": "Maintain",
-    }.get(raw_energy_dir, raw_energy_dir)
-    peak_position = max(0.4, min(0.8, float(kwargs.get("peak_position", 70)) / 100.0))
-    genre_mixing = bool(kwargs.get("genre_mixing", True))
-    genre_weight = max(0.0, min(1.0, float(kwargs.get("genre_weight", 0.3))))
-    pool_avg_energy = sum(t.energy for t in tracks) / len(tracks)
-    configured_target = kwargs.get("target_energy")
-    if configured_target is not None:
-        configured_target = max(0.0, min(100.0, float(configured_target)))
-
-    def _target_energy(position: int, total: int) -> float:
-        return _context_target_energy(
-            position,
-            total,
-            energy_direction=energy_dir,
-            peak_position=peak_position,
-            pool_average=pool_avg_energy,
-            configured_target=configured_target,
-        )
-
-    if len(tracks) <= 2:
-        def small_score(order) -> tuple:
-            total_score = 0.0
-            valid_edges = 0
-            for position, track in enumerate(order):
-                _check_cancel(cancel_check)
-                target = _target_energy(position, len(order))
-                total_score += 10.0 - min(30.0, abs(track.energy - target)) / 3.0
-                if position == 0:
-                    continue
-                previous = order[position - 1]
-                base = calculate_transition_objective(
-                    previous, track, bpm_tolerance, **kwargs
-                )
-                if base == 0:
-                    continue
-                valid_edges += 1
-                total_score += float(base)
-                if genre_mixing and genre_weight > 0.0:
-                    genre_compat = get_genre_compatibility(
-                        _resolve_track_genre(previous), _resolve_track_genre(track)
-                    )
-                    total_score += genre_weight * (genre_compat - 0.5) * 20.0
-                if (
-                    abs(track.bpm - previous.bpm) < 0.5
-                    and track.camelotCode == previous.camelotCode
-                    and abs(track.energy - previous.energy) < 5
-                ):
-                    total_score -= 12.0
-                if abs(track.energy - previous.energy) > 35:
-                    total_score -= 15.0
-            return valid_edges, total_score
-
-        return _small_pool_order(tracks, small_score, cancel_check)
-
-    unprocessed = list(tracks)
-    total = len(tracks)
-    # Start-Track passend zur Richtung: Build Up/Auto = ruhigster Track,
-    # Cool Down = energiereichster, Maintain = naechster am Durchschnitt
-    if energy_dir == "Cool Down":
-        start = max(unprocessed, key=lambda t: t.energy)
-    elif energy_dir == "Maintain":
-        start = min(unprocessed, key=lambda t: abs(t.energy - pool_avg_energy))
-    else:
-        start = min(unprocessed, key=lambda t: t.energy)
-    final_playlist = [start]
-    _remove_track(unprocessed, start)
-
-    while unprocessed:
-        _check_cancel(cancel_check)
-        current = final_playlist[-1]
-        target_energy = _target_energy(len(final_playlist), total)
-
-        # Energie-Trend aus den letzten 3 Tracks
-        recent = [t.energy for t in final_playlist[-3:]]
-        trend = recent[-1] - recent[0] if len(recent) >= 2 else 0.0
-
-        # Genre-Streak am Playlist-Ende
-        streak_genre = _resolve_track_genre(current)
-        streak = 0
-        for t in reversed(final_playlist):
-            _check_cancel(cancel_check)
-            if _resolve_track_genre(t) == streak_genre:
-                streak += 1
-            else:
-                break
-
-        best_next = None
-        highest_score = -999999.0
-        for candidate in unprocessed:
-            _check_cancel(cancel_check)
-            # Lokale Uebergangsguete als Basis. genre_weight=0 deaktiviert nur
-            # die zusaetzlichen Context-Boni, nicht den lokalen Genre-Teilwert.
-            base = calculate_transition_objective(
-                current, candidate, bpm_tolerance, **kwargs
-            )
-            if base == 0:
-                continue  # BPM-Hard-Gate beibehalten
-
-            score = float(base)
-            # Kontextboni ergaenzen die lokale Basis. Harte Kandidatengates
-            # werden dadurch nicht umgangen; keine reine Camelot-Stufenlogik.
-            # Phase: Naehe zur Ziel-Energie (+10 bei Treffer, faellt linear ab)
-            score += 10.0 - min(30.0, abs(candidate.energy - target_energy)) / 3.0
-            # Trend-Fortfuehrung: Kandidat setzt erkennbare Richtung fort
-            if abs(trend) >= 5.0:
-                cand_delta = candidate.energy - current.energy
-                if (trend > 0) == (cand_delta > 0) and abs(cand_delta) <= 25:
-                    score += 5.0
-            if genre_mixing and genre_weight > 0.0:
-                # Genre-Matrix wirkt kontinuierlich: bei Gewicht 0 ist Genre
-                # vollstaendig neutral, bei 1 maximal +/-10 Punkte.
-                genre_compat = get_genre_compatibility(
-                    streak_genre, _resolve_track_genre(candidate)
-                )
-                score += genre_weight * (genre_compat - 0.5) * 20.0
-                # Fatigue bleibt ein kleiner Zusatz innerhalb desselben Reglers.
-                if streak >= 4:
-                    fatigue = 4.0 if _resolve_track_genre(candidate) != streak_genre else -6.0
-                    score += genre_weight * fatigue
-            # Repetition-Penalty: Beinahe-Klon direkt hintereinander
-            if (
-                abs(candidate.bpm - current.bpm) < 0.5
-                and candidate.camelotCode == current.camelotCode
-                and abs(candidate.energy - current.energy) < 5
-            ):
-                score -= 12.0
-            # Energie-Cliff
-            if abs(candidate.energy - current.energy) > 35:
-                score -= 15.0
-
-            if score > highest_score:
-                highest_score = score
-                best_next = candidate
-
-        if best_next is None:
-            best_next = min(
-                unprocessed,
-                key=lambda t: effective_bpm_diff(t.bpm, current.bpm)[0],
-            )
-        final_playlist.append(best_next)
-        _remove_track(unprocessed, best_next)
-
-    return final_playlist
+def _sort_context_flow(tracks: list[Track], bpm_tolerance: float, **kwargs):
+    """Kompatibler Strategie-Einstieg mit dem aktuellen Bewertungskontext."""
+    return _strategy_engine()._sort_context_flow(tracks, bpm_tolerance, **kwargs)
 
 
 # --- Main Dispatcher --- #
@@ -3426,115 +2454,6 @@ def _complete_run_scoring_context(
     return context
 
 
-@dataclass(frozen=True, slots=True)
-class _PathState:
-    selections: tuple[Optional["CandidateSnapshot"], ...]
-    consistencies: tuple[bool, ...]
-    planned: int
-    saved_honored: int
-    score: float
-    path_consistent_links: int
-    state_key_sequence: tuple
-
-
-def _path_order(state: _PathState) -> tuple:
-    return (
-        -state.planned,
-        -state.saved_honored,
-        -state.score,
-        -state.path_consistent_links,
-        state.state_key_sequence,
-    )
-
-
-def _snapshot_flag(snapshot: "CandidateSnapshot", name: str, default=False):
-    return dict(snapshot.flags).get(name, default)
-
-
-def _candidate_link_consistent(
-    previous: "CandidateSnapshot", current: "CandidateSnapshot", middle: Track
-) -> bool:
-    grid = seconds_per_bar(middle.bpm) * effective_track_phrase_unit(middle)
-    return (
-        current.t_out
-        >= previous.t_in + 2.0 * grid - QUANTIZE_TOLERANCE_SEC
-    )
-
-
-def _select_snapshot_path(
-    candidates_by_boundary: tuple[tuple["CandidateSnapshot", ...], ...],
-    occurrences: tuple[TrackOccurrence, ...],
-    cancel_check=None,
-) -> tuple[tuple[Optional["CandidateSnapshot"], ...], tuple[bool, ...], int, int, int]:
-    """Begrenzter DP: hoechstens 12 Kandidaten plus UNGEPLANT je Kante."""
-    if not candidates_by_boundary:
-        return (), (), 0, 0, 0
-    previous_states: dict[Optional[tuple], _PathState] = {}
-    states_retained = 0
-    link_checks = 0
-
-    for index, snapshots in enumerate(candidates_by_boundary):
-        _check_cancel(cancel_check)
-        options: tuple[Optional["CandidateSnapshot"], ...] = (*snapshots[:12], None)
-        current_states: dict[Optional[tuple], _PathState] = {}
-        predecessors = tuple(previous_states.values()) or (
-            _PathState((), (), 0, 0, 0.0, 0, ()),
-        )
-        for option in options:
-            _check_cancel(cancel_check)
-            best: Optional[_PathState] = None
-            for predecessor in predecessors:
-                _check_cancel(cancel_check)
-                previous = predecessor.selections[-1] if predecessor.selections else None
-                if option is None:
-                    consistent = False
-                    link_ok = False
-                elif previous is None:
-                    consistent = True
-                    link_ok = False
-                else:
-                    link_checks += 1
-                    link_ok = _candidate_link_consistent(
-                        previous, option, occurrences[index].track
-                    )
-                    # Physisch unspielbare Kombinationen erzeugen keinen Zustand.
-                    if not link_ok:
-                        continue
-                    consistent = link_ok
-                planned = predecessor.planned + (option is not None)
-                honored = predecessor.saved_honored + int(
-                    option is not None
-                    and bool(_snapshot_flag(option, "gespeicherte_wahl"))
-                )
-                score = predecessor.score + (option.score if option is not None else 0.0)
-                path_links = predecessor.path_consistent_links + int(link_ok)
-                state_key = (0, option.key) if option is not None else (1, ())
-                candidate = _PathState(
-                    selections=(*predecessor.selections, option),
-                    consistencies=(*predecessor.consistencies, consistent),
-                    planned=planned,
-                    saved_honored=honored,
-                    score=score,
-                    path_consistent_links=path_links,
-                    state_key_sequence=(*predecessor.state_key_sequence, state_key),
-                )
-                if best is None or _path_order(candidate) < _path_order(best):
-                    best = candidate
-            assert best is not None
-            current_states[option.key if option is not None else None] = best
-        states_retained += len(current_states)
-        previous_states = current_states
-
-    winner = min(previous_states.values(), key=_path_order)
-    return (
-        winner.selections,
-        winner.consistencies,
-        link_checks,
-        winner.path_consistent_links,
-        states_retained,
-    )
-
-
 def _immutable_metrics_for_snapshot(
     track1: Track,
     track2: Track,
@@ -3777,9 +2696,10 @@ def _recommendation_snapshot(
             current.track, upcoming.track
         )
         if dj_rec is not None:
-            dj_rec.adjusted_mix_out_a = selected.t_out
-            dj_rec.adjusted_mix_in_b = selected.t_in
-            dj_rec.overlap_seconds = overlap
+            bind_candidate_recommendation(
+                dj_rec, current.track, upcoming.track, candidate, transition_type
+            )
+            dj_notes = format_dj_notes(dj_rec)
             dj_notes = _handoff_pair_point_risks(
                 dj_rec,
                 current.track,
@@ -3804,7 +2724,8 @@ def _recommendation_snapshot(
             from_track=current.track,
             to_track=upcoming.track,
             has_dj_brain=(dj_rec is not None),
-        )
+        ),
+        candidate=candidate,
     )
     notes = "; ".join(
         part for part in (selected.begruendung, *dj_notes, description) if part
@@ -4366,314 +3287,3 @@ def benchmark_algorithms(
         results[strategy_name] = quality_metrics
 
     return results
-
-
-# === Set-Timing / Time-based Planning ===
-
-
-@dataclass
-class SetTimeline:
-    """Zeitplanung fuer ein DJ-Set."""
-
-    total_duration_minutes: float  # Gesamtlaenge in Minuten
-    target_duration_minutes: float  # Gewuenschte Laenge
-    peak_position_minutes: float  # Peak-Zeitpunkt
-    entries: list  # Liste von SetTimelineEntry dicts
-    overflow_minutes: float  # Ueberschuss/Defizit in Minuten
-
-
-@dataclass
-class SetTimelineEntry:
-    """Ein Track-Eintrag in der Set-Timeline."""
-
-    track: Track
-    start_time: float  # Start in Sekunden
-    end_time: float  # Ende der hoerbaren Trackstrecke in Set-Sekunden
-    playing_duration: float  # Effektive Spieldauer in Sekunden
-    overlap_with_next: float  # Overlap in Sekunden zum naechsten Track
-    is_peak: bool  # Ist dieser Track am Peak-Punkt?
-    energy_phase: str  # "intro", "warmup", "build", "peak", "sustain", "cooldown"
-    transition_planned: Optional[bool] = None  # True/False; letzter Track None
-
-
-def _timeline_track_duration(track: Track, index: int) -> float:
-    """Liefert eine echte, positive Trackdauer oder bricht sichtbar ab."""
-    try:
-        duration = float(track.duration)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Track {index + 1}: ungueltige Dauer") from exc
-    if not math.isfinite(duration) or duration <= 0.0:
-        raise ValueError(f"Track {index + 1}: Dauer muss endlich und positiv sein")
-    return duration
-
-
-def _validated_timeline_plan(
-    plan: TransitionPlan,
-    edge_index: int,
-    duration_a: float,
-    duration_b: float,
-) -> tuple[float, float, float]:
-    """Validiert den unveraendert zu uebernehmenden Plan einer Kante."""
-    edge = f"Kante {edge_index + 1}->{edge_index + 2}"
-    try:
-        mix_out = float(plan.mix_out_a)
-        mix_in = float(plan.mix_in_b)
-        overlap = float(plan.overlap)
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise ValueError(f"{edge}: unvollstaendiger TransitionPlan") from exc
-
-    if not all(math.isfinite(value) for value in (mix_out, mix_in, overlap)):
-        raise ValueError(f"{edge}: TransitionPlan enthaelt nicht-endliche Werte")
-    if overlap <= 0.0:
-        raise ValueError(f"{edge}: Overlap muss positiv sein")
-    if not (0.0 <= mix_out and mix_out + overlap <= duration_a):
-        raise ValueError(f"{edge}: Mix-Out oder Overlap liegt ausserhalb von Track A")
-    if not (0.0 <= mix_in and mix_in + overlap <= duration_b):
-        raise ValueError(f"{edge}: Mix-In oder Overlap liegt ausserhalb von Track B")
-    return mix_out, mix_in, overlap
-
-
-def _calculate_timeline_entries(
-    tracks: list[Track], default_overlap: float,
-    transition_plans: Optional[list[TransitionPlan]] = None,
-) -> tuple[list[SetTimelineEntry], float]:
-    """Berechnet die Timeline ausschliesslich aus gueltigen Plaenen.
-
-    Eine planlose Kante spielt den aktuellen Track bis zum echten Ende und
-    hat keinen erfundenen Overlap. Planwerte bleiben exakt; ungueltige Plaene
-    werden nicht geklemmt oder durch Analysewerte ersetzt.
-    """
-    del default_overlap  # Oeffentlicher Legacy-Parameter; kein Timing-Fallback.
-    entries: list[SetTimelineEntry] = []
-    current_time = 0.0
-    n = len(tracks)
-    durations = [
-        _timeline_track_duration(track, i) for i, track in enumerate(tracks)
-    ]
-    plans: list[Optional[tuple[float, float, float]]] = [None] * max(0, n - 1)
-
-    for edge_index in range(n - 1):
-        plan = (
-            transition_plans[edge_index]
-            if transition_plans is not None and edge_index < len(transition_plans)
-            else None
-        )
-        if plan is not None:
-            plans[edge_index] = _validated_timeline_plan(
-                plan, edge_index, durations[edge_index], durations[edge_index + 1]
-            )
-
-    for index in range(1, n - 1):
-        incoming = plans[index - 1]
-        outgoing = plans[index]
-        if incoming is not None and outgoing is not None:
-            incoming_mix_in = incoming[1]
-            outgoing_mix_out = outgoing[0]
-            if not incoming_mix_in < outgoing_mix_out:
-                raise ValueError(
-                    f"Track {index + 1}: eingehender Mix-In muss vor "
-                    "ausgehendem Mix-Out liegen"
-                )
-
-    for i, track in enumerate(tracks):
-        track_dur = durations[i]
-        plan_in = plans[i - 1] if i > 0 else None
-        plan_out = plans[i] if i < n - 1 else None
-        mix_in = plan_in[1] if plan_in is not None else 0.0
-        mix_out = plan_out[0] if plan_out is not None else track_dur
-
-        if plan_out is not None:
-            overlap = plan_out[2]
-            playing_duration = mix_out - mix_in + overlap
-            transition_planned: Optional[bool] = True
-        else:
-            overlap = 0.0
-            playing_duration = track_dur - mix_in
-            transition_planned = False if i < n - 1 else None
-
-        end_time = current_time + playing_duration
-        next_start = current_time + mix_out - mix_in
-
-        entries.append(
-            SetTimelineEntry(
-                track=track,
-                start_time=current_time,
-                end_time=end_time,
-                playing_duration=playing_duration,
-                overlap_with_next=overlap,
-                is_peak=False,  # Wird spaeter gesetzt
-                energy_phase="build",  # Wird spaeter gesetzt
-                transition_planned=transition_planned,
-            )
-        )
-
-        current_time = next_start
-
-    total = entries[-1].end_time if entries else 0.0
-    return entries, total
-
-
-def _identify_peak_track(
-    entries: list[SetTimelineEntry], total_seconds: float, peak_position_pct: float
-) -> int:
-    """Findet den Index des Peak-Tracks."""
-    if not entries:
-        return 0
-
-    peak_time = total_seconds * peak_position_pct
-    best_peak_idx = 0
-    best_peak_score = -1.0
-
-    for i, entry in enumerate(entries):
-        mid = (entry.start_time + entry.end_time) / 2.0
-        # Score: Energie * (1 - Abstand zum Peak-Zeitpunkt)
-        time_factor = 1.0 - min(abs(mid - peak_time) / max(total_seconds, 1.0), 1.0)
-        energy_factor = entry.track.energy / 100.0
-        score = energy_factor * 0.6 + time_factor * 0.4
-        if score > best_peak_score:
-            best_peak_score = score
-            best_peak_idx = i
-
-    entries[best_peak_idx].is_peak = True
-    return best_peak_idx
-
-
-def _assign_energy_phases(entries: list[SetTimelineEntry], best_peak_idx: int) -> None:
-    """Weist jedem Track eine Energy-Phase zu."""
-    n = len(entries)
-    if n == 0:
-        return
-
-    peak_pos = best_peak_idx / max(n - 1, 1)
-    for i, entry in enumerate(entries):
-        relative_pos = i / max(n - 1, 1)
-        if entry.is_peak:
-            entry.energy_phase = "peak"
-        elif i == 0:
-            entry.energy_phase = "intro"
-        elif i == n - 1:
-            entry.energy_phase = "cooldown"
-        elif relative_pos < peak_pos * 0.5:
-            # L3-Fix: echte Warm-up-Phase — vorher lieferten beide Branches
-            # "build" und der finale else-Zweig war unerreichbar
-            entry.energy_phase = "warmup"
-        elif relative_pos <= peak_pos:
-            entry.energy_phase = "build"
-        elif relative_pos <= peak_pos + 0.15:
-            entry.energy_phase = "sustain"
-        else:
-            entry.energy_phase = "cooldown"
-
-
-def compute_set_timeline(
-    tracks: list[Track],
-    target_minutes: float = 60.0,
-    peak_position_pct: float = 0.65,
-    default_overlap: float = 16.0,
-    transition_plans: Optional[list[TransitionPlan]] = None,
-) -> SetTimeline:
-    """
-    Berechnet eine zeitbasierte Timeline fuer ein DJ-Set.
-
-    Jeder Track bekommt einen Start/Ende-Zeitpunkt. Gesamtlaenge = Summe
-    der Stuecke Mix-In..Mix-Out (erster Track ab 0, letzter bis zum Ende),
-    Geplante Eintraege ueberlappen um den Plan-Overlap; ungeplante Kanten
-    spielen ohne erfundene Blende bis zum Trackende.
-    Der Peak-Track wird identifiziert.
-
-    Args:
-      tracks: Sortierte Playlist
-      target_minutes: Gewuenschte Set-Laenge in Minuten
-      peak_position_pct: Peak-Position als Anteil (0.0-1.0, default 0.65)
-      default_overlap: Oeffentlicher Legacy-Parameter; ohne Plan keine Blende
-
-    Returns:
-      SetTimeline mit allen Eintraegen
-    """
-    if not tracks:
-        return SetTimeline(
-            total_duration_minutes=0.0,
-            target_duration_minutes=target_minutes,
-            peak_position_minutes=0.0,
-            entries=[],
-            overflow_minutes=0.0,
-        )
-
-    peak_position_pct = max(0.1, min(0.9, peak_position_pct))
-
-    entries, total_seconds = _calculate_timeline_entries(
-        tracks, default_overlap, transition_plans
-    )
-    best_peak_idx = _identify_peak_track(entries, total_seconds, peak_position_pct)
-    _assign_energy_phases(entries, best_peak_idx)
-
-    total_minutes = total_seconds / 60.0
-    peak_minutes = entries[best_peak_idx].start_time / 60.0 if entries else 0.0
-
-    return SetTimeline(
-        total_duration_minutes=total_minutes,
-        target_duration_minutes=target_minutes,
-        peak_position_minutes=peak_minutes,
-        entries=entries,
-        overflow_minutes=total_minutes - target_minutes,
-    )
-
-
-def get_set_timing_summary(timeline: SetTimeline) -> dict:
-    """
-    Erstellt eine menschenlesbare Zusammenfassung der Set-Timeline.
-
-    Returns:
-      Dict mit: total_time, target_time, overflow, peak_track, peak_time,
-      phase_breakdown, track_count, avg_track_duration
-    """
-    if not timeline.entries:
-        return {
-            "total_time": "0:00",
-            "target_time": f"{timeline.target_duration_minutes:.0f}:00",
-            "overflow": "0:00",
-            "overflow_seconds": 0.0,
-            "peak_track": None,
-            "peak_time": "0:00",
-            "phase_breakdown": {},
-            "track_count": 0,
-            "avg_track_duration": 0.0,
-        }
-
-    total_sec = timeline.total_duration_minutes * 60
-    target_sec = timeline.target_duration_minutes * 60
-    overflow_sec = timeline.overflow_minutes * 60
-
-    # Formatiere Zeiten
-    def _fmt(seconds: float) -> str:
-        sign = "-" if seconds < 0 else ""
-        s = abs(seconds)
-        m = int(s // 60)
-        sec = int(s % 60)
-        return f"{sign}{m}:{sec:02d}"
-
-    # Peak-Track finden
-    peak_entry = next((e for e in timeline.entries if e.is_peak), None)
-    peak_track_name = peak_entry.track.title if peak_entry else "?"
-    peak_time = _fmt(peak_entry.start_time) if peak_entry else "0:00"
-
-    # Phasen-Breakdown
-    phases: dict[str, int] = {}
-    for entry in timeline.entries:
-        phases[entry.energy_phase] = phases.get(entry.energy_phase, 0) + 1
-
-    # Durchschnittliche Track-Dauer
-    durations = [e.playing_duration for e in timeline.entries]
-    avg_dur = sum(durations) / len(durations) if durations else 0
-
-    return {
-        "total_time": _fmt(total_sec),
-        "target_time": _fmt(target_sec),
-        "overflow": _fmt(overflow_sec),
-        "overflow_seconds": overflow_sec,
-        "peak_track": peak_track_name,
-        "peak_time": peak_time,
-        "phase_breakdown": phases,
-        "track_count": len(timeline.entries),
-        "avg_track_duration": avg_dur,
-    }

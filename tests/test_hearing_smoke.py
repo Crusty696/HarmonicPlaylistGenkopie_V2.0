@@ -48,6 +48,33 @@ def test_smoke_hook_absent_in_normal_bootstrap(tmp_path):
     assert run.returncode == 0, run.stderr
 
 
+@pytest.mark.parametrize("smoke_mode", [False, True])
+def test_smoke_bootstrap_isolates_rekordbox_source(tmp_path, smoke_mode):
+    """Diagnose darf keine Benutzerbibliothek öffnen; Normalstart bleibt unverändert."""
+    root = tmp_path / "owned"
+    root.mkdir()
+    marker = tmp_path / "database-opened"
+    source = _smoke_bootstrap_source() + "\n" + (
+        "import hpg_core.rekordbox_importer as importer\n"
+        "def database_probe():\n"
+        f"    Path({str(marker)!r}).write_text('opened')\n"
+        "    raise RuntimeError('synthetic database boundary')\n"
+        "from pathlib import Path\n"
+        "importer.REKORDBOX_AVAILABLE = True\n"
+        "importer.Rekordbox6Database = database_probe\n"
+        "importer.RekordboxImporter()\n"
+    )
+    environment = dict(os.environ, HPG_SMOKE_ROOT=str(root), PYTHONPATH=str(ROOT))
+    environment.pop("HPG_DISABLE_REKORDBOX", None)
+    arguments = ["--hpg-native-smoke", str(root / "report.json")] if smoke_mode else []
+    run = subprocess.run(
+        [sys.executable, "-c", "__file__=" + repr(str(ROOT / "main.py")) + "\n" + source, *arguments],
+        cwd=tmp_path, env=environment, capture_output=True, timeout=30,
+    )
+    assert run.returncode == 0, run.stderr
+    assert marker.exists() is (not smoke_mode)
+
+
 @pytest.mark.parametrize("kind", ["missing_root", "missing_report", "outside", "existing", "absent_directory"])
 def test_native_smoke_rejects_bad_arguments_before_product_state(tmp_path, kind):
     root = tmp_path / "owned"

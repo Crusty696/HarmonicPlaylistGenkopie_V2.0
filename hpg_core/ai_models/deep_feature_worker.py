@@ -67,7 +67,7 @@ def _generate_stems(source, request):
 
 def _generate_embedding(source, request, duration):
     from .embedding_predictor import infer_embedding, infer_danceability, project_umap
-    from .deep_features import ENERGY_HASH, UMAP_HASHES
+    from .deep_features import EMBEDDING_WINDOW_SECONDS, ENERGY_HASH, UMAP_HASHES
     # Native Caller: 16 kHz, Mono, STFT 512/256, Pads [0,256,0,256].
     # HPG uses disjoint 29-s windows and duration-weighted mean, not RB identity.
     rows = []

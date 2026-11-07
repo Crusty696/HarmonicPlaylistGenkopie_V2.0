@@ -4,6 +4,34 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_invalid_outer_json_records_failed_instance_contract(monkeypatch):
+    import json
+    from hpg_core import ai_engine, lmstudio_runtime as runtime
+    from tests.test_ai_schema import _track
+    url = 'http://localhost:1234/v1/chat/completions'
+    key = runtime._qualification_key('selected', url, load_profile={'exact': 'profile'})
+    monkeypatch.setattr(runtime, 'instance_qualification_key', lambda identifier: key)
+    def invalid_json():
+        raise json.JSONDecodeError('invalid', '<html>', 0)
+    monkeypatch.setattr(ai_engine.requests, 'post', lambda *a, **kw:
+                        SimpleNamespace(status_code=200, json=invalid_json))
+    assert ai_engine.fetch_ai_analysis(_track(), 'LM Studio', 'selected', url,
+                                      request_model='owned') == {}
+    with pytest.raises(ValueError, match='Antwortvertrag bereits fehlgeschlagen'):
+        runtime.require_not_failed('selected', url, qualification_key=key)
+
+
+def test_http_failure_does_not_qualify_invalid_body(monkeypatch):
+    from hpg_core import ai_engine, lmstudio_runtime as runtime
+    from tests.test_ai_schema import _track
+    monkeypatch.setattr(ai_engine.requests, 'post', lambda *a, **kw:
+                        SimpleNamespace(status_code=503, text='unavailable',
+                                        json=lambda: pytest.fail('Fehlerbody qualifiziert')))
+    assert ai_engine.fetch_ai_analysis(_track(), 'LM Studio', 'selected',
+        'http://localhost:1234/v1/chat/completions', request_model='owned') == {}
+    assert not runtime._QUALIFICATIONS
+
+
 @pytest.mark.parametrize("installed", [["wanted-extra"], ["other"], ["prefix-wanted"]])
 def test_explicit_lm_key_must_match_exactly(monkeypatch, installed):
     from hpg_core import ai_launcher as launcher
@@ -62,7 +90,8 @@ def test_real_prepare_blocks_failed_exact_load_profile_before_sdk(monkeypatch):
     target = runtime.select_target_gpu(survey())
     url = "http://localhost:1234/v1/chat/completions"
     profile = runtime.requested_load_config(target)
-    key = runtime._qualification_key("selected", url, load_profile=profile)
+    key = runtime._qualification_key("selected", url, load_profile=profile,
+        runtime_identity=(target['runtime'], target['runtime_version']))
     runtime.record_qualification("selected", url, False, "bad schema", qualification_key=key)
     monkeypatch.setattr(runtime, "runtime_target", lambda *a: target)
     record = {"key": "selected", "type": "llm", "format": "gguf", "architecture": "qwen3",
@@ -74,7 +103,8 @@ def test_real_prepare_blocks_failed_exact_load_profile_before_sdk(monkeypatch):
     with pytest.raises(ValueError, match="bad schema"):
         runtime.prepare_gpu_model("selected", url)
     changed = {**profile, "gpu": {**profile["gpu"], "mainGpu": 7}}
-    assert key != runtime._qualification_key("selected", url, load_profile=changed)
+    assert key != runtime._qualification_key("selected", url, load_profile=changed,
+        runtime_identity=(target['runtime'], target['runtime_version']))
 
 
 def test_explicit_qt_probe_replaces_failed_schema_and_uses_fixed_request_key(monkeypatch):

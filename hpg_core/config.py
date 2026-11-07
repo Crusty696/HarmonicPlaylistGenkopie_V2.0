@@ -205,13 +205,14 @@ PARALLEL_HANG_DEADLINE_MAX = 1470  # Sekunden (24 Minuten 30 Sekunden)
 def analysis_timeout_seconds(worker_count: int = 1) -> float:
     """Begrenztes Trackbudget inklusive serieller Zusatzmodell-Warteschlange."""
     import os
+    from .ai_models.deep_feature_runtime import MAX_STEM_TIMEOUT_SECONDS
 
     if type(worker_count) is not int or worker_count < 1:
         raise ValueError("worker_count muss eine positive Ganzzahl sein")
     # Native Beat-/Phrasenjobs skalieren separat bis 420 s; hier ist Reservierung.
     # Bis zu worker_count
     # aktive Tracks teilen denselben Broker; Wartezeit zählt zum Gesamtbudget.
-    extra = (240. if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
+    extra = (MAX_STEM_TIMEOUT_SECONDS if os.environ.get("HPG_STEMS", "1") == "1" else 0.)
     # Embeddings bleiben auf 180 s begrenzt und werden vor Stems ausgeführt.
     extra += 180. if os.environ.get("HPG_EMBEDDINGS", "1") == "1" else 0.
     extra += 420. if os.environ.get("HPG_NATIVE_BEAT", "1") != "0" else 0.

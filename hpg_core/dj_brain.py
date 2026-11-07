@@ -529,9 +529,8 @@ class DJRecommendation:
   adjusted_mix_out_a: float = -1.0   # Angepasster Mix-Out fuer Track A (Sekunden)
   adjusted_mix_in_b: float = -1.0    # Angepasster Mix-In fuer Track B (Sekunden)
   # Berechnete Overlap-Dauer des Uebergangs (Tail von A, begrenzt durch den
-  # Rest von B). Hinweis: in der Playlist-Pipeline ist transition_bars die
-  # autoritative Overlap-Quelle — playlist.compute_transition_recommendations
-  # ueberschreibt overlap_seconds danach mit seconds_per_bar * transition_bars.
+  # Rest von B). In der Playlist-Pipeline ist der aktive Kandidatenplan
+  # autoritativ; seine Dauer und Taktzahl ersetzen die generische Empfehlung.
   overlap_seconds: float = 0.0
 
 

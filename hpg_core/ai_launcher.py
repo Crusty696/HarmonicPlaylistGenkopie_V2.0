@@ -8,7 +8,7 @@ Strategie (vom User vorgegeben):
     (oder bevorzugter Provider zuerst, wenn uebergeben).
   * Start: HEADLESS (CLI) zuerst, GUI-App als Fallback.
   * Modelle: REAL installierte Modelle live abfragen; gewuenschtes Modell
-    automatisch pullen/laden, falls nicht vorhanden.
+    fehlende Modelle nur nach explizitem Downloadauftrag herunterladen.
 
 Keine Qt-Abhaengigkeit hier — reine Funktionen, damit sie in einem
 Hintergrund-QThread (siehe main.py) aufgerufen werden koennen.
@@ -70,15 +70,26 @@ def _http_json(url, timeout=2):
     return False, None
 
 
-def _wait_until(predicate, timeout_sec):
+def _check_cancel(cancel_check):
+    if cancel_check and cancel_check():
+        raise InterruptedError("KI-Vorbereitung abgebrochen")
+
+
+def _wait_until(predicate, timeout_sec, cancel_check=None):
     """Pollt predicate() bis True oder Timeout. Gibt finalen bool zurueck."""
     import time
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
-        if predicate():
+        _check_cancel(cancel_check)
+        ready = predicate()
+        _check_cancel(cancel_check)
+        if ready:
             return True
         time.sleep(0.5)
-    return predicate()
+    _check_cancel(cancel_check)
+    ready = predicate()
+    _check_cancel(cancel_check)
+    return ready
 
 
 def _popen_hidden(args):
@@ -186,32 +197,40 @@ def ollama_active_model():
     return ""
 
 
-def ollama_start():
+def ollama_start(cancel_check=None):
     """Startet Ollama headless (ollama serve), GUI-App als Fallback. Bool zurueck."""
-    if ollama_running():
+    _check_cancel(cancel_check)
+    running = ollama_running()
+    _check_cancel(cancel_check)
+    if running:
         return True
 
     exe = _ollama_exe()
     if exe and os.path.exists(exe):
+        _check_cancel(cancel_check)
         # Headless: ollama serve. Wenn bereits ein Tray-Server laeuft, schlaegt
         # das mit 'address in use' fehl — egal, _wait_until erkennt den Server.
         try:
             _popen_hidden([exe, "serve"])
         except Exception as e:
             logger.warning(f"ollama serve Start fehlgeschlagen: {e}")
-        if _wait_until(ollama_running, _WAIT_HEADLESS_SEC):
+        if _wait_until(ollama_running, _WAIT_HEADLESS_SEC, cancel_check=cancel_check):
             return True
 
     # GUI-Fallback: Ollama Desktop-App startet ebenfalls den Server
     app = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama app.exe")
+    _check_cancel(cancel_check)
     if os.path.exists(app):
         try:
             subprocess.Popen([app])
         except Exception as e:
             logger.warning(f"Ollama GUI-Start fehlgeschlagen: {e}")
-        return _wait_until(ollama_running, _WAIT_GUI_SEC)
+        return _wait_until(ollama_running, _WAIT_GUI_SEC, cancel_check=cancel_check)
 
-    return ollama_running()
+    _check_cancel(cancel_check)
+    running = ollama_running()
+    _check_cancel(cancel_check)
+    return running
 
 
 def ollama_pull(model, cancel_check=None):
@@ -266,23 +285,24 @@ def ollama_pull(model, cancel_check=None):
 
 
 def _prepare_ollama(preferred_model, cancel_check=None):
-    if not ollama_start():
+    _check_cancel(cancel_check)
+    started = ollama_start() if cancel_check is None else ollama_start(cancel_check=cancel_check)
+    _check_cancel(cancel_check)
+    if not started:
         return AIProviderStatus("Ollama", _OLLAMA_HOST + "/v1/chat/completions",
                                 [], "", running=False)
     models = ollama_models()
+    _check_cancel(cancel_check)
     
     # Pruefen, was Ollama wirklich gerade im Speicher geladen hat
     active = ollama_active_model()
+    _check_cancel(cancel_check)
     preferred_match = _match_preferred_model(models, preferred_model)
 
-    # Auto-Pull: exakt gewuenschtes Modell fehlt. Ein beliebiger installierter
-    # Fallback darf diesen Download nicht unterdruecken.
+    # Erkennung ist kein Downloadauftrag und keine Freigabe eines Ersatzmodells.
     if preferred_model and not preferred_match:
-        if ollama_pull(preferred_model, cancel_check=cancel_check):
-            models = ollama_models()
-            preferred_match = _match_preferred_model(models, preferred_model)
-        elif cancel_check and cancel_check():
-            raise InterruptedError("AI model download cancelled by user")
+        return AIProviderStatus("Ollama", _OLLAMA_HOST + "/v1/chat/completions",
+                                models, "", running=True)
 
     active = preferred_match or (active if active in models else "")
     if not active:
@@ -325,19 +345,25 @@ def lms_detect_port():
     return None
 
 
-def lms_start():
+def lms_start(cancel_check=None):
     """
     Startet LM-Studio-Server headless ('lms server start'), GUI-Fallback.
     Gibt aktiven Port (int) oder None zurueck.
     """
+    _check_cancel(cancel_check)
     port = lms_detect_port()
+    _check_cancel(cancel_check)
     if port:
         return port
 
     exe = _lms_exe()
     if exe and os.path.exists(exe):
+        _check_cancel(cancel_check)
         _run_hidden([exe, "server", "start"], timeout=25)
+        # Laufende CLI-Aufrufe bleiben timeoutbegrenzt; danach keine Folgeaktion.
+        _check_cancel(cancel_check)
         port = lms_detect_port()
+        _check_cancel(cancel_check)
         if port:
             return port
 
@@ -347,12 +373,14 @@ def lms_start():
         os.path.expandvars(r"%LOCALAPPDATA%\LM-Studio\LM Studio.exe"),
         os.path.expandvars(r"%PROGRAMFILES%\LM Studio\LM Studio.exe"),
     ):
+        _check_cancel(cancel_check)
         if os.path.exists(cand):
             try:
                 subprocess.Popen([cand])
             except Exception as e:
                 logger.warning(f"LM Studio GUI-Start fehlgeschlagen: {e}")
-            if _wait_until(lambda: lms_detect_port() is not None, _WAIT_GUI_SEC):
+            if _wait_until(lambda: lms_detect_port() is not None, _WAIT_GUI_SEC, cancel_check=cancel_check):
+                _check_cancel(cancel_check)
                 return lms_detect_port()
             break
     return None
@@ -441,13 +469,15 @@ def lms_get(model, cancel_check=None):
 def _prepare_lmstudio(preferred_model, cancel_check=None):
     if cancel_check and cancel_check():
         raise InterruptedError("AI provider detection cancelled by user")
-    port = lms_start()
+    port = lms_start() if cancel_check is None else lms_start(cancel_check=cancel_check)
+    _check_cancel(cancel_check)
     if not port:
         return AIProviderStatus("LM Studio", config.AI_API_URL_LMSTUDIO,
                                 [], "", running=False)
 
     base = f"http://localhost:{port}/v1/chat/completions"
     models = lms_models(port)
+    _check_cancel(cancel_check)
     # Erkennung ist kein Ladeauftrag. Erst der Analyse-/Testworker bereitet
     # eine eigene, explizit konfigurierte Instanz vor. Downloads bleiben manuell.
     # Ein expliziter Katalogschluessel darf nicht durch einen aehnlichen Namen

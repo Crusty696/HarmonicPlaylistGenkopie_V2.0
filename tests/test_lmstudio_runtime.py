@@ -2,6 +2,27 @@
 import pytest
 
 
+def test_pre_cancelled_gpu_preparation_does_no_survey(monkeypatch):
+    from hpg_core import lmstudio_runtime as runtime
+    monkeypatch.setattr(runtime, 'runtime_target', lambda *a: pytest.fail('Survey nach Abbruch'))
+    with pytest.raises(InterruptedError):
+        runtime.prepare_gpu_model('selected', 'http://localhost:1234/v1/chat/completions',
+                                  cancel_check=lambda: True)
+
+
+def test_cancel_during_survey_prevents_inventory(monkeypatch):
+    from hpg_core import lmstudio_runtime as runtime, ai_launcher
+    state = {'cancel': False}
+    def survey(*a):
+        state['cancel'] = True
+        return {}
+    monkeypatch.setattr(runtime, 'runtime_target', survey)
+    monkeypatch.setattr(ai_launcher, '_http_json', lambda *a, **kw: pytest.fail('Inventar nach Abbruch'))
+    with pytest.raises(InterruptedError):
+        runtime.prepare_gpu_model('selected', 'http://localhost:1234/v1/chat/completions',
+                                  cancel_check=lambda: state['cancel'])
+
+
 def survey():
     return {"status": "ok", "engines": [{
         "name": "llama.cpp-win-x86_64-vulkan-avx2", "version": "2.51.0",
@@ -78,11 +99,40 @@ def test_ambiguous_gpu_index_mapping_fails_before_load():
         requested_load_config(target)
 
 
-def test_verified_runtime_uses_device_ids_without_double_remapping():
+@pytest.mark.parametrize('version', ['2.51.0', '2.67.0', '2.71.0'])
+def test_verified_runtime_uses_device_ids_without_double_remapping(version):
     from hpg_core.lmstudio_runtime import requested_load_config, select_target_gpu
-    config = requested_load_config(select_target_gpu(survey()))
+    data = survey()
+    data['engines'][0]['version'] = version
+    config = requested_load_config(select_target_gpu(data))
     assert config["gpu"]["mainGpu"] == 3
     assert config["gpu"]["disabledGpus"] == [7]
+
+
+@pytest.mark.parametrize('mutation', [
+    {'runtime_version': '2.68.0'}, {'runtime_version': None},
+    {'runtime': 'other'}, {'visible_devices': [7]},
+    {'survey_ids': [3, 3]}, {'visible_devices': [3, 99]},
+    {'disabled_ids': []}, {'disabled_ids': [3, 7]},
+    {'disabled_ids': [7, 7]}, {'device_id': True},
+])
+def test_runtime_and_device_sets_must_remain_unambiguous(mutation):
+    from hpg_core.lmstudio_runtime import requested_load_config, select_target_gpu
+    target = select_target_gpu(survey())
+    target.update(mutation)
+    with pytest.raises(ValueError):
+        requested_load_config(target)
+
+
+def test_qualification_is_bound_to_observed_runtime_version():
+    from hpg_core.lmstudio_runtime import _qualification_key
+    url = 'http://localhost:1234/v1/chat/completions'
+    old = _qualification_key('selected', url, load_profile={'same': True},
+        runtime_identity=('llama.cpp-win-x86_64-vulkan-avx2', '2.51.0'))
+    current = _qualification_key('selected', url, load_profile={'same': True},
+        runtime_identity=('llama.cpp-win-x86_64-vulkan-avx2', '2.67.0'))
+    assert old != current
+    assert current != _qualification_key('selected', url, load_profile={'same': True})
 
 
 def test_failed_gpu_setup_never_becomes_ready(monkeypatch):

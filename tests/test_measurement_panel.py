@@ -10,6 +10,30 @@ from hpg_core.measurement_panel import MeasurementDialog
 pytestmark = pytest.mark.gui
 
 
+def test_analysis_summary_uses_canonical_coverage_dictionaries():
+    from hpg_core.measurement_panel import _analysis_summary
+
+    source = SimpleNamespace(duration=600.0, analysis_mode="rekordbox_fast_tail",
+        analysis_coverage=[{"start": 0.0, "end": 360.0},
+                           {"start": 420.0, "end": 600.0}], outro_covered=True)
+    before = deepcopy(source.analysis_coverage)
+    assert "540.0/600.0 s (90%); Trackende abgedeckt" in _analysis_summary(source)
+    assert source.analysis_coverage == before
+
+
+@pytest.mark.parametrize("coverage", [
+    [{"start": 0.0}], [{"start": 0.0, "end": float("nan")}],
+    [{"start": False, "end": 10.0}], [{"start": 0.0, "end": 601.0}],
+    [{"start": 10.0, "end": 10.0}],
+    [{"start": 0.0, "end": 20.0}, {"start": 10.0, "end": 30.0}],
+])
+def test_analysis_summary_rejects_invalid_coverage_dictionaries(coverage):
+    from hpg_core.measurement_panel import _analysis_summary
+
+    source = SimpleNamespace(duration=600.0, analysis_coverage=coverage)
+    assert "Audioabdeckung ungültig gespeichert" in _analysis_summary(source)
+
+
 def diagnosis(lock=0.0, phase_error=0.0):
     return {"version": 1, "downbeat": {"reason": "fewbeats", "stage": "trim"},
             "grid": {"status": "unverifiable", "windows_checked": 0,

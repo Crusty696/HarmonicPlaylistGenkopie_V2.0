@@ -1,5 +1,10 @@
 # HPG — Quellen- und Nachweisstand
 
+Aktuelle Refaktorierung und Prüfnachweise ab 30.10.2026 stehen im
+[laufenden Arbeitsplan](docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md).
+Der folgende Abgleich bewahrt den historischen Stand vom 26.10.; er beschreibt
+weder die jüngsten Testergebnisse noch eine Freigabe des aktuellen Checkouts.
+
 Abgleich am 26.10.2026 mit dem lokalen Code und den Projektchats.
 Ausgangsstand der Abschlusspruefung: `2ca3b64cfd52553b801955815a82fd3d18851dc1`
 nach Integration der GitHub-Commits 196e5b59 und 27cb40b2; App v3.7.2,

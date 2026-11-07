@@ -27,6 +27,7 @@ from .process_runtime import OwnedModelProcess, ModelProcessCleanupError
 from .beat_predictor import MODEL_HASHES as BEAT_HASHES, PREPROCESS_VERSION as BEAT_PREPROCESS
 from .native_beat_decoder import ALGORITHM_VERSION as BEAT_DECODER_VERSION
 from .rekordbox_runtime import REKORDBOX_ROOT
+from .deep_feature_runtime import MAX_STEM_TIMEOUT_SECONDS, client_for_context
 
 logger = logging.getLogger(__name__)
 MAX_WIRE = 64 * 1024 * 1024
@@ -37,6 +38,15 @@ MAX_DEEP_FEATURE_SECONDS = 240.
 _local = threading.local()
 _pool_client = None
 _terminal_failure = threading.Event()
+
+
+def _path_job_timeout_limit(job, parameters):
+    """Stem-Laufzeit getrennt begrenzen; andere Modellfristen erhalten."""
+    if job == 'deep_features':
+        if type(parameters) is dict and parameters.get('kind') == 'stems':
+            return MAX_STEM_TIMEOUT_SECONDS
+        return MAX_DEEP_FEATURE_SECONDS
+    return MAX_PATH_JOB_SECONDS
 
 
 def model_config():
@@ -61,6 +71,52 @@ def _runtime_versions():
 
 
 def fingerprint(config=None):
+    """Bestehende Gesamtidentität einschließlich Zusatzmerkmale bewahren."""
+    return hashlib.sha256(_json(_fingerprint_components(config))).hexdigest()
+
+
+def core_fingerprint(config=None):
+    """Kernanalyse ohne die unabhängig validierten Zusatzmerkmale identifizieren."""
+    components = _fingerprint_components(config, include_deep_features=False)
+    return hashlib.sha256(_json(components)).hexdigest()
+
+
+def legacy_fingerprint(deep_feature_fingerprints, config=None):
+    """Alten Gesamtschlüssel mit heutigen Kernabhängigkeiten rekonstruieren.
+
+    Nur die zwei separat gespeicherten Zusatzidentitäten stammen aus dem
+    alten Track. Modelle, Reader, Konfiguration und Laufzeiten des Kerns
+    werden unverändert aus dem aktuellen Zustand ermittelt.
+    """
+    if (type(deep_feature_fingerprints) is not dict
+            or set(deep_feature_fingerprints) != {'stems', 'embedding'}
+            or any(type(value) is not str or len(value) != 64
+                   or any(char not in '0123456789abcdef' for char in value)
+                   for value in deep_feature_fingerprints.values())):
+        raise ValueError('Ungueltige historische Zusatzidentitaeten')
+    components = _fingerprint_components(config, include_deep_features=False)
+    components['deep_features'] = dict(deep_feature_fingerprints)
+    return hashlib.sha256(_json(components)).hexdigest()
+
+
+def legacy_core_matches(track, rekordbox_signature, config=None):
+    """Prüft Kern-/Rekordbox-Herkunft eines bereits validierten Alt-Tracks.
+
+    Dateiquellidentität und Cache-Schema prüft weiterhin der Cache-Leser.
+    Diese Prüfung verändert weder Payload noch Signaturen.
+    """
+    try:
+        old = legacy_fingerprint({
+            'stems': track.stem_analysis['fingerprint'],
+            'embedding': track.embedding_analysis['fingerprint'],
+        }, config)
+        return (track.rekordbox_signature == f'{rekordbox_signature}|neural:{old}'
+                and track.neural_analysis.get('fingerprint') == old)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def _fingerprint_components(config=None, *, include_deep_features=True):
     from ..config import MODEL_PROCESS_MEMORY_LIMIT_BYTES
     from .native_phrase_adapter import identity as native_phrase_identity
     from .deep_features import config_fingerprint as deep_feature_fingerprint
@@ -79,16 +135,18 @@ def fingerprint(config=None):
                 identities[key] = hashlib.file_digest(stream, 'sha256').hexdigest()
         except (OSError, ValueError):
             identities[key] = None
-    return hashlib.sha256(_json(dict(config=config, hashes=identities,
+    components = dict(config=config, hashes=identities,
                                      preprocess=PREPROCESS_VERSION, beat_preprocess=BEAT_PREPROCESS,
                                      beat_decoder=BEAT_DECODER_VERSION,
                                      native_phrase=native_phrase_identity(),
                                      native_beat=dict(contract=native_beat_contract, tensorflow_sha256=TF_SHA256,
                                                       enabled=native_beat_enabled(), configuration=configured_mode(),
                                                       selection=selection_version, reader=reader_contract),
-                                     deep_features=deep_feature_fingerprint(),
                                      runtimes=_runtime_versions(), wire=3,
-                                     memory_limit_bytes=MODEL_PROCESS_MEMORY_LIMIT_BYTES))).hexdigest()
+                                     memory_limit_bytes=MODEL_PROCESS_MEMORY_LIMIT_BYTES)
+    if include_deep_features:
+        components['deep_features'] = deep_feature_fingerprint()
+    return components
 
 
 def _json(value):
@@ -380,7 +438,7 @@ class CueClient:
     def deep_features(self, parameters, *, timeout_s=240.):
         started = time.monotonic()
         result = self._path_job('deep_features', parameters, timeout_s=timeout_s)
-        remaining = min(float(timeout_s), MAX_DEEP_FEATURE_SECONDS) - (time.monotonic()-started)
+        remaining = min(float(timeout_s), _path_job_timeout_limit('deep_features', parameters)) - (time.monotonic()-started)
         # Ein neuer Prozess ist nötig: ein fehlgeschlagener nativer Aufruf
         # darf nicht mit beschädigtem DLL-Zustand auf CPU wiederholt werden.
         if (parameters.get('kind') in ('stems', 'embedding') and result.get('status') == 'unavailable'
@@ -398,8 +456,7 @@ class CueClient:
         # der fertige DSP-Track samt Fehlerstatus noch ausgeliefert wird.
         if job == 'deep_features':
             track_deadline -= 5.
-        timeout_limit = (MAX_DEEP_FEATURE_SECONDS if job == 'deep_features'
-                         else MAX_PATH_JOB_SECONDS)
+        timeout_limit = _path_job_timeout_limit(job, parameters)
         execution_timeout = min(float(timeout_s), timeout_limit)
         # Das Trackbudget begrenzt die Queue. Die Laufzeit des einzelnen
         # Modells beginnt erst, wenn der serielle Broker READY meldet.
@@ -588,8 +645,7 @@ class CueServiceOwner:
                                 or type(envelope['parameters']) is not dict):
                             raise ValueError('Invalid or disabled native phrase job')
                         execution_timeout = envelope.get('execution_timeout_s', MAX_PATH_JOB_SECONDS)
-                        timeout_limit = (MAX_DEEP_FEATURE_SECONDS if envelope['job'] == 'deep_features'
-                                         else MAX_PATH_JOB_SECONDS)
+                        timeout_limit = _path_job_timeout_limit(envelope['job'], envelope['parameters'])
                         if not _finite(execution_timeout) or not 0. < execution_timeout <= timeout_limit:
                             raise ValueError('Invalid native execution timeout')
                         native_payload = _json(envelope['parameters'])
@@ -728,14 +784,14 @@ def track_session(function):
 @contextmanager
 def session():
     if _pool_client is not None:
-        yield _pool_client
+        yield client_for_context(_pool_client)
     else:
         with _track_context():
             state = _local.track
             if state['client'] is None:
                 state['owner'] = CueServiceOwner()
                 state['client'] = state['owner'].register_generation()
-            yield state['client']
+            yield client_for_context(state['client'])
 
 
 def _validate_results(results, count=None):

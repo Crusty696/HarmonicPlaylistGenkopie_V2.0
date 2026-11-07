@@ -224,7 +224,9 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
         expected = {"einzel": 1, "kandidaten": 2, "dreinoten": 2,
                     "dramaturgie": len(rate_transitions.dramaturgie_varianten()) * 5}[mode]
         assert len(manifest["specs"]) == expected
-        assert len(preflight_calls) == (expected if producer_mode == "kandidaten" else 0)
+        # Alle Modi prüfen die Renderbarkeit vor Veröffentlichung; bereits
+        # der unveränderte Ausgangsstand führt diesen Preflight aus.
+        assert len(preflight_calls) == expected
         immutable_before = {name: (config.output_dir / name).read_bytes()
                             for name in manifest["immutable_metadata"]}
         source_manifest_before = (config.output_dir / hearing_sources.SOURCE_MANIFEST_NAME).read_bytes()

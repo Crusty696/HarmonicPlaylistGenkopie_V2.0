@@ -132,18 +132,22 @@ def zyklische_aehnlichkeit(a: list[float], b: list[float],
 
 
 def deltas_between(a: TransitionSample, b: TransitionSample) -> dict[str, float]:
-    """Die vier Kennzahlen eines Uebergangs."""
+    """Messbare Kennzahlen; fehlende Muster bleiben fehlende Faktoren."""
     groove_sim = zyklische_aehnlichkeit(a.bass_pattern, b.bass_pattern)
     if groove_sim is None:
         groove_sim = zyklische_aehnlichkeit(a.groove_pattern, b.groove_pattern)
     timbre_sim = cosine_similarity(a.timbre, b.timbre)
-    return {
-        "groove_sim": float(groove_sim) if groove_sim is not None else 0.0,
+    result = {
         "sub_delta": abs(a.sub_energy - b.sub_energy),
         "punch_delta": abs(a.bass_punch - b.bass_punch),
         "brightness_delta": abs(a.brightness - b.brightness),
-        "timbre_sim": float(timbre_sim) if timbre_sim is not None else 0.0,
     }
+    # Null ist ein echter gemessener Gegensatz und kein Ersatz für Messausfall.
+    if groove_sim is not None:
+        result["groove_sim"] = float(groove_sim)
+    if timbre_sim is not None:
+        result["timbre_sim"] = float(timbre_sim)
+    return result
 
 
 # Ab dieser AUC gilt die Trennung als belastbar genug fuer den Einbau.
@@ -186,25 +190,27 @@ def cluster_bootstrap_auc(
     Aufnahmekette; sie als unabhaengig zu behandeln macht das Intervall
     zu eng.
     """
-    echte_flach = [w for mix in echte_je_mix for w in mix]
-    zufall_flach = [w for mix in zufall_je_mix for w in mix]
+    if len(echte_je_mix) != len(zufall_je_mix):
+        raise ValueError("Beide Klassen muessen dieselben Mixe enthalten.")
+    # Nur Mixe mit Messungen in beiden Klassen informieren den Vergleich.
+    # Die Paarung bleibt bei jeder Ziehung erhalten.
+    paare = [(e, z) for e, z in zip(echte_je_mix, zufall_je_mix) if e and z]
+    echte_flach = [w for e, _ in paare for w in e]
+    zufall_flach = [w for _, z in paare for w in z]
     punkt = discrimination_auc(echte_flach, zufall_flach, hoeher_ist_besser)
 
     # Mit einem einzigen Cluster laesst sich die Streuung zwischen Mixen
     # nicht schaetzen — dann gibt es schlicht keine Aussage.
-    anzahl_mixe = max(len(echte_je_mix), len(zufall_je_mix))
+    anzahl_mixe = len(paare)
     if anzahl_mixe < 2:
         return (punkt, 0.0, 1.0)
 
     rng = np.random.default_rng(seed)
     verteilung: list[float] = []
     for _ in range(ziehungen):
-        auswahl_e = rng.integers(0, len(echte_je_mix), size=len(echte_je_mix))
-        auswahl_z = rng.integers(0, len(zufall_je_mix), size=len(zufall_je_mix))
-        probe_e = [w for i in auswahl_e for w in echte_je_mix[i]]
-        probe_z = [w for i in auswahl_z for w in zufall_je_mix[i]]
-        if not probe_e or not probe_z:
-            continue
+        auswahl = rng.integers(0, anzahl_mixe, size=anzahl_mixe)
+        probe_e = [w for i in auswahl for w in paare[i][0]]
+        probe_z = [w for i in auswahl for w in paare[i][1]]
         verteilung.append(
             discrimination_auc(probe_e, probe_z, hoeher_ist_besser)
         )

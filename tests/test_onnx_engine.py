@@ -18,6 +18,7 @@ def runtime(monkeypatch, tmp_path):
 
     class Session:
         def __init__(self, path, sess_options, providers):
+            self.requested = providers
             self.providers = [p[0] if isinstance(p, tuple) else p for p in providers]
             if state.init_fail and self.providers[0] == 'DmlExecutionProvider':
                 raise RuntimeError('DML init failed')
@@ -54,6 +55,7 @@ def runtime(monkeypatch, tmp_path):
                           ExecutionMode=SimpleNamespace(ORT_SEQUENTIAL=0),
                           get_available_providers=lambda: state.available)
     monkeypatch.setitem(sys.modules, 'onnxruntime', ort)
+    monkeypatch.setattr(engine.directml_device, 'choose_device_id', lambda: 1)
     engine.clear_model_cache()
     state.path = tmp_path / 'model.onnx'
     state.path.write_bytes(b'model')
@@ -75,6 +77,26 @@ def test_cpu_options_and_metadata(runtime):
     assert runtime.created[0].disabled
     assert model.describe()['session_providers'] == ['CPUExecutionProvider']
     assert model.describe()['fallback_reason']
+
+
+def test_default_dml_uses_selected_discrete_adapter(runtime):
+    runtime.available.insert(0, 'DmlExecutionProvider')
+    engine.get_model(runtime.path)
+    assert runtime.created[0].providers[0] == 'DmlExecutionProvider'
+    assert runtime.created[0].requested[0] == ('DmlExecutionProvider', {'device_id': 1})
+    assert runtime.created[0].options.enable_mem_pattern is False
+
+
+def test_explicit_adapter_and_missing_discrete_fallback(runtime, monkeypatch):
+    runtime.available.insert(0, 'DmlExecutionProvider')
+    explicit = engine.get_model(runtime.path, device_id=0)
+    assert explicit._device_id == 0
+    assert runtime.created[0].requested[0] == ('DmlExecutionProvider', {'device_id': 0})
+    engine.clear_model_cache()
+    monkeypatch.setattr(engine.directml_device, 'choose_device_id', lambda: None)
+    cpu = engine.get_model(runtime.path)
+    assert cpu.describe()['session_providers'] == ['CPUExecutionProvider']
+    assert cpu.describe()['fallback_reason'] == 'No suitable discrete DirectML adapter'
 
 
 @pytest.mark.parametrize('failure', ['init_fail', 'run_fail'])

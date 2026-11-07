@@ -43,6 +43,8 @@ if __name__ == "__main__" and len(_bootstrap_sys.argv) > 1 and _bootstrap_sys.ar
     _bootstrap_os.environ["HPG_CACHE_DIR"] = str(_smoke_state)
     _bootstrap_os.environ["TMP"] = _bootstrap_os.environ["TEMP"] = str(_smoke_root)
     _bootstrap_os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    # Synthetische Diagnose und ihre Spawn-Worker lesen keine Benutzerbibliothek.
+    _bootstrap_os.environ["HPG_DISABLE_REKORDBOX"] = "1"
 
     def _smoke_startup_exception(exception_type, exception, trace):
         # Ausschliesslich frischer Diagnosebericht; Fehler beim Schreiben bleibt Fehler.
@@ -130,6 +132,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QScrollArea,
+    QSizePolicy,
     QStyledItemDelegate,
     QStyle,
     QRadioButton,
@@ -172,6 +175,11 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from hpg_core.transition_renderer import (
     BeatSyncError, TransitionClipSpec, _render_clip_subprocess_wrapper,
 )
+from hpg_core.ui.playlist_columns import PLAYLIST_COLUMNS, PlaylistColumn
+from hpg_core.ui.track_details import playlist_track_details
+from hpg_core.ui.playlist_table import PlaylistTable
+from hpg_core.ui.navigation import SidebarWidget, ToolbarWidget, StatusBarWidget
+from hpg_core.ui.result_publication import ResultPublicationMixin
 from hpg_core.parallel_analyzer import ParallelAnalyzer
 from hpg_core.models import get_camelot_components, seconds_to_bars
 from hpg_core.playlist import (
@@ -219,55 +227,31 @@ from hpg_core import candidate_choices
 # referenzierte `logger` ohne Definition (NameError im Fehlerpfad)
 logger = logging.getLogger(__name__)
 
+from hpg_core.run_state import RunState, AnalysisIssue, LegacyReorderRequest, ACTIVE_RUN_STATES, map_phase_progress, RUN_STATE_GUIDANCE
+from hpg_core.app_workers import (
+    AIAnalysisWorker, AIDetectWorker, AITestWorker, AIPullWorker,
+    DependencyCheckWorker, PlaylistGenerationWorker,
+    AnalysisWorker as _AnalysisWorker, TransitionRenderWorker as _TransitionRenderWorker,
+)
+
+
+class AnalysisWorker(_AnalysisWorker):
+    """Kompatibler Einstieg mit den Diensten der Anwendung."""
+
+    _create_analyzer = staticmethod(lambda: ParallelAnalyzer())
+    _filter_tracks = staticmethod(lambda tracks: apply_resource_limits(tracks))
+    _error_reporter = staticmethod(lambda: get_error_reporter())
+
+
+class TransitionRenderWorker(_TransitionRenderWorker):
+    """Kompatibler Einstieg für vorhandene App-Verbraucher."""
+
+    _error_reporter = staticmethod(lambda: get_error_reporter())
+
+
 GUI_SETTINGS_SCHEMA_VERSION = 1
 GUI_SETTINGS_KEY = "ui_state/v1"
 TRACK_FILE_PATH_ROLE = Qt.ItemDataRole.UserRole.value + 1
-
-
-class RunState(str, Enum):
-    """Einzige Wahrheit fuer den Lebenszyklus eines Analyse-Laufs."""
-
-    IDLE = "idle"
-    AUDIO = "audio"
-    AI = "ai"
-    PLAYLIST = "playlist"
-    PREVIEW = "preview"
-    CANCELLING = "cancelling"
-    SUCCESS = "success"
-    PARTIAL = "partial"
-    ERROR = "error"
-    CANCELLED = "cancelled"
-
-
-class AnalysisIssue(NamedTuple):
-    """Unveraenderlicher, thread-sicherer Befund eines Analyse-Laufs."""
-
-    code: str
-    path: str
-    message: str
-
-
-class LegacyReorderRequest(NamedTuple):
-    playlist: tuple
-    quality_metrics: dict
-    transition_recommendations: tuple
-    bpm_tolerance: float
-    scoring_context: dict
-
-
-ACTIVE_RUN_STATES = {
-    RunState.AUDIO,
-    RunState.AI,
-    RunState.PLAYLIST,
-    RunState.PREVIEW,
-    RunState.CANCELLING,
-}
-
-
-def map_phase_progress(percent: float, start: float, end: float) -> int:
-    """Mappt lokale 0..100-Prozente monoton in einen globalen Abschnitt."""
-    bounded = max(0.0, min(100.0, float(percent)))
-    return int(round(start + (end - start) * bounded / 100.0))
 
 
 def resolve_transition_mix_points(transition) -> tuple[float, float, float]:
@@ -433,370 +417,6 @@ def empfehlung_fuer_paar(recommendations, index: int):
     return None
 
 
-
-class AIAnalysisWorker(QThread):
-    """Worker thread for running AI analysis in the background."""
-    ai_finished = pyqtSignal(str, dict)  # (track_path, metadata)
-    progress = pyqtSignal(int, int)      # (current_track_index, total_tracks)
-    failed = pyqtSignal(str)
-
-    def __init__(self, playlist: list, provider: str = None, model: str = None,
-                 base_url: str = None, parent=None):
-        super().__init__(parent)
-        self.playlist = playlist
-        self.provider = provider
-        self.model = model
-        self.base_url = base_url  # Voller Endpoint vom ai_launcher (Port dynamisch)
-        self._should_cancel = False
-        self.failure_reason = ""
-        self._request_model = model
-
-    def request_cancel(self):
-        self._should_cancel = True
-        self.requestInterruption()
-
-    def _ensure_ready(self):
-        """
-        Stellt sicher dass der Provider laeuft und ein Modell gewaehlt ist.
-        Laeuft bereits im Worker-Thread → blockierend erlaubt, blockiert UI nicht.
-        LM Studio wird auch bei vorhandenem Endpoint vor jeder Analyse geprueft.
-        Inventarerkennung allein bestaetigt weder GPU-Konfiguration noch Eignung.
-        """
-        try:
-            from hpg_core import ai_launcher
-            if not (self.base_url and self.provider and self.model):
-                if self.provider:
-                    if self.provider not in {"LM Studio", "Ollama"}:
-                        raise ValueError("Unbekannter KI-Provider")
-                    status = ai_launcher.prepare_provider(
-                        self.provider, preferred_model=self.model,
-                        cancel_check=self.isInterruptionRequested)
-                else:
-                    status = ai_launcher.detect_and_start(
-                        preferred_model=self.model,
-                        cancel_check=self.isInterruptionRequested)
-                if not status or not status.running or not status.active_model:
-                    return False
-                if self.provider and status.name != self.provider:
-                    raise ValueError("Ausgewählter KI-Provider nicht verfügbar; kein automatischer Wechsel")
-                if self.model and status.active_model != self.model:
-                    raise ValueError("Ausgewähltes Modell nicht verfügbar; kein automatischer Wechsel")
-                if status and status.running:
-                    self.base_url = status.base_url
-                    self.provider = status.name
-                    if status.active_model:
-                        self.model = status.active_model
-            if not (self.base_url and self.provider and self.model):
-                return False
-            self._request_model = self.model
-            if self.provider == "LM Studio":
-                from hpg_core.lmstudio_runtime import prepare_gpu_model
-                self._request_model = prepare_gpu_model(
-                    self.model, self.base_url,
-                    cancel_check=self.isInterruptionRequested,
-                )
-        except InterruptedError:
-            raise
-        except Exception as exc:
-            logging.getLogger("hpg_core.ai_engine").error(
-                "AI provider setup failed: %s", exc
-            )
-            self.failure_reason = str(exc)
-            return False
-        return bool(self.base_url and self.provider and self.model)
-
-    def _fail(self, reason):
-        self.failure_reason = reason
-        self.failed.emit(reason)
-
-    def run(self):
-        import logging
-        import os
-        logger = logging.getLogger("hpg_core.ai_engine")
-        try:
-            ready = self._ensure_ready()
-        except InterruptedError:
-            logger.info("AI Mood Tagging cancelled during provider setup.")
-            return
-        if not ready:
-            if self._should_cancel or self.isInterruptionRequested():
-                logger.info("AI Mood Tagging cancelled during provider setup.")
-                return
-            self._fail(self.failure_reason or "Kein einsatzbereiter KI-Provider oder kein Modell verfuegbar.")
-            self.progress.emit(len(self.playlist), len(self.playlist))
-            return
-        logger.info(f"Starting AI Mood Tagging using {self.provider} (Model: {self.model})...")
-        total_tracks = len(self.playlist)
-        cancelled = False
-        failed = False
-        for i, track in enumerate(self.playlist):
-            if self._should_cancel:
-                logger.info("AI Mood Tagging cancelled by user.")
-                cancelled = True
-                break
-            self.progress.emit(i, total_tracks)
-            try:
-                from hpg_core.ai_engine import ai_metadata_matches, fetch_ai_analysis
-                if ai_metadata_matches(track, self.provider, self.model):
-                    logger.info(
-                        "[%s/%s] Passende KI-Metadaten bereits vorhanden; uebersprungen.",
-                        i + 1,
-                        total_tracks,
-                    )
-                    continue
-                filename = os.path.basename(track.filePath)
-                logger.info(f"[{i+1}/{total_tracks}] AI analyzing track: '{filename}'...")
-                ai_data = fetch_ai_analysis(
-                    track,
-                    provider=self.provider,
-                    model=self.model,
-                    url=self.base_url,
-                    cancel_check=self.isInterruptionRequested,
-                    **({"request_model": self._request_model} if self.provider == "LM Studio" else {}),
-                )
-                if self._should_cancel or self.isInterruptionRequested():
-                    logger.info("AI Mood Tagging cancelled by user.")
-                    cancelled = True
-                    break
-                if ai_data:
-                    # Cache-I/O kann auf einen extern gehaltenen SQLite-Lock bis
-                    # zum Timeout warten. Es bleibt deshalb im AI-Worker und darf
-                    # niemals den Qt-GUI-Thread blockieren.
-                    try:
-                        from hpg_core.caching import (
-                            generate_cache_key,
-                            merge_cached_ai_metadata,
-                        )
-                        cache_key = generate_cache_key(
-                            track.filePath,
-                            getattr(track, "rekordbox_signature", ""),
-                        )
-                        if not cache_key:
-                            raise RuntimeError("kein sicherer Cache-Key")
-                        persisted = merge_cached_ai_metadata(
-                            cache_key, track.filePath, ai_data
-                        )
-                    except Exception as cache_exc:
-                        reason = (
-                            f"KI-Metadaten fuer '{filename}' konnten nicht "
-                            f"persistiert werden: {cache_exc}"
-                        )
-                        logger.error(reason)
-                        self._fail(reason)
-                        failed = True
-                        break
-                    if persisted is not True:
-                        reason = (
-                            f"KI-Metadaten fuer '{filename}' konnten nicht "
-                            "bestaetigt persistiert werden."
-                        )
-                        logger.error(reason)
-                        self._fail(reason)
-                        failed = True
-                        break
-
-                    # Der bestaetigte Cache-Commit ist die atomare Grenze. Auch
-                    # ein waehrend des DB-Wartens eingetroffener Cancel darf das
-                    # bereits persistierte Ergebnis nicht im Arbeitsspeicher
-                    # beziehungsweise in der GUI unsichtbar lassen.
-                    track.ai_metadata = ai_data
-                    self.ai_finished.emit(track.filePath, ai_data)
-                    if self._should_cancel or self.isInterruptionRequested():
-                        logger.info("AI Mood Tagging cancelled after persisted result.")
-                        cancelled = True
-                        break
-                else:
-                    reason = (
-                        f"KI-Verarbeitung bei '{filename}' gestoppt: Provider- oder "
-                        "Schemafehler. Bereits erzeugte Ergebnisse bleiben erhalten."
-                    )
-                    logger.warning(reason)
-                    self._fail(reason)
-                    failed = True
-                    break
-            except InterruptedError:
-                logger.info("AI Mood Tagging cancelled by user.")
-                cancelled = True
-                break
-            except Exception as e:
-                reason = f"KI-Verarbeitung gestoppt: {e}"
-                logger.error(reason, exc_info=True)
-                self._fail(reason)
-                failed = True
-                break
-        if not cancelled and not failed:
-            self.progress.emit(total_tracks, total_tracks)
-            logger.info("AI Mood Tagging complete.")
-
-
-class AIDetectWorker(QThread):
-    """
-    Erkennt & startet AI-Provider im Hintergrund (Ollama -> LM Studio),
-    fragt real installierte Modelle ab. Blockiert die UI nie.
-    """
-    detected = pyqtSignal(object)  # AIProviderStatus oder None
-
-    def __init__(self, preferred: str = None, preferred_model: str = None, parent=None):
-        super().__init__(parent)
-        self.preferred = preferred
-        self.preferred_model = preferred_model
-
-    def run(self):
-        status = None
-        try:
-            from hpg_core import ai_launcher
-            status = ai_launcher.detect_and_start(
-                preferred=self.preferred,
-                preferred_model=self.preferred_model,
-                cancel_check=self.isInterruptionRequested,
-            )
-        except Exception:
-            status = None
-        # HPG-003: bei Abbruch (App-Close) kein Signal mehr in die sterbende UI
-        if self.isInterruptionRequested():
-            return
-        self.detected.emit(status)
-
-
-class AITestWorker(QThread):
-    """
-    Worker thread for testing the AI provider connection and model response.
-    Sends a test request and measures latency.
-    """
-    test_finished = pyqtSignal(bool, str, str, float)  # (success, response_or_error, model_name, latency)
-
-    def __init__(self, provider: str, model: str, base_url: str, parent=None):
-        super().__init__(parent)
-        self.provider = provider
-        self.model = model
-        self.base_url = base_url
-
-    def run(self):
-        import time
-        import requests
-        start_time = time.time()
-
-        url = self.base_url
-        if not url:
-            if self.provider == "LM Studio":
-                url = "http://localhost:1234/v1/chat/completions"
-            else:
-                url = "http://localhost:11434/v1/chat/completions"
-
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": hpg_config.AI_SYSTEM_PROMPT},
-                {"role": "user", "content": "Track: Technischer Metadaten-Test. Genre: Techno. BPM: 130. Energy: 60. Duration: 300s. Intro 0-32s, Hauptteil 32-268s, Outro 268-300s. Liefere das definierte Metadatenschema. Kein Audio wurde uebertragen."}
-            ]
-        }
-
-        try:
-            from hpg_core.ai_engine import AI_JSON_SCHEMA, validate_ai_completion
-            from hpg_core.models import Track
-            qualification_key = None
-            if self.provider == "LM Studio":
-                from hpg_core.lmstudio_runtime import prepare_gpu_model, instance_qualification_key
-                payload["model"] = prepare_gpu_model(
-                    self.model, url, cancel_check=self.isInterruptionRequested,
-                    explicit_retest=True)
-                qualification_key = instance_qualification_key(payload["model"])
-            payload.update(temperature=0, seed=0, max_tokens=hpg_config.AI_MAX_TOKENS,
-                           response_format={"type": "json_schema", "json_schema": AI_JSON_SCHEMA})
-            # timeout=(connect timeout, read timeout). Modell laden kann dauern, daher 30s.
-            resp = requests.post(url, json=payload, timeout=(3.0, 30.0))
-            resp.raise_for_status()
-            resp_json = resp.json()
-            latency = time.time() - start_time
-
-            # HPG-003: bei Abbruch (App-Close) kein Signal mehr emittieren
-            if self.isInterruptionRequested():
-                return
-            validate_ai_completion(
-                resp_json, Track(filePath="hpg-schema-probe", fileName="Schema-Test", duration=300.),
-                self.provider, self.model, request_model=payload["model"], url=url,
-                qualification_key=qualification_key)
-            self.test_finished.emit(True, "Metadatenschema gültig. Kein Nachweis für Audioverstehen oder musikalische Qualität.", self.model, latency)
-        except Exception as e:
-            latency = time.time() - start_time
-            if self.isInterruptionRequested():
-                return
-            self.test_finished.emit(False, str(e), self.model, latency)
-
-
-class AIPullWorker(QThread):
-    """
-    Worker thread for pulling a model from Ollama in the background.
-    """
-    pull_finished = pyqtSignal(bool, str)  # (success, error_message)
-
-    def __init__(self, model: str, parent=None):
-        super().__init__(parent)
-        self.provider = "Ollama"
-        self.model = model
-
-    def run(self):
-        try:
-            from hpg_core import ai_launcher
-            # HPG-003: cancel_check macht den bis zu 30-minuetigen Pull abbrechbar
-            success = ai_launcher.ollama_pull(
-                self.model, cancel_check=self.isInterruptionRequested
-            )
-            if self.isInterruptionRequested():
-                return
-            if success:
-                self.pull_finished.emit(True, "")
-            else:
-                self.pull_finished.emit(False, f"Modell '{self.model}' konnte nicht geladen werden. Bitte stelle sicher, dass Ollama läuft und der Modellname korrekt ist.")
-        except Exception as e:
-            if self.isInterruptionRequested():
-                return
-            self.pull_finished.emit(False, str(e))
-
-
-class DependencyCheckWorker(QThread):
-    """Prueft optionale Dienste ohne den GUI-Thread zu blockieren."""
-
-    checked = pyqtSignal(bool, bool, bool)
-    # (pedalboard_installed, ai_online, rekordbox_running)
-
-    def __init__(self, provider: str, url: str, parent=None):
-        super().__init__(parent)
-        self.provider = provider
-        self.url = url
-
-    def run(self):
-        try:
-            importlib.import_module("pedalboard")
-            pedalboard_installed = True
-        except (ImportError, OSError):
-            pedalboard_installed = False
-
-        ai_online = False
-        try:
-            import requests
-
-            requests.get(
-                self.url.replace("/chat/completions", ""),
-                timeout=(0.3, 0.3),
-            )
-            ai_online = True
-        except Exception:
-            ai_online = False
-
-        # Prozesspruefung gehoert in den Worker: psutil iteriert ueber alle
-        # laufenden Prozesse und das darf den GUI-Thread nicht blockieren.
-        try:
-            from hpg_core.rekordbox_importer import is_rekordbox_running
-
-            rekordbox_running = is_rekordbox_running()
-        except Exception:
-            rekordbox_running = False
-
-        if not self.isInterruptionRequested():
-            self.checked.emit(pedalboard_installed, ai_online, rekordbox_running)
-
-
 class HearingWorkflowWorker(QThread):
     """Fuehrt bestehende Hoertest-CLI/Audit-Schritte ohne GUI-Blockade aus."""
 
@@ -937,496 +557,6 @@ class HearingWorkflowWorker(QThread):
             result["output"] = f"{exc}\nStaging bleibt zur Prüfung erhalten: {stage}" if stage else str(exc)
             result["staging_path"] = stage
         self.completed.emit(result)
-
-
-class AnalysisWorker(QThread):
-    """Worker thread for running the analysis in the background."""
-
-    progress = pyqtSignal(int)
-    status_update = pyqtSignal(str)
-    phase_changed = pyqtSignal(int, str)  # step_index, state ("inactive", "working", "completed")
-    # AUDIT-FIX T1 (2026-07-24): eigenes Ergebnis-Signal, das NICHT das
-    # eingebaute QThread.finished ueberschreibt. Vorher gab es kein Signal mehr,
-    # das das echte Thread-Ende meldete -> deleteLater() konnte aus dem selbst
-    # emittierten Signal heraus einen noch laufenden QThread zerstoeren
-    # ("QThread: Destroyed while thread is still running").
-    analysis_done = pyqtSignal(list, dict)  # playlist, quality_metrics
-    analysis_issues = pyqtSignal(object)  # tuple[AnalysisIssue, ...]
-    rekordbox_coverage = pyqtSignal(object)  # RekordboxCoverage
-
-    def __init__(self, folder_path, *, cache_policy="reuse"):
-        super().__init__()
-        if type(cache_policy) is not str or cache_policy not in {"reuse", "fresh"}:
-            raise ValueError("cache_policy muss 'reuse' oder 'fresh' sein")
-        self.folder_path = folder_path
-        self.cache_policy = cache_policy
-        self.supported_formats = hpg_config.SUPPORTED_AUDIO_EXTENSIONS
-        self._should_cancel = False
-
-    def request_cancel(self):
-        """Cooperative cancel — setzt Flag, das in run() geprueft wird."""
-        self._should_cancel = True
-
-    def _report_rekordbox_coverage(self, analyzed_tracks):
-        """Meldet, wie viele Tracks Rekordbox-Daten nutzen konnten.
-
-        Laeuft bewusst im Worker-Thread. Der Importer-Singleton existiert nur
-        in den Analyse-Subprozessen — der erste Zugriff im GUI-Prozess liest
-        die komplette Rekordbox-DB und wuerde die Oberflaeche einfrieren.
-        """
-        try:
-            from hpg_core.rekordbox_importer import get_rekordbox_importer
-
-            paths = [t.filePath for t in analyzed_tracks if getattr(t, "filePath", "")]
-            coverage = get_rekordbox_importer().summarize_coverage(paths)
-        except Exception as e:
-            # Ein Diagnose-Fehler darf ein fertiges Analyseergebnis nie kippen.
-            logger.warning(f"Rekordbox-Abdeckung nicht ermittelbar: {e}")
-            return
-
-        if coverage.degraded:
-            logger.warning(
-                "Rekordbox-Abdeckung: %d von %d Tracks ohne nutzbare Daten "
-                "(%d unanalysiert, %d mehrdeutig) -> Librosa-Vollanalyse.",
-                coverage.degraded, coverage.total,
-                coverage.without_analysis, coverage.ambiguous,
-            )
-        self.rekordbox_coverage.emit(coverage)
-
-    def run(self):
-        """The main work of the thread - now with multi-core processing."""
-        import logging
-        logger = logging.getLogger("hpg_core.analysis")
-        try:
-            self.phase_changed.emit(0, "working")
-            self.status_update.emit("Scanning for audio files...")
-            logger.info(f"Scanning directory: {self.folder_path}")
-            logger.info("Scanning for audio files...")
-
-            # Scan for audio files
-            audio_files = []
-            scan_root = os.path.realpath(self.folder_path)
-            scan_limit_reached = False
-            for root, _, files in os.walk(self.folder_path):
-                if self._should_cancel:
-                    raise InterruptedError("Analysis cancelled by user")
-                for file in files:
-                    if file.lower().endswith(self.supported_formats):
-                        candidate = os.path.abspath(os.path.join(root, file))
-                        real_candidate = os.path.realpath(candidate)
-                        try:
-                            inside_root = os.path.commonpath(
-                                [scan_root, real_candidate]
-                            ) == scan_root
-                        except ValueError:
-                            inside_root = False
-                        if not inside_root:
-                            logger.warning(
-                                "Audio-Symlink ausserhalb des Scanroots uebersprungen: %s",
-                                candidate,
-                            )
-                            continue
-                        if len(audio_files) >= hpg_config.SECURITY_MAX_PLAYLIST_SIZE:
-                            scan_limit_reached = True
-                            break
-                        audio_files.append(candidate)
-                if scan_limit_reached:
-                    break
-
-            if scan_limit_reached:
-                self.status_update.emit(
-                    f"WARNING: Scan auf {hpg_config.SECURITY_MAX_PLAYLIST_SIZE} Tracks begrenzt."
-                )
-
-            total_files = len(audio_files)
-            if total_files == 0:
-                self.phase_changed.emit(0, "inactive")
-                self.status_update.emit(
-                    "ERROR: No audio files found in selected folder!"
-                )
-                logger.error(f"No compatible audio files ({', '.join(self.supported_formats)}) found in selected folder!")
-                self.analysis_done.emit([], {})
-                return
-
-            self.phase_changed.emit(0, "completed")
-            self.phase_changed.emit(1, "working")
-            self.status_update.emit(
-                f"Found {total_files} audio files. Starting analysis..."
-            )
-            logger.info(f"Scan complete: Found {total_files} audio files.")
-            logger.info("Starting parallel feature extraction...")
-
-            # Progress callback for parallel analyzer
-            last_update_time = 0
-
-            def progress_callback(current, total, status_msg):
-                """Forward progress updates to GUI with throttling"""
-                nonlocal last_update_time
-                current_time = time.time() * 1000  # Convert to ms
-
-                # Detail-Log ins Terminal schreiben
-                import logging
-                logger = logging.getLogger("hpg_core.parallel_analyzer")
-                logger.info(f"[{current}/{total}] {status_msg}")
-
-                # Throttle updates: Max every 100ms or on completion
-                if (current_time - last_update_time > 100) or (current >= total):
-                    float_percent = (current / total) * 100.0
-                    self.progress.emit(int(float_percent))
-                    self.status_update.emit(status_msg)
-                    last_update_time = current_time
-
-                # Cooperative cancel check
-                if self._should_cancel:
-                    raise InterruptedError("Analysis cancelled by user")
-
-            # Use ParallelAnalyzer for multi-core processing with smart scaling
-            try:
-                analyzer = (
-                    ParallelAnalyzer()
-                )  # Auto-detect optimal core count (smart scaling)
-                analyzed_tracks = analyzer.analyze_files(
-                    audio_files,
-                    progress_callback=progress_callback,
-                    cancel_callback=lambda: self._should_cancel,
-                    cache_policy=self.cache_policy,
-                )
-            except InterruptedError:
-                self.phase_changed.emit(1, "inactive")
-                self.status_update.emit("Analysis cancelled.")
-                self.analysis_done.emit([], {})
-                return
-            except Exception as e:
-                self.phase_changed.emit(1, "inactive")
-                self.status_update.emit(f"ERROR during analysis: {str(e)}")
-                get_error_reporter().log_error(
-                    "analysis", str(e), {"folder": self.folder_path}
-                )
-                self.analysis_done.emit([], {})
-                return
-
-            if self._should_cancel:
-                self.phase_changed.emit(1, "inactive")
-                self.status_update.emit("Analysis cancelled.")
-                self.analysis_done.emit([], {})
-                return
-
-            invalid_analysis_tracks = [
-                track
-                for track in analyzed_tracks
-                if getattr(track, "analysis_mode", "") not in VALID_ANALYSIS_MODES
-            ]
-            issues = [
-                AnalysisIssue(
-                    (
-                        "rekordbox_decode_degraded"
-                        if getattr(track, "analysis_mode", "")
-                        == "rekordbox_degraded"
-                        else "invalid_analysis_mode"
-                    ),
-                    str(getattr(track, "filePath", "") or ""),
-                    (
-                        "Audio-Decode fehlgeschlagen; Track wurde sicher ausgeschlossen."
-                        if getattr(track, "analysis_mode", "")
-                        == "rekordbox_degraded"
-                        else (
-                            "Ungueltiger Analysemodus "
-                            f"{getattr(track, 'analysis_mode', '')!r}; "
-                            "Track wurde sicher ausgeschlossen."
-                        )
-                    ),
-                )
-                for track in invalid_analysis_tracks
-            ]
-            if issues:
-                for issue in issues:
-                    logger.error(
-                        "Track wegen ungueltigem Analyseergebnis ausgeschlossen: %s",
-                        issue.path,
-                    )
-                analyzed_tracks = [
-                    track
-                    for track in analyzed_tracks
-                    if getattr(track, "analysis_mode", "") in VALID_ANALYSIS_MODES
-                ]
-            # Ressourcenfilter: defekte Eintraege und Tracks ueber den Limits
-            # (Dateigroesse/Dauer) entfernen, Playlist-Groesse deckeln
-            tracks_before_resource_filter = list(analyzed_tracks)
-            pre_count = len(analyzed_tracks)
-            analyzed_tracks = apply_resource_limits(analyzed_tracks)
-            retained_by_identity = Counter(id(track) for track in analyzed_tracks)
-            resource_excluded = []
-            for track in tracks_before_resource_filter:
-                track_identity = id(track)
-                if retained_by_identity[track_identity]:
-                    retained_by_identity[track_identity] -= 1
-                else:
-                    resource_excluded.append(track)
-            issues.extend(
-                AnalysisIssue(
-                    "resource_limit_excluded",
-                    str(getattr(track, "filePath", "") or ""),
-                    "Track wurde durch den Ressourcenfilter ausgeschlossen "
-                    "(defekt oder ueber Limits).",
-                )
-                for track in resource_excluded
-            )
-            if len(analyzed_tracks) < pre_count:
-                removed = pre_count - len(analyzed_tracks)
-                self.status_update.emit(
-                    f"WARNING: {removed} Track(s) durch Ressourcenfilter entfernt (defekt oder ueber Limits)."
-                )
-                logger.warning(f"Ressourcenfilter entfernte {removed} von {pre_count} Tracks.")
-
-            try:
-                self.analysis_issues.emit(tuple(issues))
-            except Exception as exc:
-                # Der Diagnosekanal darf den sicherheitsrelevanten Filter nie
-                # rueckgaengig machen oder den restlichen Lauf abbrechen.
-                logger.error("Analysebefunde konnten nicht gemeldet werden: %s", exc)
-
-            if not analyzed_tracks:
-                self.phase_changed.emit(1, "inactive")
-                self.status_update.emit("ERROR: No tracks were successfully analyzed.")
-                self.analysis_done.emit([], {})
-                return
-
-            logger.info(f"Feature extraction complete: {len(analyzed_tracks)} tracks successfully analyzed.")
-            self._report_rekordbox_coverage(analyzed_tracks)
-            self.phase_changed.emit(1, "completed")
-            self.status_update.emit(
-                f"Audio-Analyse abgeschlossen. Starte KI-Veredelung fuer {len(analyzed_tracks)} Tracks..."
-            )
-            self.analysis_done.emit(analyzed_tracks, {})
-
-        except InterruptedError:
-            self.status_update.emit("Analysis cancelled.")
-            self.analysis_done.emit([], {})
-        except Exception as e:
-            self.status_update.emit(f"FATAL ERROR: {str(e)}")
-            self.analysis_done.emit([], {})
-
-
-class PlaylistGenerationWorker(QThread):
-    """Erzeugt Playlist und TransitionResult ohne Zugriff auf GUI-Widgets."""
-
-    generation_done = pyqtSignal(object)
-    generation_failed = pyqtSignal(str)
-
-    def __init__(
-        self,
-        tracks,
-        *,
-        mode,
-        bpm_tolerance,
-        advanced_params,
-        scoring_context,
-        candidate_choice_snapshot,
-        ai_failure="",
-        finalize=True,
-        parent=None,
-    ):
-        super().__init__(parent)
-        self.tracks = tuple(tracks)
-        self.mode = str(mode)
-        self.bpm_tolerance = float(bpm_tolerance)
-        self.advanced_params = deepcopy(advanced_params)
-        self.scoring_context = deepcopy(scoring_context)
-        self.candidate_choice_snapshot = deepcopy(candidate_choice_snapshot)
-        self.ai_failure = str(ai_failure or "")
-        self.finalize_run = bool(finalize)
-
-    def request_cancel(self):
-        self.requestInterruption()
-
-    def run(self):
-        if self.isInterruptionRequested():
-            return
-        try:
-            from hpg_core.playlist import generate_playlist_result
-
-            tracks_snapshot = deepcopy(self.tracks)
-            if self.isInterruptionRequested():
-                return
-            result = generate_playlist_result(
-                list(tracks_snapshot),
-                mode=self.mode,
-                bpm_tolerance=self.bpm_tolerance,
-                advanced_params=self.advanced_params,
-                scoring_context=self.scoring_context,
-                candidate_choice_snapshot=self.candidate_choice_snapshot,
-                cancel_check=self.isInterruptionRequested,
-            )
-        except InterruptedError:
-            return
-        except Exception as exc:
-            if not self.isInterruptionRequested():
-                self.generation_failed.emit(str(exc))
-            return
-        if not self.isInterruptionRequested():
-            self.generation_done.emit(result)
-
-
-class TransitionRenderWorker(QThread):
-    """
-    Rendert alle Transition-Preview-Clips nacheinander im Hintergrund.
-    Emittiert pro fertigem Clip ein Signal damit die UI sofort aktualisiert werden kann.
-    """
-
-    clip_ready = pyqtSignal(int, str)  # (index, wav_pfad)
-    clip_error = pyqtSignal(int, str)  # (index, fehler_text)
-    # Audit 2026-07-17: tote Signale all_done/progress entfernt (nie connected)
-
-    def __init__(self, transitions: list, parent=None):
-        super().__init__(parent)
-        # transitions: Liste von TransitionRecommendation-Objekten
-        self._transitions = transitions
-        self._should_cancel = False
-        self._temp_files: list[str] = []  # Fuer Cleanup
-        self._temp_dir: str | None = None
-        self._executor = None  # HPG-004: aktiver ProcessPoolExecutor (fuer Terminate)
-        # HPG: schuetzt _executor + _should_cancel gegen TOCTOU-Race zwischen
-        # request_cancel() (GUI-Thread) und run() (Worker-Thread).
-        self._exec_lock = threading.Lock()
-        import uuid
-        self._run_id = uuid.uuid4().hex[:8]
-
-    def request_cancel(self):
-        """Kooperatives Cancel — setzt Flag und beendet laufende Child-Prozesse."""
-        # HPG-004/H1-Fix: Flag setzen UND Executor terminieren unter demselben
-        # Lock, den run() beim Setzen von self._executor haelt. Ohne Lock konnte
-        # das Cancel genau im Fenster zwischen Executor-Konstruktion und
-        # self._executor-Zuweisung verpuffen -> Render lief bis zum 60s-Timeout
-        # weiter, App haengte beim Schliessen.
-        with self._exec_lock:
-            self._should_cancel = True
-            self._terminate_executor(self._executor)
-
-    @staticmethod
-    def _terminate_executor(executor):
-        """Beendet Child-Prozesse eines Executors hart und raeumt ihn ab."""
-        if executor is None:
-            return
-        try:
-            for proc in list(getattr(executor, "_processes", {}).values()):
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-            executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-
-    def get_temp_files(self) -> list[str]:
-        return self._temp_files.copy()
-
-    def get_temp_dir(self) -> str | None:
-        return self._temp_dir
-
-    def run(self):
-        from concurrent.futures import ProcessPoolExecutor
-        from concurrent.futures.process import BrokenProcessPool
-
-        try:
-            self._temp_dir = tempfile.mkdtemp(prefix=f"hpg_preview_{self._run_id}_")
-        except OSError as exc:
-            logger.error("Privates Preview-Temp-Verzeichnis konnte nicht angelegt werden: %s", exc)
-            if not self._should_cancel:
-                for i in range(len(self._transitions)):
-                    self.clip_error.emit(i, f"Temp-Verzeichnis nicht verfuegbar: {exc}")
-            return
-
-        for i, transition in enumerate(self._transitions):
-            if self._should_cancel:
-                break
-            try:
-                # Pro Render-Session ein privates Verzeichnis verwenden; kein
-                # vorab angelegter Symlink im globalen Temp kann so ueberschrieben werden.
-                out_path = os.path.join(self._temp_dir, f"preview_{i:03d}.wav")
-                self._temp_files.append(out_path)
-
-                plan = getattr(transition, "plan", None)
-                if plan is None:
-                    self.clip_error.emit(i, "Ungeplant: kein ausfuehrbarer TransitionPlan")
-                    continue
-                spec = TransitionClipSpec.from_plan(
-                    plan, transition.from_track, transition.to_track
-                )
-
-                # Sicheres Rendern in einem Subprozess, um C-Level Abstuerze abzufangen.
-                # HPG-004: Executor manuell verwalten — bei Timeout/Cancel wird der
-                # Child-Prozess terminiert statt beim Context-Exit blockierend zu warten.
-                render_success = False
-                executor = ProcessPoolExecutor(max_workers=1)
-                # H1-Fix: Executor unter Lock veroeffentlichen. Kam das Cancel
-                # bereits vor/waehrend der Konstruktion, sieht run() hier das Flag
-                # und submittet gar nicht erst — sonst sieht request_cancel() den
-                # Executor und terminiert ihn. Kein Race-Fenster mehr.
-                with self._exec_lock:
-                    if self._should_cancel:
-                        self._terminate_executor(executor)
-                        break
-                    self._executor = executor
-                try:
-                    future = executor.submit(_render_clip_subprocess_wrapper, (spec, out_path))
-                    # Timeout grosszuegig fuer lange Trance/Progressive-Blends (bis 64s Crossfade)
-                    future.result(timeout=60.0)
-                    render_success = True
-                except BeatSyncError as sync_err:
-                    if self._should_cancel:
-                        break
-                    logger.info("Preview wegen Beat-Synchronitaet abgelehnt: %s", sync_err)
-                    get_error_reporter().log_error(
-                        "transition_render_rejected", str(sync_err), {"clip": i}
-                    )
-                    self.clip_error.emit(i, f"Vorschau abgelehnt: {sync_err}")
-                except (BrokenProcessPool, RuntimeError) as pool_err:
-                    if self._should_cancel:
-                        # Terminate durch request_cancel — kein echter Absturz
-                        break
-                    logger.error(f"Render-Prozess abgestuerzt bei Clip {i}: {pool_err}")
-                    get_error_reporter().log_error(
-                        "transition_render_crash", str(pool_err), {"clip": i}
-                    )
-                    self.clip_error.emit(i, "Format-Absturz (Datei beschaedigt)")
-                except TimeoutError:
-                    # L7-Fix: kein doppelter _terminate_executor — der finally-Block
-                    # unten raeumt den Executor ohnehin ab.
-                    logger.error(f"Render-Timeout bei Clip {i}")
-                    self.clip_error.emit(i, "Zeitueberschreitung")
-                except Exception as render_err:
-                    logger.error(f"Fehler bei Transition-Render {i}: {render_err}")
-                    get_error_reporter().log_error(
-                        "transition_render", str(render_err), {"clip": i}
-                    )
-                    self.clip_error.emit(i, f"Fehler: {render_err}")
-                finally:
-                    with self._exec_lock:
-                        self._executor = None
-                    self._terminate_executor(executor)
-
-                if render_success:
-                    self.clip_ready.emit(i, out_path)
-
-            except Exception as e:
-                self.clip_error.emit(i, str(e))
-
-    def cleanup(self):
-        """Loescht alle temporaeren WAV-Dateien."""
-        for path in self._temp_files:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError:
-                pass
-        self._temp_files.clear()
-        if self._temp_dir:
-            try:
-                os.rmdir(self._temp_dir)
-            except OSError:
-                pass
-            else:
-                self._temp_dir = None
 
 
 # AUDIT-FIX N2 (2026-07-26): Laufende Peak-Worker werden auf Modulebene
@@ -1756,7 +886,7 @@ class TransitionPreviewWidget(QWidget):
         self._play_btn = QPushButton("▶")
         self._play_btn.setFixedSize(28, 28)
         self._play_btn.setEnabled(False)  # Erst aktivieren wenn clip_ready
-        self._play_btn.setToolTip("Preview abspielen / pausieren")
+        self._play_btn.setToolTip("Vorschau abspielen / pausieren")
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, 1000)
@@ -1953,7 +1083,7 @@ class AdvancedParametersWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         # Energy Direction Control
-        energy_group = QGroupBox("Energy Direction (Context Flow)")
+        energy_group = QGroupBox("Energieverlauf (Context Flow)")
         self.energy_group = energy_group
         energy_group.setToolTip(
             "Steuert den Energie-Verlauf der Playlist.\n"
@@ -1963,18 +1093,19 @@ class AdvancedParametersWidget(QWidget):
         energy_layout = QVBoxLayout(energy_group)
 
         self.energy_direction = QComboBox()
-        self.energy_direction.addItems(["Auto", "Build Up", "Cool Down", "Maintain"])
-        self.energy_direction.setCurrentText("Auto")
+        for label, value in (("Automatisch", "Auto"), ("Aufbauen", "Build Up"),
+                             ("Abbauen", "Cool Down"), ("Beibehalten", "Maintain")):
+            self.energy_direction.addItem(label, value)
         self.energy_direction.setToolTip(
             "Auto: Algorithmus waehlt automatisch den besten Verlauf\n"
-            "Build Up: Energie steigt kontinuierlich (Opening → Peak)\n"
-            "Cool Down: Energie faellt ab (Peak → Closing)\n"
-            "Maintain: Energie bleibt auf gleichem Level"
+            "Aufbauen: Energie steigt kontinuierlich\n"
+            "Abbauen: Energie fällt kontinuierlich\n"
+            "Beibehalten: Energie bleibt auf gleichem Niveau"
         )
-        energy_layout.addWidget(QLabel("Energy Flow Direction:"))
+        energy_layout.addWidget(QLabel("Energierichtung:"))
         energy_layout.addWidget(self.energy_direction)
 
-        # Peak Position Control
+        # Position des Höhepunkts Control
         self.peak_position_slider = QSlider(Qt.Orientation.Horizontal)
         self.peak_position_slider.setRange(40, 80)
         self.peak_position_slider.setValue(70)
@@ -1984,9 +1115,9 @@ class AdvancedParametersWidget(QWidget):
             "70% = klassisch (langes Build-Up, kurzes Cool-Down)\n"
             "80% = spaet (maximale Spannung bis zum Ende)"
         )
-        self.peak_position_label = QLabel("Peak Position: 70%")
+        self.peak_position_label = QLabel("Position des Höhepunkts: 70%")
         self.peak_position_slider.valueChanged.connect(
-            lambda v: self.peak_position_label.setText(f"Peak Position: {v}%")
+            lambda v: self.peak_position_label.setText(f"Position des Höhepunkts: {v}%")
         )
 
         energy_layout.addWidget(self.peak_position_label)
@@ -2035,7 +1166,7 @@ class AdvancedParametersWidget(QWidget):
         self._test_worker = None
         self._pull_worker = None
 
-        self.provider_group = QGroupBox("AI Intelligence Provider")
+        self.provider_group = QGroupBox("Optionale KI-Metadaten")
         provider_outer = QVBoxLayout(self.provider_group)
         provider_outer.setSpacing(8)
 
@@ -2119,8 +1250,8 @@ class AdvancedParametersWidget(QWidget):
 
         layout.addWidget(self.provider_group)
 
-        # Harmonic Strictness
-        harmony_group = QGroupBox("Harmonic Mixing")
+        # Harmonische Strenge
+        harmony_group = QGroupBox("Harmonische Übergänge")
         self.harmony_group = harmony_group
         harmony_group.setToolTip(
             "Einstellungen fuer harmonisches Mixing.\n"
@@ -2138,15 +1269,15 @@ class AdvancedParametersWidget(QWidget):
             "4-6: Moderat – bevorzugt kompatible Tonarten\n"
             "7-10: Streng – nur perfekte Camelot-Matches"
         )
-        self.harmony_label = QLabel("Harmonic Strictness: 7/10")
+        self.harmony_label = QLabel("Harmonische Strenge: 7/10")
         self.harmonic_strictness.valueChanged.connect(
-            lambda v: self.harmony_label.setText(f"Harmonic Strictness: {v}/10")
+            lambda v: self.harmony_label.setText(f"Harmonische Strenge: {v}/10")
         )
 
         harmony_layout.addWidget(self.harmony_label)
         harmony_layout.addWidget(self.harmonic_strictness)
 
-        self.allow_experimental = QCheckBox("Allow Experimental Transitions")
+        self.allow_experimental = QCheckBox("Experimentelle Übergänge erlauben")
         self.allow_experimental.setChecked(True)
         self.allow_experimental.setToolTip(
             "Erlaubt kreative Tonart-Wechsel jenseits des Camelot-Wheels.\n"
@@ -2171,7 +1302,7 @@ class AdvancedParametersWidget(QWidget):
         )
         genre_layout = QVBoxLayout(genre_group)
 
-        self.genre_mixing = QCheckBox("Enable Genre Transitions")
+        self.genre_mixing = QCheckBox("Genrewechsel erlauben")
         self.genre_mixing.setChecked(True)
         self.genre_mixing.setToolTip(
             "Aktiviert: die Strategie Genre Flow sortiert nach Genre-Naehe\n"
@@ -2190,9 +1321,9 @@ class AdvancedParametersWidget(QWidget):
             "Hoehere Werte priorisieren Genre-Aehnlichkeit staerker.\n"
             "Der lokale Uebergangskandidatenscore behaelt seinen eigenen Genre-Faktor."
         )
-        self.genre_weight_label = QLabel("Genre Similarity Weight: 30%")
+        self.genre_weight_label = QLabel("Gewichtung der Genreähnlichkeit: 30%")
         self.genre_weight.valueChanged.connect(
-            lambda v: self.genre_weight_label.setText(f"Genre Similarity Weight: {v}%")
+            lambda v: self.genre_weight_label.setText(f"Gewichtung der Genreähnlichkeit: {v}%")
         )
 
         genre_layout.addWidget(self.genre_weight_label)
@@ -2546,6 +1677,7 @@ class AdvancedParametersWidget(QWidget):
             if (
                 self._ai_detect_worker.preferred == preferred
                 and self._ai_detect_worker.preferred_model == preferred_model
+                and not self._ai_detect_worker.isInterruptionRequested()
             ):
                 return
             # Provider/Modell wurde waehrend der Erkennung geaendert. Der alte
@@ -2621,12 +1753,16 @@ class AdvancedParametersWidget(QWidget):
         self.model_combo.addItems(status.models)
         if status.active_model and status.active_model in status.models:
             self.model_combo.setCurrentText(status.active_model)
+        else:
+            self.model_combo.setCurrentIndex(-1)
+            self.model_combo.setPlaceholderText("Bitte ein verfügbares Modell auswählen")
         self.model_combo.blockSignals(False)
 
         # Erkannte Werte merken (vom AIAnalysisWorker genutzt)
         self.detected_base_url = status.base_url
         self.detected_provider = status.name
         self.detected_active_model = status.active_model or self.model_combo.currentText()
+        self.test_ai_btn.setEnabled(bool(self.detected_active_model))
 
         # Port aus Endpoint extrahieren fuer Statusanzeige
         port = ""
@@ -2635,7 +1771,7 @@ class AdvancedParametersWidget(QWidget):
             port = f" :{m.group(1)}"
         self.ai_status_label.setText(
             f"KI-Server erreichbar — {status.name}{port} · {len(status.models)} Modelle · "
-            f"ausgewählt: {self.detected_active_model}. GPU und Text-Eignung ungeprüft."
+            f"ausgewählt: {self.detected_active_model or 'keines – bitte Modell wählen'}. GPU und Text-Eignung ungeprüft."
         )
 
     def _on_model_changed(self, model_name):
@@ -2644,6 +1780,14 @@ class AdvancedParametersWidget(QWidget):
             return
         self.detected_active_model = model_name
         provider = "LM Studio" if self.lmstudio_radio.isChecked() else "Ollama"
+        if not any(worker and worker.isRunning() for worker in (
+            self._test_worker, self._pull_worker, self._ai_detect_worker,
+        )):
+            self.test_ai_btn.setEnabled(
+                self.ai_enabled_checkbox.isChecked()
+                and bool(self.detected_base_url)
+                and self.detected_provider == provider
+            )
         port = ""
         if self.detected_base_url:
             m = re.search(r":(\d+)/", self.detected_base_url)
@@ -2868,7 +2012,7 @@ class AdvancedParametersWidget(QWidget):
         """Return current parameter values as dict."""
         return {
             "ai_enabled": self.ai_enabled_checkbox.isChecked(),
-            "energy_direction": self.energy_direction.currentText(),
+            "energy_direction": self.energy_direction.currentData(),
             "peak_position": self.peak_position_slider.value(),
             "target_energy": (
                 self.target_energy_slider.value()
@@ -2897,9 +2041,9 @@ class AdvancedParametersWidget(QWidget):
         peak_enabled = "peak_position" in supported and not fixed_target
         aktive_parameter = []
         if direction_enabled:
-            aktive_parameter.append("Energy Flow Direction")
+            aktive_parameter.append("Energierichtung")
         if peak_enabled:
-            aktive_parameter.append("Peak Position")
+            aktive_parameter.append("Position des Höhepunkts")
         if "target_energy" in supported:
             aktive_parameter.append(
                 "Feste Zielenergie" if fixed_target else "Zielenergie: Auto"
@@ -2975,341 +2119,6 @@ class AdvancedParametersWidget(QWidget):
 # ══════════════════════════════════════════════════════════════════
 
 
-class SidebarWidget(QWidget):
-    """Vertikale Navigation — Ableton-inspiriert, 72px breit."""
-
-    nav_changed = pyqtSignal(int)
-
-    NAV_ITEMS = [
-        ("LIB", "LIBRARY"),
-        ("PL", "PLAYLIST"),
-        ("MIX", "MIX TIPS"),
-        ("TL", "TIMELINE"),
-        ("QA", "QUALITY"),
-    ]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedWidth(72)
-        self.current_index = 0
-        self.buttons = []
-        self.init_ui()
-
-    def init_ui(self):
-        self.setStyleSheet(f"""
-            SidebarWidget {{
-                background-color: {COLORS["bg_sidebar"]};
-                border-right: 1px solid {COLORS["border"]};
-            }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 8)
-        layout.setSpacing(2)
-
-        sidebar_tips = {
-            "LIBRARY": "Bibliothek / Import:\nOrdner einlesen, Parameter einstellen, Audio-Features & KI-Analyse starten.",
-            "PLAYLIST": "Generierte Playlist:\nTabelle mit Tonarten (Camelot), Tempo (BPM), Uebergangstypen und KI-Stimmungen.",
-            "MIX TIPS": "Misch-Empfehlungen & Vorschau:\nDetaillierte Uebergangs-Tipps (EQ, Filter) und 70s-Audio-Previews abspielen.",
-            "TIMELINE": "Visuelle Playlist-Zeitleiste:\nVerlauf von Energie, BPM und Tonartkompatibilitaet ueber die gesamte Playlist.",
-            "QUALITY": "Playlist-Qualitaetsanalyse:\nMetriken fuer harmonischen Fluss, Tempo-Stetigkeit, Energie-Verlauf und Genre-Mix."
-        }
-
-        for i, (icon, label) in enumerate(self.NAV_ITEMS):
-            btn = QPushButton()
-            btn.setFixedSize(72, 56)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(sidebar_tips.get(label, label))
-            btn.clicked.connect(lambda checked, idx=i: self._on_nav_click(idx))
-            self.buttons.append(btn)
-            layout.addWidget(btn)
-
-        layout.addStretch()
-
-        # Initiale Ansicht
-        self._update_styles()
-
-    def _on_nav_click(self, index):
-        if index != self.current_index:
-            self.current_index = index
-            self._update_styles()
-            self.nav_changed.emit(index)
-
-    def set_active(self, index):
-        """Programmatisch aktiven Tab setzen + Signal emittieren."""
-        if 0 <= index < len(self.buttons):
-            self.current_index = index
-            self._update_styles()
-            self.nav_changed.emit(index)
-
-    def _update_styles(self):
-        for i, btn in enumerate(self.buttons):
-            icon, label = self.NAV_ITEMS[i]
-            is_active = i == self.current_index
-
-            if is_active:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {COLORS["accent_primary_bg"]};
-                        color: {COLORS["accent_primary"]};
-                        border: none;
-                        border-left: 3px solid {COLORS["accent_primary"]};
-                        border-radius: 0px;
-                        font-family: {FONT_FAMILY};
-                        font-size: 11px;
-                        font-weight: 600;
-                        padding: 6px 2px;
-                        text-align: center;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {COLORS["bg_hover"]};
-                    }}
-                """)
-            else:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: transparent;
-                        color: {COLORS["text_dim"]};
-                        border: none;
-                        border-left: 3px solid transparent;
-                        border-radius: 0px;
-                        font-family: {FONT_FAMILY};
-                        font-size: 11px;
-                        font-weight: normal;
-                        padding: 6px 2px;
-                        text-align: center;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {COLORS["bg_hover"]};
-                        color: {COLORS["text_primary"]};
-                        border-left: 3px solid {COLORS["border"]};
-                    }}
-                """)
-            # Text manuell setzen (QSS hat kein text-transform)
-            btn.setText(f"{icon}\n{label}")
-
-
-class ToolbarWidget(QWidget):
-    """Obere Toolbar — App-Titel, Infos, Quick-Actions."""
-
-    generate_clicked = pyqtSignal()
-    export_clicked = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(40)
-        self.init_ui()
-
-    def init_ui(self):
-        self.setStyleSheet(f"""
-            ToolbarWidget {{
-                background-color: {COLORS["bg_toolbar"]};
-                border-bottom: 1px solid {COLORS["border"]};
-            }}
-        """)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(16)
-
-        # Links: App-Titel
-        from hpg_core import __version__ as hpg_version
-        self.title_label = QLabel(f"HPG v{hpg_version}")
-        self.title_label.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS["accent_primary"]};
-                font-family: {FONT_FAMILY};
-                font-size: 14px;
-                font-weight: bold;
-            }}
-        """)
-        layout.addWidget(self.title_label)
-
-        # Mitte: Dynamische Info
-        self.info_label = QLabel("No folder selected")
-        self.info_label.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS["text_secondary"]};
-                font-family: {FONT_FAMILY};
-                font-size: 11px;
-            }}
-        """)
-        layout.addWidget(self.info_label, 1)
-
-        # Quality-Badge (anfangs versteckt)
-        self.quality_badge = QLabel("")
-        self.quality_badge.setFixedHeight(24)
-        self.quality_badge.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS["text_bright"]};
-                font-family: {FONT_FAMILY};
-                font-size: 11px;
-                font-weight: 600;
-                padding: 2px 10px;
-                border-radius: 0px;
-            }}
-        """)
-        self.quality_badge.hide()
-        layout.addWidget(self.quality_badge)
-
-        # Quick-Buttons
-        self.generate_btn = QPushButton("GENERATE")
-        self.generate_btn.setObjectName("btn_primary")
-        self.generate_btn.setFixedHeight(28)
-        self.generate_btn.setEnabled(False)
-        self.generate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.generate_btn.clicked.connect(self.generate_clicked.emit)
-        self.generate_btn.setToolTip("Playlist generieren (Strg+G)")
-        layout.addWidget(self.generate_btn)
-
-        self.export_btn = QPushButton("EXPORT")
-        self.export_btn.setObjectName("btn_secondary")
-        self.export_btn.setFixedHeight(28)
-        self.export_btn.setEnabled(False)
-        self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.export_btn.clicked.connect(self.export_clicked.emit)
-        self.export_btn.setToolTip("Playlist exportieren (Strg+E)")
-        layout.addWidget(self.export_btn)
-
-    def set_info(self, text):
-        self.info_label.setText(text)
-
-    def set_quality(self, score):
-        """Quality-Badge mit dynamischer Farbe anzeigen."""
-        color = score_color(score)
-        self.quality_badge.setText(f"Q: {score:.0%}")
-        self.quality_badge.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS["text_bright"]};
-                font-family: {FONT_FAMILY};
-                font-size: 11px;
-                font-weight: 600;
-                padding: 2px 10px;
-                border-radius: 0px;
-                background-color: {color};
-            }}
-        """)
-        self.quality_badge.show()
-
-    def set_generate_enabled(self, enabled):
-        self.generate_btn.setEnabled(enabled)
-
-    def set_export_enabled(self, enabled):
-        self.export_btn.setEnabled(enabled)
-
-
-class StatusBarWidget(QWidget):
-    """Untere Status-Leiste — Progress, Status-Text, Cancel."""
-
-    cancel_clicked = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(28)
-        self.init_ui()
-
-    def init_ui(self):
-        self.setStyleSheet(f"""
-            StatusBarWidget {{
-                background-color: {COLORS["bg_sidebar"]};
-                border-top: 1px solid {COLORS["border"]};
-            }}
-        """)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(8)
-
-        # Status-Text
-        self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS["text_secondary"]};
-                font-family: {FONT_FAMILY};
-                font-size: 11px;
-            }}
-        """)
-        layout.addWidget(self.status_label, 1)
-
-        # Hinweis-Label: bleibt stehen, auch wenn set_status() den Statustext
-        # ueberschreibt. Fuer Befunde, die den Lauf nicht abbrechen, aber das
-        # Ergebnis erklaeren (z. B. unanalysierte Rekordbox-Tracks).
-        self.hint_label = QLabel("")
-        self.hint_label.setStyleSheet(f"""
-            QLabel {{
-                color: #ffaa00;
-                font-family: {FONT_FAMILY};
-                font-size: 11px;
-                font-weight: bold;
-            }}
-        """)
-        self.hint_label.hide()
-        layout.addWidget(self.hint_label)
-
-        # Progress-Bar (konstant sichtbar)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedWidth(240)
-        self.progress_bar.setFixedHeight(22)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("0.00%")
-        self.progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                background-color: {COLORS["bg_card"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 4px;
-                text-align: center;
-                color: #FFFFFF;
-                font-family: {FONT_FAMILY};
-                font-size: 12px;
-                font-weight: bold;
-            }}
-            QProgressBar::chunk {{
-                background-color: {COLORS["accent_primary"]};
-            }}
-        """)
-        layout.addWidget(self.progress_bar)
-
-        # Cancel-Button (anfangs versteckt)
-        self.cancel_btn = QPushButton("CANCEL")
-        self.cancel_btn.setObjectName("btn_danger")
-        self.cancel_btn.setFixedHeight(20)
-        self.cancel_btn.setFixedWidth(60)
-        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cancel_btn.clicked.connect(self.cancel_clicked.emit)
-        self.cancel_btn.hide()
-        layout.addWidget(self.cancel_btn)
-
-    def set_status(self, text):
-        self.status_label.setText(text)
-
-    def set_hint(self, text, tooltip=""):
-        """Dauerhafter Hinweis neben dem Statustext."""
-        self.hint_label.setText(text)
-        self.hint_label.setToolTip(tooltip or text)
-        self.hint_label.setVisible(bool(text))
-
-    def clear_hint(self):
-        self.hint_label.clear()
-        self.hint_label.setToolTip("")
-        self.hint_label.hide()
-
-    def set_progress(self, value):
-        bounded = max(0, min(100, int(value)))
-        self.progress_bar.setValue(bounded)
-        self.progress_bar.setFormat(f"{bounded}%")
-
-    def show_progress(self):
-        """Analyse gestartet — Progress und Cancel sichtbar."""
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("0.00%")
-        self.cancel_btn.show()
-
-    def hide_progress(self):
-        """Analyse beendet — Progress und Cancel verstecken."""
-        self.cancel_btn.hide()
-
-
 class QtLogSignalEmitter(QObject):
     log_written = pyqtSignal(str, str)
 
@@ -3343,7 +2152,7 @@ class ShortcutsHelpWidget(QGroupBox):
     """Small widget displaying keyboard shortcuts in a clean grid/list layout."""
     
     def __init__(self, parent=None):
-        super().__init__("Keyboard Shortcuts", parent)
+        super().__init__("Tastenkürzel", parent)
         self.init_ui()
         
     def init_ui(self):
@@ -3352,9 +2161,9 @@ class ShortcutsHelpWidget(QGroupBox):
         layout.setSpacing(6)
         
         shortcuts = [
-            ("Ctrl+G", "Generate Playlist"),
-            ("Ctrl+E", "Export Playlist"),
-            ("Ctrl+1 - Ctrl+5", "Switch Navigation Panels"),
+            ("Ctrl+G", "Playlist generieren"),
+            ("Ctrl+E", "Playlist exportieren"),
+            ("Ctrl+1 - Ctrl+5", "Ansicht wechseln"),
         ]
         
         for key, desc in shortcuts:
@@ -3402,11 +2211,11 @@ class AnalysisProgressWidget(QWidget):
         
         self.steps = []
         step_labels = [
-            "📁 SCAN",
+            "📁 DATEIEN",
             "🔊 AUDIO",
-            "🎛️ SORT",
-            "📊 QUALITY",
-            "🤖 AI MOODS"
+            "🎛️ SORTIERUNG",
+            "📊 QUALITÄT",
+            "🤖 KI-METADATEN"
         ]
         
         for i, text in enumerate(step_labels):
@@ -3533,7 +2342,7 @@ class LibraryPanel(QWidget):
         left_layout.setSpacing(12)
 
         # Ordner-Auswahl (kein GroupBox — kompakter)
-        section_label = QLabel("MUSIC LIBRARY")
+        section_label = QLabel("MUSIKBIBLIOTHEK")
         section_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS["text_secondary"]};
@@ -3546,7 +2355,7 @@ class LibraryPanel(QWidget):
         left_layout.addWidget(section_label)
 
         self.info_label = QLabel(
-            "Drag and drop your music folder here\nor click the button below."
+            "Musikordner hier ablegen\noder über die Schaltfläche auswählen."
         )
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.info_label.setStyleSheet(
@@ -3561,7 +2370,7 @@ class LibraryPanel(QWidget):
         )
         left_layout.addWidget(self.info_label)
 
-        self.select_folder_button = QPushButton("Select Music Folder")
+        self.select_folder_button = QPushButton("Musikordner auswählen")
         self.select_folder_button.setMinimumHeight(36)
         self.select_folder_button.setObjectName("btn_secondary")
         self.select_folder_button.setToolTip(
@@ -3571,7 +2380,7 @@ class LibraryPanel(QWidget):
         left_layout.addWidget(self.select_folder_button)
 
         # Strategie
-        strategy_label = QLabel("STRATEGY")
+        strategy_label = QLabel("STRATEGIE")
         strategy_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS["text_secondary"]};
@@ -3605,7 +2414,7 @@ class LibraryPanel(QWidget):
         left_layout.addWidget(self.strategy_description)
 
         # BPM Tolerance — Kompakte Zeile
-        bpm_label = QLabel("BPM TOLERANCE")
+        bpm_label = QLabel("BPM-TOLERANZ")
         bpm_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS["text_secondary"]};
@@ -3646,7 +2455,7 @@ class LibraryPanel(QWidget):
         left_layout.addLayout(bpm_row)
 
         # Generate-Button
-        self.start_button = QPushButton("GENERATE PLAYLIST")
+        self.start_button = QPushButton("PLAYLIST GENERIEREN")
         self.start_button.setObjectName("btn_primary")
         self.start_button.setMinimumHeight(44)
         self.start_button.setToolTip(
@@ -3668,35 +2477,47 @@ class LibraryPanel(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(12)
 
+        self.advanced_toggle = QCheckBox("Erweiterte Einstellungen anzeigen")
+        right_layout.addWidget(self.advanced_toggle)
         self.advanced_params = AdvancedParametersWidget()
         self.advanced_params.apply_strategy_support(
             self.strategy_combo.currentText()
         )
         right_layout.addWidget(self.advanced_params)
+        self.advanced_params.hide()
+        self.advanced_toggle.toggled.connect(self.advanced_params.setVisible)
 
         self.shortcuts_help = ShortcutsHelpWidget()
         right_layout.addWidget(self.shortcuts_help)
         right_layout.addStretch()
 
-        right.setFixedWidth(400)
+        self.settings_scroll = QScrollArea()
+        self.settings_scroll.setWidgetResizable(True)
+        self.settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.settings_scroll.setWidget(right)
+        self.settings_scroll.setFixedWidth(420)
 
-        main_layout.addWidget(left, 1)
-        main_layout.addWidget(right, 0)
+        self.library_scroll = QScrollArea()
+        self.library_scroll.setWidgetResizable(True)
+        self.library_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.library_scroll.setWidget(left)
+        main_layout.addWidget(self.library_scroll, 1)
+        main_layout.addWidget(self.settings_scroll, 0)
 
     def _update_strategy_description(self):
         strategy = self.strategy_combo.currentText()
         descriptions = {
-            "Harmonic Flow": "Harmonic mixing (Camelot wheel) with look-ahead optimization and backtracking.",
-            "Peak-Time": "Peak arrangement with adjustable peak position and harmonic smoothing.",
-            "Genre Flow": "Smooth transitions between similar genres while maintaining energy.",
-            "Energy Wave": "Alternating high/low energy creates dynamic listening experience.",
-            "Warm-Up": "Gradual BPM increase from low to high energy.",
-            "Cool-Down": "Gradual BPM decrease from high to low energy.",
-            "Consistent": "Minimal BPM/energy jumps with harmonic compatibility.",
-            "Context Flow": "Set-phase aware: target energy per phase (Energy Direction presets), trend continuation, genre fatigue, no clone tracks back-to-back.",
+            "Harmonic Flow": "Harmonische Übergänge nach dem Camelot-Rad mit vorausschauender Reihenfolgeplanung.",
+            "Peak-Time": "Energiehöhepunkt an der gewünschten Position mit harmonischer Glättung.",
+            "Genre Flow": "Übergänge zwischen verwandten Genres mit möglichst gleichmäßiger Energie.",
+            "Energy Wave": "Abwechselnde Energiephasen für einen wellenförmigen Setverlauf.",
+            "Warm-Up": "Schrittweiser Aufbau von Tempo und Energie.",
+            "Cool-Down": "Schrittweiser Abbau von Tempo und Energie.",
+            "Consistent": "Möglichst geringe Tempo- und Energiesprünge mit harmonischer Passung.",
+            "Context Flow": "Berücksichtigt Setphasen, Energieziele, Verlauf und Genreabwechslung; vermeidet gleichartige Tracks direkt hintereinander.",
         }
         self.strategy_description.setText(
-            descriptions.get(strategy, "No description available.")
+            descriptions.get(strategy, "Keine Beschreibung verfügbar.")
         )
         if hasattr(self, "advanced_params"):
             self.advanced_params.apply_strategy_support(strategy)
@@ -3720,7 +2541,7 @@ class LibraryPanel(QWidget):
         if os.path.isdir(path):
             # W8: Pruefen ob Ordner lesbar ist
             if not os.access(path, os.R_OK):
-                self.info_label.setText(f"No read permission: {os.path.basename(path)}")
+                self.info_label.setText(f"Keine Leseberechtigung: {os.path.basename(path)}")
                 self.info_label.setStyleSheet(
                     f"QLabel {{ color: {COLORS['accent_danger']}; font-size: 13px; padding: 20px 28px; "
                     f"border: 2px solid {COLORS['accent_danger']}; border-radius: 0px; "
@@ -3875,54 +2696,12 @@ class PlaylistPanel(QWidget):
         layout.addWidget(self.quality_widget)
 
         # Tabelle
-        self.table = QTableWidget()
-        self.table.setColumnCount(16)
-        self.table.setHorizontalHeaderLabels(
-            [
-                "#",
-                "Track Name",
-                "Artist",
-                "Duration",
-                "BPM",
-                "Key",
-                "Camelot",
-                "Energy",
-                "Genre",
-                "Genre %",
-                "Mix In",
-                "Mix Out",
-                "Bass %",
-                "Klangfarbe",
-                "Passung",
-                "AI Insights",
-            ]
-        )
-
-        # Tooltips fuer Spaltenheader
-        header_tooltips = [
-            "Position in der Playlist.\nDrag & Drop zum Umsortieren.",
-            "Dateiname des Audio-Tracks.",
-            "Interpret (aus ID3-Tag oder Dateiname).",
-            "Gesamtlaenge des Tracks (Minuten:Sekunden).",
-            "Beats Per Minute – das Tempo des Tracks.",
-            "Musikalische Tonart (z.B. C Major, A Minor).",
-            "Camelot-Code fuer harmonisches Mixing.",
-            "Energie-Level des Tracks (0-100).",
-            "Automatisch erkanntes Genre.",
-            "Konfidenz der Genre-Erkennung (0-100%).",
-            "Mix-In-Punkt: Dynamisch berechneter Startpunkt für den Mix (nach Intro).",
-            "Mix-Out-Punkt: Dynamisch berechneter Endpunkt für den Mix (vor Outro).",
-            "Bass %: Trackweiter Mittelwert des Bassanteils aus der Audioanalyse. "
-            "Für Übergangs- und EQ-Hinweise werden bevorzugt die Werte der "
-            "Mix-Out-/Mix-In-Sektionen betrachtet.",
-            "Klangfarbe zum vorherigen Track: Vergleich der trackweiten MFCC-Messwerte. Keine Aussage über Tonart oder Synchronität.",
-            "Freigegebener Übergang zum vorherigen Track: Passung (0-100%). Ohne Freigabe erscheint der Ablehnungsgrund.",
-            "Optionale KI-Beschreibung zu Stimmung und Charakter.",
-        ]
-        for col, tip in enumerate(header_tooltips):
-            item = self.table.horizontalHeaderItem(col)
-            if item:
-                item.setToolTip(tip)
+        self.table = PlaylistTable()
+        self.table.setColumnCount(len(PLAYLIST_COLUMNS))
+        self.table.setHorizontalHeaderLabels([column.title for column in PLAYLIST_COLUMNS])
+        for column in PLAYLIST_COLUMNS:
+            self.table.horizontalHeaderItem(column.column).setToolTip(column.tooltip)
+            self.table.setColumnWidth(column.column, column.width)
 
         # Drag-and-Drop
         self.table.setDragDropMode(QTableWidget.DragDropMode.InternalMove)
@@ -3934,23 +2713,6 @@ class PlaylistPanel(QWidget):
         header.setStretchLastSection(True)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
-        # Spaltenbreiten
-        self.table.setColumnWidth(0, 40)
-        self.table.setColumnWidth(1, 180)
-        self.table.setColumnWidth(2, 120)
-        self.table.setColumnWidth(3, 60)
-        self.table.setColumnWidth(4, 60)
-        self.table.setColumnWidth(5, 80)
-        self.table.setColumnWidth(6, 70)
-        self.table.setColumnWidth(7, 60)
-        self.table.setColumnWidth(8, 100)
-        self.table.setColumnWidth(9, 60)
-        self.table.setColumnWidth(10, 70)
-        self.table.setColumnWidth(11, 70)
-        self.table.setColumnWidth(12, 65)
-        self.table.setColumnWidth(13, 205)
-        self.table.setColumnWidth(14, 310)
-
         # rowsMoved Signal
         self.table.model().rowsAboutToBeMoved.connect(
             self._capture_reorder_table_snapshot
@@ -3959,15 +2721,36 @@ class PlaylistPanel(QWidget):
 
         # EnergyBarDelegate fuer visuelle Energie-Anzeige (Spalte 7)
         self._energy_delegate = EnergyBarDelegate(self.table)
-        self.table.setItemDelegateForColumn(7, self._energy_delegate)
+        self.table.setItemDelegateForColumn(PlaylistColumn.ENERGY, self._energy_delegate)
         self._transition_score_delegate = TransitionScoreDelegate(self.table)
-        self.table.setItemDelegateForColumn(14, self._transition_score_delegate)
+        self.table.setItemDelegateForColumn(PlaylistColumn.TRANSITION, self._transition_score_delegate)
 
-        layout.addWidget(self.table, 1)
+        view_options = QHBoxLayout()
+        self.extended_columns = QCheckBox("Alle Messspalten anzeigen")
+        self.extended_columns.setAccessibleName("Erweiterte Playlist-Spalten")
+        self.extended_columns.toggled.connect(self._apply_column_visibility)
+        self.details_toggle = QCheckBox("Details anzeigen")
+        self.details_toggle.setChecked(True)
+        view_options.addWidget(self.extended_columns)
+        view_options.addWidget(self.details_toggle)
+        view_options.addStretch()
+        layout.addLayout(view_options)
+        self._table_layout = QHBoxLayout()
+        self._table_layout.addWidget(self.table, 3)
+        self.details_text = QPlainTextEdit()
+        self.details_text.setReadOnly(True)
+        self.details_text.setAccessibleName("Track- und Übergangsdetails")
+        self.details_text.setMinimumWidth(240)
+        self._table_layout.addWidget(self.details_text, 1)
+        layout.addLayout(self._table_layout, 1)
+        self.details_toggle.toggled.connect(self.details_text.setVisible)
+        self.table.currentCellChanged.connect(self._update_track_details)
+        self._apply_column_visibility(False)
+        self._update_track_details()
 
         # Drag-Info
         self._drag_info_default = (
-            "Drag and drop rows to reorder. Transition scores update automatically."
+            "Zeilen ziehen, um die Reihenfolge zu ändern. Übergänge werden neu bewertet."
         )
         self._drag_info_style_default = (
             f"QLabel {{ color: {COLORS['text_dim']}; font-size: 10px; font-style: italic; }}"
@@ -3981,7 +2764,7 @@ class PlaylistPanel(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        self.export_button = QPushButton("EXPORT PLAYLIST")
+        self.export_button = QPushButton("PLAYLIST EXPORTIEREN")
         self.export_button.setObjectName("btn_primary")
         self.export_button.setMinimumHeight(36)
         self.export_button.setToolTip(
@@ -3989,13 +2772,13 @@ class PlaylistPanel(QWidget):
         )
         self.export_button.clicked.connect(self.export_clicked.emit)
 
-        self.preview_button = QPushButton("PREVIEW TRANSITIONS")
+        self.preview_button = QPushButton("ÜBERGÄNGE PRÜFEN")
         self.preview_button.setObjectName("btn_secondary")
         self.preview_button.setMinimumHeight(36)
         self.preview_button.setToolTip("Zeigt eine Vorschau der Uebergaenge.")
         self.preview_button.clicked.connect(self.preview_clicked.emit)
 
-        self.restart_button = QPushButton("START OVER")
+        self.restart_button = QPushButton("ZUR BIBLIOTHEK")
         self.restart_button.setObjectName("btn_secondary")
         self.restart_button.setMinimumHeight(36)
         self.restart_button.setToolTip("Zurueck zur Library. Playlist geht verloren.")
@@ -4005,6 +2788,42 @@ class PlaylistPanel(QWidget):
         btn_layout.addWidget(self.preview_button)
         btn_layout.addWidget(self.restart_button)
         layout.addLayout(btn_layout)
+
+    def _apply_column_visibility(self, expanded):
+        for column in PLAYLIST_COLUMNS:
+            self.table.setColumnHidden(column.column, not (expanded or column.core))
+
+    def restore_view_from(self, previous):
+        """Ansicht übernehmen, Auswahl nur innerhalb derselben Ergebnisidentität."""
+        self.extended_columns.setChecked(previous.extended_columns.isChecked())
+        self.details_toggle.setChecked(previous.details_toggle.isChecked())
+        if self.generation_result is None or previous.generation_result is None:
+            return
+        if self.generation_result.run_id != previous.generation_result.run_id:
+            return
+        item = previous.table.item(previous.table.currentRow(), PlaylistColumn.TITLE)
+        identity = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if identity in self._occurrence_ids:
+            self.table.setCurrentCell(
+                self._occurrence_ids.index(identity),
+                max(0, previous.table.currentColumn()),
+            )
+
+    def _update_track_details(self, *_args):
+        row = self.table.currentRow()
+        if not 0 <= row < len(self.playlist):
+            self.details_text.setPlainText("Track auswählen, um Messungen und Übergänge zu prüfen.")
+            return
+        item = self.table.item(row, PlaylistColumn.TITLE)
+        identity = item.data(Qt.ItemDataRole.UserRole) if item else None
+        try:
+            index = self._occurrence_ids.index(identity)
+        except ValueError:
+            self.details_text.setPlainText("Auswahl wird aktualisiert.")
+            return
+        self.details_text.setPlainText(playlist_track_details(
+            self.playlist[index], index, self.transition_recommendations,
+        ))
 
     def set_playlist_data(
         self,
@@ -4062,16 +2881,16 @@ class PlaylistPanel(QWidget):
             return
 
         metrics = [
-            ("OVERALL", self.quality_metrics.get("overall_score", 0)),
-            ("HARMONY", self.quality_metrics.get("harmonic_flow", 0)),
-            ("ENERGY", self.quality_metrics.get("energy_consistency", 0)),
+            ("GESAMT", self.quality_metrics.get("overall_score", 0)),
+            ("HARMONIE", self.quality_metrics.get("harmonic_flow", 0)),
+            ("ENERGIE", self.quality_metrics.get("energy_consistency", 0)),
             ("BPM", self.quality_metrics.get("bpm_smoothness", 0)),
         ]
 
         metric_tooltips = {
-            "OVERALL": "Gesamtqualitaet der Playlist (0-100%).",
-            "HARMONY": "Harmonischer Flow — Camelot-Kompatibilitaet.",
-            "ENERGY": "Energie-Konsistenz — smoothe Uebergaenge.",
+            "GESAMT": "Gesamtqualitaet der Playlist (0-100%).",
+            "HARMONIE": "Harmonischer Flow — Camelot-Kompatibilitaet.",
+            "ENERGIE": "Energie-Konsistenz — smoothe Uebergaenge.",
             "BPM": "BPM-Smoothness — sanfte Tempo-Wechsel.",
         }
 
@@ -4243,7 +3062,11 @@ class PlaylistPanel(QWidget):
         if sub_genre:
             text = f"[{sub_genre}] {text}".strip()
         item = QTableWidgetItem(text or "-")
-        item.setToolTip(str(metadata.get("description", "") or ""))
+        description = str(metadata.get("description", "") or "")
+        item.setToolTip(
+            "KI-Metadaten: unverbindlich, kein aktiver Übergangsplan.\n" + description
+            if description else ""
+        )
         return item
 
     def _populate_table(self):
@@ -4298,28 +3121,28 @@ class PlaylistPanel(QWidget):
             fg_color, bg_color = GENRE_COLORS.get(effective_genre, GENRE_DEFAULT)
             genre_item.setForeground(QColor(fg_color))
             genre_item.setBackground(QColor(bg_color))
-            self.table.setItem(i, 8, genre_item)
+            self.table.setItem(i, PlaylistColumn.GENRE, genre_item)
 
             # Genre Confidence
             conf_item = QTableWidgetItem(
                 f"{genre_confidence * 100:.0f}%" if genre_confidence > 0 else "-"
             )
-            self.table.setItem(i, 9, conf_item)
+            self.table.setItem(i, PlaylistColumn.GENRE_CONFIDENCE, conf_item)
 
             # Mix In / Mix Out — Rang-1-Kandidat des Paars (Plan), sonst Analyse
             mix_in_item, mix_out_item = _mixpunkt_items(i, track, self.transition_recommendations)
-            self.table.setItem(i, 10, mix_in_item)
-            self.table.setItem(i, 11, mix_out_item)
+            self.table.setItem(i, PlaylistColumn.MIX_IN, mix_in_item)
+            self.table.setItem(i, PlaylistColumn.MIX_OUT, mix_out_item)
 
             # Advanced Features (Phase 3)
             bass_val = getattr(track, 'avg_bass', 0)
             bass_item = QTableWidgetItem(f"{bass_val:.0f}%")
-            self.table.setItem(i, 12, bass_item)
+            self.table.setItem(i, PlaylistColumn.BASS, bass_item)
             
             texture_item = self._make_texture_item(
                 self.playlist[i - 1] if i > 0 else None, track
             )
-            self.table.setItem(i, 13, texture_item)
+            self.table.setItem(i, PlaylistColumn.TIMBRE, texture_item)
 
             # Passung zum vorherigen Track (Spalte 14)
             if i > 0 and rec is None:
@@ -4333,13 +3156,14 @@ class PlaylistPanel(QWidget):
             tooltip = self._passung_tooltip(compatibility)
             if tooltip:
                 score_item.setToolTip(tooltip)
-            self.table.setItem(i, 14, score_item)
+            self.table.setItem(i, PlaylistColumn.TRANSITION, score_item)
 
             # KI-Metadaten gehoeren zum Track und muessen auch nach einer
             # kompletten Tabellen-Neubevoelkerung sichtbar bleiben.
-            self.table.setItem(i, 15, self._make_ai_insights_item(track))
+            self.table.setItem(i, PlaylistColumn.AI_INSIGHTS, self._make_ai_insights_item(track))
 
         self.table.setUpdatesEnabled(True)
+        self._update_track_details()
 
     def set_reorder_locked(self, locked: bool):
         """Sperrt/entsperrt das Drag&Drop-Reorder der Playlist.
@@ -4365,12 +3189,13 @@ class PlaylistPanel(QWidget):
     def _clone_reorder_table(self):
         """Erzeugt vor dem DnD einen vollstaendigen, noch unsichtbaren Snapshot."""
         source = self.table
-        snapshot = QTableWidget(source.rowCount(), source.columnCount())
+        snapshot = PlaylistTable(source.rowCount(), source.columnCount())
         for column in range(source.columnCount()):
             header = source.horizontalHeaderItem(column)
             if header is not None:
                 snapshot.setHorizontalHeaderItem(column, header.clone())
             snapshot.setColumnWidth(column, source.columnWidth(column))
+            snapshot.setColumnHidden(column, source.isColumnHidden(column))
         for row in range(source.rowCount()):
             snapshot.setRowHeight(row, source.rowHeight(row))
             for column in range(source.columnCount()):
@@ -4381,18 +3206,20 @@ class PlaylistPanel(QWidget):
         snapshot.setDragDropOverwriteMode(source.dragDropOverwriteMode())
         snapshot.setDefaultDropAction(source.defaultDropAction())
         snapshot.setSelectionBehavior(source.selectionBehavior())
+        snapshot.setCurrentCell(source.currentRow(), source.currentColumn())
         snapshot.horizontalHeader().setStretchLastSection(
             source.horizontalHeader().stretchLastSection()
         )
         snapshot.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
-        snapshot.setItemDelegateForColumn(7, EnergyBarDelegate(snapshot))
-        snapshot.setItemDelegateForColumn(14, TransitionScoreDelegate(snapshot))
+        snapshot.setItemDelegateForColumn(PlaylistColumn.ENERGY, EnergyBarDelegate(snapshot))
+        snapshot.setItemDelegateForColumn(PlaylistColumn.TRANSITION, TransitionScoreDelegate(snapshot))
         snapshot.model().rowsAboutToBeMoved.connect(
             self._capture_reorder_table_snapshot
         )
         snapshot.model().rowsMoved.connect(self._on_rows_moved)
+        snapshot.currentCellChanged.connect(self._update_track_details)
         return snapshot
 
     def _capture_reorder_table_snapshot(self, *_args):
@@ -4408,16 +3235,17 @@ class PlaylistPanel(QWidget):
             )
         self._reorder_table_snapshot = None
         moved_table = self.table
-        table_index = self.layout().indexOf(moved_table)
+        table_index = self._table_layout.indexOf(moved_table)
         try:
             replaced = self.layout().replaceWidget(moved_table, snapshot)
             if replaced is None:
                 raise RuntimeError("Playlist-Tabelle konnte nicht ersetzt werden")
         except Exception:
-            if self.layout().indexOf(snapshot) < 0:
-                self.layout().insertWidget(table_index, snapshot, 1)
-                self.layout().removeWidget(moved_table)
+            if self._table_layout.indexOf(snapshot) < 0:
+                self._table_layout.insertWidget(table_index, snapshot, 3)
+                self._table_layout.removeWidget(moved_table)
         self.table = snapshot
+        self._update_track_details()
         for action in (
             moved_table.hide,
             lambda: moved_table.setParent(None),
@@ -4438,7 +3266,7 @@ class PlaylistPanel(QWidget):
             requested = []
             invalid_message = ""
             for row in range(self.table.rowCount()):
-                item = self.table.item(row, 1)
+                item = self.table.item(row, PlaylistColumn.TITLE)
                 occurrence_id = item.data(Qt.ItemDataRole.UserRole) if item else None
                 if not (
                     isinstance(occurrence_id, tuple)
@@ -4465,7 +3293,7 @@ class PlaylistPanel(QWidget):
         track_by_id = {t.track_id: t for t in self.playlist}
         reordered_playlist = []
         for i in range(self.table.rowCount()):
-            track_name_item = self.table.item(i, 1)
+            track_name_item = self.table.item(i, PlaylistColumn.TITLE)
             if track_name_item:
                 row_id = os.path.normcase(
                     os.path.abspath(
@@ -4517,7 +3345,7 @@ class PlaylistPanel(QWidget):
         )
         self._update_quality_display()
         for i in range(self.table.rowCount()):
-            self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+            self.table.setItem(i, PlaylistColumn.POSITION, QTableWidgetItem(str(i + 1)))
 
             transition_score = 0
             texture_val = 0.0
@@ -4531,7 +3359,7 @@ class PlaylistPanel(QWidget):
             texture_item = self._make_texture_item(
                 self.playlist[i - 1] if i > 0 else None, self.playlist[i]
             )
-            self.table.setItem(i, 13, texture_item)
+            self.table.setItem(i, PlaylistColumn.TIMBRE, texture_item)
 
             # Spalte 14: Passung zum vorherigen Track aktualisieren
             if i > 0 and rec is None:
@@ -4542,14 +3370,14 @@ class PlaylistPanel(QWidget):
                 score_item = self._make_transition_score_item(
                     transition_score if i > 0 else None
                 )
-            self.table.setItem(i, 14, score_item)
+            self.table.setItem(i, PlaylistColumn.TRANSITION, score_item)
 
         # Spalten 10/11 haengen seit Teil 4 vom Paar ab (Plan des aktiven
         # Kandidaten) — nach dem Umsortieren neu setzen.
         for i, track in enumerate(self.playlist[:self.table.rowCount()]):
             mix_in_item, mix_out_item = _mixpunkt_items(i, track, self.transition_recommendations)
-            self.table.setItem(i, 10, mix_in_item)
-            self.table.setItem(i, 11, mix_out_item)
+            self.table.setItem(i, PlaylistColumn.MIX_IN, mix_in_item)
+            self.table.setItem(i, PlaylistColumn.MIX_OUT, mix_out_item)
 
 
 class MixTipsPanel(QWidget):
@@ -4652,7 +3480,7 @@ class MixTipsPanel(QWidget):
             eintraege = sorted(empfehlungen_nach_index.items())
 
         if not eintraege:
-            empty_label = QLabel("No transition tips available yet.")
+            empty_label = QLabel("Noch keine Übergänge vorhanden. Zuerst eine Playlist erstellen.")
             empty_label.setStyleSheet(
                 f"QLabel {{ color: {COLORS['text_secondary']}; font-style: italic; margin: 12px; }}"
             )
@@ -4685,9 +3513,10 @@ class MixTipsPanel(QWidget):
             )
 
             card = QFrame()
+            card.setObjectName("transitionCard")
             card.setFrameShape(QFrame.Shape.StyledPanel)
             card.setStyleSheet(f"""
-                QFrame {{
+                QFrame#transitionCard {{
                     background-color: {bg_color};
                     border-radius: 0px;
                     border: 2px solid {accent_color};
@@ -4705,6 +3534,8 @@ class MixTipsPanel(QWidget):
                 f"{rec.index + 1}. {rec.from_track.fileName} -> {rec.to_track.fileName}"
             )
             title = QLabel(title_text)
+            title.setTextFormat(Qt.TextFormat.PlainText)
+            title.setWordWrap(True)
             title.setStyleSheet(
                 f"QLabel {{ font-size: 13px; font-weight: bold; color: {COLORS['text_bright']}; }}"
             )
@@ -4733,7 +3564,7 @@ class MixTipsPanel(QWidget):
             status_text = fit_label if ausfuehrbar else "Kein Übergang: " + ungeplant_begruendung(self.transition_recommendations, card_index).splitlines()[0]
             summary = QLabel(
                 f"{status_text}" + (f" | Score {sichtbarer_score}/100 | " if ausfuehrbar else " | ") +
-                f"BPM {rec.bpm_delta:+.1f} | Energy {rec.energy_delta:+d}"
+                f"BPM {rec.bpm_delta:+.1f} | Energie {rec.energy_delta:+d}"
             )
             summary.setWordWrap(True)
             summary.setStyleSheet(
@@ -4767,7 +3598,7 @@ class MixTipsPanel(QWidget):
                 mix_out, mix_in, overlap = resolve_transition_mix_points(rec)
                 timing_text = (
                     f"Mix-Out A: {mix_out:.1f}s | Mix-In B: {mix_in:.1f}s | "
-                    f"Overlap: {overlap:.1f}s "
+                    f"Überlappung: {overlap:.1f}s "
                     f"(Fade out {rec.fade_out_start:.1f}s -> {rec.fade_out_end:.1f}s)"
                 )
             else:
@@ -4797,7 +3628,8 @@ class MixTipsPanel(QWidget):
 
             for part in notes_parts:
                 if part.startswith(
-                    ("Mix:", "EQ:", "Transition:", "BPM:", "Key:", "Energy:")
+                    ("Mix:", "EQ:", "Transition:", "Übergang:", "BPM:",
+                     "Key:", "Tonart:", "Energy:", "Energie:")
                 ):
                     dj_brain_parts.append(part)
                 elif part.startswith("!"):
@@ -4879,6 +3711,11 @@ class MixTipsPanel(QWidget):
             # Karten-Layout merken fuer spaeteres Einhaengen des PreviewWidgets
             self._card_layouts[card_index] = card_layout
 
+            # Auch ungetrennte Dateinamen dürfen die Karte nicht verbreitern.
+            # Die Kandidatentabelle behält ihren eigenen horizontalen Scrollweg.
+            for label in card.findChildren(QLabel):
+                label.setWordWrap(True)
+                label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             self.container_layout.addWidget(card)
 
         self.container_layout.addStretch()
@@ -4898,7 +3735,7 @@ class MixTipsPanel(QWidget):
         tabelle.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         tabelle.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         tabelle.setToolTip("Kandidaten fuer diesen Uebergang — Klick macht einen Kandidaten aktiv "
-                           "(Preview, Timeline und Export folgen; die Wahl wird gemerkt).")
+                           "(Vorschau, Zeitlinie und Export folgen; die Wahl wird gemerkt).")
         tabelle.setEnabled(self._candidate_choices_enabled)
         tabelle.setStyleSheet(
             f"QTableWidget {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "
@@ -5462,8 +4299,8 @@ class TimelinePanel(QWidget):
                 },
             )
             self.text_edit.setHtml(
-                f"{html_style_block()}<h3>Set Timeline</h3>"
-                "<p><b>Timeline ungültig:</b> "
+                f"{html_style_block()}<h3>Set-Zeitlinie</h3>"
+                "<p><b>Zeitlinie ungültig:</b> "
                 f"{html_mod.escape(str(exc))}</p>"
             )
             return
@@ -5472,7 +4309,7 @@ class TimelinePanel(QWidget):
         phase_colors = PHASE_COLORS
         phase_labels = PHASE_LABELS
 
-        html = f"{html_style_block()}<h3>Set Timeline</h3>"
+        html = f"{html_style_block()}<h3>Set-Zeitlinie</h3>"
 
         # Uebersicht
         overflow = summary.get("overflow_seconds", 0)
@@ -5506,11 +4343,11 @@ class TimelinePanel(QWidget):
           <td style="padding: 4px 12px;">{overflow_sign}{abs(overflow):.2f}s ({overflow_display})</td>
         </tr>
         <tr>
-          <td style="padding: 4px 12px; font-weight: bold;">Peak Track:</td>
+          <td style="padding: 4px 12px; font-weight: bold;">Track am Höhepunkt:</td>
           <td style="padding: 4px 12px;">{html_mod.escape(str(summary.get("peak_track", "-")))}</td>
         </tr>
         <tr>
-          <td style="padding: 4px 12px; font-weight: bold;">Peak bei:</td>
+          <td style="padding: 4px 12px; font-weight: bold;">Höhepunkt bei:</td>
           <td style="padding: 4px 12px;">{peak_display}</td>
         </tr>
         <tr>
@@ -5544,7 +4381,7 @@ class TimelinePanel(QWidget):
             html += "</table>"
 
         # Timeline-Details
-        html += "<h4>Timeline</h4>"
+        html += "<h4>Zeitlinie</h4>"
         html += (
             "<table style='margin: 8px 0; border-collapse: collapse; width: 100%;'>"
             f"<tr style='background: {COLORS['bg_panel']}; font-weight: bold;'>"
@@ -5553,7 +4390,7 @@ class TimelinePanel(QWidget):
             "<td style='padding: 5px 8px;'>Start</td>"
             "<td style='padding: 5px 8px;'>Ende</td>"
             "<td style='padding: 5px 8px;'>Dauer</td>"
-            "<td style='padding: 5px 8px;'>Overlap</td>"
+            "<td style='padding: 5px 8px;'>Überlappung</td>"
             "<td style='padding: 5px 8px;'>Phase</td>"
             "</tr>"
         )
@@ -5585,7 +4422,7 @@ class TimelinePanel(QWidget):
                 f"<td style='padding: 4px 8px;'>{overlap_str}</td>"
                 f"<td style='padding: 4px 8px;'>"
                 f"<span style='color: {color}; font-weight: bold;'>"
-                f"{phase.capitalize()}</span></td>"
+                f"{html_mod.escape(phase_labels.get(phase, phase.capitalize()).split(' — ', 1)[0])}</span></td>"
                 f"</tr>"
             )
 
@@ -5594,7 +4431,7 @@ class TimelinePanel(QWidget):
         # Legende
         html += "<hr>"
         html += f"<p style='color: {COLORS['text_secondary']}; font-size: 11px;'>"
-        html += "* = Peak Track | Overlap = Uebergangszeit zum naechsten Track"
+        html += "* = Track am Höhepunkt | Überlappung = Übergangszeit zum nächsten Track"
         html += "</p>"
 
         self.text_edit.setHtml(html)
@@ -5913,7 +4750,12 @@ class ToolTipEventFilter(QObject):
 # ══════════════════════════════════════════════════════════════════
 
 
-class MainWindow(QMainWindow):
+class MainWindow(ResultPublicationMixin, QMainWindow):
+    _publication_widget_types = staticmethod(lambda: (
+        PlaylistPanel, MixTipsPanel, TimelinePanel, AnalyticsPanel, ToolbarWidget,
+    ))
+    _publication_error_reporter = staticmethod(lambda: get_error_reporter())
+
     def __init__(self, settings=None):
         super().__init__()
         from hpg_core import __version__ as hpg_version
@@ -6033,7 +4875,7 @@ class MainWindow(QMainWindow):
         if "bpm_tolerance" in state:
             panel.bpm_tolerance_slider.setValue(state["bpm_tolerance"])
         if "energy_direction" in state:
-            advanced.energy_direction.setCurrentText(state["energy_direction"])
+            advanced.energy_direction.setCurrentIndex(advanced.energy_direction.findData(state["energy_direction"]))
         for name, control in (
             ("peak_position", advanced.peak_position_slider),
             ("target_energy", advanced.target_energy_slider),
@@ -6102,7 +4944,7 @@ class MainWindow(QMainWindow):
             "folder": panel.current_folder or "",
             "strategy": panel.strategy_combo.currentText(),
             "bpm_tolerance": panel.bpm_tolerance_slider.value(),
-            "energy_direction": advanced.energy_direction.currentText(),
+            "energy_direction": advanced.energy_direction.currentData(),
             "peak_position": advanced.peak_position_slider.value(),
             "target_energy_enabled": advanced.target_energy_enabled.isChecked(),
             "target_energy": advanced.target_energy_slider.value(),
@@ -6238,7 +5080,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _setup_shortcuts(self):
-        """Keyboard Shortcuts fuer Generierung, Export und Sidebar-Navigation."""
+        """Tastenkürzel fuer Generierung, Export und Sidebar-Navigation."""
         # Ctrl+G → Playlist generieren
         QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self.start_analysis)
         # Ctrl+E → Export
@@ -7376,7 +6218,7 @@ class MainWindow(QMainWindow):
     def _on_folder_selected(self, path):
         """Folder ausgewaehlt — Toolbar aktualisieren."""
         folder_name = os.path.basename(path)
-        self.toolbar.set_info(f"Folder: {folder_name}")
+        self.toolbar.set_info(f"Ordner: {folder_name}")
         self.toolbar.set_generate_enabled(True)
 
     def _set_playlist_strategy(self, mode):
@@ -7388,6 +6230,9 @@ class MainWindow(QMainWindow):
     def _set_run_state(self, state: RunState) -> None:
         """Setzt den zentralen Pipelinezustand."""
         self.run_state = state
+        toolbar = getattr(self, "toolbar", None)
+        if toolbar is not None:
+            toolbar.set_run_state(state)
         # Reorder-Sperre und Slot-Guard verwenden dieselbe aktive Zustandsmenge.
         # So bietet die Tabelle keine Aktion an, die anschliessend zurueckrollt.
         panel = getattr(self, "playlist_panel", None)
@@ -7453,7 +6298,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_retired_mix_tips_panels", ()):
             return False
         self.library_panel.progress_widget.reset_steps()
-        self._finish_run(RunState.CANCELLED, "Analysis cancelled.")
+        self._finish_run(RunState.CANCELLED, "Analyse abgebrochen.")
         return True
 
     def _on_preview_state_changed(self, active: bool) -> None:
@@ -7475,30 +6320,30 @@ class MainWindow(QMainWindow):
                 self._set_run_state(RunState.PREVIEW)
                 self.status_bar.show_progress()
                 self.status_bar.set_progress(0)
-                self.status_bar.set_status("Transition-Vorschau wird gerendert...")
+                self.status_bar.set_status("Übergangsvorschau wird gerendert...")
             return
         if self.run_state == RunState.PREVIEW:
             panel = self.mix_tips_panel
             if panel._render_worker is not None or panel._render_workers or panel._preview_queue:
                 return
             if panel._preview_batch_cancelled:
-                self._finish_run(RunState.CANCELLED, "Transition-Vorschau abgebrochen.")
+                self._finish_run(RunState.CANCELLED, "Übergangsvorschau abgebrochen.")
                 return
             successes = panel._preview_batch_successes
             failures = panel._preview_batch_failures
             if successes and not failures:
-                self._finish_run(RunState.SUCCESS, "Transition-Vorschau bereit.")
+                self._finish_run(RunState.SUCCESS, "Übergangsvorschau bereit.")
             elif successes:
                 self._finish_run(
                     RunState.PARTIAL,
-                    f"Transition-Vorschau teilweise bereit: {successes} erfolgreich, "
+                    f"Übergangsvorschau teilweise bereit: {successes} erfolgreich, "
                     f"{failures} fehlgeschlagen.",
                 )
             else:
                 self._finish_run(
                     RunState.ERROR,
-                    f"Keine Transition-Vorschau erstellt: {failures} fehlgeschlagen."
-                    if failures else "Keine Transition-Vorschau erstellt.",
+                    f"Keine Übergangsvorschau erstellt: {failures} fehlgeschlagen."
+                    if failures else "Keine Übergangsvorschau erstellt.",
                 )
 
     def _finish_run(self, state: RunState, status: str) -> None:
@@ -7516,7 +6361,7 @@ class MainWindow(QMainWindow):
         self.status_bar.set_status(status)
 
     def select_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Music Folder")
+        folder_path = QFileDialog.getExistingDirectory(self, "Musikordner auswählen")
         if folder_path:
             self.library_panel.set_folder_path(folder_path)
 
@@ -7534,7 +6379,7 @@ class MainWindow(QMainWindow):
 
         if not settings["folder"]:
             QMessageBox.warning(
-                self, "No Folder Selected", "Please select a music folder first."
+                self, "Kein Ordner ausgewählt", "Bitte zuerst einen Musikordner auswählen."
             )
             return False
 
@@ -7606,7 +6451,7 @@ class MainWindow(QMainWindow):
 
         # StatusBar: Progress zeigen
         self.status_bar.show_progress()
-        self.status_bar.set_status("Starting analysis...")
+        self.status_bar.set_status("Analyse wird gestartet …")
         # Befund des Vorlaufs verwerfen — er gilt fuer einen anderen Ordner.
         self.status_bar.clear_hint()
 
@@ -7843,7 +6688,7 @@ class MainWindow(QMainWindow):
             "playlist_generation", str(message),
             {"tracks": len(self.analyzed_raw_tracks)},
         )
-        self._finish_run(RunState.ERROR, f"ERROR generating playlist: {message}")
+        self._finish_run(RunState.ERROR, f"Fehler bei der Playlist-Erstellung: {message}")
 
     def _on_playlist_generation_done(self, neues_result, source_worker=None):
         """Publiziert Worker-Ergebnis ausschliesslich im GUI-Thread."""
@@ -7866,7 +6711,7 @@ class MainWindow(QMainWindow):
             else:
                 self._finish_run(
                     RunState.ERROR,
-                    "ERROR: Playlist generation returned empty result.",
+                    "Playlist-Erstellung ohne Ergebnis. Analysehinweise prüfen.",
                 )
             return
 
@@ -7884,7 +6729,7 @@ class MainWindow(QMainWindow):
             )
             self._finish_run(
                 RunState.ERROR,
-                f"ERROR calculating playlist transitions: {str(exc)}",
+                f"Fehler bei der Übergangsplanung: {str(exc)}",
             )
             return
 
@@ -7901,9 +6746,9 @@ class MainWindow(QMainWindow):
         mode = getattr(neues_result, "mode", None) or (
             self._run_settings or {}
         ).get("strategy", self.current_playlist_mode)
-        self.toolbar.set_info(f"{len(self.playlist)} tracks | {mode}")
+        self.toolbar.set_info(f"{len(self.playlist)} Tracks | {mode}")
         self.status_bar.set_status(
-            f"Complete — {len(self.playlist)} tracks, Quality {overall:.0%}"
+            f"Fertig — {len(self.playlist)} Tracks, Qualität {overall:.0%}"
         )
         
         # Automatisch zum Playlist-Panel wechseln
@@ -7935,7 +6780,7 @@ class MainWindow(QMainWindow):
             final_message = (
                 "Playlist fertig; " + "; ".join(partial_reasons)
                 if partial_reasons
-                else f"Complete — {len(self.playlist)} tracks, Quality {overall:.0%}"
+                else f"Fertig — {len(self.playlist)} Tracks, Qualität {overall:.0%}"
             )
             self._finish_run(final_state, final_message)
 
@@ -8052,7 +6897,7 @@ class MainWindow(QMainWindow):
                     + ".",
                 )
             else:
-                self._finish_run(RunState.ERROR, "Analysis returned no results.")
+                self._finish_run(RunState.ERROR, "Analyse ohne Ergebnisse. Hinweise prüfen und erneut starten.")
             return
 
         # Speichere die analysierten Roh-Tracks
@@ -8093,7 +6938,8 @@ class MainWindow(QMainWindow):
         
         # Der AI-Worker analysiert alle rohen, importierten Tracks, um deren Moods/Subgenres einzusammeln!
         self.ai_worker = AIAnalysisWorker(
-            self.analyzed_raw_tracks, provider=provider, model=model, base_url=base_url
+            self.analyzed_raw_tracks, provider=provider, model=model, base_url=base_url,
+            cache_policy=getattr(source_worker, "cache_policy", "reuse"),
         )
 
         # Phase 5: AI MOODS in Arbeit
@@ -8151,253 +6997,6 @@ class MainWindow(QMainWindow):
         )
         return transition_metrics, quality_metrics, transition_plan
 
-    def _connect_publication_signals(self, playlist_panel, mix_tips_panel, toolbar):
-        toolbar.generate_clicked.connect(self.start_analysis)
-        toolbar.export_clicked.connect(self.export_playlist)
-        playlist_panel.export_clicked.connect(self.export_playlist)
-        playlist_panel.preview_clicked.connect(self.preview_transitions)
-        playlist_panel.restart_clicked.connect(self.restart_app)
-        playlist_panel.playlist_reordered.connect(self._on_playlist_reordered)
-        playlist_panel.reorder_failed.connect(self._on_playlist_reorder_failed)
-        mix_tips_panel.preview_state_changed.connect(self._on_preview_state_changed)
-        mix_tips_panel.candidate_chosen.connect(self._on_candidate_chosen)
-        mix_tips_panel.reserve_ready.connect(self._on_render_reserve_ready)
-        mix_tips_panel.transition_rating_requested.connect(self._rate_transition_preview)
-
-    def _disconnect_publication_signals(self, playlist_panel, mix_tips_panel, toolbar):
-        connections = (
-            (toolbar.generate_clicked, self.start_analysis),
-            (toolbar.export_clicked, self.export_playlist),
-            (playlist_panel.export_clicked, self.export_playlist),
-            (playlist_panel.preview_clicked, self.preview_transitions),
-            (playlist_panel.restart_clicked, self.restart_app),
-            (playlist_panel.playlist_reordered, self._on_playlist_reordered),
-            (playlist_panel.reorder_failed, self._on_playlist_reorder_failed),
-            (mix_tips_panel.preview_state_changed, self._on_preview_state_changed),
-            (mix_tips_panel.candidate_chosen, self._on_candidate_chosen),
-            (mix_tips_panel.reserve_ready, self._on_render_reserve_ready),
-            (mix_tips_panel.transition_rating_requested, self._rate_transition_preview),
-        )
-        for signal, slot in connections:
-            try:
-                signal.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass
-
-    def _prepare_uebergangs_views(
-        self, playlist, quality_metrics, transition_plan, bpm_tolerance,
-        scoring_context, generation_result=None,
-    ):
-        """Bereitet alle abhaengigen Views ohne Mutation des Live-Zustands vor."""
-        playlist_panel = PlaylistPanel()
-        mix_tips_panel = MixTipsPanel()
-        timeline_panel = TimelinePanel()
-        analytics_panel = AnalyticsPanel()
-        toolbar = ToolbarWidget()
-        prepared = (
-            playlist_panel, mix_tips_panel, timeline_panel, analytics_panel, toolbar
-        )
-        try:
-            self._connect_analytics_signals(analytics_panel)
-            # Der View-Austausch darf den geoeffneten Hoertest weder vergessen
-            # noch laufende Aktionen wieder freigeben. Keine neue Geschaeftsregel.
-            for name, button in vars(self.analytics_panel).items():
-                if name.startswith("hearing_") and isinstance(button, QPushButton):
-                    getattr(analytics_panel, name).setEnabled(button.isEnabled())
-            analytics_panel.hearing_status.setText(
-                self.analytics_panel.hearing_status.text()
-            )
-            playlist_panel.set_playlist_data(
-                playlist,
-                quality_metrics,
-                transition_recommendations=transition_plan,
-                bpm_tolerance=bpm_tolerance,
-                scoring_context=scoring_context,
-                generation_result=generation_result,
-            )
-            mix_tips_panel.set_recommendations(transition_plan, playlist)
-            mix_tips_panel.setup_transition_previews(transition_plan)
-            mix_tips_panel._generation_result = generation_result
-            timeline_panel.set_timeline(
-                playlist, transition_plan, scoring_context
-            )
-            analytics_panel.set_analytics(
-                quality_metrics, playlist, bpm_tolerance,
-                transition_plan, scoring_context,
-            )
-            toolbar.set_info(self.toolbar.info_label.text())
-            toolbar.set_generate_enabled(self.toolbar.generate_btn.isEnabled())
-            toolbar.set_export_enabled(self.toolbar.export_btn.isEnabled())
-            toolbar.set_quality(quality_metrics.get("overall_score", 0))
-            playlist_panel.set_reorder_locked(
-                self.run_state in ACTIVE_RUN_STATES
-            )
-            mix_tips_panel.set_candidate_choices_enabled(
-                self.run_state not in ACTIVE_RUN_STATES
-            )
-            self._connect_publication_signals(
-                playlist_panel, mix_tips_panel, toolbar
-            )
-        except Exception:
-            try:
-                mix_tips_panel._cleanup_existing_previews()
-            except Exception:
-                pass
-            for widget in prepared:
-                widget.deleteLater()
-            raise
-        return prepared
-
-    def _retire_mix_tips_panel(self, panel):
-        """Gibt Preview-Ressourcen nach dem Commit genau einmal frei."""
-        running = [worker for worker in panel._render_workers if worker.isRunning()]
-        if running:
-            self._retired_mix_tips_panels.add(panel)
-            for worker in running:
-                worker.finished.connect(
-                    lambda retired=panel: self._finish_retired_mix_tips_panel(retired)
-                )
-        try:
-            panel._cleanup_existing_previews()
-        finally:
-            if not any(worker.isRunning() for worker in panel._render_workers):
-                self._retired_mix_tips_panels.discard(panel)
-                panel.deleteLater()
-
-    def _finish_retired_mix_tips_panel(self, panel):
-        if panel._render_worker is not None or panel._render_workers:
-            return
-        self._retired_mix_tips_panels.discard(panel)
-        panel.deleteLater()
-        self._try_finish_cancelled_run()
-
-    def _commit_uebergangs_views(
-        self, prepared, playlist, quality_metrics, generation_result
-    ):
-        """Tauscht vorbereitete Widgets strukturell aus und entsorgt danach alte."""
-        new_playlist, new_mix, new_timeline, new_analytics, new_toolbar = prepared
-        old_panels = (
-            self.playlist_panel, self.mix_tips_panel,
-            self.timeline_panel, self.analytics_panel,
-        )
-        new_panels = (new_playlist, new_mix, new_timeline, new_analytics)
-        old_toolbar = self.toolbar
-        current_index = self.content_stack.currentIndex()
-        toolbar_swapped = False
-        try:
-            for panel in old_panels:
-                self.content_stack.removeWidget(panel)
-            for index, panel in enumerate(new_panels, start=1):
-                self.content_stack.insertWidget(index, panel)
-            replaced = self._right_layout.replaceWidget(old_toolbar, new_toolbar)
-            if replaced is None:
-                raise RuntimeError("Toolbar konnte nicht atomar ersetzt werden")
-            toolbar_swapped = True
-            self.content_stack.setCurrentIndex(current_index)
-        except Exception:
-            if toolbar_swapped or self._right_layout.indexOf(new_toolbar) >= 0:
-                self._right_layout.replaceWidget(new_toolbar, old_toolbar)
-            for panel in reversed(new_panels):
-                if self.content_stack.indexOf(panel) < 0:
-                    continue
-                try:
-                    self.content_stack.removeWidget(panel)
-                except Exception:
-                    pass
-            for index, panel in enumerate(old_panels, start=1):
-                if self.content_stack.indexOf(panel) < 0:
-                    self.content_stack.insertWidget(index, panel)
-            try:
-                self.content_stack.setCurrentIndex(current_index)
-            except Exception:
-                pass
-            self._disconnect_publication_signals(new_playlist, new_mix, new_toolbar)
-            try:
-                new_mix._cleanup_existing_previews()
-            except Exception:
-                pass
-            for widget in prepared:
-                widget.deleteLater()
-            raise
-
-        self.playlist_panel = new_playlist
-        self.mix_tips_panel = new_mix
-        self.timeline_panel = new_timeline
-        self.analytics_panel = new_analytics
-        self.toolbar = new_toolbar
-        self.playlist = list(playlist)
-        self.quality_metrics = dict(quality_metrics)
-        if generation_result is not None:
-            self.current_generation_result = generation_result
-
-        try:
-            self._disconnect_publication_signals(
-                old_panels[0], old_panels[1], old_toolbar
-            )
-        except Exception as exc:
-            get_error_reporter().log_error(
-                "transition_view_disconnect", str(exc), {}
-            )
-        retirement_actions = (
-            ("toolbar_hide", old_toolbar.hide),
-            ("toolbar_detach", lambda: old_toolbar.setParent(None)),
-            ("toolbar_delete", old_toolbar.deleteLater),
-            ("playlist_delete", old_panels[0].deleteLater),
-            ("timeline_delete", old_panels[2].deleteLater),
-            ("analytics_delete", old_panels[3].deleteLater),
-        )
-        for stage, action in retirement_actions:
-            try:
-                action()
-            except Exception as exc:
-                get_error_reporter().log_error(
-                    "transition_view_retire", str(exc), {"stage": stage}
-                )
-        try:
-            self._retire_mix_tips_panel(old_panels[1])
-        except Exception as exc:
-            get_error_reporter().log_error(
-                "transition_view_retire", str(exc), {"stage": "mix_tips"}
-            )
-
-    def _verteile_uebergaenge(
-        self,
-        transition_plan,
-        bpm_tolerance,
-        scoring_context,
-        *,
-        playlist=None,
-        quality_metrics=None,
-        generation_result=None,
-    ):
-        """Publiziert einen Plan per Prepare/Commit ohne destruktiven Rollback."""
-        ziel_playlist = list(self.playlist if playlist is None else playlist)
-        ziel_quality = dict(self.quality_metrics if quality_metrics is None else quality_metrics)
-        prepared = self._prepare_uebergangs_views(
-            ziel_playlist, ziel_quality, transition_plan,
-            bpm_tolerance, deepcopy(scoring_context),
-            generation_result,
-        )
-        self._commit_uebergangs_views(
-            prepared, ziel_playlist, ziel_quality, generation_result
-        )
-
-    def _publiziere_generation_result(self, result) -> None:
-        """Publiziert genau einen vollstaendigen Result-Zustand atomar."""
-        from hpg_core.playlist import legacy_transition_recommendations
-
-        playlist = list(result.tracks)
-        quality = result.quality_dict()
-        context = result.scoring_context_dict()
-        recommendations = legacy_transition_recommendations(result)
-        self._verteile_uebergaenge(
-            recommendations,
-            result.bpm_tolerance,
-            context,
-            playlist=playlist,
-            quality_metrics=quality,
-            generation_result=result,
-        )
 
     def _on_render_reserve_ready(self, payload):
         # Alte/abgebrochene Worker-Ergebnisse dürfen den GUI-Thread nicht mit
@@ -8536,7 +7135,7 @@ class MainWindow(QMainWindow):
         paar_index = int(getattr(rec, "index", index))
         self.status_bar.set_status(
             f"Kandidat Rang {rang} fuer Uebergang {paar_index + 1}\u2192{paar_index + 2} gewaehlt — "
-            "Preview, Timeline und Export folgen."
+            "Vorschau, Zeitlinie und Export folgen."
         )
 
     def _on_result_candidate_chosen(self, index: int, candidate_key) -> None:
@@ -8634,7 +7233,7 @@ class MainWindow(QMainWindow):
         self.mix_tips_panel.verwerfe_preview(index)
         self.status_bar.set_status(
             f"Kandidat Rang {kandidat.rang} fuer Uebergang "
-            f"{index + 1}\u2192{index + 2} gewaehlt — Preview, Timeline und Export folgen."
+            f"{index + 1}\u2192{index + 2} gewaehlt — Vorschau, Zeitlinie und Export folgen."
         )
 
     def _on_playlist_reorder_failed(self, message):
@@ -8684,7 +7283,7 @@ class MainWindow(QMainWindow):
                 )
                 return
             self.status_bar.set_status(
-                "Playlist umsortiert; Mixpoints, Preview, Timeline und Export "
+                "Playlist umsortiert; Mixpunkte, Vorschau, Zeitlinie und Export "
                 "wurden aus demselben Result aktualisiert."
             )
             return
@@ -8717,16 +7316,16 @@ class MainWindow(QMainWindow):
         if not self.playlist:
             QMessageBox.warning(
                 self,
-                "No Playlist",
-                "No playlist to export. Analyze audio files first.",
+                "Keine Playlist",
+                "Noch keine Playlist zum Exportieren. Zuerst Musik analysieren.",
             )
             return
 
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export Playlist",
+            "Playlist exportieren",
             f"HPG_Playlist_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            "M3U8 Playlist (*.m3u8);;Rekordbox XML (*.xml);;All Files (*.*)",
+            "M3U8 Playlist (*.m3u8);;Rekordbox XML (*.xml);;Alle Dateien (*.*)",
         )
 
         if not file_path:
@@ -8747,8 +7346,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "Export Error",
-                f"Failed to export playlist:\n{str(e)}",
+                "Exportfehler",
+                f"Playlist konnte nicht exportiert werden:\n{str(e)}",
             )
 
     def _export_m3u8(self, file_path: str):
@@ -8763,10 +7362,10 @@ class MainWindow(QMainWindow):
             report = exporter.export(self.playlist, file_path, playlist_name)
 
             message = (
-                f"M3U8 Playlist exported!\n\n"
-                f"Location: {file_path}\n"
+                f"M3U8-Playlist exportiert!\n\n"
+                f"Speicherort: {file_path}\n"
                 f"Tracks: {report.tracks_written}\n"
-                f"Compatible with Rekordbox, Serato, Traktor."
+                f"Kompatibel mit Rekordbox, Serato und Traktor."
             )
             if report.status == "partial":
                 QMessageBox.warning(
@@ -8775,9 +7374,9 @@ class MainWindow(QMainWindow):
                     message + "\n\n" + "\n".join(report.errors),
                 )
             else:
-                QMessageBox.information(self, "Export Successful", message)
+                QMessageBox.information(self, "Export abgeschlossen", message)
         except Exception as e:
-            raise Exception(f"M3U8 export failed: {e}")
+            raise Exception(f"M3U8-Export fehlgeschlagen: {e}")
 
     def _export_rekordbox_xml(self, file_path: str):
         try:
@@ -8794,7 +7393,7 @@ class MainWindow(QMainWindow):
             )
 
             message = (
-                f"Location: {file_path}\nTracks: {report.tracks_written}\n"
+                f"Speicherort: {file_path}\nTracks: {report.tracks_written}\n"
                 f"Cues: {report.cues_written}\nBeatgrids: {report.beatgrids_written}"
             )
             if report.status == "partial":
@@ -8804,31 +7403,31 @@ class MainWindow(QMainWindow):
                     message + "\n\n" + "\n".join(report.errors),
                 )
             else:
-                QMessageBox.information(self, "Export Successful", message)
+                QMessageBox.information(self, "Export abgeschlossen", message)
         except ImportError:
             QMessageBox.critical(
                 self,
-                "Library Missing",
-                "pyrekordbox not installed! Falling back to M3U8...",
+                "Abhängigkeit fehlt",
+                "pyrekordbox ist nicht installiert. Stattdessen wird M3U8 exportiert.",
             )
             # L2-Fix: nur die Endung ersetzen, nicht jedes ".xml" im Pfad
             m3u8_path = os.path.splitext(file_path)[0] + ".m3u8"
             self._export_m3u8(m3u8_path)
         except Exception as e:
-            raise Exception(f"Rekordbox XML export failed: {e}")
+            raise Exception(f"Rekordbox-XML-Export fehlgeschlagen: {e}")
 
     def preview_transitions(self):
-        """Transition Preview Dialog."""
+        """Übergangsvorschau Dialog."""
         if not self.playlist:
             return
 
         if len(self.playlist) < 2:
             QMessageBox.information(
-                self, "Preview", "Need at least 2 tracks to show transitions."
+                self, "Übergangsvorschau", "Für Übergänge werden mindestens zwei Tracks benötigt."
             )
             return
 
-        transitions_info = "Transition Analysis:\n\n"
+        transitions_info = "Übergangsanalyse:\n\n"
         recommendations = self.playlist_panel.transition_recommendations
         for i in range(len(self.playlist) - 1):
             current = self.playlist[i]
@@ -8855,12 +7454,12 @@ class MainWindow(QMainWindow):
                 )
             transitions_info += f"   BPM: {current.bpm:.1f} -> {next_track.bpm:.1f}\n"
             transitions_info += (
-                f"   Key: {current.camelotCode} -> {next_track.camelotCode}\n\n"
+                f"   Tonart: {current.camelotCode} -> {next_track.camelotCode}\n\n"
             )
 
         msg = QMessageBox(self)
-        msg.setWindowTitle("Transition Preview")
-        msg.setText("Transition Analysis")
+        msg.setWindowTitle("Übergangsvorschau")
+        msg.setText("Übergangsanalyse")
         msg.setDetailedText(transitions_info)
         msg.exec()
 
@@ -8936,8 +7535,8 @@ class MainWindow(QMainWindow):
         self.current_playlist_mode = "Harmonic Flow"
         self.toolbar.set_export_enabled(False)
         self.toolbar.quality_badge.hide()
-        self.toolbar.set_info("No folder selected")
-        self.status_bar.set_status("Ready")
+        self.toolbar.set_info("Kein Ordner ausgewählt")
+        self.status_bar.set_status("Bereit")
         self.sidebar.set_active(0)
         self.content_stack.setCurrentIndex(0)
 

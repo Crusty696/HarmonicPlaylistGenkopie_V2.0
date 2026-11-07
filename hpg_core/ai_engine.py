@@ -3,6 +3,7 @@ import logging
 import json
 import math
 import multiprocessing
+import time
 from datetime import datetime, timezone
 from typing import Callable
 from .models import Track
@@ -85,6 +86,13 @@ def _cancelable_post(url, payload, timeout, cancel_check: Callable[[], bool]):
     if cancel_check():
         raise InterruptedError("KI-Analyse abgebrochen")
 
+    # requests begrenzt einzelne Lesevorgaenge, nicht die Gesamtdauer. Auch
+    # stockende Antworten oder ein haengender Kindprozess muessen enden.
+    budget = sum(timeout) if isinstance(timeout, tuple) else float(timeout)
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError("KI-HTTP-Gesamtfrist muss endlich und positiv sein")
+    deadline = time.monotonic() + budget
+
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
     process = context.Process(
@@ -100,7 +108,10 @@ def _cancelable_post(url, payload, timeout, cancel_check: Callable[[], bool]):
         while True:
             if cancel_check():
                 raise InterruptedError("KI-Analyse abgebrochen")
-            if receive_connection.poll(_CANCEL_POLL_SECONDS):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise requests.exceptions.Timeout("KI-HTTP-Gesamtfrist überschritten")
+            if receive_connection.poll(min(_CANCEL_POLL_SECONDS, remaining)):
                 message = receive_connection.recv()
                 break
             if not process.is_alive():
@@ -110,6 +121,10 @@ def _cancelable_post(url, payload, timeout, cancel_check: Callable[[], bool]):
                 raise requests.exceptions.RequestException(
                     f"KI-HTTP-Prozess endete ohne Ergebnis (Exitcode {process.exitcode})"
                 )
+    except EOFError as exc:
+        raise requests.exceptions.RequestException(
+            "KI-HTTP-Prozess hat den Antwortkanal ohne Ergebnis geschlossen"
+        ) from exc
     finally:
         receive_connection.close()
         if not started:
@@ -254,6 +269,18 @@ def validate_ai_analysis(
         raise ValueError("KI-Ergebnis verletzt den persistierbaren Vertrag")
     return result
 
+def decode_ai_response(response, provider, model, *, request_model=None, url=None, qualification_key=None):
+    """Nur beobachtetes ungueltiges Antwort-JSON negativ qualifizieren."""
+    try:
+        return response.json()
+    except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as exc:
+        if provider == "LM Studio" and request_model and url:
+            from .lmstudio_runtime import record_qualification
+            record_qualification(model, url, False, "Ungueltiges Antwort-JSON: " + str(exc),
+                                 qualification_key=qualification_key)
+        raise
+
+
 def validate_ai_completion(response, track, provider, model, *, request_model=None, url=None, qualification_key=None):
     """Gleicher Antwortvertrag fuer expliziten Modelltest und echte Trackanfrage.
 
@@ -397,8 +424,10 @@ def fetch_ai_analysis(
 
         if cancel_check and cancel_check():
             raise InterruptedError("KI-Analyse abgebrochen")
+        response_data = decode_ai_response(resp, current_provider, model or config.AI_MODEL,
+            request_model=request_model, url=url, qualification_key=qualification_key)
         parsed_data = validate_ai_completion(
-            resp.json(), track, current_provider, model or config.AI_MODEL,
+            response_data, track, current_provider, model or config.AI_MODEL,
             request_model=request_model, url=url, qualification_key=qualification_key)
         logger.info(f"AI-Analyse erfolgreich geladen fuer {track.title} ({current_provider})")
         return parsed_data

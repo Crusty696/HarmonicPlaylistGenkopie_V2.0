@@ -444,8 +444,8 @@ def pair_quality_reasons(
 
 def _genre(track: Track) -> str:
     # Lazy: playlist importiert (ab Teil 4) dieses Modul — kein Importzyklus.
-    from .playlist import _resolve_track_genre
-    return _resolve_track_genre(track)
+    from .genres import resolve_track_genre
+    return resolve_track_genre(track)
 
 
 def _grid_sec(track: Track) -> float:
@@ -1034,7 +1034,7 @@ def score_pair(track_a: Track, track_b: Track, out_a: MixCandidate, in_b: MixCan
     `bass_swap_geplant`: der Aufrufer rendert/plant einen Bass-/EQ-Swap — der
     Kick-Konflikt ist damit geloest, KICK_KONFLIKT_ABZUG entfaellt, das Flag
     `bass_swap_pflicht` bleibt gesetzt."""
-    from .playlist import VOCAL_CLASH_PENALTY, combine_weighted   # lazy, s. _genre
+    from .scoring_primitives import VOCAL_CLASH_PENALTY, combine_weighted
     richtung = getattr(energy_direction, "value", energy_direction)
     genre_a, genre_b = _genre(track_a), _genre(track_b)
     tol = tolerances if tolerances is not None else get_tolerances(genre_a)

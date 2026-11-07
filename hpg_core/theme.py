@@ -20,6 +20,7 @@ Stellt bereit:
 """
 
 from PyQt6.QtGui import QPalette, QColor
+from .transition_notes import TRANSITION_TYPE_LABELS
 
 # ──────────────────────────────────────────────────────────────
 # Schriftarten — Monospace fuer DAW-Look
@@ -117,12 +118,12 @@ PHASE_COLORS = {
 }
 
 PHASE_LABELS = {
-  "intro":    "Intro \u2014 Sanfter Einstieg",
-  "warmup":   "Warm-up \u2014 Behutsam anheizen",
-  "build":    "Build-Up \u2014 Steigende Energie",
-  "peak":     "Peak \u2014 Hoechste Intensitaet",
-  "sustain":  "Sustain \u2014 Energie halten",
-  "cooldown": "Cooldown \u2014 Ausklang",
+  "intro":    "Einstieg \u2014 Sanft beginnen",
+  "warmup":   "Aufwärmen \u2014 Behutsam anheizen",
+  "build":    "Aufbau \u2014 Steigende Energie",
+  "peak":     "Höhepunkt \u2014 Höchste Intensität",
+  "sustain":  "Plateau \u2014 Energie halten",
+  "cooldown": "Ausklang \u2014 Energie zurücknehmen",
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -130,21 +131,9 @@ PHASE_LABELS = {
 # ──────────────────────────────────────────────────────────────
 
 # Transition-Typ Beschreibungen fuer UI
-TRANSITION_TYPE_LABELS: dict[str, str] = {
-    "smooth_blend": "Smooth Blend",
-    "bass_swap": "Bass Swap",
-    "pro_eq_swap": "Pro EQ Swap",
-    "breakdown_bridge": "Breakdown Bridge",
-    "drop_cut": "Drop Cut",
-    "filter_ride": "Filter Ride",
-    "halftime_switch": "Halftime Switch",
-    "echo_out": "Echo Out",
-    "cold_cut": "Cold Cut",
-}
-
 TRANSITION_TYPE_DESCRIPTIONS: dict[str, str] = {
     "smooth_blend": (
-        "Langer EQ-Blend ueber 16-32 Bars.\n"
+        "EQ-Blende mit der im aktiven Plan angezeigten Dauer.\n"
         "Beide Tracks laufen parallel, Bass und\n"
         "Mids werden sanft uebergeblendet."
     ),

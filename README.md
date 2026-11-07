@@ -5,9 +5,14 @@ HPG analysiert ausgewählte Musik, bewertet Trackpaarungen und Mixpunkte,
 erstellt eine Playlist und macht geplante Übergänge als Vorschau hörbar.
 Die Ergebnisse lassen sich als M3U8 oder Rekordbox-XML exportieren.
 
-Quellenabgleich: 26.10.2026. **Der Entwicklungsstand besitzt keine vollständige
-Produkt- oder musikalische Abnahme.** Offene Fehler, Testresultate und datierte
-App-Belege stehen im [Quellen- und Nachweisstand](PRODUCTION_STATUS.md).
+**Stand 07.11.2026:** Ein isolierter App-Lauf analysierte 26 Originaltracks
+frisch und veröffentlichte eine Playlist mit 19 geplanten von 25 Übergängen.
+Der aktuelle Quellstand bestand 6705 Tests; ein Originaltrack lieferte danach
+einen isolierten Cachetreffer. Das sind technische Nachweise, keine vollständige
+musikalische oder EXE-Abnahme. Aktuelle Grenzen und Rohbelege stehen im
+[laufenden Arbeitsplan](docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md).
+Der [Quellen- und Nachweisstand](PRODUCTION_STATUS.md) bewahrt den historischen
+Abgleich vom 26.10.2026.
 
 ## Start aus dem Projekt
 
@@ -88,6 +93,9 @@ Kopieren von Originalmusik und keine musikalische Abnahme allein durch Qt-Laden.
 | Context Flow | Energieziel, Verlauf und Genrekontext |
 
 Details: [Playlist-Entscheidungen und Mixpunkte](docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md).
+
+Modulzuständigkeiten, kompatible Einstiegspunkte und die überarbeitete
+Playlistansicht: [Architektur und Datenfluss](docs/ARCHITEKTUR.md).
 
 ## Formate und native Voraussetzungen
 

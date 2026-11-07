@@ -213,25 +213,47 @@ def _skalen_aus(deltas: list[dict]) -> dict[str, float]:
 
 def kombinierter_score(
     delta: dict, gewichte: dict[str, float], skalen: dict[str, float]
-) -> float:
+) -> float | None:
     """Gewichteter Gesamtscore eines Paares; hoeher = eher echter Uebergang.
 
     Faktoren, bei denen ein NIEDRIGER Wert fuer einen Uebergang spricht
     (Abstaende), werden umgedreht, damit alle in dieselbe Richtung zeigen.
+    Jeder positiv gewichtete Faktor muss gemessen sein. Sonst ist der
+    gelernte Gesamtscore unbekannt; Umnormieren wuerde ihn veraendern.
     """
     summe = 0.0
     gewicht_summe = 0.0
     for faktor, hoeher_ist_besser in AUC_RICHTUNG.items():
-        if faktor not in delta:
-            continue
         w = gewichte.get(faktor, 0.0)
         if w <= 0.0:
             continue
+        if faktor not in delta or delta[faktor] is None:
+            return None
+        messwert = float(delta[faktor])
+        if not np.isfinite(messwert):
+            return None
         skala = skalen.get(faktor) or 1.0
-        wert = min(1.0, abs(float(delta[faktor])) / skala)
+        wert = min(1.0, abs(messwert) / skala)
         summe += w * (wert if hoeher_ist_besser else 1.0 - wert)
         gewicht_summe += w
-    return summe / gewicht_summe if gewicht_summe > 0 else 0.0
+    return summe / gewicht_summe if gewicht_summe > 0 else None
+
+
+def bewerte_holdout(
+    echte_deltas: list[dict], zufalls_deltas: list[dict],
+    gewichte: dict[str, float], skalen: dict[str, float],
+) -> tuple[bool | None, dict]:
+    """Prueft vollstaendige Gesamtscores und weist Messausfaelle getrennt aus."""
+    klassen = {}
+    messwerte = {}
+    for name, deltas in (("uebergaenge", echte_deltas), ("zufallspaare", zufalls_deltas)):
+        scores = [kombinierter_score(d, gewichte, skalen) for d in deltas]
+        gueltig = [score for score in scores if score is not None]
+        klassen[name] = gueltig
+        messwerte[name] = {"verwendet": len(gueltig), "ausgelassen": len(scores) - len(gueltig)}
+    if not klassen["uebergaenge"] or not klassen["zufallspaare"]:
+        return None, messwerte
+    return holdout_passed(klassen["uebergaenge"], klassen["zufallspaare"]), messwerte
 
 
 def ist_echter_uebergang(i: int, j: int) -> bool:
@@ -319,8 +341,8 @@ def berechne_auc_richtung(echte: list[dict], zufall: list[dict]) -> dict[str, fl
     """AUC je Faktor, unter Beachtung der Richtung (hoeher/niedriger ist besser)."""
     auc: dict[str, float] = {}
     for faktor, hoeher_ist_besser in AUC_RICHTUNG.items():
-        echte_werte = [d[faktor] for d in echte]
-        zufalls_werte = [d[faktor] for d in zufall]
+        echte_werte = [d[faktor] for d in echte if faktor in d]
+        zufalls_werte = [d[faktor] for d in zufall if faktor in d]
         auc[faktor] = discrimination_auc(echte_werte, zufalls_werte, hoeher_ist_besser)
     return auc
 
@@ -335,8 +357,8 @@ def berechne_auc_grenzen(
     """
     grenzen: dict[str, tuple[float, float, float]] = {}
     for faktor, hoeher_ist_besser in AUC_RICHTUNG.items():
-        echte_werte = [[d[faktor] for d in mix] for mix in echte_je_mix]
-        zufalls_werte = [[d[faktor] for d in mix] for mix in zufall_je_mix]
+        echte_werte = [[d[faktor] for d in mix if faktor in d] for mix in echte_je_mix]
+        zufalls_werte = [[d[faktor] for d in mix if faktor in d] for mix in zufall_je_mix]
         grenzen[faktor] = cluster_bootstrap_auc(
             echte_werte, zufalls_werte, hoeher_ist_besser
         )
@@ -352,13 +374,13 @@ def berechne_toleranzen(echte: list[dict]) -> dict[str, float | None]:
     """
     return {
         "groove_sim_min": tolerance_percentile(
-            [d["groove_sim"] for d in echte], 10.0
+            [d["groove_sim"] for d in echte if "groove_sim" in d], 10.0
         ),
         "sub_delta_max": tolerance_percentile(
-            [d["sub_delta"] for d in echte], 90.0
+            [d["sub_delta"] for d in echte if "sub_delta" in d], 90.0
         ),
         "brightness_delta_max": tolerance_percentile(
-            [d["brightness_delta"] for d in echte], 90.0
+            [d["brightness_delta"] for d in echte if "brightness_delta" in d], 90.0
         ),
     }
 
@@ -369,6 +391,7 @@ def baue_ergebnis(
     zufalls_deltas: list[dict],
     holdout: bool | None,
     grenzen: dict[str, tuple[float, float, float]] | None = None,
+    *, holdout_messwerte: dict | None = None,
 ) -> dict:
     """Fasst AUC, gelernte Gewichte, Toleranzen und Holdout zum Ausgabe-JSON zusammen.
 
@@ -392,10 +415,16 @@ def baue_ergebnis(
         "genre": genre,
         "anzahl_uebergaenge": len(echte_deltas),
         "anzahl_zufallspaare": len(zufalls_deltas),
+        "messwerte_je_faktor": {
+            faktor: {"uebergaenge": sum(faktor in d for d in echte_deltas),
+                     "zufallspaare": sum(faktor in d for d in zufalls_deltas)}
+            for faktor in AUC_RICHTUNG
+        },
         "auc": auc,
         "gewichte": gewichte,
         "toleranzen": berechne_toleranzen(echte_deltas),
         "holdout": holdout,
+        "holdout_messwerte": holdout_messwerte,
         # Fundstellen in Sekunden — die Pruefspur fuer die Frage, ob die
         # Erkennung echte Uebergaenge getroffen hat oder Sprechgrenzen.
         "stellen_s": [round(d["stelle_s"], 1) for d in echte_deltas
@@ -477,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Gelerntes Gewichtsbudget: %.4f", budget)
 
     holdout_ergebnis: bool | None = None
+    holdout_messwerte: dict | None = None
     if args.holdout:
         holdout_daten = verarbeite_mix(args.holdout)
         if holdout_daten is None:
@@ -492,18 +522,20 @@ def main(argv: list[str] | None = None) -> int:
             # schwaechste der fuenf. Der Test verwarf damit Kalibrierungen,
             # die von timbre_sim und sub_delta klar gestuetzt wurden.
             skalen = _skalen_aus(alle_echten_deltas + zufalls_deltas)
-            holdout_ergebnis = holdout_passed(
-                [kombinierter_score(d, gewichte_roh, skalen) for d in holdout_echte],
-                [kombinierter_score(d, gewichte_roh, skalen) for d in holdout_zufall],
+            holdout_ergebnis, holdout_messwerte = bewerte_holdout(
+                holdout_echte, holdout_zufall, gewichte_roh, skalen,
             )
-            if not holdout_ergebnis:
+            if holdout_ergebnis is None:
+                logger.warning("Holdout nicht bewertbar: keine vollstaendigen Gesamtscores in beiden Klassen.")
+            elif not holdout_ergebnis:
                 logger.warning(
                     "Holdout-Test nicht bestanden — gelernte Werte fuer %s "
                     "nicht belastbar genug fuer den Einbau.", args.genre
                 )
 
     ergebnis = baue_ergebnis(
-        args.genre, alle_echten_deltas, zufalls_deltas, holdout_ergebnis, grenzen
+        args.genre, alle_echten_deltas, zufalls_deltas, holdout_ergebnis, grenzen,
+        holdout_messwerte=holdout_messwerte,
     )
 
     with open(args.out, "w", encoding="utf-8") as f:

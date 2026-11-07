@@ -1,0 +1,1 @@
+"""Oberflächenbausteine der HPG-Anwendung."""

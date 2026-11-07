@@ -78,7 +78,7 @@ muessen nachweislich ueber das PairCandidate-Gate laufen.
 
 ## FeatureCache
 
-`FeatureCache(y, sr)` [hpg_core/analysis.py] ist ein lazy, track-lokaler Cache fuer
+`FeatureCache(y, sr)` [hpg_core/feature_cache.py] ist ein lazy, track-lokaler Cache fuer
 MFCC/RMS/STFT/Chroma/Centroid/Flatness/Contrast/Onset/HPSS. Er wird durch
 Genre-Klassifikation, Downbeat, Phrase und Struktur durchgereicht.
 Neue Feature-Berechnung? **Erst pruefen, ob der Cache sie schon hat.**

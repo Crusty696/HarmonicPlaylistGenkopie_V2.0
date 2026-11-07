@@ -20,6 +20,7 @@ from .caching import (
     cache_track,
     generate_cache_key,
     get_cached_track,
+    get_legacy_cached_core,
 )
 from .config import (
     SUPPORTED_AUDIO_EXTENSIONS,
@@ -433,153 +434,7 @@ def _estimate_audio_downbeat_full(
 REVERSE_CAMELOT_MAP = {v: k for k, v in CAMELOT_MAP.items()}
 
 
-@dataclass
-class FeatureCache:
-    """Lazy, track-lokaler Cache für wiederverwendete Librosa-Features.
-
-    Die Cache-Einträge werden erst beim ersten Zugriff berechnet. Dadurch
-    bleibt der bestehende Fast-Path leichtgewichtig, während Struktur-,
-    Fingerprint- und Track-Feature-Pfade dieselben Matrizen teilen können.
-    Module außerhalb des Ownership-Scope bleiben bewusst über ihre alten
-    Signaturen angebunden.
-    """
-
-    y: np.ndarray
-    sr: int
-    _mfcc: dict[tuple[int, int | None], np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _rms: dict[int, np.ndarray] = field(default_factory=dict, init=False, repr=False)
-    _stft: dict[tuple[int, int], np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _chroma: dict[int | None, np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _centroid: dict[int, np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _flatness: dict[int | None, np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _contrast: dict[int | None, np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _onset: dict[int | None, np.ndarray] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _hpss: tuple[np.ndarray, np.ndarray] | None = field(
-        default=None, init=False, repr=False
-    )
-
-    def fenster(self, max_samples: int) -> "FeatureCache":
-        """Abgeleiteter Cache ueber die ersten `max_samples` Samples.
-
-        Warum ueberhaupt: Fast-Path und Vollpfad laden verschieden lange
-        Signale und rechnen dieselben Merkmalsfunktionen darauf. Das Ergebnis
-        haengt damit daran, ob Rekordbox-Metadaten vorliegen -- und genau
-        diese Werte vergleicht das Scoring miteinander (D8).
-
-        Ist das Signal nicht laenger als das Fenster, kommt das ELTERNOBJEKT
-        selbst zurueck. Der Fast-Path bekommt es heute, weil
-        `FEATURE_WINDOW_DURATION` GLEICH `LIBROSA_FAST_PATH_DURATION` ist --
-        `config.py` koppelt beide ueber `min`, beide stehen auf 360. Nicht
-        "nie groesser als": der `return self`-Zweig verlangt ein Fenster, das
-        MINDESTENS so lang ist wie das geladene Signal. Stiege die Ladegrenze
-        ueber 360, entstuende auch im Fast-Path ein Kindcache -- fachlich
-        folgenlos, weil das Kind denselben Ausschnitt frisch rechnet. Was
-        wirklich zaehlt, ist `FEATURE_WINDOW_DURATION <= `
-        `LIBROSA_FAST_PATH_DURATION`; das sichert
-        `TestMerkmalsfensterKopplung` in tests/test_config.py.
-
-        Sonst entsteht ein LEERER Cache auf dem Ausschnitt. Er rechnet jede
-        Matrix selbst und ist damit wertgleich zu einer Rechnung auf
-        `self.y[:max_samples]` -- nicht gemessen, sondern dadurch, dass
-        dieselbe Funktion mit denselben Parametern auf denselben Samples
-        laeuft. Ueber das Verhaeltnis der beiden PFADE zueinander sagt das
-        nichts: was Fast-Path und Vollpfad laden, entscheidet `librosa.load`.
-
-        Frueher wurden hier die Matrizen des Elternteils zugeschnitten. Das
-        war toter Code -- an beiden Aufrufstellen steht `fenster()` direkt
-        hinter `FeatureCache(y, sr)`, der Elterncache ist also leer, und der
-        Schnitt lief ueber leere Dicts. Er trug dafuer einen echten Fehler:
-        `chroma_stft` schaetzt `tuning` global ueber das ganze Signal, ein
-        geschnittenes Chroma haette also zu einer anderen Stimmung gehoert
-        als das Fenster (Journal 2026-09-05).
-        """
-        if max_samples >= len(self.y):
-            return self
-        return FeatureCache(y=self.y[:max_samples], sr=self.sr)
-
-    def get_mfcc(self, n_mfcc: int = 13, hop_length: int | None = None) -> np.ndarray:
-        key = (n_mfcc, hop_length)
-        if key not in self._mfcc:
-            kwargs = {"y": self.y, "sr": self.sr, "n_mfcc": n_mfcc}
-            if hop_length is not None:
-                kwargs["hop_length"] = hop_length
-            self._mfcc[key] = librosa.feature.mfcc(**kwargs)
-        return self._mfcc[key]
-
-    def get_rms(self, hop_length: int = HOP_LENGTH) -> np.ndarray:
-        if hop_length not in self._rms:
-            self._rms[hop_length] = librosa.feature.rms(
-                y=self.y, hop_length=hop_length
-            )
-        return self._rms[hop_length]
-
-    def get_stft_magnitude(
-        self, n_fft: int = 2048, hop_length: int = HOP_LENGTH
-    ) -> np.ndarray:
-        key = (n_fft, hop_length)
-        if key not in self._stft:
-            self._stft[key] = np.abs(
-                librosa.stft(self.y, n_fft=n_fft, hop_length=hop_length)
-            )
-        return self._stft[key]
-
-    def get_chroma(self, hop_length: int | None = None) -> np.ndarray:
-        if hop_length not in self._chroma:
-            kwargs = {"y": self.y, "sr": self.sr}
-            if hop_length is not None:
-                kwargs["hop_length"] = hop_length
-            self._chroma[hop_length] = librosa.feature.chroma_stft(**kwargs)
-        return self._chroma[hop_length]
-
-    def get_spectral_centroid(self, hop_length: int = HOP_LENGTH) -> np.ndarray:
-        if hop_length not in self._centroid:
-            self._centroid[hop_length] = librosa.feature.spectral_centroid(
-                y=self.y, sr=self.sr, hop_length=hop_length
-            )
-        return self._centroid[hop_length]
-
-    def get_spectral_flatness(self, hop_length: int | None = None) -> np.ndarray:
-        if hop_length not in self._flatness:
-            kwargs = {"y": self.y}
-            if hop_length is not None:
-                kwargs["hop_length"] = hop_length
-            self._flatness[hop_length] = librosa.feature.spectral_flatness(**kwargs)
-        return self._flatness[hop_length]
-
-    def get_spectral_contrast(self, hop_length: int | None = None) -> np.ndarray:
-        if hop_length not in self._contrast:
-            kwargs = {"y": self.y, "sr": self.sr}
-            if hop_length is not None:
-                kwargs["hop_length"] = hop_length
-            self._contrast[hop_length] = librosa.feature.spectral_contrast(**kwargs)
-        return self._contrast[hop_length]
-
-    def get_onset_strength(self, hop_length: int | None = None) -> np.ndarray:
-        if hop_length not in self._onset:
-            kwargs = {"y": self.y, "sr": self.sr}
-            if hop_length is not None:
-                kwargs["hop_length"] = hop_length
-            self._onset[hop_length] = librosa.onset.onset_strength(**kwargs)
-        return self._onset[hop_length]
-
-    def get_hpss(self) -> tuple[np.ndarray, np.ndarray]:
-        if self._hpss is None:
-            self._hpss = librosa.effects.hpss(self.y)
-        return self._hpss
+from .feature_cache import FeatureCache
 
 
 def analyze_frequency_bands(
@@ -3559,8 +3414,18 @@ def _prepare_native_beats(file_path, duration, y, sr, *, snapshot=None):
         return dict(analysis=dict(status='unavailable', reason=reason),
                     accepted=False, transient=True,
                     decision=dict(status='unavailable', reason=reason))
+    # Der Worker hat hier bereits Gesamtfolge und stabiles Ersatzfenster
+    # verglichen. Ihr bleibender Tempowiderspruch ist eine fachliche Ablehnung,
+    # kein durch denselben Lauf zu heilender Transport-/Prozessfehler. Exakt
+    # den bekannten Worker-/Adaptergrund behandeln; unbekannte Fehler bleiben
+    # transient. Das native Raster wird weiterhin nicht freigegeben.
+    permanent_native_reasons = (
+        'unsupported_source_format',
+        'ValueError: NativeContractError: Stable model window still contradicts full sequence',
+    )
     context = dict(analysis=native, accepted=False,
-                   transient=native.get('status') == 'unavailable' and native.get('reason') != 'unsupported_source_format',
+                   transient=(native.get('status') == 'unavailable'
+                              and native.get('reason') not in permanent_native_reasons),
                    decision=dict(status=(native.get('status') if native.get('status') in
                        ('disabled', 'unavailable') else 'rejected'),
                        reason=('native_unavailable' if native.get('status') == 'unavailable'
@@ -3707,6 +3572,50 @@ def _collect_beat_windows(
 
 
 @cue_service.track_session
+def _preserve_repair_features(track):
+    """Nur Zusatzmessungen eines validierten Cachetreffers quellgebunden erhalten."""
+    from copy import deepcopy
+    from pathlib import Path
+    from .ai_models.feature_audio import source_identity
+    try:
+        return dict(path=os.path.normcase(os.path.abspath(track.filePath)),
+                    identity=source_identity(Path(track.filePath)),
+                    values={name: deepcopy(getattr(track, name))
+                            for name in ('stem_analysis', 'embedding_analysis')})
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _finalize_analyzed_track(track, *, cache_key, cache_policy,
+                            analysis_degraded, anchor_decision, preserved_features=None):
+    """Ein Abschlussvertrag für beide Analysepfade."""
+    from .analysis_pipeline import finalize_track
+    from .ai_models import deep_feature_runtime
+    if preserved_features is not None:
+        from copy import deepcopy
+        from pathlib import Path
+        from .ai_models.feature_audio import source_identity
+        try:
+            same_source = (
+                os.path.normcase(os.path.abspath(track.filePath)) == preserved_features['path']
+                and source_identity(Path(track.filePath)) == preserved_features['identity'])
+        except (OSError, TypeError, ValueError):
+            same_source = False
+        if same_source:
+            for name, value in preserved_features['values'].items():
+                setattr(track, name, deepcopy(value))
+        # Der normale Attachment-Validator prüft zusätzlich Version, Fingerprint
+        # und Dauer. Geänderte/fehlende Zusatzmerkmale werden regulär erneuert.
+    return finalize_track(
+        track, cache_policy=cache_policy, cache_key=cache_key,
+        analysis_degraded=analysis_degraded,
+        anchor_transient=anchor_decision["neural"]["transient"],
+        attach_features=deep_feature_runtime.attach,
+        transient_failure=cue_service.transient_failure,
+        persist=_persist_analysis_result, logger=logger,
+    )
+
+
 def analyze_track(file_path: str, *, cache_policy: str = "reuse",
                   native_snapshot=None) -> Track | None:
     """Analyzes one track; ``fresh`` bypasses both track-cache reads and writes."""
@@ -3774,7 +3683,7 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse",
 
     cue_source_signature = _cue_source_signature(file_path, rekordbox_signature)
     try:
-        neural_identity = cue_service.fingerprint()
+        neural_identity = cue_service.core_fingerprint()
         # Bestehende Cache-/Metadatenkonsumenten verwenden dieses Signaturfeld.
         # Deshalb dieselbe erweiterte Quellidentität im Track und Lookup halten.
         rekordbox_signature = f"{rekordbox_signature}|neural:{neural_identity}"
@@ -3787,17 +3696,33 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse",
         return None
 
     cached_track = None
+    migrated_core = False
     if cache_policy == "reuse":
         try:
             cached_track = get_cached_track(cache_key, file_path=file_path)
+            if cached_track is None:
+                source_signature = rekordbox_signature.rsplit('|neural:', 1)[0]
+                cached_track = get_legacy_cached_core(file_path, source_signature, neural_identity)
+                migrated_core = cached_track is not None
         except Exception as error:
             logger.warning("Cache-Lesefehler; Track wird neu analysiert: %s", error)
             cached_track = None
 
+    preserved_features = None
+    from .ai_models.native_track_beats import needs_refiner_repair
+    if cached_track is not None and needs_refiner_repair(cached_track.native_beat_analysis):
+        preserved_features = _preserve_repair_features(cached_track)
+        cached_track = None
+        migrated_core = False
+        logger.info('Alte native Refinerablehnung wird einmal gezielt neu analysiert: %s',
+                    os.path.basename(file_path))
+
     if cached_track:
         cached_mode = getattr(cached_track, "analysis_mode", None)
         if cached_mode in VALID_ANALYSIS_MODES:
-            from .ai_models.deep_features import attach as attach_deep_features
+            if migrated_core and not cache_track(cache_key, cached_track):
+                logger.warning('Migrierte Kernanalyse konnte nicht gespeichert werden: %s', os.path.basename(file_path))
+            from .ai_models.deep_feature_runtime import attach as attach_deep_features
             from .ai_models.deep_features import needs_refresh as deep_features_need_refresh
             if deep_features_need_refresh(cached_track):
                 # Fehlgeschlagene/veraltete Zusatzmerkmale gezielt erneuern.
@@ -3822,530 +3747,557 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse",
     logger.info(f"Analysiere: {os.path.basename(file_path)}")
 
     if rekordbox_data and rekordbox_data.bpm:
-        # Rekordbox data available - use it!
-        analysis_degraded = False  # AUDIT-FIX A-02: markiert Load-Fehlschlag
+        return _analyze_rekordbox_path(
+            cache_key=cache_key,
+            cache_policy=cache_policy,
+            cue_source_signature=cue_source_signature,
+            file_duration=file_duration,
+            file_path=file_path,
+            native_snapshot=native_snapshot,
+            neural_identity=neural_identity,
+            rekordbox_data=rekordbox_data,
+            rekordbox_importer=rekordbox_importer,
+            rekordbox_signature=rekordbox_signature,
+            preserved_features=preserved_features,
+        )
+    return _analyze_audio_path(
+        cache_key=cache_key,
+        cache_policy=cache_policy,
+        cue_source_signature=cue_source_signature,
+        file_duration=file_duration,
+        file_path=file_path,
+        native_snapshot=native_snapshot,
+        neural_identity=neural_identity,
+        rekordbox_data=rekordbox_data,
+        rekordbox_importer=rekordbox_importer,
+        rekordbox_signature=rekordbox_signature,
+        preserved_features=preserved_features,
+    )
+
+
+def _analyze_rekordbox_path(
+    *, cache_key, cache_policy, cue_source_signature, file_duration, file_path,
+    native_snapshot, neural_identity, rekordbox_data, rekordbox_importer,
+    rekordbox_signature, preserved_features=None,
+):
+    # Rekordbox data available - use it!
+    analysis_degraded = False  # AUDIT-FIX A-02: markiert Load-Fehlschlag
+    logger.info(
+        f"Rekordbox-Daten: BPM={rekordbox_data.bpm}, Key={rekordbox_data.camelot_code}"
+    )
+
+    # Still extract ID3 tags (Rekordbox might have different metadata)
+    artist_id3, title_id3, genre_id3 = extract_metadata(file_path)
+
+    # Prefer Rekordbox metadata, fallback to ID3
+    artist = rekordbox_data.artist or artist_id3
+    title = rekordbox_data.title or title_id3
+    genre = rekordbox_data.genre or genre_id3
+
+    # For duration and some missing data, we still need librosa (quick load only)
+    # K2 Audit-Fix: Dauer begrenzen — BPM/Key kommt aus Rekordbox, nur Energy/Genre noetig
+    try:
+        y, sr = _load_analysis_audio(
+            file_path, duration=LIBROSA_FAST_PATH_DURATION
+        )
+        # Fensterbreite EINMAL je Pfad. Stand sie an mehreren Stellen,
+        # konnte `energy` gegen ein anderes Fenster laufen als die
+        # uebrigen sieben Merkmale, ohne dass ein Test das sieht.
+        fenster_samples = int(FEATURE_WINDOW_DURATION * sr)
+        feature_cache = FeatureCache(y, sr)
+        # D8: gemeinsames Messfenster fuer die Merkmale. Bewusst EIGENE
+        # Namen -- wuerden `y` und `feature_cache` neu gebunden, wanderten
+        # auch `calculate_bass_intensity`, `classify_genre`, der
+        # MFCC-Fingerabdruck, die Sektionsschleife und die
+        # Strukturfenster still mit. Genau EINMAL gebunden, damit kein
+        # Merkmal gegen ein anderes Fenster laufen kann.
+        y_fenster = y[:fenster_samples]
+        cache_fenster = feature_cache.fenster(fenster_samples)
+        # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
+        duration = file_duration
+
+        # Calculate energy and bass (not in Rekordbox)
+        energy = calculate_energy(y_fenster)
+        bass_intensity = calculate_bass_intensity(y, sr)
+
+        lufs, lufs_status, lufs_coverage, lufs_channels, lufs_sample_rate = (
+            calculate_file_lufs(file_path)
+        )
+        # Key aus der Rekordbox-DB = verlaesslich analysiert
+        key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
+
+        grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
+        rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
+        native_context = _prepare_native_beats(file_path, duration, y, sr,
+            **({'snapshot': native_snapshot} if native_snapshot is not None else {}))
+        if native_context['accepted']:
+            bpm = native_context['analysis']['bpm']
+            reference_attempt, beat_windows = _native_reference_candidate_windows(
+                file_path, duration, bpm, y, sr, rekordbox_grid,
+                rekordbox_data.bpm,
+                getattr(rekordbox_data, "path_match", "unknown"),
+                native_context,
+            )
+            tempo_transient, tempo_diagnostic = False, None
+        else:
+            beat_windows = _collect_beat_windows(file_path, duration, y, sr)
+            bpm, reference_attempt, tempo_transient, tempo_diagnostic = _resolve_track_tempo(
+                file_path, duration, rekordbox_data.bpm, y, sr, rekordbox_grid, beat_windows,
+                reference_bpm=rekordbox_data.bpm,
+                reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
+
+        # DJ Brain: Genre-Klassifikation
+        genre_result = classify_genre(
+            y, sr, bpm, bass_intensity, genre
+        )
         logger.info(
-            f"Rekordbox-Daten: BPM={rekordbox_data.bpm}, Key={rekordbox_data.camelot_code}"
+            f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
         )
 
-        # Still extract ID3 tags (Rekordbox might have different metadata)
-        artist_id3, title_id3, genre_id3 = extract_metadata(file_path)
+        # Downbeat-Anker (2026-07-17): zuerst der exakte Rekordbox-Beatgrid
+        # (ANLZ/PQTZ, Konfidenz 1.0), sonst eigene Schaetzung (Phase-Voting)
+        # Rekordbox-Phrasen (PSSI) und Cues mit Provenienz — Rohmaterial
+        # fuer die Mixpunkt-Kandidaten (Spec 2026-08-21)
+        cue_points = normalize_cues(
+            rekordbox_data.cue_points,
+            duration=file_duration,
+            source=file_path,
+        )
+        phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
+        (first_downbeat, downbeat_confidence, beatgrid_source, beatgrid_validation,
+         downbeat_diagnostics, grid_diagnostics, anchor_decision, phrase_estimate) = _resolve_track_anchor(
+            file_path, duration, bpm, y, sr, rekordbox_grid, beat_windows,
+            reference_bpm=rekordbox_data.bpm, reference_attempt=reference_attempt,
+            phrase_unit=phrase_unit, native_context=native_context,
+            reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
+        anchor_decision["neural"]["transient"] |= tempo_transient or native_context.get('transient', False)
+        phrase_usage_blocked = bar_position_usage_blocked(anchor_decision)
+        bar_position_status = _classify_bar_position_status(
+            beatgrid_source, downbeat_confidence, native_context['accepted'],
+            phrase_usage_blocked, anchor_decision.get("bar_position_comparison"))
+        # Das prueft stabile Beatphase, nicht unabhaengige Takt-1-Genauigkeit.
+        anchor_grid_usable = (
+            beatgrid_validation.status == "verified"
+            and (downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
+                 or native_context['accepted'])
+        )
+        phrase_phase_usable = _phrase_phase_usable(
+            beatgrid_source, bar_position_status, phrase_usage_blocked,
+            anchor_grid_usable,
+        )
+        pssi_grid_usable = bool(
+            beatgrid_source == "rekordbox"
+            and beatgrid_validation.status == "verified"
+            and not phrase_usage_blocked
+        )
+        phrases = (
+            rekordbox_importer.get_phrases(file_path, duration=file_duration)
+            if pssi_grid_usable
+            and hasattr(rekordbox_importer, "get_phrases")
+            else []
+        )
+        mix_phase_usable = bool(
+            anchor_grid_usable and not phrase_usage_blocked
+            and (phrase_phase_usable or (pssi_grid_usable and phrases))
+        )
 
-        # Prefer Rekordbox metadata, fallback to ID3
-        artist = rekordbox_data.artist or artist_id3
-        title = rekordbox_data.title or title_id3
-        genre = rekordbox_data.genre or genre_id3
-
-        # For duration and some missing data, we still need librosa (quick load only)
-        # K2 Audit-Fix: Dauer begrenzen — BPM/Key kommt aus Rekordbox, nur Energy/Genre noetig
-        try:
-            y, sr = _load_analysis_audio(
-                file_path, duration=LIBROSA_FAST_PATH_DURATION
-            )
-            # Fensterbreite EINMAL je Pfad. Stand sie an mehreren Stellen,
-            # konnte `energy` gegen ein anderes Fenster laufen als die
-            # uebrigen sieben Merkmale, ohne dass ein Test das sieht.
-            fenster_samples = int(FEATURE_WINDOW_DURATION * sr)
-            feature_cache = FeatureCache(y, sr)
-            # D8: gemeinsames Messfenster fuer die Merkmale. Bewusst EIGENE
-            # Namen -- wuerden `y` und `feature_cache` neu gebunden, wanderten
-            # auch `calculate_bass_intensity`, `classify_genre`, der
-            # MFCC-Fingerabdruck, die Sektionsschleife und die
-            # Strukturfenster still mit. Genau EINMAL gebunden, damit kein
-            # Merkmal gegen ein anderes Fenster laufen kann.
-            y_fenster = y[:fenster_samples]
-            cache_fenster = feature_cache.fenster(fenster_samples)
-            # Echte Datei-Dauer, nicht die abgeschnittene aus y (max FAST_PATH_DURATION)
-            duration = file_duration
-
-            # Calculate energy and bass (not in Rekordbox)
-            energy = calculate_energy(y_fenster)
-            bass_intensity = calculate_bass_intensity(y, sr)
-
-            lufs, lufs_status, lufs_coverage, lufs_channels, lufs_sample_rate = (
-                calculate_file_lufs(file_path)
-            )
-            # Key aus der Rekordbox-DB = verlaesslich analysiert
-            key_confidence = 1.0 if rekordbox_data.camelot_code else 0.0
-
-            grid_reader = getattr(rekordbox_importer, "get_beatgrid", None)
-            rekordbox_grid = grid_reader(file_path) if callable(grid_reader) else []
-            native_context = _prepare_native_beats(file_path, duration, y, sr,
-                **({'snapshot': native_snapshot} if native_snapshot is not None else {}))
-            if native_context['accepted']:
-                bpm = native_context['analysis']['bpm']
-                reference_attempt, beat_windows = _native_reference_candidate_windows(
-                    file_path, duration, bpm, y, sr, rekordbox_grid,
-                    rekordbox_data.bpm,
-                    getattr(rekordbox_data, "path_match", "unknown"),
-                    native_context,
-                )
-                tempo_transient, tempo_diagnostic = False, None
+        if anchor_grid_usable and not phrase_usage_blocked:
+            if phrase_estimate is not None:
+                first_phrase, phrase_confidence = phrase_estimate
             else:
-                beat_windows = _collect_beat_windows(file_path, duration, y, sr)
-                bpm, reference_attempt, tempo_transient, tempo_diagnostic = _resolve_track_tempo(
-                    file_path, duration, rekordbox_data.bpm, y, sr, rekordbox_grid, beat_windows,
-                    reference_bpm=rekordbox_data.bpm,
-                    reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
-
-            # DJ Brain: Genre-Klassifikation
-            genre_result = classify_genre(
-                y, sr, bpm, bass_intensity, genre
-            )
-            logger.info(
-                f"Genre: {genre_result.genre} (confidence: {genre_result.confidence:.2f}, source: {genre_result.source})"
-            )
-
-            # Downbeat-Anker (2026-07-17): zuerst der exakte Rekordbox-Beatgrid
-            # (ANLZ/PQTZ, Konfidenz 1.0), sonst eigene Schaetzung (Phase-Voting)
-            # Rekordbox-Phrasen (PSSI) und Cues mit Provenienz — Rohmaterial
-            # fuer die Mixpunkt-Kandidaten (Spec 2026-08-21)
-            cue_points = normalize_cues(
-                rekordbox_data.cue_points,
-                duration=file_duration,
-                source=file_path,
-            )
-            phrase_unit = GENRE_PHRASE_UNITS.get(genre_result.genre, 8)
-            (first_downbeat, downbeat_confidence, beatgrid_source, beatgrid_validation,
-             downbeat_diagnostics, grid_diagnostics, anchor_decision, phrase_estimate) = _resolve_track_anchor(
-                file_path, duration, bpm, y, sr, rekordbox_grid, beat_windows,
-                reference_bpm=rekordbox_data.bpm, reference_attempt=reference_attempt,
-                phrase_unit=phrase_unit, native_context=native_context,
-                reference_path_match=getattr(rekordbox_data, "path_match", "unknown"))
-            anchor_decision["neural"]["transient"] |= tempo_transient or native_context.get('transient', False)
-            phrase_usage_blocked = bar_position_usage_blocked(anchor_decision)
-            bar_position_status = _classify_bar_position_status(
-                beatgrid_source, downbeat_confidence, native_context['accepted'],
-                phrase_usage_blocked, anchor_decision.get("bar_position_comparison"))
-            # Das prueft stabile Beatphase, nicht unabhaengige Takt-1-Genauigkeit.
-            anchor_grid_usable = (
-                beatgrid_validation.status == "verified"
-                and (downbeat_confidence >= DOWNBEAT_RELIABLE_MIN
-                     or native_context['accepted'])
-            )
-            phrase_phase_usable = _phrase_phase_usable(
-                beatgrid_source, bar_position_status, phrase_usage_blocked,
-                anchor_grid_usable,
-            )
-            pssi_grid_usable = bool(
-                beatgrid_source == "rekordbox"
-                and beatgrid_validation.status == "verified"
-                and not phrase_usage_blocked
-            )
-            phrases = (
-                rekordbox_importer.get_phrases(file_path, duration=file_duration)
-                if pssi_grid_usable
-                and hasattr(rekordbox_importer, "get_phrases")
-                else []
-            )
-            mix_phase_usable = bool(
-                anchor_grid_usable and not phrase_usage_blocked
-                and (phrase_phase_usable or (pssi_grid_usable and phrases))
-            )
-
-            if anchor_grid_usable and not phrase_usage_blocked:
-                if phrase_estimate is not None:
-                    first_phrase, phrase_confidence = phrase_estimate
-                else:
-                    first_phrase, phrase_confidence = estimate_first_phrase(
-                        y, sr, bpm, first_downbeat, phrase_unit
-                    )
-            else:
-                first_phrase, phrase_confidence = MIX_POINT_UNSET, 0.0
-            phrase_anchor = None if phrase_usage_blocked else (
-                first_phrase
-                if anchor_grid_usable
-                and first_phrase >= 0.0
-                and phrase_confidence >= PHRASE_CONFIDENCE_MIN
-                else first_downbeat if anchor_grid_usable else 0.0
-            )
-            if phrases and pssi_grid_usable:
-                phrase_anchor = float(phrases[0]["start_s"])
-
-            # Wenn Audio kein belastbares erstes Phrasenereignis findet,
-            # darf die Novelty-Messung im Strukturpfad die Genre-Prior-
-            # Phrasenlaenge bestimmen. Das Raster bleibt am bestaetigten
-            # Downbeat verankert; gesperrte oder unbestaetigte Raster behalten
-            # unveraendert den Genre-Prior.
-            measure_phrase_unit = (
-                anchor_grid_usable
-                and not phrase_usage_blocked
-                and (first_phrase < 0.0 or phrase_confidence < PHRASE_CONFIDENCE_MIN)
-            )
-
-            # Native Erzeugung ist getrennt von importierten PSSI-Phrasen.
-            from .ai_models.native_phrase_adapter import analyze_track_phrases
-            native_key_note, native_key_mode = REVERSE_CAMELOT_MAP.get(
-                rekordbox_data.camelot_code, ('', ''))
-            native_phrase_analysis = analyze_track_phrases(
-                file_path, bpm=bpm, duration=file_duration, first_downbeat=first_downbeat,
-                grid_usable=anchor_grid_usable and phrase_phase_usable,
-                usage_blocked=phrase_usage_blocked,
-                imported_phrases=phrases, reference_grid=rekordbox_grid,
-                grid_source=beatgrid_source,
-                native_beat_analysis=(native_context['analysis'] if native_context['accepted'] else None),
-                key_note=native_key_note, key_mode=native_key_mode)
-            cue_model_candidates, cue_model_grid_verified = _cue_candidates_for_structure(
-                phrases=phrases, pssi_grid_usable=pssi_grid_usable,
-                native_phrase_analysis=native_phrase_analysis,
-                phrase_phase_usable=phrase_phase_usable,
-                pssi_grid_verified=(phrase_phase_usable and beatgrid_source == "rekordbox"
-                                    and beatgrid_validation.status == "verified"),
-            )
-            # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
-            (
-                structure, analysis_coverage, outro_covered,
-                first_phrase, phrase_confidence, phrase_anchor, cue_score_binding,
-            ) = _analyze_structure_with_final_phrase_anchor(
-                file_path, y, sr, bpm, genre_result.genre, duration,
-                first_downbeat=first_downbeat,
-                phrase_anchor=phrase_anchor,
-                first_phrase=first_phrase,
-                phrase_confidence=phrase_confidence,
-                phrase_unit=phrase_unit,
-                measure_phrase_unit=measure_phrase_unit,
-                preserve_phrase_anchor=bool(phrases and pssi_grid_usable),
-                anchor_grid_usable=anchor_grid_usable,
-                phrase_usage_blocked=phrase_usage_blocked,
-                feature_cache=feature_cache,
-                cue_candidates=cue_model_candidates,
-                cue_verified_grid=cue_model_grid_verified,
-                reanalyze_cue_verified_grid=cue_model_grid_verified,
-                cue_source_signature=cue_source_signature,
-                native_phrase_analysis=native_phrase_analysis,
-            )
-            section_dicts = [s.to_dict() for s in structure.sections]
-            for section in section_dicts:
-                section["analysis_status"] = (
-                    "unanalysed" if section.get("label") == "unanalysed" else "analyzed"
+                first_phrase, phrase_confidence = estimate_first_phrase(
+                    y, sr, bpm, first_downbeat, phrase_unit
                 )
-            section_labels = [s.label for s in structure.sections]
-            logger.info(
-                f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
-            )
+        else:
+            first_phrase, phrase_confidence = MIX_POINT_UNSET, 0.0
+        phrase_anchor = None if phrase_usage_blocked else (
+            first_phrase
+            if anchor_grid_usable
+            and first_phrase >= 0.0
+            and phrase_confidence >= PHRASE_CONFIDENCE_MIN
+            else first_downbeat if anchor_grid_usable else 0.0
+        )
+        if phrases and pssi_grid_usable:
+            phrase_anchor = float(phrases[0]["start_s"])
 
-            # AUDIT-FEATURE A1 (2026-07-26): Phrasen-Phase schaetzen und als
-            # Anker fuers PHRASEN-Gitter verwenden (Konfidenz-Gate; Fallback
-            # bleibt der Takt-Anker first_downbeat).
-            # AUDIT-FIX R2 (2026-07-26): NUR bei belastbarem Downbeat-Raster —
-            # ein gescheitertes Downbeat-Estimate (Konfidenz 0.0) wuerde sonst
-            # ein erfundenes Bar-Raster ab t=0 abstimmen.
-            # AUDIT-FIX R4 (2026-07-26): Sentinel -1.0 statt 0.0 — first_phrase
-            # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
-            # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
-            # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
-            if not mix_phase_usable:
-                mix_in_point = mix_out_point = MIX_POINT_UNSET
-                mix_in_bars = mix_out_bars = 0
-            elif section_dicts:
-                mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
-                    calculate_genre_aware_mix_points(
-                        section_dicts, bpm, duration,
-                        genre_result.genre, anchor=phrase_anchor,
-                        first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
-                        phrase_unit=structure.phrase_unit,
-                    )
-                )
-                logger.info(
-                    f"DJ Brain Mix-Punkte: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
-                )
-            else:
-                mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
-                    analyze_structure_and_mix_points(
-                        y, sr, duration, energy, bpm,
-                        genre=genre_result.genre,
-                        anchor=phrase_anchor,
-                        first_downbeat=first_downbeat,  # R3
-                        phrase_unit=structure.phrase_unit,
-                    )
-                )
+        # Wenn Audio kein belastbares erstes Phrasenereignis findet,
+        # darf die Novelty-Messung im Strukturpfad die Genre-Prior-
+        # Phrasenlaenge bestimmen. Das Raster bleibt am bestaetigten
+        # Downbeat verankert; gesperrte oder unbestaetigte Raster behalten
+        # unveraendert den Genre-Prior.
+        measure_phrase_unit = (
+            anchor_grid_usable
+            and not phrase_usage_blocked
+            and (first_phrase < 0.0 or phrase_confidence < PHRASE_CONFIDENCE_MIN)
+        )
 
-            # Gerichtete manuelle Cues behalten ihre Prioritaet, muessen aber
-            # denselben quantisierten Intro-/Outro-Vertrag wie Analyzerpunkte
-            # erfuellen. Der gemeinsame Helfer wird auch im Vollpfad benutzt.
-            if mix_phase_usable:
-                mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
-                    mix_in_point,
-                    mix_out_point,
-                    cue_points=cue_points,
-                    bpm=bpm,
-                    duration=duration,
-                    phrase_unit=structure.phrase_unit,
-                    anchor=phrase_anchor,
-                    sections=section_dicts,
-                )
-            # Nach den manuellen Cues neu rechnen -- sie koennen die Punkte
-            # verschoben haben. Dieselbe Rundung wie `dj_brain` und die
-            # Anzeige: `int()` trunkierte, wodurch Cache und Anzeige um einen
-            # Takt auseinanderliefen. Der Sentinel MIX_POINT_UNSET (-1.0)
-            # ergaebe gerundet ab 174 BPM einen negativen Takt, den
-            # `caching.validate_track_dict` zurueckweist.
-            mix_in_bars = (
-                seconds_to_bars(mix_in_point, bpm)
-                if mix_in_point >= 0 else 0
-            )
-            mix_out_bars = (
-                seconds_to_bars(mix_out_point, bpm)
-                if mix_out_point >= 0 else 0
-            )
-            if not anchor_grid_usable:
-                # Kein Track-Mixpunkt darf auf dem unzuverlaessigen
-                # Fallback-Anker als Takt- oder Phrasenraster ausgegeben werden.
-                mix_in_point = mix_out_point = MIX_POINT_UNSET
-                mix_in_bars = mix_out_bars = 0
-
-            # Audio Feature Extensions
-            brightness = calculate_brightness(y_fenster, sr, cache_fenster)
-            vocal_instrumental = detect_vocal_instrumental(y_fenster, sr, cache_fenster)
-            danceability = calculate_danceability(
-                y_fenster, sr, bpm, cache_fenster
-            )
-            # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
-            mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
-                y, sr, feature_cache=feature_cache
-            )
-            logger.debug(
-                f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
-            )
-
-        except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as e:
-            # AUDIT-FIX A-02 (2026-07-24): Nur die tatsaechlich erwarteten
-            # Lade-/Decode-Fehlerklassen fangen (vorher `except Exception`, was
-            # auch echte Programmierfehler als "Load fehlgeschlagen" tarnte).
-            # Ohne decodiertes Audio existiert kein belastbarer Analyseerfolg.
-            # Insbesondere duerfen keine Default-Mixpunkte nach außen gelangen.
-            logger.warning("Schneller Librosa-Load fehlgeschlagen: %s", e)
-            return None
-
-        # Extract key note and mode from Camelot code (for backward compatibility)
-        key_note = ""
-        key_mode = ""
-        if rekordbox_data.camelot_code:
-            # Use reverse mapping to get correct Note and Mode from Camelot code
-            key_tuple = REVERSE_CAMELOT_MAP.get(rekordbox_data.camelot_code)
-            if key_tuple:
-                key_note, key_mode = key_tuple
-
-        # --- Advanced Audio Analysis (Phase 2) ---
-        # C1-Fix: Block darf NICHT im camelot_code-Zweig haengen, sonst wird
-        # `track` bei Tracks ohne Key nie erzeugt (UnboundLocalError).
-        # C2-Fix: bereits geladenes Fast-Path-Audio (y) wiederverwenden statt
-        # die Datei erneut in voller Laenge zu laden.
-        try:
-            # Timbre-Fingerprint fuer den Fast-Path-Ausschnitt
-            timbre_fp = generate_timbre_fingerprint(y_fenster, sr, cache_fenster)
-
-            # Overall Track Averages for Advanced Features (VOR dem Sektions-Loop,
-            # damit Sektionen ausserhalb des geladenen Audiofensters darauf
-            # zurueckfallen koennen).
-            avg_b, avg_m, avg_h = analyze_frequency_bands(y_fenster, sr, cache_fenster)
-            track_pr, track_sf = analyze_rhythm_complexity(y_fenster, sr, cache_fenster)
-
-            # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
-            # compute_groove_fields). y/sr sind hier das Fast-Path-Audio.
-            groove = compute_groove_fields(
-                y_fenster, sr, bpm, first_downbeat,
-                downbeat_confidence if anchor_grid_usable else 0.0,
-                feature_cache=cache_fenster, sections=section_dicts,
-            )
-
-            # Update each section with detailed frequency and rhythm data
-            updated_sections = []
-            section_audio_windows = getattr(
-                structure, '_section_audio_windows', [(0.0, y, feature_cache)]
-            )
-            for sec_dict in section_dicts:
-                y_seg, section_cache, sample_range = _section_audio_slice(
-                    sec_dict, section_audio_windows, sr, feature_cache,
-                )
-
-                if len(y_seg) > sr: # At least 1 second
-                    # Frequency Bands
-                    b, m, h = analyze_frequency_bands(y_seg, sr)
-                    sec_dict['avg_bass'] = b
-                    sec_dict['avg_mids'] = m
-                    sec_dict['avg_highs'] = h
-
-                    # Rhythm & Texture
-                    percussive_ratio, spectral_flatness = analyze_rhythm_complexity(
-                        y_seg, sr, section_cache,
-                        sample_range=sample_range,
-                    )
-                    sec_dict['percussive_ratio'] = percussive_ratio
-                    sec_dict['spectral_flatness'] = spectral_flatness
-
-                    # Bassdruck der Sektion fuer den Nahtstellen-Vergleich
-                    # (Spec 5.3). Zu kurze Sektionen bekommen die Schluessel
-                    # NICHT — transition_features faellt dann auf das
-                    # Trackmittel zurueck, statt einen aus wenigen Frames
-                    # geschaetzten Wert vorzutaeuschen.
-                    if len(y_seg) >= BASS_KENNWERTE_MIN_SEC * sr:
-                        sec_sub, sec_punch = bass_kennwerte(y_seg, sr)
-                        sec_dict['sub_energy'] = sec_sub
-                        sec_dict['bass_punch'] = sec_punch
-                else:
-                    # Audit-Fix 2026-07-21: Sektion liegt ausserhalb des geladenen
-                    # Audiofensters (Fast-Path 360s / Full 600s) oder ist zu kurz.
-                    # Vorher wurden hier harte 0.0-Platzhalter geschrieben, die den
-                    # sinnvollen Track-Level-Fallback in dj_brain
-                    # (out_sec_data.get('avg_bass', track_a.avg_bass)) UEBERSCHRIEBEN —
-                    # genau am kritischen Mix-Out langer Tracks. Jetzt erben diese
-                    # Sektionen die Track-weiten Kennwerte statt Bass=0 vorzutaeuschen.
-                    sec_dict['avg_bass'] = sec_dict.get('avg_bass', avg_b)
-                    sec_dict['avg_mids'] = avg_m
-                    sec_dict['avg_highs'] = avg_h
-                    sec_dict['percussive_ratio'] = track_pr
-                    sec_dict['spectral_flatness'] = track_sf
-
-                updated_sections.append(sec_dict)
-
-            section_dicts = updated_sections
-
-        except Exception as e:
-            logger.warning(f"Erweiterte Analyse fehlgeschlagen: {e}")
-            timbre_fp = []
-            avg_b = avg_m = avg_h = 0.0
-            track_pr = track_sf = 0.0
-            groove = GrooveFeatures()
-
-        # Mixpunkt-Kandidaten (Spec 2026-08-21). Guard: im degradierten Zweig
-        # sind die Listen bereits leer gesetzt und duerfen nicht ueberschrieben
-        # werden (section_dicts/structure waeren dort Platzhalter).
-        if not analysis_degraded:
-            if phrase_usage_blocked:
-                mix_in_candidates, mix_out_candidates = [], []
-                phrase_grid = []
-                kandidaten = None
-            else:
-                kandidaten = _kandidaten_berechnen(
-                    file_path, pfad="fast", bpm=bpm, duration=duration,
-                    first_downbeat=first_downbeat,
-                    downbeat_confidence=downbeat_confidence,
-                    phrase_confidence=phrase_confidence,
-                    phrase_anchor=phrase_anchor,
-                    anchor_grid_usable=anchor_grid_usable,
-                    phrase_phase_usable=phrase_phase_usable,
-                    pssi_grid_usable=pssi_grid_usable and bool(phrases),
-                    phrase_unit=structure.phrase_unit, sections=section_dicts,
-                    phrases=phrases, cues=cue_points,
-                    native_phrases=native_phrase_analysis.get('phrases', []),
-                    analyzer_in=mix_in_point, analyzer_out=mix_out_point,
-                    outro_covered=outro_covered,
-                    cue_scores=_bound_cue_scores(cue_model_candidates, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
-                )
-            if not phrase_usage_blocked and kandidaten is None:
-                return None
-            if not phrase_usage_blocked:
-                mix_in_candidates, mix_out_candidates = kandidaten
-                phrase_grid = phrase_grid_from_phrases(phrases or native_phrase_analysis.get('phrases', []))
-
-        # Create Track object with Rekordbox data
-        track = Track(
-            avg_bass=avg_b,
-            avg_mids=avg_m,
-            avg_highs=avg_h,
-            spectral_flatness=track_sf,
-            percussive_ratio=track_pr,
-            timbre_fingerprint=timbre_fp,
-            groove_pattern=groove.groove_pattern,
-            bass_pattern=groove.bass_pattern,
-            syncopation=groove.syncopation,
-            sub_energy=groove.sub_energy,
-            bass_punch=groove.bass_punch,
-            filePath=file_path,
-            fileName=os.path.basename(file_path),
-            artist=artist,
-            title=title,
-            genre=genre,
-            duration=duration,
-            bpm=bpm,
-            keyNote=key_note,
-            keyMode=key_mode,
-            camelotCode=rekordbox_data.camelot_code,
-            energy=energy,
-            bass_intensity=bass_intensity,
-            mix_in_point=mix_in_point,
-            mix_out_point=mix_out_point,
-            mix_in_bars=mix_in_bars,
-            mix_out_bars=mix_out_bars,
-            detected_genre=genre_result.genre,
-            genre_confidence=genre_result.confidence,
-            genre_source=genre_result.source,
-            sections=section_dicts,
-            phrase_unit=structure.phrase_unit,
-            phrase_unit_source=structure.phrase_unit_source,
-            phrase_unit_candidate=structure.phrase_unit_candidate,
-            phrase_unit_score=structure.phrase_unit_score,
-            phrase_unit_margin=structure.phrase_unit_margin,
-            brightness=brightness,
-            vocal_instrumental=vocal_instrumental,
-            danceability=danceability,
-            mfcc_fingerprint=mfcc_fingerprint,
-            first_downbeat=first_downbeat,
-            downbeat_confidence=downbeat_confidence,
-            bar_position_status=bar_position_status,
-            beatgrid_source=beatgrid_source,
-            beatgrid_status=beatgrid_validation.status,
-            beatgrid_windows_checked=beatgrid_validation.windows_checked,
-            beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
-            neural_analysis=cue_service.neural_snapshot(structure, neural_identity, beat_windows),
+        # Native Erzeugung ist getrennt von importierten PSSI-Phrasen.
+        from .ai_models.native_phrase_adapter import analyze_track_phrases
+        native_key_note, native_key_mode = REVERSE_CAMELOT_MAP.get(
+            rekordbox_data.camelot_code, ('', ''))
+        native_phrase_analysis = analyze_track_phrases(
+            file_path, bpm=bpm, duration=file_duration, first_downbeat=first_downbeat,
+            grid_usable=anchor_grid_usable and phrase_phase_usable,
+            usage_blocked=phrase_usage_blocked,
+            imported_phrases=phrases, reference_grid=rekordbox_grid,
+            grid_source=beatgrid_source,
+            native_beat_analysis=(native_context['analysis'] if native_context['accepted'] else None),
+            key_note=native_key_note, key_mode=native_key_mode)
+        cue_model_candidates, cue_model_grid_verified = _cue_candidates_for_structure(
+            phrases=phrases, pssi_grid_usable=pssi_grid_usable,
             native_phrase_analysis=native_phrase_analysis,
-            native_beat_analysis=native_context['analysis'],
-            measurement_diagnostics=measurement_snapshot(
-                downbeat_diagnostics, beatgrid_validation,
-                decode_failures=grid_diagnostics.get("decode_failures", ()),
-                anchor_decision=anchor_decision,
-                phrase_unit_diagnostic=dict(
-                    unit=structure.phrase_unit,
-                    source=structure.phrase_unit_source,
-                    candidate=structure.phrase_unit_candidate,
-                    raw_score=structure.phrase_unit_score,
-                    ranking_margin=structure.phrase_unit_margin,
-                ),
-                tempo_diagnostic=tempo_diagnostic,
-                native_grid_diagnostic=native_context.get('decision'),
-            ),
+            phrase_phase_usable=phrase_phase_usable,
+            pssi_grid_verified=(phrase_phase_usable and beatgrid_source == "rekordbox"
+                                and beatgrid_validation.status == "verified"),
+        )
+        # DJ Brain: gemeinsamer Strukturabschluss für beide Analysepfade.
+        (
+            structure, analysis_coverage, outro_covered,
+            first_phrase, phrase_confidence, phrase_anchor, cue_score_binding,
+        ) = _analyze_structure_with_final_phrase_anchor(
+            file_path, y, sr, bpm, genre_result.genre, duration,
+            first_downbeat=first_downbeat,
+            phrase_anchor=phrase_anchor,
             first_phrase=first_phrase,
             phrase_confidence=phrase_confidence,
-            key_confidence=key_confidence,
-            lufs=lufs,
-            rekordbox_signature=rekordbox_signature,
-            analysis_mode=(
-                "rekordbox_degraded"
-                if analysis_degraded
-                else "rekordbox_fast_tail"
-            ),
-            analysis_coverage=analysis_coverage,
-            outro_covered=outro_covered,
-            lufs_status=lufs_status,
-            lufs_coverage_seconds=lufs_coverage,
-            lufs_channels=lufs_channels,
-            lufs_sample_rate=lufs_sample_rate,
-            phrases=phrases,
-            cue_points=cue_points,
-            phrase_grid=phrase_grid,
-            mix_in_candidates=mix_in_candidates,
-            mix_out_candidates=mix_out_candidates,
+            phrase_unit=phrase_unit,
+            measure_phrase_unit=measure_phrase_unit,
+            preserve_phrase_anchor=bool(phrases and pssi_grid_usable),
+            anchor_grid_usable=anchor_grid_usable,
+            phrase_usage_blocked=phrase_usage_blocked,
+            feature_cache=feature_cache,
+            cue_candidates=cue_model_candidates,
+            cue_verified_grid=cue_model_grid_verified,
+            reanalyze_cue_verified_grid=cue_model_grid_verified,
+            cue_source_signature=cue_source_signature,
+            native_phrase_analysis=native_phrase_analysis,
+        )
+        section_dicts = [s.to_dict() for s in structure.sections]
+        for section in section_dicts:
+            section["analysis_status"] = (
+                "unanalysed" if section.get("label") == "unanalysed" else "analyzed"
+            )
+        section_labels = [s.label for s in structure.sections]
+        logger.info(
+            f"Struktur: {len(structure.sections)} Sektionen: {section_labels} (Phrase: {structure.phrase_unit} Bars)"
         )
 
-        # Laufzeit-Provenienz fuer Kohorten/Hoertests; kein persistiertes Feld.
-        track.analysis_origin = "fresh"
-        from .ai_models import deep_features
-        deep_features.attach(track)
-
-        # Degradierte Kernanalysen nicht persistieren. Optionale Stems/Embeddings
-        # duerfen dagegen als unavailable gespeichert werden: der Cache-Hit kann
-        # sie spaeter gezielt erneuern, ohne die Basisanalyse neu zu rechnen.
-        if cache_policy == "reuse":
-            if not analysis_degraded and not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
-                if not _persist_analysis_result(cache_key, track):
-                    return None
-            else:
-                logger.warning(
-                    f"Degradierte Kernanalyse NICHT gecacht: {os.path.basename(file_path)}"
+        # AUDIT-FEATURE A1 (2026-07-26): Phrasen-Phase schaetzen und als
+        # Anker fuers PHRASEN-Gitter verwenden (Konfidenz-Gate; Fallback
+        # bleibt der Takt-Anker first_downbeat).
+        # AUDIT-FIX R2 (2026-07-26): NUR bei belastbarem Downbeat-Raster —
+        # ein gescheitertes Downbeat-Estimate (Konfidenz 0.0) wuerde sonst
+        # ein erfundenes Bar-Raster ab t=0 abstimmen.
+        # AUDIT-FIX R4 (2026-07-26): Sentinel -1.0 statt 0.0 — first_phrase
+        # 0.0 ist eine GUELTIGE Phase (Track startet auf der Phrasengrenze).
+        # DJ Brain: Genre-spezifische Mix-Punkte (RMS-Fallback ohne Sections
+        # delegiert intern ebenfalls an calculate_genre_aware_mix_points)
+        if not mix_phase_usable:
+            mix_in_point = mix_out_point = MIX_POINT_UNSET
+            mix_in_bars = mix_out_bars = 0
+        elif section_dicts:
+            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
+                calculate_genre_aware_mix_points(
+                    section_dicts, bpm, duration,
+                    genre_result.genre, anchor=phrase_anchor,
+                    first_downbeat=first_downbeat,  # R3: Untergrenze am Takt-Anker
+                    phrase_unit=structure.phrase_unit,
                 )
-        return track
+            )
+            logger.info(
+                f"DJ Brain Mix-Punkte: in={mix_in_bars} bars, out={mix_out_bars} bars ({genre_result.genre})"
+            )
+        else:
+            mix_in_point, mix_out_point, mix_in_bars, mix_out_bars = (
+                analyze_structure_and_mix_points(
+                    y, sr, duration, energy, bpm,
+                    genre=genre_result.genre,
+                    anchor=phrase_anchor,
+                    first_downbeat=first_downbeat,  # R3
+                    phrase_unit=structure.phrase_unit,
+                )
+            )
 
+        # Gerichtete manuelle Cues behalten ihre Prioritaet, muessen aber
+        # denselben quantisierten Intro-/Outro-Vertrag wie Analyzerpunkte
+        # erfuellen. Der gemeinsame Helfer wird auch im Vollpfad benutzt.
+        if mix_phase_usable:
+            mix_in_point, mix_out_point = _apply_manual_mixpoint_cues(
+                mix_in_point,
+                mix_out_point,
+                cue_points=cue_points,
+                bpm=bpm,
+                duration=duration,
+                phrase_unit=structure.phrase_unit,
+                anchor=phrase_anchor,
+                sections=section_dicts,
+            )
+        # Nach den manuellen Cues neu rechnen -- sie koennen die Punkte
+        # verschoben haben. Dieselbe Rundung wie `dj_brain` und die
+        # Anzeige: `int()` trunkierte, wodurch Cache und Anzeige um einen
+        # Takt auseinanderliefen. Der Sentinel MIX_POINT_UNSET (-1.0)
+        # ergaebe gerundet ab 174 BPM einen negativen Takt, den
+        # `caching.validate_track_dict` zurueckweist.
+        mix_in_bars = (
+            seconds_to_bars(mix_in_point, bpm)
+            if mix_in_point >= 0 else 0
+        )
+        mix_out_bars = (
+            seconds_to_bars(mix_out_point, bpm)
+            if mix_out_point >= 0 else 0
+        )
+        if not anchor_grid_usable:
+            # Kein Track-Mixpunkt darf auf dem unzuverlaessigen
+            # Fallback-Anker als Takt- oder Phrasenraster ausgegeben werden.
+            mix_in_point = mix_out_point = MIX_POINT_UNSET
+            mix_in_bars = mix_out_bars = 0
+
+        # Audio Feature Extensions
+        brightness = calculate_brightness(y_fenster, sr, cache_fenster)
+        vocal_instrumental = detect_vocal_instrumental(y_fenster, sr, cache_fenster)
+        danceability = calculate_danceability(
+            y_fenster, sr, bpm, cache_fenster
+        )
+        # M1 Audit-Fix: MFCC kommt aus classify_genre() (spart doppelte Berechnung)
+        mfcc_fingerprint = genre_result.mfcc_fingerprint or calculate_mfcc_fingerprint(
+            y, sr, feature_cache=feature_cache
+        )
+        logger.debug(
+            f"Features: brightness={brightness}, vocal={vocal_instrumental}, dance={danceability}"
+        )
+
+    except (sf.LibsndfileError, RuntimeError, OSError, ValueError) as e:
+        # AUDIT-FIX A-02 (2026-07-24): Nur die tatsaechlich erwarteten
+        # Lade-/Decode-Fehlerklassen fangen (vorher `except Exception`, was
+        # auch echte Programmierfehler als "Load fehlgeschlagen" tarnte).
+        # Ohne decodiertes Audio existiert kein belastbarer Analyseerfolg.
+        # Insbesondere duerfen keine Default-Mixpunkte nach außen gelangen.
+        logger.warning("Schneller Librosa-Load fehlgeschlagen: %s", e)
+        return None
+
+    # Extract key note and mode from Camelot code (for backward compatibility)
+    key_note = ""
+    key_mode = ""
+    if rekordbox_data.camelot_code:
+        # Use reverse mapping to get correct Note and Mode from Camelot code
+        key_tuple = REVERSE_CAMELOT_MAP.get(rekordbox_data.camelot_code)
+        if key_tuple:
+            key_note, key_mode = key_tuple
+
+    # --- Advanced Audio Analysis (Phase 2) ---
+    # C1-Fix: Block darf NICHT im camelot_code-Zweig haengen, sonst wird
+    # `track` bei Tracks ohne Key nie erzeugt (UnboundLocalError).
+    # C2-Fix: bereits geladenes Fast-Path-Audio (y) wiederverwenden statt
+    # die Datei erneut in voller Laenge zu laden.
+    try:
+        # Timbre-Fingerprint fuer den Fast-Path-Ausschnitt
+        timbre_fp = generate_timbre_fingerprint(y_fenster, sr, cache_fenster)
+
+        # Overall Track Averages for Advanced Features (VOR dem Sektions-Loop,
+        # damit Sektionen ausserhalb des geladenen Audiofensters darauf
+        # zurueckfallen koennen).
+        avg_b, avg_m, avg_h = analyze_frequency_bands(y_fenster, sr, cache_fenster)
+        track_pr, track_sf = analyze_rhythm_complexity(y_fenster, sr, cache_fenster)
+
+        # Groove-Features (nur auf belastbarem Downbeat-Raster, siehe
+        # compute_groove_fields). y/sr sind hier das Fast-Path-Audio.
+        groove = compute_groove_fields(
+            y_fenster, sr, bpm, first_downbeat,
+            downbeat_confidence if anchor_grid_usable else 0.0,
+            feature_cache=cache_fenster, sections=section_dicts,
+        )
+
+        # Update each section with detailed frequency and rhythm data
+        updated_sections = []
+        section_audio_windows = getattr(
+            structure, '_section_audio_windows', [(0.0, y, feature_cache)]
+        )
+        for sec_dict in section_dicts:
+            y_seg, section_cache, sample_range = _section_audio_slice(
+                sec_dict, section_audio_windows, sr, feature_cache,
+            )
+
+            if len(y_seg) > sr: # At least 1 second
+                # Frequency Bands
+                b, m, h = analyze_frequency_bands(y_seg, sr)
+                sec_dict['avg_bass'] = b
+                sec_dict['avg_mids'] = m
+                sec_dict['avg_highs'] = h
+
+                # Rhythm & Texture
+                percussive_ratio, spectral_flatness = analyze_rhythm_complexity(
+                    y_seg, sr, section_cache,
+                    sample_range=sample_range,
+                )
+                sec_dict['percussive_ratio'] = percussive_ratio
+                sec_dict['spectral_flatness'] = spectral_flatness
+
+                # Bassdruck der Sektion fuer den Nahtstellen-Vergleich
+                # (Spec 5.3). Zu kurze Sektionen bekommen die Schluessel
+                # NICHT — transition_features faellt dann auf das
+                # Trackmittel zurueck, statt einen aus wenigen Frames
+                # geschaetzten Wert vorzutaeuschen.
+                if len(y_seg) >= BASS_KENNWERTE_MIN_SEC * sr:
+                    sec_sub, sec_punch = bass_kennwerte(y_seg, sr)
+                    sec_dict['sub_energy'] = sec_sub
+                    sec_dict['bass_punch'] = sec_punch
+            else:
+                # Audit-Fix 2026-07-21: Sektion liegt ausserhalb des geladenen
+                # Audiofensters (Fast-Path 360s / Full 600s) oder ist zu kurz.
+                # Vorher wurden hier harte 0.0-Platzhalter geschrieben, die den
+                # sinnvollen Track-Level-Fallback in dj_brain
+                # (out_sec_data.get('avg_bass', track_a.avg_bass)) UEBERSCHRIEBEN —
+                # genau am kritischen Mix-Out langer Tracks. Jetzt erben diese
+                # Sektionen die Track-weiten Kennwerte statt Bass=0 vorzutaeuschen.
+                sec_dict['avg_bass'] = sec_dict.get('avg_bass', avg_b)
+                sec_dict['avg_mids'] = avg_m
+                sec_dict['avg_highs'] = avg_h
+                sec_dict['percussive_ratio'] = track_pr
+                sec_dict['spectral_flatness'] = track_sf
+
+            updated_sections.append(sec_dict)
+
+        section_dicts = updated_sections
+
+    except Exception as e:
+        logger.warning(f"Erweiterte Analyse fehlgeschlagen: {e}")
+        timbre_fp = []
+        avg_b = avg_m = avg_h = 0.0
+        track_pr = track_sf = 0.0
+        groove = GrooveFeatures()
+
+    # Mixpunkt-Kandidaten (Spec 2026-08-21). Guard: im degradierten Zweig
+    # sind die Listen bereits leer gesetzt und duerfen nicht ueberschrieben
+    # werden (section_dicts/structure waeren dort Platzhalter).
+    if not analysis_degraded:
+        if phrase_usage_blocked:
+            mix_in_candidates, mix_out_candidates = [], []
+            phrase_grid = []
+            kandidaten = None
+        else:
+            kandidaten = _kandidaten_berechnen(
+                file_path, pfad="fast", bpm=bpm, duration=duration,
+                first_downbeat=first_downbeat,
+                downbeat_confidence=downbeat_confidence,
+                phrase_confidence=phrase_confidence,
+                phrase_anchor=phrase_anchor,
+                anchor_grid_usable=anchor_grid_usable,
+                phrase_phase_usable=phrase_phase_usable,
+                pssi_grid_usable=pssi_grid_usable and bool(phrases),
+                phrase_unit=structure.phrase_unit, sections=section_dicts,
+                phrases=phrases, cues=cue_points,
+                native_phrases=native_phrase_analysis.get('phrases', []),
+                analyzer_in=mix_in_point, analyzer_out=mix_out_point,
+                outro_covered=outro_covered,
+                cue_scores=_bound_cue_scores(cue_model_candidates, cue_source_signature, cue_score_binding, structure.cue_diagnostics),
+            )
+        if not phrase_usage_blocked and kandidaten is None:
+            return None
+        if not phrase_usage_blocked:
+            mix_in_candidates, mix_out_candidates = kandidaten
+            phrase_grid = phrase_grid_from_phrases(phrases or native_phrase_analysis.get('phrases', []))
+
+    # Create Track object with Rekordbox data
+    track = Track(
+        avg_bass=avg_b,
+        avg_mids=avg_m,
+        avg_highs=avg_h,
+        spectral_flatness=track_sf,
+        percussive_ratio=track_pr,
+        timbre_fingerprint=timbre_fp,
+        groove_pattern=groove.groove_pattern,
+        bass_pattern=groove.bass_pattern,
+        syncopation=groove.syncopation,
+        sub_energy=groove.sub_energy,
+        bass_punch=groove.bass_punch,
+        filePath=file_path,
+        fileName=os.path.basename(file_path),
+        artist=artist,
+        title=title,
+        genre=genre,
+        duration=duration,
+        bpm=bpm,
+        keyNote=key_note,
+        keyMode=key_mode,
+        camelotCode=rekordbox_data.camelot_code,
+        energy=energy,
+        bass_intensity=bass_intensity,
+        mix_in_point=mix_in_point,
+        mix_out_point=mix_out_point,
+        mix_in_bars=mix_in_bars,
+        mix_out_bars=mix_out_bars,
+        detected_genre=genre_result.genre,
+        genre_confidence=genre_result.confidence,
+        genre_source=genre_result.source,
+        sections=section_dicts,
+        phrase_unit=structure.phrase_unit,
+        phrase_unit_source=structure.phrase_unit_source,
+        phrase_unit_candidate=structure.phrase_unit_candidate,
+        phrase_unit_score=structure.phrase_unit_score,
+        phrase_unit_margin=structure.phrase_unit_margin,
+        brightness=brightness,
+        vocal_instrumental=vocal_instrumental,
+        danceability=danceability,
+        mfcc_fingerprint=mfcc_fingerprint,
+        first_downbeat=first_downbeat,
+        downbeat_confidence=downbeat_confidence,
+        bar_position_status=bar_position_status,
+        beatgrid_source=beatgrid_source,
+        beatgrid_status=beatgrid_validation.status,
+        beatgrid_windows_checked=beatgrid_validation.windows_checked,
+        beatgrid_max_phase_error_ms=beatgrid_validation.max_phase_error_ms,
+        neural_analysis=cue_service.neural_snapshot(structure, neural_identity, beat_windows),
+        native_phrase_analysis=native_phrase_analysis,
+        native_beat_analysis=native_context['analysis'],
+        measurement_diagnostics=measurement_snapshot(
+            downbeat_diagnostics, beatgrid_validation,
+            decode_failures=grid_diagnostics.get("decode_failures", ()),
+            anchor_decision=anchor_decision,
+            phrase_unit_diagnostic=dict(
+                unit=structure.phrase_unit,
+                source=structure.phrase_unit_source,
+                candidate=structure.phrase_unit_candidate,
+                raw_score=structure.phrase_unit_score,
+                ranking_margin=structure.phrase_unit_margin,
+            ),
+            tempo_diagnostic=tempo_diagnostic,
+            native_grid_diagnostic=native_context.get('decision'),
+        ),
+        first_phrase=first_phrase,
+        phrase_confidence=phrase_confidence,
+        key_confidence=key_confidence,
+        lufs=lufs,
+        rekordbox_signature=rekordbox_signature,
+        analysis_mode=(
+            "rekordbox_degraded"
+            if analysis_degraded
+            else "rekordbox_fast_tail"
+        ),
+        analysis_coverage=analysis_coverage,
+        outro_covered=outro_covered,
+        lufs_status=lufs_status,
+        lufs_coverage_seconds=lufs_coverage,
+        lufs_channels=lufs_channels,
+        lufs_sample_rate=lufs_sample_rate,
+        phrases=phrases,
+        cue_points=cue_points,
+        phrase_grid=phrase_grid,
+        mix_in_candidates=mix_in_candidates,
+        mix_out_candidates=mix_out_candidates,
+    )
+
+    return _finalize_analyzed_track(
+        track, cache_key=cache_key, cache_policy=cache_policy,
+        analysis_degraded=analysis_degraded, anchor_decision=anchor_decision,
+        preserved_features=preserved_features,
+    )
+
+
+def _analyze_audio_path(
+    *, cache_key, cache_policy, cue_source_signature, file_duration, file_path,
+    native_snapshot, neural_identity, rekordbox_data, rekordbox_importer,
+    rekordbox_signature, preserved_features=None,
+):
     # Kein Rekordbox-Tempo: BPM kommt aus dem Audio. Ein vorhandener, aber in
     # Rekordbox noch nicht analysierter Datensatz bleibt fuer unabhaengige
     # Metadaten (Artist/Title/Genre, validierter Key, Cues/ANLZ) nutzbar.
@@ -4922,16 +4874,11 @@ def analyze_track(file_path: str, *, cache_policy: str = "reuse",
             mix_out_candidates=mix_out_candidates,
         )
 
-        # Laufzeit-Provenienz fuer Kohorten/Hoertests; kein persistiertes Feld.
-        track.analysis_origin = "fresh"
-
-        from .ai_models import deep_features
-        deep_features.attach(track)
-        if cache_policy == "reuse":
-            if not cue_service.transient_failure(track.neural_analysis) and track.native_phrase_analysis.get("status") != "unavailable" and not anchor_decision["neural"]["transient"]:
-                if not _persist_analysis_result(cache_key, track):
-                    return None
-        return track
+        return _finalize_analyzed_track(
+            track, cache_key=cache_key, cache_policy=cache_policy,
+            analysis_degraded=False, anchor_decision=anchor_decision,
+            preserved_features=preserved_features,
+        )
 
     except Exception as e:
         logger.error(f"Fehler bei der Librosa-Analyse von {file_path}: {e}")

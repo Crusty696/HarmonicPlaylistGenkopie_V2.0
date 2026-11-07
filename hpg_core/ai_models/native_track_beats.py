@@ -25,6 +25,17 @@ from .reader_contract import (
 from .native_beat_boundaries import VERSION as BOUNDARY_CONTRACT
 
 CONTRACT = 'hpg-native-track-beats-v18'
+REFINER_FAILURE_REVISION = 1
+REFINER_FAILURE_REASON = 'ValueError: NativeContractError: Stable model window still contradicts full sequence'
+
+
+def needs_refiner_repair(value):
+    """Nur den bekannten alten Refinerfehler einmal mit korrigiertem Producer prüfen."""
+    if (type(value) is not dict or value.get('status') != 'unavailable'
+            or value.get('reason') != REFINER_FAILURE_REASON):
+        return False
+    revision = value.get('failure_producer_revision', 0)
+    return type(revision) is int and 0 <= revision < REFINER_FAILURE_REVISION
 
 
 def _finite_number(value):
@@ -58,7 +69,15 @@ def validate_snapshot(value, *, duration):
     if type(value) is not dict or value.get('status') not in ('ok', 'unavailable', 'disabled'):
         raise ValueError('Invalid native beat snapshot')
     if value['status'] != 'ok':
-        if set(value) != {'status', 'reason'} or type(value['reason']) is not str:
+        fields = set(value)
+        if fields == {'status', 'reason', 'failure_producer_revision'}:
+            revision = value['failure_producer_revision']
+            if (value['status'] != 'unavailable' or value['reason'] != REFINER_FAILURE_REASON
+                    or type(revision) is not int or not 0 <= revision <= REFINER_FAILURE_REVISION):
+                raise ValueError('Invalid native failure revision')
+        elif fields != {'status', 'reason'}:
+            raise ValueError('Invalid unavailable native beats')
+        if type(value['reason']) is not str:
             raise ValueError('Invalid unavailable native beats')
         return
     fields = {'status', 'reason', 'contract', 'executable_sha256', 'tensorflow_sha256',
@@ -236,6 +255,7 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
             cancel_event=None, snapshot=None, verification_snapshot=None):
     if not enabled():
         return dict(status='disabled', reason='disabled')
+    producer_called = False
     try:
         source = Path(path).resolve(strict=True)
         identity = _source_identity(source)
@@ -257,9 +277,11 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
             raise ValueError('Invalid native beat timeout')
         deadline = time.monotonic() + timeout_s
         def call(job, module, request):
+            nonlocal producer_called
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError('Native beat deadline expired')
+            producer_called = True
             if transport is not None:
                 result = transport(job, request, timeout_s=remaining)
             else:
@@ -307,4 +329,7 @@ def analyze(path, *, transport=None, timeout_s=MAX_NATIVE_TRACK_JOB_SECONDS,
         validate_snapshot(result, duration=frames/44100)
         return result
     except Exception as error:
-        return dict(status='unavailable', reason=f'{type(error).__name__}: {error}')
+        result = dict(status='unavailable', reason=f'{type(error).__name__}: {error}')
+        if producer_called and result['reason'] == REFINER_FAILURE_REASON:
+            result['failure_producer_revision'] = REFINER_FAILURE_REVISION
+        return result

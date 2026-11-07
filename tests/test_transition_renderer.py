@@ -497,7 +497,7 @@ class TestStrictRenderFehlerpfade:
             raise RuntimeError("stretch kaputt")
 
         monkeypatch.setattr(
-            "hpg_core.transition_renderer.librosa.effects.time_stretch", fail_stretch
+            "hpg_core.preview_stretch.stretch", fail_stretch
         )
 
         with pytest.raises(BeatSyncError, match="Time-Stretching fehlgeschlagen"):
@@ -1809,11 +1809,11 @@ class TestTor1GridRegression:
             seen.update(kwargs)
             return b[kwargs["lead_frames"]:]
 
-        stretch = Mock(side_effect=lambda audio, **_kwargs: audio)
+        stretch = Mock(side_effect=lambda audio, sr, rate: audio)
         monkeypatch.setattr("hpg_core.transition_renderer._load_segment", load)
         monkeypatch.setattr("hpg_core.transition_renderer._align_beat_phase", align)
         monkeypatch.setattr(
-            "hpg_core.transition_renderer.librosa.effects.time_stretch", stretch
+            "hpg_core.preview_stretch.stretch", stretch
         )
         monkeypatch.setattr(
             "hpg_core.transition_renderer._synchronize_and_verify_kicks",
@@ -1838,7 +1838,8 @@ class TestTor1GridRegression:
         source_start = mix_in - source_lead
         assert loads[0][0] == 0.0
         assert loads[1] == pytest.approx((source_start, source_lead + 3.0))
-        assert stretch.call_args.kwargs["rate"] == pytest.approx(rate)
+        assert stretch.call_args.args[1] == 1000
+        assert stretch.call_args.args[2] == pytest.approx(rate)
         assert seen["lead_frames"] == round(source_lead / rate * 1000)
         assert seen["bar_grid_frames"] == round(output_grid * 1000)
         assert seen["bar_aligned"] is (reliable and bar_reliable)
@@ -1916,12 +1917,12 @@ class TestHalfDoubleRate:
         self._mock_audio(monkeypatch)
         gesehen = {}
 
-        def _stretch(daten, rate):
+        def _stretch(daten, sr, rate):
             gesehen["rate"] = rate
             return daten
 
         monkeypatch.setattr(
-            "hpg_core.transition_renderer.librosa.effects.time_stretch", _stretch
+            "hpg_core.preview_stretch.stretch", _stretch
         )
         monkeypatch.setattr("hpg_core.transition_renderer.sf.write", Mock())
         try:

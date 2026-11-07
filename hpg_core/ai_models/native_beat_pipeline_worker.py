@@ -398,14 +398,22 @@ def _handle(payload):
                     # Fensters. Die fertige Modell7-Folge bleibt erhalten.
                     grid, bpm_hundredths, rows, coverage = correct_boundaries(
                         image, reader, selection, stable_start)
-                    grid, final_bpm = processor.refine(grid, int(bpm_hundredths), False)
+                    # Ein Originaltrack (Parallel Worlds): zweites Refinement
+                    # derselben Instanz hielt 81 BPM trotz neuem 348-s-Fenster;
+                    # frischer Zustand ergab 135 BPM ohne neue Modellinferenz.
+                    replacement_processor = NativeGridProcessor(image, reader)
+                    grid, final_bpm = replacement_processor.refine(
+                        grid, int(bpm_hundredths), False)
                     if full_model_disagrees(final_bpm / 100., verification_rows):
                         raise NativeContractError('Stable model window still contradicts full sequence')
                 else:
                     # Ohne stabiles 60-s-Fenster bleibt nur das vollständige
                     # native Grid; variable Raster bleiben nachgelagert gesperrt.
                     selection = select_model(4)
-                    grid, final_bpm = processor.refine(
+                    # Auch die vollständige Alternative braucht unbenutzten
+                    # Refinerzustand statt des bereits verfeinerten Introgrids.
+                    replacement_processor = NativeGridProcessor(image, reader)
+                    grid, final_bpm = replacement_processor.refine(
                         verification_grid, int(verification_bpm), True)
                     model_id, hashes = 'model7', verification_hashes
                     rows, coverage, verification = verification_rows, verification_coverage, None

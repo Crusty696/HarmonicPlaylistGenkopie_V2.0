@@ -24,7 +24,7 @@ Bei `cache_policy="reuse"` passiert der Cache-Lookup **vor** der Analyse.
 **innerhalb** von `analyze_track`, nicht in einem spaeteren Schritt.
 
 ```
-main.AnalysisWorker.run              [main.py]
+main.AnalysisWorker.run              [hpg_core/app_workers.py; Dienstbindung main.py]
   1 os.walk + Realpath-Containment (Symlink-Ausbruch verworfen)
     + Deckel SECURITY_MAX_PLAYLIST_SIZE (1000)
   2 ParallelAnalyzer.analyze_files   [hpg_core/parallel_analyzer.py]
@@ -50,11 +50,14 @@ main.AnalysisWorker.run              [main.py]
 
 | Thema | Datei | Einstieg |
 |---|---|---|
-| Zentrale GUI, Worker, Panels | `main.py` | `MainWindow.init_ui` |
+| Zentrale GUI, Panels und Dienstbindung | `main.py` | `MainWindow.init_ui` |
+| Worker und Laufzustände | `hpg_core/app_workers.py`, `run_state.py` | `AnalysisWorker`, `RunState` |
+| Navigation und atomare Ergebnisveröffentlichung | `hpg_core/ui/` | `navigation.py`, `result_publication.py` |
 | Track-Datenmodell, Camelot, Anker | `hpg_core/models.py` | `class Track` |
 | Audio-Analyse | `hpg_core/analysis.py` | `analyze_track` |
 | Mixpoints, DJ-Empfehlungen | `hpg_core/dj_brain.py` | `calculate_genre_aware_mix_points`, `generate_dj_recommendation`, `calculate_paired_mix_points` |
-| Strategien + Scoring | `hpg_core/playlist.py` | `STRATEGIES` |
+| Scoring und Orchestrierung | `hpg_core/playlist.py` | `generate_playlist_result` |
+| Strategiealgorithmen und Resultverträge | `hpg_core/playlist_strategies.py`, `playlist_results.py` | `PlaylistStrategies`, `PlaylistGenerationResult` |
 | Genre-Tabellen (SSoT) | `hpg_core/genres.py` | `CANONICAL_GENRES` |
 | Cache | `hpg_core/caching.py` | `CACHE_VERSION` |
 | PSSI-Phrasen | `hpg_core/rekordbox_phrases.py` | `phrases_from_anlz` |
@@ -64,8 +67,9 @@ main.AnalysisWorker.run              [main.py]
 | Rekordbox-Import | `hpg_core/rekordbox_importer.py` | `class RekordboxImporter` |
 | Export | `hpg_core/exporters/` | m3u8, Rekordbox-XML |
 
-**GUI-Navigation** (`SidebarWidget.NAV_ITEMS` [main.py]): LIBRARY ·
-PLAYLIST · MIX TIPS · TIMELINE · QUALITY, Umschalten per Ctrl+1..5.
+**GUI-Navigation** (`SidebarWidget.NAV_ITEMS` [hpg_core/ui/navigation.py]):
+Bibliothek · Playlist · Übergänge · Zeitlinie · Qualität, Umschalten per Ctrl+1..5.
+Weitere Modulgrenzen und kompatible Fassaden: `docs/ARCHITEKTUR.md`.
 
 ## Welcher Skill fuer welche Frage
 

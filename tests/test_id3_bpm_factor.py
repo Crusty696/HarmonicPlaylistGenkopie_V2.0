@@ -75,7 +75,7 @@ def test_ungueltige_audiomessung_bleibt_unveraendert(measured):
 
 
 def test_analyse_nutzt_id3_genre_erst_hinter_dem_rekordbox_fastpath():
-    source = inspect.getsource(analysis.analyze_track)
+    source = inspect.getsource(analysis._analyze_audio_path)
     tree = ast.parse(source)
     calls = [
         node
@@ -87,6 +87,8 @@ def test_analyse_nutzt_id3_genre_erst_hinter_dem_rekordbox_fastpath():
     assert len(calls) == 1
     assert isinstance(calls[0].args[2], ast.Name)
     assert calls[0].args[2].id == "genre_id3"
-    assert source.index("if rekordbox_data and rekordbox_data.bpm:") < source.index(
-        "_correct_id3_bpm_factor("
-    )
+    fast_source = inspect.getsource(analysis._analyze_rekordbox_path)
+    assert "_correct_id3_bpm_factor(" not in fast_source
+    dispatcher = inspect.getsource(analysis.analyze_track)
+    assert dispatcher.index("if rekordbox_data and rekordbox_data.bpm:") < dispatcher.index("_analyze_rekordbox_path(")
+    assert dispatcher.index("return _analyze_rekordbox_path(") < dispatcher.index("return _analyze_audio_path(")

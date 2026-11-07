@@ -128,6 +128,61 @@ def test_fingerprint_tracks_appearance_and_contents(tmp_path):
     assert len({first, second, cs.fingerprint(config)}) == 3
 
 
+def test_core_identity_is_independent_of_deep_features(monkeypatch, tmp_path):
+    from hpg_core.ai_models import deep_features
+    config = dict(samplecnn_path=str(tmp_path/'sample'), cue_model_path=str(tmp_path/'cue'))
+    monkeypatch.setattr(deep_features, 'config_fingerprint', lambda: {'embedding': 'old'})
+    before_core = cs.core_fingerprint(config)
+    before_full = cs.fingerprint(config)
+    monkeypatch.setattr(deep_features, 'config_fingerprint', lambda: {'embedding': 'new'})
+    assert cs.core_fingerprint(config) == before_core
+    assert cs.fingerprint(config) != before_full
+    (tmp_path/'sample').write_bytes(b'changed-core-model')
+    assert cs.core_fingerprint(config) != before_core
+
+
+def test_core_identity_does_not_read_deep_feature_artifacts(monkeypatch):
+    from hpg_core.ai_models import deep_features
+    def forbidden():
+        raise AssertionError('Zusatzmodelle gehören nicht zur Kernidentität')
+    monkeypatch.setattr(deep_features, 'config_fingerprint', forbidden)
+    assert len(cs.core_fingerprint()) == 64
+
+
+def test_legacy_identity_requires_unchanged_core(monkeypatch, tmp_path):
+    from hpg_core.ai_models import deep_features
+    config = dict(samplecnn_path=str(tmp_path/'sample'), cue_model_path=str(tmp_path/'cue'))
+    old = {'stems': 'a'*64, 'embedding': 'b'*64}
+    monkeypatch.setattr(deep_features, 'config_fingerprint', lambda: old)
+    original = cs.fingerprint(config)
+    monkeypatch.setattr(deep_features, 'config_fingerprint', lambda: {'stems': 'c'*64, 'embedding': 'd'*64})
+    assert cs.legacy_fingerprint(old, config) == original
+    assert cs.fingerprint(config) != original
+    (tmp_path/'cue').write_bytes(b'changed-cue-model')
+    assert cs.legacy_fingerprint(old, config) != original
+
+
+@pytest.mark.parametrize('value', [None, {}, {'stems': 'a'*64},
+    {'stems': 'a'*64, 'embedding': 'z'*64},
+    {'stems': 'a'*64, 'embedding': 'b'*64, 'extra': 'c'*64}])
+def test_legacy_identity_rejects_incomplete_or_invalid_payload(value):
+    with pytest.raises(ValueError):
+        cs.legacy_fingerprint(value)
+
+
+def test_legacy_core_matches_requires_both_provenance_bindings(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(cs, 'legacy_fingerprint', lambda *a: 'a'*64)
+    track = SimpleNamespace(stem_analysis={'fingerprint': 'b'*64},
+        embedding_analysis={'fingerprint': 'c'*64},
+        rekordbox_signature='rb|neural:' + 'a'*64,
+        neural_analysis={'fingerprint': 'a'*64})
+    assert cs.legacy_core_matches(track, 'rb')
+    assert not cs.legacy_core_matches(track, 'changed-rb')
+    track.neural_analysis['fingerprint'] = 'd'*64
+    assert not cs.legacy_core_matches(track, 'rb')
+
+
 @pytest.mark.parametrize('mutation', ['nan', 'extra', 'shape', 'kind'])
 def test_strict_header(mutation):
     payload = cs.encode_audio(np.ones(20, np.float32), 22050, [dict(start_s=0., kind=1, mood=1)],

@@ -7,8 +7,10 @@ Weg zum aktuellen Code. Sie ist keine Produktabnahme.
 
 1. Aktueller Nutzerauftrag und [AGENTS.md](../AGENTS.md) bestimmen den Umfang.
 2. [Produktleitlinie](../MEMORY.md), `hpg-orientation` und Fachskills führen zum Code.
-3. [Quellen- und Nachweisstand](../PRODUCTION_STATUS.md) trennt Implementierung,
-   alte Testresultate, Originaltrack-Läufe und musikalische Bewertung.
+3. Der [laufende Refaktorierungsplan](superpowers/plans/2026-10-30-gesamtrefaktorierung.md)
+   enthält die aktuellen Änderungen und datierten Prüfnachweise. Der
+   [Quellen- und Nachweisstand](../PRODUCTION_STATUS.md) bewahrt den historischen
+   Abgleich vom 26.10. samt damaliger Grenzen.
 4. [Übergabe vom 20.10.](CHAT_UEBERGABE_2026-10-20.md) enthält die jüngste
    fachliche Chatübergabe, Rohbelegpfade und offene Fehler. Historische
    Fortsetzungsbefehle werden durch Lesen nicht zum aktuellen Auftrag.
@@ -132,9 +134,12 @@ Die Sicherung vom 04.10. und `cleanup-manifest-2026-10-04.json` bleiben erhalten
 
 - Historische Berichte nennen Bugs und Tests. Ihre Entfernung erklaert
   keinen Bug fuer behoben. Wiederaufnahme nur mit aktueller Reproduktion.
-- Historische Aussagen zur Mindestlaufzeit von zwei Phrasen widersprechen
-  einander. Dies wird nicht durch Dokumentationsbereinigung entschieden:
-  aktuellen Auftrag, Fachvertrag und betroffenen Code gemeinsam pruefen.
+- Der aktuelle Mixpoint-Vertrag verlangt mindestens zwei Phrasen zwischen
+  Mix-In und Mix-Out (`analysis._valid_final_mix_pair`,
+  `mix_candidates.passes_track_gates`, `hpg-mixpoint-engineering`). Die
+  Vier-Phrasen-Beschreibung in `tests/test_mix_points_root.py` ist eine
+  historische Beschreibung eines engeren Testfalls, kein allgemeines Gate.
+  Bei einer fachlichen Aenderung beide aktiven Pfade und den Test erneut pruefen.
 - Fehlen einer Datei namens test_ai_engine.py beweist keine fehlende
   AI-Testabdeckung. Abdeckung waere am konkreten Verhalten zu untersuchen.
 - Historische Modellbenchmarks, Hardwareempfehlungen, Serverzustaende,

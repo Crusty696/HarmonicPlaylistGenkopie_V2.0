@@ -16,6 +16,8 @@ import threading
 
 import numpy as np
 
+from . import directml_device
+
 
 class OnnxModelError(RuntimeError):
     """Basisklasse für diagnostizierbare Modellfehler."""
@@ -139,7 +141,8 @@ def _check_output_value(value, contract, name, shape, symbols, *, map_scalar=Fal
 class OnnxModel:
     """Session und gemeinsame Sperre; über get_model() beziehen."""
 
-    def __init__(self, path, identity, ort, prefer_directml, device_id):
+    def __init__(self, path, identity, ort, prefer_directml, device_id,
+                 selection_reason=None):
         self._lock = threading.RLock()
         self._pid = os.getpid()
         self._path = path
@@ -148,7 +151,7 @@ class OnnxModel:
         self._device_id = device_id
         self._available = list(ort.get_available_providers())
         self._requested = ['DmlExecutionProvider', 'CPUExecutionProvider'] if prefer_directml else ['CPUExecutionProvider']
-        self._fallback_reason = None
+        self._fallback_reason = selection_reason
         self._terminal_error = None
         dml = prefer_directml and 'DmlExecutionProvider' in self._available
         if prefer_directml and not dml:
@@ -269,10 +272,19 @@ def clear_model_cache():
         _CACHE_PID = os.getpid()
 
 
-def get_model(path, *, prefer_directml=True, device_id=0):
+def get_model(path, *, prefer_directml=True, device_id=None):
     """Lädt lazy; identische Anfragen teilen Session und Inferenzsperre."""
-    if not isinstance(device_id, int) or isinstance(device_id, bool) or device_id < 0:
+    if (device_id is not None and
+            (not isinstance(device_id, int) or isinstance(device_id, bool) or device_id < 0)):
         raise ModelInputError('device_id must be a nonnegative integer')
+    selection_reason = None
+    if device_id is None and prefer_directml:
+        device_id = directml_device.choose_device_id()
+        if device_id is None:
+            prefer_directml = False
+            selection_reason = 'No suitable discrete DirectML adapter'
+    if device_id is None:
+        device_id = 0
     with _CACHE_LOCK:
         if _CACHE_PID != os.getpid():
             clear_model_cache()
@@ -292,7 +304,8 @@ def get_model(path, *, prefer_directml=True, device_id=0):
             ort = importlib.import_module('onnxruntime')
         except (ImportError, OSError) as exc:
             raise ModelUnavailableError(f'ONNX Runtime unavailable: {exc}') from exc
-        model = OnnxModel(resolved, identity, ort, prefer_directml, device_id)
+        model = OnnxModel(resolved, identity, ort, prefer_directml, device_id,
+                          selection_reason)
         _CACHE[key] = model
         while len(_CACHE) > 2:
             _CACHE.popitem(last=False)

@@ -115,7 +115,7 @@ def pipeline(monkeypatch, tmp_path):
                         ('bass_kennwerte', (.5, .5)), ('_kandidaten_berechnen', ([], []))]:
         monkeypatch.setattr(analysis, name, lambda *a, _value=value, **k: _value)
     monkeypatch.setattr(analysis, 'compute_groove_fields', lambda *a, **k: analysis.GrooveFeatures())
-    monkeypatch.setattr(cs, 'fingerprint', lambda *a: 'a'*64)
+    monkeypatch.setattr(cs, 'core_fingerprint', lambda *a: 'a'*64)
     monkeypatch.setattr(analysis, '_collect_beat_windows', lambda *args: [])
     return path, importer, candidates
 

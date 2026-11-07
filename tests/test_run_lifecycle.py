@@ -455,7 +455,7 @@ def test_playlist_shows_unplanned_transition_without_executable_plan(qtbot):
 
   panel.set_playlist_data(tracks, {})
 
-  assert panel.table.horizontalHeaderItem(14).text() == "Passung"
+  assert panel.table.horizontalHeaderItem(14).text() == "Übergang"
   assert panel.table.item(0, 14).text() == "—"
   score_item = panel.table.item(1, 14)
   score = score_item.data(Qt.ItemDataRole.UserRole)
@@ -482,7 +482,9 @@ def test_playlist_repopulation_preserves_ai_insights(qtbot):
   panel.set_playlist_data([track], {})
 
   assert panel.table.item(0, 15).text() == "[Peak Techno] dark, driving"
-  assert panel.table.item(0, 15).toolTip() == "late-night"
+  assert panel.table.item(0, 15).toolTip() == (
+    "KI-Metadaten: unverbindlich, kein aktiver Übergangsplan.\nlate-night"
+  )
 
 
 def test_preview_temp_directory_is_removed_after_cache_cleanup(qtbot, tmp_path):
@@ -579,7 +581,7 @@ def test_strategy_ui_disables_parameters_that_are_not_consumed(qtbot):
   assert widget.peak_position_slider.isEnabled() is True
   assert widget.genre_weight.isEnabled() is False
   assert "● AKTIV" in widget.energy_strategy_hint.text()
-  assert "Peak Position" in widget.energy_strategy_hint.text()
+  assert "Position des Höhepunkts" in widget.energy_strategy_hint.text()
   assert "#00E676" in widget.energy_group.styleSheet()
   assert "Peak-Time" in widget.harmony_strategy_hint.text()
   assert "#00E676" in widget.harmony_group.styleSheet()

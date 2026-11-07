@@ -340,6 +340,43 @@ def _identity_strategy(monkeypatch):
     )
 
 
+@pytest.mark.parametrize("entrypoint", ["result", "legacy"])
+def test_dj_hinweise_beschreiben_den_aktiven_kandidaten(monkeypatch, entrypoint):
+    from hpg_core.dj_brain import DJRecommendation
+
+    _identity_strategy(monkeypatch)
+    tracks = [_track("a.wav"), _track("b.wav")]
+    candidate = _candidate(140.0, 70.0)
+    candidate.blend_bars = 8
+    candidate.overlap_sec = 8 * 240.0 / 140.0
+    monkeypatch.setattr(pc, "rank_pair_candidates", lambda *a, **kw: [candidate])
+    monkeypatch.setattr(pl, "_kandidaten_fuer_paar", lambda *a, **kw: [candidate])
+    monkeypatch.setattr(candidate_choices, "snapshot", lambda: {})
+    stale = DJRecommendation(
+        genre_pair="Psytrance -> Psytrance", genre_compatibility=1.0,
+        mix_technique="VERALTETE TECHNIK", eq_advice="VERALTETER EQ",
+        transition_bars=24, outgoing_section="outro", incoming_section="intro",
+        structure_note="Ideal: Outro in Intro mixen",
+    )
+    monkeypatch.setattr(pl, "generate_dj_recommendation", lambda *a: stale)
+    if entrypoint == "result":
+        result = pl.generate_playlist_result(tracks, "Warm-Up", 2.0)
+        rec = pl.legacy_transition_recommendations(result)[0]
+    else:
+        rec = pl.compute_transition_recommendations(tracks, 2.0)[0]
+
+    assert rec.plan.mix_out_a == 140.0
+    assert rec.plan.mix_in_b == 70.0
+    assert rec.plan.overlap == pytest.approx(candidate.overlap_sec)
+    assert "Übergang: 8 Takte" in rec.notes
+    assert "24 bars" not in rec.notes
+    assert "VERALTET" not in rec.notes
+    assert "Ideal: Outro in Intro" not in rec.notes
+    assert "Struktur: main -> main" in rec.notes
+    assert stale.transition_bars == 8
+    assert stale.transition_type == rec.plan.transition_type
+
+
 def test_candidate_snapshot_kanonisiert_und_validiert_key_tief():
     candidate = _candidate(10.024, 20.026)
 

@@ -20,7 +20,7 @@ compute_transition_recommendations   hpg_core/playlist.py   -> TransitionPlan
 Im Kindprozess wird daraus ein `BrokenProcessPool`, den der Worker faengt —
 die App ueberlebt. Nie in den GUI- oder Analyse-Thread zurueckbauen.
 
-`TransitionClipSpec.from_plan(plan, from_track, to_track)` [hpg_core/transition_renderer.py] ist der
+`TransitionClipSpec.from_plan(plan, from_track, to_track)` [hpg_core/transition_spec.py] ist der
 **einzige** erlaubte Weg vom Plan zur Render-Spec: keine zweite
 Timing-Berechnung. Wer Timing anpassen will, aendert den Plan.
 

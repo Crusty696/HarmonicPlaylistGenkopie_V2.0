@@ -106,7 +106,7 @@ ueber `track_id` [hpg_core/models.py].
 daraus `TransitionRecommendation` + `TransitionPlan` (der **eine** Timing-
 Vertrag Richtung Renderer und Anzeige).
 
-`SetTimeline` / `compute_set_timeline` [hpg_core/playlist.py] liefert die Zeitleisten-Ansicht
+`SetTimeline` / `compute_set_timeline` [hpg_core/set_timeline.py] liefert die Zeitleisten-Ansicht
 (Phasen, Peak-Track, Energie-Kurve).
 
 ## Camelot-Tabelle als reine Funktion (2026-08-22)

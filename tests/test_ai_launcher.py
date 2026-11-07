@@ -115,7 +115,7 @@ def test_ollama_start_headless_and_gui_fallback(monkeypatch):
   monkeypatch.setattr(launcher.os.path, "exists", lambda path: path == "ollama.exe")
   calls = []
   monkeypatch.setattr(launcher, "_popen_hidden", lambda args: calls.append(args))
-  monkeypatch.setattr(launcher, "_wait_until", lambda predicate, timeout: predicate())
+  monkeypatch.setattr(launcher, "_wait_until", lambda predicate, timeout, **kw: predicate())
 
   assert launcher.ollama_start() is True
   assert calls == [["ollama.exe", "serve"]]
@@ -123,7 +123,7 @@ def test_ollama_start_headless_and_gui_fallback(monkeypatch):
   monkeypatch.setattr(launcher, "ollama_running", lambda: False)
   monkeypatch.setattr(launcher, "_ollama_exe", lambda: None)
   monkeypatch.setattr(launcher.os.path, "exists", lambda _path: True)
-  monkeypatch.setattr(launcher, "_wait_until", lambda predicate, timeout: True)
+  monkeypatch.setattr(launcher, "_wait_until", lambda predicate, timeout, **kw: True)
   gui_calls = []
   monkeypatch.setattr(
     launcher.subprocess, "Popen", lambda args: gui_calls.append(args)
@@ -150,7 +150,7 @@ def test_ollama_pull_and_prepare(monkeypatch):
   assert launcher._prepare_ollama("llama3").running is False
 
 
-def test_ollama_already_running_missing_exe_and_auto_pull(monkeypatch):
+def test_ollama_already_running_missing_exe_and_no_implicit_pull(monkeypatch):
   monkeypatch.setattr(launcher, "ollama_running", lambda: True)
   assert launcher.ollama_start() is True
 
@@ -158,15 +158,15 @@ def test_ollama_already_running_missing_exe_and_auto_pull(monkeypatch):
   assert launcher.ollama_pull("llama3") is False
 
   monkeypatch.setattr(launcher, "ollama_start", lambda: True)
-  model_lists = iter([[], ["llama3:latest"]])
-  monkeypatch.setattr(launcher, "ollama_models", lambda: next(model_lists))
+  monkeypatch.setattr(launcher, "ollama_models", lambda: [])
   monkeypatch.setattr(launcher, "ollama_active_model", lambda: "")
   monkeypatch.setattr(
-    launcher, "ollama_pull", lambda _model, cancel_check=None: True
+    launcher, "ollama_pull", lambda *a, **kw: pytest.fail("Download braucht expliziten Auftrag")
   )
   status = launcher._prepare_ollama("llama3")
-  assert status.models == ["llama3:latest"]
-  assert status.active_model == "llama3:latest"
+  # Geänderter Nutzervertrag: Erkennung erteilt keine Downloadfreigabe.
+  assert status.models == []
+  assert status.active_model == ""
 
 
 def test_lms_detect_port(monkeypatch):
@@ -194,7 +194,7 @@ def test_lms_start_cli_and_gui(monkeypatch):
 
   monkeypatch.setattr(launcher, "lms_detect_port", lambda: None)
   monkeypatch.setattr(launcher, "_lms_exe", lambda: None)
-  monkeypatch.setattr(launcher, "_wait_until", lambda predicate, timeout: True)
+  monkeypatch.setattr(launcher, "_wait_until", lambda predicate, timeout, **kw: True)
   gui_calls = []
   monkeypatch.setattr(
     launcher.subprocess, "Popen", lambda args: gui_calls.append(args)
@@ -340,7 +340,7 @@ def test_detection_rejects_provider_without_active_model(monkeypatch):
   assert status.active_model == ""
 
 
-def test_preferred_model_is_downloaded_even_with_installed_fallback(monkeypatch):
+def test_missing_preferred_model_neither_downloads_nor_selects_fallback(monkeypatch):
   monkeypatch.setattr(launcher, "ollama_start", lambda: True)
   model_lists = iter([["fallback-audio"], ["preferred:latest", "fallback-audio"]])
   monkeypatch.setattr(launcher, "ollama_models", lambda: next(model_lists))
@@ -354,8 +354,10 @@ def test_preferred_model_is_downloaded_even_with_installed_fallback(monkeypatch)
 
   status = launcher._prepare_ollama("preferred")
 
-  assert pulled == [("preferred", None)]
-  assert status.active_model == "preferred:latest"
+  # Ersetzt bewusst die alte Auto-Pull-Erwartung gemäß Freigabevertrag.
+  assert pulled == []
+  assert status.models == ["fallback-audio"]
+  assert status.active_model == ""
 
 
 def test_cancel_stops_lm_detection_without_download(monkeypatch):
@@ -373,3 +375,59 @@ def test_cancel_stops_lm_detection_without_download(monkeypatch):
     launcher._prepare_lmstudio("preferred", cancel_check=cancelled)
 
   assert received == []
+
+
+@pytest.mark.parametrize('name', ['Ollama', 'LM Studio'])
+def test_pre_cancelled_provider_does_not_start_or_query(name, monkeypatch):
+  for method in ('ollama_start', 'lms_start', 'ollama_models', 'lms_models'):
+    monkeypatch.setattr(launcher, method, lambda *a, **kw: pytest.fail('Vorbereitung nach Abbruch'))
+  with pytest.raises(InterruptedError):
+    launcher.prepare_provider(name, 'selected', cancel_check=lambda: True)
+
+
+@pytest.mark.parametrize('method', ['ollama_start', 'lms_start'])
+def test_pre_cancelled_start_does_not_query_service(method, monkeypatch):
+  monkeypatch.setattr(launcher, 'ollama_running', lambda: pytest.fail('HTTP nach Abbruch'))
+  monkeypatch.setattr(launcher, 'lms_detect_port', lambda: pytest.fail('CLI nach Abbruch'))
+  with pytest.raises(InterruptedError):
+    getattr(launcher, method)(cancel_check=lambda: True)
+
+
+def test_poll_observes_cancel_even_when_predicate_reports_ready():
+  state = {'cancel': False}
+  def ready():
+    state['cancel'] = True
+    return True
+  with pytest.raises(InterruptedError):
+    launcher._wait_until(ready, 1., cancel_check=lambda: state['cancel'])
+
+
+def test_ollama_poll_cancel_prevents_gui_fallback(monkeypatch):
+  state = {'cancel': False, 'polls': 0}
+  def running():
+    state['polls'] += 1
+    if state['polls'] == 2:
+      state['cancel'] = True
+    return False
+  monkeypatch.setattr(launcher, 'ollama_running', running)
+  monkeypatch.setattr(launcher, '_ollama_exe', lambda: 'ollama.exe')
+  monkeypatch.setattr(launcher.os.path, 'exists', lambda path: True)
+  monkeypatch.setattr(launcher, '_popen_hidden', lambda args: None)
+  monkeypatch.setattr(launcher.subprocess, 'Popen', lambda *a, **kw: pytest.fail('GUI nach Abbruch'))
+  with pytest.raises(InterruptedError):
+    launcher.ollama_start(cancel_check=lambda: state['cancel'])
+  assert state['polls'] == 2
+
+
+def test_lms_cancel_after_bounded_cli_prevents_fallback(monkeypatch):
+  state = {'cancel': False}
+  monkeypatch.setattr(launcher, 'lms_detect_port', lambda: None)
+  monkeypatch.setattr(launcher, '_lms_exe', lambda: 'lms.exe')
+  monkeypatch.setattr(launcher.os.path, 'exists', lambda path: True)
+  def cli(*a, **kw):
+    state['cancel'] = True
+    return ''
+  monkeypatch.setattr(launcher, '_run_hidden', cli)
+  monkeypatch.setattr(launcher.subprocess, 'Popen', lambda *a, **kw: pytest.fail('GUI nach Abbruch'))
+  with pytest.raises(InterruptedError):
+    launcher.lms_start(cancel_check=lambda: state['cancel'])

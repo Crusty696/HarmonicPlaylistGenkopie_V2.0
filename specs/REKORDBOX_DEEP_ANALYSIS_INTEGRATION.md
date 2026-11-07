@@ -1,5 +1,22 @@
 # Rekordbox Deep Analysis und Taktzuverlaessigkeit – integrierter Implementierungsplan
 
+> **Aktueller Abgleich 07.11.2026:** Die historische Tabelle unter
+> „Read-only Bestandsabgleich“ beschreibt den damaligen Stand und ist keine
+> heutige Aufgabenliste. `Track` enthält inzwischen `stem_analysis` und
+> `embedding_analysis`; `deep_features.py` validiert lokale Stemkurven und
+> Embeddingfenster, `pair_candidates.py` verwendet verfügbare lokale Werte,
+> `playlist.py` übernimmt einen Stem-Bass-Swap-Kandidaten nur als Empfehlung
+> ins Render-Raster. `cue_service.py` liefert Cue-Rohscores; deren
+> Endauswahl und musikalischer Nutzen sind damit nicht unabhängig belegt.
+> `measurement_panel.py` zeigt persistierte Anker-/Rasterdiagnosen an.
+> Der aktuelle Cachewert ist 183. Der ONNX-DirectML-Smoke auf DXGI-Adapter 1
+> (RX 7800 XT) und der gemeinsame Test mit 6704 bestandenen Fällen stehen
+> im laufenden [Arbeitsplan](../docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md).
+> Der separate native Rekordbox-Modellprozess belastete die iGPU; auf
+> ausdrücklichen Nutzerwunsch bleibt die iGPU frei und der native 26-Track-Lauf
+> vorerst ausgesetzt. Frischer vollständiger App-Ablauf, unabhängige
+> Takt-/Phrasenqualität, musikalisches Hörurteil und EXE-Abnahme bleiben offen.
+
 > **Quellenabgleich 26.10.2026:** Der aktuelle Code nutzt Cache-Version 183.
 > Neuester fachlicher Chatstand: [Übergabe vom 20.10.](../docs/CHAT_UEBERGABE_2026-10-20.md).
 > Aktuelle Zusammenfassung: [Quellen- und Nachweisstand](../PRODUCTION_STATUS.md).
@@ -18,6 +35,7 @@
 >
 > **Repository:** `C:\Users\david\Documents\HarmonicPlaylistGenerator_V2.0`
 > **Runtime:** Python 3.12 / `venv312`. Die urspruengliche Spezifikation nennt AMD RX 7800 XT und DirectML-only; der tatsaechliche GPU-/DirectML-Laufzeitstatus ist fuer diese Revision nicht live verifiziert.
+> **Aktueller Geraetebefund 07.11.2026:** DXGI-Index 0 ist auf diesem Rechner die iGPU, Index 1 die RX 7800 XT. Die ONNX-Geraetewahl und der noch laufende Gesamtpruefstand stehen im [Arbeitsplan](../docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md#fortsetzung-07112026-directml-geraetewahl). Die folgenden aelteren Gerät-0-Aussagen bleiben historische Befunde.
 > **Arbeitsregel:** Originalmusik bleibt am Quellort und wird nur lesend analysiert/abgespielt. Keine Audio-Kopien, persistierten Audio-Hoertestclips, Cache-Manipulation oder EXE-Builds in diesem Plan-Audit.
 
 ## 0. Vorbereitung und Migrationsauftrag (14.10.2026)
@@ -536,9 +554,10 @@ import onnxruntime as ort
 import numpy as np
 import librosa
 
-# DirectML Session für AMD Radeon RX 7800 XT aufbauen
+# DXGI-Adapter zur RX 7800 XT auf diesem Rechner: Index 1.
+# Index 0 waere hier die iGPU; produktiv den geprueften Selektor verwenden.
 providers = [
-    ("DmlExecutionProvider", {"device_id": 0}),
+    ("DmlExecutionProvider", {"device_id": 1}),
     "CPUExecutionProvider"
 ]
 session = ort.InferenceSession(

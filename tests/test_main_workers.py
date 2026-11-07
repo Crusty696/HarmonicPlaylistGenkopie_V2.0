@@ -94,7 +94,7 @@ def test_timeline_panel_meldet_ungueltige_kante_ohne_fallback(
   panel.set_timeline(tracks, [invalid])
 
   text = panel.text_edit.toPlainText()
-  assert "Timeline ungültig" in text
+  assert "Zeitlinie ungültig" in text
   assert "Kante 1->2" in text
   reporter.log_error.assert_called_once()
 
@@ -138,7 +138,7 @@ def test_timeline_panel_meldet_ungueltige_peak_position_kontrolliert(
 
   panel.set_timeline([track], scoring_context={"peak_position": 40.0})
 
-  assert "Timeline ungültig" in panel.text_edit.toPlainText()
+  assert "Zeitlinie ungültig" in panel.text_edit.toPlainText()
   assert "peak_position" in panel.text_edit.toPlainText()
   reporter.log_error.assert_called_once()
 
@@ -306,7 +306,7 @@ def test_ai_analysis_worker_persists_metadata_off_gui_thread(monkeypatch):
   monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *args: "key")
   monkeypatch.setattr(
     "hpg_core.caching.merge_cached_ai_metadata",
-    lambda key, path, value: cached.append((key, path, value)) or True,
+    lambda key, path, value, **kwargs: cached.append((key, path, value)) or True,
   )
   worker = main.AIAnalysisWorker(
     [track], provider="Ollama", model="model", base_url="http://local"
@@ -334,7 +334,7 @@ def test_ai_analysis_worker_publiziert_nicht_bei_unbestaetigter_persistenz(
   monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *_args: "key")
   monkeypatch.setattr(
     "hpg_core.caching.merge_cached_ai_metadata",
-    lambda *_args: merge_result,
+    lambda *_args, **_kwargs: merge_result,
   )
   worker = main.AIAnalysisWorker(
     [track], provider="Ollama", model="model", base_url="http://local"
@@ -364,7 +364,7 @@ def test_ai_analysis_worker_publiziert_nicht_bei_persistenz_exception(monkeypatc
   )
   monkeypatch.setattr("hpg_core.caching.generate_cache_key", lambda *_args: "key")
 
-  def fail_merge(*_args):
+  def fail_merge(*_args, **_kwargs):
     raise RuntimeError("cache kaputt")
 
   monkeypatch.setattr("hpg_core.caching.merge_cached_ai_metadata", fail_merge)
@@ -432,7 +432,7 @@ def test_ai_analysis_worker_publiziert_commit_vor_nachlaufendem_cancel(monkeypat
     [track], provider="Ollama", model="model", base_url="http://local"
   )
 
-  def persist_and_cancel(*_args):
+  def persist_and_cancel(*_args, **_kwargs):
     worker.request_cancel()
     return True
 
@@ -482,14 +482,135 @@ def test_ai_analysis_worker_reicht_cancel_durch_und_meldet_keinen_fehler(
   assert progress == [(0, 1)]
 
 
+@pytest.mark.parametrize("other_available", [False, True])
+def test_detect_explicit_provider_keeps_available_inventory_without_requested_model(monkeypatch, other_available):
+  from hpg_core import ai_launcher
+
+  selected = ai_launcher.AIProviderStatus("Ollama", "http://isolated:11434/v1/chat/completions",
+      ["installed-other"], "", running=True)
+  other = ai_launcher.AIProviderStatus("LM Studio", "http://isolated:1234/v1/chat/completions",
+      ["missing-request"] if other_available else [],
+      "missing-request" if other_available else "", running=other_available)
+  calls = []
+
+  def prepare(name, preferred_model=None, cancel_check=None):
+    calls.append(name)
+    return selected if name == "Ollama" else other
+
+  monkeypatch.setattr(ai_launcher, "prepare_provider", prepare)
+  worker = main.AIDetectWorker("Ollama", "missing-request")
+  emitted = []
+  worker.detected.connect(emitted.append)
+  worker.run()
+
+  assert emitted == [selected]
+  assert emitted[0].running is True
+  assert emitted[0].models == ["installed-other"]
+  assert calls == ["Ollama"]
+
+
+def test_detect_inventory_without_selected_model_requires_explicit_choice(qtbot):
+  from hpg_core.ai_launcher import AIProviderStatus
+
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  status = AIProviderStatus("Ollama", "http://isolated/v1/chat/completions",
+                            ["available"], "", running=True)
+
+  widget._on_ai_detected(status)
+
+  assert widget.model_combo.count() == 1
+  assert widget.model_combo.currentText() == ""
+  assert not widget.test_ai_btn.isEnabled()
+  assert "erreichbar" in widget.ai_status_label.text()
+  widget.model_combo.setCurrentText("available")
+  assert widget.test_ai_btn.isEnabled()
+  assert widget.detected_active_model == "available"
+
+
+def test_reenable_ai_replaces_interrupted_detection(qtbot, monkeypatch):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.model_combo.addItem("selected")
+  widget.model_combo.setCurrentText("selected")
+  assert widget.model_combo.currentText() == "selected"
+  widget.detected_provider = "Ollama"
+  widget.ollama_radio.setChecked(True)
+  old = Mock(preferred="Ollama", preferred_model="selected")
+  old.isRunning.return_value = True
+  old.isInterruptionRequested.return_value = False
+  old.requestInterruption.side_effect = lambda: setattr(old.isInterruptionRequested, "return_value", True)
+  widget._ai_detect_worker = old
+  widget._ai_detect_workers = [old]
+  replacement = Mock(preferred="Ollama", preferred_model="selected")
+  factory = Mock(return_value=replacement)
+  monkeypatch.setattr(main, "AIDetectWorker", factory)
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+
+  widget.ai_enabled_checkbox.setChecked(False)
+  widget.ai_enabled_checkbox.setChecked(True)
+
+  old.requestInterruption.assert_called()
+  factory.assert_called_once()
+  replacement.start.assert_called_once()
+  assert widget._ai_detect_worker is replacement
+
+
+def test_refresh_ai_reuses_same_noninterrupted_detection(qtbot, monkeypatch):
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+  widget.ollama_radio.setChecked(True)
+  widget.model_combo.addItem("selected")
+  widget.model_combo.setCurrentText("selected")
+  widget.detected_provider = "Ollama"
+  worker = Mock(preferred="Ollama", preferred_model="selected")
+  worker.isRunning.return_value = True
+  worker.isInterruptionRequested.return_value = False
+  widget._ai_detect_worker = worker
+  widget.ai_enabled_checkbox.blockSignals(True)
+  widget.ai_enabled_checkbox.setChecked(True)
+  widget.ai_enabled_checkbox.blockSignals(False)
+  factory = Mock()
+  monkeypatch.setattr(main, "AIDetectWorker", factory)
+
+  widget.refresh_ai_providers()
+
+  factory.assert_not_called()
+  worker.requestInterruption.assert_not_called()
+  assert widget._ai_detect_worker is worker
+
+
+def test_ai_insights_marks_valid_llm_mixpoint_description_advisory(qtbot):
+  from hpg_core.ai_engine import validate_ai_analysis, validate_ai_metadata
+
+  track = Track(filePath="C:/advisory.wav", fileName="advisory.wav", duration=400.)
+  description = "Mix-In bei 68.9 Sekunden; Mix-Out bei 329.2 Sekunden."
+  track.ai_metadata = validate_ai_analysis({
+      "sub_genre": "Psytrance", "moods": ["driving", "dark"],
+      "description": description, "mix_in_time": 68.9, "mix_out_time": 329.2,
+  }, track, "LM Studio", "model")
+  assert validate_ai_metadata(track.ai_metadata, duration=track.duration)
+
+  item = main.PlaylistPanel._make_ai_insights_item(track)
+
+  assert description in item.toolTip()
+  assert "unverbindlich" in item.toolTip().lower()
+  assert "kein aktiver übergangsplan" in item.toolTip().lower()
+
+
 def test_detect_worker_passes_cooperative_cancel(monkeypatch):
   captured = {}
 
-  def detect_and_start(**kwargs):
+  def detect_and_start(_name, **kwargs):
     captured.update(kwargs)
     return None
 
-  monkeypatch.setattr("hpg_core.ai_launcher.detect_and_start", detect_and_start)
+  monkeypatch.setattr("hpg_core.ai_launcher.prepare_provider", detect_and_start)
   worker = main.AIDetectWorker("Ollama", "model")
   worker.run()
 
@@ -499,7 +620,7 @@ def test_detect_worker_passes_cooperative_cancel(monkeypatch):
 def test_detect_worker_emits_success_and_failure(monkeypatch):
   status = SimpleNamespace(running=True)
   monkeypatch.setattr(
-    "hpg_core.ai_launcher.detect_and_start", lambda **kwargs: status
+    "hpg_core.ai_launcher.prepare_provider", lambda *args, **kwargs: status
   )
   worker = main.AIDetectWorker("Ollama", "model")
   emitted = []
@@ -571,6 +692,101 @@ def test_ai_test_worker_success_empty_and_error(monkeypatch):
   worker.run()
   assert emitted[0][0] is False
   assert "down" in emitted[0][1]
+
+
+@pytest.mark.parametrize("provider", ["Ollama", "LM Studio"])
+@pytest.mark.parametrize("stage", ["entry", "before_post"])
+def test_ai_test_worker_cancel_stops_preparation_and_http(monkeypatch, provider, stage):
+  from hpg_core import lmstudio_runtime
+
+  worker = main.AITestWorker(provider, "model", "http://isolated/v1/chat/completions")
+  post = Mock()
+  prepare = Mock(return_value="owned")
+  emitted = Mock()
+  worker.test_finished.connect(emitted)
+  monkeypatch.setattr(requests, "post", post)
+  monkeypatch.setattr(lmstudio_runtime, "prepare_gpu_model", prepare)
+  monkeypatch.setattr(lmstudio_runtime, "instance_qualification_key", lambda model: None)
+  # Externe Qt-Unterbrechung; kein request_cancel-Flag erforderlich.
+  checks = iter([True] if stage == "entry" else [False, True])
+  monkeypatch.setattr(worker, "isInterruptionRequested", lambda: next(checks))
+
+  worker.run()
+
+  post.assert_not_called()
+  emitted.assert_not_called()
+  assert prepare.call_count == (1 if stage == "before_post" and provider == "LM Studio" else 0)
+
+
+@pytest.mark.parametrize("stage", ["entry", "prepared"])
+def test_ai_analysis_worker_external_interrupt_prevents_work(monkeypatch, stage):
+  from hpg_core import ai_engine
+
+  worker = main.AIAnalysisWorker([Track(filePath="C:/a.wav", fileName="a.wav")],
+      provider="Ollama", model="model", base_url="http://isolated")
+  checks = iter([True] if stage == "entry" else [False, True])
+  monkeypatch.setattr(worker, "isInterruptionRequested", lambda: next(checks))
+  prepare = Mock(return_value=True)
+  fetch = Mock()
+  monkeypatch.setattr(worker, "_ensure_ready", prepare)
+  monkeypatch.setattr(ai_engine, "fetch_ai_analysis", fetch)
+  emitted = Mock()
+  worker.ai_finished.connect(emitted)
+  worker.progress.connect(emitted)
+  worker.failed.connect(emitted)
+
+  worker.run()
+
+  assert worker._should_cancel is False
+  assert prepare.call_count == (1 if stage == "prepared" else 0)
+  fetch.assert_not_called()
+  emitted.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["json", "transport", "http", "cancel"])
+def test_ai_test_worker_qualifies_only_observed_invalid_outer_json(monkeypatch, failure):
+  from hpg_core import lmstudio_runtime
+
+  key = ("isolated-worker-instance", "model", "contract")
+  monkeypatch.setattr(lmstudio_runtime, "_QUALIFICATIONS", {})
+  monkeypatch.setattr(lmstudio_runtime, "prepare_gpu_model", lambda *a, **k: "owned-probe")
+  monkeypatch.setattr(lmstudio_runtime, "instance_qualification_key", lambda model: key)
+  worker = main.AITestWorker("LM Studio", "catalog-model", "http://isolated/v1/chat/completions")
+  emitted = []
+  worker.test_finished.connect(lambda *args: emitted.append(args))
+  response = Mock()
+  response.json.side_effect = json.JSONDecodeError("invalid", "not-json", 0)
+  if failure == "http":
+    response.raise_for_status.side_effect = requests.HTTPError("503")
+  cancelled = False
+  monkeypatch.setattr(worker, "isInterruptionRequested", lambda: cancelled)
+
+  def post(*args, **kwargs):
+    nonlocal cancelled
+    assert kwargs["json"]["model"] == "owned-probe"
+    if failure == "transport":
+      raise requests.ConnectionError("offline")
+    cancelled = failure == "cancel"
+    return response
+
+  monkeypatch.setattr(requests, "post", post)
+  worker.run()
+
+  if failure == "json":
+    assert lmstudio_runtime._QUALIFICATIONS[key][0] is False
+    assert "Antwort-JSON" in lmstudio_runtime._QUALIFICATIONS[key][1]
+    with pytest.raises(ValueError, match="bereits fehlgeschlagen"):
+      lmstudio_runtime.require_not_failed("catalog-model", "http://isolated/v1/chat/completions",
+                                         qualification_key=key)
+    response.json.assert_called_once()
+  else:
+    assert lmstudio_runtime._QUALIFICATIONS == {}
+    response.json.assert_not_called()
+  if failure == "cancel":
+    assert emitted == []
+  else:
+    assert len(emitted) == 1
+    assert emitted[0][0] is False
 
 
 @pytest.mark.parametrize("outcome", [True, False])
@@ -675,7 +891,7 @@ def test_analysis_worker_empty_folder(tmp_path):
   worker.run()
 
   assert finished == [([], {})]
-  assert any("No audio files" in status for status in statuses)
+  assert any("Keine Audiodateien" in status for status in statuses)
 
 
 def test_product_audio_extensions_are_explicit_and_complete():
@@ -977,8 +1193,9 @@ def test_prepare_uebergangs_views_reicht_scoring_context_an_timeline(
     widget.deleteLater()
 
 
-def _deliver_current_analysis(window, tracks, quality=None):
+def _deliver_current_analysis(window, tracks, quality=None, cache_policy="reuse"):
   worker = Mock()
+  worker.cache_policy = cache_policy
   window.worker = worker
   window.analysis_finished(tracks, quality or {}, worker)
   return worker
@@ -1023,7 +1240,7 @@ def test_mainwindow_terminal_state_and_empty_analysis(qtbot, monkeypatch):
   window._set_run_state(main.RunState.AUDIO)
   _deliver_current_analysis(window, [])
   assert window.run_state == main.RunState.ERROR
-  assert "no results" in window.status_bar.status_label.text().lower()
+  assert "ohne ergebnisse" in window.status_bar.status_label.text().lower()
 
 
 def test_mainwindow_meldet_alle_degradierten_tracks_konkret(qtbot, monkeypatch):
@@ -1174,7 +1391,7 @@ def test_playlist_done_legacy_empty_behaelt_generischen_fehler(qtbot, monkeypatc
   window._on_playlist_generation_done(SimpleNamespace(tracks=()), worker)
 
   assert window.run_state == main.RunState.ERROR
-  assert "empty result" in window.status_bar.status_label.text()
+  assert "ohne Ergebnis" in window.status_bar.status_label.text()
   publish.assert_not_called()
 
 
@@ -1555,8 +1772,9 @@ def test_stale_playlist_worker_result_und_fehler_werden_ignoriert(
   reporter.log_error.assert_not_called()
 
 
+@pytest.mark.parametrize("cache_policy", ["reuse", "fresh"])
 def test_ai_lifecycle_generiert_und_publiziert_result_erst_nach_worker_ende(
-  qtbot, monkeypatch
+  qtbot, monkeypatch, cache_policy
 ):
   window = _window(qtbot, monkeypatch)
   tracks = [Track(filePath="C:/a.wav", fileName="a.wav", bpm=128.0)]
@@ -1577,12 +1795,13 @@ def test_ai_lifecycle_generiert_und_publiziert_result_erst_nach_worker_ende(
     "ai_base_url": "http://127.0.0.1:11434",
   }
 
-  _deliver_current_analysis(window, tracks)
+  _deliver_current_analysis(window, tracks, cache_policy=cache_policy)
 
   generate.assert_not_called()
   publish.assert_not_called()
   worker = window.ai_worker
   assert worker is not None
+  assert worker.cache_policy == cache_policy
 
   window.on_ai_worker_finished(worker)
   _wait_playlist_worker(qtbot, window)
@@ -1606,9 +1825,10 @@ def test_ai_worker_verwendet_auch_leere_model_und_base_url_laufsnapshots(
       pass
 
   class _AIWorker:
-    def __init__(self, worker_tracks, *, provider, model, base_url):
+    def __init__(self, worker_tracks, *, provider, model, base_url, cache_policy):
       captured.update(
-        tracks=worker_tracks, provider=provider, model=model, base_url=base_url
+        tracks=worker_tracks, provider=provider, model=model, base_url=base_url,
+        cache_policy=cache_policy,
       )
       self.ai_finished = _Signal()
       self.progress = _Signal()
@@ -1642,6 +1862,7 @@ def test_ai_worker_verwendet_auch_leere_model_und_base_url_laufsnapshots(
     "provider": "Ollama",
     "model": "",
     "base_url": None,
+    "cache_policy": "reuse",
   }
   window.ai_worker.start.assert_called_once_with()
 
@@ -3586,7 +3807,7 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   first.library_panel.set_folder_path(str(tmp_path))
   first.library_panel.strategy_combo.setCurrentText("Context Flow")
   first.library_panel.bpm_tolerance_slider.setValue(1)
-  ap.energy_direction.setCurrentText("Build Up")
+  ap.energy_direction.setCurrentText("Aufbauen")
   ap.peak_position_slider.setValue(63)
   ap.target_energy_slider.setValue(76)
   ap.target_energy_enabled.setChecked(True)
@@ -4160,7 +4381,7 @@ def test_mix_tips_leeren_verwirft_auch_die_alte_playlist(qtbot):
   panel.set_recommendations([], [])
 
   texte = [label.text() for label in panel.findChildren(main.QLabel)]
-  assert "No transition tips available yet." in texte
+  assert "Noch keine Übergänge vorhanden. Zuerst eine Playlist erstellen." in texte
   assert not any("UNGEPLANT" in text for text in texte)
 
 

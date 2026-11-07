@@ -281,7 +281,7 @@ class ParallelAnalyzer:
         BATCH_SIZE = min(200, max(worker_count * 2, total_files // 4))
 
         if progress_callback:
-            progress_callback(0, total_files, f"Starting analysis with {worker_count} cores...")
+            progress_callback(0, total_files, f"Analyse startet mit {worker_count} Prozessen …")
 
         logger.info(f"Verarbeite {total_files} Dateien mit {worker_count} Workers in Batches von {BATCH_SIZE}...")
 
@@ -416,7 +416,7 @@ class ParallelAnalyzer:
                                         finished_count += 1
                                         if _is_successful_analysis_result(track):
                                             completed_count += 1
-                                            status_msg = f"Analyzed: {os.path.basename(file_path)}"
+                                            status_msg = f"Analysiert: {os.path.basename(file_path)}"
                                         else:
                                             track = None
                                             batch_results[idx] = None
@@ -544,7 +544,7 @@ class ParallelAnalyzer:
                                         raise TimeoutError()
                                 if _is_successful_analysis_result(track):
                                     completed_count += 1
-                                    status_msg = f"Analyzed (Safe Mode): {os.path.basename(file_path)}"
+                                    status_msg = f"Analysiert (Wiederherstellung): {os.path.basename(file_path)}"
                                 else:
                                     track = None
                                     status_msg = f"[FAILED] {os.path.basename(file_path)}"

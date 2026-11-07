@@ -17,7 +17,7 @@ _QUALIFICATION_LOCK = threading.Lock()
 _INSTANCE_QUALIFICATION_KEYS = {}
 
 
-def _qualification_key(model_key, url, *, load_profile=None):
+def _qualification_key(model_key, url, *, load_profile=None, runtime_identity=None):
     """Sessionnachweis an echten Antwortvertrag und angefordertes GPU-Profil binden."""
     import hashlib
     from . import config
@@ -29,7 +29,7 @@ def _qualification_key(model_key, url, *, load_profile=None):
     endpoint = (parsed.scheme.lower(), host, parsed.port, parsed.path.rstrip("/"))
     contract = {"schema": AI_JSON_SCHEMA, "prompt": config.AI_SYSTEM_PROMPT,
                 "prompt_version": AI_PROMPT_VERSION, "context": CONTEXT_TOKENS,
-                "gpu": TARGET_GPU, "runtime": "vulkan-2.51.0",
+                "gpu": TARGET_GPU, "runtime": runtime_identity,
                 "load_profile": load_profile,
                 "offload": 1.0, "strict_vram": True, "kv_gpu": True,
                 "max_tokens": config.AI_MAX_TOKENS, "temperature": 0, "seed": 0}
@@ -119,12 +119,20 @@ def runtime_target(host="127.0.0.1", port=1234):
 def requested_load_config(target):
     # LM Studio 0.4.25+1 uebersetzt Survey-Geraete-IDs selbst durch die
     # visibleDevices- und disabledGpus-Abbildungen. Nicht doppelt umnummerieren.
-    # Historischer Quellcodebeleg und Runtime-Grenze: Archivwegweiser
-    # in docs/PROJECT_KNOWLEDGE.md (Implementierungsbericht vom 04.10.).
-    if target.get("runtime_version") != "2.51.0":
+    # Ebenso lokal belegt fuer App 0.4.27+2 / Runtime 2.67.0 / SDK 1.5.0:
+    # main/index.js SHA256 1613092a7807e13f4d386704b02ec1ebbca96faa93f7e85c693bf2e442fd9fd4.
+    # Survey-IDs bleiben auch bei umgekehrter Sichtbarkeitsreihenfolge erhalten.
+    if (target.get("runtime") != "llama.cpp-win-x86_64-vulkan-avx2"
+            or target.get("runtime_version") not in {"2.51.0", "2.67.0", "2.71.0"}):
         raise ValueError("GPU-Indexzuordnung dieser Runtime-Version nicht nachgewiesen; kein Modell geladen")
     visible, ids = target.get("visible_devices", []), target.get("survey_ids", [])
-    if not visible or len(set(visible)) != len(visible) or any(i not in ids for i in visible):
+    disabled = target.get("disabled_ids", [])
+    main = target.get("device_id")
+    if (any(type(values) is not list or any(type(i) is not int for i in values)
+            or len(set(values)) != len(values) for values in (visible, ids, disabled))
+            or not visible or not ids or type(main) is not int
+            or main not in visible or any(i not in ids for i in visible)
+            or set(disabled) != set(ids) - {main}):
         raise ValueError("Mehrdeutige GPU-Indexzuordnung; kein Modell geladen")
     return {"contextLength": CONTEXT_TOKENS,
             "gpu": {"ratio": 1.0, "mainGpu": target["device_id"],
@@ -150,6 +158,8 @@ def prepare_gpu_model(model_key, url, *, cancel_check=None, explicit_retest=Fals
     Config-Readback bestaetigt die Anforderung, nicht die physische Ausfuehrung.
     Der Aufrufer darf daraus keinen Laufzeitnachweis oder Audiofaehigkeit ableiten.
     """
+    if cancel_check and cancel_check():
+        raise InterruptedError("KI-Vorbereitung abgebrochen")
     while not _LOAD_LOCK.acquire(timeout=.1):
         if cancel_check and cancel_check():
             raise InterruptedError("KI-Vorbereitung abgebrochen")
@@ -160,13 +170,19 @@ def prepare_gpu_model(model_key, url, *, cancel_check=None, explicit_retest=Fals
 
 
 def _prepare_gpu_model(model_key, url, *, cancel_check=None, explicit_retest=False):
+    def checkpoint():
+        if cancel_check and cancel_check():
+            raise InterruptedError("KI-Vorbereitung abgebrochen")
+    checkpoint()
     import lmstudio as lms
     from .ai_launcher import _http_json, _lms_exe, _run_hidden
     parsed = urlparse(url)
     if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or not parsed.port:
         raise ValueError("GPU-Steuerung nur für einen lokalen LM-Studio-Endpunkt")
     target = runtime_target(parsed.hostname, parsed.port)
+    checkpoint()
     ok, inventory = _http_json(f"http://{parsed.netloc}/api/v1/models", timeout=5)
+    checkpoint()
     records = [m for m in (inventory or {}).get("models", []) if m.get("key") == model_key]
     if not ok or len(records) != 1:
         raise ValueError("Ausgewähltes Modell nicht eindeutig installiert")
@@ -176,12 +192,10 @@ def _prepare_gpu_model(model_key, url, *, cancel_check=None, explicit_retest=Fal
     expected = requested_load_config(target)
     # Vor Netzwerk-Inferenz einfrieren: derselbe Schluessel gilt bis zum Record,
     # auch falls Defaults waehrend der Anfrage geaendert werden.
-    qualification_key = _qualification_key(model_key, url, load_profile=expected)
+    qualification_key = _qualification_key(model_key, url, load_profile=expected,
+        runtime_identity=(target['runtime'], target['runtime_version']))
     if not explicit_retest:
         require_not_failed(model_key, url, qualification_key=qualification_key)
-    def checkpoint():
-        if cancel_check and cancel_check():
-            raise InterruptedError("KI-Vorbereitung abgebrochen")
     def validate(handle, identifier):
         info = handle.get_info()
         if handle.identifier != identifier or info.model_key != model_key:

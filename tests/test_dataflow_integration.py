@@ -398,9 +398,12 @@ def test_cooperative_cancel():
     with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py"), "r", encoding="utf-8") as f:
         source = f.read()
 
-    check("_should_cancel in AnalysisWorker", "_should_cancel" in source)
-    check("request_cancel() Methode existiert", "def request_cancel(self)" in source)
-    check("InterruptedError Handler existiert", "except InterruptedError" in source)
+    from hpg_core import app_workers
+    import inspect
+    worker_source = inspect.getsource(app_workers.AnalysisWorker)
+    check("_should_cancel in AnalysisWorker", "_should_cancel" in worker_source)
+    check("request_cancel() Methode existiert", "def request_cancel(self)" in worker_source)
+    check("InterruptedError Handler existiert", "except InterruptedError" in worker_source)
     check("html_mod.escape in set_timing", "html_mod.escape" in source)
     check("import html as html_mod", "import html as html_mod" in source)
     check("setUpdatesEnabled(False) in mix_recs", "setUpdatesEnabled(False)" in source)

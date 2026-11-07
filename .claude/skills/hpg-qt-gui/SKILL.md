@@ -7,12 +7,12 @@ description: Use when working on the HPG PyQt6 GUI in main.py — QThread-Worker
 
 ## Architektur
 
-`main.py` enthaelt MainWindow, zentrale Worker und Panels.
+`main.py` enthält MainWindow, Panels und Dienstbindungen; Worker liegen in `hpg_core/app_workers.py`.
 Weitere GUI-Komponenten stehen unter anderem in `hpg_core/measurement_panel.py`;
-die Oberflaeche ist nicht ausschliesslich in main.py implementiert. Es gibt kein `ui/`-Paket (alte Doku behauptet das).
+die Oberflaeche ist nicht ausschliesslich in main.py implementiert. Navigation, Spalten und Ergebnisveröffentlichung liegen in `hpg_core/ui/`.
 
 Fuenf Panels in einem `QStackedWidget`, umgeschaltet von `SidebarWidget`
-[main.py]: LIBRARY(0) PLAYLIST(1) MIX TIPS(2) TIMELINE(3) QUALITY(4).
+[hpg_core/ui/navigation.py]: Bibliothek(0), Playlist(1), Übergänge(2), Zeitlinie(3), Qualität(4).
 Shortcuts: `Ctrl+G` generieren, `Ctrl+E` exportieren, `Ctrl+1..5` Panel
 `_setup_shortcuts` [main.py].
 
@@ -21,9 +21,10 @@ Shortcuts: `Ctrl+G` generieren, `Ctrl+E` exportieren, `Ctrl+1..5` Panel
 **Business-Logik im QThread, UI-Update ausschliesslich per `pyqtSignal`.**
 Kein Widget-Zugriff aus `run()`, kein manuelles Marshalling.
 
-Worker in main.py: `AnalysisWorker` [main.py], `AIAnalysisWorker` [main.py],
-`AIDetectWorker`, `AITestWorker`, `AIPullWorker`, `DependencyCheckWorker`,
-`TransitionRenderWorker` [main.py], Peak-Worker fuer die Wellenform.
+Workerimplementierungen liegen in `hpg_core/app_workers.py`; die kompatiblen
+`AnalysisWorker`- und `TransitionRenderWorker`-Fassaden in `main.py` binden
+die App-Dienste. KI-/Abhängigkeitsworker werden von dort importiert.
+Peak-Worker bleiben beim Wellenform-Widget.
 
 ## Worker-Muster (vier Pflichtteile)
 
@@ -41,7 +42,7 @@ class MyWorker(QThread):
 ```
 
 1. **Eigener Ergebnis-Name.** `AnalysisWorker` heisst das Signal
-   `analysis_done` [main.py]. `finished` ist von `QThread` belegt; ueberschreibt
+   `analysis_done` [hpg_core/app_workers.py]. `finished` ist von `QThread` belegt; ueberschreibt
    man es, meldet nichts mehr das echte Thread-Ende und `deleteLater()` trifft
    einen noch laufenden Thread ("QThread: Destroyed while thread is still
    running").
@@ -57,8 +58,8 @@ class MyWorker(QThread):
 
 ## RunState — die einzige Wahrheit
 
-`RunState` [main.py]: IDLE · AUDIO · AI · PLAYLIST · PREVIEW · CANCELLING ·
-SUCCESS · PARTIAL · ERROR · CANCELLED. `ACTIVE_RUN_STATES` [main.py] = AUDIO,
+`RunState` [hpg_core/run_state.py]: IDLE · AUDIO · AI · PLAYLIST · PREVIEW · CANCELLING ·
+SUCCESS · PARTIAL · ERROR · CANCELLED. `ACTIVE_RUN_STATES` [hpg_core/run_state.py] = AUDIO,
 AI, PLAYLIST, PREVIEW, CANCELLING.
 
 - `_set_run_state` [main.py] koppelt die Reorder-Sperre an den Zustand (nur
@@ -73,7 +74,7 @@ Neue Terminalpfade immer ueber `_finish_run` fuehren.
 ## Fortschritt
 
 Audio-Analyse = 0-80 %, KI = 80-95 %, Rest Playlist/Preview. Mapping ueber
-`map_phase_progress(percent, start, end)` [main.py]. Die Slots pruefen den
+`map_phase_progress(percent, start, end)` [hpg_core/run_state.py]. Die Slots pruefen den
 `run_state`, bevor sie den Balken anfassen. Updates sind auf 100 ms gedrosselt.
 
 ## Peak-Worker / Wellenform
@@ -85,13 +86,13 @@ laufender QThread darf **nie** per GC/`deleteLater` sterben.
 
 ## Panels und Tabelle
 
-`PlaylistPanel` [main.py] hat **16 Spalten** (0-15): # · Track Name · Artist ·
-Duration · BPM · Key · Camelot · Energy · Genre · Genre % · Mix In · Mix Out ·
-Bass % · Texture · Passung(14) · AI Insights(15). Spalte 7 nutzt
-`EnergyBarDelegate`, Spalte 14 `TransitionScoreDelegate`. Wer eine Spalte einfuegt, muss
-`setHorizontalHeaderLabels`, die Tooltip-Liste, `setColumnWidth`, die
-Delegate-Indizes, `_populate_table` **und** `_update_table_after_reorder`
-anfassen — der Spaltenindex steht an sechs Stellen.
+`PlaylistPanel` [main.py] bezieht seine 16 Spalten aus
+`hpg_core/ui/playlist_columns.py`: `PlaylistColumn` definiert Identitäten,
+`PLAYLIST_COLUMNS` Titel, Tooltips, Breiten und die kompakte Auswahl.
+Neue Spalten dort definieren und Befüllung, Reorder sowie passende Delegates
+anpassen. Keine zweite Spaltenliste oder numerische Indizes in der GUI pflegen.
+Übergangskarten müssen bei langen Dateinamen innerhalb der Ansichtsbreite
+bleiben; ausschließlich die Kandidatentabelle darf intern horizontal scrollen.
 
 Farben und Labels kommen aus `hpg_core/theme.py` (`COLORS`, `GENRE_COLORS`,
 `PHASE_*`, `TRANSITION_TYPE_*`, `TRANSITION_SCORE_STYLES`,

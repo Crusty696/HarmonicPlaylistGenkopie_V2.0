@@ -416,9 +416,9 @@ def _analysis_summary(track):
     previous_end = 0.0
     try:
         for interval in coverage:
-            if type(interval) not in (list, tuple) or len(interval) != 2:
+            if not isinstance(interval, dict) or not {"start", "end"} <= interval.keys():
                 raise ValueError
-            start, end = interval
+            start, end = interval["start"], interval["end"]
             if (type(start) not in (int, float) or type(end) not in (int, float)
                     or not math.isfinite(start) or not math.isfinite(end)
                     or start < previous_end or end <= start or end > duration):
@@ -612,6 +612,21 @@ def _snapshot(track):
                      track_bpm, rekordbox_bpm, _analysis_summary(track),
                      _source_summary(track, diagnostic),
                      _status_summary(track, diagnostic), _deep_summary(track))
+
+
+def track_measurement_summary(track):
+    """Gemeinsame validierte Kurzdiagnose für Playlist und Messansicht."""
+    snapshot = _snapshot(track)
+    parts = [snapshot.analysis_summary, snapshot.source_summary, snapshot.status_summary]
+    if snapshot.diagnostic is None:
+        parts.append(_INVALID)
+    else:
+        parts.append(_anchor_summary(snapshot.diagnostic, snapshot.bar_position_status))
+        parts.append(_phrase_unit_summary(snapshot))
+        parts.append(_tempo_summary(snapshot))
+    if snapshot.deep_summary:
+        parts.append(snapshot.deep_summary)
+    return "\n".join(part for part in parts if part)
 
 
 def _phrase_unit_summary(snapshot):
