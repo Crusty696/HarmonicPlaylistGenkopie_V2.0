@@ -53,4 +53,4 @@ performance_test, acceptance, regression, slow, requires_audio, gui,
 exporter. Ein Marker `audio` ist nicht registriert. Keine automatische
 Klassifizierung anhand einer gemessenen Ein-Sekunden-Laufzeit behaupten.
 Der Standardlauf waehlt `slow` ab. Abschlussumfang und Testausnahmen stehen
-in AGENTS.md und im Skill hpg-testing-verification.
+in `docs/PROJECT_KNOWLEDGE.md` und im Skill hpg-testing-verification.

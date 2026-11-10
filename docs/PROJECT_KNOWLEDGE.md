@@ -35,6 +35,9 @@ Weg zum aktuellen Code. Sie ist keine Produktabnahme.
   beauftragt oder für eine konkrete Änderung erforderlich ist.
 - `.agents/skills/` ist der einzige aktive Skill-Bestand. Gelöschte
   `.claude/`- und `.codex/`-Spiegel werden nicht als Quellen vorausgesetzt.
+- `.agents/agents/` ist die kanonische Agentenquelle. In diesem Checkout
+  entfernte `.claude/`- und `.codex/`-Agentenspiegel müssen nicht
+  wiederhergestellt oder synchronisiert werden.
 
 ## Aktuell im Quellcode verankert
 
@@ -101,7 +104,8 @@ Aus den historischen Handoffs, docs/agent-memory und dem Session-Corpus vom
   musikalische Bewertung sind getrennte Nachweise. EXE-Pfad und SHA-256
   muessen zum getesteten Build passen; frische Analyse und Cache getrennt.
 - Unabhaengige Waechterpruefung auf Anforderung; kein Vorab- oder Commitgate.
-  Die Spiegel unter `.agents/agents` und `.claude/agents` synchron halten.
+  `.agents/agents/` ist die kanonische Agentenquelle; entfernte Spiegel muessen
+  nicht wiederhergestellt werden.
 - Historisch dokumentierte Kommunikationspraeferenz: Antworten mit :-) enden.
 
 ## Neueste fachliche Entscheidungen aus dem Projektchat

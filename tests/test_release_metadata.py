@@ -65,7 +65,7 @@ def test_living_docs_reference_current_cache_contract():
     "docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md",
   ):
     content = (ROOT / relative_path).read_text(encoding="utf-8")
-    # AGENTS darf den Code verlinken, ohne veränderliche Versionszahlen zu
+    # Projektwissen darf den Code verlinken, ohne veränderliche Versionszahlen zu
     # duplizieren. Vorhandene konkrete Angaben müssen dagegen aktuell sein.
     versions = re.findall(r'CACHE_VERSION \d+', content)
     paths = re.findall(r'hpg_cache_v\d+\.db', content)

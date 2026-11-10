@@ -33,7 +33,8 @@ Erst haltbare Erkenntnisse und offene Fragen extrahieren, dann sichern und
 entfernen. Historische Fehler nicht automatisch als behoben markieren.
 Originalmusik, Datenbanken, Lock-/Coverage-Dateien und geschuetzte
 Benutzerartefakte bleiben unangetastet. Keine Wiederherstellung veralteter
-Statuskopien als aktuelle Wahrheit. Beide Skill-Spiegel konsistent halten.
+Statuskopien als aktuelle Wahrheit. `.agents/skills/` ist die kanonische
+Quelle; entfernte Spiegel nicht automatisch wiederherstellen.
 
 ## Beweisgrenzen
 

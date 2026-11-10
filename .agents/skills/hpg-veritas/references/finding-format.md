@@ -4,7 +4,7 @@ Jeder Pass schreibt ein JSON-Objekt:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "pass_id": 1,
   "agent_context_id": "frischer-kontext-id",
   "file_order_seed": 101,

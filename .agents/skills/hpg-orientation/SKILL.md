@@ -1,6 +1,6 @@
 ---
 name: hpg-orientation
-description: Use when starting any work on the HPG / Harmonic Playlist Generator repo and the module layout, data flow, user purpose or "which file owns this" is not yet clear — also when a doc, README or CLAUDE.md statement needs to be checked against the code.
+description: Use when starting any work on the HPG / Harmonic Playlist Generator repo and the module layout, data flow, user purpose or "which file owns this" is not yet clear — also when README.md or docs/PROJECT_KNOWLEDGE.md needs to be checked against the code.
 ---
 
 # HPG Orientation
@@ -96,9 +96,9 @@ Weitere Modulgrenzen und kompatible Fassaden: `docs/ARCHITEKTUR.md`.
 ## Quellen vor Statuskopien
 
 `docs/PROJECT_KNOWLEDGE.md` enthaelt den Quellenwegweiser, erhaltene
-Nutzervertraege und offene historische Fragen. Alte Status-, Handoff- und
-Auditkopien wurden nach Wissensextraktion aus dem Workspace entfernt.
-Neueste fachliche Chatuebergabe: `docs/CHAT_UEBERGABE_2026-10-20.md`.
+Nutzervertraege und offene historische Fragen. Die fachliche Chatuebergabe
+`docs/CHAT_UEBERGABE_2026-10-20.md` bleibt als datierte Historie erhalten;
+ihre alten Auftraege starten nicht automatisch erneut.
 `PRODUCTION_STATUS.md` trennt aktuellen Code und datierte Nachweise.
 Markdown liefert Hinweise; Code und passende ausgefuehrte Tests liefern
 Belege. Historische Auftraege nicht erneut ausfuehren. Vor Testwiederholungen
