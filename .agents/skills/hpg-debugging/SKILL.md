@@ -47,7 +47,7 @@ Skript festhalten, dann fixen. Bei Analyse-Themen: Cache vorher isolieren
 (`HPG_CACHE_FILE`), sonst debuggt man gegen alte Werte.
 
 **Geschuetzte Dateien:** `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`,
-`track_cache.*` — nicht fuer Diagnose oder Tests veraendern; Schutzregeln aus AGENTS.md beachten. Zum Ansehen
+`track_cache.*` — nicht fuer Diagnose oder Tests veraendern; Schutzregeln aus `docs/PROJECT_KNOWLEDGE.md` beachten. Zum Ansehen
 `tools/_inspect_cache.py`.
 
 ## Common Mistakes

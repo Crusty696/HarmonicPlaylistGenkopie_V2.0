@@ -1,6 +1,6 @@
 # Pre-Mortem (Gary Klein)
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 Risk Officer's Pflicht-Tool. "Stell dir vor, der Plan ist gescheitert — was ist passiert?"

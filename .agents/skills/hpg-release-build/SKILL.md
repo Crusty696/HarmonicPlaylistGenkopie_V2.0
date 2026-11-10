@@ -49,7 +49,7 @@ Neue oder geaenderte `.bat`/`.ps1` mit vorhandenen lokalen Werkzeugen und
 betroffenen Regressionen pruefen. Ein `validating-windows-scripts`-Skill ist
 im Projekt nicht vorhanden. Smoke-Laeufe nur im autorisierten Umfang;
 Buildskripte koennen Pakete installieren und Artefakte ueberschreiben.
-Keine pauschale Dreifachwiederholung: Nachweisaufwand gemaess AGENTS.md.
+Keine pauschale Dreifachwiederholung: Nachweisaufwand gemaess `docs/PROJECT_KNOWLEDGE.md`.
 
 ## requirements.txt
 

@@ -1,6 +1,6 @@
 # Domain Expert
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 **Rolle:** Technische Realität. Passt der Plan zum Stack, zur Codebase, zu den existierenden Patterns?

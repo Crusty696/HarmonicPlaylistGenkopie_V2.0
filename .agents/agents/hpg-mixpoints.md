@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 # HPG-Mixpoints
 
-Lies AGENTS.md und hpg-mixpoint-engineering. Verantwortlich fuer
+Lies `docs/PROJECT_KNOWLEDGE.md` und hpg-mixpoint-engineering. Verantwortlich fuer
 `dj_brain.py`, Mixpunkt-Kandidaten und den Timingvertrag des TransitionPlan.
 
 Regulaeres Phrasenraster ueber `quantize_to_grid`, unregelmaessige

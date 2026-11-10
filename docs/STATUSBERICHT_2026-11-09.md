@@ -4,6 +4,12 @@
 **Produkt:** Harmonic Playlist Generator (HPG), App-Version 3.7.2  
 **Zweck:** Bestandsaufnahme des gesamten App-Projekts nach Abgleich mit GitHub. Dieser Bericht ist eine datierte Lageeinschätzung, keine Produktfreigabe.
 
+**GitHub-Nachtrag am selben Tag:** Der Bericht wurde anschließend als `dc1edb12`
+auf `origin/codex/gesamtrefaktorierung` gepusht. Der Produktcode-Stand blieb bei
+`d82e9728`; `dc1edb12` fügt diesen Bericht hinzu. Damit ist die Remote-Spitze
+jetzt `dc1edb12`, und der Branch enthält vier statt drei Commits mehr als
+`main` (einschließlich dieses Dokumentations-Commits).
+
 ## Kurzstatus
 
 HPG ist eine weit entwickelte Windows-Desktopanwendung zur Vorbereitung von DJ-Sets. Der aktuelle Code deckt Analyse, Playlist-Erzeugung, Übergangsplanung, Hörvorschau und Export ab. Der jüngste dokumentierte Volltest ist grün. Ein frischer 26-Track-App-Lauf veröffentlichte eine Playlist und 19 Übergänge.

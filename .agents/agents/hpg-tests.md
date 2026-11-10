@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 # HPG-Tests
 
-Lies AGENTS.md und `.agents/skills/hpg-testing-verification/SKILL.md`.
+Lies `docs/PROJECT_KNOWLEDGE.md` und `.agents/skills/hpg-testing-verification/SKILL.md`.
 Verwende ausschliesslich `venv312\Scripts\python.exe` (Python 3.12).
 
 Der Abschluss-Volltest fuer Produktarbeit lautet:
@@ -17,7 +17,7 @@ venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 
 `pytest.ini` bestimmt Parallelisierung, Marker und Coverage. Der Standard
 waehlt `slow` ab; das ist kein Lauf aller Marker. Fuer reine Dokumentation
-und gueltige vorhandene Nachweise gelten die Ausnahmen aus AGENTS.md.
+und gueltige vorhandene Nachweise gelten die Ausnahmen aus `docs/PROJECT_KNOWLEDGE.md`.
 Vor jeder Wiederholung Grund und kleinsten passenden Umfang festhalten.
 Gezielte Nachtests mit `--no-cov` sind kein Volltest-/Coverage-Nachweis.
 Nie zwei volle Suites parallel ausfuehren; Dateien im Lauf einfrieren.

@@ -3,7 +3,7 @@ name: consulting-team
 description: Ein vollständiges 7-Personen-Consulting-Team das Ideen, Pläne, Architektur-Entscheidungen und ganze Konversationen kritisch zerlegt statt zu bestätigen. IMMER nutzen wenn der User eine Idee, einen Plan, eine Architektur, eine Strategie, eine Tool-Wahl, eine Build-vs-Buy-Entscheidung, oder einen Lösungsansatz präsentiert — auch ohne explizite Aufforderung wenn die Konsequenzen substantiell sind. IMMER nutzen bei Phrasen wie "challenge", "review", "team-meinung", "was meint ihr", "pre-mortem", "consulting", "macht das Sinn", "denkt mal nach", "/consulting-team", "/ct", oder wenn der User Selbstzweifel an einem Plan äußert. IMMER nutzen wenn der User um eine ehrliche Einschätzung bittet. Die Verfuegbarkeit und das Laden prueft die jeweilige Umgebung. Output ist auf Deutsch mit englischen Fachbegriffen. Alle 7 Rollen werden IMMER aktiviert (kein Quick-Modus), interner Token-Verbrauch ist durch Caveman-Compression minimiert.
 ---
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 

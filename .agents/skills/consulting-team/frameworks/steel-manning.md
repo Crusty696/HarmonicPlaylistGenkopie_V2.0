@@ -1,6 +1,6 @@
 # Steel-Manning
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 Devil's Advocate's Pflicht-Tool. Die *stärkste* Form der Gegenposition formulieren.

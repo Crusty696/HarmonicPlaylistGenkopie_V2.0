@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-SKILL_ROOTS = (REPO / ".agents" / "skills", REPO / ".claude" / "skills")
-# CLAUDE.md und AGENTS.md trugen dieselben veralteten Kennzahlen wie die Skills.
-EXTRA_DOCS = (REPO / "CLAUDE.md", REPO / "AGENTS.md")
+SKILL_ROOTS = (REPO / ".agents" / "skills",)
+# Dauerhafte Projektregeln und volatile Kennzahlen leben in dieser Quelldatei.
+EXTRA_DOCS = (REPO / "docs" / "PROJECT_KNOWLEDGE.md",)
 
 # `symbol` ... [pfad/zur/datei.py] — der Anker gilt fuer das letzte
 # Backtick-Symbol vor der Klammer.
@@ -34,7 +34,7 @@ SYMBOL = re.compile(r"^[A-Za-z_]\w*$")
 
 
 def _skill_files() -> list[Path]:
-    """Alle Markdown-Dateien beider Spiegel plus die beiden Projekt-Anweisungen."""
+    """Alle aktiven Skills plus die zentrale Projektwissensdatei."""
     files = [path for root in SKILL_ROOTS for path in sorted(root.rglob("*.md"))]
     files.extend(doc for doc in EXTRA_DOCS if doc.is_file())
     assert files, "Keine Skill-Dokumente gefunden — Pfade pruefen"
@@ -50,6 +50,12 @@ def _hpg_files() -> list[Path]:
     files = [path for path in _skill_files() if "consulting-team" not in path.parts]
     assert files, "Keine HPG-Dokumente gefunden — Pfade pruefen"
     return files
+
+
+def test_only_agents_skill_tree_is_active() -> None:
+    assert (REPO / ".agents" / "skills" / "hpg-orientation" / "SKILL.md").is_file()
+    legacy_root = REPO / ".claude" / "skills"
+    assert not any(path.is_file() for path in legacy_root.rglob("*")) if legacy_root.exists() else True
 
 
 def _defines(source: str, symbol: str) -> bool:
@@ -109,19 +115,3 @@ def test_symbolreferenzen_zeigen_auf_existierende_definition(skill: Path) -> Non
             if not _defines(ziel.read_text(encoding="utf-8", errors="replace"), symbol):
                 fehler.append(f"Zeile {zeile_nr}: `{symbol}` nicht definiert in {rel}")
     assert not fehler, f"{skill.relative_to(REPO)}:\n  " + "\n  ".join(fehler)
-
-
-def test_agents_und_claude_spiegel_sind_identisch() -> None:
-    """Beide Spiegel muessen bitgleich sein, sonst liest Codex etwas anderes als Claude Code."""
-    unterschiede: list[str] = []
-    for teil in ("skills", "agents"):
-        links, rechts = REPO / ".agents" / teil, REPO / ".claude" / teil
-        namen = {p.relative_to(links) for p in links.rglob("*") if p.is_file()}
-        namen |= {p.relative_to(rechts) for p in rechts.rglob("*") if p.is_file()}
-        for name in sorted(namen):
-            a, b = links / name, rechts / name
-            if not a.is_file() or not b.is_file():
-                unterschiede.append(f"{teil}/{name}: nur auf einer Seite")
-            elif a.read_bytes() != b.read_bytes():
-                unterschiede.append(f"{teil}/{name}: Inhalt weicht ab")
-    assert not unterschiede, "Spiegel driften:\n  " + "\n  ".join(unterschiede)

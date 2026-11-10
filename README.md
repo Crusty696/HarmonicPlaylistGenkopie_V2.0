@@ -15,6 +15,8 @@ Aktuelle Grenzen und Rohbelege stehen im
 [laufenden Arbeitsplan](docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md).
 Der [Quellen- und Nachweisstand](PRODUCTION_STATUS.md) bewahrt den historischen
 Abgleich vom 26.10.2026.
+Der [Gesamtstatus mit GitHub-Abgleich vom 09.11.2026](docs/STATUSBERICHT_2026-11-09.md)
+fasst den jüngsten Entwicklungsstand und seine Nachweisgrenzen zusammen.
 
 ## Start aus dem Projekt
 
@@ -120,7 +122,7 @@ Factoryliste. Modell-/DLL-Artefakte müssen zur geprüften lokalen Umgebung pass
 | Vorschau | `hpg_core/transition_renderer.py`, `preview_stretch.py` |
 | Export | `hpg_core/exporters/` |
 | Prüfungen und Hilfswerkzeuge | `tests/`, `tools/` |
-| Arbeitsregeln und Fachskills | `AGENTS.md`, `.agents/skills/` |
+| Arbeitsregeln und Fachskills | `docs/PROJECT_KNOWLEDGE.md`, `.agents/skills/` |
 
 [Projektwissen](docs/PROJECT_KNOWLEDGE.md) enthält erhaltene Entscheidungen.
 [Jüngste fachliche Übergabe](docs/CHAT_UEBERGABE_2026-10-20.md) enthält die offenen
@@ -136,7 +138,8 @@ venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
 
 `pytest.ini` bestimmt Parallelisierung und Coverage; der Standard waehlt
 Tests mit Marker `slow` ab. Vorhandene gültige Belege
-wiederverwenden; Dokumentationsausnahmen und Schutzregeln stehen in AGENTS.md.
+wiederverwenden; Dokumentationsausnahmen und Schutzregeln stehen in
+`docs/PROJECT_KNOWLEDGE.md`.
 Testzustände isolieren, Produktivcache und vorhandene Coverage-Dateien erhalten.
 
 `build.bat`, `HPG.spec` und `build_installer.bat` beschreiben die Buildwege.

@@ -102,4 +102,4 @@ Neueste fachliche Chatuebergabe: `docs/CHAT_UEBERGABE_2026-10-20.md`.
 `PRODUCTION_STATUS.md` trennt aktuellen Code und datierte Nachweise.
 Markdown liefert Hinweise; Code und passende ausgefuehrte Tests liefern
 Belege. Historische Auftraege nicht erneut ausfuehren. Vor Testwiederholungen
-AGENTS.md beachten: vorhandene gueltige Nachweise wiederverwenden.
+`docs/PROJECT_KNOWLEDGE.md` beachten: vorhandene gueltige Nachweise wiederverwenden.

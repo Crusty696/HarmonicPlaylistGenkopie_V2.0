@@ -138,7 +138,6 @@ def safe_project_target(repo: Path, raw: str) -> Path:
     allowed = (
         Path("tools/audit"),
         Path(".agents/skills/hpg-veritas"),
-        Path(".claude/skills/hpg-veritas"),
     )
     if not any(rel == prefix or prefix in rel.parents for prefix in allowed):
         raise VeritasError(f"Projektziel nicht freigegeben: {raw}")

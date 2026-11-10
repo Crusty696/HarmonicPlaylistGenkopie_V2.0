@@ -5,10 +5,13 @@ Weg zum aktuellen Code. Sie ist keine Produktabnahme.
 
 ## Einstieg und Quellenrang
 
-1. Aktueller Nutzerauftrag und [AGENTS.md](../AGENTS.md) bestimmen den Umfang.
+1. Der aktuelle Nutzerauftrag bestimmt den Umfang; diese Datei enthält die
+   dauerhaften Projektregeln.
 2. [Produktleitlinie](../MEMORY.md), `hpg-orientation` und Fachskills führen zum Code.
-3. Der [laufende Refaktorierungsplan](superpowers/plans/2026-10-30-gesamtrefaktorierung.md)
+3. Der [Refaktorierungs- und Nachweisprotokoll](superpowers/plans/2026-10-30-gesamtrefaktorierung.md)
    enthält die aktuellen Änderungen und datierten Prüfnachweise. Der
+   [Gesamtstatus vom 09.11.2026](STATUSBERICHT_2026-11-09.md) bündelt den
+   jüngsten Entwicklungsabgleich mit GitHub. Der
    [Quellen- und Nachweisstand](../PRODUCTION_STATUS.md) bewahrt den historischen
    Abgleich vom 26.10. samt damaliger Grenzen.
 4. [Übergabe vom 20.10.](CHAT_UEBERGABE_2026-10-20.md) enthält die jüngste
@@ -17,8 +20,21 @@ Weg zum aktuellen Code. Sie ist keine Produktabnahme.
 5. [Deep-Analysis-Spezifikation](../specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md)
    bewahrt Ziele und datierte Umsetzungsgeschichte. Ihr älterer Beispielcode
    ist kein aktueller API-Vertrag. Der Kopf ordnet den Stand ein.
-6. Allgemeine Ausführungsregeln stehen in AGENTS.md, Deep-Analysis-Besonderheiten
-   im [Fachskill](../.agents/skills/hpg-deep-analysis/SKILL.md). Keine zusätzliche Regelkopie.
+6. Allgemeine Ausführungsregeln stehen in dieser Datei; Deep-Analysis-
+   Besonderheiten im [Fachskill](../.agents/skills/hpg-deep-analysis/SKILL.md).
+   `.agents/skills/` ist der aktive Skill-Bestand.
+
+## Aktive Arbeitsregeln
+
+- Nutzerauftrag und lokaler Arbeitsbaum sind maßgeblich; bestehende Änderungen
+  nicht ohne Auftrag verwerfen.
+- Musikbibliothek, vorhandene Hörbewertungen, Cache und Coverage-Dateien sind
+  Nutzerdaten und dürfen durch Tests oder Bereinigung nicht überschrieben werden.
+- Projektbefehle verwenden `venv312`; Nachweise und Prüfumfang richten sich
+  nach Auftrag und relevantem Fachskill. Einen Volltest nur ausführen, wenn er
+  beauftragt oder für eine konkrete Änderung erforderlich ist.
+- `.agents/skills/` ist der einzige aktive Skill-Bestand. Gelöschte
+  `.claude/`- und `.codex/`-Spiegel werden nicht als Quellen vorausgesetzt.
 
 ## Aktuell im Quellcode verankert
 
@@ -125,8 +141,8 @@ einschließlich seiner Ungültigkeitskennzeichnung am bisherigen Ort.
 [Bereinigungsnachweis und Sicherung](CLEANUP_2026-10-26.md).
 Der [lokale Inventarbericht](REPOSITORY_INVENTORY.md) grenzt die abschliessende
 Dokument-/Anweisungspruefung vom Laufzeit- und Musiknachweis ab.
-Historische HTML-Visualisierungen und memory-Sessionnotizen sind als solche
-gekennzeichnet; ihre Beispiele erzeugen keine heutigen Arbeitsauftraege.
+Die drei ueberholten HTML-Visualisierungen wurden am 08.11.2026 entfernt;
+die aktuelle Flussbeschreibung bleibt der fachliche Einstieg.
 Die Sicherung vom 04.10. und `cleanup-manifest-2026-10-04.json` bleiben erhalten.
 
 ## Offene Fragen und Grenzen
@@ -196,3 +212,30 @@ Erhaltene Erkenntnisse und Nachweisgrenzen:
 
 Die jüngste Chatübergabe vom 20.10., die Deep-Analysis-Spezifikation und der
 zurückgezogene VERITAS-Lauf samt Ungültigkeitskennzeichnung bleiben im Projekt.
+
+## Konsolidierte historische Sessionnotizen (08.11.2026)
+
+Die redundanten Sessionnotizen vom 25.08. und 19.09. wurden nach gesicherter
+Inhaltsprüfung entfernt. Ihre alten Fortsetzungsaufträge und Laufzeitangaben
+sind keine aktuellen Arbeitsaufträge oder Abnahmen. Ergänzend zu den obigen
+Verträgen bleiben folgende fachliche Hinweise erhalten:
+
+- Beatmatching verlangt gleiches effektives Tempo und passende Kickphase.
+  Doppelschläge, Galoppieren und Drift sind technische Fehler; das importierte
+  Grid muss auch in den tatsächlich verwendeten Mixbereichen stimmen.
+- Lautheit und klangliche Ausgewogenheit über Vorlauf, Übergang und Nachlauf
+  betrachten, nicht ausschließlich anhand eines kurzen Introausschnitts.
+  Historisch wurde für Psytrance der 3-Band-EQ-Swap verlangt. Die damaligen
+  numerischen Pegel-/Gatewerte sind keine ungeprüft zu übernehmenden aktuellen
+  Konstanten; maßgeblich sind heutiger Code und Fachvertrag.
+- Hörproben dürfen im Browser nicht durch veraltete Audiocaches ersetzt werden;
+  Bewertungen müssen erhalten bleiben. Historische technische Rendernachweise
+  ersetzen kein menschliches Hörurteil.
+- Ein in einer Sandbox unsichtbarer Basisinterpreter beweist keine fehlende
+  Python-Installation. Vor Neuinstallation die native Projektumgebung prüfen.
+  Source-Start und gebündelte EXE haben unterschiedliche Laufzeitabhängigkeiten.
+
+Historische Hörtestorte zur Wiederverwendung vorhandener Bewertungen:
+`C:\Users\david\Music\HPG-Psytrance-Kandidaten-30Paare-2026-08-25` und
+`C:\Users\david\Desktop\HPG-Techno-Prog-Melodic-50`. Existenz und heutiger
+Bewertungsstand wurden bei dieser Dokumentbereinigung nicht neu geprüft.

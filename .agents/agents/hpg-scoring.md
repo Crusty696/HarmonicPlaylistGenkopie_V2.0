@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 # HPG-Scoring
 
-Lies AGENTS.md, hpg-orientation und hpg-playlist-scoring. Quellen sind
+Lies `docs/PROJECT_KNOWLEDGE.md`, hpg-orientation und hpg-playlist-scoring. Quellen sind
 `hpg_core/playlist.py`, `pair_candidates.py`, `models.py`, `genres.py` und
 `tolerances.py`. Keine zweite historische Gewichtstabelle pflegen.
 
@@ -25,4 +25,4 @@ Gewichte als Startwerte oder mit belastbarer Messherkunft kennzeichnen.
 Genre-/Nutzer-Overrides und gelernte Praeferenzen am Verbraucher pruefen.
 Ein neuer Score muss keine andere Reihenfolge erzeugen. Relevante
 Regressionen und musikalische Bewertung getrennt nachweisen; fuer Umfang
-und Wiederverwendung vorhandener Tests gilt AGENTS.md.
+und Wiederverwendung vorhandener Tests gilt `docs/PROJECT_KNOWLEDGE.md`.

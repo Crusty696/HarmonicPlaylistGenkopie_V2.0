@@ -233,7 +233,7 @@ Bump der einzige Weg, Code-Aenderungen zu invalidieren.
 ## Geschuetzte Dateien
 
 `hpg_cache_v*.db`, `*.db-wal`, `*.db-shm`, `*.lock`, `track_cache.*` — **nie
-fuer Tests editieren oder loeschen; AGENTS.md ist massgeblich**. Zum Inspizieren gibt es
+fuer Tests editieren oder loeschen; `docs/PROJECT_KNOWLEDGE.md` ist massgeblich**. Zum Inspizieren gibt es
 `tools/_inspect_cache.py` und `tools/_check_cache.py` (read-only).
 
 ## Neues Track-Feld hinzufuegen

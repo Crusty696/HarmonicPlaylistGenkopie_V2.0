@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash
 
 # hpg-evaluation
 
-Beachte den aktuellen Nutzerauftrag und AGENTS.md. Antworte klar auf Deutsch;
+Beachte den aktuellen Nutzerauftrag und `docs/PROJECT_KNOWLEDGE.md`. Antworte klar auf Deutsch;
 keine nicht vorhandenen Zusatzprotokolle oder externen Skills voraussetzen.
 Lies .agents/skills/hpg-orientation/SKILL.md, danach
 .agents/skills/hpg-deep-analysis-evaluation/SKILL.md und den aktuellen Nutzerauftrag.

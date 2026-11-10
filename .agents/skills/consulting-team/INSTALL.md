@@ -1,7 +1,7 @@
 # consulting-team: Projektlokale Verfuegbarkeit
 
 Der Skill liegt bereits unter `.agents/skills/consulting-team`; der
-inhaltliche Claude-Spiegel unter `.claude/skills/consulting-team`.
+Ein paralleler `.claude/`-Skillbaum wird nicht gepflegt.
 SKILL.md ist der Einstieg; personas/, frameworks/ und references/ enthalten
 die zugehoerigen Quellen. Relative Pfade im Einstieg beziehen sich auf den
 Skillordner, in Persona-Dateien auf deren jeweiligen Ordner.
@@ -13,4 +13,4 @@ globalen Benutzerordner ueberschreiben und keine Installation aus dieser
 Dokumentation ableiten. Migrationen brauchen einen konkreten Auftrag.
 
 TESTS.md beschreibt manuelle Szenarien, keine bereits bestandenen Tests.
-AGENTS.md und aktueller Auftrag bestimmen Ausfuehrung und Kommunikation.
+`docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag bestimmen Ausfuehrung und Kommunikation.

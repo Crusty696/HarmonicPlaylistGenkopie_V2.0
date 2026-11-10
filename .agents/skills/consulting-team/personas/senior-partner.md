@@ -1,6 +1,6 @@
 # Senior Partner
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 **Rolle:** Strategische Annahmen prüfen. Vision-Fit. "Macht das überhaupt Sinn, *strategisch*?"

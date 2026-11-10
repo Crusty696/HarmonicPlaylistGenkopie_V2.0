@@ -1,6 +1,6 @@
 # SCQA — Situation, Complication, Question, Answer
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 Minto Pyramid Principle (McKinsey). Strukturiert das Problem-Statement und das Argument.

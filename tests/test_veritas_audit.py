@@ -337,16 +337,12 @@ def _sync_config(repo: Path, vault: Path, tmp_path: Path) -> Path:
             "vault_audit_dir": "10_Projects/HPG/_wiki/audit",
             "project_lessons": "tools/audit/LESSONS.md",
             "project_learnings": "tools/audit/learnings.json",
-            "active_learnings": [
-                ".agents/skills/hpg-veritas/references/active-learnings.md",
-                ".claude/skills/hpg-veritas/references/active-learnings.md",
-            ],
+            "active_learnings": ".agents/skills/hpg-veritas/references/active-learnings.md",
             "max_active_learning_lines": 20,
         },
     )
     (repo / "tools" / "audit").mkdir(parents=True)
-    for mirror in (".agents", ".claude"):
-        (repo / mirror / "skills" / "hpg-veritas" / "references").mkdir(parents=True)
+    (repo / ".agents" / "skills" / "hpg-veritas" / "references").mkdir(parents=True)
     return config
 
 
@@ -462,7 +458,7 @@ def test_sync_rejects_missing_verifier_gate(tmp_path: Path) -> None:
         sync_knowledge.build_expected(run_dir, repo, veritas.read_json(config))
 
 
-def test_sync_writes_every_active_learning_mirror(tmp_path: Path) -> None:
+def test_sync_writes_active_learning_target(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -473,13 +469,10 @@ def test_sync_writes_every_active_learning_mirror(tmp_path: Path) -> None:
 
     assert sync_knowledge.command_sync(args, config_path=config) == 0
 
-    mirrors = [
-        repo / ".agents" / "skills" / "hpg-veritas" / "references" / "active-learnings.md",
-        repo / ".claude" / "skills" / "hpg-veritas" / "references" / "active-learnings.md",
-    ]
-    contents = [mirror.read_text(encoding="utf-8") for mirror in mirrors]
-    assert all(mirror.is_file() for mirror in mirrors)
-    assert contents[0] == contents[1]
+    active_learnings = (
+        repo / ".agents" / "skills" / "hpg-veritas" / "references" / "active-learnings.md"
+    )
+    assert active_learnings.is_file()
     expected, _, orphans, _konflikte = sync_knowledge.build_expected(
         run_dir, repo, veritas.read_json(config)
     )
@@ -490,9 +483,10 @@ def test_sync_rejects_active_learning_target_outside_allowlist(tmp_path: Path) -
     repo = _repo(tmp_path)
     with pytest.raises(veritas.VeritasError):
         sync_knowledge.safe_project_target(repo, "docs/active-learnings.md")
-    assert sync_knowledge.safe_project_target(
-        repo, ".claude/skills/hpg-veritas/references/active-learnings.md"
-    ).is_absolute()
+    with pytest.raises(veritas.VeritasError):
+        sync_knowledge.safe_project_target(
+            repo, ".claude/skills/hpg-veritas/references/active-learnings.md"
+        )
 
 
 def test_sync_rejects_learning_source_without_finding(tmp_path: Path) -> None:
@@ -1240,7 +1234,7 @@ def test_vereinigung_lehnt_bestand_ohne_id_und_mit_doppelter_id_ab(
         sync_knowledge.vereinige_learnings(ziel, {"schema_version": 2, "learnings": []})
 
 
-def test_sync_traegt_bestands_learning_in_alle_ziele(tmp_path: Path) -> None:
+def test_sync_traegt_bestands_learning_ins_aktive_ziel(tmp_path: Path) -> None:
     """End-to-End ueber eine bereits gefuellte learnings.json.
 
     Nur hier faellt auf, wenn der vereinigte Bestand ungeprueft in die
@@ -1285,10 +1279,10 @@ def test_sync_traegt_bestands_learning_in_alle_ziele(tmp_path: Path) -> None:
     assert "Alte Regel bleibt gueltig." in (
         repo / "tools" / "audit" / "LESSONS.md"
     ).read_text(encoding="utf-8")
-    # Die aktiven Regeln sind ein eigenes Ziel: faellt jemand dort auf den
+    # Die aktive Regeldatei ist ein eigenes Ziel: faellt jemand dort auf den
     # Lauf zurueck, bliebe die Suite ohne diese Zeile gruen.
     assert "L-042" in (
-        repo / ".claude" / "skills" / "hpg-veritas" / "references" / "active-learnings.md"
+        repo / ".agents" / "skills" / "hpg-veritas" / "references" / "active-learnings.md"
     ).read_text(encoding="utf-8")
 
 
@@ -1538,12 +1532,11 @@ def test_zweiter_apply_lauf_aendert_keine_einzige_datei(tmp_path: Path) -> None:
     }
     assert vorher
     # Die C2-Ziele liegen im Repository, nicht im Vault -- einschliesslich der
-    # beiden Spiegel fuer die aktiven Regeln. Ohne sie belegt der Test die
+    # aktiven Regeldatei. Ohne sie belegt der Test die
     # Idempotenz der Vereinigung nicht.
     def _repo_ziele() -> dict[Path, bytes]:
         wurzeln = (
             repo / "tools" / "audit",
-            repo / ".claude" / "skills" / "hpg-veritas",
             repo / ".agents" / "skills" / "hpg-veritas",
         )
         return {

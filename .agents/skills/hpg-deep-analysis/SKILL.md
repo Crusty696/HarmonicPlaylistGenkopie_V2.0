@@ -87,7 +87,7 @@ keinen Produktvolltest oder Audioholdout allein dafür starten.
 
 ## Ergänzungen aus dem konsolidierten Ausführungsleitfaden
 
-AGENTS.md enthält die allgemeinen Arbeits-, Schutz- und Nachweisregeln.
+`docs/PROJECT_KNOWLEDGE.md` enthält die allgemeinen Arbeits-, Schutz- und Nachweisregeln.
 Bestehende Paketpins erhalten; Installationen, Provider- und Sicherheitswechsel
 nur mit ausdrücklicher Freigabe. Keine alte Installationsroutine oder feste
 Cache-Zielversion erneut ausführen. Keine unbeauftragten GUI-/Genre-Umbauten.

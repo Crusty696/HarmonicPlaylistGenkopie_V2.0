@@ -59,8 +59,7 @@ def test_living_docs_reference_current_cache_contract():
   # docs/TRACKAUSWAHL-... nannte bis 2026-09-04 v44, ohne dass ein Test das
   # meldete (D13). Jetzt erzwingt der naechste Bump die Korrektur dort.
   for relative_path in (
-    "AGENTS.md",
-    "CLAUDE.md",
+    "docs/PROJECT_KNOWLEDGE.md",
     # Der Schnellstart ist seit der Dokumentkonsolidierung Teil der README.
     "README.md",
     "docs/TRACKAUSWAHL-UND-MIXPOINT-FLUSS.md",

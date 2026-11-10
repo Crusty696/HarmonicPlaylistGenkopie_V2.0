@@ -13,13 +13,13 @@ description: Use when running or writing HPG tests, or before claiming HPG work 
 
 Python 3.12 gemäß `hpg_core/app_metadata.py`, kein System-Python oder 3.13+.
 Gezielte Entwicklungstests dürfen `--no-cov` verwenden; sie sind kein Volltest.
-Ausnahmen für reine Dokumentation und gültige vorhandene Belege stehen in AGENTS.md.
+Ausnahmen für reine Dokumentation und gültige vorhandene Belege stehen in `docs/PROJECT_KNOWLEDGE.md`.
 
 ## Nachweise wiederverwenden
 
 Keine feste historische Testzahl als aktuellen Stand uebernehmen. Vor einem
 neuen Lauf vorhandene Ergebnisse und deren Hash-/Eingabebindung pruefen.
-AGENTS.md hat Vorrang: reine Dokumentationsaenderungen brauchen keinen neuen
+`docs/PROJECT_KNOWLEDGE.md` hat Vorrang: reine Dokumentationsaenderungen brauchen keinen neuen
 Build, Volltest oder Audioanalyselauf. Isolierte Erwartungskorrekturen und
 gezielte Nachtests getrennt vom vorherigen Gesamtlauf dokumentieren.
 Quellenwegweiser: docs/PROJECT_KNOWLEDGE.md.
@@ -131,7 +131,7 @@ Spec Abschnitt 3; Erhaltene Anforderungen: `docs/PROJECT_KNOWLEDGE.md`.
 
 ## Was ein Abschluss belegt
 
-Den Nachweisumfang vor dem Lauf aus dem Auftrag und AGENTS.md ableiten.
+Den Nachweisumfang vor dem Lauf aus dem Auftrag und `docs/PROJECT_KNOWLEDGE.md` ableiten.
 Bei Produktänderungen gelten Abschluss-Volltest und Coverage-Gate sowie die
 betroffenen nativen Abläufe; bei reiner Dokumentation gelten die dortigen Ausnahmen.
 Gezielte Nachtests getrennt vom Volltest nennen. Ein fehlgeschlagener Volltest

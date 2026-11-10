@@ -28,10 +28,10 @@ Diese werden im Inventar erfasst, nicht als aktuelle Produktanleitung behandelt.
 Ihre Fremd-/Rohinhalte werden nicht umgeschrieben. Originalmusik, DB-/Cache-,
 WAL-/SHM-, Lock-/Coverage-Dateien und Claude-Autopilot-Artefakte sind geschuetzt.
 
-Die drei HTML-Visualisierungen sind am sichtbaren Einstieg als historische
-Entwuerfe gekennzeichnet. Die PNG-Systemkarte ist im aktuellen Flussdokument
-als historische Illustration eingeordnet. Die zwei Sessionnotizen unter
-memory/ sind datierte Quellen, keine aktuellen Ausfuehrungsanweisungen.
+Nachtrag 08.11.2026: Die drei ueberholten HTML-Visualisierungen wurden nach
+Abgleich mit der aktuellen Flussbeschreibung entfernt. Die PNG-Systemkarte
+bleibt dort als historische Illustration eingeordnet. Die zwei historischen
+Sessionnotizen wurden in PROJECT_KNOWLEDGE.md konsolidiert und entfernt.
 Zurueckgezogene VERITAS-Berichte und deren UNGUELTIG-Kennzeichnung bleiben erhalten.
 
 ## Aktuelle Quellen und Werkzeuge

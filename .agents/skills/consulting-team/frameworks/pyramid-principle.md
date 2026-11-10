@@ -1,6 +1,6 @@
 # Pyramid Principle (Barbara Minto)
 
-Projektanwendung: AGENTS.md und aktueller Auftrag haben Vorrang. Beispiele
+Projektanwendung: `docs/PROJECT_KNOWLEDGE.md` und aktueller Auftrag haben Vorrang. Beispiele
 sind hypothetisch, keine aktuellen HPG-Befunde oder gemessenen Benchmarks.
 
 Synthesizer-Pflicht. Strukturiert den finalen Report: Hauptaussage zuerst, dann Stützpfeiler.

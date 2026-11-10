@@ -4,9 +4,6 @@
   "vault_audit_dir": "10_Projects/HarmonicPlaylistGenerator/_wiki/audit",
   "project_lessons": "tools/audit/LESSONS.md",
   "project_learnings": "tools/audit/learnings.json",
-  "active_learnings": [
-    ".agents/skills/hpg-veritas/references/active-learnings.md",
-    ".claude/skills/hpg-veritas/references/active-learnings.md"
-  ],
+  "active_learnings": ".agents/skills/hpg-veritas/references/active-learnings.md",
   "max_active_learning_lines": 20
 }

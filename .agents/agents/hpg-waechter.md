@@ -122,7 +122,7 @@ vor.
 
 ### 5. Halten die Invarianten des Projekts?
 
-Lies die passenden Skills unter `.claude/skills/` — `hpg-orientation`,
+Lies die passenden Skills unter `.agents/skills/` — `hpg-orientation`,
 `hpg-playlist-scoring`, `hpg-mixpoint-engineering`, `hpg-cache-persistence`,
 `hpg-genres`, `hpg-qt-gui`, `hpg-testing-verification`. Sie enthalten die
 harten Regeln. Insbesondere:

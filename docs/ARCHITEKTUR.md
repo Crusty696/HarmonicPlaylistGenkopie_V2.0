@@ -60,7 +60,8 @@ Neuanalyse. Ungeplante Grenzen bleiben als solche sichtbar.
 
 ## Prüfweg
 
-Projektinterpreter und Volltest bleiben durch AGENTS.md/pytest.ini bestimmt.
+Der Projektinterpreter folgt `docs/PROJECT_KNOWLEDGE.md`; Testoptionen stehen
+in `pytest.ini`.
 `tools/run_refactor_checks.ps1` ist ein optionaler Windows-Aufruf mit isolierter
 Coverage, eindeutigen Logs und Quell-/Testhashes. `-Full` führt die Tests mit
 den unveränderten Projektoptionen aus; ohne den Schalter ist es ein gezielter
