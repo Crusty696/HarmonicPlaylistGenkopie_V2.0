@@ -248,8 +248,8 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
-  Live-Queue am 11.11.2026 zeigt Prompt-ID `35` (UUID
-  `ecb19ff6-0df5-47e1-9cc2-92be495da6e8`) aktiv und 0 wartende Aufträge.
+  Live-Queue am 11.11.2026 zeigt Prompt-ID `36` (UUID
+  `770d4ae4-82a2-4354-be19-af11035cb59a`) aktiv und 0 wartende Aufträge.
   Der Promptverlauf und die Ausgabedatei sind noch nicht bestätigt. Der Auftrag
   und Batchproducer blieben unangetastet.
   Producer bleibt unberührt. Frühere Ausgaben
