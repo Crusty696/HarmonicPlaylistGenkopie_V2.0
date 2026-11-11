@@ -2,7 +2,7 @@
 
 **Stand:** 12.11.2026
 **Branch:** `codex/gesamtrefaktorierung`
-**Ausgangsrevision vor dieser Fortsetzung:** `e313c7cb3cdba860cded64151fc0b11956a192fc` (lokaler und entfernter Branch gleich)
+**Ausgangsrevision der heutigen Artefaktprüfung:** `ead15b2dcb4b663fda68aab91ad874c135e533b7` (lokaler und entfernter Branch gleich)
 
 ## Geprüfte Fortschritte
 
@@ -42,17 +42,18 @@
   manuelle Pause-/Fehlerpfade, ein vollständiger Fit-/Exportablauf und eine
   musikalische Abnahme mit Originalmusik. Der vollständige manuelle
   Abnahmepunkt bleibt daher offen.
-- Der aktuelle Hörtest-Plan nennt als verbleibenden maschinenprüfbaren Punkt
-  einen Golden-Master-Lauf mit unveränderter CLI-Bindungsprüfung und allen
-  publizierten CSV-/JSON-Schemas. Die vorhandenen Producer-/Sitzungs- und
-  Fit-Rundreisen belegen Teilverträge, nicht diesen Gesamtvertrag.
+- Die automatisierten Artefaktverträge sind jetzt über getrennte fokussierte
+  Producer-, Fit-, Rating- und Blindtest-Worker-Rundreisen abgedeckt. Einzel-
+  und Kandidaten-Fitberichte werden zwischen CLI und nativem Pfad verglichen;
+  normale Kandidaten- und Dreinoten-Fits laufen mit echter CLI-Bindungsprüfung.
+  Die Fixtures sind synthetisch und ersetzen keinen vollständigen Lauf, keine
+  reale Audioabnahme und keinen manuellen Test aller GUI-Pfade.
 - Zwei zusätzliche Kandidatenpfade schließen einen Teil dieser Lücke: Die
   Tests für normalen Kandidaten- und Dreinoten-Fit erzeugen jeweils einen
   persistenten CLI-Auditbericht, lassen den CLI-Fit mit unveränderter
   Binding-Validierung laufen und vergleichen den publizierten JSON-Bericht mit
   dem nativen Fit-Ergebnis. Der gezielte Lauf bestand **2/2** am 12.11.2026.
-  Quellen, Cache und Renderer sind synthetisch; andere Artefakt-Schemas und die
-  vollständige Golden-Master-Matrix bleiben offen.
+  Quellen, Cache und Renderer sind synthetisch.
 - Der Einzel-Fit-Rundlauf ist zusätzlich geschlossen:
   `test_single_fit_cli_output_matches_native_report_and_roundtrips` vergleicht
   das echte CLI-`gewichte.json` mit dem nativen Einzel-Fit-Bericht und validiert
