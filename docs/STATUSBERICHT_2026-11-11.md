@@ -674,3 +674,9 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Prompt-ID `d07ad550-1972-45ab-b37d-ff38863cd593` meldet `success` und `completed=true`. `E:\03_Video_&_Medien\Film_x_batch\FX_0505_00001_.mp4` liegt mit 1.521.253 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt-ID `e3fe365d-8695-4609-8699-1cbd50d84aa0`, Präfix `Film_x_batch/FX_0506`, läuft; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
 - Nachfolgender GitHub-/Quellstand `4b7d4adf2fb9757ade223d46b3e3e90075d9c241` wurde gepusht und remote verifiziert. Dieser Folgebericht ändert nur Dokumentation.
+
+## GUI-Fit-Bericht-Export verifiziert
+
+- `tests/test_hearing_calibration.py::test_csv_single_real_fit_without_cache_audio_preserves_old_output` klickt jetzt den echten Ergebnisdialog-Button „Bericht / Vorschlag speichern“. Beide Fälle mit und ohne vorhandene `gewichte.json` bestanden: **2/2** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,57 s). Der Export wird erneut eingelesen, `validate_proposal` akzeptiert ihn, Inhalt stimmt mit dem Vorschlag überein und der Dialog zeigt den Zielpfad. Synthetische CSV, keine Audioanalyse/GPU.
+- Der Runtime-Nachweis schließt die zuvor offene Fit-Dialogklick-Lücke. Keine fehlende Button-Verdrahtung gefunden. Vollständige CLI-gegen-native Fit-Parität, Vollsuite, aktueller Frozen-Build und manuelle GUI-Abnahme bleiben offen.
+- Batch-Folgepoll bei Beginn dieses Prüfschritts: Prompt `e3fe365d-8695-4609-8699-1cbd50d84aa0` / `FX_0506` aktiv, Queue 1/0, Producer-PID 10456 lebt.

@@ -157,7 +157,10 @@ def test_csv_single_validator_rejects_malformed_metadata(tmp_path, defect):
 
 @pytest.mark.parametrize("old_output", [False, True])
 def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, monkeypatch, old_output, qtbot):
-    from hpg_core.hearing_calibration import compute_proposal, validate_proposal, export_proposal
+    import json
+    from PyQt6.QtWidgets import QPushButton
+    from hpg_core import hearing_panel
+    from hpg_core.hearing_calibration import compute_proposal, validate_proposal
     root = _csv_single(tmp_path, rated=True)
     if old_output:
         (root / "gewichte.json").write_bytes(b"old output stays untouched")
@@ -183,7 +186,20 @@ def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, 
     assert not proposal["audit_passed"] and not proposal["gate_updates"]
     assert {p.name: p.read_bytes() for p in root.iterdir()} == before
     assert not list(op.rglob("*.wav"))
-    export_proposal(proposal, tmp_path / "report.json")
+    target = tmp_path / f"dialog-report-{old_output}.json"
+    monkeypatch.setattr(
+        hearing_panel.QFileDialog, "getSaveFileName",
+        lambda *_args: (str(target), "JSON (*.json)"),
+    )
+    save_button = next(
+        button for button in dialog.findChildren(QPushButton)
+        if button.text() == "Bericht / Vorschlag speichern"
+    )
+    save_button.click()
+    exported = json.loads(target.read_text(encoding="utf-8"))
+    validate_proposal(exported)
+    assert exported == proposal
+    assert dialog.status_label.text() == f"Bericht gespeichert: {target}"
 
 
 @pytest.mark.gui
