@@ -365,6 +365,11 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `58504f56-8bcd-452e-b1db-b8c5f843a14e`, Präfix `Film_x_batch/FX_0483`,
   1 laufend, 0 wartend; History und Zieldatei für 0483 noch nicht vorhanden.
   Producer blieb unangetastet; kein Auftrag eingereiht, geändert oder abgebrochen.
+  Nächster Live-Poll: Prompt 52 abgeschlossen. History und
+  `FX_0483_00001_.mp4` bestätigen H.264, 736×416, 24 fps, 243 Frames,
+  10,125 Sekunden. Der Producer hat anschließend Prompt 53 (UUID
+  `2317eeec-4883-4498-a4aa-ffdd550b1327`, Präfix `Film_x_batch/FX_0484`)
+  gestartet; Queue: 1 laufend, 0 wartend. Keine Queue- oder Produceränderung.
   Frühere Ausgaben `FX_0436` bis `FX_0438` bestätigte `ffprobe` ebenfalls als
   H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
@@ -394,6 +399,12 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   beim Leeren zurück. Regression `test_playlist_panel_schaltet_leerzustand_mit_playlistinhalt`
   bestanden. Der neue Frozen-Build bestätigt sichtbare und barrierefreie Darstellung;
   keine Analyse gestartet.
+- Zusätzliche sichtbare Prüfung desselben isolierten Frozen-Builds am 11.11.:
+  Playlist zeigt den Leerhinweis, Übergänge „Noch keine Übergänge vorhanden.
+  Zuerst eine Playlist erstellen.“, Zeitlinie „Keine Playlist vorhanden.“;
+  Qualität zeigt Camelot-Rad und Hörtest-Aktionen. Kein Trackordner gewählt,
+  keine Analyse gestartet und keine Quelldatei verändert. Das ist eine Prüfung
+  der leeren Startzustände, keine Abnahme des produktiven Playlist-/Fit-/Exportpfads.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
    und jede Ausgabe per History und `ffprobe` prüfen.
