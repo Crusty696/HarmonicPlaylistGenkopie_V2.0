@@ -64,8 +64,12 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `test_zwei_genres_lernen_gegensaetzliche_gewichte_real` besteht. Der Test lässt
   120 synthetische, unabhängige Paare je Genre durch `_fit_kandidaten_genre`
   laufen und reproduziert gegensätzliche Gewichtungen samt realer Gate-Logik.
-  Das belegt keinen Fit auf Originalmusik. Die Apply-E2E verwendet weiter einen
-  injizierten Pass-Ausgang und bleibt als durchgehende Kette offen.
+  Danach schloss `test_real_producer_audit_native_fit_confirm_apply_actual_ranking`
+  die durchgehende Kette mit echtem Producer, Audit, Fit, Gate, GUI-Bestätigung,
+  Apply und Ranking-Refresh: **1 Test in 251,99 s**. Der Test injiziert keinen
+  Fit- oder Gate-Ausgang. Seine 64 synthetischen Paare und 128 Varianten liefern
+  keine Musik-Ground-Truth; Originalmusik-Abnahme bleibt offen. Der frühere
+  Hinweis auf einen injizierten Apply-E2E-Ausgang ist damit veraltet.
 - Fit-Optionsabbildung neu geprüft: **8/8 Dialog-/Workerfälle bestanden**.
   Einzel-Fit reicht Genres weiter; Kandidaten-/Dreinoten-Fit deaktiviert den
   unwirksamen Genrefilter; Replay-Audit deaktiviert den Seed. Artefakt-/Golden-
