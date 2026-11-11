@@ -6631,10 +6631,12 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
 
         generation_tracks = self.analyzed_raw_tracks
-        self._playlist_selection_report = None
-        self._playlist_selection_warning = ""
+        preserve_membership = bool(settings.get("preserve_playlist_membership"))
+        if not preserve_membership:
+            self._playlist_selection_report = None
+            self._playlist_selection_warning = ""
         playlist_length = settings.get("playlist_length", 0)
-        if settings.get("preserve_playlist_membership"):
+        if preserve_membership:
             from hpg_core.playlist_selection import retain_membership
             try:
                 generation_tracks = retain_membership(

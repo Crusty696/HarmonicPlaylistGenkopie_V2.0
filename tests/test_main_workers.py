@@ -1723,6 +1723,60 @@ def test_begrenzte_playlist_waehlt_tracks_vor_dem_generation_worker(
   assert window._playlist_selection_report.selected == 2
 
 
+def test_hearing_ranking_refresh_keeps_playlist_membership_and_selection_report(
+  qtbot, monkeypatch
+):
+  from hpg_core import candidate_preferences
+
+  window = _window(qtbot, monkeypatch)
+  source_tracks = [
+    Track(filePath=f"C:/{name}.wav", fileName=f"{name}.wav", bpm=128.0)
+    for name in "abcd"
+  ]
+  window.analyzed_raw_tracks = source_tracks
+  window.playlist = [
+    Track(filePath=source_tracks[index].filePath,
+          fileName=source_tracks[index].fileName, bpm=128.0)
+    for index in (1, 3)
+  ]
+  window._playlist_selection_report = SimpleNamespace(
+    requested=2, eligible=4, selected=2, avoided_previous_set=False,
+  )
+  previous_report = window._playlist_selection_report
+  window.library_panel.playlist_length_box.setValue(1)
+  monkeypatch.setattr(candidate_preferences, "reset_cache", lambda: None)
+  monkeypatch.setattr(main.candidate_choices, "snapshot", lambda: {})
+  captured = {}
+
+  class _Signal:
+    def connect(self, _slot):
+      pass
+
+  class _Worker:
+    def __init__(self, tracks, **kwargs):
+      captured["tracks"] = tuple(tracks)
+      captured["kwargs"] = kwargs
+      self.generation_done = _Signal()
+      self.generation_failed = _Signal()
+      self.finished = _Signal()
+
+    def start(self):
+      captured["started"] = True
+
+    def isRunning(self):
+      return False
+
+  monkeypatch.setattr(main, "PlaylistGenerationWorker", _Worker)
+
+  window._refresh_hearing_ranking()
+
+  assert [track.track_id for track in captured["tracks"]] == [
+    source_tracks[1].track_id, source_tracks[3].track_id,
+  ]
+  assert captured["kwargs"]["finalize"] is True
+  assert window._playlist_selection_report is previous_report
+
+
 def test_playlist_generation_laeuft_im_worker_und_gui_bleibt_responsiv(
   qtbot, monkeypatch
 ):

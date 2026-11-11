@@ -66,7 +66,7 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   wenn eine andere Teilmenge möglich ist. Hörtest-Ranking-Refresh behält die
   aktuelle Trackmitgliedschaft. Die lokale Historie wird atomar nur bei
   `ExportReport.status == "success"` aktualisiert; ungültige Historie wird
-  nicht überschrieben. Nachweise: 19 Auswahl-/Rotationstests, 5 GUI-/Worker-/
+  nicht überschrieben. Nachweise: 19 Auswahl-/Rotationstests, 6 GUI-/Worker-/
   Settings-Tests und 1 Export-Hook-Test bestanden (`--no-cov`). Kein Volltest,
   neuer Frozen-Build, nativer Originaltrack-Lauf oder musikalisches Urteil
   nach dieser Änderung.
