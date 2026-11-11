@@ -697,6 +697,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - `tests/test_hearing_ram_calibration.py::test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate`: **1/1 bestanden** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 1,30 s). Nativer `compute_proposal` führt RAM-Audit und Fit auf synthetischen Daten aus; CLI-Wrapper liest CSV und berechnet über denselben `_compute_candidate_fit`. Kanonische Berichte sind gleich. CLI schreibt den Gate-Entwurf, GUI lässt Child-Präferenzen unverändert. CLI-Bindungsprüfung/-token wurden für diesen Berechnungsvertragstest kontrolliert ersetzt; separate Tests decken Bindungen ab. Keine Originalmusik/GPU.
 - Prompt-ID `f1ae3519-0d7c-488c-9e99-952b36668899` / `FX_0507` meldet `success`, `completed=true`. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0507_00001_.mp4`: 1.202.688 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt-ID `6f822810-c414-41cd-a34c-31a07fe98efd`, Präfix `Film_x_batch/FX_0508`, läuft; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+
+## Lokale Arbeitsänderungen abgegrenzt
+
+- Der read-only-Dateistatus zählt weiterhin 93 unveränderte lokale Änderungen. Endungs-/Pfadabgleich ordnet sie Markdown/HTML, `.claude/`- und `.codex/`-Agent-/Skillkonfigurationen sowie Projektanweisungen zu; keine `.py`-, `.spec`-, Installer-, Build- oder Requirements-Dateien darunter. Nichts davon wurde gestaged oder verändert.
 - Dieser Zwischenstand entstand vor der Dreinoten-Parität: Der erste Kandidaten-Paritätstest und das Plan-Update waren damals noch uncommitted; Dreinoten-CLI/native-Fit-Vergleich war zu diesem Zeitpunkt offen. Der aktuelle Test-/Commitstand folgt im Nachtrag „Dreinoten-CLI/native-Fit-Parität geprüft“; Vollsuite, aktueller Frozen-Build und manuelle GUI-Abnahme bleiben offen.
 
 ## Dreinoten-CLI/native-Fit-Parität geprüft
