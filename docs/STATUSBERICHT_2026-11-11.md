@@ -70,10 +70,14 @@ Frozen-Build liegt weiterhin nicht vor.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Der FilmX-Producer setzte danach mit `FX_0432` fort. Der separate
-  Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde deshalb vom
-  Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde. Dieser
-  Vier-Clip-Lauf ist noch nicht ausgeführt.
+- Der bestehende FilmX-Batch enthält **500 MP4-Dateien**; `FX_0431`,
+  `FX_0432` und `FX_0433` meldeten in der History `success`. `ffprobe`
+  bestätigte für alle drei H.264, 736×416, 24 fps, 243 Frames und 10,125
+  Sekunden. `FX_0434` ist aktuell in der Queue aktiv.
+- Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
+  Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde, weil dieser
+  bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
+  nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt.
 
 ## Nächste Schritte
 
