@@ -23,6 +23,11 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   **87 Tests bestanden** für Pfadcontainment, Duplikate, Audioeigenschaften,
   No-overwrite, Schlüsseltrennung, portable Worker-Abbruch-/Rollback-Grenzen
   und native GUI-Weitergabe. Keine Entblindung oder Statistik implementiert.
+- Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
+  `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
+  Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine
+  Port-/Prozess-/Fortschrittsverträge bestanden mit **34/34 Tests**. Die Matrix
+  enthält nun auch seine Abgrenzung zum nativen Qualitätsbereich.
 
 - Neuester Stand: Satzbrowser filtert vorhandene Sets nach Ordner, Format,
   Fortschritt, Status und Fehlern; eine beim Filtern ausgeblendete Auswahl wird

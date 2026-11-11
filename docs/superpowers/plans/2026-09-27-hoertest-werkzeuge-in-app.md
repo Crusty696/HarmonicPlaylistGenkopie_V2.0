@@ -131,7 +131,7 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 
 **Schnittstellen:** Liefert Tabelle `Werkzeugfunktion → bestehende API/CLI → GUI-Aktion → Testbeleg`, einschließlich aller Optionen oben.
 
-- [x] Jeden CLI-Parser, Server-Endpunkt, Satzvalidator, Auditor und Fit-Ausgang direkt gegen aktuellen Code aufnehmen. Matrix: [HEARING_CLI_GUI_MATRIX.md](../../HEARING_CLI_GUI_MATRIX.md).
+- [x] Jeden CLI-Parser, Server-Endpunkt, Satzvalidator, Auditor, Fit-Ausgang und den optionalen `Start_Hoertest.bat`-/`tools/hoertest_launcher.py`-Weg direkt gegen aktuellen Code aufnehmen. Matrix: [HEARING_CLI_GUI_MATRIX.md](../../HEARING_CLI_GUI_MATRIX.md); Launcher-Verträge 34/34 bestanden am 11.11.2026.
 - [x] Für jede Option als GUI-Feld, bewusst ausgeschlossene Entwickleroption oder nicht unterstützten Punkt klassifizieren; Ausschluss begründen und dem Nutzer sichtbar machen. Siehe Options-, Server-, Fit- und Diagnosegrenzen in der Matrix.
 - [x] Festlegen, wie Satzliste, Typ, Parameter, Status, Bewertung öffnen, Audit, Fit-Bericht und Blindtest im bestehenden QUALITY-Bereich erreichbar sind. Siehe GUI-Aktionen und Evidenz in der Matrix.
 - [ ] Wächter-Read-only-Prüfung des Inventars; offene Paritätslücken vor Implementation schließen.

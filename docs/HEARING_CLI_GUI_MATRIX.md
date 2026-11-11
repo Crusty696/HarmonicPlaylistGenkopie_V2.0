@@ -57,6 +57,8 @@ Native GUI-Ratings und HTTP-POSTs verwenden beide `hpg_core.hearing_ratings.save
 
 Server-CLI: `--dir` wird durch den geöffneten Satz ersetzt; `--port` durch einen freien Loopback-Port; `--launch-token` durch die interne Startkennung der gebundenen `QProcess`-Instanz; `--cache` wird für alte Sätze optional explizit gewählt, sonst nutzt die App den zum Satz gebundenen Snapshot. Keine fremden Prozesse am Port werden beendet. Tests: `test_startkennung_bindet_launcher_an_eigenen_server`, `test_startkennung_auch_fuer_dramaturgie_server` und Server-Lifecycle-Fälle in `tests/test_hearing_browser_integration.py`.
 
+Der optionale Konsolenweg `Start_Hoertest.bat` → `tools/hoertest_launcher.py` ist weiterhin vorhanden und getestet. Er findet direkte Hörtest-Unterordner auf Desktop/Projekt oder nimmt einen manuellen Pfad, zeigt schemaabhängigen Fortschritt, wählt einen freien Loopback-Port, startet `hoertest_server.py` mit eigenem Launch-Token, öffnet den Browser erst nach Bereitschaft und beendet ausschließlich den eigenen Serverprozess. Im Qualitätsbereich entspricht ihm die native Satzsuche plus **Bewerten im Browser**; dort werden Wurzel und Satz explizit gewählt und Prozess/URL innerhalb der App verwaltet. Der Konsolenlauncher bleibt ein optionaler Kompatibilitätsweg, kein fehlender Desktop-Featurepfad. Belege: `tests/test_hoertest_launcher.py` (Portkollision, Prozessbindung, Startfehler, Absturz, Browserfehler, Fortschritt und Schemaabgleich).
+
 ## Fit und Berichte
 
 | CLI | GUI-Ersatz | Unterschied / Status | Belege |
@@ -83,6 +85,6 @@ Server-CLI: `--dir` wird durch den geöffneten Satz ersetzt; `--port` durch eine
 
 ## Verifikationsgrenze
 
-Die Parser-Hilfe wurde direkt ausgeführt für `prepare`, `fit`, `transition-ratings-report`, `hoertest_server`, `prepare_dj_blind_test` und `audit_candidate_set`. Routepfade und Aktionen wurden gegen `tools/hoertest_server.py`, `hpg_core/hearing_ratings.py`, `hpg_core/hearing_panel.py`, `hpg_core/hearing_workflow.py` und die in den Tabellen genannten Regressionstests abgeglichen. `audit` ist **kein** `rate_transitions.py`-Subkommando; der Kandidaten-Audit ist das separate `tools/audit_candidate_set.py`-Werkzeug.
+Die Parser-Hilfe wurde direkt ausgeführt für `prepare`, `fit`, `transition-ratings-report`, `hoertest_server`, `prepare_dj_blind_test` und `audit_candidate_set`. Routepfade und Aktionen wurden gegen `tools/hoertest_server.py`, `tools/hoertest_launcher.py`, `hpg_core/hearing_ratings.py`, `hpg_core/hearing_panel.py`, `hpg_core/hearing_workflow.py` und die in den Tabellen genannten Regressionstests abgeglichen. `audit` ist **kein** `rate_transitions.py`-Subkommando; der Kandidaten-Audit ist das separate `tools/audit_candidate_set.py`-Werkzeug.
 
 Die Matrix belegt Implementierung und Testverdrahtung, aber keine vollständige manuelle Audio-/Usability-Abnahme aller Modi. Der unabhängige Read-only-Review der Matrix und der Gesamtabschlussreview bleiben offen.
