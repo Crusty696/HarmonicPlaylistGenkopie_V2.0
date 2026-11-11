@@ -462,7 +462,10 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `_producer_namespace` und CLI-Parser stimmen für Modusabbildung und
   aktivierte/deaktivierte Optionen überein; relevante Produktivdateien sind
   seit dem in der Matrix gepinnten Quellcommit unverändert. Kein Code-Delta
-  gefunden. Fit-/Export-/Restmatrix- und Gesamt-Abnahme bleiben offen.
+  gefunden. Unabhängiger Dateidrift-Check bis HEAD `ff1d1393` bestätigt für
+  die Matrix-Produktivpfade seit `6285970` weiterhin keine Änderungen; geändert
+  wurden nur `tests/test_hearing_workflow.py` und `tests/test_prepare_dj_blind_test.py`.
+  Fit-/Export-/Restmatrix- und Gesamt-Abnahme bleiben offen.
 
 ## Nächste Schritte
 
