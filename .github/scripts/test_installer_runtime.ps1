@@ -106,9 +106,22 @@ for index, path in enumerate(sys.argv[1:]):
     }
 
     $app = Start-Process -FilePath $installedExe -WindowStyle Hidden -PassThru
-    Start-Sleep -Seconds 8
-    if ($app.HasExited) {
-        throw "Installed application exited with $($app.ExitCode)"
+    $guiDeadline = [System.Diagnostics.Stopwatch]::StartNew()
+    $mainWindowReady = $false
+    while ($guiDeadline.Elapsed.TotalSeconds -lt 30) {
+        if ($app.HasExited) {
+            throw "Installed application exited with $($app.ExitCode)"
+        }
+        $app.Refresh()
+        if ($app.MainWindowHandle -ne [IntPtr]::Zero -and
+            -not [string]::IsNullOrWhiteSpace($app.MainWindowTitle)) {
+            $mainWindowReady = $true
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $mainWindowReady) {
+        throw "Installed application did not create a main window with a title"
     }
 } catch {
     $failure = $_
