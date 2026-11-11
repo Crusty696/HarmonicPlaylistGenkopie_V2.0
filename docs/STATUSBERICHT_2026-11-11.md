@@ -529,13 +529,15 @@ besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`,
 
 ## Nächste Schritte
 
-1. FilmX-Queue nicht unterbrechen. Live-Stand am 11.11.2026 nach dem UI-Commit:
-   Prompt 70, UUID `542c2371-3776-4c74-9a99-b7b644b7c311`, Präfix
+1. FilmX-Queue nicht unterbrechen. Live-Stand am 11.11.2026:
+   Prompt 71, UUID `5874445e-04ac-4f13-a938-9a695bccdc4f`, Präfix
    `Film_x_batch/FX_0496`, Producer-PID 10456 aktiv, Queue 1 laufend/0 wartend.
-   Prompt 69/`FX_0496_00001_.mp4` ist in der History erfolgreich, 736×416,
-   24 fps, 243 Frames, 10,125 s. Den geplanten H3-Vier-Clip-Batch erst nach
-   Ende des aktuellen Producers starten und jede Ausgabe über History und
-   `ffprobe` prüfen.
+   Prompt 70/`FX_0496_00002_.mp4` wurde in der History erfolgreich gemeldet;
+   die Datei (3.854.009 Bytes) liegt vor. `ffprobe` bestätigt H.264, 736×416,
+   24 fps, 243 Frames und 10,125 s. Die frühere Ausgabe
+   `FX_0496_00001_.mp4` ist separat für Prompt 69 bestätigt. Den geplanten
+   H3-Vier-Clip-Batch erst nach Ende des aktuellen Producers starten und jede
+   Ausgabe über History und `ffprobe` prüfen.
    Desktopinventar: sechs Fenster aus isolierten `HPG-build-verification`-
    Builds sind noch offen. Die dazugehörigen HPG-Prozesse zeigten im 3-s-
    CPU-Snapshot keine fortlaufende Last außer 0,12 CPU-s bei einem Prozess;
