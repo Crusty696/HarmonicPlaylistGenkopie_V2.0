@@ -101,7 +101,8 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   SHA-256 `3894A9827D5537ADA59ECA67F6AB86CE36C65DCDE6EFDE15FBF514FE3CE2F4C3`.
   Im isolierten GUI-Profil gestartet; Timeline zeigte sichtbar und im
   Accessibility-Tree „Keine Playlist vorhanden.“ Keine Analyse gestartet.
-  Gezielt 2/2 Timeline-Tests bestanden (`-n 0 --no-cov`).
+  Das Worker-/Timeline-Testmodul bestand mit **214 Tests**, 1 Test war
+  abgewählt (Exitcode 0, `-n 0 --no-cov`, 7,27 s).
 - Voriger Frozen-Build für den Playlistrotations-Quellstand: Python 3.12.10,
   PyInstaller 6.21.0; Build vollständig erfolgreich. EXE:
   `E:\AI\HPG-build-verification-2026-11-11-playlist-rotation-4fe4a1757cfd4349877bcbd826904fdc\dist\HarmonicPlaylistGenerator.exe`,
@@ -331,8 +332,8 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   `set_timeline` noch nicht aufgerufen. Der Startzustand ist nun direkt im
   schreibgeschützten Textfeld vorbelegt.
 - Regressionstest `test_timeline_panel_zeigt_leerzustand_beim_start` und
-  bestehender Timeline-Renderingstest: **2/2 bestanden** mit dem Projektinterpreter
-  (`venv312`, `-n 0 --no-cov`). Ein erster Aufruf mit globalem Python fand
+  bestehender Timeline-Renderingstest waren in **214 bestandenen Tests** des
+  Worker-/Timeline-Testmoduls enthalten (`venv312`, `-n 0 --no-cov`). Ein erster Aufruf mit globalem Python fand
   `librosa` nicht; der korrigierte Aufruf nutzte die Projektumgebung.
 - Der Qualitäts-Tab zeigt beim Start das Camelot-Rad, seine Hörtest-Aktionen
   und den erklärenden Text. Keine zweite leere Hauptansicht festgestellt.
