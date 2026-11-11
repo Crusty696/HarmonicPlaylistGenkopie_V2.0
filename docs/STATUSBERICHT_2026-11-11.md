@@ -238,6 +238,11 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   Smoke `ok=true`: Imports/Formulare, Spawn-Worker, RAM-Render und isolierte CSV-Fit-Probe;
   Algorithmusfingerprint 117 Dateien, SHA-256
   `591fae4d619aeb696ee706d27a4a31605dfbe0bb570fae47f6dc259bab3b97f5`.
+  Der aktuelle Quellfingerprint wurde am 11.11. erneut mit demselben Verfahren
+  berechnet: ebenfalls 117 Dateien, SHA-256
+  `2ba0636673669ba21fbf8edca2a7656792a03f0c102b2fef18d4dd64f9defbae`.
+  Die Abweichung verifiziert, dass dieser Frozen-Build nicht zum aktuellen
+  Algorithmusquellstand passt; Neubau bleibt bis Batch-Ende vertagt.
   Vollsuite nach Rotation sowie vollständige manuelle Set-/Fit-/Export- und
   Originalmusik-Abnahme bleiben offen.
 - Nach dem Timeline-Startzustandsfix erneut isoliert gebaut: Python 3.12.10,
