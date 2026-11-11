@@ -279,6 +279,55 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
 
     for name in common_files:
         assert (cli_config.output_dir / name).read_bytes() == (native_result.output_dir / name).read_bytes()
+
+    if mode == "kandidaten" and not three_notes:
+        import numpy as np
+        import soundfile as sf
+
+        from hpg_core import hearing_calibration, transition_renderer
+        from tools import audit_candidate_set as audit
+        from tests.test_audit_candidate_set import _copy_render
+
+        for set_dir in (cli_config.output_dir, native_result.output_dir):
+            ratings = rt.lies_csv(set_dir / "bewertung.csv")
+            for rating in ratings:
+                rating["note"] = "4"
+            rt.schreibe_csv(set_dir / "bewertung.csv", rt.BEWERTUNG_KANDIDATEN_SPALTEN, ratings)
+
+        def render_synthetic_ram(_spec, destination):
+            signal = np.zeros((800, 2), dtype=np.float32)
+            transition_renderer._synchronize_and_verify_kicks(signal, signal, 8000, 120., 800)
+            sf.write(destination, signal, 8000, subtype="PCM_16", format="WAV")
+
+        monkeypatch.setattr(transition_renderer, "render_transition_clip", render_synthetic_ram)
+        monkeypatch.setattr(transition_renderer, "_synchronize_and_verify_kicks", lambda a, b, *args, **kwargs: b)
+        monkeypatch.setattr(transition_renderer, "_kick_lags_across_overlap", lambda *args: [0., 0., 0.])
+        monkeypatch.setattr(audit, "_load_tracks_immutable", lambda *_args: tracks)
+        monkeypatch.setattr(audit, "rank_pair_candidates", lambda *_args, **_kwargs: [candidate])
+        audit_report = audit.audit_set(
+            cli_config.output_dir, cache, render=_copy_render(cli_config.output_dir),
+        )
+        audit_path = tmp_path / "cli-audit.json"
+        audit_path.write_text(json.dumps(audit_report), encoding="utf-8")
+        operation_root = tmp_path / "native-fit-operation"
+        operation_root.mkdir()
+        monkeypatch.setenv(
+            "HPG_CANDIDATE_PREFERENCES_FILE",
+            str(operation_root / "child_preferences.json"),
+        )
+        native_fit = hearing_calibration.compute_proposal(
+            native_result.output_dir, cache, operation_root=operation_root,
+            operation_id="6" * 32, seed=config.seed,
+        )
+        assert rt.befehl_fit_kandidaten(SimpleNamespace(
+            dir=cli_config.output_dir, cache=cache, audit_report=audit_path, seed=config.seed,
+        )) == 0
+        cli_draft = json.loads(
+            (cli_config.output_dir / "candidate_preferences_entwurf.json").read_bytes()
+        )
+        assert cli_draft == native_fit["candidate_report"]["ergebnis"]
+        assert not (operation_root / "child_preferences.json").exists()
+
     assert all(path.read_bytes().startswith(b"synthetic source") for path in sources.iterdir())
     assert cache.read_bytes() == b"isolated cache fingerprint"
 

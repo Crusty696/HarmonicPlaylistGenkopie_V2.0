@@ -2,7 +2,7 @@
 
 **Stand:** 12.11.2026
 **Branch:** `codex/gesamtrefaktorierung`
-**Lokaler und entfernter Branch:** `18bd9a01ca64fdf2420c826ae03297527f1d91ea` (gleich; zuletzt Referenzbereinigung gepusht)
+**Ausgangsrevision vor dieser Fortsetzung:** `e313c7cb3cdba860cded64151fc0b11956a192fc` (lokaler und entfernter Branch gleich)
 
 ## Geprüfte Fortschritte
 
@@ -46,6 +46,12 @@
   einen Golden-Master-Lauf mit unveränderter CLI-Bindungsprüfung und allen
   publizierten CSV-/JSON-Schemas. Die vorhandenen Producer-/Sitzungs- und
   Fit-Rundreisen belegen Teilverträge, nicht diesen Gesamtvertrag.
+- Ein zusätzlicher Kandidatenpfad schließt einen Teil dieser Lücke: Der Test
+  erzeugt einen persistenten CLI-Auditbericht, lässt den normalen CLI-Fit
+  einschließlich Binding-Validierung laufen und vergleicht den publizierten
+  Entwurf mit dem nativen Fit-Ergebnis. Der gezielte Fall bestand **1/1** am
+  12.11.2026. Quellen und Renderer sind synthetisch; andere Artefakt-Schemas
+  und die vollständige Golden-Master-Matrix bleiben offen.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.
