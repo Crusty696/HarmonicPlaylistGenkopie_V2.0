@@ -234,6 +234,27 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     cli_view = load_rating_session(cli_config.output_dir)
     assert logical_session(native_view) == logical_session(cli_view)
 
+    def flattened_clips(session):
+        return [clip for group in session["groups"] for clip in group["clips"]]
+
+    native_clips = flattened_clips(native_view)
+    cli_clips = flattened_clips(cli_view)
+    assert len(native_clips) == native_session.clip_count == len(cli_clips)
+    assert native_session.source_contents_verified is True
+    assert len(native_session.playback_paths) == native_session.clip_count
+    assert set(native_session.playback_paths) == set(native_session.specs)
+    assert all(clip["path"] is None and isinstance(clip.get("spec"), dict)
+               for clip in native_clips)
+    assert not list(native_result.output_dir.rglob("*.wav"))
+
+    cli_paths = [Path(clip["path"]) for clip in cli_clips]
+    assert len({path.resolve() for path in cli_paths}) == native_session.clip_count
+    assert all(path.is_file() and path.suffix.lower() == ".wav" for path in cli_paths)
+    for path in cli_paths:
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getnchannels() == 2
+            assert audio.getnframes() > 0
+
     if mode == "einzel":
         from hpg_core.hearing_calibration import validate_set
         assert validate_set(cli_config.output_dir)
