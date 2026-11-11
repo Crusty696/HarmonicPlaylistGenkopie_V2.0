@@ -211,6 +211,18 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   korrigiert.
 - Originalmusik-/manuelle Bewertungsabnahme und eine explizite Prüfung des
   optionalen TBB-Threading-Backends bleiben offen.
+- Der alte Deep-Sky-Provenienzfehler ist im vorbereiteten Artefaktstand vom
+  01.11. behoben: `dict_to_track` lädt `hpg-deepsky-fresh-20261101-8ceqex1v/track.json`
+  mit aktuellem Code; native Kandidatenherkunft bleibt bei
+  `downbeat_confidence=0` ausdrücklich getrennt. Die bestehende Qt-App-Probe
+  W ↔ Deep Sky ergab trotzdem **0 freigegebene Übergänge** (`planned=0`,
+  `recommendations=0`, Qualität 0 %). Der gespeicherte Diagnosebericht zeigt
+  bei 125/127 BPM (2-BPM-Grenze unverändert) in beiden Richtungen
+  `native_beat_gap`; kein lokaler Kandidat erreichte den Score-Gatewert 0,70
+  (beste Scores 0,513 bzw. 0,662). Kein Gate wurde gelockert und keine
+  Originalaudio-Datei neu analysiert oder verändert. Die technische
+  Provenienzreparatur ist damit bestätigt, eine brauchbare W/Deep-Sky-Mischung
+  oder musikalische Abnahme nicht.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
   Dokumentation und Playlist-Längenspezifikation wurden nicht in die obigen
   gezielten Commits aufgenommen und bleiben im Arbeitsbaum erhalten.
