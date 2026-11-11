@@ -547,35 +547,22 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 ## Nächste Schritte
 
-1. FilmX-Queue nicht unterbrechen. Live-Stand am 11.11.2026:
-   Prompt 71 / UUID `5874445e-04ac-4f13-a938-9a695bccdc4f` ist in History
-   erfolgreich abgeschlossen. `FX_0496_00003_.mp4` liegt mit 3.512.006 Bytes
-   vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
-   Die Dateien `_00001_` und `_00002_` sind separat bestätigt. Die Folgeausgabe
-   `FX_0497_00001_.mp4` liegt mit 2.272.035 Bytes vor und ist per `ffprobe`
-   als H.264, 736×416, 24 fps, 243 Frames und 10,125 s bestätigt. Prompt 73
-   (`FX_0498`) ist inzwischen aus der Queue verschwunden; seine Ausgabe
-   `FX_0498_00001_.mp4` (3.036.269 Bytes) wurde ebenso per `ffprobe` geprüft
-   (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Seine History war bereits
-   leer. Prompts 74 und 75 sind aus der Queue verschwunden. Aktuell läuft
-   Prompt 76 / UUID `faad791c-1432-4256-be04-ab53b54a3b72`, Präfix
-   `Film_x_batch/FX_0499`; Queue 1/0, Producer-PID 10456 lebt. History und
-   Ausgabedatei waren beim Poll noch leer/nicht vorhanden.
-   Kein fremder Queue-Job wird verändert. Den geplanten H3-Vier-Clip-Batch erst
-   nach Ende aller aktiven und wartenden
-   Jobs starten, Queue-Eigentümer und freie Queue vorher erneut prüfen und jede
-   Ausgabe über History und `ffprobe` prüfen.
-   Desktopinventar: sechs Fenster aus isolierten `HPG-build-verification`-
-   Builds sind noch offen. Die dazugehörigen HPG-Prozesse zeigten im 3-s-
-   CPU-Snapshot keine fortlaufende Last außer 0,12 CPU-s bei einem Prozess;
-   die Fenster wurden nicht verändert oder geschlossen.
-2. Nach Ende des laufenden Batches die Vollsuite gegen den aktuellen HEAD
-   ausführen; die letzte Vollsuite vor jüngsten Änderungen bestand mit
-   6.679/6.679 Tests und 81,11 % Coverage.
-3. Im Vollsuite-Lauf nach dem Batch prüfen, ob die auf 60 Sekunden erweiterte
-   Smoke-Spawn-Frist den dokumentierten xdist-Timeout beseitigt.
-4. Manuellen Fit-/Exportpfad und weitere Modi abnehmen; Originalmusik- und
-   Native-Analyse erst prüfen, wenn die iGPU-/Analysefreigabe wieder gilt.
+1. FilmX-Queue nicht unterbrechen. Letzter Live-Poll am 11.11.2026:
+   Prompt 80 / UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`, Präfix
+   `Film_x_batch/FX_0503`, aktiv; Queue 1/0, Producer-PID 10456 lebt.
+   Prompt 79 / `FX_0502` ist in der History erfolgreich abgeschlossen; die
+   Ausgabe wurde mit `ffprobe` geprüft. Fremde Queue-Jobs nicht verändern.
+2. Nach Ende aller aktiven und wartenden ComfyUI-Jobs die Vollsuite gegen den
+   dann aktuellen HEAD ausführen. Der letzte dokumentierte Volltest vor den
+   jüngsten Änderungen bestand mit 6.679/6.679 Tests und 81,11 % Coverage.
+   Im Lauf zusätzlich prüfen, ob die auf 60 Sekunden verlängerte Smoke-Spawn-
+   Frist den dokumentierten xdist-Timeout beseitigt.
+3. Danach einen isolierten Frozen-Build vom aktuellen HEAD erstellen und genau
+   diesen Build für die noch offene sichtbare GUI-Abnahme verwenden. Fit-,
+   Export- und weitere Modi bleiben bis zu dieser Abnahme offen.
+4. Originalmusik- und native GPU-Prüfungen erst nach Ende des Batches und nur
+   nach der vereinbarten iGPU-/Analysefreigabe durchführen. Keine Musik- oder
+   Produktivcache-Dateien verschieben oder überschreiben.
 
 ## UI-Sprachkorrektur 11.11.2026
 
