@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Der Code-Commit `c507efa5162070da202aa7391bde5b245c41e753` wurde auf `origin/codex/gesamtrefaktorierung` bestätigt. Dieser Statusbericht wurde anschließend separat gepusht.
+**GitHub-Abgleich:** Lokaler `HEAD` und `origin/codex/gesamtrefaktorierung` stimmen auf `f357e4e7e99f545fb6947779225e659c83136371` überein. Letzter Code-Commit ist `baa77d314cfef093c9c00d530be67c85ceb8d1c8`; `f357e4e` dokumentiert den anschließenden GUI-Startnachweis.
 
 ## Kurzstatus
 
