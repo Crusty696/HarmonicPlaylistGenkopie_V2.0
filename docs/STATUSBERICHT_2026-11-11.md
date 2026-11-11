@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026, vor dem synthetischen Ergebnis-/Exporttest):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmten nach `git fetch origin` auf `ef9aa52cfbe1c15ff3195f7dd396682b3c23b96e` überein. `origin/main` war Vorfahr; der Branch lag 136 Commits voraus. `gh run list` meldete keine Branch-Runs; ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, nach dem synthetischen Ergebnis-/Exporttest):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmten nach `git fetch origin` auf `429e2f6596b79e428dfa510d6b021c39235b27d0` überein. `origin/main` war Vorfahr; der Branch lag 137 Commits voraus. `gh run list` nach dem Push meldete keine Branch-Runs; ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -455,6 +455,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Folgepoll: Prompt 62/UUID `2979c237-f19f-406b-b947-e0b0ac3d5dda` ist erfolgreich abgeschlossen und als `FX_0492_00002_.mp4` gespeichert; damit ist das zuvor doppelte Präfix durch getrennte Dateinummern aufgelöst. Beide Dateien `FX_0492_00001_.mp4` und `_00002_.mp4` wurden mit `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s bestätigt. Aktueller Live-Stand: Prompt 65/UUID `a97fbddd-1d44-4a1a-bbf6-491c49498aa4` läuft, Queue 1/0. Kein Eingriff.
 - Folgepoll: Prompt 65/UUID `a97fbddd-1d44-4a1a-bbf6-491c49498aa4` erfolgreich beendet; dritte Ausgabe desselben Präfixes `FX_0492_00003_.mp4` (3.262.669 Byte). `ffprobe`: H.264, 736×416, 24 fps, 243 Frames, 10,125 s. Damit erzeugten die drei Prompts mit Präfix `FX_0492` eindeutige Dateinummern 00001–00003. Prompt 66/UUID `fa05ce9b-d9bb-43a7-aa6a-69990a303fb7`, Präfix `Film_x_batch/FX_0493`, läuft; Queue 1/0. Producer und Queue unangetastet.
 - Folgepoll 11.11.2026: Prompt 66 erfolgreich abgeschlossen; History nennt `FX_0493_00001_.mp4`, H.264-Ausgabe 736×416, 24 fps, 243 Frames, 10,125 s. Producer-PID 10456 lebt; Prompt 67/UUID `89bc932c-7282-47e4-9eed-28d22d0ae392`, Präfix `Film_x_batch/FX_0494`, läuft, Queue 1/0. Keine Queue-Änderung.
+- Folgepoll 11.11.2026: Prompt 67 erfolgreich abgeschlossen; History nennt `FX_0494_00001_.mp4`, Video 736×416, 24 fps, 243 Frames, 10,125 s. Producer-PID 10456 lebt; Prompt 68/UUID `cea766e1-dcf5-48cc-a399-b4aa12a76e3e`, Präfix `Film_x_batch/FX_0495`, läuft, Queue 1/0. Keine Queue-Änderung.
 ## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände
