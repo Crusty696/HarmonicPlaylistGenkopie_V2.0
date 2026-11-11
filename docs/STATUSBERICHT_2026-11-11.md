@@ -691,3 +691,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 - ComfyUI-Folgepoll zeigt Prompt-ID `f1ae3519-0d7c-488c-9e99-952b36668899`, Präfix `Film_x_batch/FX_0507`, aktiv; Queue 1/0, Producer-PID 10456 lebt.
 - Commit `50057538040f6e56456278ffc618fcbbca19b359` ergänzt den Dialogklick-Rundreisenachweis und wurde gepusht. Der neue GUI-Exporttest besteht in beiden Parametervarianten (**2/2**); Plan und Fit-Exportstatus sind nachgeführt.
+
+## Kanonische Kandidaten-Fit-Parität geprüft
+
+- `tests/test_hearing_ram_calibration.py::test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate`: **1/1 bestanden** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 1,30 s). Nativer `compute_proposal` führt RAM-Audit und Fit auf synthetischen Daten aus; CLI-Wrapper liest CSV und berechnet über denselben `_compute_candidate_fit`. Kanonische Berichte sind gleich. CLI schreibt den Gate-Entwurf, GUI lässt Child-Präferenzen unverändert. CLI-Bindungsprüfung/-token wurden für diesen Berechnungsvertragstest kontrolliert ersetzt; separate Tests decken Bindungen ab. Keine Originalmusik/GPU.
+- Prompt-ID `f1ae3519-0d7c-488c-9e99-952b36668899` / `FX_0507` meldet `success`, `completed=true`. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0507_00001_.mp4`: 1.202.688 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Prompt-ID `6f822810-c414-41cd-a34c-31a07fe98efd`, Präfix `Film_x_batch/FX_0508`, läuft; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+- Paritätstest und Plan-Update sind noch nicht committed; Dreinoten-CLI/native-Fit-Vergleich, Vollsuite, aktueller Frozen-Build und manuelle GUI-Abnahme bleiben offen.

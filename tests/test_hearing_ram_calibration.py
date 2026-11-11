@@ -146,6 +146,55 @@ def test_native_fit_is_pure_and_does_not_render_again(ram_set, monkeypatch):
     assert not (op / "child_preferences.json").exists()
 
 
+def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate(
+    ram_set, monkeypatch
+):
+    from copy import deepcopy
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from hpg_core import candidate_preferences as cp
+
+    root, cache, op, _render_calls, tracks = ram_set
+    calculated_reports = []
+    calculate = rate._compute_candidate_fit
+
+    def capture_calculation(*args):
+        report = calculate(*args)
+        calculated_reports.append(deepcopy(report))
+        return report
+
+    monkeypatch.setattr(rate, "_compute_candidate_fit", capture_calculation)
+    native = calibration.compute_proposal(
+        root, cache, operation_root=op, operation_id="3" * 32, seed=1
+    )
+    assert native["fit_status"] == "passed"
+    assert native["candidate_report"] == calculated_reports[-1]
+    assert native["gate_updates"] == {}
+    assert not (op / "child_preferences.json").exists()
+
+    inputs = audit.prepare_candidate_inputs(root, cache).as_dict()
+    token = (
+        ("merkmale_sha256", sha256((root / "merkmale.csv").read_bytes()).hexdigest()),
+        ("bewertung_sha256", sha256((root / "bewertung.csv").read_bytes()).hexdigest()),
+    )
+    monkeypatch.setattr(rate, "_fit_binding_token", lambda *_args: token)
+    monkeypatch.setattr(rate, "_validiere_fit_bindung", lambda *_args: inputs["manifest"])
+    monkeypatch.setattr(rate, "_bestaetige_fit_binding", lambda *_args: None)
+    monkeypatch.setattr(rate, "lade_tracks_aus_cache", lambda *_args: tracks)
+    monkeypatch.setattr(
+        cp, "merge_user_preferences_atomically",
+        lambda *_args, **_kwargs: pytest.fail("Gate ohne Update darf Preferences nicht publizieren"),
+    )
+    cli_status = rate.befehl_fit_kandidaten(SimpleNamespace(
+        dir=root, cache=cache, audit_report=root / "audit.json", seed=1,
+    ))
+
+    assert cli_status == 0
+    assert calculated_reports[-1] == native["candidate_report"]
+    assert (root / "candidate_preferences_entwurf.json").is_file()
+    assert not (op / "child_preferences.json").exists()
+
+
 def test_inputs_and_receipt_are_detached_immutable(ram_set):
     root, cache, *_ = ram_set
     inputs = audit.prepare_candidate_inputs(root, cache)
