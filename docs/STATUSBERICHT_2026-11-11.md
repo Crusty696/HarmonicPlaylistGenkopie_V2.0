@@ -58,12 +58,17 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   geprüft: Ordner-, Status- und Fortschrittsfilter funktionieren; beim
   Ausblenden der ausgewählten Zeile wird „Öffnen“ deaktiviert. Kein Satz wurde
   geöffnet, keine Analyse gestartet.
-- Manuelle Sichtprüfung des aktuellen Frozen-Builds (SHA-256
-  `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`): App
-  startete und blieb bedienbar; QA-Ansicht, Hörtestformular und erweiterte
-  Vorbereitungsoptionen öffneten sich. Formular ohne Auftrag geschlossen.
-  Kein Ordner ausgewählt, keine Analyse, Satz-Erzeugung, Wiedergabe oder
-  vollständige GUI-Abnahme durchgeführt.
+- Manueller GUI-Pfad des aktuellen Frozen-Builds (SHA-256
+  `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`) am
+  11.11.2026 mit ausschließlich synthetischen Audios und isoliertem AppData:
+  vorbereiteten Einzelsatz geöffnet, Vorschau im RAM gerendert/abgespielt,
+  Testnote 3 in `bewertung.csv` gespeichert, Dialog geschlossen und Satz erneut
+  geöffnet. Beim erneuten Öffnen zeigte die App `Bewertet: 1/1` und
+  `Vorhandene Noten geladen`; damit ist Save-/Reload-Verhalten für diese
+  synthetische Einzelvariante manuell bestätigt. Die Testnote wurde danach nur
+  im isolierten Temp-Artefakt entfernt; dessen CSV enthält wieder nur den
+  Header. Kein Originalaudio, keine Analyse, kein Fit, kein Export und keine
+  musikalische Qualitätsbewertung. Vollständige GUI-Abnahme bleibt offen.
 - Vollsuite nach Satzbrowser-Änderung: **6.644/6.644 bestanden**, Coverage
   **81,02 %**, Exitcode 0. Isolierter PyInstaller-Build mit `HPG.spec`
   abgeschlossen; Native-Smoke `ok=true` (Imports/Formulare, Spawn/Worker-
@@ -225,12 +230,11 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
-  Live-Queue am 11.11.2026 zeigt Prompt-ID `33` (UUID
-  `6cdc5a29-ef9e-4a87-9bf7-ea2ca4c91211`) aktiv; der Workflow verwendet
-  `MiniMaxH3ReferenceToVideo` und speichert unter `Film_x_batch/FX_0464`.
-  Es gibt 0 wartende Aufträge. Der Verlauf für Prompt `30` war leer; dessen
-  Abschluss/Ausgabedatei ist daher hier nicht bestätigt. Prompt `33` bleibt
-  laufend und unangetastet.
+  Live-Queue am 11.11.2026 zeigt Prompt-ID `34` (UUID
+  `e588ba7a-1524-4734-9123-f2c26242aec6`) aktiv; der Workflow verwendet
+  `MiniMaxH3ReferenceToVideo` und speichert unter `Film_x_batch/FX_0465`.
+  Es gibt 0 wartende Aufträge. Queue-Abfrage bestätigt den Auftrag weiterhin
+  aktiv; Prompt `34` und der Batchproducer blieben unangetastet.
   Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
@@ -244,7 +248,7 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
    und jede Ausgabe per History und `ffprobe` prüfen.
-2. Restlichen manuellen GUI-Pfad (Satz erstellen/öffnen, bewerten, Fit/Export)
+2. Restlichen manuellen GUI-Pfad (Satz erstellen, Fit/Export und weitere Modi)
    abnehmen; Matrix-Parität nach der erneuten Parser-/Producerprüfung unabhängig
    read-only gegen den Code reviewen.
 3. Parallelen nativen Smoke-Ausreißer untersuchen; Originalmusikabnahme und
