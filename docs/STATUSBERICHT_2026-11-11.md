@@ -724,3 +724,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Read-only-Review des Produktcode-Deltas von `149f5af1ad46eb99f3958a5ad28376d52ad11854` bis `c0f851ceee0f73e6faf2ddc4d54a540aa70be4fd`: kein belastbar reproduzierbarer Defekt gefunden. Geprüft wurden Playlist-Auswahl/Exportrotation, Hearing-Profile/CSV-Validierung sowie geänderte UI-, Worker- und Installer-Pfade. Keine Tests, Builds, Audio-/GPU-Arbeit oder Dateien geändert.
 - Ein zweiter unabhängiger Read-only-Blindspot-Pass über dasselbe Produktcode-Delta fand ebenfalls keinen quellcodebelegten Defekt oder fehlende Verdrahtung. Schwerpunkt: `hpg_core/hearing_calibration.py`, `tools/rate_transitions.py`, `hpg_core/playlist_selection.py` und die Aufrufpfade in `main.py`. Auch dieser Pass führte keine Tests, Builds oder Audio-/GPU-/GUI-Prüfungen aus.
 - Der geprüfte Produktcode ist am aktuellen HEAD `a411e7709ef4be9d453d7544245f541845ac1dcf` unverändert; danach kamen nur Dokumentationscommits hinzu. Die beiden Delta-Reviews ersetzen weder Laufzeit-/Musikabnahme noch den offenen vollständigen GUI-/Release-Abschlussreview.
+
+## FilmX-Batch-Fortschritt
+
+- Prompt `02106d71-4cd8-4cd1-a679-9c1cfb8e2c99` / `FX_0512` meldet in der ComfyUI-History `success`. `Film_x_batch/FX_0512_00001_.mp4` existiert mit 2.125.400 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Folgeprompt `56a12074-ae4d-4fd2-bdcd-f8ab05967796` / Präfix `Film_x_batch/FX_0513` läuft; Producer-PID 10456 lebt. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
