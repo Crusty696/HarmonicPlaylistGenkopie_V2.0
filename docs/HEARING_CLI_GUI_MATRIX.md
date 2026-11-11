@@ -1,7 +1,7 @@
 # Hörtest-Werkzeuge: CLI- und GUI-Matrix
 
 **Stand:** 11.11.2026
-**Codebasis:** Branch `codex/gesamtrefaktorierung`, Commit `b36a623e`
+**Codebasis:** Branch `codex/gesamtrefaktorierung`, Produkt-/Werkzeugabgleich auf Commit `3707d71e` (die Folgecommits ändern nur Nachweise/Tests).
 **Zweck:** Werkzeugverhalten, Nutzeraktionen, absichtliche Unterschiede und Regressionen direkt gegeneinander abgleichen. CLI-Optionen, die Pfade/Prozesse für Entwickler steuern, werden nicht als fehlende Nutzerfunktion gewertet, wenn die App sie kontrolliert ableitet.
 
 ## Satzvorbereitung
@@ -36,7 +36,7 @@ CLI-Parser: `tools/rate_transitions.py prepare`. GUI: `HearingPrepareDialog` →
 |---|---|---|---|
 | `hearing_discovery.discover_sets(root)` | **Sätze / Fortschritt** wählt explizite Wurzel; liest Wurzel und direkte Unterordner; Tabelle filtert Ordner, Typ, Fortschritt, Status und Fehler | Fortschritt ist kein Quellen-/Auditnachweis. Öffnen lädt und validiert danach vollständig im Hintergrund. Links und tiefere Ordner werden nicht verfolgt. | `test_discovery_rows_then_full_load_only_after_finished`; `test_hearing_set_browser_search_filters_and_clears_hidden_selection` |
 | Legacy Einzel-CSV: `hearing_calibration.validate_set` | **Satz öffnen**, Einzel-CSV-Auswertung | Prüft CSV-Schema, eindeutige IDs, 1:1-Zuordnung und Wertebereiche; traversiert dabei keine Clip-Unterordner | `tests/test_hearing_calibration.py`; `tests/test_hearing_browser_integration.py` |
-| Quellreferenz Einzel/Kandidaten/Dramaturgie: `hearing_sources.load_source_session` mit getrennten Modusvalidatoren | **Satz öffnen** und Rating-Fortsetzung | Modusspezifische Manifest-/Metadatenprüfung; Quellen- und Audio-Bindung bleibt getrennt von Replay-Audit | `tests/test_hearing_sources.py`; `tests/test_hearing_browser_integration.py` |
+| Quellreferenz Einzel/Kandidaten/Dramaturgie: `hearing_sources.load_source_session` mit getrennten Modusvalidatoren | **Satz öffnen** und Rating-Fortsetzung | Modusspezifische Manifest-/Metadatenprüfung; Quellen- und Audio-Bindung bleibt getrennt von Replay-Audit | `tests/test_hearing_sources.py`; `tests/test_hearing_browser_integration.py`; `test_service_uses_real_internal_producers_with_source_sink` prüft die Loaderannahme echter interner Producer-Ausgaben für Einzel/Kandidaten/Dreinoten |
 | `tools.audit_candidate_set` (`--set-dir`, `--cache`, `--report`) | **Kandidaten-Replay prüfen** | Schreibt keine Originalclips, Ratings oder Cache. App zeigt Replay-Ergebnis und Integritätsbindung; persistente Reportdatei ist optionaler Export, keine Voraussetzung des nativen Vorschlagsflusses | `tests/test_audit_candidate_set.py`; `test_audit_dialog_completion_reports_replay_without_fit` |
 
 ### Native und Browser-Bewertung
@@ -85,6 +85,6 @@ Der optionale Konsolenweg `Start_Hoertest.bat` → `tools/hoertest_launcher.py` 
 
 ## Verifikationsgrenze
 
-Die Parser-Hilfe wurde direkt ausgeführt für `prepare`, `fit`, `transition-ratings-report`, `hoertest_server`, `prepare_dj_blind_test` und `audit_candidate_set`. Routepfade und Aktionen wurden gegen `tools/hoertest_server.py`, `tools/hoertest_launcher.py`, `hpg_core/hearing_ratings.py`, `hpg_core/hearing_panel.py`, `hpg_core/hearing_workflow.py` und die in den Tabellen genannten Regressionstests abgeglichen. `audit` ist **kein** `rate_transitions.py`-Subkommando; der Kandidaten-Audit ist das separate `tools/audit_candidate_set.py`-Werkzeug.
+Die Parser-Hilfe wurde direkt ausgeführt für `prepare`, `fit`, `transition-ratings-report`, `hoertest_server`, `prepare_dj_blind_test` und `audit_candidate_set`; `prepare --help` wurde am 11.11.2026 erneut gegen die Tabelle geprüft. Routepfade und Aktionen wurden gegen `tools/hoertest_server.py`, `tools/hoertest_launcher.py`, `hpg_core/hearing_ratings.py`, `hpg_core/hearing_panel.py`, `hpg_core/hearing_workflow.py` und die in den Tabellen genannten Regressionstests abgeglichen. `audit` ist **kein** `rate_transitions.py`-Subkommando; der Kandidaten-Audit ist das separate `tools/audit_candidate_set.py`-Werkzeug.
 
-Die Matrix belegt Implementierung und Testverdrahtung, aber keine vollständige manuelle Audio-/Usability-Abnahme aller Modi. Der unabhängige Read-only-Review der Matrix und der Gesamtabschlussreview bleiben offen.
+Die Matrix belegt Implementierung und Testverdrahtung, aber keine vollständige manuelle Audio-/Usability-Abnahme aller Modi. Ein manueller aktueller Frozen-Build-Smoke öffnete am 11.11.2026 die QA-Ansicht, das Hörtestformular und erweiterte Optionen; es startete keinen Satz und prüfte weder Playback noch Bewertung/Fit/Export. Der unabhängige Read-only-Review der Matrix und der Gesamtabschlussreview bleiben offen.

@@ -244,7 +244,8 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
    und jede Ausgabe per History und `ffprobe` prüfen.
-2. Manuellen GUI-Klickpfad verifizieren und die vollständige Tool-zu-GUI-
-   Paritätsmatrix mit Parser, Routen und Tests synchronisieren.
+2. Restlichen manuellen GUI-Pfad (Satz erstellen/öffnen, bewerten, Fit/Export)
+   abnehmen; Matrix-Parität nach der erneuten Parser-/Producerprüfung unabhängig
+   read-only gegen den Code reviewen.
 3. Parallelen nativen Smoke-Ausreißer untersuchen; Originalmusikabnahme und
    optionales TBB-Backend getrennt prüfen.
