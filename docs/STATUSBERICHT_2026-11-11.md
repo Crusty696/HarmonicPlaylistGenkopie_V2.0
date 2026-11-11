@@ -58,6 +58,18 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   geprüft: Ordner-, Status- und Fortschrittsfilter funktionieren; beim
   Ausblenden der ausgewählten Zeile wird „Öffnen“ deaktiviert. Kein Satz wurde
   geöffnet, keine Analyse gestartet.
+- Playlist-Längenwunsch und Exportrotation am 11.11.2026 im Hauptcheckout
+  integriert: `0`/„Alle“ erhält die bisherige Trackliste; Werte 1–1000 wählen
+  vor der bestehenden Strategie aus gültigen Tracks ohne Zurücklegen. Tracks
+  mit länger zurückliegendem letztem erfolgreichem Export erhalten höheres
+  Auswahlgewicht. Eine identische letzte Trackzusammenstellung wird vermieden,
+  wenn eine andere Teilmenge möglich ist. Hörtest-Ranking-Refresh behält die
+  aktuelle Trackmitgliedschaft. Die lokale Historie wird atomar nur bei
+  `ExportReport.status == "success"` aktualisiert; ungültige Historie wird
+  nicht überschrieben. Nachweise: 19 Auswahl-/Rotationstests, 5 GUI-/Worker-/
+  Settings-Tests und 1 Export-Hook-Test bestanden (`--no-cov`). Kein Volltest,
+  neuer Frozen-Build, nativer Originaltrack-Lauf oder musikalisches Urteil
+  nach dieser Änderung.
 - Manueller GUI-Pfad des aktuellen Frozen-Builds (SHA-256
   `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`) am
   11.11.2026 mit ausschließlich synthetischen Audios und isoliertem AppData:
