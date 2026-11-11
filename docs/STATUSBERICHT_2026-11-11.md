@@ -78,8 +78,8 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   geöffnet. Beim erneuten Öffnen zeigte die App `Bewertet: 1/1` und
   `Vorhandene Noten geladen`; damit ist Save-/Reload-Verhalten für diese
   synthetische Einzelvariante manuell bestätigt. Die Testnote wurde danach nur
-  im isolierten Temp-Artefakt entfernt; dessen CSV enthält wieder nur den
-  Header. Kein Originalaudio, keine Analyse, kein Fit, kein Export und keine
+  im isolierten Temp-Artefakt entfernt; die synthetische Paarzeile bleibt mit leerer Bewertung erhalten. Kein
+  Originalaudio, keine Analyse, kein Fit, kein Export und keine
   musikalische Qualitätsbewertung. Vollständige GUI-Abnahme bleibt offen.
 - Vollsuite nach Satzbrowser-Änderung: **6.644/6.644 bestanden**, Coverage
   **81,02 %**, Exitcode 0. Isolierter PyInstaller-Build mit `HPG.spec`
@@ -264,10 +264,10 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
-  Live-Queue am 11.11.2026 zeigt Prompt-ID `36` (UUID
-  `770d4ae4-82a2-4354-be19-af11035cb59a`) aktiv und 0 wartende Aufträge.
-  Der Promptverlauf und die Ausgabedatei sind noch nicht bestätigt. Der Auftrag
-  und Batchproducer blieben unangetastet.
+  Live-Queue am 11.11.2026 zeigt Prompt-ID `38` (UUID
+    `0e390c1e-aaab-4ca3-a25d-a84eb3269ec8`) aktiv und 0 wartende Aufträge.
+    Promptverlauf und Ausgabedatei sind noch nicht bestätigt. Auftrag und
+    Batchproducer blieben unangetastet.
   Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
