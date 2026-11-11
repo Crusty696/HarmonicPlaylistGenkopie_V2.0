@@ -4930,18 +4930,18 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
         warnings = []
         if not pedalboard_installed:
-            warnings.append("• Spotify-Pedalboard fehlt: Frequenzweichen (EQ-Swap) werden ueber eine Scipy-Alternative berechnet. Der echte Dynamik-Compressor ist inaktiv.")
+            warnings.append("• Pedalboard fehlt: Frequenzweichen (EQ-Swap) werden über eine SciPy-Alternative berechnet. Der echte Dynamik-Kompressor ist inaktiv.")
         if not ai_online:
             # M4-Fix: Hinweis passend zum gewaehlten Provider statt hardcodiert Ollama
             port = "1234" if ai_provider == "LM Studio" else "11434"
-            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Optionale KI-Moods und Subgenres werden nicht ergaenzt; deterministische Mixing-Tips bleiben verfuegbar. Bitte starten Sie {ai_provider} auf Port {port}.")
+            warnings.append(f"• Lokaler KI-Server ({ai_provider}) ist offline: Optionale KI-Stimmungen und Subgenres werden nicht ergänzt; deterministische Übergangshinweise bleiben verfügbar. Bitte starten Sie {ai_provider} auf Port {port}.")
         if rekordbox_running:
             # Rekordbox checkpointet sein WAL erst beim Beenden nach master.db.
             # Waehrend es laeuft, liest HPG einen aelteren Stand.
-            warnings.append("• Rekordbox laeuft: HPG liest die Datenbank erst nach dem Beenden von Rekordbox aktuell. Frisch analysierte Tracks fehlen dann noch und werden neu berechnet. Fuer aktuelle Metadaten Rekordbox schliessen.")
+            warnings.append("• Rekordbox läuft: HPG liest die Datenbank erst nach dem Beenden von Rekordbox aktuell. Frisch analysierte Titel fehlen dann noch und werden neu berechnet. Für aktuelle Metadaten Rekordbox schließen.")
 
         if warnings:
-            warn_text = "System-Hinweis: Einige Dienste sind eingeschraenkt (Fuer Details hier hovern)"
+            warn_text = "System-Hinweis: Einige Dienste sind eingeschränkt (Für Details hier hovern)"
             self.status_bar.set_status(warn_text)
             self.status_bar.setToolTip("\n".join(warnings))
             # Audit-Fix 2026-07-21: status_bar ist ein StatusBarWidget(QWidget),

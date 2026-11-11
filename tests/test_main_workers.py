@@ -2917,8 +2917,22 @@ def test_real_window_shows_rekordbox_warning_end_to_end(qtbot, monkeypatch):
   check(window)
 
   qtbot.waitUntil(
-    lambda: "Rekordbox laeuft" in window.status_bar.toolTip(), timeout=5000
+    lambda: "Rekordbox läuft" in window.status_bar.toolTip(), timeout=5000
   )
+
+
+def test_dependency_warning_uses_normal_german_accents(qtbot, monkeypatch):
+  window = _window(qtbot, monkeypatch)
+
+  window._on_dependencies_checked(False, False, False, "Ollama")
+
+  assert window.status_bar.status_label.text() == (
+    "System-Hinweis: Einige Dienste sind eingeschränkt (Für Details hier hovern)"
+  )
+  tooltip = window.status_bar.toolTip()
+  assert "über eine SciPy-Alternative" in tooltip
+  assert "nicht ergänzt" in tooltip
+  assert "verfügbar" in tooltip
 
 
 # --- Rekordbox-Abdeckung nach dem Lauf --------------------------------------

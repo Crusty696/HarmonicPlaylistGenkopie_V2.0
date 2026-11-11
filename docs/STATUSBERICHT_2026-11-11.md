@@ -28,6 +28,12 @@ Accessibility-Name verwenden jetzt „Titel auswählen“ bzw.
 besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`,
 0,69 s). Der Frozen-Build selbst stammt von vor diesem letzten Textdelta.
 
+Die Statusleiste transliterierte deutsche Umlaute noch als `ae/ue`; außerdem
+waren einzelne Warnhinweise sprachlich gemischt. Statushinweis sowie Pedalboard-,
+KI-Server- und Rekordbox-Warntext verwenden jetzt normale deutsche Schreibweise.
+End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
+**2/2** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 1,13 s).
+
 ## Verifizierte Änderungen und Prüfungen
 - UI-Lokalisierungsdelta: Statuszähler, Analytics, Timeline, Tooltips und
   Worker-Text wurden vereinheitlicht. Die gezielte Qt-Regression bestand
