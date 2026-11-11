@@ -17,7 +17,10 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
 - Neuester Stand: Satzbrowser filtert vorhandene Sets nach Ordner, Format,
   Fortschritt, Status und Fehlern; eine beim Filtern ausgeblendete Auswahl wird
   gelöscht. Gezielt und in der vollständigen Suite verifiziert. Der native UI-
-  Klickpfad ließ sich in dieser Sitzung nicht zuverlässig bedienen.
+  Pfad wurde im aktuellen Frozen-Build mit drei isolierten Beispielsätzen
+  geprüft: Ordner-, Status- und Fortschrittsfilter funktionieren; beim
+  Ausblenden der ausgewählten Zeile wird „Öffnen“ deaktiviert. Kein Satz wurde
+  geöffnet, keine Analyse gestartet.
 - Vollsuite nach Satzbrowser-Änderung: **6.644/6.644 bestanden**, Coverage
   **81,02 %**, Exitcode 0. Isolierter PyInstaller-Build mit `HPG.spec`
   abgeschlossen; Native-Smoke `ok=true` (Imports/Formulare, Spawn/Worker-
@@ -166,9 +169,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Aktuelle Live-Abfrage: FilmX-Batch **514 MP4-Dateien**, Auftrag `FX_0460`
-  (Prompt-ID `29`, UUID `676d873b-1edb-45a5-8a56-1a778b6f9e3c`) läuft;
-  Queue hat 0 wartende Aufträge. Producer bleibt unberührt. Frühere Ausgaben
+- Aktuelle Live-Abfrage: **527 MP4-Dateien**. Auftrag `FX_0460` (Prompt-ID `29`,
+  UUID `676d873b-1edb-45a5-8a56-1a778b6f9e3c`) wurde erfolgreich abgeschlossen;
+  `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
+  für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
+  `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
+  Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
