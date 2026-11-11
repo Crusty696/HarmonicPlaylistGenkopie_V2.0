@@ -91,6 +91,12 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   echten Cache-/Such-/Scoringalgorithmen, Audio-Renderqualität, Rating-Fortsetzung
   oder musikalische Qualität. Das gesamte Modul `tests/test_hearing_workflow.py`
   bestand danach mit **32/32 Tests** (`-n 0 --no-cov`, 2,06 s).
+- Native GUI-Satzfolge nochmals für alle Modi gezielt geprüft:
+  `test_native_prepare_load_edit_reopen_source_metadata` bestand für Einzel,
+  Kandidaten, Dreinoten und Dramaturgie mit **4/4 in 4,24 s** (`venv312`,
+  `-n 0 --no-cov`). Reale Prepare-/Load-Worker, Rating-Speicherung, Dialogschluss
+  und erneutes Laden laufen; Render-Preflight und Wiedergabe-Payload sind
+  synthetisch, ohne Audio-DSP oder Originalmusik.
 - Native Veröffentlichung mit den echten internen Producerfunktionen ergänzt
   geprüft: **3/3** für Einzel, Kandidaten und Dreinoten-Kandidaten. Alle Outputs
   werden vom späteren Quellmanifest-Loader eingelesen; Einzel zusätzlich vom
