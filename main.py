@@ -5883,15 +5883,25 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
         from hpg_core.hearing_panel import HearingFitDialog
         from hpg_core.hearing_jobs import HearingCalibrationWorker
-        from tools.hoertest_server import BEWERTUNG_SPALTEN, bewertungsschema
+        from tools.hoertest_server import (
+            BEWERTUNG_SPALTEN, BEWERTUNG_DREINOTEN_SPALTEN,
+            BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN, bewertungsschema,
+        )
         try:
-            single = bewertungsschema(Path(target) / "bewertung.csv") == BEWERTUNG_SPALTEN
+            rating_schema = bewertungsschema(Path(target) / "bewertung.csv")
+            single = rating_schema == BEWERTUNG_SPALTEN
+            dreinoten_pilot = rating_schema in {
+                BEWERTUNG_DREINOTEN_SPALTEN, BEWERTUNG_DREINOTEN_CLUSTER_SPALTEN,
+            }
             if override and not single:
                 raise ValueError("Einzel-CSV-Auswertung verlangt exakt pair_id,clip,bewertung.")
         except (OSError, ValueError, UnicodeError, csv.Error) as exc:
             QMessageBox.warning(self, "Hörtest", f"Bewertungsschema nicht lesbar: {exc}")
             return
-        dialog = HearingFitDialog(None if override else self._hearing_cache_path, audit_only=audit_only, single=single, parent=self)
+        dialog = HearingFitDialog(
+            None if override else self._hearing_cache_path,
+            audit_only=audit_only, single=single, three_note=dreinoten_pilot, parent=self,
+        )
         self._hearing_native_active = True
         self._update_hearing_buttons()
         try:
@@ -5929,7 +5939,10 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
         from hpg_core.hearing_panel import HearingCalibrationResultDialog
         from hpg_core.hearing_jobs import HearingApplyWorker
-        dialog = HearingCalibrationResultDialog(proposal, self, cleanup_warning=cleanup_warning)
+        dialog = HearingCalibrationResultDialog(
+            proposal, self, cleanup_warning=cleanup_warning,
+            confirm_apply=bool(proposal["candidate_report"] and proposal["candidate_report"]["dreinoten"]),
+        )
         self._hearing_native_active = True
         self._update_hearing_buttons()
         try:
@@ -5938,6 +5951,20 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             self._hearing_native_active = False
             self._update_hearing_buttons()
         if accepted and self._hearing_selection_allowed() and not self._run_is_active():
+            if proposal["candidate_report"]["dreinoten"]:
+                answer = QMessageBox.question(
+                    self, "Dreinoten-Pilot übernehmen",
+                    "Die folgenden im Pilot-Fit bestandenen Kandidaten-Gates werden atomar in die Nutzerpräferenzen geschrieben. "
+                    "Danach startet eine Playlist-Neuberechnung. Abbrechen lässt Präferenzen unverändert.\n\n"
+                    + json.dumps(proposal["gate_updates"], ensure_ascii=False, indent=2),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    self.analytics_panel.hearing_status.setText(
+                        "Dreinoten-Fitbericht geschlossen; keine Präferenzen geändert."
+                    )
+                    return
             self._start_hearing_worker(HearingApplyWorker(proposal, self), "apply")
 
     def _refresh_hearing_ranking(self):

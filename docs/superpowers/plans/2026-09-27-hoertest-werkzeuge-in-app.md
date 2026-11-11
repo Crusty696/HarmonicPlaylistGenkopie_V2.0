@@ -183,7 +183,7 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 - [x] Kandidaten-Audit-Erfolg und -Fehler, Binding, Cachefamilie/WAL, Mutationen während Audit, Source-/Legacy-Einzelvalidator und isolierter Audit-Fit sind durch `tests/test_audit_candidate_set.py`, `tests/test_hearing_calibration.py`, `tests/test_hearing_sources_phase_v2.py` und `tests/test_hearing_ratings.py` abgedeckt; keinen Kandidatenbericht ohne erfolgreichen RAM-Audit akzeptieren.
 - [x] Kandidaten-Fit ist UI-seitig bis zur vollständigen Ratingprüfung freigegeben und Service-seitig an erfolgreiches Audit-Receipt und Fit-Binding gebunden; Apply validiert und prüft Binding erneut.
 - [x] Audit verändert keine Originalclips, Ratings, Quellen oder Cache; Kandidaten-Audit rendert in RAM und verifiziert Fingerprints.
-- [ ] Ein lesbarer Auditbericht samt Warnungen, Cache-/Build-Bindung und expliziter Trennung „Replay bestanden“ vs. „Fit bestanden“ direkt im Hörtestbereich anzeigen.
+- [x] Separater Auditdialog zeigt erfolgreiches Replay, ausdrücklich nicht ausgeführten Fit, Cache-/Build-/Quell-/Datei-Bindung und Integritätsdigest; Audit- und Fit-Completion bleiben getrennt und Close-sicher. Geprüft in `tests/test_hearing_calibration.py` und `tests/test_hearing_browser_integration.py`.
 - [ ] Nachweis der Report-Kollision/Publikation nur dann ergänzen, wenn ein persistenter Auditbericht weiterhin Produktanforderung ist; aktueller nativer Pfad verwendet gebundenen Vorschlag und optionalen Export.
 
 **Abnahmekriterium:** Kandidaten-Fit kann nicht ohne passenden erfolgreichen Audit starten. Für Modi ohne diesen Audit existiert eine dokumentierte, getestete, modusspezifische Freigabeprüfung; UI kennzeichnet deren geringeren/anderen Prüfstatus klar.
@@ -200,7 +200,8 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 - [x] Einzel-Fit zeigt Stichprobe, Klassen, Datenlage/Grund, aktive Faktoren, Koeffizienten und Bootstrapintervalle als ausdrücklich inaktiven Entwurf.
 - [x] Kandidaten-Fit zeigt Genre-Gates, Holdout/Train, Baseline, AUC, Identifizierbarkeit, Intervalle, neue Gewichte und Rangfolge; vollständiger maschinenlesbarer Fitbericht bleibt sichtbar/exportierbar.
 - [x] Explizite Apply-Bestätigung, atomare Persistenz, Cache-Reset, neuer Scoring-Context, Playlist-Neuberechnung und Fehlerstatus sind durch vorhandene Services und fünf gezielte MainWindow-Regressionen geprüft.
-- [ ] GUI-Modus-/Option-Matrix vervollständigen: Seed/Genre und Dreinoten-Pilot getrennt abbilden; Kandidaten-`--genre` nicht als wirkungsvollen Filter anbieten; jede wirksame Option gegen CLI-Serviceausgabe testen.
+- [ ] GUI-Modus-/Option-Matrix vervollständigen: Seed/Genre und alle Satztypen abbilden; Kandidaten-`--genre` nicht als wirkungsvollen Filter anbieten; jede wirksame Option gegen CLI-Serviceausgabe testen.
+- [x] Dreinoten-Pilot anhand des CSV-Schemas im Fitdialog sichtbar kennzeichnen; Fit bleibt Vorschlag, bestandene Gates brauchen vor Apply eine zweite Ja-Bestätigung. Ja/Nein, Modusübergabe und unveränderten Normal-Kandidatenpfad in `tests/test_hearing_browser_integration.py`; Dialogtext in `tests/test_hearing_calibration.py` geprüft (7 gezielte Tests bestanden, 11.11.2026).
 - [ ] Produktive Apply-Zustimmung mit realem gültigem gatebestandenem Kandidatenvorschlag einschließlich Ja/Nein, Persistenzfehler und Ranking-Rangwirkung in isolierter E2E-Fixture vollständig nachweisen.
 - [x] Dreinoten-Gates/Deep-Feature-Abblation je Featuregruppe in der Ergebnisübersicht lesbar darstellen: Status/Grund, Train-/Holdout-Clips und Cluster, Baseline-/erweiterte AUC samt Delta und explizit kein Einfluss auf den Produkt-Score; GUI-Test in `tests/test_hearing_calibration.py`.
 

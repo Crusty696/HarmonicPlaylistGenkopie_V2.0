@@ -1015,7 +1015,7 @@ class HearingBlindPrepareDialog(QDialog):
 class HearingFitDialog(QDialog):
     """Fit-Optionen und Cache explizit waehlen; noch keine Gewichte aktivieren."""
 
-    def __init__(self, cache="", *, audit_only=False, single=False, parent=None):
+    def __init__(self, cache="", *, audit_only=False, single=False, three_note=False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Hörtest prüfen" if audit_only else "Bewertungen auswerten – nur Vorschlag")
         layout = QVBoxLayout(self)
@@ -1054,7 +1054,15 @@ class HearingFitDialog(QDialog):
         self.seed_box.setEnabled(not audit_only)
         self.genres_edit.setEnabled(not audit_only and single)
         layout.addLayout(form)
-        layout.addWidget(QLabel("Kandidaten: exakter Replay-Audit. Einzel: eigener Fit. Dramaturgie: kein Fit.\nBerechnung verändert keine aktiven Nutzergewichte."))
+        mode_text = (
+            "Dreinoten-Pilot: Bewertungsfelder aus dem gespeicherten Satzschema erkannt. "
+            "Kandidaten-Gewichte werden nur nach bestandenem Gate und separater Zweitbestätigung übernommen."
+            if three_note and not audit_only else
+            "Dreinoten-Satz: Replay-Audit ist nicht anwendbar; dieser Lauf erstellt nur einen Fit-Vorschlag."
+            if three_note else
+            "Kandidaten: exakter Replay-Audit. Einzel: eigener Fit. Dramaturgie: kein Fit."
+        )
+        layout.addWidget(QLabel(mode_text + "\nBerechnung verändert keine aktiven Nutzergewichte."))
         self.error_label = QLabel()
         layout.addWidget(self.error_label)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -1123,13 +1131,14 @@ class HearingAuditResultDialog(QDialog):
 class HearingCalibrationResultDialog(QDialog):
     """Zeigt reale Gates und Vorschlag; aktive Uebernahme separat bestaetigen."""
 
-    def __init__(self, proposal, parent=None, cleanup_warning=""):
+    def __init__(self, proposal, parent=None, cleanup_warning="", *, confirm_apply=False):
         super().__init__(parent)
         import json
         from .hearing_calibration import validate_proposal
         validate_proposal(proposal)
         self.proposal = proposal
-        self.setWindowTitle("Kalibrierungsergebnis – noch nicht aktiv übernommen")
+        self.confirm_apply = bool(confirm_apply)
+        self.setWindowTitle("Kalibrierungsergebnis – Übernahme bestätigen" if confirm_apply else "Kalibrierungsergebnis – noch nicht aktiv übernommen")
         self.resize(850, 620)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
@@ -1146,6 +1155,9 @@ class HearingCalibrationResultDialog(QDialog):
             text.appendPlainText(json.dumps({key: proposal[key] for key in (
                 "binding", "audit_passed", "audit", "fit_status", "gate_updates", "proposal_sha256",
             )}, ensure_ascii=False, indent=2))
+            if self.confirm_apply:
+                text.appendPlainText("\nBESTÄTIGUNG: Diese konkreten gated Dreinoten-Gewichte werden atomar übernommen:\n")
+                text.appendPlainText(json.dumps(proposal["gate_updates"], ensure_ascii=False, indent=2))
         elif proposal["single_proposal"] is not None:
             text.setPlainText(self._single_proposal_summary(proposal["single_proposal"]))
             text.appendPlainText("\nVOLLSTÄNDIGER GEWICHTE-ENTWURF\n")
@@ -1158,14 +1170,17 @@ class HearingCalibrationResultDialog(QDialog):
             text.setPlainText(json.dumps(proposal, ensure_ascii=False, indent=2))
         layout.addWidget(text)
         row = QHBoxLayout()
-        self.apply_button = QPushButton("Diese Gewichte übernehmen und Playlist neu berechnen")
+        self.apply_button = QPushButton(
+            "Gated Dreinoten-Gewichte übernehmen und neu berechnen"
+            if self.confirm_apply else "Diese Gewichte übernehmen und Playlist neu berechnen"
+        )
         self.apply_button.setEnabled(bool(proposal["gate_updates"]) and proposal["fit_status"] == "passed" and proposal["audit_passed"])
         self.apply_button.clicked.connect(self.accept)
         row.addWidget(self.apply_button)
         export = QPushButton("Bericht / Vorschlag speichern")
         export.clicked.connect(self._export)
         row.addWidget(export)
-        close = QPushButton("Ohne Übernahme schließen")
+        close = QPushButton("Bericht schließen" if self.confirm_apply else "Ohne Übernahme schließen")
         close.clicked.connect(self.reject)
         row.addWidget(close)
         layout.addLayout(row)

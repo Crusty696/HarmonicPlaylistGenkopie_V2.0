@@ -891,3 +891,75 @@ def test_audit_dialog_completion_reports_replay_without_fit(qtbot, monkeypatch):
     assert "Replay-Audit bestanden" in window.analytics_panel.hearing_status.text()
     assert "Fit nicht ausgeführt" in window.analytics_panel.hearing_status.text()
     assert not window._hearing_native_active
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("answer", [QDialog.DialogCode.Rejected, QDialog.DialogCode.Accepted])
+@pytest.mark.parametrize("confirmation", [main.QMessageBox.StandardButton.No, main.QMessageBox.StandardButton.Yes])
+def test_three_note_apply_requires_second_explicit_confirmation(qtbot, monkeypatch, answer, confirmation):
+    window = _window(qtbot, monkeypatch)
+    updates = {"Psytrance": {"kandidaten_harmonic_weight": 0.5}}
+    proposal = {"candidate_report": {"dreinoten": True}, "gate_updates": updates}
+    class Dialog:
+        def __init__(self, supplied, parent, *, cleanup_warning="", confirm_apply=False):
+            assert supplied is proposal and confirm_apply
+        def exec(self):
+            return answer
+    monkeypatch.setattr(hearing_panel, "HearingCalibrationResultDialog", Dialog)
+    questions = []
+    monkeypatch.setattr(main.QMessageBox, "question", lambda *args: questions.append(args) or confirmation)
+    starts = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+    window._show_hearing_proposal(proposal)
+    if answer == QDialog.DialogCode.Accepted:
+        assert questions and "kandidaten_harmonic_weight" in questions[0][2]
+    else:
+        assert not questions
+    if answer == QDialog.DialogCode.Accepted and confirmation == main.QMessageBox.StandardButton.Yes:
+        assert len(starts) == 1 and starts[0][1] == "apply"
+        assert isinstance(starts[0][0], hearing_jobs.HearingApplyWorker)
+    else:
+        assert starts == []
+
+
+@pytest.mark.gui
+def test_three_note_schema_starts_seeded_candidate_fit_worker(qtbot, monkeypatch, tmp_path):
+    from tools import hoertest_server as hs
+    window = _window(qtbot, monkeypatch)
+    root = tmp_path / "three-note-set"
+    root.mkdir()
+    (root / "bewertung.csv").write_text(",".join(hs.BEWERTUNG_DREINOTEN_SPALTEN) + "\n")
+    (root / "hearing_source_manifest.json").write_text("{}")
+    monkeypatch.setattr(window, "_hearing_set_path", str(root))
+    class Form:
+        def __init__(self, cache, **kwargs):
+            assert kwargs["single"] is False and kwargs["audit_only"] is False
+            assert kwargs["three_note"] is True
+            self.cache, self.seed, self.genres = "cache.db", 23, ()
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(hearing_panel, "HearingFitDialog", Form)
+    starts = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+    window._fit_hearing_set()
+    worker, action = starts[0]
+    assert isinstance(worker, hearing_jobs.HearingCalibrationWorker)
+    assert worker.seed == 23 and worker.fit and action == "fit"
+
+
+def test_normal_candidate_apply_uses_existing_apply_worker_without_extra_prompt(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    updates = {"Psytrance": {"kandidaten_harmonic_weight": 0.1}}
+    proposal = {"candidate_report": {"dreinoten": False}, "gate_updates": updates}
+    class Dialog:
+        def __init__(self, supplied, parent, *, cleanup_warning="", confirm_apply=False):
+            assert supplied is proposal and not confirm_apply
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(hearing_panel, "HearingCalibrationResultDialog", Dialog)
+    monkeypatch.setattr(main.QMessageBox, "question", lambda *args: pytest.fail("Normaler Kandidatenfit braucht keine Dreinoten-Zweitbestätigung"))
+    starts = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+    window._show_hearing_proposal(proposal)
+    assert starts and starts[0][1] == "apply"
+    assert isinstance(starts[0][0], hearing_jobs.HearingApplyWorker)

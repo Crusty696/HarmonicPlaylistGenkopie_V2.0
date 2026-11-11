@@ -654,3 +654,25 @@ def test_candidate_audit_dialog_rejects_fit_proposal(qtbot, ram_set):
     proposal = compute_proposal(root, cache, operation_root=operation, operation_id="1" * 32, fit=True, seed=1)
     with pytest.raises(ValueError, match="ohne Fit"):
         HearingAuditResultDialog(proposal)
+
+
+def test_three_note_result_dialog_labels_atomic_apply_confirmation(qtbot, ram_set):
+    from PyQt6.QtWidgets import QPlainTextEdit
+    from hpg_core.hearing_panel import HearingCalibrationResultDialog
+    from hpg_core.hearing_calibration import compute_proposal
+
+    root, cache, operation, _calls, _tracks = ram_set
+    proposal = compute_proposal(root, cache, operation_root=operation, operation_id="1" * 32, seed=1)
+    proposal["candidate_report"]["dreinoten"] = True
+    from hpg_core.candidate_preferences import GEWICHT_SCHLUESSEL
+    weights = {key: 0.1 for key in GEWICHT_SCHLUESSEL}
+    proposal["candidate_report"]["gate_updates"] = {"Psytrance": weights}
+    proposal["gate_updates"] = proposal["candidate_report"]["gate_updates"]
+    from hpg_core.hearing_calibration import _digest
+    proposal["proposal_sha256"] = _digest({key: value for key, value in proposal.items() if key != "proposal_sha256"})
+    dialog = HearingCalibrationResultDialog(proposal, confirm_apply=True)
+    qtbot.addWidget(dialog)
+    text = dialog.findChild(QPlainTextEdit).toPlainText()
+    assert "BESTÄTIGUNG" in text
+    assert "kandidaten_harmonic_weight" in text
+    assert "Gated Dreinoten-Gewichte übernehmen" in dialog.apply_button.text()
