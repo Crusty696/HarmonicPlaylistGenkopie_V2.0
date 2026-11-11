@@ -698,3 +698,9 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Prompt-ID `f1ae3519-0d7c-488c-9e99-952b36668899` / `FX_0507` meldet `success`, `completed=true`. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0507_00001_.mp4`: 1.202.688 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt-ID `6f822810-c414-41cd-a34c-31a07fe98efd`, Präfix `Film_x_batch/FX_0508`, läuft; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
 - Paritätstest und Plan-Update sind noch nicht committed; Dreinoten-CLI/native-Fit-Vergleich, Vollsuite, aktueller Frozen-Build und manuelle GUI-Abnahme bleiben offen.
+
+## Dreinoten-CLI/native-Fit-Parität geprüft
+
+- `tests/test_hearing_ram_calibration.py::test_three_note_cli_and_native_fit_share_report_but_publish_separately`: **1/1 bestanden** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 1,33 s). Nativer GUI-Vorschlag und CLI-Wrapper liefern denselben kanonischen Dreinoten-Fitbericht und dieselben Gate-Updates. GUI-Bericht bleibt `aktiviert_candidate_preferences=false`; CLI-Bericht setzt es nach erfolgreicher Veröffentlichung auf `true`. CLI-Bindungstoken/-validierung im Vergleichstest kontrolliert ersetzt; übrige Schema- und Fit-Bindungstests getrennt. Synthetischer RAM-Satz, keine Originalmusik/GPU.
+- Der Fit-Paritätsbeleg deckt nun Standard-Kandidaten- und Dreinotenpfad ab. Vollständiger Golden-Master mit unveränderter CLI-Bindungsprüfung und sämtlichen publizierten Schemas bleibt offen.
+- ComfyUI bleibt bei Prompt-ID `6f822810-c414-41cd-a34c-31a07fe98efd`, Präfix `Film_x_batch/FX_0508`, Queue 1/0, Producer-PID 10456 aktiv. Keine Queue-Aktion vorgenommen.

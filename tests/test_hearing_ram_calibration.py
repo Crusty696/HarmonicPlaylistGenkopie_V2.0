@@ -195,6 +195,82 @@ def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate
     assert not (op / "child_preferences.json").exists()
 
 
+def test_three_note_cli_and_native_fit_share_report_but_publish_separately(
+    ram_set, monkeypatch
+):
+    from copy import deepcopy
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from hpg_core import candidate_preferences as cp
+    from hpg_core.hearing_sources import SOURCE_MANIFEST_NAME, _fingerprint
+
+    root, cache, op, _render_calls, tracks = ram_set
+    manifest_path = root / rate.KANDIDATEN_MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest.update(format_version=rate.DREINOTEN_MANIFEST_VERSION,
+                    rating_schema="three_notes_v1")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    source_path = root / SOURCE_MANIFEST_NAME
+    source_manifest = json.loads(source_path.read_bytes())
+    source_manifest["immutable_metadata"][rate.KANDIDATEN_MANIFEST_NAME] = _fingerprint(manifest_path)
+    source_path.write_text(json.dumps(source_manifest), encoding="utf-8")
+    _csv(root / "bewertung.csv", rate.BEWERTUNG_DREINOTEN_SPALTEN, [{
+        "pair_id": "001", "clip_id": "001_k1", "track_note": "4",
+        "technik_note": "4", "gesamt_note": "4", "gewaehlt": "1", "zeit": "",
+    }])
+    weights = {name: .1 for name in rate.KANDIDATEN_TEILWERTE}
+    monkeypatch.setattr(rate, "fit_dreinoten_genre", lambda *_args: (
+        weights, {"uebernommen": True, "grund": "synthetic gate pass"},
+    ))
+
+    calculated_reports = []
+    calculate = rate._compute_candidate_fit
+
+    def capture_calculation(*args):
+        report = calculate(*args)
+        calculated_reports.append(deepcopy(report))
+        return report
+
+    monkeypatch.setattr(rate, "_compute_candidate_fit", capture_calculation)
+    native = calibration.compute_proposal(
+        root, cache, operation_root=op, operation_id="4" * 32, seed=1
+    )
+    assert native["fit_status"] == "passed"
+    assert native["candidate_report"] == calculated_reports[-1]
+    assert native["candidate_report"]["ergebnis"]["aktiviert_candidate_preferences"] is False
+    assert set(native["gate_updates"]) == {"Psytrance"}
+    assert not (op / "child_preferences.json").exists()
+
+    inputs = audit.prepare_candidate_inputs(root, cache).as_dict()
+    token = (
+        ("merkmale_sha256", sha256((root / "merkmale.csv").read_bytes()).hexdigest()),
+        ("bewertung_sha256", sha256((root / "bewertung.csv").read_bytes()).hexdigest()),
+    )
+    monkeypatch.setattr(rate, "_fit_binding_token", lambda *_args: token)
+    monkeypatch.setattr(rate, "_validiere_fit_bindung", lambda *_args: inputs["manifest"])
+    monkeypatch.setattr(rate, "_bestaetige_fit_binding", lambda *_args: None)
+    monkeypatch.setattr(rate, "lade_tracks_aus_cache", lambda *_args: tracks)
+    published = []
+
+    def publish(updates, diagnose=None):
+        published.append((deepcopy(updates), deepcopy(diagnose)))
+        return root / "active-preferences.json"
+
+    monkeypatch.setattr(cp, "merge_user_preferences_atomically", publish)
+    cli_status = rate.befehl_fit_kandidaten(SimpleNamespace(
+        dir=root, cache=cache, audit_report=root / "audit.json", seed=1,
+    ))
+
+    assert cli_status == 0
+    assert calculated_reports[-1] == native["candidate_report"]
+    assert published and published[0][0] == native["gate_updates"]
+    cli_report = json.loads((root / "dreinoten_fit_bericht.json").read_text(encoding="utf-8"))
+    expected_cli_report = deepcopy(native["candidate_report"]["ergebnis"])
+    expected_cli_report["aktiviert_candidate_preferences"] = True
+    assert cli_report == expected_cli_report
+    assert not (op / "child_preferences.json").exists()
+
+
 def test_inputs_and_receipt_are_detached_immutable(ram_set):
     root, cache, *_ = ram_set
     inputs = audit.prepare_candidate_inputs(root, cache)
