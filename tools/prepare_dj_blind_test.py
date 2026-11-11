@@ -14,10 +14,15 @@ from pathlib import Path
 import soundfile as sf
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path, checkpoint=None) -> str:
   digest = hashlib.sha256()
   with path.open("rb") as handle:
-    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+    while True:
+      if checkpoint:
+        checkpoint()
+      chunk = handle.read(1024 * 1024)
+      if not chunk:
+        break
       digest.update(chunk)
   return digest.hexdigest()
 
@@ -154,6 +159,124 @@ def prepare(
       shutil.rmtree(staging, ignore_errors=True)
   public_path = output_dir / "blind_session.csv"
   return public_path, key_path
+
+
+def validate_portable_session(public_path: Path, key_path: Path, *, checkpoint=None) -> dict:
+  """Prueft CSV-Bindung, getrennten Schluessel und alle neutralen Clipkopien."""
+  def check():
+    if checkpoint:
+      checkpoint()
+
+  check()
+  public_path, key_path = Path(public_path), Path(key_path)
+  if public_path.name != "blind_session.csv" or public_path.is_symlink() or getattr(public_path, "is_junction", lambda: False)():
+    raise ValueError("Oeffentliche Session muss eine regulaere blind_session.csv sein")
+  if key_path.is_symlink() or getattr(key_path, "is_junction", lambda: False)():
+    raise ValueError("Privater Schluessel ist ein symbolischer Link")
+  session_root = public_path.parent.resolve(strict=True)
+  public_path = public_path.resolve(strict=True)
+  key_path = key_path.resolve(strict=True)
+  if not public_path.is_file() or not key_path.is_file():
+    raise ValueError("Session oder privater Schluessel fehlt")
+  if key_path == session_root or key_path.is_relative_to(session_root):
+    raise ValueError("Privater Schluessel liegt im Session-Ordner")
+
+  public_fields = (
+    "session_id", "pair_id", "candidate_a_id", "candidate_a_clip",
+    "candidate_b_id", "candidate_b_clip",
+  )
+  key_fields = (
+    "session_id", "pair_id", "candidate", "system", "source_sha256",
+    "blinded_sha256",
+  )
+  with public_path.open("r", encoding="utf-8-sig", newline="") as handle:
+    reader = csv.DictReader(handle)
+    if tuple(reader.fieldnames or ()) != public_fields:
+      raise ValueError("Oeffentliche Session hat ein unbekanntes CSV-Schema")
+    public_rows = list(reader)
+  with key_path.open("r", encoding="utf-8-sig", newline="") as handle:
+    reader = csv.DictReader(handle)
+    if tuple(reader.fieldnames or ()) != key_fields:
+      raise ValueError("Privater Schluessel hat ein unbekanntes CSV-Schema")
+    key_rows = list(reader)
+  check()
+  if not public_rows or len(key_rows) != len(public_rows) * 2:
+    raise ValueError("Session und Schluessel haben unvollstaendige Paarzahlen")
+  if any(None in row or any(row.get(field) is None for field in public_fields) for row in public_rows):
+    raise ValueError("Oeffentliche Session enthaelt unvollstaendige CSV-Zeilen")
+  if any(None in row or any(row.get(field) is None for field in key_fields) for row in key_rows):
+    raise ValueError("Privater Schluessel enthaelt unvollstaendige CSV-Zeilen")
+
+  session_ids = {str(row["session_id"]) for row in public_rows}
+  if len(session_ids) != 1:
+    raise ValueError("Oeffentliche Session mischt mehrere Sitzungskennungen")
+  session_id = next(iter(session_ids))
+  if len(session_id) != 12 or any(character not in "0123456789abcdef" for character in session_id):
+    raise ValueError("Sitzungskennung ist ungueltig")
+
+  key_by_pair_side = {}
+  for row in key_rows:
+    identity = (row["pair_id"], row["candidate"])
+    if (row["session_id"] != session_id or row["candidate"] not in {"A", "B"}
+        or row["system"] not in {"HPG", "baseline"} or identity in key_by_pair_side):
+      raise ValueError("Privater Schluessel ist inkonsistent")
+    for digest_name in ("source_sha256", "blinded_sha256"):
+      digest = row[digest_name]
+      if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError("Privater Schluessel enthaelt einen ungueltigen SHA-256-Wert")
+    key_by_pair_side[identity] = row
+
+  seen_pair_ids = set()
+  seen_clip_ids = set()
+  for index, row in enumerate(public_rows, 1):
+    check()
+    pair_id = row["pair_id"]
+    if not pair_id or pair_id in seen_pair_ids or row["session_id"] != session_id:
+      raise ValueError("Oeffentliche Session hat leere oder doppelte Paar-IDs")
+    seen_pair_ids.add(pair_id)
+    systems = set()
+    for side, id_field, clip_field in (
+      ("A", "candidate_a_id", "candidate_a_clip"),
+      ("B", "candidate_b_id", "candidate_b_clip"),
+    ):
+      candidate_id = f"pair_{index:03d}_{side}"
+      if row[id_field] != candidate_id or candidate_id in seen_clip_ids:
+        raise ValueError("Kandidaten-ID ist nicht kanonisch")
+      seen_clip_ids.add(candidate_id)
+      relative_clip = f"clips/{candidate_id}.wav"
+      if row[clip_field] != relative_clip:
+        raise ValueError("Clip-Pfad ist nicht kanonisch")
+      key = key_by_pair_side.get((pair_id, side))
+      if key is None:
+        raise ValueError("Schluesselzuordnung fuer Kandidat fehlt")
+      systems.add(key["system"])
+      clip_path = session_root / relative_clip
+      clip_path_resolved = clip_path.resolve(strict=True)
+      if not clip_path_resolved.is_relative_to(session_root):
+        raise ValueError("Clip verlaesst den Session-Ordner")
+      current = clip_path
+      while current != session_root:
+        if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+          raise ValueError("Clip-Pfad enthaelt einen symbolischen Link")
+        current = current.parent
+      before = clip_path_resolved.stat()
+      info = sf.info(clip_path_resolved)
+      if info.format != "WAV" or info.subtype != "PCM_16" or info.frames <= 0:
+        raise ValueError("Neutraler Clip ist kein gueltiges PCM-16-WAV")
+      digest = _sha256(clip_path_resolved, check)
+      after = clip_path_resolved.stat()
+      signature = lambda stat: (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino, stat.st_dev)
+      if signature(before) != signature(after):
+        raise ValueError("Neutraler Clip wurde waehrend der Pruefung veraendert")
+      if digest != key["blinded_sha256"]:
+        raise ValueError("Neutraler Clip stimmt nicht mit dem privaten Schluessel ueberein")
+    if systems != {"HPG", "baseline"}:
+      raise ValueError("A/B-Paar enthaelt nicht genau ein HPG- und ein Baseline-Element")
+
+  if len(key_by_pair_side) != len(public_rows) * 2:
+    raise ValueError("Privater Schluessel enthaelt zusaetzliche Paarzuordnungen")
+  return {"session_id": session_id, "pair_count": len(public_rows),
+          "clip_count": len(public_rows) * 2}
 
 
 def main() -> int:

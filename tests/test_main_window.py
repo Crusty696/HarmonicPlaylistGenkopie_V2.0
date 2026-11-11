@@ -82,6 +82,25 @@ def test_portable_blind_selection_starts_native_export_worker(qtbot, monkeypatch
     assert worker.config == {key: value for key, value in config.items() if key != "delivery_mode"}
 
 
+def test_portable_blind_integrity_selection_starts_csv_checker(qtbot, monkeypatch, tmp_path):
+    from hpg_core import hearing_jobs
+
+    window = _window(qtbot, monkeypatch)
+    public = tmp_path / "session" / "blind_session.csv"
+    key = tmp_path / "private" / "blind_key.csv"
+    selections = iter(((str(public), "CSV (*.csv)"), (str(key), "CSV (*.csv)")))
+    monkeypatch.setattr(main.QFileDialog, "getOpenFileName", lambda *_args: next(selections))
+    starts = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+
+    window._check_hearing_blind()
+
+    worker, action = starts[0]
+    assert isinstance(worker, hearing_jobs.HearingBlindExportCheckWorker)
+    assert (worker.public_path, worker.key_path) == (public, key)
+    assert action == "blind_export_check"
+
+
 def test_fit_requires_confirmation_and_cancel_keeps_preferences_untouched(
     qtbot, monkeypatch, tmp_path
 ):

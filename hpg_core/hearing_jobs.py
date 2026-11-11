@@ -306,6 +306,43 @@ class HearingBlindExportWorker(QThread):
         self.completed.emit(result)
 
 
+class HearingBlindExportCheckWorker(QThread):
+    """Prueft portablen CSV-Blindsatz und Clip-Hashes ohne Schreibzugriffe."""
+
+    status_update = pyqtSignal(str)
+    completed = pyqtSignal(object)
+
+    def __init__(self, public_path, key_path, parent=None):
+        super().__init__(parent)
+        from pathlib import Path
+        from .hearing_workflow import CancellationToken
+        self.public_path, self.key_path = Path(public_path), Path(key_path)
+        self.cancel = CancellationToken()
+
+    def request_cancel(self):
+        return self.cancel.request_cancel()
+
+    def run(self):
+        from tools.prepare_dj_blind_test import validate_portable_session
+        from .hearing_workflow import HearingCancelledError
+
+        try:
+            self.status_update.emit("Prüfe portable Session, getrennten Schlüssel und Clip-Hashes lesend …")
+            result = validate_portable_session(
+                self.public_path, self.key_path, checkpoint=self.cancel.checkpoint
+            )
+            result["ok"] = True
+        except (HearingCancelledError, InterruptedError):
+            result = {"ok": False, "cancelled": True,
+                      "output": "Portable A/B-Prüfung abgebrochen. Keine Dateien verändert."}
+        except Exception:
+            result = {
+                "ok": False,
+                "output": "Portable A/B-Prüfung fehlgeschlagen. Session-CSV, getrennten CSV-Schlüssel und vorhandene Clipkopien prüfen.",
+            }
+        self.completed.emit(result)
+
+
 class HearingBlindCheckWorker(QThread):
     """Prueft bestehende Referenzen lesend; gibt keine Schluesseldaten weiter."""
 

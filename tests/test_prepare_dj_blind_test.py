@@ -1,10 +1,11 @@
 import csv
+import hashlib
 
 import numpy as np
 import pytest
 import soundfile as sf
 
-from tools.prepare_dj_blind_test import prepare
+from tools.prepare_dj_blind_test import prepare, validate_portable_session
 
 
 def test_prepare_copies_neutral_clips_and_separates_key(tmp_path):
@@ -74,3 +75,49 @@ def test_prepare_rejects_clip_outside_manifest_root(tmp_path):
 
   with pytest.raises(ValueError, match="ausserhalb"):
     prepare(manifest, tmp_path / "session", tmp_path / "key.csv")
+
+
+def test_validate_portable_session_checks_clip_hashes_without_writes(tmp_path):
+  hpg = tmp_path / "hpg.wav"
+  baseline = tmp_path / "baseline.wav"
+  sf.write(hpg, np.zeros(8000), 8000)
+  sf.write(baseline, np.ones(8000) * 0.1, 8000)
+  manifest = tmp_path / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{hpg},{baseline}\n",
+    encoding="utf-8",
+  )
+  output, key = tmp_path / "session", tmp_path / "private" / "key.csv"
+  public, key = prepare(manifest, output, key, seed=4)
+  files = [public, key, *sorted((output / "clips").glob("*.wav"))]
+  before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+
+  result = validate_portable_session(public, key)
+
+  assert result["pair_count"] == 1 and result["clip_count"] == 2
+  assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest
+             for path, digest in before.items())
+
+
+def test_validate_portable_session_rejects_changed_clip_and_in_session_key(tmp_path):
+  hpg = tmp_path / "hpg.wav"
+  baseline = tmp_path / "baseline.wav"
+  sf.write(hpg, np.zeros(8000), 8000)
+  sf.write(baseline, np.ones(8000) * 0.1, 8000)
+  manifest = tmp_path / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{hpg},{baseline}\n",
+    encoding="utf-8",
+  )
+  output, key = tmp_path / "session", tmp_path / "private" / "key.csv"
+  public, key = prepare(manifest, output, key, seed=4)
+  clip = output / "clips" / "pair_001_A.wav"
+  clip.write_bytes(clip.read_bytes() + b"changed")
+
+  with pytest.raises(ValueError, match="Clip stimmt nicht"):
+    validate_portable_session(public, key)
+
+  internal_key = output / "private.csv"
+  internal_key.write_bytes(key.read_bytes())
+  with pytest.raises(ValueError, match="liegt im Session-Ordner"):
+    validate_portable_session(public, internal_key)

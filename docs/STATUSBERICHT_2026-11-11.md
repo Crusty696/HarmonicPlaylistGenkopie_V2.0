@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Der zuletzt geprüfte Code-Commit `0bba81eaa2f17bc1c46c233cf1fc1cc0aa651297` ist auf `origin/codex/gesamtrefaktorierung` vorhanden. Dieser Bericht hält den Stand danach fest.
+**GitHub-Abgleich:** Der zuletzt geprüfte Code-Commit `0bba81eaa2f17bc1c46c233cf1fc1cc0aa651297` ist auf `origin/codex/gesamtrefaktorierung` vorhanden. Dieser Bericht hält den Stand danach fest; der Integritätsvalidator ist noch uncommitted.
 
 ## Kurzstatus
 
@@ -27,7 +27,7 @@ manueller kompletter GUI-Ablauf bleiben offen.
   `tests/test_hearing_native_integration.py` bestanden nach der Bereinigung
   mit dem Python-3.12-Projektinterpreter. `git diff --check` war sauber.
 - Nach den Änderungen bestand `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`
-  mit **6.595 Tests** in 776,48 Sekunden (Exitcode 0, Coverage-Gate bestanden).
+  mit **6.598 Tests** in 794,28 Sekunden; fokussierte CSV-Prüfung: 122 Tests (Exitcode 0, Coverage-Gate bestanden).
   Der konfigurierte Lauf schließt `slow`-Tests aus. Der Hörtest-E2E-Vertrag
   deckt Producer, Audit, nativen Fit, Bestätigung und Ranking-Aktualisierung ab.
   Automatisierte Tests ersetzen keine menschliche Bedien- oder Klangabnahme.
@@ -43,11 +43,11 @@ manueller kompletter GUI-Ablauf bleiben offen.
   APPDATA/LOCALAPPDATA-Overrides erschien ein gespeicherter Musikordner im
   Dialog; die Quelle dieser Voreinstellung wurde nicht separat geprüft.
 - Nach dem Exportpfad wurde mit Python 3.12.10 und PyInstaller 6.21.0 erneut
-  isoliert unter `E:\AI\HPG-build-verification-2026-11-11-portable-blind` gebaut.
+  isoliert unter `E:\AI\HPG-build-verification-2026-11-11-portable-blind-check` gebaut.
   Bestehende Buildziele und Root-EXE lagen außerhalb des Wirkpfads. Die EXE
   bestand `--hpg-native-smoke` mit Exitcode 0 und `ok=true`; der PyInstaller-
   Abhängigkeitsgraph enthält `tools.prepare_dj_blind_test`. EXE-SHA256:
-  `3BEF404F8C91B60D1563EB99FBB852C760B067C3D7C31E808346F54A0AA457FC`.
+  `B8D36D86A74524658CDEA09394B9948DEC024EC7910DB3C7677C8C69D4D9083F`.
   Das belegt Packaging/Smoke, nicht den manuellen Exportklick oder Klang.
 - Commit `c507efa` enthält ausschließlich `main.py` und die beiden genannten
   Testdateien und wurde zu GitHub gepusht.
@@ -63,10 +63,9 @@ manueller kompletter GUI-Ablauf bleiben offen.
 - Native Hörtest-Module und GUI-Aktionen sind im Code vorhanden. Die Suite
   deckt zentrale Erzeugungs-, Audit-, Fit-, Blindtest- und Rankingpfade ab;
   vollständige Zuordnung aller Werkzeugoptionen zu GUI-Aktionen und ein
-  manueller App-Ablauf sind nicht abgenommen. Die App prüft weiter lokale
-  Referenz-JSON samt Schlüssel; einen portablen CSV-Blindsatz kann sie nach dem
-  Export noch nicht erneut öffnen oder integritätsprüfen. Der portable Worker
-  besitzt keine Abbruchfunktion; die GUI weist vor dem Start darauf hin.
+  manueller App-Ablauf sind nicht abgenommen. Portable CSV-Sessions können jetzt
+  gegen die getrennte Schlüsseldatei integritätsgeprüft werden. Der Export-
+  Kopiervorgang bleibt nicht abbrechbar; die GUI weist vor dem Start darauf hin.
 - Der erhaltene Umsetzungsplan vom 27.09.2026 wurde nach Hashvergleich aus dem
   gesicherten Branch-Commit nach
   [2026-09-27-hoertest-werkzeuge-in-app.md](superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md)
@@ -90,11 +89,11 @@ manueller kompletter GUI-Ablauf bleiben offen.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Bei der erneuten Live-Abfrage enthält der FilmX-Batch **505 MP4-Dateien**;
-  ComfyUI meldet `FX_0431` bis `FX_0438` in der History als `success`. `ffprobe`
-  bestätigt `FX_0436` bis `FX_0438` als H.264, 736×416, 24 fps, 243 Frames und
-  10,125 Sekunden. Ein Queue-Job läuft gerade, keiner wartet; dessen ID ist
-  `b5fe4a63-38ad-45c3-8a6a-e195ce7ecb91`.
+- Live-Abfrage am 11.11.: FilmX-Batch **508 MP4-Dateien**, Warteschlange 0,
+  ein laufender Auftrag `FX_0442` (ID
+  `1b374626-80fb-4e6d-be10-cc76fdd358c7`). Der laufende Producer bleibt
+  unberührt. Frühere Ausgaben `FX_0436` bis `FX_0438` wurden mit `ffprobe`
+  als H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden bestätigt.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
   Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde, weil dieser
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch

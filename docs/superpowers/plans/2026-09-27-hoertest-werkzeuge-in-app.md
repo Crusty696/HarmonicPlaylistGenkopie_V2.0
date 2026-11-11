@@ -227,7 +227,7 @@ Referenz-JSON; CSV-Export prüfen und erneut öffnen bleibt offen.
 - [ ] Tests für Pfadcontainment, doppelte/identische Clips, Dauer-/Samplerateabweichung, vorhandene Session und getrennten Schlüssel schreiben.
 - [ ] App führt Prüfung und Session-Erstellung aus; öffentliche Session und geheimer Zuordnungsschlüssel bleiben physisch getrennt.
 - [ ] App zeigt klare Ausgabeorte und trennt öffentliche Session von privatem Schlüssel; Schlüssel darf nie in öffentlichem Sessionordner, Browser oder Logs landen.
-- [ ] Nutzer kann Session abschließen/Dateien auf Integrität prüfen; keine Entblindung oder Statistik behaupten, weil das Werkzeug diese Funktion nicht implementiert.
+- [x] Nutzer kann Dateien der Session auf Integrität prüfen. Keine Entblindung oder Statistik behaupten, weil das Werkzeug diese Funktion nicht implementiert.
 - [ ] Optionaler Folgeschritt nur nach separater Spezifikation: Import `validation/dj_blind_test_template.csv`, Zuordnungsprüfung per Schlüssel, Ausschlussregeln und aggregierte Auswertung. Nicht ungefragt mit Trainingslabels/Präferenz-Fit vermischen.
 
 **Abnahmekriterium:** Die vorhandene Blindtest-Session-Erstellung ist per App vollständig verfügbar; Plan verspricht keine nicht existente Bewertung/Auswertung. Eine spätere Entblindungsfunktion erhält eigenes Konzept und Tests.

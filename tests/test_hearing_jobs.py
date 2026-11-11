@@ -95,14 +95,14 @@ def test_blind_check_worker_cooperative_cancel_during_real_hash(tmp_path, qtbot,
 
 def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp_path, qtbot):
     import csv
-    from hpg_core.hearing_jobs import HearingBlindExportWorker
+    from hpg_core import hearing_jobs
     from tests.test_hearing_blind import _fixture
     from tests.test_hearing_native_integration import _fingerprints
 
     manifest, output, _key, root = _fixture(tmp_path, count=2)
     key = tmp_path / "private" / "blind_key.csv"
     before = _fingerprints(root)
-    worker = HearingBlindExportWorker({
+    worker = hearing_jobs.HearingBlindExportWorker({
         "manifest": manifest,
         "output_dir": output,
         "key_path": key,
@@ -134,6 +134,20 @@ def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp
     assert {row["system"] for row in key_rows} == {"HPG", "baseline"}
     assert key.parent != output and "erstelle neutrale Sessionkopien" in messages[0]
     assert _fingerprints(root) == before
+
+    check_worker = hearing_jobs.HearingBlindExportCheckWorker(public_path, key)
+    with qtbot.waitSignal(check_worker.completed, timeout=10000) as check_signal:
+        check_worker.start()
+    assert check_worker.wait(5000)
+    assert check_signal.args[0] == {"session_id": public_rows[0]["session_id"],
+                                    "pair_count": 2, "clip_count": 4, "ok": True}
+
+    cancel_worker = hearing_jobs.HearingBlindExportCheckWorker(public_path, key)
+    assert cancel_worker.request_cancel()
+    with qtbot.waitSignal(cancel_worker.completed, timeout=5000) as cancel_signal:
+        cancel_worker.start()
+    assert cancel_worker.wait(5000)
+    assert cancel_signal.args[0]["cancelled"] and not cancel_signal.args[0]["ok"]
 
 
 def test_csv_single_worker_real_spawn_preserves_none_cache(tmp_path, monkeypatch, qtbot):

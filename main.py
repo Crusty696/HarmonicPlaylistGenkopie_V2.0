@@ -4491,8 +4491,8 @@ class AnalyticsPanel(QWidget):
         self.hearing_open_button = QPushButton("Satz öffnen")
         self.hearing_discovery_button = QPushButton("Sätze / Fortschritt")
         self.hearing_blind_button = QPushButton("A/B-Blindsatz vorbereiten")
-        self.hearing_blind_check_button = QPushButton("Lokale A/B-Referenzen prüfen")
-        self.hearing_blind_check_button.setToolTip("Nur bestehende lokale Referenz-JSON und getrennten Schlüssel prüfen. Portable Clipkopien haben einen CSV-Schlüssel und werden hier nicht geprüft.")
+        self.hearing_blind_check_button = QPushButton("A/B-Integrität prüfen")
+        self.hearing_blind_check_button.setToolTip("Lokale Referenz-JSON oder portable CSV-Session samt getrenntem Schlüssel lesend prüfen. Keine Bewertung oder Statistik.")
         self.hearing_preview_button = QPushButton("Höransicht")
         self.hearing_rating_button = QPushButton("In der App bewerten")
         self.hearing_rating_button.setEnabled(False)
@@ -5294,6 +5294,13 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 "Keine Bewertung oder Statistik. Nicht metadatenblind oder portabel. Keine Dateien verändert."
             )
             return
+        if action == "blind_export_check":
+            self.analytics_panel.hearing_status.setText(
+                f"Portable A/B-Integrität geprüft: {result['pair_count']} Paare, "
+                f"{result['clip_count']} Clipkopien. Schlüssel und SHA-256-Werte passen. "
+                "Keine Dateien verändert; keine Bewertung oder Statistik."
+            )
+            return
         if action == "blind":
             self.analytics_panel.hearing_status.setText(
                 "LOCAL UI BLIND vorbereitet: nur Referenzen, keine Audiokopien. Nicht metadatenblind / portabel; keine Bewertung oder Statistik.\n"
@@ -5506,20 +5513,29 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
     def _check_hearing_blind(self):
         if not self._hearing_selection_allowed() or self._run_is_active():
             return
-        from hpg_core.hearing_jobs import HearingBlindCheckWorker
+        from hpg_core.hearing_jobs import HearingBlindCheckWorker, HearingBlindExportCheckWorker
         self._hearing_native_active = True
         self._update_hearing_buttons()
         try:
-            public_path, _ = QFileDialog.getOpenFileName(self, "Öffentliche A/B-Referenzdatei wählen", "", "JSON (*.json)")
+            public_path, _ = QFileDialog.getOpenFileName(
+                self, "Öffentliche A/B-Session wählen", "", "A/B-Session (*.json *.csv);;JSON (*.json);;CSV (*.csv)"
+            )
             if (not public_path or self._close_pending or self._hearing_worker is not None or self._run_is_active()
                     or self._hearing_process is not None and self._hearing_process.state() != QProcess.ProcessState.NotRunning):
                 return
-            key_path, _ = QFileDialog.getOpenFileName(self, "Getrennten privaten A/B-Schlüssel wählen", "", "JSON (*.json)")
+            portable = Path(public_path).suffix.casefold() == ".csv"
+            key_filter = "CSV (*.csv)" if portable else "JSON (*.json)"
+            key_path, _ = QFileDialog.getOpenFileName(
+                self, "Getrennten privaten A/B-Schlüssel wählen", "", key_filter
+            )
         finally:
             self._hearing_native_active = False
             self._update_hearing_buttons()
         if key_path and self._hearing_selection_allowed() and not self._run_is_active():
-            self._start_hearing_worker(HearingBlindCheckWorker(public_path, key_path, self), "blind_check")
+            worker = (HearingBlindExportCheckWorker(public_path, key_path, self) if portable
+                      else HearingBlindCheckWorker(public_path, key_path, self))
+            action = "blind_export_check" if portable else "blind_check"
+            self._start_hearing_worker(worker, action)
 
     def _open_hearing_rating(self):
         if self._close_pending or self._hearing_worker is not None or not self._hearing_set_path or self._hearing_native_active:
