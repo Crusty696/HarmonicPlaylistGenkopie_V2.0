@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Der bisherige Stand `f46e2b58477d0f07af3b326a90171cb39523b91d` war mit `origin/codex/gesamtrefaktorierung` synchronisiert. Dieser Bericht ergänzt den internen Metadaten-Link-Fix.
+**GitHub-Abgleich:** Code-Stand `f27436a5a09a587ef15dc5125adeb6e48bd23911` wurde mit `origin/codex/gesamtrefaktorierung` abgeglichen. Der Bericht und die Planpräzisierung halten diesen Abgleich fest.
 
 ## Kurzstatus
 
@@ -57,7 +57,7 @@ manueller kompletter GUI-Ablauf bleiben offen.
   Bestehende Buildziele und Root-EXE lagen außerhalb des Wirkpfads. Die EXE
   bestand `--hpg-native-smoke` mit Exitcode 0 und `ok=true`; der PyInstaller-
   Abhängigkeitsgraph enthält `tools.prepare_dj_blind_test`. EXE-SHA256:
-  `F0B55E177BADDE2C253A2B8752408EC68BE89BB1A678DC553E73BB123CE5565F`.
+  `2626E2ECC32DF8F60836EA7C79246B5E49FB6E849482B3A89114A21ECCA1F67A`.
   Der Native-Smoke endete mit `ok=true`, Exitcode 0; Spawn, RAM-Render und CSV-Fit-Probe bestanden. Der xref enthält `tools.prepare_dj_blind_test`. PyInstaller meldete fehlendes optionales `tbb12.dll`. Das belegt Packaging/Smoke, nicht den manuellen Exportklick oder Klang.
 - Commit `c507efa` enthält ausschließlich `main.py` und die beiden genannten
   Testdateien und wurde zu GitHub gepusht.
@@ -81,8 +81,11 @@ manueller kompletter GUI-Ablauf bleiben offen.
   [2026-09-27-hoertest-werkzeuge-in-app.md](superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md)
   zurückgeholt. Seine ursprünglichen Checkboxen und Matrix sind nicht gegen
   den heutigen Code synchronisiert; er bleibt Anforderungssammlung, keine
-  aktuelle Fertigstellungsanzeige. Der falsche Smoke-Schalter wurde auf den
-  realen `--hpg-native-smoke`-Einstieg korrigiert.
+  aktuelle Fertigstellungsanzeige. Einzel-Quellsätze werden bereits durch
+  `hpg_core.hearing_sources.load_source_session` mit dem Modusvalidator
+  `_single_metadata` geprüft; ein separates `validate_set`-API existiert nicht.
+  Der falsche Smoke-Schalter wurde auf den realen `--hpg-native-smoke`-Einstieg
+  korrigiert.
 - Originalmusik-/manuelle Bewertungsabnahme und eine explizite Prüfung des
   optionalen TBB-Threading-Backends bleiben offen.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
