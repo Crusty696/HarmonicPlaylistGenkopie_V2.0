@@ -294,3 +294,17 @@ def test_speichern_und_reset_zeigen_den_gleichen_override_hinweis(
   widget._on_transition_weights_reset()
   assert "Kandidaten-Toleranzbasis" in widget.transition_weight_status.text()
   assert "wirkt dort nicht" in widget.transition_weight_status.text()
+
+def test_advanced_tooltips_use_correct_german_accents(qtbot, monkeypatch, tmp_path):
+  monkeypatch.setenv("HPG_TOLERANCES_FILE", str(tmp_path / "leer.json"))
+  widget = main.AdvancedParametersWidget()
+  qtbot.addWidget(widget)
+
+  assert "Intensität" in widget.energy_group.toolTip()
+  assert "wählt automatisch" in widget.energy_direction.toolTip()
+  assert "Höhepunkt" in widget.peak_position_slider.toolTip()
+  assert widget.ai_status_label.text() == "KI deaktiviert (deterministischer Kernlauf)"
+  assert "verfügbare Textmodelle" in widget.ai_refresh_btn.toolTip()
+  assert "Kompatibilität" in widget.harmonic_strictness.toolTip()
+  assert "größere Tonart-Sprünge" in widget.harmonic_strictness.toolTip()
+  assert "Genre-Ähnlichkeit" in widget.genre_mixing.toolTip()

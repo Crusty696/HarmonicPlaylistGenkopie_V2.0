@@ -944,8 +944,8 @@ class AdvancedParametersWidget(QWidget):
         self.energy_group = energy_group
         energy_group.setToolTip(
             "Steuert den Energie-Verlauf der Playlist.\n"
-            "Bestimmt, wie sich die Intensitaet der Tracks\n"
-            "ueber die gesamte Playlist entwickelt."
+            "Bestimmt, wie sich die Intensität der Tracks\n"
+            "über die gesamte Playlist entwickelt."
         )
         energy_layout = QVBoxLayout(energy_group)
 
@@ -954,7 +954,7 @@ class AdvancedParametersWidget(QWidget):
                              ("Abbauen", "Cool Down"), ("Beibehalten", "Maintain")):
             self.energy_direction.addItem(label, value)
         self.energy_direction.setToolTip(
-            "Auto: Algorithmus waehlt automatisch den besten Verlauf\n"
+            "Auto: Algorithmus wählt automatisch den besten Verlauf\n"
             "Aufbauen: Energie steigt kontinuierlich\n"
             "Abbauen: Energie fällt kontinuierlich\n"
             "Beibehalten: Energie bleibt auf gleichem Niveau"
@@ -967,10 +967,10 @@ class AdvancedParametersWidget(QWidget):
         self.peak_position_slider.setRange(40, 80)
         self.peak_position_slider.setValue(70)
         self.peak_position_slider.setToolTip(
-            "Wo soll der energetische Hoehepunkt der Playlist liegen?\n"
-            "40% = frueh (kurzes Warm-Up)\n"
+            "Wo soll der energetische Höhepunkt der Playlist liegen?\n"
+            "40% = früh (kurzes Warm-Up)\n"
             "70% = klassisch (langes Build-Up, kurzes Cool-Down)\n"
-            "80% = spaet (maximale Spannung bis zum Ende)"
+            "80% = spät (maximale Spannung bis zum Ende)"
         )
         self.peak_position_label = QLabel("Position des Höhepunkts: 70%")
         self.peak_position_slider.valueChanged.connect(
@@ -993,7 +993,7 @@ class AdvancedParametersWidget(QWidget):
         self.target_energy_slider.setRange(0, 100)
         self.target_energy_slider.setValue(70)
         self.target_energy_slider.setToolTip(
-            "Konstantes Energie-Ziel fuer Context Flow: 0 = ruhig, 100 = maximal."
+            "Konstantes Energie-Ziel für Context Flow: 0 = ruhig, 100 = maximal."
         )
         self.target_energy_label = QLabel("Feste Zielenergie: 70/100")
         self.target_energy_slider.valueChanged.connect(
@@ -1030,8 +1030,8 @@ class AdvancedParametersWidget(QWidget):
         self.ai_enabled_checkbox = QCheckBox("Optionale KI-Metadaten aktivieren")
         self.ai_enabled_checkbox.setChecked(False)
         self.ai_enabled_checkbox.setToolTip(
-            "Optionales lokales LLM fuer Mood/Subgenre. Die Audioanalyse und "
-            "Playlist-Erzeugung funktionieren vollstaendig ohne KI."
+            "Optionales lokales LLM für Mood/Subgenre. Die Audioanalyse und "
+            "Playlist-Erzeugung funktionieren vollständig ohne KI."
         )
         provider_outer.addWidget(self.ai_enabled_checkbox)
 
@@ -1066,7 +1066,7 @@ class AdvancedParametersWidget(QWidget):
         provider_outer.addLayout(model_layout)
 
         # Row 3: Status label
-        self.ai_status_label = QLabel("AI: noch nicht geprueft")
+        self.ai_status_label = QLabel("KI: noch nicht geprüft")
         self.ai_status_label.setWordWrap(True)
         self.ai_status_label.setStyleSheet("font-size: 11px;")
         provider_outer.addWidget(self.ai_status_label)
@@ -1085,12 +1085,12 @@ class AdvancedParametersWidget(QWidget):
         provider_outer.addLayout(btn_layout)
 
         # Tooltips fuer AI Provider Widget
-        self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) fuer Mood- und Subgenre-Tags aus vorhandenen Track-Metadaten.")
+        self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) für Mood- und Subgenre-Tags aus vorhandenen Track-Metadaten.")
         self.ollama_radio.setToolTip("Nutze Ollama als lokalen KI-Dienst. Läuft sehr stabil auf AMD-Grafikkarten unter Windows.")
-        self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt fuer detaillierte Modellkonfigurationen.")
+        self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt für detaillierte Modellkonfigurationen.")
         self.model_combo.setToolTip("LM Studio: technische Vorauswahl nach Textfähigkeit und VRAM-Budget. Erst 'Modell testen' prüft eine echte Schemaantwort. HPG sendet Metadaten, keine Audiodateien; das ist kein Nachweis für Audioverstehen.")
-        self.ai_refresh_btn.setToolTip("Sucht lokale KI-Instanzen und deren verfuegbare Textmodelle.")
-        self.test_ai_btn.setToolTip("Fuehrt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu pruefen.")
+        self.ai_refresh_btn.setToolTip("Sucht lokale KI-Instanzen und deren verfügbare Textmodelle.")
+        self.test_ai_btn.setToolTip("Führt einen Test-Prompt aus, um die Antwortgeschwindigkeit und Richtigkeit des Modells zu prüfen.")
 
         self._ai_controls = [
             self.ollama_radio,
@@ -1111,7 +1111,7 @@ class AdvancedParametersWidget(QWidget):
         harmony_group = QGroupBox("Harmonische Übergänge")
         self.harmony_group = harmony_group
         harmony_group.setToolTip(
-            "Einstellungen fuer harmonisches Mixing.\n"
+            "Einstellungen für harmonisches Mixing.\n"
             "Harmonisches Mixing nutzt den Camelot-Wheel,\n"
             "um Tracks mit kompatiblen Tonarten zu verbinden."
         )
@@ -1121,8 +1121,8 @@ class AdvancedParametersWidget(QWidget):
         self.harmonic_strictness.setRange(1, 10)
         self.harmonic_strictness.setValue(7)
         self.harmonic_strictness.setToolTip(
-            "Wie streng soll die harmonische Kompatibilitaet sein?\n"
-            "1-3: Locker – erlaubt groessere Tonart-Spruenge\n"
+            "Wie streng soll die harmonische Kompatibilität sein?\n"
+            "1-3: Locker – erlaubt größere Tonart-Sprünge\n"
             "4-6: Moderat – bevorzugt kompatible Tonarten\n"
             "7-10: Streng – nur perfekte Camelot-Matches"
         )
@@ -1138,8 +1138,8 @@ class AdvancedParametersWidget(QWidget):
         self.allow_experimental.setChecked(True)
         self.allow_experimental.setToolTip(
             "Erlaubt kreative Tonart-Wechsel jenseits des Camelot-Wheels.\n"
-            "Aktiviert: Auch Energy-Boost und Mood-Change Uebergaenge moeglich\n"
-            "Deaktiviert: Nur sichere Camelot-kompatible Uebergaenge"
+            "Aktiviert: Auch Energy-Boost und Mood-Change Übergänge möglich\n"
+            "Deaktiviert: Nur sichere Camelot-kompatible Übergänge"
         )
         harmony_layout.addWidget(self.allow_experimental)
 
@@ -1155,17 +1155,17 @@ class AdvancedParametersWidget(QWidget):
         genre_group.setToolTip(
             "Steuert, wie Genres in der Playlist gemischt werden.\n"
             "Die App erkennt automatisch das Genre jedes Tracks\n"
-            "und kann aehnliche Genres bevorzugt zusammen sortieren."
+            "und kann ähnliche Genres bevorzugt zusammen sortieren."
         )
         genre_layout = QVBoxLayout(genre_group)
 
         self.genre_mixing = QCheckBox("Genrewechsel erlauben")
         self.genre_mixing.setChecked(True)
         self.genre_mixing.setToolTip(
-            "Aktiviert: die Strategie Genre Flow sortiert nach Genre-Naehe\n"
+            "Aktiviert: die Strategie Genre Flow sortiert nach Genre-Nähe\n"
             "Deaktiviert: Genre Flow faellt auf Harmonic Flow zurueck.\n"
-            "Die Genre-Aehnlichkeit geht in beiden Faellen in den\n"
-            "Uebergangs-Score ein — dieser Schalter aendert nur die Sortierung."
+            "Die Genre-Ähnlichkeit geht in beiden Fällen in den\n"
+            "Übergangs-Score ein — dieser Schalter ändert nur die Sortierung."
         )
         genre_layout.addWidget(self.genre_mixing)
 
@@ -1173,10 +1173,10 @@ class AdvancedParametersWidget(QWidget):
         self.genre_weight.setRange(0, 100)
         self.genre_weight.setValue(30)
         self.genre_weight.setToolTip(
-            "Wie stark soll Genre-Aehnlichkeit die Sortierung beeinflussen?\n"
+            "Wie stark soll Genre-Ähnlichkeit die Sortierung beeinflussen?\n"
             "0%: Keine zusaetzliche Genre-Prioritaet in der Sortierung\n"
-            "Hoehere Werte priorisieren Genre-Aehnlichkeit staerker.\n"
-            "Der lokale Uebergangskandidatenscore behaelt seinen eigenen Genre-Faktor."
+            "Höhere Werte priorisieren Genre-Ähnlichkeit stärker.\n"
+            "Der lokale Übergangskandidatenscore behält seinen eigenen Genre-Faktor."
         )
         self.genre_weight_label = QLabel("Gewichtung der Genreähnlichkeit: 30%")
         self.genre_weight.valueChanged.connect(

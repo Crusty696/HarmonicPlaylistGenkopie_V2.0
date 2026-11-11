@@ -555,3 +555,18 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
    Smoke-Spawn-Frist den dokumentierten xdist-Timeout beseitigt.
 4. Manuellen Fit-/Exportpfad und weitere Modi abnehmen; Originalmusik- und
    Native-Analyse erst prüfen, wenn die iGPU-/Analysefreigabe wieder gilt.
+
+## UI-Sprachkorrektur 11.11.2026
+
+- Im sichtbaren Bereich `AdvancedParametersWidget` wurden 26 deutsche
+  Beschriftungs- und Tooltip-Texte mit ASCII-Umschriften auf korrekte Umlaute
+  umgestellt; die KI-Statuszeile heißt nun „KI: noch nicht geprüft“ vor der
+  Initialisierung. Im tatsächlichen Widget-Startzustand wechselt sie korrekt zu
+  „KI deaktiviert (deterministischer Kernlauf)“.
+- Neuer Qt-Regressionstest
+  `test_advanced_tooltips_use_correct_german_accents`: **1 bestanden** mit
+  Python 3.12.10 (`venv312`, `-n 0 --no-cov`). Kein Vollsuite-Lauf und kein
+  Frozen-Build; beides bleibt nach dem ComfyUI-Batch eingeplant.
+- Frischer ComfyUI-Poll: Prompt 71 / UUID
+  `5874445e-04ac-4f13-a938-9a695bccdc4f` läuft weiter, Queue 1 aktiv/0 wartend;
+  Producer-PID 10456 lebt. Keine Eingriffe in Queue oder Producer.
