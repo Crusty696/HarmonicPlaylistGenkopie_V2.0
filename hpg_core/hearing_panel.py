@@ -1101,6 +1101,14 @@ class HearingCalibrationResultDialog(QDialog):
             text.appendPlainText(json.dumps({key: proposal[key] for key in (
                 "binding", "audit_passed", "audit", "fit_status", "gate_updates", "proposal_sha256",
             )}, ensure_ascii=False, indent=2))
+        elif proposal["single_proposal"] is not None:
+            text.setPlainText(self._single_proposal_summary(proposal["single_proposal"]))
+            text.appendPlainText("\nVOLLSTÄNDIGER GEWICHTE-ENTWURF\n")
+            text.appendPlainText(json.dumps(proposal["single_proposal"], ensure_ascii=False, indent=2))
+            text.appendPlainText("\nBINDUNG UND VORSCHLAGSINTEGRITÄT\n")
+            text.appendPlainText(json.dumps({key: proposal[key] for key in (
+                "binding", "fit_status", "proposal_sha256",
+            )}, ensure_ascii=False, indent=2))
         else:
             text.setPlainText(json.dumps(proposal, ensure_ascii=False, indent=2))
         layout.addWidget(text)
@@ -1150,6 +1158,27 @@ class HearingCalibrationResultDialog(QDialog):
         if report["dreinoten"]:
             deep = report["diagnose"].get("deep_feature_calibration", {})
             lines.append(f"\nDreinoten-/Deep-Feature-Ergebnis: {json.dumps(deep, ensure_ascii=False, sort_keys=True)}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _single_proposal_summary(proposal):
+        import json
+        details = proposal.get("_diagnose", {})
+        approved = details.get("belastbar") is True
+        lines = [
+            "EINZEL-FIT: Gewichtsentwurf – NICHT aktiv übernommen",
+            f"Bewertungen: {details.get('anzahl_bewertungen', 'n/a')} gesamt; "
+            f"{details.get('anzahl_gut', 'n/a')} gut; "
+            f"{details.get('anzahl_nicht_gut', 'n/a')} nicht gut",
+            f"Datenlage: {'belastbar laut Fit-Gate' if approved else 'nicht als belastbar freigegeben'}",
+            f"Begründung: {details.get('hinweis', 'keine Diagnose vorhanden')}",
+            f"Aktive Merkmale: {', '.join(details.get('aktive_merkmale', ())) or 'keine'}",
+            f"Merkmalsstreuung: {json.dumps(details.get('merkmals_streuung', {}), ensure_ascii=False, sort_keys=True)}",
+            f"Koeffizienten: {json.dumps(details.get('koeffizienten', {}), ensure_ascii=False, sort_keys=True)}",
+            f"95-%-Bootstrapintervalle: {json.dumps(details.get('intervalle', {}), ensure_ascii=False, sort_keys=True)}",
+            f"Bootstrap-Ziehungen: {details.get('bootstrap_ziehungen', 'n/a')}",
+            "Dieser Bericht ist ein Entwurf. Aktive App-Gewichte blieben unverändert.",
+        ]
         return "\n".join(lines)
 
     def _export(self):

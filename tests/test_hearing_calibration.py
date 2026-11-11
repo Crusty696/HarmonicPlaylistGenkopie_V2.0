@@ -156,7 +156,7 @@ def test_csv_single_validator_rejects_malformed_metadata(tmp_path, defect):
 
 
 @pytest.mark.parametrize("old_output", [False, True])
-def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, monkeypatch, old_output):
+def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, monkeypatch, old_output, qtbot):
     from hpg_core.hearing_calibration import compute_proposal, validate_proposal, export_proposal
     root = _csv_single(tmp_path, rated=True)
     if old_output:
@@ -169,6 +169,14 @@ def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, 
     validate_proposal(proposal)
     assert proposal["fit_status"] == "passed"
     assert proposal["single_proposal"]
+    from PyQt6.QtWidgets import QPlainTextEdit
+    from hpg_core.hearing_panel import HearingCalibrationResultDialog
+    dialog = HearingCalibrationResultDialog(proposal)
+    qtbot.addWidget(dialog)
+    summary = dialog.findChild(QPlainTextEdit).toPlainText()
+    assert "Gewichtsentwurf – NICHT aktiv übernommen" in summary
+    assert "95-%-Bootstrapintervalle" in summary
+    assert "Aktive App-Gewichte blieben unverändert" in summary
     assert proposal["binding"]["cache_path"] is None
     assert proposal["binding"]["cache"] is None
     assert proposal["binding"]["sources"] == {}
