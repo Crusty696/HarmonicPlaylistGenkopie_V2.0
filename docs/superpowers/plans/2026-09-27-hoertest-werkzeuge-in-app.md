@@ -149,8 +149,8 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 - [ ] Tests für Moduswahl und vollständige Option-zu-Argument-Zuordnung schreiben; ungültige Grenzwerte vor Workerstart ablehnen.
 - [ ] Satzverwaltung mit Suche/Auswahl, Erkennung des Formats und Fortschritt für vorhandene Ordner ergänzen.
 - [ ] Erzeugungsoptionen aus dem CLI zugänglich machen: Anzahl, Genre, BPM/Energy/Harmonie, Seed, Track-Einmaligkeit, Auswahlprofil, Worker, Transitiontyp, Versionslimit und Dramaturgie-Parameter.
-- [ ] Bestehende Sätze nur lesend öffnen; Service erzeugt neue Ausgabe in genau einer atomaren sibling-staging-Grenze, validiert und veröffentlicht; vorhandene Ziele nie überschreiben. Quellreferenz-Sätze verwenden `hpg_core.hearing_sources.load_source_session` mit getrennten Modi `_single_metadata`, `_candidate_metadata` und `_dramaturgy_metadata`; ein eigenständiges `validate_set`-API gibt es im aktuellen Code nicht. Legacy-Einzelordner benötigen weiter einen ausdrücklich dokumentierten Validierungsvertrag.
-- [ ] GUI-Fortschritt/Abbruch/QThread-Cleanup testen; Einzel mit neuem `validate_set`-Validator, Kandidat und Dramaturgie mit ihren jeweils vorhandenen Validatoren lesbar.
+- [ ] Bestehende Sätze nur lesend öffnen; Service erzeugt neue Ausgabe in genau einer atomaren sibling-staging-Grenze, validiert und veröffentlicht; vorhandene Ziele nie überschreiben. Quellreferenz-Sätze verwenden `hpg_core.hearing_sources.load_source_session` mit getrennten Modi `_single_metadata`, `_candidate_metadata` und `_dramaturgy_metadata`. Legacy-Einzel-CSV nutzt `hpg_core.hearing_calibration.validate_set` für Schema, eindeutige Paar-IDs, 1:1-Bindung und Wertebereiche; der Clips-Unterordner bleibt dabei unberührt.
+- [ ] GUI-Fortschritt/Abbruch/QThread-Cleanup testen; Einzel-CSV mit `validate_set`, Quellreferenz-Einzel, Kandidat und Dramaturgie mit ihren jeweils eigenen Validatoren lesbar.
 
 **Abnahmekriterium:** Die GUI kann jeden unterstützten Satzmodus samt fachlich relevanten Parametern erzeugen und bestehende Läufe fortsetzen, ohne CLI-Bedienung.
 

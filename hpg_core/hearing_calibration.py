@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -18,6 +20,135 @@ def _encoded(value):
 
 def _digest(value):
     return hashlib.sha256(_encoded(value)).hexdigest()
+
+
+def validate_set(directory):
+    """Validiert Legacy-Einzel-CSV-Metadaten ohne den Clips-Ordner zu betreten.
+
+    Die Bewertungszeilen muessen die Merkmalszeilen eindeutig 1:1 abdecken.
+    Clipdateien werden absichtlich weder aufgelistet noch geoeffnet: der
+    Einzel-Fit verwendet ausschliesslich CSV-Metadaten.
+    """
+    from tools import rate_transitions as rate
+    from tools.hoertest_server import BEWERTUNG_SPALTEN
+
+    root = Path(directory).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("Einzel-Hoertestsatz ist kein Ordner")
+    required = {"pair_id", *rate.ALLE_FAKTOREN}
+    optional = {
+        "crossfade_sek", *rate.ZUSATZ_SPALTEN, *rate.PLAN_AUDIT_SPALTEN,
+        "track_a", "track_b",
+    }
+
+    def read_csv(name, allowed, required_columns):
+        path = root / name
+        raw = path.read_bytes()
+        try:
+            reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline=""))
+            headers = tuple(reader.fieldnames or ())
+            if (not headers or len(headers) != len(set(headers))
+                    or not required_columns <= set(headers) or not set(headers) <= allowed):
+                raise ValueError(f"{name}: ungueltiges oder unbekanntes CSV-Schema")
+            rows = list(reader)
+        except (UnicodeError, csv.Error) as exc:
+            raise ValueError(f"{name}: CSV ist unlesbar") from exc
+        if not rows or any(None in row or any(value is None for value in row.values()) for row in rows):
+            raise ValueError(f"{name}: leere oder fehlerhafte CSV-Zeile")
+        return rows, {"size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}, set(headers)
+
+    metric_rows, metric_fingerprint, metric_columns = read_csv(
+        "merkmale.csv", required | optional, required,
+    )
+    rating_rows, rating_fingerprint, _ = read_csv(
+        "bewertung.csv", set(BEWERTUNG_SPALTEN), set(BEWERTUNG_SPALTEN),
+    )
+    plan_columns = set(rate.PLAN_AUDIT_SPALTEN)
+    if metric_columns & plan_columns and not plan_columns <= metric_columns:
+        raise ValueError("Einzel-Planmetadaten sind nur teilweise vorhanden")
+    track_columns = {"track_a", "track_b"}
+    if metric_columns & track_columns and not track_columns <= metric_columns:
+        raise ValueError("Einzel-Trackmetadaten sind nur teilweise vorhanden")
+    metric_ids = []
+    for row in metric_rows:
+        pair_id = row["pair_id"]
+        if (not pair_id or pair_id != pair_id.strip() or pair_id in {".", ".."}
+                or any(char in pair_id for char in ("/", "\\", ":", "\0"))):
+            raise ValueError("Merkmals-Paar-ID fehlt oder ist kein sicherer Dateiname")
+        metric_ids.append(pair_id)
+        for name in rate.ALLE_FAKTOREN:
+            try:
+                value = float(row[name])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Merkmal {name} ist keine Zahl") from exc
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"Merkmal {name} liegt nicht endlich in 0..1")
+
+        if "crossfade_sek" in row:
+            value = _finite_float(row["crossfade_sek"], "crossfade_sek")
+            if value <= 0:
+                raise ValueError("crossfade_sek muss positiv sein")
+        if "overall_score" in row:
+            value = _finite_float(row["overall_score"], "overall_score")
+            if not 0.0 <= value <= 1.0:
+                raise ValueError("overall_score liegt nicht in 0..1")
+        if "lufs_delta" in row and row["lufs_delta"].strip():
+            _finite_float(row["lufs_delta"], "lufs_delta")
+        if plan_columns <= metric_columns:
+            mix_out = _finite_float(row["plan_mix_out_sec"], "plan_mix_out_sec")
+            mix_in = _finite_float(row["plan_mix_in_sec"], "plan_mix_in_sec")
+            overlap = _finite_float(row["plan_overlap_sec"], "plan_overlap_sec")
+            crossfade = _finite_float(row["crossfade_sek"], "crossfade_sek") if "crossfade_sek" in row else overlap
+            sample_rate = _finite_float(row["plan_target_sr"], "plan_target_sr")
+            rank = _finite_float(row["kandidat_rang"], "kandidat_rang")
+            bpm_tolerance = _finite_float(row["bpm_toleranz"], "bpm_toleranz")
+            if (mix_out < 0 or mix_in < 0 or overlap <= 0 or sample_rate <= 0
+                    or not sample_rate.is_integer() or rank < 1 or not rank.is_integer()
+                    or not 0 < bpm_tolerance <= rate.PAAR_BPM_MAX):
+                raise ValueError("Einzel-Planwerte liegen ausserhalb ihrer Bereiche")
+            if row["plan_transition_type"] not in rate.SUPPORTED_TRANSITION_TYPES:
+                raise ValueError("Einzel-Plan enthaelt einen unbekannten Transitiontyp")
+            if row["energy_direction"] not in {"auto", "up", "down", "maintain"}:
+                raise ValueError("Einzel-Plan enthaelt eine ungueltige Energierichtung")
+            if abs(crossfade - overlap) > 0.011:
+                raise ValueError("Einzel-Blendenlaenge widerspricht dem Plan")
+        if track_columns <= metric_columns:
+            if any(not row[name].strip() or not Path(row[name]).is_absolute() for name in track_columns):
+                raise ValueError("Einzel-Trackpfade muessen absolute Pfade sein")
+
+    if len(metric_ids) != len(set(metric_ids)):
+        raise ValueError("Merkmals-Paar-ID ist doppelt")
+
+    rating_ids = []
+    for row in rating_rows:
+        pair_id = row["pair_id"]
+        note = row["bewertung"]
+        clip = row["clip"]
+        if (not pair_id or pair_id != pair_id.strip()
+                or pair_id in {".", ".."}
+                or any(char in pair_id for char in ("/", "\\", ":", "\0"))):
+            raise ValueError("Bewertungs-Paar-ID fehlt oder ist ungueltig")
+        if clip != f"clips/{pair_id}.wav":
+            raise ValueError("Clip-Referenz passt nicht zur Einzel-Paar-ID")
+        if note not in ("", "1", "2", "3", "4", "5"):
+            raise ValueError("Einzelbewertung liegt nicht in 1..5")
+        rating_ids.append(pair_id)
+    if len(rating_ids) != len(set(rating_ids)):
+        raise ValueError("Bewertungs-Paar-ID ist doppelt")
+    if set(metric_ids) != set(rating_ids) or len(metric_ids) != len(rating_ids):
+        raise ValueError("Merkmale und Bewertungen passen nicht exakt 1:1")
+
+    return {"merkmale.csv": metric_fingerprint, "bewertung.csv": rating_fingerprint}
+
+
+def _finite_float(raw, name):
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} ist keine Zahl") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name} ist nicht endlich")
+    return value
 
 
 def snapshot(directory, cache, *, seed, genres):
@@ -79,6 +210,10 @@ def snapshot(directory, cache, *, seed, genres):
         metadata.discard("gewichte.json")
     if metadata != allowed_metadata:
         raise ValueError("Satz enthaelt fehlende oder unbekannte Metadaten; keine Dateien kopiert")
+    if legacy_csv_single:
+        validated_files = validate_set(root)
+        if any(files.get(name) != expected for name, expected in validated_files.items()):
+            raise ValueError("Einzel-CSV-Metadaten wurden waehrend der Validierung veraendert")
     if mode == "kandidaten":
         # Nur die exakt validierten bisherigen Kandidatenvertraege sind regulaer.
         # Unbekannte Versionen/Research-Zusatzfelder erhalten keinen Standardzweck.

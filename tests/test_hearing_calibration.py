@@ -1,5 +1,6 @@
 """Kalibrierung trennt Berechnung, Gates und produktive Uebernahme."""
 import json
+import csv
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,52 @@ def test_csv_single_rejects_metadata_link(tmp_path):
         pytest.skip(f"Metadaten-Link auf diesem Host nicht verfuegbar: {exc}")
     with pytest.raises(ValueError):
         snapshot(root, None, seed=1, genres=())
+
+
+def test_csv_single_rejects_duplicate_rating_pair_before_fit(tmp_path):
+    from hpg_core.hearing_calibration import snapshot
+    root = _csv_single(tmp_path, rated=True)
+    ratings = root / "bewertung.csv"
+    lines = ratings.read_text(encoding="utf-8").splitlines()
+    ratings.write_text("\n".join((*lines, lines[1], "")), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate|doppelt|eindeutig|1:1"):
+        snapshot(root, None, seed=1, genres=())
+
+
+@pytest.mark.parametrize("defect", [
+    "duplicate_metric", "rating_id_mismatch", "invalid_note", "nonfinite_factor",
+    "unknown_metric_column", "unsafe_clip_reference",
+])
+def test_csv_single_validator_rejects_malformed_metadata(tmp_path, defect):
+    from hpg_core.hearing_calibration import validate_set
+    root = _csv_single(tmp_path, rated=True)
+    path = root / ("merkmale.csv" if defect in {"duplicate_metric", "nonfinite_factor", "unknown_metric_column"} else "bewertung.csv")
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        columns = list(reader.fieldnames or ())
+        rows = list(reader)
+    if defect == "duplicate_metric":
+        rows.append(dict(rows[0]))
+    elif defect == "rating_id_mismatch":
+        rows[0]["pair_id"] = "unbekannt"
+        rows[0]["clip"] = "clips/unbekannt.wav"
+    elif defect == "invalid_note":
+        rows[0]["bewertung"] = "4.5"
+    elif defect == "nonfinite_factor":
+        from tools import rate_transitions as rate
+        rows[0][rate.ALLE_FAKTOREN[0]] = "nan"
+    elif defect == "unknown_metric_column":
+        columns.append("unbekannt")
+        for row in rows:
+            row["unbekannt"] = "x"
+    else:
+        rows[0]["clip"] = "clips/../outside.wav"
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+    with pytest.raises(ValueError):
+        validate_set(root)
 
 
 @pytest.mark.parametrize("old_output", [False, True])
