@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026, nach Push des GUI-Tests):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen nach `git fetch origin` auf `dc79d303b3464bf412f6e6a72b3661a77616de7c` überein. `origin/main` ist Vorfahr; der Branch liegt 134 Commits voraus. `gh run list` nach dem Push meldet keine Branch-Runs; ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, vor dem synthetischen Ergebnis-/Exporttest):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmten nach `git fetch origin` auf `ef9aa52cfbe1c15ff3195f7dd396682b3c23b96e` überein. `origin/main` war Vorfahr; der Branch lag 136 Commits voraus. `gh run list` meldete keine Branch-Runs; ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -15,6 +15,7 @@ visuell sowie barrierefrei geprüft. Die vollständige manuelle GUI-/Originalmus
 Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
+- Result-Identität bis zum konkreten UI-Export geprüft: `tests/test_run_lifecycle.py::test_generation_result_reorder_exportiert_dieselbe_occurrence_reihenfolge` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,58 s). Der Test veröffentlicht ein synthetisches `PlaylistGenerationResult`, sortiert anhand der Occurrence-IDs um, klickt den Button des danach aktuellen Panels und liest die tatsächlich geschriebene M3U8-Reihenfolge zurück. Keine Originalaudios oder Modellinferenz; keine musikalische Bewertung.
 - Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade.
 - Leichtgewichtiger Quellsyntax-Gate am aktuellen Quellstand bestanden: `venv312\Scripts\python.exe -m compileall -q main.py hpg_core tools` (Exitcode 0). Keine GPU-/Audioarbeit; ersetzt weder Vollsuite noch Frozen-Build.
 - Abhängigkeits-Vorabcheck am aktuellen `venv312`: `python -m pip check` meldet `No broken requirements found.` Keine Paketpins geändert; CI, Vollsuite und Frozen-Build bleiben getrennte Gates.

@@ -455,6 +455,59 @@ def test_generation_result_reorder_nutzt_occurrences_bei_gleichem_pfad(
   assert [track.fileName for track in window.playlist] == ["second.wav", "first.wav"]
 
 
+def test_generation_result_reorder_exportiert_dieselbe_occurrence_reihenfolge(
+  qtbot, monkeypatch, tmp_path
+):
+  from hpg_core.playlist import generate_playlist_result
+
+  monkeypatch.setattr(MainWindow, "check_dependencies_and_warn", lambda self: None)
+  window = MainWindow(settings=_MemorySettings())
+  qtbot.addWidget(window)
+  tracks = [
+    Track(
+      filePath=f"C:/synthetic/{name}.wav",
+      fileName=f"{name}.wav",
+      bpm=128.0 + index,
+    )
+    for index, name in enumerate(("a", "b", "c"))
+  ]
+  result = generate_playlist_result(tracks, "Harmonic Flow", bpm_tolerance=2.0)
+  window._publiziere_generation_result(result)
+  panel = window.playlist_panel
+
+  assert panel.table.model().moveRows(
+    QModelIndex(), 0, 1, QModelIndex(), 3
+  ) is True
+
+  expected_tracks = [tracks[1], tracks[2], tracks[0]]
+  assert window.current_generation_result is not result
+  assert tuple(window.current_generation_result.tracks) == tuple(expected_tracks)
+  assert window.playlist == expected_tracks
+  reordered_panel = window.playlist_panel
+
+  output = tmp_path / "reordered.m3u8"
+  monkeypatch.setattr(
+    main.QFileDialog,
+    "getSaveFileName",
+    lambda *_args, **_kwargs: (
+      str(output), "M3U8 Playlist (*.m3u8)"
+    ),
+  )
+  monkeypatch.setattr(
+    window, "_playlist_history_file", lambda: tmp_path / "history.json"
+  )
+  monkeypatch.setattr(main.QMessageBox, "information", Mock())
+
+  assert reordered_panel.export_button.isEnabled()
+  reordered_panel.export_button.click()
+
+  exported_paths = [
+    line for line in output.read_text(encoding="utf-8").splitlines()
+    if line and not line.startswith("#")
+  ]
+  assert exported_paths == [track.filePath for track in expected_tracks]
+
+
 def test_neuer_analysestart_behaelt_altes_result_bis_zum_publish(
   qtbot, monkeypatch, tmp_path
 ):
