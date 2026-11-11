@@ -33,6 +33,12 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   Trackpfad. `test_playlist_panel_export_button_writes_m3u8`: **1 bestanden**
   (`-n 0 --no-cov`, 0,74 s). Dies deckt den Button-/Signal-/Speicherpfad ab,
   ersetzt keine manuelle Set-/Fit-/Rekordbox-XML-/Originalmusik-Abnahme.
+- Isolierter synthetischer Kandidatensatz mit dem echten `create_set`-Producer
+  vorbereitet: ein Paar, zwei Kandidatenclips, sechs Satzdateien unter
+  `E:\AI\HPG-build-verification-2026-11-11-manual-hearing-32012e5\hearing-set`;
+  Quellhashes unverändert. Das neue GUI-Fenster ließ sich nach zwei CUA-Inventur-
+  Zeitlimits nicht anbinden. Öffnen/Bewerten im GUI bleibt daher unbestätigt;
+  keine Analyse und kein Zugriff auf Originalmusik.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
