@@ -7,10 +7,12 @@
 
 ## Kurzstatus
 
-Die konfigurierte Suite besteht aktuell mit 6.644 Tests und 81,02 % Coverage.
-Der isolierte Frozen-Build samt Native-Smoke besteht auch mit dem aktuellen
-Satzbrowser-Suchfilter. Originalmusik-Abnahme, vollständige manuelle GUI-
-Abnahme und ComfyUI-H3-Batch bleiben offen.
+Letzte Vollsuite nach dem Satzbrowser-Suchfilter: 6.644 Tests, 81,02 % Coverage.
+Der letzte isolierte Frozen-Build und Native-Smoke enthalten diesen Filter, aber
+noch nicht die spätere Playlistlängen-/Rotationsänderung. Dafür bestehen gezielte
+GUI-, Fit- und Exportprüfungen; Vollsuite und neuer Frozen-Build fehlen weiterhin.
+Originalmusik-Abnahme, vollständige manuelle GUI-Abnahme und ComfyUI-H3-Batch
+bleiben offen.
 
 ## Verifizierte Änderungen und Prüfungen
 
@@ -70,6 +72,18 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Settings-Tests und 1 Export-Hook-Test bestanden (`--no-cov`). Kein Volltest,
   neuer Frozen-Build, nativer Originaltrack-Lauf oder musikalisches Urteil
   nach dieser Änderung.
+- Neuer isolierter Qt-/Worker-E2E-Nachweis am 11.11.2026: echter Kandidaten-
+  Producer, Audit/Fit-Worker, bestätigtes Apply und Ranking-Refresh bestanden;
+  **1 Test in 251,99 s**. Die Audiodateien und der Cache liegen in einer
+  temporären synthetischen Fixture; Labels sind keine Musik-Ground-Truth und
+  Rating-/Bestenwahl werden über die Test-API eingespeist. Separat bestanden
+  **130 GUI-, M3U8-, Rekordbox-XML- und Playlistrotations-Tests in 1,30 s**
+  (`-n 0 --no-cov`). Das prüft die technische Kette, nicht manuelle Nutzerklicks,
+  Originalmusik oder die musikalische Qualität. Vollsuite und neuer Build nach
+  Playlistrotation bleiben offen.
+  Zusätzlich bestanden **143 Browser-/Dialog-/Satzmodus-Preflight- und
+  Workflowtests in 8,49 s** (`-n 0 --no-cov`), einschließlich Einzel-,
+  Kandidaten- und Dramaturgie-Produktion.
 - Manueller GUI-Pfad des aktuellen Frozen-Builds (SHA-256
   `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`) am
   11.11.2026 mit ausschließlich synthetischen Audios und isoliertem AppData:
@@ -264,10 +278,10 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
-  Live-Queue am 11.11.2026 zeigt Prompt-ID `38` (UUID
-    `0e390c1e-aaab-4ca3-a25d-a84eb3269ec8`) aktiv und 0 wartende Aufträge.
-    Promptverlauf und Ausgabedatei sind noch nicht bestätigt. Auftrag und
-    Batchproducer blieben unangetastet.
+  Live-Queue am 11.11.2026 zeigt Prompt-ID `39` (UUID
+  `6cc191bf-8f15-4594-a5e1-31895024cfad`) aktiv und 0 wartende Aufträge.
+  Promptverlauf und Ausgabedatei sind noch nicht bestätigt. Auftrag und
+  Batchproducer blieben unangetastet.
   Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
