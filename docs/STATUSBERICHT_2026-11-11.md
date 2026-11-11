@@ -43,7 +43,9 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   abgespielt. Im schreibenden Dialog speicherte die GUI eine temporäre Note 3
   für `001_k1` in `bewertung.csv`; CSV danach auf den vorher leeren Stand
   zurückgesetzt und verifiziert. Nach erneutem Laden meldet das GUI `0/2`
-  Varianten bewertet. Das ist technischer Speicher-/Preview-/Fortsetzungsnachweis,
+  Varianten bewertet; „Bewertungen auswerten“ bleibt ohne Noten deaktiviert.
+  Der Fit-Dialog/Worker wurde nicht gestartet. Das ist technischer
+  Speicher-/Preview-/Fortsetzungsnachweis,
   keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. Der
   Legacy-Browserknopf zeigt für quellenbasierte Sätze den Hinweis, dass er
   vorhandene Hörclips erwartet; Server/Browser wurden nicht gestartet.
