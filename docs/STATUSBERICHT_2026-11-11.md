@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Code-Stand `f27436a5a09a587ef15dc5125adeb6e48bd23911` wurde mit `origin/codex/gesamtrefaktorierung` abgeglichen. Der Bericht und die Planpräzisierung halten diesen Abgleich fest.
+**GitHub-Abgleich:** Code-Stand `149f5af1ad46eb99f3958a5ad28376d52ad11854` wurde mit `origin/codex/gesamtrefaktorierung` abgeglichen. Der Bericht und die Planpräzisierung halten diesen Abgleich fest.
 
 ## Kurzstatus
 
@@ -34,6 +34,19 @@ manueller kompletter GUI-Ablauf bleiben offen.
   bestand isoliert. Das gesamte Modul meldete **205 bestanden**, aber der
   Befehl endete wegen des projektweiten Coverage-Gates mit Exitcode 1
   (8,74 % statt mindestens 70 %); daraus folgt kein grüner Modul-Gesamtlauf.
+- Der Full-VERITAS-Audit vom 11.11. prüfte `hpg_core`, GUI, Tools, Tests,
+  Build/Release und aktuelle Produktdokumente in drei unabhängigen Kontexten
+  (Seeds 7112027–7112029). Alle drei Pass-Dateien und der Nullbefund-Verifikator
+  waren valide; der Merge ergab **0 Findings**. Der Vorgänger-Audit vom 10.11.
+  hatte einen einzelnen, nicht reproduzierten Dokumentationsbefund. Sync-Dry-Run
+  zeigte nur die allowlist-gesteuerten generierten Ziele, keine Waisen oder
+  Konflikte; Apply endete mit `sync_difference_count=0` und `complete=true`.
+  Pass 2 meldete gezielte Testgruppen mit **303** und **350** bestandenen Tests;
+  deren Einzelbefehle sind nicht im Laufartefakt protokolliert. Kein Volltest,
+  GUI-/Originalmusik-/Rekordbox-Ablauf oder Build wurde in diesem Audit
+  ausgeführt. Optionale Scanner Bandit, mypy, radon, ruff und vulture fehlten.
+  Der Laufbericht und die Passdateien liegen unter
+  `E:\AI\HPG-veritas-full-2026-11-11`.
 - Der letzte Volltestlauf vor zwei zusätzlichen Race-Regressionstests sammelte 6.600 Tests: **6.599 bestanden, 1 fehlgeschlagen**
   in 768,35 Sekunden; Coverage 81,03 %. Fehler:
   `tests/test_hearing_smoke.py::test_source_smoke_actual_qt_spawn_ram_dsp_from_unrelated_directory`.
@@ -102,8 +115,8 @@ manueller kompletter GUI-Ablauf bleiben offen.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Live-Abfrage am 11.11.: FilmX-Batch **512 MP4-Dateien**, Warteschlange 0,
-  ein laufender Auftrag (ID `421d2bea-87fc-41d8-91b8-44060ea9906e`; Prompt-
+- Live-Abfrage am 11.11.: FilmX-Batch **514 MP4-Dateien**, Warteschlange 0,
+  ein laufender Auftrag (ID `9559b1ca-575a-4ae2-b60b-ccfd55a077c6`; Prompt-
   Prefix nicht erneut ausgelesen). Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
