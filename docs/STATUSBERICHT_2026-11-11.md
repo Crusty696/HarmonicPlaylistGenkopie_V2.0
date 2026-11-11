@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026, letzter Produktcode-Commit):** Commit `f0c920d6beb8b61503ca9e4a5fe1358156d8a389` stimmt nach `git fetch origin` mit `origin/codex/gesamtrefaktorierung` überein; `origin/main` ist Vorfahr und liegt 143 Commits zurück. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, letzter Produktcode-Commit):** Commit `84b6f7d7d9c7688af5ca72f8a5848521aee8c9af` stimmt nach `git fetch origin` mit `origin/codex/gesamtrefaktorierung` überein; `origin/main` ist Vorfahr und liegt 148 Commits zurück. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
