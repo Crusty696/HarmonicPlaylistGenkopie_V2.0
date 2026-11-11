@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Lokaler `HEAD` und `origin/codex/gesamtrefaktorierung` stimmen auf `f357e4e7e99f545fb6947779225e659c83136371` überein. Letzter Code-Commit ist `baa77d314cfef093c9c00d530be67c85ceb8d1c8`; `f357e4e` dokumentiert den anschließenden GUI-Startnachweis.
+**GitHub-Abgleich:** Der zuletzt geprüfte Code-Commit `d3f6cfc0e3f5426122d93e88e0074536b7c43d9b` ist auf `origin/codex/gesamtrefaktorierung` vorhanden. Dieser Bericht hält den Stand danach fest.
 
 ## Kurzstatus
 
@@ -31,12 +31,13 @@ Frozen-Build liegt weiterhin nicht vor.
   auch der Hörtest-E2E-Vertrag mit Producer, Audit, nativem Fit, Bestätigung
   und Ranking-Aktualisierung. Das ersetzt keine menschliche Bedien- oder
   Klangabnahme.
-- Eine anschließende Bereinigung entfernte unverbundene Cache-/Zielpfadfelder
-  und einen ungenutzten Dateibrowser aus dem nativen Erzeugungsdialog; der
-  Managed-Workflow leitet diese Pfade selbst ab. Der fokussierte Lauf
-  `tests/test_hearing_panel.py --no-cov --tb=short -q` bestand mit **26 Tests**.
-  Die Vollsuite wurde vor genau dieser letzten kleinen GUI-Bereinigung
-  ausgeführt und danach nicht wiederholt.
+- Eine anschließende Bereinigung entfernte unverbundene Cache-/Zielpfadfelder,
+  einen ungenutzten Dateibrowser und ein nicht angeschlossenes Mehrordnerfeld
+  aus dem nativen Erzeugungsdialog. `managed_config` bindet diesen Ablauf an
+  genau einen gewählten Musikordner und leitet private Cache- und Satzziele selbst
+  ab. Der fokussierte Lauf `tests/test_hearing_panel.py --no-cov --tb=short -q`
+  bestand danach mit **26 Tests**. Die Vollsuite wurde vor diesen letzten
+  kleinen GUI-Bereinigungen ausgeführt und danach nicht wiederholt.
 - Die aktuelle Frozen-EXE startete auch im normalen GUI-Modus. Bibliotheks-
   und Qualitätsbereich sowie der Hörtest-Erzeugungsdialog wurden sichtbar
   geöffnet. Der Dialog wurde abgebrochen, bevor Analyse oder Satz-Erzeugung
