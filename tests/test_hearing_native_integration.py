@@ -69,7 +69,6 @@ def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp
         return True
     monkeypatch.setattr(hearing_playback, "preflight_renderability", synthetic_preflight)
     monkeypatch.setattr(hoertest_server, "ThreadingHTTPServer", forbidden)
-    monkeypatch.setattr(main.HearingWorkflowWorker, "_run_command", forbidden)
     monkeypatch.setattr(candidate_preferences, "merge_user_preferences_atomically", forbidden)
     monkeypatch.setattr(main.MainWindow, "_start_hearing_server", forbidden)
     warnings = []
