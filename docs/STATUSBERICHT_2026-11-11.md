@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026, vor dem folgenden UI-Delta):** Commit `73b248b2e3c297599d86c10160de225633963461` ist auf `origin/codex/gesamtrefaktorierung`; `git fetch origin` bestätigte identische lokale und entfernte HEADs. `origin/main` ist Vorfahr. `gh run list` zeigte keine Branch-Runs, ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026):** Commit `062351b228f3e1ae13179e21a0d89080159b19f6` stimmt nach `git fetch origin` mit `origin/codex/gesamtrefaktorierung` überein; `origin/main` ist Vorfahr und liegt 143 Commits zurück. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -529,6 +529,10 @@ Exportmeldungen ab. Synthetische Worker-/UI-Tests ohne Audioanalyse.
    24 fps, 243 Frames, 10,125 s. Den geplanten H3-Vier-Clip-Batch erst nach
    Ende des aktuellen Producers starten und jede Ausgabe über History und
    `ffprobe` prüfen.
+   Desktopinventar: sechs Fenster aus isolierten `HPG-build-verification`-
+   Builds sind noch offen. Die dazugehörigen HPG-Prozesse zeigten im 3-s-
+   CPU-Snapshot keine fortlaufende Last außer 0,12 CPU-s bei einem Prozess;
+   die Fenster wurden nicht verändert oder geschlossen.
 2. Nach Ende des laufenden Batches die Vollsuite gegen den aktuellen HEAD
    ausführen; die letzte Vollsuite vor jüngsten Änderungen bestand mit
    6.679/6.679 Tests und 81,11 % Coverage.
