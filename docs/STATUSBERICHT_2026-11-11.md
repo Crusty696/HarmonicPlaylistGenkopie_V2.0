@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen auf `00a99d1af346ac69dcd6b65eae77eb888141dc36` überein. `origin/main` ist Vorfahr; der Branch liegt 132 Commits voraus. GitHub meldet für diesen HEAD keine Statuschecks; ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für den aktuellen HEAD ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen nach `git fetch origin` auf `57a7141ccc98d264ff928fa0303de8db3695c4ad` überein. `origin/main` ist Vorfahr; der Branch liegt 133 Commits voraus. `gh run list` meldet keine Branch-Runs; ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für den aktuellen HEAD ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -15,6 +15,7 @@ visuell sowie barrierefrei geprüft. Die vollständige manuelle GUI-/Originalmus
 Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
+- Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade.
 - Leichtgewichtiger Quellsyntax-Gate am aktuellen Quellstand bestanden: `venv312\Scripts\python.exe -m compileall -q main.py hpg_core tools` (Exitcode 0). Keine GPU-/Audioarbeit; ersetzt weder Vollsuite noch Frozen-Build.
 - Abhängigkeits-Vorabcheck am aktuellen `venv312`: `python -m pip check` meldet `No broken requirements found.` Keine Paketpins geändert; CI, Vollsuite und Frozen-Build bleiben getrennte Gates.
 - Release-Metadaten abgeglichen: `APP_VERSION`, README-Titel, `installer.iss` `AppVersion`/Dateiname und `version_info.txt` stimmen sämtlich auf `3.7.2` überein. Kein Versionsdrift; der aktuelle Frozen-Build ist weiterhin offen.
@@ -452,6 +453,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Live-Poll am 11.11.2026: Prompt 64/UUID `5ceba7ee-ec6d-409a-8320-f595e9298f8b` läuft; Prompt 65/UUID `a97fbddd-1d44-4a1a-bbf6-491c49498aa4` wartet. Queue 1 laufend/1 wartend. Producer und Warteschlange unverändert gelassen.
 - Folgepoll: Prompt 62/UUID `2979c237-f19f-406b-b947-e0b0ac3d5dda` ist erfolgreich abgeschlossen und als `FX_0492_00002_.mp4` gespeichert; damit ist das zuvor doppelte Präfix durch getrennte Dateinummern aufgelöst. Beide Dateien `FX_0492_00001_.mp4` und `_00002_.mp4` wurden mit `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s bestätigt. Aktueller Live-Stand: Prompt 65/UUID `a97fbddd-1d44-4a1a-bbf6-491c49498aa4` läuft, Queue 1/0. Kein Eingriff.
 - Folgepoll: Prompt 65/UUID `a97fbddd-1d44-4a1a-bbf6-491c49498aa4` erfolgreich beendet; dritte Ausgabe desselben Präfixes `FX_0492_00003_.mp4` (3.262.669 Byte). `ffprobe`: H.264, 736×416, 24 fps, 243 Frames, 10,125 s. Damit erzeugten die drei Prompts mit Präfix `FX_0492` eindeutige Dateinummern 00001–00003. Prompt 66/UUID `fa05ce9b-d9bb-43a7-aa6a-69990a303fb7`, Präfix `Film_x_batch/FX_0493`, läuft; Queue 1/0. Producer und Queue unangetastet.
+- Folgepoll 11.11.2026: Prompt 66 erfolgreich abgeschlossen; History nennt `FX_0493_00001_.mp4`, H.264-Ausgabe 736×416, 24 fps, 243 Frames, 10,125 s. Producer-PID 10456 lebt; Prompt 67/UUID `89bc932c-7282-47e4-9eed-28d22d0ae392`, Präfix `Film_x_batch/FX_0494`, läuft, Queue 1/0. Keine Queue-Änderung.
 ## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände

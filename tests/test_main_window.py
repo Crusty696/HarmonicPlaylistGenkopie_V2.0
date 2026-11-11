@@ -50,6 +50,59 @@ def test_quality_panel_exposes_existing_hearing_workflow(qtbot):
     assert panel.hearing_server_button.isEnabled() is False
 
 
+def test_quality_panel_actions_reach_mainwindow_handlers(qtbot, monkeypatch):
+    actions = []
+    handlers = (
+        "_open_collection_dialog",
+        "_open_measurement_dialog",
+        "_prepare_hearing_set",
+        "_open_hearing_set",
+        "_discover_hearing_sets",
+        "_prepare_hearing_blind",
+        "_check_hearing_blind",
+        "_open_hearing_preview",
+        "_open_hearing_rating",
+        "_fit_hearing_set",
+        "_fit_hearing_csv_set",
+        "_cancel_hearing_work",
+        "_start_hearing_server",
+    )
+
+    for handler in handlers:
+        def capture(_self, *args, _handler=handler, **kwargs):
+            actions.append((_handler, args, kwargs))
+
+        monkeypatch.setattr(main.MainWindow, handler, capture)
+
+    window = _window(qtbot, monkeypatch)
+    panel = window.analytics_panel
+    buttons = (
+        ("collection_button", "_open_collection_dialog", {}),
+        ("measurement_button", "_open_measurement_dialog", {}),
+        ("hearing_prepare_button", "_prepare_hearing_set", {}),
+        ("hearing_open_button", "_open_hearing_set", {}),
+        ("hearing_discovery_button", "_discover_hearing_sets", {}),
+        ("hearing_blind_button", "_prepare_hearing_blind", {}),
+        ("hearing_blind_check_button", "_check_hearing_blind", {}),
+        ("hearing_preview_button", "_open_hearing_preview", {}),
+        ("hearing_rating_button", "_open_hearing_rating", {}),
+        ("hearing_fit_button", "_fit_hearing_set", {}),
+        ("hearing_csv_fit_button", "_fit_hearing_csv_set", {}),
+        ("hearing_audit_button", "_fit_hearing_set", {"audit_only": True}),
+        ("hearing_cancel_button", "_cancel_hearing_work", {}),
+        ("hearing_server_button", "_start_hearing_server", {}),
+    )
+
+    for button_name, _handler, _kwargs in buttons:
+        button = getattr(panel, button_name)
+        button.setEnabled(True)
+        button.click()
+
+    assert actions == [
+        (handler, (), kwargs) for _button, handler, kwargs in buttons
+    ]
+
+
 def test_portable_blind_selection_starts_native_export_worker(qtbot, monkeypatch, tmp_path):
     from hpg_core import hearing_jobs, hearing_panel
 
