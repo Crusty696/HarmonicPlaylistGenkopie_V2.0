@@ -1084,7 +1084,7 @@ class AdvancedParametersWidget(QWidget):
         btn_layout.addWidget(self.test_ai_btn)
         provider_outer.addLayout(btn_layout)
 
-        # Tooltips fuer AI Provider Widget
+        # Tooltips für AI Provider Widget
         self.provider_group.setToolTip("Konfiguriere deinen lokalen KI-Provider (Ollama oder LM Studio) für Mood- und Subgenre-Tags aus vorhandenen Track-Metadaten.")
         self.ollama_radio.setToolTip("Nutze Ollama als lokalen KI-Dienst. Läuft sehr stabil auf AMD-Grafikkarten unter Windows.")
         self.lmstudio_radio.setToolTip("Nutze LM Studio als lokalen KI-Dienst. Perfekt für detaillierte Modellkonfigurationen.")
@@ -1163,7 +1163,7 @@ class AdvancedParametersWidget(QWidget):
         self.genre_mixing.setChecked(True)
         self.genre_mixing.setToolTip(
             "Aktiviert: die Strategie Genre Flow sortiert nach Genre-Nähe\n"
-            "Deaktiviert: Genre Flow faellt auf Harmonic Flow zurueck.\n"
+            "Deaktiviert: Genre Flow fällt auf Harmonic Flow zurück.\n"
             "Die Genre-Ähnlichkeit geht in beiden Fällen in den\n"
             "Übergangs-Score ein — dieser Schalter ändert nur die Sortierung."
         )
@@ -1174,7 +1174,7 @@ class AdvancedParametersWidget(QWidget):
         self.genre_weight.setValue(30)
         self.genre_weight.setToolTip(
             "Wie stark soll Genre-Ähnlichkeit die Sortierung beeinflussen?\n"
-            "0%: Keine zusaetzliche Genre-Prioritaet in der Sortierung\n"
+            "0%: Keine zusätzliche Genre-Priorität in der Sortierung\n"
             "Höhere Werte priorisieren Genre-Ähnlichkeit stärker.\n"
             "Der lokale Übergangskandidatenscore behält seinen eigenen Genre-Faktor."
         )
@@ -1192,14 +1192,14 @@ class AdvancedParametersWidget(QWidget):
 
         layout.addWidget(genre_group)
 
-        # Kandidaten-Gewichte gelten fuer die lokale Paarbewertung aller
+        # Kandidaten-Gewichte gelten für die lokale Paarbewertung aller
         # Strategien und bleiben deshalb unabhaengig von apply_strategy_support.
         weight_group = QGroupBox("Editierbare Kandidaten-Toleranzbasis")
         self.transition_weight_group = weight_group
         weight_group.setToolTip(
-            "Editierbare Kandidaten-Toleranzbasis fuer Groove, Bassdruck,\n"
-            "Klangfarbe, Stimmung und Lautheit. Aenderungen wirken ab dem\n"
-            "naechsten Lauf und erfordern keine Neuanalyse."
+            "Editierbare Kandidaten-Toleranzbasis für Groove, Bassdruck,\n"
+            "Klangfarbe, Stimmung und Lautheit. Änderungen wirken ab dem\n"
+            "nächsten Lauf und erfordern keine Neuanalyse."
         )
         weight_layout = QVBoxLayout(weight_group)
 
@@ -1207,22 +1207,22 @@ class AdvancedParametersWidget(QWidget):
         self._transition_weight_values = {}
         for schluessel, label, start, erklaerung in (
             ("kandidaten_groove_weight", "Groove", 26,
-             "Rhythmische Verzahnung von Bass und Anschlaegen"),
+             "Rhythmische Verzahnung von Bass und Anschlägen"),
             ("kandidaten_bass_weight", "Bassdruck", 7,
-             "Bass-Kontinuitaet und Kick-/Bass-Konflikte"),
+             "Bass-Kontinuität und Kick-/Bass-Konflikte"),
             ("kandidaten_timbre_weight", "Klangfarbe", 4,
-             "Aehnlichkeit von Mitten und Hoehen"),
+             "Ähnlichkeit von Mitten und Höhen"),
             ("kandidaten_mood_weight", "Stimmung", 4,
              "Stimmungs- und Dur-/Moll-Passung"),
             ("kandidaten_loudness_weight", "Lautheit", 6,
-             "Lautheitsunterschied am lokalen Uebergang"),
+             "Lautheitsunterschied am lokalen Übergang"),
         ):
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(0, 100)
             slider.setValue(start)
             slider.setToolTip(
                 f"{erklaerung}. Der Wert gewichtet nur die Rangfolge der "
-                "Mixpunkt-Kandidaten; Track-Gewichte bleiben unveraendert."
+                "Mixpunkt-Kandidaten; Track-Gewichte bleiben unverändert."
             )
             # Waehrend des Ziehens NICHT schreiben: valueChanged feuert bei
             # jeder Mausbewegung und wuerde die Override-Datei dutzendfach
@@ -1256,8 +1256,8 @@ class AdvancedParametersWidget(QWidget):
         # Reset-Handler gerufen, nie beim Aufbau.
         gewicht_hinweis = self._lade_transition_regler()
         self.transition_weight_status.setText(
-            "Editierbare Kandidaten-Toleranzbasis geladen — Aenderungen wirken "
-            "ab dem naechsten Lauf."
+            "Editierbare Kandidaten-Toleranzbasis geladen — Änderungen wirken "
+            "ab dem nächsten Lauf."
             + gewicht_hinweis
             + self._praeferenz_hinweis()
         )
@@ -1301,7 +1301,7 @@ class AdvancedParametersWidget(QWidget):
             for value in gewichte.values()
         ):
             self.transition_weight_status.setText(
-                "Kandidaten-Gewichte ungueltig: Werte muessen endlich und "
+                "Kandidaten-Gewichte ungültig: Werte müssen endlich und "
                 "zwischen 0 und 100 % liegen."
                 + self._lade_transition_regler()
             )
@@ -1310,7 +1310,7 @@ class AdvancedParametersWidget(QWidget):
             write_overrides_atomically(kandidaten_gewichte=gewichte)
         except (ValueError, OSError) as exc:
             prefix = (
-                "Gewichte ungueltig"
+                "Gewichte ungültig"
                 if isinstance(exc, ValueError)
                 else "Gewichte nicht gespeichert"
             )
@@ -1321,14 +1321,14 @@ class AdvancedParametersWidget(QWidget):
             return
         gewicht_hinweis = self._lade_transition_regler()
         self.transition_weight_status.setText(
-            "Kandidaten-Toleranzbasis gespeichert — wirkt ab dem naechsten Lauf."
+            "Kandidaten-Toleranzbasis gespeichert — wirkt ab dem nächsten Lauf."
             + gewicht_hinweis
             + self._praeferenz_hinweis()
         )
 
     @staticmethod
     def _praeferenz_hinweis() -> str:
-        """Hoertest-Praeferenzen (candidate_preferences.json) schlagen den
+        """Hörtest-Praeferenzen (candidate_preferences.json) schlagen den
         Kandidaten-Regler je Genre — das soll der Nutzer sehen."""
         try:
             from hpg_core.candidate_preferences import load_candidate_preferences
@@ -1337,7 +1337,7 @@ class AdvancedParametersWidget(QWidget):
             return ""
         if not genres:
             return ""
-        return (" Hoertest-Override aktiv fuer: " + ", ".join(genres)
+        return (" Hörtest-Override aktiv für: " + ", ".join(genres)
                 + " — die editierbare Kandidaten-Toleranzbasis wirkt dort nicht.")
 
     def _on_transition_weights_reset(self) -> None:
@@ -1355,7 +1355,7 @@ class AdvancedParametersWidget(QWidget):
         if entfernt:
             text = (
                 "Eigene Kandidaten-Toleranzbasis verworfen — die Standardbasis ist wieder aktiv; "
-                "Track-Gewichte blieben unveraendert."
+                "Track-Gewichte blieben unverändert."
             )
         else:
             text = "Keine eigene Kandidaten-Toleranzbasis vorhanden — Standardbasis ist aktiv."
@@ -1408,8 +1408,8 @@ class AdvancedParametersWidget(QWidget):
         return (
             " Genre-spezifische Kandidatengewichte aktiv; Regler zeigen "
             f"{referenz_genre}. Erste Abweichung: {abweichendes_genre}. Eine "
-            "Aenderung setzt die fuenf sichtbaren Werte global; die fuenf "
-            "versteckten Verhaeltnisse bleiben je Genre erhalten."
+            "Änderung setzt die fünf sichtbaren Werte global; die fünf "
+            "versteckten Verhältnisse bleiben je Genre erhalten."
         )
 
     # ----- AI Provider Auto-Detect / Auto-Start -----
@@ -1621,7 +1621,7 @@ class AdvancedParametersWidget(QWidget):
         self.detected_active_model = status.active_model or self.model_combo.currentText()
         self.test_ai_btn.setEnabled(bool(self.detected_active_model))
 
-        # Port aus Endpoint extrahieren fuer Statusanzeige
+        # Port aus Endpoint extrahieren für Statusanzeige
         port = ""
         m = re.search(r":(\d+)/", status.base_url or "")
         if m:

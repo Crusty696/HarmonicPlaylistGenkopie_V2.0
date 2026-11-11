@@ -104,7 +104,7 @@ def test_weights_summing_to_one_or_more_show_error_and_skip_write(
   # geschriebene Datei darf dabei nicht ueberschrieben werden.
   widget.transition_weight_sliders["kandidaten_timbre_weight"].setValue(10)
 
-  assert "ungueltig" in widget.transition_weight_status.text()
+  assert "ungültig" in widget.transition_weight_status.text()
   assert override_pfad.read_text(encoding="utf-8") == stand_vor_fehler
   assert widget.transition_weight_sliders["kandidaten_timbre_weight"].value() == 4
 
@@ -267,7 +267,7 @@ def test_kandidaten_toleranzbasis_zeigt_initial_sofort_hoertest_overrides_sortie
 
   assert widget.transition_weight_group.title() == "Editierbare Kandidaten-Toleranzbasis"
   status = widget.transition_weight_status.text()
-  assert "naechsten Lauf" in status
+  assert "nächsten Lauf" in status
   assert "Psytrance, Techno" in status
   assert "wirkt dort nicht" in status
 
@@ -308,3 +308,7 @@ def test_advanced_tooltips_use_correct_german_accents(qtbot, monkeypatch, tmp_pa
   assert "Kompatibilität" in widget.harmonic_strictness.toolTip()
   assert "größere Tonart-Sprünge" in widget.harmonic_strictness.toolTip()
   assert "Genre-Ähnlichkeit" in widget.genre_mixing.toolTip()
+  assert "Änderungen wirken ab dem" in widget.transition_weight_group.toolTip()
+  assert "Anschlägen" in widget.transition_weight_sliders["kandidaten_groove_weight"].toolTip()
+  assert "Kontinuität" in widget.transition_weight_sliders["kandidaten_bass_weight"].toolTip()
+  assert "Ähnlichkeit von Mitten und Höhen" in widget.transition_weight_sliders["kandidaten_timbre_weight"].toolTip()

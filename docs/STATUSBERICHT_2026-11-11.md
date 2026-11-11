@@ -564,6 +564,9 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   umgestellt; die KI-Statuszeile heißt nun „KI: noch nicht geprüft“ vor der
   Initialisierung. Im tatsächlichen Widget-Startzustand wechselt sie korrekt zu
   „KI deaktiviert (deterministischer Kernlauf)“.
+- Weitere noch sichtbare ASCII-Umschriften in Genre-/Kandidatengewicht-
+  Tooltips und Statusmeldungen korrigiert; einschließlich der Statusmeldung
+  „ungültig“ und des Hinweises auf den nächsten Lauf.
 - Neuer Qt-Regressionstest
   `tests/test_transition_weight_ui.py`: **12/12 bestanden** mit
   Python 3.12.10 (`venv312`, `-n 0 --no-cov`). Kein Vollsuite-Lauf und kein
