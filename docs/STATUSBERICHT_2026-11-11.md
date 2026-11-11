@@ -218,9 +218,15 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   W ↔ Deep Sky ergab trotzdem **0 freigegebene Übergänge** (`planned=0`,
   `recommendations=0`, Qualität 0 %). Der gespeicherte Diagnosebericht zeigt
   bei 125/127 BPM (2-BPM-Grenze unverändert) in beiden Richtungen
-  `native_beat_gap`; kein lokaler Kandidat erreichte den Score-Gatewert 0,70
-  (beste Scores 0,513 bzw. 0,662). Kein Gate wurde gelockert und keine
-  Originalaudio-Datei neu analysiert oder verändert. Die technische
+  beste lokale Scores 0,513 bzw. 0,662, beide unter dem Score-Gatewert 0,70.
+  Für die jeweiligen besten 8-Bar-Kandidaten bestehen beide geprüften
+  `stable_model_window`-Fenster; die 16-Bar-Varianten fallen teilweise am
+  `native_beat_gap`-Gate durch. Keine Variante erreicht dennoch den
+  Score-Mindestwert. Die aktuelle Cachedatei `hpg_cache_v183.db` enthält
+  read-only geprüft nur den Versionsmarker und keine Trackdatensätze; der ältere
+  v46-Cache ist kein aktueller Analysebeleg. Damit ist in den geprüften
+  Bestandsdaten kein verifizierter Alternativpartner vorhanden. Kein Gate wurde
+  gelockert und keine Originalaudio-Datei neu analysiert oder verändert. Die technische
   Provenienzreparatur ist damit bestätigt, eine brauchbare W/Deep-Sky-Mischung
   oder musikalische Abnahme nicht.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
