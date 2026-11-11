@@ -97,6 +97,13 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `-n 0 --no-cov`). Reale Prepare-/Load-Worker, Rating-Speicherung, Dialogschluss
   und erneutes Laden laufen; Render-Preflight und Wiedergabe-Payload sind
   synthetisch, ohne Audio-DSP oder Originalmusik.
+- Read-only-Frischeprüfung der CLI/GUI-Matrix gegen den aktuellen HEAD:
+  zwischen ihrem Quellstand `6285970` und HEAD änderte sich in den geprüften
+  Matrix-Produktionsdateien nur `hpg_core/hearing_smoke.py`, außerhalb der
+  Matrixpfade. Der neuere Producer-Paritätstest ergänzt die Belege, ohne
+  Producer-/GUI-Verträge zu ändern. Kein Produktionsdrift in der geprüften
+  Hörtest-Matrix gefunden; der getrennte unabhängige Abschluss-Wächter bleibt
+  offen.
 - Native Veröffentlichung mit den echten internen Producerfunktionen ergänzt
   geprüft: **3/3** für Einzel, Kandidaten und Dreinoten-Kandidaten. Alle Outputs
   werden vom späteren Quellmanifest-Loader eingelesen; Einzel zusätzlich vom
@@ -459,7 +466,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 2. Nach Ende des laufenden Batches die Vollsuite gegen den aktuellen HEAD
    ausführen; die letzte Vollsuite vor jüngsten Änderungen bestand mit
    6.679/6.679 Tests und 81,11 % Coverage.
-3. Parallelen nativen Smoke-Ausreißer untersuchen und restliche CLI/GUI-Matrix
-   read-only prüfen.
+3. Im Vollsuite-Lauf nach dem Batch prüfen, ob die auf 60 Sekunden erweiterte
+   Smoke-Spawn-Frist den dokumentierten xdist-Timeout beseitigt.
 4. Manuellen Fit-/Exportpfad und weitere Modi abnehmen; Originalmusik- und
    Native-Analyse erst prüfen, wenn die iGPU-/Analysefreigabe wieder gilt.
