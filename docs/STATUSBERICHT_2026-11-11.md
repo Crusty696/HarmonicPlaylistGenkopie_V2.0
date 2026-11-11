@@ -437,6 +437,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Folgeauftrag: Prompt 61, UUID `f58ec805-d9fe-4ccb-82b5-b0e3d49937f3`, Präfix `Film_x_batch/FX_0492`, läuft; Producer-PID 10456 lebt, Queue 1 laufend/0 wartend. Kein Eingriff oder zusätzlicher Prompt.
 - Folgepoll: Prompt 61/UUID `f58ec805-d9fe-4ccb-82b5-b0e3d49937f3` ist erfolgreich abgeschlossen. `E:\03_Video_&_Medien\Film_x_batch\FX_0492_00001_.mp4` liegt mit 2.475.858 Byte vor. History: 736×416, 24 fps, 243 Frames, 10,125 s; FFmpeg: H.264 High/AVC1, 24 fps, 10,13 s.
 - Aktiver Folgeprompt 62/UUID `2979c237-f19f-406b-b947-e0b0ac3d5dda` verwendet erneut `Film_x_batch/FX_0492`; Queue 1 laufend/0 wartend, Producer-PID 10456 aktiv. Für Prompt 62 ist noch keine History und keine zweite Datei sichtbar. Doppeltes Präfix als ungeklärt notiert; keine Queue-Aktion.
+- Folgepoll: Prompt 62 läuft weiter; Queue nun 1 laufend/2 wartend. Wartende IDs 63/UUID `22ef2101-2f00-4472-a4f7-6214ef16b5aa` und 64/UUID `5ceba7ee-ec6d-409a-8320-f595e9298f8b`; ihre Präfixe sind aus der verfügbaren Queue-Antwort nicht aufgelöst. Producer bleibt unangetastet.
 ## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände
