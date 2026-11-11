@@ -41,7 +41,7 @@ def _metadata(folder):
                  "hearing_source_manifest.json", "kandidaten_manifest.json"):
         path = root / name
         if path.exists() or path.is_symlink():
-            if path.resolve().parent != root:
+            if path.is_symlink() or path.is_junction() or path.resolve().parent != root:
                 raise RatingError("Metadaten-Datei liegt ausserhalb des Satzes")
     return root
 

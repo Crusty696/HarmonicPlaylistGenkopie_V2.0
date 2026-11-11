@@ -172,6 +172,19 @@ def test_metadata_symlink_no_writes(tmp_path, transport, name):
     assert before == {p.name: p.read_bytes() for p in folder.glob("*.csv")}
 
 
+def test_internal_metadata_symlink_rejected_before_rating_write(tmp_path, monkeypatch):
+    from hpg_core.hearing_ratings import RatingError, save_rating
+    folder = tmp_path / "session"
+    make_session(folder, "kandidaten")
+    target = folder / "bewertung.csv"
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == target or original(path))
+    before = target.read_bytes()
+    with pytest.raises(RatingError, match="Metadaten-Datei"):
+        save_rating(folder, "/note", {"pair_id": "p", "clip_id": "p_k1", "note": 3})
+    assert target.read_bytes() == before
+
+
 def test_lock_and_parallel_merge(tmp_path):
     from hpg_core import hearing_ratings as ratings
     assert ratings.CSV_SCHREIB_LOCK is hs.CSV_SCHREIB_LOCK

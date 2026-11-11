@@ -3,14 +3,15 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Code-Commit `070f2f03931d056c54f9abb931d20f12cea97c06` ist auf `origin/codex/gesamtrefaktorierung` vorhanden. Dieser Bericht dokumentiert dessen A/B-Abbruch-/Race-Korrektur.
+**GitHub-Abgleich:** Der bisherige Stand `f46e2b58477d0f07af3b326a90171cb39523b91d` war mit `origin/codex/gesamtrefaktorierung` synchronisiert. Dieser Bericht ergänzt den internen Metadaten-Link-Fix.
 
 ## Kurzstatus
 
 Die gezielten A/B-Änderungen bestehen fokussierte Tests und isolierten
-Frozen-Smoke. Der letzte Volltest meldete einen parallelen Subprozess-Ausreißer;
-der Einzeltest bestand. Originalmusik-Abnahme und manueller kompletter
-GUI-Ablauf bleiben offen.
+Frozen-Smoke. Zusätzlich lehnt die Bewertungsfortschreibung interne Symlinks
+auf Metadaten jetzt ab. Der letzte Volltest meldete einen parallelen
+Subprozess-Ausreißer; der Einzeltest bestand. Originalmusik-Abnahme und
+manueller kompletter GUI-Ablauf bleiben offen.
 
 ## Verifizierte Änderungen und Prüfungen
 
@@ -26,6 +27,13 @@ GUI-Ablauf bleiben offen.
 - `tests/test_main_window.py` und
   `tests/test_hearing_native_integration.py` bestanden nach der Bereinigung
   mit dem Python-3.12-Projektinterpreter. `git diff --check` war sauber.
+- Bei der Bewertungsfortschreibung fand sich eine Abweichung zum Satzinventar:
+  interne Symlinks auf Metadaten bestanden `_metadata`'s Elternpfadtest, obwohl
+  die Inventarsuche Links ablehnt. Die Bewertungsroutine lehnt jetzt Symlinks
+  und Junctions explizit ab. `test_internal_metadata_symlink_rejected_before_rating_write`
+  bestand isoliert. Das gesamte Modul meldete **205 bestanden**, aber der
+  Befehl endete wegen des projektweiten Coverage-Gates mit Exitcode 1
+  (8,74 % statt mindestens 70 %); daraus folgt kein grüner Modul-Gesamtlauf.
 - Der letzte Volltestlauf vor zwei zusätzlichen Race-Regressionstests sammelte 6.600 Tests: **6.599 bestanden, 1 fehlgeschlagen**
   in 768,35 Sekunden; Coverage 81,03 %. Fehler:
   `tests/test_hearing_smoke.py::test_source_smoke_actual_qt_spawn_ram_dsp_from_unrelated_directory`.
@@ -91,8 +99,8 @@ GUI-Ablauf bleiben offen.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Live-Abfrage am 11.11.: FilmX-Batch **511 MP4-Dateien**, Warteschlange 0,
-  ein laufender Auftrag (ID `ee12f6e6-b0ad-4103-a27e-6cbd6f28efad`; Prompt-
+- Live-Abfrage am 11.11.: FilmX-Batch **512 MP4-Dateien**, Warteschlange 0,
+  ein laufender Auftrag (ID `421d2bea-87fc-41d8-91b8-44060ea9906e`; Prompt-
   Prefix nicht erneut ausgelesen). Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
