@@ -516,7 +516,7 @@ class AnalysisWorker(QThread):
 
             if scan_limit_reached:
                 self.status_update.emit(
-                    f"Hinweis: Suche auf {hpg_config.SECURITY_MAX_PLAYLIST_SIZE} Tracks begrenzt."
+                    f"Hinweis: Suche auf {hpg_config.SECURITY_MAX_PLAYLIST_SIZE} Titel begrenzt."
                 )
 
             total_files = len(audio_files)
@@ -655,7 +655,7 @@ class AnalysisWorker(QThread):
             if len(analyzed_tracks) < pre_count:
                 removed = pre_count - len(analyzed_tracks)
                 self.status_update.emit(
-                    f"Hinweis: {removed} Track(s) durch Ressourcenfilter entfernt (defekt oder ueber Limits)."
+                    f"Hinweis: {removed} Titel durch Ressourcenfilter entfernt (defekt oder über Grenzwerten)."
                 )
                 logger.warning(f"Ressourcenfilter entfernte {removed} von {pre_count} Tracks.")
 
@@ -668,7 +668,7 @@ class AnalysisWorker(QThread):
 
             if not analyzed_tracks:
                 self.phase_changed.emit(1, "inactive")
-                self.status_update.emit("Keine Tracks erfolgreich analysiert. Fehlerhinweise prüfen.")
+                self.status_update.emit("Keine Titel erfolgreich analysiert. Fehlerhinweise prüfen.")
                 self.analysis_done.emit([], {})
                 return
 
@@ -676,7 +676,7 @@ class AnalysisWorker(QThread):
             self._report_rekordbox_coverage(analyzed_tracks)
             self.phase_changed.emit(1, "completed")
             self.status_update.emit(
-                f"Audioanalyse für {len(analyzed_tracks)} Tracks abgeschlossen. Playlist wird vorbereitet …"
+                f"Audioanalyse für {len(analyzed_tracks)} Titel abgeschlossen. Playlist wird vorbereitet …"
             )
             self.analysis_done.emit(analyzed_tracks, {})
 
@@ -830,7 +830,7 @@ class TransitionRenderWorker(QThread):
 
                 plan = getattr(transition, "plan", None)
                 if plan is None:
-                    self.clip_error.emit(i, "Ungeplant: kein ausfuehrbarer TransitionPlan")
+                    self.clip_error.emit(i, "Nicht geplant: kein ausführbarer Übergangsplan")
                     continue
                 spec = TransitionClipSpec.from_plan(
                     plan, transition.from_track, transition.to_track

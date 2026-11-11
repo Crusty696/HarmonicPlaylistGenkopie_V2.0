@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026, nach dem synthetischen Ergebnis-/Exporttest):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmten nach `git fetch origin` auf `429e2f6596b79e428dfa510d6b021c39235b27d0` überein. `origin/main` war Vorfahr; der Branch lag 137 Commits voraus. `gh run list` nach dem Push meldete keine Branch-Runs; ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, vor dem aktuellen UI-Audit-Commit):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen auf `5c908ec3927c12a06e7422a033ed44123e377f59` überein; `origin/main` ist Vorfahr. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -14,7 +14,20 @@ Aktionszustandsfix besteht den gezielten Qt-Test und ist im isolierten Frozen-Bu
 visuell sowie barrierefrei geprüft. Die vollständige manuelle GUI-/Originalmusik-
 Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
+Aktueller UI-Audit: Der Bericht in `AnalyticsPanel` zeigte noch englische
+Überschriften, Messwerte und Empfehlungen; Statuszähler, Tooltips, Exportmeldungen
+und Teile des Timeline-Berichts mischten ebenfalls Englisch und Deutsch. Diese
+sichtbaren Texte sind jetzt konsistent deutsch. Gezielte Qt-Regressionen decken
+Qualitätsstufen, Titelzähler, Worker-Status, Timeline und Exportmeldungen ab.
+Der ergänzte synthetische Worker-Status-Test läuft ohne Audioanalyse.
+
 ## Verifizierte Änderungen und Prüfungen
+- UI-Lokalisierungsdelta: Statuszähler, Analytics, Timeline, Tooltips und
+  Worker-Text wurden vereinheitlicht. Die gezielte Qt-Regression bestand
+  **13/13** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 1,43 s);
+  der ergänzte synthetische Worker-Status-Test bestand **1/1** (0,67 s).
+  `git diff --check` ist sauber. Keine Vollsuite, kein Frozen-Build und keine
+  Audio-/Originaltrack-Prüfung für dieses Delta.
 - Result-Identität bis zum konkreten UI-Export geprüft: `tests/test_run_lifecycle.py::test_generation_result_reorder_exportiert_dieselbe_occurrence_reihenfolge` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,58 s). Der Test veröffentlicht ein synthetisches `PlaylistGenerationResult`, sortiert anhand der Occurrence-IDs um, klickt den Button des danach aktuellen Panels und liest die tatsächlich geschriebene M3U8-Reihenfolge zurück. Keine Originalaudios oder Modellinferenz; keine musikalische Bewertung.
 - Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade.
 - Leichtgewichtiger Quellsyntax-Gate am aktuellen Quellstand bestanden: `venv312\Scripts\python.exe -m compileall -q main.py hpg_core tools` (Exitcode 0). Keine GPU-/Audioarbeit; ersetzt weder Vollsuite noch Frozen-Build.

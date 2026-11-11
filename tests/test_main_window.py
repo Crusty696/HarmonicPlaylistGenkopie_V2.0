@@ -50,6 +50,59 @@ def test_quality_panel_exposes_existing_hearing_workflow(qtbot):
     assert panel.hearing_server_button.isEnabled() is False
 
 
+def test_visible_navigation_and_progress_counts_are_german(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    tooltip = window.playlist_panel.restart_button.toolTip()
+    length_tooltip = window.library_panel.playlist_length_box.toolTip()
+
+    assert "Zur Bibliothek zurück" in tooltip
+    assert "Library" not in tooltip
+    assert "Titel" in length_tooltip
+    assert "Tracks" not in length_tooltip
+
+    window._set_run_state(main.RunState.AI)
+    window._on_ai_progress(2, 3)
+
+    assert window.status_bar.status_label.text() == "KI-Anreicherung läuft … (2/3 Titel)"
+
+
+def test_analytics_quality_report_is_german(qtbot):
+    panel = main.AnalyticsPanel()
+    qtbot.addWidget(panel)
+    panel.set_analytics(
+        {
+            "overall_score": 0.5,
+            "harmonic_flow": 0.5,
+            "energy_consistency": 0.5,
+            "bpm_smoothness": 0.5,
+            "avg_harmonic_score": 50.0,
+            "avg_energy_jump": 12.0,
+            "avg_bpm_jump": 2.0,
+        },
+        playlist=[],
+        bpm_tolerance=2.0,
+    )
+
+    visible_text = panel.text_edit.toPlainText()
+    assert "Playlist-Qualität" in visible_text
+    assert "Gesamtbewertungen" in visible_text
+    assert "Gesamtqualität" in visible_text
+    assert "Durchschnittliche Harmonikbewertung" in visible_text
+    assert "Anpassungen prüfen" in visible_text
+    assert "Playlist Quality Analysis" not in visible_text
+    assert "Average Harmonic Score" not in visible_text
+    assert "Try increasing" not in visible_text
+
+    for score, expected in (
+        (0.9, "Sehr gute Playlist!"),
+        (0.7, "Gute Playlist."),
+    ):
+        panel.set_analytics(
+            {"overall_score": score}, playlist=[], bpm_tolerance=2.0
+        )
+        assert expected in panel.text_edit.toPlainText()
+
+
 def test_quality_panel_actions_reach_mainwindow_handlers(qtbot, monkeypatch):
     actions = []
     handlers = (

@@ -71,7 +71,9 @@ def test_timeline_panel_zeigt_planstatus_overlap_und_praezision(qtbot):
   text = panel.text_edit.toPlainText()
   assert "01:00.00" in text
   assert "12.35s" in text
-  assert "UNGEPLANT" in text
+  assert "NICHT GEPLANT" in text
+  assert "Titel" in text
+  assert "Track" not in text
   assert "—" in text
 
 
@@ -884,7 +886,7 @@ def test_render_worker_weist_planlose_transition_ohne_subprozess_ab(
 
   worker.run()
 
-  assert errors == [(0, "Ungeplant: kein ausfuehrbarer TransitionPlan")]
+  assert errors == [(0, "Nicht geplant: kein ausführbarer Übergangsplan")]
   assert worker._executor is None
 
 
@@ -899,6 +901,35 @@ def test_analysis_worker_empty_folder(tmp_path):
 
   assert finished == [([], {})]
   assert any("Keine Audiodateien" in status for status in statuses)
+
+
+def test_analysis_worker_statuses_use_german_title_counts(tmp_path, monkeypatch):
+  sources = [tmp_path / "a.wav", tmp_path / "b.wav"]
+  for source in sources:
+    source.write_bytes(b"synthetic fixture; analyzer is replaced")
+  tracks = [
+    SimpleNamespace(
+      filePath=str(source),
+      analysis_mode="librosa_full_or_tail",
+    )
+    for source in sources
+  ]
+
+  class FakeAnalyzer:
+    def analyze_files(self, _paths, **_kwargs):
+      return tracks
+
+  worker = main.AnalysisWorker(str(tmp_path))
+  worker._create_analyzer = lambda: FakeAnalyzer()
+  worker._filter_tracks = lambda values: values[:1]
+  worker._report_rekordbox_coverage = Mock()
+  statuses = []
+  worker.status_update.connect(statuses.append)
+
+  worker.run()
+
+  assert any("Hinweis: 1 Titel durch Ressourcenfilter entfernt" in status for status in statuses)
+  assert any("Audioanalyse für 1 Titel abgeschlossen" in status for status in statuses)
 
 
 def test_product_audio_extensions_are_explicit_and_complete():
@@ -1262,7 +1293,7 @@ def test_mainwindow_meldet_alle_degradierten_tracks_konkret(qtbot, monkeypatch):
 
   assert window.run_state == main.RunState.ERROR
   status = window.status_bar.status_label.text()
-  assert "Alle 2 Tracks" in status
+  assert "Alle 2 Titel" in status
   assert "Audio-Decodefehler" in status
 
 
@@ -1278,8 +1309,8 @@ def test_mainwindow_meldet_reinen_ressourcenausfall_konkret(qtbot, monkeypatch):
 
   assert window.run_state == main.RunState.ERROR
   status = window.status_bar.status_label.text()
-  assert "2 Track(s) durch Ressourcenfilter" in status
-  assert "Kein Track" in status
+  assert "2 Titel durch Ressourcenfilter" in status
+  assert "Kein Titel" in status
 
 
 def test_mainwindow_kombiniert_decode_und_ressourcenausfall(qtbot, monkeypatch):
@@ -1294,8 +1325,8 @@ def test_mainwindow_kombiniert_decode_und_ressourcenausfall(qtbot, monkeypatch):
 
   assert window.run_state == main.RunState.ERROR
   status = window.status_bar.status_label.text()
-  assert "1 Track(s) wegen Audio-Decodefehler" in status
-  assert "1 Track(s) durch Ressourcenfilter" in status
+  assert "1 Titel wegen Audio-Decodefehler" in status
+  assert "1 Titel durch Ressourcenfilter" in status
 
 
 def _playlist_result_publish_stub(window):
@@ -1327,7 +1358,7 @@ def test_playlist_done_meldet_reinen_bpm_ausfall_konkret(qtbot, monkeypatch):
   window._on_playlist_generation_done(result, worker)
 
   assert window.run_state == main.RunState.ERROR
-  assert "2 Track(s)" in window.status_bar.status_label.text()
+  assert "2 Titel" in window.status_bar.status_label.text()
   assert "ungültiger BPM" in window.status_bar.status_label.text()
   publish.assert_not_called()
 
@@ -1360,9 +1391,9 @@ def test_playlist_done_meldet_bpm_decode_und_ki_als_partial(qtbot, monkeypatch):
 
   assert window.run_state == main.RunState.PARTIAL
   status = window.status_bar.status_label.text()
-  assert "2 Track(s) wegen ungültiger BPM" in status
-  assert "1 Track(s) wegen Audio-Decodefehler" in status
-  assert "1 Track(s) durch Ressourcenfilter" in status
+  assert "2 Titel wegen ungültiger BPM" in status
+  assert "1 Titel wegen Audio-Decodefehler" in status
+  assert "1 Titel durch Ressourcenfilter" in status
   assert "KI-Anreicherung unvollstaendig" in status
 
 
@@ -1385,6 +1416,7 @@ def test_playlist_done_ohne_ausschluss_bleibt_success(qtbot, monkeypatch):
   window._on_playlist_generation_done(result, worker)
 
   assert window.run_state == main.RunState.SUCCESS
+  assert "1 Titel" in window.status_bar.status_label.text()
 
 
 def test_playlist_done_legacy_empty_behaelt_generischen_fehler(qtbot, monkeypatch):
@@ -2410,6 +2442,7 @@ def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   window._export_m3u8(str(tmp_path / "set.m3u8"))
   assert m3u8_exporter.export.call_args.args[2] == "HPG - Warm-Up"
   info.assert_called_once()
+  assert "Titel: 1" in info.call_args.args[2]
 
   report = SimpleNamespace(
     status="partial",
@@ -2424,6 +2457,7 @@ def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   window._export_rekordbox_xml(str(tmp_path / "set.xml"))
   assert xml_exporter.export.call_args.args[2] == "HPG - Warm-Up"
   warning.assert_called_once()
+  assert "Titel: 1" in warning.call_args.args[2]
 
 
 @pytest.mark.parametrize(
@@ -3007,19 +3041,19 @@ def test_mixpunkt_quelle_aus_empfehlungen():
   recs = [SimpleNamespace(plan=SimpleNamespace(mix_out_a=192.0, mix_in_b=82.3), kandidat_aktiv=1)]
   t0 = SimpleNamespace(mix_in_point=60.0, mix_out_point=200.0)
   t1 = SimpleNamespace(mix_in_point=50.0, mix_out_point=210.0)
-  quelle = "TransitionPlan · Kandidat Rang 1"
+  quelle = "Übergangsplan · Kandidatenrang 1"
   assert mixpunkte_fuer_tabelle(0, t0, recs) == (60.0, "Analyse", 192.0, quelle)
   assert mixpunkte_fuer_tabelle(1, t1, recs) == (82.3, quelle, 210.0, "Analyse")
   assert mixpunkte_fuer_tabelle(1, t1, []) == (50.0, "Analyse", 210.0, "Analyse")
-  # TransitionPlan bleibt SSOT, auch ohne Kandidatenrang.
+  # Der Uebergangsplan bleibt SSOT, auch ohne Kandidatenrang.
   recs0 = [SimpleNamespace(plan=SimpleNamespace(mix_out_a=1.0, mix_in_b=2.0), kandidat_aktiv=0)]
-  assert mixpunkte_fuer_tabelle(0, t0, recs0) == (60.0, "Analyse", 1.0, "TransitionPlan")
+  assert mixpunkte_fuer_tabelle(0, t0, recs0) == (60.0, "Analyse", 1.0, "Übergangsplan")
   sparse = [SimpleNamespace(
     index=1, plan=SimpleNamespace(mix_out_a=180.0, mix_in_b=70.0), kandidat_aktiv=2,
   )]
   assert mixpunkte_fuer_tabelle(0, t0, sparse) == (60.0, "Analyse", 200.0, "Analyse")
   assert mixpunkte_fuer_tabelle(1, t1, sparse)[2:] == (
-    180.0, "TransitionPlan · Kandidat Rang 2"
+    180.0, "Übergangsplan · Kandidatenrang 2"
   )
 
 
@@ -4884,7 +4918,7 @@ def test_reorder_setzt_mixpunkt_spalten_aus_neuen_empfehlungen(qtbot, monkeypatc
   qtbot.addWidget(panel)
   monkeypatch.setattr(main, "compute_transition_recommendations", lambda *a, **k: [rec])
   panel.set_playlist_data([rec.from_track, rec.to_track], {}, transition_recommendations=[rec], bpm_tolerance=2.0)
-  assert panel.table.item(1, 10).toolTip() == "Quelle: TransitionPlan · Kandidat Rang 1"
+  assert panel.table.item(1, 10).toolTip() == "Quelle: Übergangsplan · Kandidatenrang 1"
   assert panel.table.item(1, 10).text().startswith("01:22") and panel.table.item(0, 11).text().startswith("02:44")
   import dataclasses
   rec2 = dataclasses.replace(rec, plan=dataclasses.replace(rec.plan, mix_in_b=109.7, mix_out_a=219.4))

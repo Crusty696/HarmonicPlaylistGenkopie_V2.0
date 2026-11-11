@@ -240,10 +240,10 @@ def test_bpm_tooltip_beschreibt_transitionplan_gate_statt_nachbar_garantie(qtbot
 
   tooltip = panel.bpm_tolerance_slider.toolTip()
 
-  assert "TransitionPlan" in tooltip
-  assert "Half-/Double-Time" in tooltip
+  assert "Übergangsplan" in tooltip
+  assert "Halb-/Doppeltempo" in tooltip
   assert "garantiert nicht" in tooltip
-  assert "UNGEPLANT" in tooltip
+  assert "nicht geplant" in tooltip
   assert "nicht gerendert" in tooltip
 
 

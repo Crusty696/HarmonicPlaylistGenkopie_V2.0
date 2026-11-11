@@ -345,7 +345,7 @@ def mixpunkte_fuer_tabelle(index: int, track, recs) -> tuple:
         plan = getattr(rec, "plan", None)
         rang = int(getattr(rec, "kandidat_aktiv", 0) or 0)
         if plan is not None:
-            quelle = f"TransitionPlan · Kandidat Rang {rang}" if rang > 0 else "TransitionPlan"
+            quelle = f"Übergangsplan · Kandidatenrang {rang}" if rang > 0 else "Übergangsplan"
             mix_in, quelle_in = float(plan.mix_in_b), quelle
         else:
             quelle_in = "Ungeplant (Analysewert)"
@@ -354,7 +354,7 @@ def mixpunkte_fuer_tabelle(index: int, track, recs) -> tuple:
         plan = getattr(rec, "plan", None)
         rang = int(getattr(rec, "kandidat_aktiv", 0) or 0)
         if plan is not None:
-            quelle = f"TransitionPlan · Kandidat Rang {rang}" if rang > 0 else "TransitionPlan"
+            quelle = f"Übergangsplan · Kandidatenrang {rang}" if rang > 0 else "Übergangsplan"
             mix_out, quelle_out = float(plan.mix_out_a), quelle
         else:
             quelle_out = "Ungeplant (Analysewert)"
@@ -2287,8 +2287,8 @@ class LibraryPanel(QWidget):
         self.playlist_length_box.setValue(0)
         self.playlist_length_box.setSpecialValueText("Alle")
         self.playlist_length_box.setToolTip(
-            "Alle analysierten Tracks verwenden oder die Playlist auf 1 bis 1000 Tracks begrenzen.\n"
-            "Bei einer Begrenzung erhalten laenger nicht exportierte Tracks eine hoehere Auswahlchance."
+            "Alle analysierten Titel verwenden oder die Playlist auf 1 bis 1000 Titel begrenzen.\n"
+            "Bei einer Begrenzung erhalten laenger nicht exportierte Titel eine hoehere Auswahlchance."
         )
         left_layout.addWidget(self.playlist_length_box)
 
@@ -2315,11 +2315,11 @@ class LibraryPanel(QWidget):
         # der Paar-Kandidaten, PAAR_BPM_MAX); der Slider bleibt einstellbar.
         self.bpm_tolerance_slider.setValue(2)
         self.bpm_tolerance_slider.setToolTip(
-            "Effektives BPM-Gate fuer den TransitionPlan (einstellbar: ±1 bis ±2 BPM).\n"
-            "Direkte sowie erkannte Half-/Double-Time-Beziehungen werden geprueft. "
+            "Effektive BPM-Grenze für den Übergangsplan (einstellbar: ±1 bis ±2 BPM).\n"
+            "Direktes Tempo sowie erkannte Halb-/Doppeltempo-Beziehungen werden geprüft. "
             "Der Regler garantiert nicht, dass jedes benachbarte Paar planbar ist: "
-            "scheitert dieses oder ein anderes Kandidaten-Gate, bleibt der Uebergang "
-            "UNGEPLANT und wird nicht gerendert."
+            "scheitert dieses oder ein anderes Kandidaten-Gate, bleibt der Übergang "
+            "nicht geplant und wird nicht gerendert."
         )
         self.bpm_value_label = QLabel("±2")
         self.bpm_value_label.setFixedWidth(30)
@@ -2679,7 +2679,7 @@ class PlaylistPanel(QWidget):
         self.restart_button = QPushButton("ZUR BIBLIOTHEK")
         self.restart_button.setObjectName("btn_secondary")
         self.restart_button.setMinimumHeight(36)
-        self.restart_button.setToolTip("Zurueck zur Library. Playlist geht verloren.")
+        self.restart_button.setToolTip("Zur Bibliothek zurück. Die Playlist geht verloren.")
         self.restart_button.clicked.connect(self.restart_clicked.emit)
 
         btn_layout.addWidget(self.export_button)
@@ -4248,7 +4248,7 @@ class TimelinePanel(QWidget):
           <td style="padding: 4px 12px;">{overflow_sign}{abs(overflow):.2f}s ({overflow_display})</td>
         </tr>
         <tr>
-          <td style="padding: 4px 12px; font-weight: bold;">Track am Höhepunkt:</td>
+          <td style="padding: 4px 12px; font-weight: bold;">Titel am Höhepunkt:</td>
           <td style="padding: 4px 12px;">{html_mod.escape(str(summary.get("peak_track", "-")))}</td>
         </tr>
         <tr>
@@ -4256,11 +4256,11 @@ class TimelinePanel(QWidget):
           <td style="padding: 4px 12px;">{peak_display}</td>
         </tr>
         <tr>
-          <td style="padding: 4px 12px; font-weight: bold;">Tracks:</td>
+          <td style="padding: 4px 12px; font-weight: bold;">Titel:</td>
           <td style="padding: 4px 12px;">{summary["track_count"]}</td>
         </tr>
         <tr>
-          <td style="padding: 4px 12px; font-weight: bold;">Ø Dauer/Track:</td>
+          <td style="padding: 4px 12px; font-weight: bold;">Ø Dauer/Titel:</td>
           <td style="padding: 4px 12px;">{avg_display}</td>
         </tr>
       </table>
@@ -4280,7 +4280,7 @@ class TimelinePanel(QWidget):
                     f"<span style='color: {color}; font-weight: bold;'>●</span></td>"
                     f"<td style='padding: 3px 10px;'>{label}</td>"
                     f"<td style='padding: 3px 10px; text-align: right;'>"
-                    f"{count} Track{'s' if count != 1 else ''}</td>"
+                    f"{count} Titel</td>"
                     f"</tr>"
                 )
             html += "</table>"
@@ -4291,7 +4291,7 @@ class TimelinePanel(QWidget):
             "<table style='margin: 8px 0; border-collapse: collapse; width: 100%;'>"
             f"<tr style='background: {COLORS['bg_panel']}; font-weight: bold;'>"
             "<td style='padding: 5px 8px;'>#</td>"
-            "<td style='padding: 5px 8px;'>Track</td>"
+            "<td style='padding: 5px 8px;'>Titel</td>"
             "<td style='padding: 5px 8px;'>Start</td>"
             "<td style='padding: 5px 8px;'>Ende</td>"
             "<td style='padding: 5px 8px;'>Dauer</td>"
@@ -4314,7 +4314,7 @@ class TimelinePanel(QWidget):
             if entry.transition_planned is True:
                 overlap_str = f"{entry.overlap_with_next:.2f}s"
             elif entry.transition_planned is False:
-                overlap_str = "UNGEPLANT"
+                overlap_str = "NICHT GEPLANT"
             else:
                 overlap_str = "—"
             html += (
@@ -4336,7 +4336,7 @@ class TimelinePanel(QWidget):
         # Legende
         html += "<hr>"
         html += f"<p style='color: {COLORS['text_secondary']}; font-size: 11px;'>"
-        html += "* = Track am Höhepunkt | Überlappung = Übergangszeit zum nächsten Track"
+        html += "* = Titel am Höhepunkt | Überlappung = Übergangszeit zum nächsten Titel"
         html += "</p>"
 
         self.text_edit.setHtml(html)
@@ -4530,7 +4530,7 @@ class AnalyticsPanel(QWidget):
         hearing_layout.addWidget(self.collection_button)
         self.measurement_button = QPushButton("Messdiagnosen anzeigen")
         self.measurement_button.setToolTip(
-            "Gespeicherte Messgründe und Fenster der aktuell analysierten Tracks ansehen. "
+            "Gespeicherte Messgründe und Fenster der aktuell analysierten Titel ansehen. "
             "Keine erneute Analyse. Fehlende Diagnosen bleiben unbekannt; dies ist kein musikalischer Qualitätsnachweis."
         )
         self.measurement_button.clicked.connect(self.measurement_requested)
@@ -4596,41 +4596,41 @@ class AnalyticsPanel(QWidget):
             return
 
         html = f"""{html_style_block()}
-<h3>Playlist Quality Analysis</h3>
+<h3>Playlist-Qualität</h3>
 
-<h4>Overall Scores</h4>
+<h4>Gesamtbewertungen</h4>
 <ul>
-<li><b>Overall Quality:</b> {quality_metrics.get("overall_score", 0):.1%}</li>
-<li><b>Harmonic Flow:</b> {quality_metrics.get("harmonic_flow", 0):.1%}</li>
-<li><b>Energy Consistency:</b> {quality_metrics.get("energy_consistency", 0):.1%}</li>
-<li><b>BPM Smoothness:</b> {quality_metrics.get("bpm_smoothness", 0):.1%}</li>
+<li><b>Gesamtqualität:</b> {quality_metrics.get("overall_score", 0):.1%}</li>
+<li><b>Harmonischer Fluss:</b> {quality_metrics.get("harmonic_flow", 0):.1%}</li>
+<li><b>Energiekonsistenz:</b> {quality_metrics.get("energy_consistency", 0):.1%}</li>
+<li><b>BPM-Stetigkeit:</b> {quality_metrics.get("bpm_smoothness", 0):.1%}</li>
 </ul>
 
-<h4>Detailed Metrics</h4>
+<h4>Einzelwerte</h4>
 <ul>
-<li><b>Average Harmonic Score:</b> {quality_metrics.get("avg_harmonic_score", 0):.1f}/100</li>
-<li><b>Average Energy Jump:</b> {quality_metrics.get("avg_energy_jump", 0):.1f}</li>
-<li><b>Average BPM Jump:</b> {quality_metrics.get("avg_bpm_jump", 0):.1f}</li>
+<li><b>Durchschnittliche Harmonikbewertung:</b> {quality_metrics.get("avg_harmonic_score", 0):.1f}/100</li>
+<li><b>Durchschnittlicher Energiesprung:</b> {quality_metrics.get("avg_energy_jump", 0):.1f}</li>
+<li><b>Durchschnittlicher BPM-Sprung:</b> {quality_metrics.get("avg_bpm_jump", 0):.1f}</li>
 </ul>
 
-<h4>Recommendations</h4>
+<h4>Hinweise</h4>
 """
 
         overall_score = quality_metrics.get("overall_score", 0)
         if overall_score >= 0.8:
-            html += "<p><b>Excellent playlist!</b> Great flow for DJ sets.</p>"
+            html += "<p><b>Sehr gute Playlist!</b> Harmonischer Fluss für DJ-Sets.</p>"
         elif overall_score >= 0.6:
-            html += "<p><b>Good playlist.</b> Minor improvements possible.</p>"
+            html += "<p><b>Gute Playlist.</b> Kleine Verbesserungen sind möglich.</p>"
         else:
-            html += "<p><b>Consider adjustments.</b> Try a different algorithm or adjust BPM tolerance.</p>"
+            html += "<p><b>Anpassungen prüfen.</b> Andere Strategie oder BPM-Toleranz ausprobieren.</p>"
 
         if quality_metrics.get("harmonic_flow", 0) < 0.6:
-            html += "<p>Try increasing harmonic strictness or using 'Harmonic Flow'..</p>"
+            html += "<p>Harmonische Strenge erhöhen oder 'Harmonic Flow' wählen.</p>"
         if quality_metrics.get("energy_consistency", 0) < 0.6:
-            html += "<p>Consider 'Context Flow' or 'Energy Wave' for better energy flow.</p>"
+            html += "<p>Für einen besseren Energieverlauf 'Context Flow' oder 'Energy Wave' wählen.</p>"
         if quality_metrics.get("bpm_smoothness", 0) < 0.6:
             html += (
-                "<p>Try increasing BPM tolerance or using 'Consistent' algorithm.</p>"
+                "<p>BPM-Toleranz erhöhen oder die Strategie 'Consistent' wählen.</p>"
             )
 
         self.text_edit.setHtml(html)
@@ -6565,7 +6565,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             scaled = map_phase_progress(percent, 80, 95)
             self.status_bar.set_progress(scaled)
             self.library_panel.progress_widget.set_progress(scaled)
-            self.status_bar.set_status(f"KI-Anreicherung laeuft... ({current}/{total} Tracks)")
+            self.status_bar.set_status(f"KI-Anreicherung läuft … ({current}/{total} Titel)")
 
     def cancel_analysis(self):
         """Analyse abbrechen — cooperative shutdown."""
@@ -6651,7 +6651,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             )
         if self.playlist_worker and self.playlist_worker.isRunning():
             self._finish_run(
-                RunState.ERROR, "ERROR: Playlist-Erzeugung laeuft bereits."
+                RunState.ERROR, "Fehler: Playlist-Erzeugung läuft bereits."
             )
             return
 
@@ -6746,8 +6746,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             if invalid_bpm_excluded:
                 self._finish_run(
                     RunState.ERROR,
-                    f"ERROR: {invalid_bpm_excluded} Track(s) wegen ungültiger "
-                    "BPM ausgeschlossen; kein Track für die Playlist übrig.",
+                    f"Fehler: {invalid_bpm_excluded} Titel wegen ungültiger "
+                    "BPM ausgeschlossen; kein Titel für die Playlist übrig.",
                 )
             else:
                 self._finish_run(
@@ -6794,9 +6794,9 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f" | Auswahl {selection_report.selected}/{selection_report.eligible} "
                 f"(Ziel {selection_report.requested})"
             )
-        self.toolbar.set_info(f"{len(self.playlist)} Tracks | {mode}{selection_info}")
+        self.toolbar.set_info(f"{len(self.playlist)} Titel | {mode}{selection_info}")
         self.status_bar.set_status(
-            f"Fertig — {len(self.playlist)} Tracks, Qualität {overall:.0%}"
+            f"Fertig — {len(self.playlist)} Titel, Qualität {overall:.0%}"
         )
         
         # Automatisch zum Playlist-Panel wechseln
@@ -6810,17 +6810,17 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             resource_excluded_count = self._resource_limit_excluded_count()
             if degraded_count:
                 partial_reasons.append(
-                    f"{degraded_count} Track(s) wegen Audio-Decodefehler ausgeschlossen "
+                    f"{degraded_count} Titel wegen Audio-Decodefehler ausgeschlossen "
                     "(Details im Analyse-Log)"
                 )
             if resource_excluded_count:
                 partial_reasons.append(
-                    f"{resource_excluded_count} Track(s) durch Ressourcenfilter "
+                    f"{resource_excluded_count} Titel durch Ressourcenfilter "
                     "ausgeschlossen"
                 )
             if invalid_bpm_excluded:
                 partial_reasons.append(
-                    f"{invalid_bpm_excluded} Track(s) wegen ungültiger BPM ausgeschlossen"
+                    f"{invalid_bpm_excluded} Titel wegen ungültiger BPM ausgeschlossen"
                 )
             if ai_failure:
                 partial_reasons.append(f"KI-Anreicherung unvollstaendig: {ai_failure}")
@@ -6828,12 +6828,12 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             final_message = (
                 "Playlist fertig; " + "; ".join(partial_reasons)
                 if partial_reasons
-                else f"Fertig — {len(self.playlist)} Tracks, Qualität {overall:.0%}"
+                else f"Fertig — {len(self.playlist)} Titel, Qualität {overall:.0%}"
             )
             if selection_report is not None:
                 final_message += (
                     f" | Auswahl {selection_report.selected} von "
-                    f"{selection_report.eligible} gültigen Tracks; Ziel "
+                    f"{selection_report.eligible} gültigen Titeln; Ziel "
                     f"{selection_report.requested}."
                 )
             if self._playlist_selection_warning:
@@ -6860,15 +6860,15 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
 
         lines = [
-            f"{coverage.degraded} von {coverage.total} analysierten Tracks "
+            f"{coverage.degraded} von {coverage.total} analysierten Titeln "
             f"konnten keine Rekordbox-Daten nutzen und wurden komplett neu "
             f"berechnet (ohne Rekordbox-Beatgrid)."
         ]
         if coverage.without_analysis:
             lines.append("")
             lines.append(
-                f"• {coverage.without_analysis} Track(s) stehen in der "
-                f"Collection, sind dort aber nicht analysiert. In Rekordbox "
+                f"• {coverage.without_analysis} Titel stehen in der "
+                f"Sammlung, sind dort aber nicht analysiert. In Rekordbox "
                 f"analysieren, Rekordbox schliessen, Lauf wiederholen."
             )
             for name in coverage.examples_without_analysis:
@@ -6876,7 +6876,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         if coverage.ambiguous:
             lines.append("")
             lines.append(
-                f"• {coverage.ambiguous} Track(s) haben mehrdeutige "
+                f"• {coverage.ambiguous} Titel haben mehrdeutige "
                 f"Rekordbox-Eintraege (mehrere Records mit widerspruechlichen "
                 f"Werten). HPG verwirft solche Daten bewusst, statt zu raten."
             )
@@ -6885,7 +6885,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         if coverage.not_in_collection:
             lines.append("")
             lines.append(
-                f"{coverage.not_in_collection} weitere(r) Track(s) haben keinen "
+                f"{coverage.not_in_collection} weitere Titel haben keinen "
                 f"Rekordbox-Eintrag mit identischem Pfad; ob sie unter einem "
                 f"anderen Pfad vorhanden sind, ist offen."
             )
@@ -6932,23 +6932,23 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             if degraded_count and not resource_excluded_count:
                 self._finish_run(
                     RunState.ERROR,
-                    "ERROR: Alle "
-                    f"{degraded_count} Tracks wegen Audio-Decodefehler ausgeschlossen. "
+                    "Fehler: Alle "
+                    f"{degraded_count} Titel wegen Audio-Decodefehler ausgeschlossen. "
                     "Details stehen im Analyse-Log.",
                 )
             elif degraded_count or resource_excluded_count:
                 reasons = []
                 if degraded_count:
                     reasons.append(
-                        f"{degraded_count} Track(s) wegen Audio-Decodefehler"
+                        f"{degraded_count} Titel wegen Audio-Decodefehler"
                     )
                 if resource_excluded_count:
                     reasons.append(
-                        f"{resource_excluded_count} Track(s) durch Ressourcenfilter"
+                        f"{resource_excluded_count} Titel durch Ressourcenfilter"
                     )
                 self._finish_run(
                     RunState.ERROR,
-                    "ERROR: Kein Track fuer die Playlist uebrig; ausgeschlossen: "
+                    "Fehler: Kein Titel für die Playlist übrig; ausgeschlossen: "
                     + "; ".join(reasons)
                     + ".",
                 )
@@ -7445,7 +7445,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             message = (
                 f"M3U8-Playlist exportiert!\n\n"
                 f"Speicherort: {file_path}\n"
-                f"Tracks: {report.tracks_written}\n"
+                f"Titel: {report.tracks_written}\n"
                 f"Kompatibel mit Rekordbox, Serato und Traktor."
             )
             if history_warning:
@@ -7477,7 +7477,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             history_warning = self._record_successful_playlist_export(report)
 
             message = (
-                f"Speicherort: {file_path}\nTracks: {report.tracks_written}\n"
+                f"Speicherort: {file_path}\nTitel: {report.tracks_written}\n"
                 f"Cues: {report.cues_written}\nBeatgrids: {report.beatgrids_written}"
             )
             if history_warning:
@@ -7509,7 +7509,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
 
         if len(self.playlist) < 2:
             QMessageBox.information(
-                self, "Übergangsvorschau", "Für Übergänge werden mindestens zwei Tracks benötigt."
+                self, "Übergangsvorschau", "Für Übergänge werden mindestens zwei Titel benötigt."
             )
             return
 
@@ -7528,15 +7528,15 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             if rec is not None:
                 mix_out, mix_in, overlap = resolve_transition_mix_points(rec)
                 transitions_info += (
-                    f"   Score: {rec.compatibility_score}% | "
-                    f"Kandidat Rang {int(getattr(rec, 'kandidat_aktiv', 0) or 0)}\n"
+                    f"   Bewertung: {rec.compatibility_score}% | "
+                    f"Kandidatenrang {int(getattr(rec, 'kandidat_aktiv', 0) or 0)}\n"
                     f"   Mix-Out: {mix_out:.1f}s | Mix-In: {mix_in:.1f}s | "
                     f"Blende: {overlap:.1f}s\n"
                 )
             else:
                 transitions_info += (
-                    "   UNGEPLANT | Score: 0% | "
-                    "kein ausfuehrbarer TransitionPlan\n"
+                    "   NICHT GEPLANT | Bewertung: 0% | "
+                    "kein ausführbarer Übergangsplan\n"
                 )
             transitions_info += f"   BPM: {current.bpm:.1f} -> {next_track.bpm:.1f}\n"
             transitions_info += (
