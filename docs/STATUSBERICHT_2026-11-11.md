@@ -17,7 +17,7 @@
 
 **ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512`–`FX_0518` erfolgreich; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s. `FX_0518` hat 2.036.428 Byte. Aktuell läuft `FX_0519` (UUID `2acb09c8-e61b-4f70-8704-9c30d99da838`); Queue 1/0, `film_batch.py` PID 26284 lebt. Batch-Ende nicht festgestellt; Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
 
-**Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
+**Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 91 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
 Letzte Vollsuite vor dem neuen Playlist-Aktionszustandsfix am 11.11.2026:
 **6.679/6.679 bestanden**, Coverage **81,11 %**, Exitcode 0 (`venv312`, Python
@@ -709,7 +709,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 ## Lokale Arbeitsänderungen abgegrenzt
 
-- Der read-only-Dateistatus zählt weiterhin 93 unveränderte lokale Änderungen. Endungs-/Pfadabgleich ordnet sie Markdown/HTML, `.claude/`- und `.codex/`-Agent-/Skillkonfigurationen sowie Projektanweisungen zu; keine `.py`-, `.spec`-, Installer-, Build- oder Requirements-Dateien darunter. Nichts davon wurde gestaged oder verändert.
+- Der read-only-Dateistatus zählte vor dem Commit der zwei geprüften Plan-/Spezifikationsdateien 93 lokale Änderungen; danach blieben 91. Endungs-/Pfadabgleich ordnet sie Markdown/HTML, `.claude/`- und `.codex/`-Agent-/Skillkonfigurationen sowie Projektanweisungen zu; keine `.py`-, `.spec`-, Installer-, Build- oder Requirements-Dateien darunter. Die übrigen Änderungen bleiben unverändert und ungestaged.
 - Dieser Zwischenstand entstand vor der Dreinoten-Parität: Der erste Kandidaten-Paritätstest und das Plan-Update waren damals noch uncommitted; Dreinoten-CLI/native-Fit-Vergleich war zu diesem Zeitpunkt offen. Der aktuelle Test-/Commitstand folgt im Nachtrag „Dreinoten-CLI/native-Fit-Parität geprüft“; Vollsuite, aktueller Frozen-Build und manuelle GUI-Abnahme bleiben offen.
 
 ## Dreinoten-CLI/native-Fit-Parität geprüft
