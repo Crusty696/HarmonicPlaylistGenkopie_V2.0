@@ -55,7 +55,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Result-Identität bis zum konkreten UI-Export geprüft: `tests/test_run_lifecycle.py::test_generation_result_reorder_exportiert_dieselbe_occurrence_reihenfolge` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,58 s). Der Test veröffentlicht ein synthetisches `PlaylistGenerationResult`, sortiert anhand der Occurrence-IDs um, klickt den Button des danach aktuellen Panels und liest die tatsächlich geschriebene M3U8-Reihenfolge zurück. Keine Originalaudios oder Modellinferenz; keine musikalische Bewertung.
 - Rekordbox-XML-/Preview-Verträge gezielt nachgeprüft: **58/58 Tests bestanden** in `tests/test_rekordbox_xml_exporter.py` und drei GUI-Exportregressionen aus `tests/test_main_workers.py` (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 1,01 s). Dabei zwei überholte englische Preview-Erwartungen an den aktuellen deutschen Dialogtext angepasst. XML-Exporter-Tests stubs pyrekordbox; kein Rekordbox-Liveimport und keine manuelle XML-App-Abnahme.
 - Alten Diagnoseverdacht im Paar-Ranking am aktuellen Quellstand geprüft: Ablehnungsgründe werden über den Rankinglauf und `rejection_reasons` bis zum ungeplanten Übergang transportiert; die GUI zeigt den konkreten Grund. Fehlende Klangfarbenmessung erscheint als „unbekannt“ statt als gemessener Kontrast. `tests/test_pair_rejection_diagnostics.py` und `tests/test_transition_labels.py`: **16/16 bestanden** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 0,52 s). Der damalige Befund ist im aktuellen Code behoben; kein neuer Scoring- oder Diagnose-Fix erforderlich.
-- Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade.
+- Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade. Wiederholung am aktuellen HEAD: Test erneut **1/1 bestanden** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 0,47 s).
 - Leichtgewichtiger Quellsyntax-Gate am aktuellen Quellstand bestanden: `venv312\Scripts\python.exe -m compileall -q main.py hpg_core tools` (Exitcode 0). Keine GPU-/Audioarbeit; ersetzt weder Vollsuite noch Frozen-Build.
 - Abhängigkeits-Vorabcheck am aktuellen `venv312`: `python -m pip check` meldet `No broken requirements found.` Keine Paketpins geändert; CI, Vollsuite und Frozen-Build bleiben getrennte Gates.
 - Release-Metadaten abgeglichen: `APP_VERSION`, README-Titel, `installer.iss` `AppVersion`/Dateiname und `version_info.txt` stimmen sämtlich auf `3.7.2` überein. Kein Versionsdrift; der aktuelle Frozen-Build ist weiterhin offen.
@@ -551,9 +551,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
    (`FX_0498`) ist inzwischen aus der Queue verschwunden; seine Ausgabe
    `FX_0498_00001_.mp4` (3.036.269 Bytes) wurde ebenso per `ffprobe` geprüft
    (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Seine History war bereits
-   leer. Aktuell läuft Prompt 74 / UUID `2ea93448-a5b5-4e44-b753-21556d10cd2e`,
-   `PBStudio_T007/.../item_1`; Producer-PID 10456, Queue 1/2. Wartend sind
-   Prompt 75 `PBStudio_T007/.../item_2` und Prompt 76 `Film_x_batch/FX_0499`.
+   leer. Prompt 74 ist aus der Queue verschwunden. Aktuell läuft Prompt 75 / UUID
+   `61e9a877-611f-48be-9a63-70142a59d658`,
+   `PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_2`; Queue 1/1.
+   Wartend ist Prompt 76 `Film_x_batch/FX_0499`.
    Kein fremder Queue-Job wird verändert. Den geplanten H3-Vier-Clip-Batch erst
    nach Ende aller aktiven und wartenden
    Jobs starten, Queue-Eigentümer und freie Queue vorher erneut prüfen und jede
@@ -587,7 +588,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Prompt 73 / `FX_0498` ist nicht mehr in der Queue; `FX_0498_00001_.mp4`
   (3.036.269 Bytes) ist per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames,
   10,125 s bestätigt. Die History war beim Poll bereits leer. Aktuell läuft
-  Prompt 74 / UUID `2ea93448-a5b5-4e44-b753-21556d10cd2e` (`PBStudio_T007/.../item_1`),
-  Queue 1/2. Wartend: Prompt 75 (`PBStudio_T007/.../item_2`) und Prompt 76
-  (`Film_x_batch/FX_0499`). Producer-PID 10456 lebt. Fremde Jobs und Queue
-  blieben unangetastet.
+  Prompt 74 ist nicht mehr gelistet. Prompt 75 / UUID
+  `61e9a877-611f-48be-9a63-70142a59d658`
+  (`PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_2`) läuft;
+  Queue 1/1. Prompt 76 (`Film_x_batch/FX_0499`) wartet. Producer-PID 10456
+  lebt. Fremde Jobs und Queue blieben unangetastet.
