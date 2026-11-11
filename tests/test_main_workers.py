@@ -1675,6 +1675,54 @@ def test_final_generation_verwendet_genau_ein_unveraenderliches_result(
   publish.assert_called_once_with(result)
 
 
+def test_begrenzte_playlist_waehlt_tracks_vor_dem_generation_worker(
+  qtbot, monkeypatch
+):
+  window = _window(qtbot, monkeypatch)
+  tracks = [
+    Track(filePath=f"C:/{name}.wav", fileName=f"{name}.wav", bpm=128.0)
+    for name in "abcd"
+  ]
+  window.analyzed_raw_tracks = tracks
+  window._run_settings = {
+    "strategy": "Harmonic Flow",
+    "bpm_tolerance": 2.0,
+    "advanced_params": {},
+    "candidate_choice_snapshot": {},
+    "playlist_length": 2,
+  }
+  captured = {}
+
+  class _Signal:
+    def connect(self, _slot):
+      pass
+
+  class _Worker:
+    def __init__(self, selected, **kwargs):
+      captured["tracks"] = tuple(selected)
+      captured["kwargs"] = kwargs
+      self.generation_done = _Signal()
+      self.generation_failed = _Signal()
+      self.finished = _Signal()
+
+    def start(self):
+      captured["started"] = True
+
+    def isRunning(self):
+      return False
+
+  monkeypatch.setattr(main, "PlaylistGenerationWorker", _Worker)
+
+  window.on_ai_worker_finished(ai_completed=False, finalize=True)
+
+  assert len(captured["tracks"]) == 2
+  assert len({track.track_id for track in captured["tracks"]}) == 2
+  assert captured["started"] is True
+  assert window._playlist_selection_report.requested == 2
+  assert window._playlist_selection_report.eligible == 4
+  assert window._playlist_selection_report.selected == 2
+
+
 def test_playlist_generation_laeuft_im_worker_und_gui_bleibt_responsiv(
   qtbot, monkeypatch
 ):
@@ -3785,6 +3833,8 @@ def test_qt_model_move_emits_about_before_and_moved_after_mutation(
 
 def test_app_bpm_default_ist_zwei(qtbot, monkeypatch):
   window = _window(qtbot, monkeypatch)
+  assert window.library_panel.playlist_length_box.value() == 0
+  assert window.library_panel.playlist_length_box.specialValueText() == "Alle"
   assert window.library_panel.bpm_tolerance_slider.value() == 2
   assert window.library_panel.bpm_value_label.text() == "\u00b12"
   assert window.current_bpm_tolerance == 2.0
@@ -3806,6 +3856,7 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   ap = first.library_panel.advanced_params
   first.library_panel.set_folder_path(str(tmp_path))
   first.library_panel.strategy_combo.setCurrentText("Context Flow")
+  first.library_panel.playlist_length_box.setValue(37)
   first.library_panel.bpm_tolerance_slider.setValue(1)
   ap.energy_direction.setCurrentText("Aufbauen")
   ap.peak_position_slider.setValue(63)
@@ -3828,6 +3879,7 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   restored_ap = second.library_panel.advanced_params
   assert restored["folder"] == str(tmp_path)
   assert restored["strategy"] == "Context Flow"
+  assert restored["playlist_length"] == 37
   assert restored["bpm_tolerance"] == 1.0
   assert restored["advanced_params"] == {
     "ai_enabled": False,
@@ -3865,6 +3917,7 @@ def test_gui_settings_roundtrip_validiert_und_wird_weitergeleitet(
   second.start_analysis()
   assert captured == {"folder_path": str(tmp_path), "cache_policy": "reuse"}
   assert second._run_settings["ai_enabled"] is False
+  assert second._run_settings["playlist_length"] == 37
   assert second._run_settings["ai_provider"] == "LM Studio"
   assert second._run_settings["ai_model"] == "local-model"
   assert second._run_settings["advanced_params"]["target_energy"] == 76
@@ -3890,6 +3943,40 @@ def test_gui_state_target_energy_validiert_bool_und_bereich():
   })
   assert "target_energy_enabled" not in invalid
   assert "target_energy" not in invalid
+
+
+def test_gui_state_playlist_length_validiert_ganzzahlbereich():
+  state = main.MainWindow._validated_ui_state({
+    "version": main.GUI_SETTINGS_SCHEMA_VERSION,
+    "playlist_length": 1000,
+  })
+  assert state["playlist_length"] == 1000
+
+  for value in (True, -1, 1001, 12.5, "12"):
+    invalid = main.MainWindow._validated_ui_state({
+      "version": main.GUI_SETTINGS_SCHEMA_VERSION,
+      "playlist_length": value,
+    })
+    assert "playlist_length" not in invalid
+
+
+def test_export_history_counts_only_success_status(qtbot, monkeypatch, tmp_path):
+  from hpg_core.playlist_selection import load_history
+
+  path = tmp_path / "playlist_export_history.json"
+  monkeypatch.setenv("HPG_PLAYLIST_HISTORY_FILE", str(path))
+  window = _window(qtbot, monkeypatch)
+  window.playlist = [Track(filePath="C:/exported.wav", fileName="exported.wav")]
+
+  partial = SimpleNamespace(status="partial")
+  assert window._record_successful_playlist_export(partial) == ""
+  assert not path.exists()
+
+  success = SimpleNamespace(status="success")
+  assert window._record_successful_playlist_export(success) == ""
+  history = load_history(path)
+  assert history["last_set"] == [window.playlist[0].track_id]
+  assert window.playlist[0].track_id in history["last_exported"]
 
 
 def test_laufsnapshot_verwirft_erkannten_endpoint_des_vorherigen_providers(

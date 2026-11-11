@@ -19,6 +19,9 @@ sys.path.insert(0, PROJECT_ROOT)
 _TEST_CACHE_DIR = tempfile.mkdtemp(prefix=f"hpg_pytest_{os.getpid()}_")
 _TEST_CACHE_FILE = os.path.join(_TEST_CACHE_DIR, "hpg_cache_test.db")
 os.environ["HPG_CACHE_FILE"] = _TEST_CACHE_FILE
+os.environ["HPG_PLAYLIST_HISTORY_FILE"] = os.path.join(
+  _TEST_CACHE_DIR, "playlist_export_history.json"
+)
 
 from hpg_core.caching import CACHE_VERSION
 

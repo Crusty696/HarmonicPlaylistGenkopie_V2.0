@@ -2270,6 +2270,28 @@ class LibraryPanel(QWidget):
         )
         left_layout.addWidget(self.strategy_description)
 
+        playlist_length_label = QLabel("PLAYLIST-LÄNGE")
+        playlist_length_label.setStyleSheet(f"""
+            QLabel {{
+                color: {COLORS["text_secondary"]};
+                font-family: {FONT_FAMILY};
+                font-size: 10px;
+                font-weight: bold;
+                padding-top: 8px;
+                padding-bottom: 4px;
+            }}
+        """)
+        left_layout.addWidget(playlist_length_label)
+        self.playlist_length_box = QSpinBox()
+        self.playlist_length_box.setRange(0, 1000)
+        self.playlist_length_box.setValue(0)
+        self.playlist_length_box.setSpecialValueText("Alle")
+        self.playlist_length_box.setToolTip(
+            "Alle analysierten Tracks verwenden oder die Playlist auf 1 bis 1000 Tracks begrenzen.\n"
+            "Bei einer Begrenzung erhalten laenger nicht exportierte Tracks eine hoehere Auswahlchance."
+        )
+        left_layout.addWidget(self.playlist_length_box)
+
         # BPM Tolerance — Kompakte Zeile
         bpm_label = QLabel("BPM-TOLERANZ")
         bpm_label.setStyleSheet(f"""
@@ -2422,6 +2444,7 @@ class LibraryPanel(QWidget):
         return {
             "folder": self.current_folder,
             "strategy": self.strategy_combo.currentText(),
+            "playlist_length": self.playlist_length_box.value(),
             "bpm_tolerance": float(self.bpm_tolerance_slider.value()),
             "advanced_params": self.get_advanced_parameters(),
         }
@@ -4632,6 +4655,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         self._dependency_worker = None
         self.run_state = RunState.IDLE
         self._run_settings = None
+        self._playlist_selection_report = None
+        self._playlist_selection_warning = ""
         self._run_id = 0
         self._close_pending = False
         self._retired_mix_tips_panels = set()
@@ -4705,6 +4730,9 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         finite_number("target_energy", 0, 100, integer=True)
         finite_number("harmonic_strictness", 1, 10, integer=True)
         finite_number("genre_weight", 0, 100, integer=True)
+        playlist_length = raw.get("playlist_length")
+        if type(playlist_length) is int and 0 <= playlist_length <= 1000:
+            state["playlist_length"] = playlist_length
         if raw.get("energy_direction") in {"Auto", "Build Up", "Cool Down", "Maintain"}:
             state["energy_direction"] = raw["energy_direction"]
         for name in (
@@ -4732,6 +4760,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             panel.strategy_combo.setCurrentText(state["strategy"])
         if "bpm_tolerance" in state:
             panel.bpm_tolerance_slider.setValue(state["bpm_tolerance"])
+        if "playlist_length" in state:
+            panel.playlist_length_box.setValue(state["playlist_length"])
         if "energy_direction" in state:
             advanced.energy_direction.setCurrentIndex(advanced.energy_direction.findData(state["energy_direction"]))
         for name, control in (
@@ -4775,6 +4805,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         signals = (
             panel.folder_selected,
             panel.strategy_combo.currentTextChanged,
+            panel.playlist_length_box.valueChanged,
             panel.bpm_tolerance_slider.valueChanged,
             advanced.energy_direction.currentTextChanged,
             advanced.peak_position_slider.valueChanged,
@@ -4801,6 +4832,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             "version": GUI_SETTINGS_SCHEMA_VERSION,
             "folder": panel.current_folder or "",
             "strategy": panel.strategy_combo.currentText(),
+            "playlist_length": panel.playlist_length_box.value(),
             "bpm_tolerance": panel.bpm_tolerance_slider.value(),
             "energy_direction": advanced.energy_direction.currentData(),
             "peak_position": advanced.peak_position_slider.value(),
@@ -5988,6 +6020,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             settings["ai_enabled"] = ai_enabled
             settings["scoring_context"] = resolve_run_scoring_context(settings["strategy"], advanced_params)
             settings["candidate_choice_snapshot"] = candidate_choices.snapshot()
+            if self.playlist:
+                settings["preserve_playlist_membership"] = True
         except Exception as exc:
             self.analytics_panel.hearing_status.setText(f"Gewichte gespeichert, aber Reload fehlgeschlagen; sichtbares Ranking ist veraltet: {exc}")
             self.toolbar.set_export_enabled(False)
@@ -6339,6 +6373,9 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             advanced_source = settings["advanced_params"]
             if not isinstance(advanced_source, Mapping):
                 raise ValueError("advanced_params muss ein Mapping sein")
+            playlist_length = settings.get("playlist_length", 0)
+            if type(playlist_length) is not int or not 0 <= playlist_length <= 1000:
+                raise ValueError("playlist_length muss eine ganze Zahl von 0 bis 1000 sein")
             advanced_params = deepcopy(dict(advanced_source))
             ai_enabled = advanced_params.pop("ai_enabled", False)
             if type(ai_enabled) is not bool:
@@ -6371,6 +6408,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         self._run_settings = deepcopy({
             "folder": settings["folder"],
             "strategy": settings["strategy"],
+            "playlist_length": playlist_length,
             "bpm_tolerance": bpm_tolerance,
             "advanced_params": advanced_params,
             "ai_enabled": ai_enabled,
@@ -6592,8 +6630,41 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             )
             return
 
+        generation_tracks = self.analyzed_raw_tracks
+        self._playlist_selection_report = None
+        self._playlist_selection_warning = ""
+        playlist_length = settings.get("playlist_length", 0)
+        if settings.get("preserve_playlist_membership"):
+            from hpg_core.playlist_selection import retain_membership
+            try:
+                generation_tracks = retain_membership(
+                    self.analyzed_raw_tracks, self.playlist,
+                )
+            except ValueError as exc:
+                self._finish_run(
+                    RunState.ERROR,
+                    f"Ranking-Neuberechnung abgebrochen; Trackmitgliedschaft fehlt: {exc}",
+                )
+                return
+        elif finalize and playlist_length:
+            from hpg_core.playlist_selection import (
+                empty_history, load_history, select_tracks,
+            )
+            history_path = self._playlist_history_file()
+            try:
+                history = load_history(history_path)
+            except (OSError, ValueError) as exc:
+                history = empty_history()
+                self._playlist_selection_warning = (
+                    "Rotationshistorie konnte nicht gelesen werden; Auswahl nutzt"
+                    f" neutrale Zufallsvariation. Historie bleibt erhalten: {exc}"
+                )
+            generation_tracks, self._playlist_selection_report = select_tracks(
+                self.analyzed_raw_tracks, playlist_length, history,
+            )
+
         worker = PlaylistGenerationWorker(
-            self.analyzed_raw_tracks,
+            generation_tracks,
             mode=mode,
             bpm_tolerance=bpm_tolerance,
             advanced_params=advanced_params,
@@ -6689,7 +6760,14 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         mode = getattr(neues_result, "mode", None) or (
             self._run_settings or {}
         ).get("strategy", self.current_playlist_mode)
-        self.toolbar.set_info(f"{len(self.playlist)} Tracks | {mode}")
+        selection_report = self._playlist_selection_report
+        selection_info = ""
+        if selection_report is not None:
+            selection_info = (
+                f" | Auswahl {selection_report.selected}/{selection_report.eligible} "
+                f"(Ziel {selection_report.requested})"
+            )
+        self.toolbar.set_info(f"{len(self.playlist)} Tracks | {mode}{selection_info}")
         self.status_bar.set_status(
             f"Fertig — {len(self.playlist)} Tracks, Qualität {overall:.0%}"
         )
@@ -6725,6 +6803,14 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 if partial_reasons
                 else f"Fertig — {len(self.playlist)} Tracks, Qualität {overall:.0%}"
             )
+            if selection_report is not None:
+                final_message += (
+                    f" | Auswahl {selection_report.selected} von "
+                    f"{selection_report.eligible} gültigen Tracks; Ziel "
+                    f"{selection_report.requested}."
+                )
+            if self._playlist_selection_warning:
+                final_message += f" {self._playlist_selection_warning}"
             self._finish_run(final_state, final_message)
 
     def _cleanup_playlist_worker(self, source_worker=None):
@@ -7293,6 +7379,30 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f"Playlist konnte nicht exportiert werden:\n{str(e)}",
             )
 
+    def _playlist_history_file(self) -> Path:
+        override = os.environ.get("HPG_PLAYLIST_HISTORY_FILE")
+        if override:
+            return Path(override)
+        app_data = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppDataLocation
+        )
+        if not app_data:
+            raise OSError("AppData-Verzeichnis ist nicht verfuegbar")
+        return Path(app_data) / "playlist_export_history.json"
+
+    def _record_successful_playlist_export(self, report) -> str:
+        if getattr(report, "status", None) != "success":
+            return ""
+        try:
+            from hpg_core.playlist_selection import record_successful_export
+            record_successful_export(self._playlist_history_file(), self.playlist)
+        except (OSError, TimeoutError, TypeError, ValueError) as exc:
+            logging.getLogger(__name__).warning(
+                "Playlist exportiert, Rotationshistorie nicht aktualisiert: %s", exc
+            )
+            return f"Export erfolgreich; Rotationshistorie nicht aktualisiert: {exc}"
+        return ""
+
     def _export_m3u8(self, file_path: str):
         try:
             exporter = M3U8Exporter()
@@ -7303,6 +7413,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             )
             playlist_name = f"HPG - {mode}"
             report = exporter.export(self.playlist, file_path, playlist_name)
+            history_warning = self._record_successful_playlist_export(report)
 
             message = (
                 f"M3U8-Playlist exportiert!\n\n"
@@ -7310,6 +7421,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f"Tracks: {report.tracks_written}\n"
                 f"Kompatibel mit Rekordbox, Serato und Traktor."
             )
+            if history_warning:
+                message += f"\n\n{history_warning}"
             if report.status == "partial":
                 QMessageBox.warning(
                     self,
@@ -7334,11 +7447,14 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 self.playlist, file_path, playlist_name,
                 transitions=self.playlist_panel.transition_recommendations,
             )
+            history_warning = self._record_successful_playlist_export(report)
 
             message = (
                 f"Speicherort: {file_path}\nTracks: {report.tracks_written}\n"
                 f"Cues: {report.cues_written}\nBeatgrids: {report.beatgrids_written}"
             )
+            if history_warning:
+                message += f"\n\n{history_warning}"
             if report.status == "partial":
                 QMessageBox.warning(
                     self,
