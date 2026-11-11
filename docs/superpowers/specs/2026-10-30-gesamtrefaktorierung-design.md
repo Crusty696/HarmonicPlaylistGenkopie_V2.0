@@ -2,7 +2,7 @@
 
 Stand: 30.10.2026. Bestätigter Entwurf gemäß Umsetzungsprotokoll;
 keine Implementierungs- oder Abnahmebehauptung. Den aktuellen Arbeits- und
-Prüfstand führt der [Refaktorierungsplan](../plans/2026-10-30-gesamtrefaktorierung.md).
+Prüfstand führt das [Umsetzungs- und Nachweisprotokoll](../plans/2026-10-30-gesamtrefaktorierung.md).
 
 ## Auftrag und Entscheidungen
 

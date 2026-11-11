@@ -1,4 +1,4 @@
-# Gesamtrefaktorierung Implementation Plan
+# Gesamtrefaktorierung — datiertes Umsetzungs- und Nachweisprotokoll
 
 ## EXE-Originaltrack-Lauf vom 07.11.2026, native Beats deaktiviert
 
@@ -684,11 +684,12 @@ aller Cachezeilen. Kein Seeding, keine Musik-/Datenbankdateikopie. Bereits
 gefüllter Belegordner verhindert einen erneuten Start. Erst nach Ende des
 aktuellen Prozesses, Integration und gemeinsamem Prüflauf verwenden.
 
-Gesammelte Restkorrektur aus unabhängigem lesendem Anforderungsabgleich:
-`main.py` enthält in `_export_m3u8` und `_export_rekordbox_xml` noch englische
-Exportfehlertexte. Nach Ende des App-Laufs in den nächsten Änderungsblock
-aufnehmen; während des Laufs Produktcode unverändert lassen. Die strukturellen
-Aufgaben 1–6 sind vorhanden; dies ersetzt nicht die native und musikalische Abnahme.
+Lesender Nachabgleich am 11.11.2026: Die dort genannte offene UI-Korrektur ist
+im aktuellen `main.py` bereits umgesetzt. `_export_m3u8` gibt
+„M3U8-Export fehlgeschlagen“ und `_export_rekordbox_xml`
+„Rekordbox-XML-Export fehlgeschlagen“ weiter. Die frühere offene Meldung ist
+damit veraltet; kein Produktcode-Edit erforderlich. Die strukturellen Aufgaben
+1–6 sind vorhanden; dies ersetzt nicht die native und musikalische Abnahme.
 
 Gebündelte notwendige Nachprüfung der Korrekturen: **434 bestanden**, 11,36 s,
 Exitcode 0, ohne Coverage. Umfang: caching, core_cache_migration, cue_service,
@@ -887,52 +888,16 @@ Kandidatenwechsel. Vollständige frische Originaltrack-Analyse samt tatsächlich
 Cache-Wiederverwendung und musikalische Bewertung bleiben gesondert offen.
 Kein neuer EXE-Build, Commit oder Push. Keine pauschale Fehlerfreiheit behauptet.
 
-> Ausführung: superpowers:executing-plans; Umsetzung in diesem Chat.
+## Abgeschlossene Strukturarbeit — Orientierung
 
-**Goal:** Den bestätigten Gesamtentwurf in überprüfbaren Etappen umsetzen.
-**Architecture:** Qt-freie Fachverträge und kleine zuständige Module; kompatible öffentliche Fassaden; ein Ergebnis für alle Verbraucher.
-**Tech Stack:** vorhandenes Python 3.12/venv312, PyQt6, pytest.
-**Spec:** ../specs/2026-10-30-gesamtrefaktorierung-design.md
-
-## Globale Grenzen
-
-AGENTS.md gilt. Originalmusik und Produktivzustand bleiben geschützt.
-Keine Installationen oder kostenpflichtigen Aufrufe. Keine Änderung der
-musikalischen Grenzen ohne nachgewiesenen fachlichen Grund. Keine Pushes oder Builds.
-
-## Prüfschwerpunkte
-
-Doppelte Trackvorkommen, verspätete Worker, fehlende lokale Messungen,
-atomare Ergebnisveröffentlichung und Quellidentität bei Cache-Reuse.
-Vorhandene Regressionen weiterverwenden; Charakterisierung vor Auslagerungen.
-
-## Aufgaben
-
-- [x] 1. Scoring-Grundlagen: scoring_primitives.py mit combine_weighted und
-  VOCAL_CLASH_PENALTY; playlist re-exportiert; pair_candidates verwendet
-  genres.resolve_track_genre direkt. Test: fehlende/Nullgewichte und reale Paarregressionen.
-- [x] 2. Result-Verträge: playlist_results.py für unveränderliche Snapshots,
-  TransitionPlan, Result-Typen und freeze/thaw; kompatible Imports. Test:
-  test_playlist_generation_result.py und test_preview_result_contract.py.
-- [x] 3. Playlist-Tabelle und Details: ui/playlist_columns.py, zentrale
-  Identitäten; main.PlaylistPanel verwendet Definition und zeigt ausblendbare
-  konkrete Track-/Übergangsdetails sowie erweiterte Spalten. Test: echte Qt-Tabelle,
-  Auswahl, Reorder, leere Liste und doppelte Vorkommen.
-- [x] 4. Ablaufsteuerung: UI-Worker/Publikation nach Abhängigkeitsprüfung
-  trennen; RunState und atomare Veröffentlichung erhalten. Test:
-  test_main_workers.py, test_main_window.py, Result-/Reorder-Regressionen.
-- [x] 5. Analyse/Cache: gemeinsame Schritte für Vorprüfung und Finalisierung
-  isolieren, Datenverträge erhalten, Messdiagnosen in Details anzeigen. Test:
-  test_analyze_track.py, test_analysis_coverage.py, test_caching.py.
-- [x] 6. Strategien/Timeline/Übergänge: zuständige Module und konsistente
-  Ablehnungsdiagnose; geplante und ungeplante Grenzen sichtbar unterscheiden.
-  Test: Scoring-, Timeline-, Kandidaten- und Renderer-Verträge.
-- [x] 7. Projektweite Integration: Rekordbox, Export, Inferenz, ParallelAnalyzer,
-  Buildimporte und Dokumentation gegen Migration prüfen; konkrete Defekte
-  reproduzieren und korrigieren. Keine unbegründete Neuentwicklung.
-- [x] 8. Technischer Abschluss: Volltest mit isolierter Coverage; nativer App-Ablauf und
-  Cache-Reuse anhand Originaltracks; sichtbare Prüfung, unabhängiger Review.
-  Musikalische Bewertung bleibt ohne menschliches Urteil offen.
+Die frühere achtteilige Ausführungscheckliste wurde am 09.11.2026 entfernt.
+Fachliche Anforderungen bleiben im [bestätigten Entwurf](../specs/2026-10-30-gesamtrefaktorierung-design.md).
+Code-Navigation: scoring_primitives.py, playlist_results.py, ui/playlist_columns.py,
+RunState und Ergebnisveröffentlichung, gemeinsame Analyse-/Cache-Schritte sowie
+Strategie-/Timeline-/Übergangsmodule. Nachfolgende datierte Protokolle bewahren
+ihre tatsächlichen Prüfergebnisse und Grenzen. Die frühere Abschlusscheckbox
+ersetzt insbesondere keine frische Originaltrack-/Cache- oder musikalische Abnahme.
+AGENTS.md und der aktuelle Nutzerauftrag bestimmen jede weitere Ausführung.
 
 ## Fortschrittsprotokoll
 
