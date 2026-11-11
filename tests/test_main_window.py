@@ -376,3 +376,71 @@ def test_native_prepare_calls_service_worker_not_cli(qtbot, monkeypatch, tmp_pat
     assert worker.config is config
     assert worker.managed_metadata == ("metadata",)
     assert callable(worker.request_cancel)
+
+
+@pytest.mark.parametrize(("persisted", "effective", "expected_pending"), [
+    (True, True, True), (True, False, True), (False, False, False),
+])
+def test_apply_result_schedules_ranking_refresh_only_after_persist(
+    qtbot, monkeypatch, persisted, effective, expected_pending
+):
+    window = _window(qtbot, monkeypatch)
+    result = {"ok": True, "apply_state": {
+        "persisted": persisted, "effective_reload": effective,
+        "error": "reload failed" if persisted and not effective else "",
+    }}
+    window._hearing_completed(result, "apply")
+    assert window._hearing_refresh_pending is expected_pending
+    assert ("Gewichte gespeichert: JA" if persisted else "Gewichte gespeichert: NEIN") in window.analytics_panel.hearing_status.text()
+    if persisted and not effective:
+        assert "effektiver Reload: NEIN" in window.analytics_panel.hearing_status.text()
+
+
+def test_apply_refresh_uses_new_scoring_context(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    window.analyzed_raw_tracks = [SimpleNamespace(filePath="synthetic-track")]
+    refreshed = []
+    from hpg_core import candidate_preferences, candidate_choices
+    monkeypatch.setattr(candidate_preferences, "reset_cache", lambda: refreshed.append("cache-reset"))
+    monkeypatch.setattr(candidate_choices, "snapshot", lambda: {"fresh": True})
+    monkeypatch.setattr(window.library_panel, "get_current_settings", lambda: {
+        "strategy": "balanced", "advanced_params": {}, "bpm_tolerance": 6,
+    })
+    monkeypatch.setattr(main.StrategyConfig, "from_mapping", lambda _value: object())
+    monkeypatch.setattr(main, "resolve_run_scoring_context", lambda strategy, _params: {"revision": "new"})
+    monkeypatch.setattr(main, "PlaylistGenerationWorker", lambda *args, **kwargs: _FakePlaylistWorker(refreshed))
+    window._refresh_hearing_ranking()
+    assert refreshed[0] == "cache-reset"
+    assert window._run_settings["scoring_context"] == {"revision": "new"}
+    assert window._run_settings["candidate_choice_snapshot"] == {"fresh": True}
+    assert "worker-start" in refreshed
+    assert window._hearing_refresh_worker is window.playlist_worker
+
+
+class _FakePlaylistWorker:
+    def __init__(self, events):
+        from PyQt6.QtCore import QObject, pyqtSignal
+        class Signals(QObject):
+            generation_done = pyqtSignal(object)
+            generation_failed = pyqtSignal(str)
+            finished = pyqtSignal()
+        self.signals = Signals()
+        self.generation_done = self.signals.generation_done
+        self.generation_failed = self.signals.generation_failed
+        self.finished = self.signals.finished
+        self.events = events
+    def start(self):
+        self.events.append("worker-start")
+    def isRunning(self):
+        return False
+
+
+def test_failed_ranking_refresh_does_not_claim_success(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    worker = _FakePlaylistWorker([])
+    window.playlist_worker = worker
+    window._hearing_refresh_worker = worker
+    window._on_playlist_generation_failed("synthetic scoring failure", worker)
+    assert window._hearing_refresh_worker is None
+    assert "fehlgeschlagen" in window.analytics_panel.hearing_status.text()
+    assert "Ranking-Neuberechnung fehlgeschlagen" in window.analytics_panel.hearing_status.text()
