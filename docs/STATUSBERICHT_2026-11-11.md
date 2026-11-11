@@ -31,12 +31,19 @@ Frozen-Build liegt weiterhin nicht vor.
   auch der Hörtest-E2E-Vertrag mit Producer, Audit, nativem Fit, Bestätigung
   und Ranking-Aktualisierung. Das ersetzt keine menschliche Bedien- oder
   Klangabnahme.
-- Ein isolierter Frozen-Build mit Python 3.12.10 und PyInstaller 6.21.0 wurde
-  unter `E:\AI\HPG-build-verification-2026-11-11-def331d` erstellt; bestehende
-  Buildziele und die Root-EXE blieben außerhalb des Buildpfads. Die gebaute
-  EXE bestand `--hpg-native-smoke` mit `ok=true`: native Imports/Formulare,
-  Spawn-Worker, RAM-Audiorendering, Fit-Ablehnung und Cleanup waren erfolgreich.
-  EXE-SHA256: `1C64834FBAC22893135BBC0D78EE09582EE6AAB1E9B3484FA53EFB5BFCF72597`.
+- Eine anschließende Bereinigung entfernte unverbundene Cache-/Zielpfadfelder
+  und einen ungenutzten Dateibrowser aus dem nativen Erzeugungsdialog; der
+  Managed-Workflow leitet diese Pfade selbst ab. Der fokussierte Lauf
+  `tests/test_hearing_panel.py --no-cov --tb=short -q` bestand mit **26 Tests**.
+  Die Vollsuite wurde vor genau dieser letzten kleinen GUI-Bereinigung
+  ausgeführt und danach nicht wiederholt.
+- Der aktuelle Quellstand wurde isoliert mit Python 3.12.10 und PyInstaller
+  6.21.0 unter `E:\AI\HPG-build-verification-2026-11-11-final` gebaut.
+  Bestehende Buildziele und Root-EXE blieben außerhalb des Buildpfads. Die
+  gebaute EXE bestand `--hpg-native-smoke` mit Exitcode 0 und `ok=true`:
+  native Imports/Formulare, Spawn-Worker, RAM-Audiorendering, Fit-Ablehnung und
+  Cleanup waren erfolgreich. EXE-SHA256:
+  `49C9B17873C3D7965CEA66F5784E4E5E4808A057DBBD30AAFABA2944A2D693E3`.
   Die bestehende Root-EXE behielt SHA256
   `07BBB91DF0A74B8C457156AB1DE368B5C9B8496D0528055C8A2E8FC1583AA3D4`.
 - PyInstaller meldete `tbb12.dll` für `numba.np.ufunc.tbbpool` nicht gefunden.

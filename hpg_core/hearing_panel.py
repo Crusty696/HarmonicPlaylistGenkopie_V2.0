@@ -117,8 +117,6 @@ class HearingPrepareDialog(QDialog):
         form = QFormLayout()
         self.mode_box = QComboBox()
         self.mode_box.addItems(["Einzel", "Kandidaten", "Dreinoten-Pilot", "Dramaturgie"])
-        self.cache_edit = QLineEdit()
-        self.output_edit = QLineEdit()
         self.source_roots_edit = QPlainTextEdit()
         self.source_roots_edit.setPlaceholderText("Freigegebene Musikordner: ein vollständiger Pfad pro Zeile")
         self.source_roots_edit.setMaximumHeight(90)
@@ -213,16 +211,6 @@ class HearingPrepareDialog(QDialog):
         self.mode_box.setCurrentIndex(1)
         self._mode_changed()
 
-    def _browse(self, edit, directory):
-        if directory:
-            parent = QFileDialog.getExistingDirectory(self, "Elternordner wählen; neuen Ordnernamen im Feld ergänzen")
-            if parent:
-                edit.setText(parent.rstrip("/\\") + "/Neuer-Hoertest")
-        else:
-            path, _ = QFileDialog.getOpenFileName(self, "Analyse-Cache wählen", "", "SQLite (*.db)")
-            if path:
-                edit.setText(path)
-
     def _add_source_root(self):
         path = QFileDialog.getExistingDirectory(self, "Original-Musikordner zum Lesen freigeben", self.folder_edit.text())
         if path:
@@ -241,7 +229,7 @@ class HearingPrepareDialog(QDialog):
     def values(self):
         index = self.mode_box.currentIndex()
         mode = ("einzel", "kandidaten", "kandidaten", "dramaturgie")[index]
-        values = {"mode": mode, "cache": self.cache_edit.text().strip(), "output_dir": self.output_edit.text().strip(), "bpm_tolerance": self.bpm_box.value()}
+        values = {"mode": mode, "bpm_tolerance": self.bpm_box.value()}
         if mode != "dramaturgie":
             values.update(count=self.count_box.value(), seed=self.seed_box.value(), energy_direction=None if self.energy_box.currentText() == "auto" else self.energy_box.currentText(), only_genre=None if self.genre_box.currentIndex() == 0 else self.genre_box.currentText())
         if mode == "kandidaten":
@@ -256,8 +244,6 @@ class HearingPrepareDialog(QDialog):
         try:
             from hpg_core.hearing_managed import managed_config
             values = self.values()
-            for key in ("cache", "output_dir"):
-                values.pop(key)
             if values.get("selection_profile"):
                 values["selection_profile"] = Path(values["selection_profile"])
             if values.get("energy_direction") is None:
