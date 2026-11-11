@@ -15,7 +15,7 @@
 
 **Vier-Modi-CLI/GUI-Sitzungsparität:** `tests/test_hearing_workflow.py::test_real_internal_producer_artifacts_match_cli_and_native_service` besteht **4/4** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 2,29 s). Für Einzel, Kandidaten, Dreinoten und Dramaturgie werden synthetische Producer-Artefakte verglichen; CLI-Legacy-Loader und nativer Quell-Loader liefern identische logische Rating-Sessions. Dramaturgie prüft die vollständige Acht-Strategien-Matrix. Das belegt noch keine Golden-Master-Rundreise sämtlicher Fit-/Blindtest- und Export-CSV/JSON-Schemas.
 
-**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512` (UUID `02106d71-4cd8-4cd1-a679-9c1cfb8e2c99`) erfolgreich; MP4 per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s geprüft. Folgeprompt `FX_0513` (UUID `56a12074-ae4d-4fd2-bdcd-f8ab05967796`) läuft; Queue 1 aktiv, 0 wartend, Producer-PID 10456 lebt. Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
+**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512` und `FX_0513` erfolgreich; beide MP4s per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s geprüft. `FX_0513` hat 2.047.495 Byte. Folgeprompt `FX_0514` (UUID `73ddd6a6-e467-4ad0-9c98-0bad98621545`) läuft; Queue 1 aktiv, 0 wartend, Producer-PID 10456 lebt. Batch-Ende nicht festgestellt; Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
@@ -728,4 +728,5 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 ## FilmX-Batch-Fortschritt
 
 - Prompt `02106d71-4cd8-4cd1-a679-9c1cfb8e2c99` / `FX_0512` meldet in der ComfyUI-History `success`. `Film_x_batch/FX_0512_00001_.mp4` existiert mit 2.125.400 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
-- Folgeprompt `56a12074-ae4d-4fd2-bdcd-f8ab05967796` / Präfix `Film_x_batch/FX_0513` läuft; Producer-PID 10456 lebt. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
+- Prompt `56a12074-ae4d-4fd2-bdcd-f8ab05967796` / `FX_0513` meldet `success`. `Film_x_batch/FX_0513_00001_.mp4` existiert mit 2.047.495 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Folgeprompt `73ddd6a6-e467-4ad0-9c98-0bad98621545` / Präfix `Film_x_batch/FX_0514` läuft; Queue 1/0, Producer-PID 10456 lebt. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
