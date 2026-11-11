@@ -428,6 +428,8 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 - Live-Poll danach: Producer-PID 10456 lebt weiter. ComfyUI meldet Prompt 60, UUID `537e8032-5083-4ccd-871b-180486ee0c7c`, Queue 1 laufend/0 wartend. Die History enthält noch keinen Abschluss; `FX_0491` ist nicht als fertige Datei bestätigt. Kein Queue-Eingriff.
 - Folgepoll: derselbe Prompt 60 und PID 10456 weiterhin aktiv; keine History-Abschlussmeldung und keine fertige `FX_0491`-Datei. HPG-Arbeit blieb CPU-/Datei-isoliert, keine GPU- oder Originalmusik-Analyse gestartet.
+- Neuer Live-Poll: Prompt 60/UUID `537e8032-5083-4ccd-871b-180486ee0c7c` ist erfolgreich abgeschlossen. `E:\03_Video_&_Medien\Film_x_batch\FX_0491_00001_.mp4` liegt mit 2.608.249 Byte vor. ComfyUI-History meldet 736×416, 24 fps, 243 Frames, 10,125 s; FFmpeg liest H.264 High/AVC1 und Containerdauer 10,13 s.
+- Folgeauftrag: Prompt 61, UUID `f58ec805-d9fe-4ccb-82b5-b0e3d49937f3`, Präfix `Film_x_batch/FX_0492`, läuft; Producer-PID 10456 lebt, Queue 1 laufend/0 wartend. Kein Eingriff oder zusätzlicher Prompt.
 ## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände
