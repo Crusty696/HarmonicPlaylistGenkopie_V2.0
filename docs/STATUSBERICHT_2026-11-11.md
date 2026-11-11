@@ -93,6 +93,7 @@ manueller kompletter GUI-Ablauf bleiben offen.
   WAV-Namen und hält den Zuordnungsschlüssel als getrennte CSV-Datei. Start- und
   Fehlerpfad sind mit 143 fokussierten Tests geprüft.
 
+- Beim Fortsetzen wurde ein Fehler im Legacy-Einzel-CSV-Fit gefunden: doppelte oder inkonsistente Paar-IDs konnten die Snapshot-Grenze passieren; der Fit-Merge konnte doppelte Bewertungen überschreiben. `hpg_core.hearing_calibration.validate_set` validiert jetzt CSV-Schema, IDs, Noten, Faktoren und 1:1-Bindung, ohne Clipdateien zu traversieren. `tests/test_hearing_calibration.py -k csv_single`: **30 bestanden**. Kein Volltest nach dieser Änderung. Commit `f5b45a8a` enthält Fix, Regressionstests, Plan-Korrektur und VERITAS-Wissenssync.
 ## Verbleibende HPG-Arbeit
 
 - Native Hörtest-Module und GUI-Aktionen sind im Code vorhanden. Vollständige
