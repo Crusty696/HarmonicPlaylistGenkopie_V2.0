@@ -9,7 +9,7 @@
 
 **Fortsetzung 11.11.2026:** CPU-/synthetische Integrationsprüfungen nachgeführt: Hearing-Browser 107/107, Hearing-Panel 42/42, MainWindow 22/22, Hearing-Workflow 32/32, Scoring/Strategien 182/182, Deep-Feature-Runtime 65/65, Native-Reader 36/36, Cache-Migration 8/8 und statische Release-Gates 38/38 bestanden. Zusätzlich bestanden 168 Playlist-/Layouttests, 13 Tabellen-/Detailpaneltests und 16 Hearing-Kartentests mit Exitcode 0. In drei Qt-Läufen erschien `Windows fatal exception: code 0x8001010d`: bei `qtbot.wait(50)`, Drag-Tests und Kartenaufbau im `pytestqt.plugin._process_events`. Alle Assertions bestanden; Ursache bleibt ungeklärt.
 
-**ComfyUI:** Prompts 76–78 (`FX_0499`–`FX_0501`) erfolgreich; alle Ausgaben per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 79 / `FX_0502` (UUID `15139be3-cc17-44a2-885c-56c2cc8e86a1`) läuft; letzter Queue-Poll 1 aktiv, 0 wartend. Queue unberührt.
+**ComfyUI:** Prompts 76–79 (`FX_0499`–`FX_0502`) erfolgreich; die letzten vier Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 80 / `FX_0503` (UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
@@ -640,3 +640,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Hearing-Karten-/Rating-Integration vollständig geprüft: **16/16 bestanden** (`tests/test_hearing_panel_cards.py`, Python 3.12.10, `venv312`, `-n 0 --no-cov`, 2,24 s). Synthetisches WAV und Qt-Fixtures belegen Notenskalen, card-spezifische Schreibsperren, Renderfehler-Entzug, Navigation ohne Fake-Saves, veraltete Callbacks, Seek-/Progress-Signale und sichtbare Auswahl. Keine DSP-/Originalaudioqualität. Der erste Test meldete denselben Windows-HRESULT im Pytest-Qt-Eventpump; Prozess und Assertions liefen erfolgreich weiter.
 - RAM-gebundene Übergangsbewertung vollständig gezielt geprüft: **3/3 bestanden** (`tests/test_transition_rating_ram.py`, Python 3.12.10, `venv312`, `-n 0 --no-cov`, 0,59 s). Preview-Bytes erreichen Dialog ohne temporäre Audiodatei; Playerfehler sperrt Rating; persistierte Metadaten öffnen erneut und verwerfen geänderte Quelle. Synthetische Bytes/temporäre Metadaten, keine Originalmusik.
 - Launcher-/Probe-Verträge gezielt vollständig geprüft: **66/66 bestanden** (`tests/test_hoertest_launcher.py`, `tests/test_ai_launcher.py`, `tests/test_probe_launcher.py`; Python 3.12.10, `venv312`, `-n 0 --no-cov`, 1,26 s). Abgedeckt: eigener Serverprozess/Port und Browserbereitschaft/-fehler, CSV-/Bewertungsschemas, Provider-Auswahl und Cancel ohne impliziten Download, eindeutige Probe-Logs und korrekt quotierter Skriptpfad. Server/Prozesse gemockt; keine Live-Provider-/GPU-Abnahme.
+
+## ComfyUI-Fortschritt nach Prompt 79
+
+- ComfyUI-History meldet Prompt 79 / UUID `15139be3-cc17-44a2-885c-56c2cc8e86a1` erfolgreich. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0502_00001_.mp4` liegt mit 2.471.871 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Prompt 80 / UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`, Präfix `Film_x_batch/FX_0503`, ist aktiv; Queue 1/0. Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
