@@ -14,6 +14,7 @@ import main
 from hpg_core import hearing_jobs, hearing_panel, hearing_sources
 from tests.test_hearing_blind import _fixture as blind_fixture
 from tests.test_hearing_native_integration import _fingerprints
+from tests.test_hearing_ram_calibration import ram_set
 from tests.test_hearing_sources import source_fixture
 from tests.test_main_window import _window
 
@@ -978,3 +979,118 @@ def test_normal_candidate_apply_uses_existing_apply_worker_without_extra_prompt(
     window._show_hearing_proposal(proposal)
     assert starts and starts[0][1] == "apply"
     assert isinstance(starts[0][0], hearing_jobs.HearingApplyWorker)
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("accepted", [False, True])
+def test_gated_candidate_fit_apply_persists_and_refreshes_ranking_end_to_end(
+    qtbot, monkeypatch, ram_set, accepted
+):
+    import json
+    from hpg_core import candidate_preferences as cp
+    from hpg_core.hearing_calibration import compute_proposal
+    from tools import rate_transitions as rate
+
+    root, cache, operation, _calls, _tracks = ram_set
+    preference_path = operation / "child_preferences.json"
+    original_fit = rate._compute_candidate_fit
+    weights = {name: 0.1 for name in rate.KANDIDATEN_TEILWERTE}
+    preference_weights = {
+        **{f"kandidaten_{name}_weight": value for name, value in weights.items()},
+        "schema_rang": ["pssi_phrase", "analyzer"],
+    }
+
+    def accepted_fit(rows, ratings, manifest, genres, seed):
+        report = original_fit(rows, ratings, manifest, genres, seed)
+        report["gate_updates"] = {"Psytrance": preference_weights}
+        report["gewichte_je_genre"] = {"Psytrance": weights}
+        report["rangfolge"] = {"Psytrance": ["pssi_phrase", "analyzer"]}
+        report["ergebnis"] = rate.baue_candidate_preferences(
+            report["gewichte_je_genre"], report["rangfolge"], report["diagnose"]
+        )
+        report["diagnose"]["genres"]["Psytrance"] = {
+            "uebernommen": True, "grund": "isolierter E2E-Gate-Fixture"
+        }
+        return report
+
+    monkeypatch.setattr(rate, "_compute_candidate_fit", accepted_fit)
+    proposal = compute_proposal(root, cache, operation_root=operation,
+                                operation_id="c" * 32, fit=True, seed=1)
+    assert proposal["audit_passed"] and proposal["gate_updates"]
+    assert not preference_path.exists()
+    cp.reset_cache()
+
+    window = _window(qtbot, monkeypatch)
+    window._hearing_set_path = str(root)
+    window._hearing_cache_path = str(cache)
+    window.analyzed_raw_tracks = [SimpleNamespace(filePath="synthetic-track")]
+    refreshed = []
+
+    def refresh():
+        cp.reset_cache()
+        loaded = cp.load_candidate_preferences()["Psytrance"]
+        assert loaded["gewichte"] == {
+            key: value for key, value in preference_weights.items() if key != "schema_rang"
+        }
+        assert loaded["schema_rang"] == ["pssi_phrase", "analyzer"]
+        refreshed.append(loaded)
+
+    monkeypatch.setattr(window, "_refresh_hearing_ranking", refresh)
+
+    class AcceptedDialog:
+        def __init__(self, supplied, parent, *, cleanup_warning="", confirm_apply=False):
+            assert supplied is proposal and parent is window and not confirm_apply
+        def exec(self):
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(hearing_panel, "HearingCalibrationResultDialog", AcceptedDialog)
+    window._show_hearing_proposal(proposal)
+    if not accepted:
+        assert not preference_path.exists()
+        assert not refreshed
+        assert window._hearing_worker is None
+        return
+    qtbot.waitUntil(lambda: window._hearing_worker is None and len(refreshed) == 1, timeout=20000)
+    persisted = json.loads(preference_path.read_text(encoding="utf-8"))
+    assert persisted["Psytrance"]["schema_rang"] == ["pssi_phrase", "analyzer"]
+    assert "Gewichte gespeichert: JA; effektiver Reload: JA." in window.analytics_panel.hearing_status.text()
+
+
+@pytest.mark.gui
+def test_apply_worker_reports_isolated_preference_write_failure(qtbot, monkeypatch, ram_set):
+    from hpg_core import candidate_preferences as cp
+    from hpg_core.hearing_calibration import compute_proposal
+    from hpg_core.hearing_jobs import HearingApplyWorker
+    from tools import rate_transitions as rate
+
+    root, cache, operation, _calls, _tracks = ram_set
+    blocked_parent = operation / "blocked-parent"
+    blocked_parent.write_text("not a directory", encoding="utf-8")
+    preference_path = blocked_parent / "preferences.json"
+    original_fit = rate._compute_candidate_fit
+    weights = {name: 0.1 for name in rate.KANDIDATEN_TEILWERTE}
+    preference_weights = {f"kandidaten_{name}_weight": value for name, value in weights.items()}
+
+    def accepted_fit(rows, ratings, manifest, genres, seed):
+        report = original_fit(rows, ratings, manifest, genres, seed)
+        report["gate_updates"] = {"Psytrance": preference_weights}
+        report["gewichte_je_genre"] = {"Psytrance": weights}
+        report["rangfolge"] = {"Psytrance": ["pssi_phrase"]}
+        report["ergebnis"] = rate.baue_candidate_preferences(
+            report["gewichte_je_genre"], report["rangfolge"], report["diagnose"]
+        )
+        return report
+
+    monkeypatch.setattr(rate, "_compute_candidate_fit", accepted_fit)
+    proposal = compute_proposal(root, cache, operation_root=operation,
+                                operation_id="d" * 32, fit=True, seed=1)
+    monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(preference_path))
+    cp.reset_cache()
+    worker = HearingApplyWorker(proposal)
+    with qtbot.waitSignal(worker.completed, timeout=15000) as completed:
+        worker.start()
+    assert worker.wait(5000)
+    result = completed.args[0]
+    assert result["ok"] and result["apply_state"]["persisted"] is False
+    assert result["apply_state"]["effective_reload"] is False
+    assert result["apply_state"]["error"]
