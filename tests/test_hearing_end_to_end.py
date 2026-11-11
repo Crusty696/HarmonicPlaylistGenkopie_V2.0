@@ -100,6 +100,89 @@ def test_real_producer_audit_native_fit_confirm_apply_actual_ranking(tmp_path, q
 
 @pytest.mark.gui
 @pytest.mark.integration
+def test_three_note_native_fit_worker_returns_bound_draft_from_real_producer(
+    tmp_path, qtbot, monkeypatch,
+):
+    """Dreinoten-Satz durchläuft Producer, Rating, GUI-Worker, Audit und Fit."""
+    from dataclasses import replace
+    from PyQt6.QtWidgets import QDialog
+
+    from hpg_core import hearing_panel
+    from hpg_core.hearing_ratings import save_rating
+    from hpg_core.hearing_workflow import create_set
+    from tests.hearing_e2e_fixtures import FIT_SEED, managed_hearing_jobs, producer_fixture
+    from tests.test_main_window import _window
+    from tools import rate_transitions as rate
+    import main
+
+    config, _tracks, _inventory = producer_fixture(tmp_path, count=1)
+    config = replace(config, three_notes=True)
+    prepared = create_set(config)
+    metrics = rate.lies_csv(prepared.output_dir / "merkmale.csv")
+    best = None
+    for row in metrics:
+        note = 5 if float(row["loudness"]) > .5 else 2
+        for dimension in ("track_note", "technik_note", "gesamt_note"):
+            save_rating(prepared.output_dir, "/note", {
+                "pair_id": row["pair_id"], "clip_id": row["clip_id"],
+                "dimension": dimension, "note": note if dimension != "technik_note" else 4,
+            })
+        if best is None or float(row["loudness"]) > float(best["loudness"]):
+            best = row
+    assert best is not None
+    save_rating(prepared.output_dir, "/bester", {
+        "pair_id": best["pair_id"], "clip_id": best["clip_id"],
+    })
+
+    preference_path = tmp_path / "active-preferences.json"
+    monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(preference_path))
+    window = _window(qtbot, monkeypatch)
+    window._hearing_set_path = str(prepared.output_dir)
+    window._hearing_cache_path = str(config.cache)
+
+    class AcceptedFitDialog:
+        def __init__(self, cache, *, audit_only, single, three_note, parent):
+            assert cache == str(config.cache)
+            assert not audit_only and not single and three_note
+            self.cache = cache
+            self.seed, self.genres = FIT_SEED, ()
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(hearing_panel, "HearingFitDialog", AcceptedFitDialog)
+    proposals, warnings = [], []
+
+    def capture_result(dialog):
+        qtbot.addWidget(dialog)
+        proposals.append(dialog.proposal)
+        assert not dialog.apply_button.isEnabled()
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(hearing_panel.HearingCalibrationResultDialog, "exec", capture_result)
+    monkeypatch.setattr(main.QMessageBox, "warning", lambda *args: warnings.append(str(args[-1])))
+
+    with managed_hearing_jobs(qtbot) as owned:
+        owned.append(window)
+        window._fit_hearing_set()
+        assert window._hearing_worker is not None and window._hearing_action == "fit"
+        qtbot.waitUntil(
+            lambda: window._hearing_worker is None and bool(proposals or warnings),
+            timeout=120000,
+        )
+
+    assert not warnings
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal["audit_passed"] and proposal["fit_status"] == "passed"
+    assert proposal["candidate_report"]["dreinoten"] is True
+    assert proposal["candidate_report"]["diagnose"]["rating_schema"] == "three_notes_v1"
+    assert proposal["gate_updates"] == {}
+    assert not preference_path.exists()
+
+
+@pytest.mark.gui
+@pytest.mark.integration
 def test_applied_preferences_reorder_visible_mixpoint_ranking(
     tmp_path, qtbot, monkeypatch, request
 ):
