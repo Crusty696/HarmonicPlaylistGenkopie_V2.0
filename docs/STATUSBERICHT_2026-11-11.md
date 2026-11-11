@@ -13,6 +13,8 @@
 
 **Einzel-Fit-App-Pfad:** `tests/test_hearing_calibration.py::test_single_fit_from_app_button_shows_real_draft_without_applying` besteht **1/1** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 2,08 s). Echter CSV-Fit-Button, `HearingCalibrationWorker`-Spawn, Fitberechnung und Ergebnisdialog; synthetische Zwei-Zeilen-CSV, kein Cache oder Audio. Dialog kennzeichnet Gewichte als nicht übernommen; aktive Präferenzen und Quelldateien bleiben unverändert. Kein vollständiger CSV/JSON-Golden-Master-Rundlauf.
 
+**Vier-Modi-CLI/GUI-Sitzungsparität:** `tests/test_hearing_workflow.py::test_real_internal_producer_artifacts_match_cli_and_native_service` besteht **4/4** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 2,29 s). Für Einzel, Kandidaten, Dreinoten und Dramaturgie werden synthetische Producer-Artefakte verglichen; CLI-Legacy-Loader und nativer Quell-Loader liefern identische logische Rating-Sessions. Dramaturgie prüft die vollständige Acht-Strategien-Matrix. Das belegt noch keine Golden-Master-Rundreise sämtlicher Fit-/Blindtest- und Export-CSV/JSON-Schemas.
+
 **ComfyUI:** Prompts 76–80 (`FX_0499`–`FX_0503`) erfolgreich; alle fünf Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 81 / `FX_0504` (UUID `d2fe4670-d775-400a-8970-240546e3f066`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
@@ -648,3 +650,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 - Die App-Einzel-Fit-Kette wurde vom sichtbaren Button bis zum Ergebnisdialog mit dem echten Worker und isolierter CSV geprüft: **1/1 bestanden**. Der Fit erzeugt einen Vorschlag, schreibt keine aktiven Kandidatenpräferenzen und verändert keine Quelldatei. Beleg: `tests/test_hearing_calibration.py::test_single_fit_from_app_button_shows_real_draft_without_applying`.
 - Prompt 81 / UUID `d2fe4670-d775-400a-8970-240546e3f066`, Präfix `Film_x_batch/FX_0504`, war beim Queue-Poll aktiv; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+
+## Vier-Modi-Sitzungsparität nachgeführt
+
+- CLI- und native App-Sätze wurden für Einzel, Kandidaten, Dreinoten und Dramaturgie über die jeweiligen realen Loader eingelesen; die normalisierten logischen Rating-Sessions stimmen in allen vier Varianten überein. Kandidaten- und Dramaturgie-Manifeste werden durch ihre strikten Loader validiert; die Dramaturgie-Fixture enthält alle acht Strategien. **4/4 bestanden**, synthetische Quelldateien und kontrollierte Producer, keine Audioanalyse/GPU. Vollständige Rundreisen aller Fit-, Blindtest- und Export-Schemas bleiben offen.

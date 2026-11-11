@@ -130,9 +130,6 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     monkeypatch.setattr(rt, "lade_tracks_aus_cache", lambda *_: tracks)
 
     if mode == "dramaturgie":
-        variant = rt.dramaturgie_varianten()[0]
-        monkeypatch.setattr(rt, "dramaturgie_varianten", lambda: [variant])
-
         def playlist(pool, strategy, **options):
             occurrences = [SimpleNamespace(occurrence_id=("fixture", i)) for i in range(len(pool))]
             recommendations = [SimpleNamespace(
@@ -212,6 +209,30 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         "dramaturgie": rt.befehl_prepare_dramaturgie,
     }[mode]
     assert cli_wrapper(cli_args) == 0
+    from hpg_core.hearing_ratings import load_session as load_rating_session
+
+    def logical_session(session):
+        return (
+            session["mode"],
+            tuple(
+                (
+                    group["id"],
+                    tuple(
+                        (
+                            clip["pair_id"], clip["clip_id"],
+                            clip["ratings"], clip["gewaehlt"],
+                        )
+                        for clip in group["clips"]
+                    ),
+                    group["ratings"],
+                )
+                for group in session["groups"]
+            ),
+        )
+
+    native_view = load_rating_session(native_result.output_dir)
+    cli_view = load_rating_session(cli_config.output_dir)
+    assert logical_session(native_view) == logical_session(cli_view)
 
     if mode == "einzel":
         from hpg_core.hearing_calibration import validate_set
