@@ -174,6 +174,9 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
+  Live-Queue am 11.11.2026 bestätigt Prompt-ID `30` weiterhin aktiv. Der
+  laufende Workflow verwendet `MiniMaxH3ReferenceToVideo` und speichert unter
+  `Film_x_batch/FX_0461`; er gehört damit zum H3-Modelllauf des FilmX-Batches.
   Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
