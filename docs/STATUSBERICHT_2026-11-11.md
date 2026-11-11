@@ -1,7 +1,8 @@
 # HPG Entwicklungs- und Lagebericht
 
-**Stand:** 11.11.2026  
-**Branch:** `codex/gesamtrefaktorierung`  
+**Stand:** 11.11.2026
+
+**Branch:** `codex/gesamtrefaktorierung`
 **GitHub-Abgleich:** Lokal und `origin/codex/gesamtrefaktorierung` stehen auf `c507efa5162070da202aa7391bde5b245c41e753`.
 
 ## Kurzstatus
