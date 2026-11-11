@@ -243,6 +243,11 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   `2ba0636673669ba21fbf8edca2a7656792a03f0c102b2fef18d4dd64f9defbae`.
   Die Abweichung verifiziert, dass dieser Frozen-Build nicht zum aktuellen
   Algorithmusquellstand passt; Neubau bleibt bis Batch-Ende vertagt.
+  Drei kurze Qt-Regressionen zum späteren UI-Textstand bestehen am aktuellen
+  Quellcode **3/3** (`test_transition_preview_labels_and_tooltips_are_german`,
+  `test_empty_input_is_explicit`, `test_advanced_tooltips_use_correct_german_accents`,
+  `venv312`, Python 3.12.10, `-n 0 --no-cov`, 0,78 s). Der echte Native-Smoke,
+  Vollsuite und Frozen-Neubau bleiben offen.
   Vollsuite nach Rotation sowie vollständige manuelle Set-/Fit-/Export- und
   Originalmusik-Abnahme bleiben offen.
 - Nach dem Timeline-Startzustandsfix erneut isoliert gebaut: Python 3.12.10,
