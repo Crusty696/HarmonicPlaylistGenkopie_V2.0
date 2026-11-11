@@ -48,6 +48,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   Legacy-Browserknopf zeigt für quellenbasierte Sätze den Hinweis, dass er
   vorhandene Hörclips erwartet; Server/Browser wurden nicht gestartet.
   Wiederaufnahme weiterer Modi und Originalmusik-Abnahme bleiben offen.
+- Satzbrowser-End-to-End im isolierten Frozen-GUI geprüft: „Sätze / Fortschritt“ mit dem synthetischen Testordner als Wurzel listet genau einen Kandidatensatz, `0/1`, Status `new`. Nach Auswahl wurde „Open“ aktiv; Öffnen lud den Satz und meldete „Satz geladen (kandidaten). Analyseherkunft: unbekannt. Kein Render-/Audit-Nachweis.“ Keine Analyse oder Bewertung gestartet.
 - Einzel-CSV-Fit am 11.11.2026 mit isolierter synthetischer Fixture (`E:\AI\HPG-build-verification-2026-11-11-csv-fit-ui`, zwei Bewertungen, keine Audios und kein Cache) im Frozen-GUI ausgeführt. Fitstatus `passed`; Ergebnis 2 Bewertungen (1 gut, 1 nicht gut), Datenlage nicht belastbar. Produktive Übernahme war deaktiviert. Dialog zeigte Datei-Hashes, Build-Fingerprint und Vorschlagsdigest; aktive Gewichte blieben laut Dialog unverändert. Kein Vorschlag wurde übernommen oder gespeichert.
 - „Messdiagnosen anzeigen“ am 11.11.2026 im isolierten Frozen-GUI geöffnet: ohne übergebene Tracks meldet die App „Keine analysierten Tracks übergeben. Keine Messdiagnosen verfügbar.“ Beide Tabellen bleiben leer und melden keine Trackauswahl. Dialog danach geschlossen; keine Analyse oder Änderung ausgelöst.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
@@ -373,6 +374,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `2317eeec-4883-4498-a4aa-ffdd550b1327`, Präfix `Film_x_batch/FX_0484`)
   gestartet; Queue: 1 laufend, 0 wartend. Keine Queue- oder Produceränderung.
   Prompt 53 wurde danach abgeschlossen; `FX_0484_00001_.mp4` wurde per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden bestätigt. Anschließend startete der Producer Prompt 54 (UUID `45db9fc5-ea21-4067-96a1-33e9d2c64bea`, Präfix `Film_x_batch/FX_0485`). Live-Poll 11.11.2026 17:05 UTC: Producer-PID 10456 aktiv, `rendert`, 484/558 fertig, Prompt 54 läuft, 1 laufend und 0 wartend. Kein zusätzlicher Prompt wurde eingereiht.
+  Folge-Poll 11.11.2026 17:11:30 +01:00: Prompt 54/`FX_0485` abgeschlossen; `FX_0485_00001_.mp4` (1.266.834 Bytes) liegt vor. `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden. Prompt 55 läuft: UUID `7e3b88f4-5c6e-448b-b3df-a483a54b5cd6`, Präfix `Film_x_batch/FX_0486`; Producer-PID 10456 aktiv, 485/558 fertig, Queue 1 laufend/0 wartend, Heartbeat 17:11:29. Kein zusätzlicher Prompt eingereiht.
   Frühere Ausgaben `FX_0436` bis `FX_0438` bestätigte `ffprobe` ebenfalls als
   H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
