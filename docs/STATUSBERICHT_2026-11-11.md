@@ -118,6 +118,14 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Zuordnung liegt außerdem in `test_prepare_form_maps_modes_and_disables_ineffective_fields`,
   `test_prepare_form_exposes_all_effective_candidate_options` und
   `test_namespace_has_exact_ui_to_parser_mapping`.
+- Live-Desktopinventar am 11.11.2026 zeigt zwei offene HPG-Fenster aus älteren
+  Scratch-EXEs (`candidate-report-fix` und `portable-blind-check`). Der aktuelle
+  Satzbrowser-Build liegt separat unter
+  `E:\AI\HPG-build-verification-2026-11-11-set-browser-search`; sein SHA-256
+  stimmt mit `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`
+  überein, war im Desktopinventar aber nicht geöffnet. Daher bleibt die
+  Bedienabnahme am aktuellen Build offen. Die älteren Fenster wurden nicht
+  verändert.
 - Nach dem Exportpfad wurde mit Python 3.12.10 und PyInstaller 6.21.0 erneut
   isoliert unter `E:\AI\HPG-build-verification-2026-11-11-portable-blind-final2` gebaut.
   Bestehende Buildziele und Root-EXE lagen außerhalb des Wirkpfads. Die EXE

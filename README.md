@@ -5,18 +5,14 @@ HPG analysiert ausgewählte Musik, bewertet Trackpaarungen und Mixpunkte,
 erstellt eine Playlist und macht geplante Übergänge als Vorschau hörbar.
 Die Ergebnisse lassen sich als M3U8 oder Rekordbox-XML exportieren.
 
-**Stand 07.11.2026:** Ein isolierter App-Lauf analysierte 26 Originaltracks
-frisch und veröffentlichte eine Playlist mit 19 geplanten von 25 Übergängen.
-Der aktuelle Quellstand bestand 6706 Tests; ein Originaltrack lieferte danach
-einen isolierten Cachetreffer. Ein neuer EXE-Build bestand einen gezielten
-Originaltrack-Workerlauf nach Korrektur der gebündelten VC-Laufzeit; der
-vollständige EXE-App-Ablauf und die musikalische Abnahme bleiben offen.
-Aktuelle Grenzen und Rohbelege stehen im
-[laufenden Arbeitsplan](docs/superpowers/plans/2026-10-30-gesamtrefaktorierung.md).
-Der [Quellen- und Nachweisstand](PRODUCTION_STATUS.md) bewahrt den historischen
-Abgleich vom 26.10.2026.
-Der [Gesamtstatus mit GitHub-Abgleich vom 09.11.2026](docs/STATUSBERICHT_2026-11-09.md)
-fasst den jüngsten Entwicklungsstand und seine Nachweisgrenzen zusammen.
+**Stand 11.11.2026:** Der aktuelle Quellstand besteht die konfigurierte Suite
+mit **6.644 Tests und 81,02 % Coverage**. Der isolierte Frozen-Build samt
+Native-Smoke besteht ebenfalls. Das belegt Tests und Paketierung, keine
+vollständige manuelle Audio-/Usability-Abnahme. Offene Punkte, Build-Hash,
+ComfyUI-Live-Status und genaue Verifikationsgrenzen stehen im
+[aktuellen Entwicklungsbericht](docs/STATUSBERICHT_2026-11-11.md). Frühere
+Originaltrack-Läufe bleiben historische Einzelbelege und ersetzen diese
+Abnahme nicht.
 
 ## Start aus dem Projekt
 
@@ -78,8 +74,12 @@ trennt Metadaten von Audioanalyse und musikalischer Qualität.
 | `manual_test.bat` | optionaler technischer Einzeltrack-Bericht; aktuellen Quellordner mit `--folder` angeben und Testcache isolieren |
 
 Die beiden Zusatzstarter sind für den normalen App-Start nicht erforderlich.
-Der native Hörtest verwendet Quellreferenzen und RAM-Wiedergabe. Kein
-Kopieren von Originalmusik und keine musikalische Abnahme allein durch Qt-Laden.
+Der native Hörtest liegt im Fenster **QUALITÄT**: dort Sätze vorbereiten,
+vorhandene Sätze und Fortschritt öffnen, in der App bewerten oder optional
+**Bewerten im Browser** starten. `Start_Hoertest.bat` bleibt ein optionaler
+Konsolen-/Browserweg für vorhandene Sätze. Die native Vorbereitung verwendet
+Quellreferenzen und RAM-Wiedergabe; Originalmusik wird nicht in den Hörtestsatz
+kopiert. Automatisierte Qt-/Decoderprüfungen sind keine musikalische Abnahme.
 
 ## Strategien
 
