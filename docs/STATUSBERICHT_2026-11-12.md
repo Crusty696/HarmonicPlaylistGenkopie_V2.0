@@ -46,12 +46,13 @@
   einen Golden-Master-Lauf mit unveränderter CLI-Bindungsprüfung und allen
   publizierten CSV-/JSON-Schemas. Die vorhandenen Producer-/Sitzungs- und
   Fit-Rundreisen belegen Teilverträge, nicht diesen Gesamtvertrag.
-- Ein zusätzlicher Kandidatenpfad schließt einen Teil dieser Lücke: Der Test
-  erzeugt einen persistenten CLI-Auditbericht, lässt den normalen CLI-Fit
-  einschließlich Binding-Validierung laufen und vergleicht den publizierten
-  Entwurf mit dem nativen Fit-Ergebnis. Der gezielte Fall bestand **1/1** am
-  12.11.2026. Quellen und Renderer sind synthetisch; andere Artefakt-Schemas
-  und die vollständige Golden-Master-Matrix bleiben offen.
+- Zwei zusätzliche Kandidatenpfade schließen einen Teil dieser Lücke: Die
+  Tests für normalen Kandidaten- und Dreinoten-Fit erzeugen jeweils einen
+  persistenten CLI-Auditbericht, lassen den CLI-Fit mit unveränderter
+  Binding-Validierung laufen und vergleichen den publizierten JSON-Bericht mit
+  dem nativen Fit-Ergebnis. Der gezielte Lauf bestand **2/2** am 12.11.2026.
+  Quellen, Cache und Renderer sind synthetisch; andere Artefakt-Schemas und die
+  vollständige Golden-Master-Matrix bleiben offen.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.

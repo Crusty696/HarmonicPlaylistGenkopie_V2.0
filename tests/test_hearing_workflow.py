@@ -280,7 +280,7 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     for name in common_files:
         assert (cli_config.output_dir / name).read_bytes() == (native_result.output_dir / name).read_bytes()
 
-    if mode == "kandidaten" and not three_notes:
+    if mode == "kandidaten":
         import numpy as np
         import soundfile as sf
 
@@ -291,8 +291,12 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         for set_dir in (cli_config.output_dir, native_result.output_dir):
             ratings = rt.lies_csv(set_dir / "bewertung.csv")
             for rating in ratings:
-                rating["note"] = "4"
-            rt.schreibe_csv(set_dir / "bewertung.csv", rt.BEWERTUNG_KANDIDATEN_SPALTEN, ratings)
+                if three_notes:
+                    rating.update(track_note="4", technik_note="4", gesamt_note="4")
+                else:
+                    rating["note"] = "4"
+            columns = rt.BEWERTUNG_DREINOTEN_SPALTEN if three_notes else rt.BEWERTUNG_KANDIDATEN_SPALTEN
+            rt.schreibe_csv(set_dir / "bewertung.csv", columns, ratings)
 
         def render_synthetic_ram(_spec, destination):
             signal = np.zeros((800, 2), dtype=np.float32)
@@ -322,9 +326,8 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         assert rt.befehl_fit_kandidaten(SimpleNamespace(
             dir=cli_config.output_dir, cache=cache, audit_report=audit_path, seed=config.seed,
         )) == 0
-        cli_draft = json.loads(
-            (cli_config.output_dir / "candidate_preferences_entwurf.json").read_bytes()
-        )
+        output_name = "dreinoten_fit_bericht.json" if three_notes else "candidate_preferences_entwurf.json"
+        cli_draft = json.loads((cli_config.output_dir / output_name).read_bytes())
         assert cli_draft == native_fit["candidate_report"]["ergebnis"]
         assert not (operation_root / "child_preferences.json").exists()
 
