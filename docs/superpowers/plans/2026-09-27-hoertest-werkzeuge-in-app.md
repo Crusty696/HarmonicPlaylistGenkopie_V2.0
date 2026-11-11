@@ -131,9 +131,9 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 
 **Schnittstellen:** Liefert Tabelle `Werkzeugfunktion → bestehende API/CLI → GUI-Aktion → Testbeleg`, einschließlich aller Optionen oben.
 
-- [ ] Jeden CLI-Parser, Server-Endpunkt, Satzvalidator, Auditor und Fit-Ausgang direkt gegen aktuellen Code aufnehmen.
-- [ ] Für jede Option als GUI-Feld, bewusst ausgeschlossene Entwickleroption oder nicht unterstützten Punkt klassifizieren; Ausschluss begründen und dem Nutzer sichtbar machen.
-- [ ] Festlegen, wie Satzliste, Typ, Parameter, Status, Bewertung öffnen, Audit, Fit-Bericht und Blindtest im bestehenden QUALITY-Bereich erreichbar sind.
+- [x] Jeden CLI-Parser, Server-Endpunkt, Satzvalidator, Auditor und Fit-Ausgang direkt gegen aktuellen Code aufnehmen. Matrix: [HEARING_CLI_GUI_MATRIX.md](../../HEARING_CLI_GUI_MATRIX.md).
+- [x] Für jede Option als GUI-Feld, bewusst ausgeschlossene Entwickleroption oder nicht unterstützten Punkt klassifizieren; Ausschluss begründen und dem Nutzer sichtbar machen. Siehe Options-, Server-, Fit- und Diagnosegrenzen in der Matrix.
+- [x] Festlegen, wie Satzliste, Typ, Parameter, Status, Bewertung öffnen, Audit, Fit-Bericht und Blindtest im bestehenden QUALITY-Bereich erreichbar sind. Siehe GUI-Aktionen und Evidenz in der Matrix.
 - [ ] Wächter-Read-only-Prüfung des Inventars; offene Paritätslücken vor Implementation schließen.
 
 **Abnahmekriterium:** Commitfähige Paritätsmatrix benennt für jeden existierenden CLI-Parameter, Satztyp, Bewertungsdimension, HTTP-Routenverhalten und Fit-Ausgang den App-Ersatz sowie konkrete Testfunktion(en). Nicht vorhandene Launcher-/BAT-Funktionen werden ausdrücklich nicht als Ist-Verhalten behauptet. Toolverhalten, das absichtlich nicht migriert wird, steht explizit als nicht benötigter Admin-/Diagnosepfad darin. Auflistung ist per `--help`, Route-Handler und Erfolgs-/Fehlerpfad im Code belegt.
