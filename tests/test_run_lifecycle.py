@@ -270,6 +270,14 @@ def test_thousand_transitions_create_no_eager_players_or_render_jobs(qtbot):
   assert len(panel._preview_queue) == 0
 
 
+def test_mix_tips_panel_shows_initial_empty_state(qtbot):
+  panel = MixTipsPanel()
+  qtbot.addWidget(panel)
+
+  labels = [label.text() for label in panel.container.findChildren(QLabel)]
+  assert "Noch keine Übergänge vorhanden. Zuerst eine Playlist erstellen." in labels
+
+
 def test_peak_worker_class_is_module_level_and_drains(qtbot):
   """Regression: _PeakWorker lag frueher IN WaveformWidget.load() — jeder
   Aufruf erzeugte ein neues Klassenobjekt (eigenes pyqtSignal/QMetaObject)."""

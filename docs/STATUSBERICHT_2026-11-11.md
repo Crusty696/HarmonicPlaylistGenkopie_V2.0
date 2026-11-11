@@ -11,7 +11,7 @@ Letzte Vollsuite vor Playlistrotation: 6.644 Tests, 81,02 % Coverage.
 Der aktuelle Source-Stand wurde danach isoliert eingefroren; PyInstaller-Build
 und Frozen-Native-Smoke bestehen. Der Smoke ist synthetisch und ersetzt weder
 Vollsuite nach Playlistrotation noch vollständige manuelle GUI- oder
-Originalmusik-Abnahme. Der offene ComfyUI-H3-Batch bleibt unangetastet.
+Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
 
@@ -68,9 +68,7 @@ Originalmusik-Abnahme. Der offene ComfyUI-H3-Batch bleibt unangetastet.
   aktuelle Trackmitgliedschaft. Die lokale Historie wird atomar nur bei
   `ExportReport.status == "success"` aktualisiert; ungültige Historie wird
   nicht überschrieben. Nachweise: 19 Auswahl-/Rotationstests, 6 GUI-/Worker-/
-  Settings-Tests und 1 Export-Hook-Test bestanden (`--no-cov`). Kein Volltest,
-  neuer Frozen-Build, nativer Originaltrack-Lauf oder musikalisches Urteil
-  nach dieser Änderung.
+  Settings-Tests und 1 Export-Hook-Test bestanden (`--no-cov`). Volltest, nativer Originaltrack-Lauf und musikalisches Urteil nach dieser Änderung fehlen.
 - Neuer isolierter Qt-/Worker-E2E-Nachweis am 11.11.2026: echter Kandidaten-
   Producer, Audit/Fit-Worker, bestätigtes Apply und Ranking-Refresh bestanden;
   **1 Test in 251,99 s**. Die Audiodateien und der Cache liegen in einer
@@ -78,12 +76,26 @@ Originalmusik-Abnahme. Der offene ComfyUI-H3-Batch bleibt unangetastet.
   Rating-/Bestenwahl werden über die Test-API eingespeist. Separat bestanden
   **130 GUI-, M3U8-, Rekordbox-XML- und Playlistrotations-Tests in 1,30 s**
   (`-n 0 --no-cov`). Das prüft die technische Kette, nicht manuelle Nutzerklicks,
-  Originalmusik oder die musikalische Qualität. Vollsuite und neuer Build nach
-  Playlistrotation bleiben offen.
+  Originalmusik oder die musikalische Qualität. Vollsuite nach Rotation und vollständige manuelle Set-/Fit-/Exportbedienung bleiben offen.
   Zusätzlich bestanden **143 Browser-/Dialog-/Satzmodus-Preflight- und
   Workflowtests in 8,49 s** (`-n 0 --no-cov`), einschließlich Einzel-,
   Kandidaten- und Dramaturgie-Produktion.
-- Neuer isolierter Frozen-Build für den Playlistrotations-Quellstand: Python 3.12.10,
+- Mix-Tab-Startzustand im Frozen-Build als UI-Lücke reproduziert: Der vorhandene
+  Leerhinweis wurde erst nach `set_recommendations()` gerendert; `MixTipsPanel.init_ui()`
+  ruft `_populate()` jetzt initial auf. Regression `test_mix_tips_panel_shows_initial_empty_state`
+  und kompletter `tests/test_run_lifecycle.py`-Lauf: **36/36 bestanden** (`-n 0 --no-cov`).
+  Der neue Frozen-Build zeigt sichtbar „Noch keine Übergänge vorhanden. Zuerst eine
+  Playlist erstellen.“; keine Analyse gestartet.
+- Aktueller isolierter Frozen-Build nach Mix-Tab-Fix: Python 3.12.10, PyInstaller
+  6.21.0; Build und Frozen-Native-Smoke erfolgreich. EXE:
+  `E:\AI\HPG-build-verification-2026-11-11-mix-empty-state-b289e9292dd44d93baff5dfd43cb4d9e\dist\HarmonicPlaylistGenerator.exe`,
+  SHA-256 `412A062C3683020F8FE10DB8EE70B217697048D2275B623FE5240A42D5F7675B`.
+  Smoke `ok=true`: Imports/Formulare, Spawn-Worker, RAM-Render und isolierte CSV-Fit-Probe;
+  Algorithmusfingerprint 117 Dateien, SHA-256
+  `591fae4d619aeb696ee706d27a4a31605dfbe0bb570fae47f6dc259bab3b97f5`.
+  Vollsuite nach Rotation sowie vollständige manuelle Set-/Fit-/Export- und
+  Originalmusik-Abnahme bleiben offen.
+- Voriger Frozen-Build für den Playlistrotations-Quellstand: Python 3.12.10,
   PyInstaller 6.21.0; Build vollständig erfolgreich. EXE:
   `E:\AI\HPG-build-verification-2026-11-11-playlist-rotation-4fe4a1757cfd4349877bcbd826904fdc\dist\HarmonicPlaylistGenerator.exe`,
   SHA-256 `C0BF60E56B0E976391AC846DF084FC38F51A80FDA50E3A36DDCBFC304AD38573`.
@@ -289,8 +301,8 @@ Originalmusik-Abnahme. Der offene ComfyUI-H3-Batch bleibt unangetastet.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
-  Live-Queue am 11.11.2026 zeigt Prompt-ID `40` (UUID
-  `bd96f494-2c49-430b-9b25-bfa85419aa84`) aktiv und 0 wartende Aufträge.
+  Live-Queue am 11.11.2026 zeigt Prompt-ID `42` (UUID
+  `805d4d33-05d5-4c9a-9023-851c8cecdf14`) aktiv und 0 wartende Aufträge.
   Promptverlauf und Ausgabedatei sind noch nicht bestätigt. Auftrag und
   Batchproducer blieben unangetastet.
   Producer bleibt unberührt. Frühere Ausgaben

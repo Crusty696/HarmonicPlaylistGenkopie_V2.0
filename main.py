@@ -3314,6 +3314,7 @@ class MixTipsPanel(QWidget):
         self.container_layout.setContentsMargins(8, 8, 8, 8)
         self.container_layout.setSpacing(8)
         self.scroll.setWidget(self.container)
+        self._populate()
 
     def set_recommendations(self, recommendations, playlist=None):
         self.transition_recommendations = recommendations
