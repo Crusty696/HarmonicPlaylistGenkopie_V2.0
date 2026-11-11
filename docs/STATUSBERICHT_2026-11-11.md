@@ -654,3 +654,11 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 ## Vier-Modi-Sitzungsparität nachgeführt
 
 - CLI- und native App-Sätze wurden für Einzel, Kandidaten, Dreinoten und Dramaturgie über die jeweiligen realen Loader eingelesen; die normalisierten logischen Rating-Sessions stimmen in allen vier Varianten überein. Kandidaten- und Dramaturgie-Manifeste werden durch ihre strikten Loader validiert; die Dramaturgie-Fixture enthält alle acht Strategien. **4/4 bestanden**, synthetische Quelldateien und kontrollierte Producer, keine Audioanalyse/GPU. Vollständige Rundreisen aller Fit-, Blindtest- und Export-Schemas bleiben offen.
+
+## Weitere isolierte Vertragsprüfungen und aktueller Lauf
+
+- `tests/test_prepare_dj_blind_test.py`: **9/9 bestanden**; Session-/Schlüsseltrennung, No-clobber, Reihenfolge, Pfadvalidierung, Hashbindung sowie Abbruch-/Rollback. Synthetische temporäre Dateien, keine Originalmusik.
+- Fit-Artefakte: **2/2 bestanden** (`test_export_valid_native_receipt_and_canonical_binding_roundtrip`, `test_export_new_report_is_no_clobber`); gültiger Bericht wird exportiert, erneut gelesen und validiert; bestehendes Ziel bleibt unangetastet. GUI-Button-Rundreise bleibt ungeprüft.
+- GUI-Exporttest-Probe wurde nach zwei fehlgeschlagenen Fixture-Aufrufen entfernt. Verifizierte Voraussetzung: `compute_proposal` verlangt `HPG_CANDIDATE_PREFERENCES_FILE` gleich `<operation_root>\\child_preferences.json`; der Pfad muss vor dem Fit fehlen. Das ist die Child-Präferenzisolation, kein nachgewiesener Produktfehler.
+- Aktueller ComfyUI-Poll: Präfix `Film_x_batch/FX_0505`, Queue 1 aktiv / 0 wartend; Prompt-ID `d07ad550-1972-45ab-b37d-ff38863cd593`, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+- Repo-HEAD und GitHub-Branch `codex/gesamtrefaktorierung` stimmen auf `7fbafed931e1a5733312c83164cfb233443a5002` überein. 93 lokale Arbeitsänderungen bleiben unangetastet. Vollsuite, aktueller Frozen-Build und GUI-Abnahme bleiben bis nach dem ComfyUI-Batch offen.
