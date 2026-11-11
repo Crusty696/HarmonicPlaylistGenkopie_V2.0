@@ -5939,9 +5939,11 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
         from hpg_core.hearing_panel import HearingCalibrationResultDialog
         from hpg_core.hearing_jobs import HearingApplyWorker
+        candidate_report = proposal["candidate_report"]
+        dreinoten_pilot = bool(candidate_report and candidate_report["dreinoten"])
         dialog = HearingCalibrationResultDialog(
             proposal, self, cleanup_warning=cleanup_warning,
-            confirm_apply=bool(proposal["candidate_report"] and proposal["candidate_report"]["dreinoten"]),
+            confirm_apply=dreinoten_pilot,
         )
         self._hearing_native_active = True
         self._update_hearing_buttons()
@@ -5951,7 +5953,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             self._hearing_native_active = False
             self._update_hearing_buttons()
         if accepted and self._hearing_selection_allowed() and not self._run_is_active():
-            if proposal["candidate_report"]["dreinoten"]:
+            if dreinoten_pilot:
                 answer = QMessageBox.question(
                     self, "Dreinoten-Pilot übernehmen",
                     "Die folgenden im Pilot-Fit bestandenen Kandidaten-Gates werden atomar in die Nutzerpräferenzen geschrieben. "

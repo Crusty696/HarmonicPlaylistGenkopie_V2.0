@@ -7,14 +7,25 @@
 
 ## Kurzstatus
 
-Die gezielten A/B-Änderungen bestehen fokussierte Tests und isolierten
-Frozen-Smoke. Zusätzlich lehnt die Bewertungsfortschreibung interne Symlinks
-auf Metadaten jetzt ab. Der letzte Volltest meldete einen parallelen
-Subprozess-Ausreißer; der Einzeltest bestand. Originalmusik-Abnahme und
-manueller kompletter GUI-Ablauf bleiben offen.
+Die konfigurierte Suite besteht aktuell mit 6.643 Tests und 81,01 % Coverage.
+Ein xdist-Worker gab im Lauf eine Windows-COM-Fatalmeldung aus, wurde ersetzt;
+Pytest endete trotzdem erfolgreich. Der isolierte Frozen-Smoke besteht.
+Originalmusik-Abnahme, vollständige manuelle GUI-Abnahme und abschließende
+Verifikation des Batchlaufs bleiben offen.
 
 ## Verifizierte Änderungen und Prüfungen
 
+- Vollsuite nach dem Dialog-/Fit-Fix erneut ausgeführt: **6.643/6.643 bestanden**,
+  Coverage **81,01 %**, Exitcode 0 (`venv312\Scripts\python.exe -m pytest
+  tests/ --tb=short -q`). Dabei erschien einmal `Windows fatal exception:
+  code 0x8001010d` in einem xdist-Worker; der Worker wurde ersetzt, alle Tests
+  liefen zu Ende. Das ist ein verbliebenes Stabilitätssignal, keine rote
+  Pytest-Prüfung.
+- Fehler im angenommenen Hörtest-Ergebnis behoben: Einzel-Fit-Vorschläge haben
+  `candidate_report=None`; `_show_hearing_proposal` las danach bisher trotzdem
+  `candidate_report["dreinoten"]` und konnte den Apply-Dialog abbrechen. Die
+  Dreinoten-Bestätigung wird nun nur bei vorhandenem Bericht geprüft.
+  Apply-/GUI-Integration: **119 Tests bestanden**; Suite oben grün.
 - Der Repository-Audit vom 10.11. fand keinen bestätigten Produktionscode-Bug.
   Er prüfte statische Bereiche und gezielte Testgruppen, nicht die gesamte
   Laufzeit. Details und Grenzen stehen in

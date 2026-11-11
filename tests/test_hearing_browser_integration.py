@@ -710,7 +710,7 @@ def test_proposal_modal_preselection_guard(qtbot, monkeypatch, tmp_path, guard):
 def test_proposal_modal_blocks_queued_server_and_rechecks_apply(qtbot, monkeypatch, tmp_path, retry_origin, outcome):
     window = _window(qtbot, monkeypatch)
     ordinary = _ordinary_state(window, tmp_path)
-    proposal = {"test": "GUI routing only; no real apply"}
+    proposal = {"test": "GUI routing only; no real apply", "candidate_report": None}
     queued, starts, constructed, button_states = [], [], [], []
     real_update = window._update_hearing_buttons
     def update():
@@ -732,8 +732,8 @@ def test_proposal_modal_blocks_queued_server_and_rechecks_apply(qtbot, monkeypat
         window._hearing_server_finished(process, exit_code=1)
     assert len(queued) == 1 and window._hearing_process is None
     class Form:
-        def __init__(self, value, parent, cleanup_warning=""):
-            constructed.append((value, parent, cleanup_warning))
+        def __init__(self, value, parent, cleanup_warning="", *, confirm_apply=False):
+            constructed.append((value, parent, cleanup_warning, confirm_apply))
         def exec(self):
             assert window._hearing_native_active and window._hearing_worker is None
             assert not window.analytics_panel.hearing_server_button.isEnabled()
@@ -764,7 +764,7 @@ def test_proposal_modal_blocks_queued_server_and_rechecks_apply(qtbot, monkeypat
                 window._show_hearing_proposal(proposal, "owned temp retained")
         else:
             window._show_hearing_proposal(proposal, "owned temp retained")
-        assert constructed == [(proposal, window, "owned temp retained")]
+        assert constructed == [(proposal, window, "owned temp retained", False)]
         assert not window._hearing_native_active
         assert button_states[0] == (True, False) and button_states[-1][0] is False
         if outcome == "accept":

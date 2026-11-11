@@ -77,9 +77,16 @@ def transport_proposal(tmp_path, monkeypatch):
         "audit": receipt,
         "fit_status": "passed", "gate_updates": updates,
         "diagnose": {"transport_contract_fixture": True, "numerical_audit_proven": False},
-        "single_proposal": None, "live_applied": False,
+        "single_proposal": None,
+        "candidate_report": {
+            "status": "passed", "gate_updates": updates, "diagnose": {}, "dreinoten": False,
+            "ergebnis": {}, "gewichte_je_genre": {}, "rangfolge": {},
+            "counts": {"clips": 0, "reine": 0, "ohne": 0, "verworfen": 0},
+        },
+        "live_applied": False,
         "output": "Synthetic transport fixture; no replay audit or fit executed.",
     }
+    proposal["candidate_report"]["diagnose"] = proposal["diagnose"]
     proposal["proposal_sha256"] = calibration._digest(proposal)
     calibration.validate_proposal(proposal, expected_operation_id="a" * 32)
     calibration.verify_binding(binding)
