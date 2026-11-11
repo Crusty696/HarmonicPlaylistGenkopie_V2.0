@@ -44,7 +44,9 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   für `001_k1` in `bewertung.csv`; CSV danach auf den vorher leeren Stand
   zurückgesetzt und verifiziert. Nach erneutem Laden meldet das GUI `0/2`
   Varianten bewertet; „Bewertungen auswerten“ bleibt ohne Noten deaktiviert.
-  Der Fit-Dialog/Worker wurde nicht gestartet. Das ist technischer
+  Der Fit-Dialog/Worker wurde nicht gestartet. „Einzel-CSV auswerten“ öffnet
+  einen getrennten Ordnerwähler; dieser wurde abgebrochen, ohne den geladenen
+  Satz zu wechseln oder einen Worker zu starten. Das ist technischer
   Speicher-/Preview-/Fortsetzungsnachweis,
   keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. Der
   Legacy-Browserknopf zeigt für quellenbasierte Sätze den Hinweis, dass er
