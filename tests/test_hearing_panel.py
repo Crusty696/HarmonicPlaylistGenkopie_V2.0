@@ -1,5 +1,7 @@
 """Native Bewertung muss ohne Browser speichern und fortsetzbar sein."""
 
+import json
+
 import pytest
 
 
@@ -173,7 +175,7 @@ def test_prepare_form_maps_modes_and_disables_ineffective_fields(qtbot,index,mod
     assert dialog.energy_box.isEnabled() is (mode != "dramaturgie")
     assert dialog.genre_box.isEnabled() is (mode != "dramaturgie")
     for widget in (dialog.harmonic_box, dialog.experimental_box, dialog.versions_box,
-                   dialog.tracks_once_box, dialog.profile_edit, dialog.workers_box,
+                   dialog.tracks_once_box, dialog.profile_edit, dialog.profile_browse, dialog.workers_box,
                    dialog.transition_box):
         assert widget.isEnabled() is (mode == "kandidaten")
     assert dialog.sequence_tracks_box.isEnabled() is (mode == "dramaturgie")
@@ -213,6 +215,7 @@ def test_prepare_form_exposes_all_effective_candidate_options(qtbot):
     (0, "einzel"), (1, "kandidaten"), (2, "kandidaten"), (3, "dramaturgie"),
 ])
 def test_prepare_form_config_and_producer_namespace_parity(qtbot, monkeypatch, tmp_path, index, mode):
+    import json
     from hpg_core.hearing_panel import HearingPrepareDialog
     from hpg_core.hearing_sources import SourceRenderSink
     from hpg_core.hearing_workflow import CancellationToken, _producer_namespace
@@ -221,7 +224,14 @@ def test_prepare_form_config_and_producer_namespace_parity(qtbot, monkeypatch, t
     source_root = tmp_path / "originals"
     source_root.mkdir()
     profile = tmp_path / "selection.json"
-    profile.write_text("{}", encoding="utf-8")
+    profile.write_text(json.dumps({
+        "purpose": "selection_only", "product_weights_changed": False,
+        "features": ["groove"], "feature_mean": {"groove": 0.5},
+        "feature_std": {"groove": 0.2},
+        "models": {name: {"intercept": 0.0, "coefficients": {"groove": 1.0}}
+                   for name in ("track_note", "technik_note", "gesamt_note")},
+        "excluded_undirected_pairs": [], "historical_track_counts": {"old-track.wav": 2},
+    }), encoding="utf-8")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     dialog = HearingPrepareDialog(folder=str(source_root))
     qtbot.addWidget(dialog)
@@ -273,8 +283,65 @@ def test_prepare_form_config_and_producer_namespace_parity(qtbot, monkeypatch, t
         assert config.only_genre == "Techno"
     elif mode == "kandidaten":
         assert config.only_genre == "Techno"
+        candidate = {
+            "track_a": type("TrackRef", (), {"filePath": str(tmp_path / "a.wav")})(),
+            "track_b": type("TrackRef", (), {"filePath": str(tmp_path / "b.wav")})(),
+            "merkmale": {"groove": 0.7},
+        }
+        ranked, selected = rate.wende_auswahlprofil_an([candidate], profile)
+        assert len(ranked) == 1 and selected == 0
+        assert ranked[0]["historische_prognose"] == pytest.approx(1.0)
     else:
         assert config.only_genre is None
+
+
+def test_prepare_form_selection_profile_file_picker(qtbot, monkeypatch, tmp_path):
+    from PyQt6.QtWidgets import QFileDialog
+    from hpg_core.hearing_panel import HearingPrepareDialog
+
+    profile = tmp_path / "selection.json"
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: (str(profile), "JSON (*.json)"))
+    dialog = HearingPrepareDialog()
+    qtbot.addWidget(dialog)
+    dialog.mode_box.setCurrentIndex(1)
+    dialog.profile_browse.click()
+    assert dialog.profile_edit.text() == str(profile)
+
+
+@pytest.mark.parametrize("payload", [
+    "not JSON",
+    "{}",
+    json.dumps({"purpose": "ranking", "product_weights_changed": False}),
+    json.dumps({
+        "purpose": "selection_only", "product_weights_changed": False,
+        "features": ["unknown"], "feature_mean": {"unknown": 0.0},
+        "feature_std": {"unknown": 1.0},
+        "models": {name: {"intercept": 0.0, "coefficients": {"unknown": 1.0}}
+                   for name in ("track_note", "technik_note", "gesamt_note")},
+        "excluded_undirected_pairs": [], "historical_track_counts": [],
+    }),
+])
+def test_prepare_form_rejects_bad_selection_profile_before_config_or_worker(qtbot, monkeypatch, tmp_path, payload):
+    from hpg_core import hearing_managed
+    from hpg_core.hearing_panel import HearingPrepareDialog
+
+    source_root = tmp_path / "originals"
+    source_root.mkdir()
+    profile = tmp_path / "selection.json"
+    profile.write_text(payload, encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(
+        hearing_managed, "managed_config",
+        lambda *_args, **_kwargs: pytest.fail("Ungültiges Profil darf nicht bis zur Konfiguration gelangen"),
+    )
+    dialog = HearingPrepareDialog(folder=str(source_root))
+    qtbot.addWidget(dialog)
+    dialog.mode_box.setCurrentIndex(1)
+    dialog.profile_edit.setText(str(profile))
+    dialog._accept_config()
+    assert dialog.result() != 1
+    assert not hasattr(dialog, "config")
+    assert dialog.error_label.text()
 
 
 def test_native_memory_playback_retains_buffer_and_releases_on_reject(qtbot):

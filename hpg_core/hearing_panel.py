@@ -146,6 +146,13 @@ class HearingPrepareDialog(QDialog):
         self.versions_box = integer(1, 5, rate.STANDARD_MAX_VERSIONEN_PRO_PAAR)
         self.tracks_once_box = QCheckBox("Jeden Track im Durchgang höchstens einmal")
         self.profile_edit = QLineEdit()
+        self.profile_browse = QPushButton("Datei wählen")
+        self.profile_browse.clicked.connect(self._choose_selection_profile)
+        profile_row = QWidget()
+        profile_layout = QHBoxLayout(profile_row)
+        profile_layout.setContentsMargins(0, 0, 0, 0)
+        profile_layout.addWidget(self.profile_edit)
+        profile_layout.addWidget(self.profile_browse)
         self.workers_box = integer(1, 4, 1)
         self.transition_box = QComboBox()
         self.transition_box.addItems(["kontrolliert", "produktion"])
@@ -181,7 +188,7 @@ class HearingPrepareDialog(QDialog):
             ("Energie-Richtung", self.energy_box), ("Harmonie-Strenge", self.harmonic_box),
             ("Experimentell", self.experimental_box), ("Zufallsseed", self.seed_box),
             ("Nur gleiche Genres", self.genre_box), ("Versionen pro Paar", self.versions_box),
-            ("Track-Auswahl", self.tracks_once_box), ("Auswahlprofil (optional)", self.profile_edit),
+            ("Track-Auswahl", self.tracks_once_box), ("Auswahlprofil (optional)", profile_row),
             ("Suchprozesse", self.workers_box), ("Übergangstyp-Modus", self.transition_box),
             ("Tracks im Dramaturgie-Pool", self.sequence_tracks_box),
             ("Übergänge pro Dramaturgie-Variante", self.transitions_box),
@@ -213,12 +220,20 @@ class HearingPrepareDialog(QDialog):
         if path:
             self.folder_edit.setText(path)
 
+    def _choose_selection_profile(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Auswahlprofil wählen", self.profile_edit.text(), "JSON-Dateien (*.json)"
+        )
+        if path:
+            self.profile_edit.setText(path)
+
     def _mode_changed(self, _index=None):
         candidate = self.mode_box.currentIndex() in (1, 2)
         dramaturgy = self.mode_box.currentIndex() == 3
         for widget in (self.count_box, self.seed_box, self.energy_box, self.genre_box):
             widget.setEnabled(not dramaturgy)
-        for widget in (self.harmonic_box, self.experimental_box, self.versions_box, self.tracks_once_box, self.profile_edit, self.workers_box, self.transition_box):
+        for widget in (self.harmonic_box, self.experimental_box, self.versions_box, self.tracks_once_box,
+                       self.profile_edit, self.profile_browse, self.workers_box, self.transition_box):
             widget.setEnabled(candidate)
         self.sequence_tracks_box.setEnabled(dramaturgy)
         self.transitions_box.setEnabled(dramaturgy)
@@ -242,13 +257,15 @@ class HearingPrepareDialog(QDialog):
             from hpg_core.hearing_managed import managed_config
             values = self.values()
             if values.get("selection_profile"):
+                from tools.rate_transitions import lade_auswahlprofil
                 values["selection_profile"] = Path(values["selection_profile"])
+                lade_auswahlprofil(values["selection_profile"])
             if values.get("energy_direction") is None:
                 values["energy_direction"] = "auto"
             if not self.folder_edit.text().strip():
                 raise ValueError("Einen Original-Musikordner wählen")
             self.config = managed_config(self.folder_edit.text().strip(), **values)
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, KeyError) as exc:
             self.error_label.setText(str(exc))
             return
         self.accept()

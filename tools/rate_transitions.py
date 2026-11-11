@@ -1188,19 +1188,84 @@ def _paar_schluessel(a: Track, b: Track) -> tuple[str, str]:
     return tuple(sorted((track_pfad_schluessel(a), track_pfad_schluessel(b))))
 
 
-def wende_auswahlprofil_an(kandidaten: list[dict], profil_pfad: Path) -> tuple[list[dict], int]:
-    """Nutzt alte Noten nur fuer die Auswahl; App-Gewichte bleiben unberuehrt."""
-    profil = json.loads(profil_pfad.read_text(encoding="utf-8"))
+def lade_auswahlprofil(profil_pfad: Path) -> dict:
+    """Liest und validiert das rein lokale Auswahlprofil vor Analyse/Workerstart."""
+    def finite_number(value):
+        if type(value) not in (int, float, str):
+            return False
+        try:
+            return math.isfinite(float(value))
+        except (OverflowError, ValueError):
+            return False
+
+    try:
+        profil = json.loads(Path(profil_pfad).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Auswahlprofil ist nicht als JSON lesbar: {exc}") from exc
+    if type(profil) is not dict:
+        raise ValueError("Auswahlprofil muss ein JSON-Objekt sein")
     if profil.get("purpose") != "selection_only" or profil.get("product_weights_changed") is not False:
         raise ValueError("Auswahlprofil ist nicht als rein auswahlbezogen gekennzeichnet")
+    required = {
+        "features", "feature_mean", "feature_std", "models",
+        "excluded_undirected_pairs", "historical_track_counts",
+    }
+    if not required <= set(profil):
+        raise ValueError(f"Auswahlprofil fehlt Pflichtfelder: {sorted(required - set(profil))}")
+    if type(profil["features"]) is not list:
+        raise ValueError("Auswahlprofil-Merkmale müssen eine Liste sein")
+    merkmale = list(profil["features"])
+    mittel = profil["feature_mean"]
+    streuung_profil = profil["feature_std"]
+    modelle = profil["models"]
+    erwartete_ziele = {"track_note", "technik_note", "gesamt_note"}
+    if (any(type(name) is not str or name not in KANDIDATEN_TEILWERTE for name in merkmale)
+            or len(merkmale) != len(set(merkmale))):
+        raise ValueError("Auswahlprofil enthält unbekannte oder doppelte Merkmale")
+    if any(type(block) is not dict for block in (mittel, streuung_profil, modelle)):
+        raise ValueError("Auswahlprofil-Merkmalstatistiken und Modelle müssen Objekte sein")
+    for name in merkmale:
+        values = (mittel.get(name), streuung_profil.get(name))
+        if any(not finite_number(value) for value in values):
+            raise ValueError(f"Auswahlprofil-Merkmal {name} braucht endliche Mittelwerte und Streuungen")
+        if float(streuung_profil[name]) < 0:
+            raise ValueError(f"Auswahlprofil-Streuung {name} darf nicht negativ sein")
+    if not erwartete_ziele <= set(modelle):
+        raise ValueError("Auswahlprofil braucht Modelle für Track-, Technik- und Gesamtnote")
+    for target, model in modelle.items():
+        if type(model) is not dict or type(model.get("coefficients")) is not dict:
+            raise ValueError(f"Auswahlprofil-Modell {target} ist ungültig")
+        numbers = [model.get("intercept"), *(model["coefficients"].get(name) for name in merkmale)]
+        if any(not finite_number(value) for value in numbers):
+            raise ValueError(f"Auswahlprofil-Modell {target} braucht endliche Koeffizienten")
+    excluded = profil["excluded_undirected_pairs"]
+    historical = profil["historical_track_counts"]
+    if (type(excluded) is not list or any(
+            type(pair) is not list or len(pair) != 2 or any(type(path) is not str or not path for path in pair)
+            for pair in excluded)):
+        raise ValueError("Auswahlprofil-Ausschlussliste muss Trackpaare enthalten")
+    if type(historical) is list:
+        if any(type(path) is not str or not path for path in historical):
+            raise ValueError("Auswahlprofil-Trackhistorie muss Trackpfade enthalten")
+    elif type(historical) is dict:
+        if any(type(path) is not str or not path for path in historical):
+            raise ValueError("Auswahlprofil-Trackhistorie muss Trackpfade als Schlüssel enthalten")
+    else:
+        raise ValueError("Auswahlprofil-Trackhistorie muss Liste oder Objekt sein")
+    return profil
+
+
+def wende_auswahlprofil_an(kandidaten: list[dict], profil_pfad: Path) -> tuple[list[dict], int]:
+    """Nutzt alte Noten nur fuer die Auswahl; App-Gewichte bleiben unberuehrt."""
+    profil = lade_auswahlprofil(profil_pfad)
     merkmale = list(profil["features"])
     mittel = profil["feature_mean"]
     streuung_profil = profil["feature_std"]
     modelle = profil["models"]
     ausgeschlossene = {
-        tuple(sorted(map(str, paar))) for paar in profil["excluded_undirected_pairs"]
+        tuple(sorted(paar)) for paar in profil["excluded_undirected_pairs"]
     }
-    alte_tracks = set(map(str, profil["historical_track_counts"]))
+    alte_tracks = set(profil["historical_track_counts"])
 
     gefiltert: list[dict] = []
     for kandidat in kandidaten:
