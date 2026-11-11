@@ -384,6 +384,25 @@ def test_reorder_uses_full_track_identity_for_duplicate_basenames(qtbot):
   ]
 
 
+def test_playlist_panel_schaltet_leerzustand_mit_playlistinhalt(qtbot):
+  panel = PlaylistPanel()
+  qtbot.addWidget(panel)
+
+  assert panel._table_stack.currentWidget() is panel.empty_playlist_label
+  assert "Noch keine Playlist vorhanden." in panel.empty_playlist_label.text()
+
+  track = Track(filePath="C:/set/track.wav", fileName="track.wav", bpm=128.0)
+  panel.set_playlist_data([track], {})
+
+  assert panel._table_stack.currentWidget() is panel.table
+  assert panel.table.rowCount() == 1
+
+  panel.set_playlist_data([], {})
+
+  assert panel._table_stack.currentWidget() is panel.empty_playlist_label
+  assert panel.table.rowCount() == 0
+
+
 def test_generation_result_reorder_nutzt_occurrences_bei_gleichem_pfad(
   qtbot, monkeypatch
 ):

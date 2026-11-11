@@ -7,11 +7,12 @@
 
 ## Kurzstatus
 
-Letzte Vollsuite vor Playlistrotation: 6.644 Tests, 81,02 % Coverage.
-Der aktuelle Source-Stand wurde danach isoliert eingefroren; PyInstaller-Build
-und Frozen-Native-Smoke bestehen. Der Smoke ist synthetisch und ersetzt weder
-Vollsuite nach Playlistrotation noch vollständige manuelle GUI- oder
-Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
+Vollsuite nach Playlist-Startzustandsfix am 11.11.2026: **6.679/6.679 bestanden**,
+Coverage **81,11 %**, Exitcode 0 (`venv312`, Python 3.12.10,
+`pytest tests/ --tb=short -q -n 2`, Laufzeit 22:51). Timeline- und Playlist-Leerzustände
+sind im isolierten Frozen-Build sichtbar geprüft. Die
+vollständige manuelle GUI-/Originalmusik-Abnahme bleibt offen. Der laufende
+ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
 
@@ -103,6 +104,12 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   Accessibility-Tree „Keine Playlist vorhanden.“ Keine Analyse gestartet.
   Das Worker-/Timeline-Testmodul bestand mit **214 Tests**, 1 Test war
   abgewählt (Exitcode 0, `-n 0 --no-cov`, 7,27 s).
+- Nach dem Playlist-Leerzustandsfix isoliert gebaut: Python 3.12.10,
+  PyInstaller 6.21.0; Build erfolgreich. EXE:
+  `E:\AI\HPG-build-verification-2026-11-11-playlist-empty-a95512adad7f4d1689e09c2889af9386\dist\HarmonicPlaylistGenerator.exe`,
+  SHA-256 `7BA80381972534ABE5FA1828A2E0CF2112F7123F37DF33876BDE2AA026DAADF0`.
+  Im isolierten GUI-Profil zeigt der Playlist-Tab den Leerhinweis sichtbar und
+  im Accessibility-Tree; Regressionstest plus Vollsuite bestanden. Keine Analyse gestartet.
 - Voriger Frozen-Build für den Playlistrotations-Quellstand: Python 3.12.10,
   PyInstaller 6.21.0; Build vollständig erfolgreich. EXE:
   `E:\AI\HPG-build-verification-2026-11-11-playlist-rotation-4fe4a1757cfd4349877bcbd826904fdc\dist\HarmonicPlaylistGenerator.exe`,
@@ -318,7 +325,10 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   `Film_x_batch/FX_0474`; Queue hat 0 wartende Aufträge. Der History-Endpunkt
   liefert während des laufenden Auftrags noch keinen Eintrag. Kein neuer Prompt
   wurde eingereiht.
-  Producer bleibt unberührt. Frühere Ausgaben
+  Nach der aktuellen Vollsuite bestätigter Live-Stand: Prompt-ID `49`, UUID
+  `dfe9b25b-0f0c-4408-93c3-6b7531616ede`, Ausgabepräfix
+  `Film_x_batch/FX_0480`; Queue hat 0 wartende Aufträge.
+  Producer bleibt unberührt; kein Auftrag eingereiht, geändert oder abgebrochen. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
@@ -341,13 +351,13 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   Worker-/Timeline-Testmoduls enthalten (`venv312`, `-n 0 --no-cov`). Ein erster Aufruf mit globalem Python fand
   `librosa` nicht; der korrigierte Aufruf nutzte die Projektumgebung.
 - Der Qualitäts-Tab zeigt beim Start das Camelot-Rad, seine Hörtest-Aktionen
-  und den erklärenden Text. Keine zweite leere Hauptansicht festgestellt.
-- Der neue Frozen-Build mit diesem Fix wurde isoliert gestartet und die
-  sichtbare sowie barrierefreie Textdarstellung bestätigt; keine Analyse
-  gestartet.
-- Eine Folgestart-Instanz für die Playlist-Ansicht blieb außerhalb der UI-
-  Inventur, obwohl der isolierte Prozess lief. Daher keine Aussage zum
-  sichtbaren Playlist-Leerzustand aus diesem Versuch; Prozess beendet.
+  und den erklärenden Text.
+- Der Playlist-Tab hatte beim Start eine leere Tabelle ohne Erklärung. Er zeigt
+  nun „Noch keine Playlist vorhanden. Erstelle zuerst eine Playlist in der
+  Bibliothek.“; beim Setzen von Tracks schaltet die Ansicht auf die Tabelle und
+  beim Leeren zurück. Regression `test_playlist_panel_schaltet_leerzustand_mit_playlistinhalt`
+  bestanden. Der neue Frozen-Build bestätigt sichtbare und barrierefreie Darstellung;
+  keine Analyse gestartet.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
    und jede Ausgabe per History und `ffprobe` prüfen.

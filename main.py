@@ -2605,6 +2605,22 @@ class PlaylistPanel(QWidget):
         self._transition_score_delegate = TransitionScoreDelegate(self.table)
         self.table.setItemDelegateForColumn(PlaylistColumn.TRANSITION, self._transition_score_delegate)
 
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self.table)
+        self.empty_playlist_label = QLabel(
+            "Noch keine Playlist vorhanden.\n"
+            "Erstelle zuerst eine Playlist in der Bibliothek."
+        )
+        self.empty_playlist_label.setObjectName("playlistEmptyState")
+        self.empty_playlist_label.setAccessibleName("Keine Playlist vorhanden")
+        self.empty_playlist_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_playlist_label.setWordWrap(True)
+        self.empty_playlist_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; padding: 24px;"
+        )
+        self._table_stack.addWidget(self.empty_playlist_label)
+        self._table_stack.setCurrentWidget(self.empty_playlist_label)
+
         view_options = QHBoxLayout()
         self.extended_columns = QCheckBox("Alle Messspalten anzeigen")
         self.extended_columns.setAccessibleName("Erweiterte Playlist-Spalten")
@@ -2616,7 +2632,7 @@ class PlaylistPanel(QWidget):
         view_options.addStretch()
         layout.addLayout(view_options)
         self._table_layout = QHBoxLayout()
-        self._table_layout.addWidget(self.table, 3)
+        self._table_layout.addWidget(self._table_stack, 3)
         self.details_text = QPlainTextEdit()
         self.details_text.setReadOnly(True)
         self.details_text.setAccessibleName("Track- und Übergangsdetails")
@@ -2951,6 +2967,9 @@ class PlaylistPanel(QWidget):
 
     def _populate_table(self):
         """Tabelle mit Performance-Optimierung befuellen."""
+        self._table_stack.setCurrentWidget(
+            self.table if self.playlist else self.empty_playlist_label
+        )
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(self.playlist))
 
