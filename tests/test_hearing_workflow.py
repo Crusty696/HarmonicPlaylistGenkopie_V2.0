@@ -47,6 +47,52 @@ def config_fixture(tmp_path, monkeypatch):
     return PrepareConfig("einzel", tmp_path / "result", cache, count=1, source_roots=(sources,))
 
 
+def test_cli_and_native_single_prepare_csv_artifacts_match(config_fixture, monkeypatch, tmp_path):
+    """Compare wrapper artifacts with a fixed producer fixture, not real DSP."""
+    from dataclasses import replace
+    from hpg_core.hearing_calibration import validate_set
+    from hpg_core.hearing_sources import SourceRenderSink, load_source_session
+    from hpg_core.hearing_workflow import _producer_namespace
+    from tools import rate_transitions as rt
+
+    producer = producer_for(
+        config_fixture.source_roots[0] / "a.wav",
+        config_fixture.source_roots[0] / "b.mp3",
+    )
+
+    def render_or_reference(args):
+        if args.hpg_render_sink is not None:
+            return producer(args)
+        def write_test_clip(_spec, destination):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"fixed deterministic test render")
+        args.hpg_render_sink = write_test_clip
+        try:
+            return producer(args)
+        finally:
+            args.hpg_render_sink = None
+
+    monkeypatch.setattr(rt, "_befehl_prepare_intern", render_or_reference)
+    cli_config = replace(config_fixture, output_dir=tmp_path / "cli-set")
+    cli_sink_root = tmp_path / "cli-sink"
+    cli_sink_root.mkdir()
+    cli_sink = SourceRenderSink(cli_sink_root, cli_config.source_roots)
+    cli_args = _producer_namespace(
+        cli_config, cli_config.output_dir, cli_config.output_dir,
+        cli_sink, CancellationToken(), None, None,
+    )
+    cli_args.hpg_render_sink = None
+    assert rt.befehl_prepare(cli_args) == 0
+    gui_config = replace(config_fixture, output_dir=tmp_path / "gui-set")
+    result = create_set(gui_config)
+
+    assert result.status == "prepared"
+    assert validate_set(cli_config.output_dir)
+    assert load_source_session(gui_config.output_dir).pair_count == 1
+    for name in ("merkmale.csv", "bewertung.csv"):
+        assert (cli_config.output_dir / name).read_bytes() == (gui_config.output_dir / name).read_bytes()
+
+
 def test_create_set_publishes_prepared_virtual_counts(config_fixture):
     updates = []
     result = create_set(config_fixture, progress=updates.append)

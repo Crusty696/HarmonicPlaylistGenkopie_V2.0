@@ -33,6 +33,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Einzel-Fit reicht Genres weiter; Kandidaten-/Dreinoten-Fit deaktiviert den
   unwirksamen Genrefilter; Replay-Audit deaktiviert den Seed. Artefakt-/Golden-
   Master-Vergleich bleibt ein separates offenes Task-7-Kriterium.
+- Erster CLI-/GUI-Publikationsvergleich bestanden (**1/1**): ein deterministischer
+  Einzelmodus-Fixture-Producer erzeugt über beide Wrapper bytegleiche CSVs;
+  Legacy- und Quellvalidator akzeptieren die Resultate. Der interne Algorithmus
+  war dabei absichtlich ersetzt. Das ist ein Wrapper-/Schema-Vertrag, kein
+  Golden Master für reale Producer; die übrigen Modi und JSON-Rundreisen bleiben
+  offen.
 - Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
   `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
   Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine
