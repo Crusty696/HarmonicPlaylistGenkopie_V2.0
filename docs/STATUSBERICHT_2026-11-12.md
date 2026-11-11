@@ -53,6 +53,11 @@
   dem nativen Fit-Ergebnis. Der gezielte Lauf bestand **2/2** am 12.11.2026.
   Quellen, Cache und Renderer sind synthetisch; andere Artefakt-Schemas und die
   vollständige Golden-Master-Matrix bleiben offen.
+- Der Einzel-Fit-Rundlauf ist zusätzlich geschlossen:
+  `test_single_fit_cli_output_matches_native_report_and_roundtrips` vergleicht
+  das echte CLI-`gewichte.json` mit dem nativen Einzel-Fit-Bericht und validiert
+  den wieder eingelesenen Vorschlag; **1/1** gezielt bestanden. Fixture nutzt
+  synthetische CSVs ohne Cache und Audiodateien.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.

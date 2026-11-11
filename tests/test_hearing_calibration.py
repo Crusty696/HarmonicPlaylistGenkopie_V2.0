@@ -202,6 +202,35 @@ def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, 
     assert dialog.status_label.text() == f"Bericht gespeichert: {target}"
 
 
+def test_single_fit_cli_output_matches_native_report_and_roundtrips(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from hpg_core.hearing_calibration import compute_proposal, export_proposal, validate_proposal
+    from tools import rate_transitions as rate
+
+    root = _csv_single(tmp_path, rated=True)
+    operation_root = tmp_path / "single-fit-operation"
+    operation_root.mkdir()
+    monkeypatch.setenv(
+        "HPG_CANDIDATE_PREFERENCES_FILE",
+        str(operation_root / "child_preferences.json"),
+    )
+    native = compute_proposal(
+        root, None, operation_root=operation_root, operation_id="7" * 32, seed=1,
+    )
+    validate_proposal(native)
+
+    assert rate.befehl_fit(SimpleNamespace(dir=root, seed=1, genre=None)) == 0
+    cli_report = json.loads((root / "gewichte.json").read_bytes())
+    assert cli_report == native["single_proposal"]
+
+    export_path = export_proposal(native, tmp_path / "single-fit-proposal.json")
+    exported = json.loads(export_path.read_bytes())
+    validate_proposal(exported)
+    assert exported == native
+    assert not (operation_root / "child_preferences.json").exists()
+
+
 @pytest.mark.gui
 @pytest.mark.integration
 def test_single_fit_from_app_button_shows_real_draft_without_applying(
