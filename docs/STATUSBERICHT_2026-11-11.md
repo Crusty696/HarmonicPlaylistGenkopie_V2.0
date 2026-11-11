@@ -19,6 +19,10 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
   `--no-cov`; er belegt diese Gruppen, nicht die vollständige Suite oder reale
   Decoder-/Musikabnahme.
+- Blindtest-Vorbereitung/Integritätsprüfung am 11.11.2026 fokussiert geprüft:
+  **87 Tests bestanden** für Pfadcontainment, Duplikate, Audioeigenschaften,
+  No-overwrite, Schlüsseltrennung, portable Worker-Abbruch-/Rollback-Grenzen
+  und native GUI-Weitergabe. Keine Entblindung oder Statistik implementiert.
 
 - Neuester Stand: Satzbrowser filtert vorhandene Sets nach Ordner, Format,
   Fortschritt, Status und Fehlern; eine beim Filtern ausgeblendete Auswahl wird

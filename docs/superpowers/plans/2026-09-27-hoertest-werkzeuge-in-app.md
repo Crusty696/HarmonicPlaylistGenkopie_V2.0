@@ -233,11 +233,13 @@ Nach letzter Änderung bestanden 11 fokussierte Tests; der letzte Volltest hatte
 6.599/6.600 Tests grün, ein paralleler Smoke-Subprozessfehler bestand isoliert.
 Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand.
 
-- [ ] Tests für Pfadcontainment, doppelte/identische Clips, Dauer-/Samplerateabweichung, vorhandene Session und getrennten Schlüssel schreiben.
-- [ ] App führt Prüfung und Session-Erstellung aus; öffentliche Session und geheimer Zuordnungsschlüssel bleiben physisch getrennt.
-- [ ] App zeigt klare Ausgabeorte und trennt öffentliche Session von privatem Schlüssel; Schlüssel darf nie in öffentlichem Sessionordner, Browser oder Logs landen.
+- [x] Tests für Pfadcontainment, doppelte/identische Clips, Dauer-/Samplerateabweichung, vorhandene Session und getrennten Schlüssel schreiben. Producer- und Blind-Contract-Regressionen bestanden im fokussierten Lauf.
+- [x] App führt Prüfung und Session-Erstellung aus; öffentliche Session und geheimer Zuordnungsschlüssel bleiben physisch getrennt. Native Export-/Checkworker und echte Producerintegration bestanden.
+- [x] App zeigt klare Ausgabeorte und trennt öffentliche Session von privatem Schlüssel; Schlüssel darf nie in öffentlichem Sessionordner, Browser oder Logs landen. Getrennte Pfadabbildung und Integritätsprüfung sind durch MainWindow-, Worker- und Sessionprüfungen abgedeckt.
 - [x] Nutzer kann Dateien der Session auf Integrität prüfen. Keine Entblindung oder Statistik behaupten, weil das Werkzeug diese Funktion nicht implementiert.
 - [ ] Optionaler Folgeschritt nur nach separater Spezifikation: Import `validation/dj_blind_test_template.csv`, Zuordnungsprüfung per Schlüssel, Ausschlussregeln und aggregierte Auswertung. Nicht ungefragt mit Trainingslabels/Präferenz-Fit vermischen.
+
+**Verifikation 11.11.2026:** 87 fokussierte Fälle aus Producer, Referenz-/Portablesession, Worker und GUI-Integration bestanden mit `pytest ... --no-cov -q`. Der optionale Import/Entblindungs-/Statistikpfad bleibt außerhalb des belegten Funktionsumfangs.
 
 **Abnahmekriterium:** Die vorhandene Blindtest-Session-Erstellung ist per App vollständig verfügbar; Plan verspricht keine nicht existente Bewertung/Auswertung. Eine spätere Entblindungsfunktion erhält eigenes Konzept und Tests.
 
