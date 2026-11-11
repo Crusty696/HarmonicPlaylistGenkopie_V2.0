@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Code-Stand `149f5af1ad46eb99f3958a5ad28376d52ad11854` wurde mit `origin/codex/gesamtrefaktorierung` abgeglichen. Der Bericht und die Planpräzisierung halten diesen Abgleich fest.
+**GitHub-Abgleich:** Der VERITAS-Codeaudit prüfte Commit `149f5af1ad46eb99f3958a5ad28376d52ad11854`; der Branch ist inzwischen weiter. Der Bericht wird mit jedem bestätigten Schritt nachgeführt.
 
 ## Kurzstatus
 
@@ -65,6 +65,18 @@ manueller kompletter GUI-Ablauf bleiben offen.
   startete. Die temporären Cache-/Logpfade lagen im Build-Scratch. Trotz
   APPDATA/LOCALAPPDATA-Overrides erschien ein gespeicherter Musikordner im
   Dialog; die Quelle dieser Voreinstellung wurde nicht separat geprüft.
+- Zusätzliche GUI-Sichtprüfung: Qualitätsbereich und Hörtest-Erzeugungsdialog
+  öffneten sich; die erweiterten Kandidatenoptionen waren sichtbar. Der Dialog
+  wurde ohne Satzstart abgebrochen. Das laufende Fenster gehörte jedoch zur
+  älteren Smoke-EXE
+  `E:\AI\HPG-build-verification-2026-11-11-portable-blind-check\dist\HarmonicPlaylistGenerator.exe`
+  (SHA-256 `B8D36D86A74524658CDEA09394B9948DEC024EC7910DB3C7677C8C69D4D9083F`),
+  nicht zum zuletzt geprüften Build `portable-blind-final2` (SHA-256
+  `2626E2ECC32DF8F60836EA7C79246B5E49FB6E849482B3A89114A21ECCA1F67A`). Diese
+  Bedienprobe bestätigt daher nicht den aktuellen Build. Testabdeckung der
+  Zuordnung liegt außerdem in `test_prepare_form_maps_modes_and_disables_ineffective_fields`,
+  `test_prepare_form_exposes_all_effective_candidate_options` und
+  `test_namespace_has_exact_ui_to_parser_mapping`.
 - Nach dem Exportpfad wurde mit Python 3.12.10 und PyInstaller 6.21.0 erneut
   isoliert unter `E:\AI\HPG-build-verification-2026-11-11-portable-blind-final2` gebaut.
   Bestehende Buildziele und Root-EXE lagen außerhalb des Wirkpfads. Die EXE
