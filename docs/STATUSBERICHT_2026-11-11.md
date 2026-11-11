@@ -631,3 +631,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Produktions-/Testcode nach `TODO`, `FIXME`, `XXX`, `NotImplementedError` durchsucht: keine offenen Marker. Der einzige `pass`-Treffer in `main.py` fängt gezielt `RuntimeError` ab, wenn ein Qt-Worker-C++-Objekt bereits via `deleteLater()` zerstört wurde; Kommentar und Generation-Counter belegen defensive Lifecycle-Behandlung, kein toter Code.
 - Folgepoll: Prompt 77 / `FX_0500` erfolgreich abgeschlossen. `E:\03_Video_&_Medien\Film_x_batch\FX_0500_00001_.mp4` liegt mit 1.980.063 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s. Prompt 78 / UUID `f2877b56-4f1a-43fc-9a8e-ed60bef19c54`, Präfix `Film_x_batch/FX_0501`, läuft; Queue 1/0, Producer-PID 10456 lebt.
 - MainWindow-Kandidatenwechsel-/Rollbackpfade gezielt geprüft: **10/10 bestanden** (`tests/test_main_workers.py`, zehn ausgewählte Cases, Python 3.12.10, `venv312`, `-n 0 --no-cov`, 1,35 s). Ergebnis-Key-Snapshot und Rebuild, Playlist-Mitgliedschaft beim Ranking-Refresh, Sperre während Audio-Lauf sowie atomarer Rollback bei Berechnungs-, Verteilungs- und Preference-Fehlern; kontrollierte Fixtures.
+
+## Dokumentationslink-Audit
+
+- Read-only-Linkcheck für 45 lokale Markdown-Links in README, `docs/` und `specs/` fand einen defekten relativen README-Link in `docs/superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md`. Pfad von `../../README.md` auf `../../../README.md` korrigiert; erneuter Linkcheck: **45 geprüft, 0 fehlend**. Historischer Planinhalt blieb sonst unverändert.

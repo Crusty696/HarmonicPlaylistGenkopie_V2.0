@@ -258,7 +258,7 @@ Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand.
 - [ ] Separater manueller Usability-Check: App-Start, lokalen Hörtest in App bedienen, Pause/Wechsel/Speichern/Resume, Fehler verständlich; menschliches Audio-Urteil bleibt explizit außerhalb automatisierter Qualitätsbehauptungen.
 - [ ] Unabhängiger Wächter-Read-only-Durchgang vor Umsetzung und Abschlussreview nach Umsetzung, Findings beheben und erneut prüfen.
 - [x] Vollständigen Pflicht-Testlauf `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q` und isolierte Build-/Smokeprüfung ausführen; Ergebnis siehe [Entwicklungsbericht](../../STATUSBERICHT_2026-11-11.md).
-- [x] Schnellstart aktualisieren und Zusatzwerkzeug erst dann als optionalen Diagnose-/Entwicklerweg bezeichnen, wenn die Matrix lückenlos ist. [README](../../README.md) nennt den nativen Einstieg unter QUALITÄT und führt `Start_Hoertest.bat` als optionalen Browserweg; die Matrix listet dessen Vertrag.
+- [x] Schnellstart aktualisieren und Zusatzwerkzeug erst dann als optionalen Diagnose-/Entwicklerweg bezeichnen, wenn die Matrix lückenlos ist. [README](../../../README.md) nennt den nativen Einstieg unter QUALITÄT und führt `Start_Hoertest.bat` als optionalen Browserweg; die Matrix listet dessen Vertrag.
 
 **Abnahmekriterium:** Alle Inventarpunkte sind über App-Aktionen erreichbar, getestete CLI/App-Parität ist belegt, Gesamt-Testlauf und Packaging-Smokecheck bestehen. Bis dahin gilt das Zusatzwerkzeug weiterhin als erforderlich.
 
