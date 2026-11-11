@@ -36,9 +36,11 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Isolierter synthetischer Kandidatensatz mit dem echten `create_set`-Producer
   vorbereitet: ein Paar, zwei Kandidatenclips, sechs Satzdateien unter
   `E:\AI\HPG-build-verification-2026-11-11-manual-hearing-32012e5\hearing-set`;
-  Quellhashes unverändert. Das neue GUI-Fenster ließ sich nach zwei CUA-Inventur-
-  Zeitlimits nicht anbinden. Öffnen/Bewerten im GUI bleibt daher unbestätigt;
-  keine Analyse und kein Zugriff auf Originalmusik.
+  Quellhashes unverändert. Am 11.11.2026 im Frozen-GUI über den Satzbrowser
+  vollständig geprüft und geöffnet. Accessibility-Tree meldet „Satz geladen
+  (kandidaten)“; Analyseherkunft bleibt unbekannt, kein Render-/Auditnachweis.
+  Kein Originalaudio und keine Analyse gestartet. Bewerten, Vorschau und
+  Wiederaufnahme dieses Kandidatensatzes bleiben noch manuell zu prüfen.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
@@ -348,10 +350,11 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `Film_x_batch/FX_0474`; Queue hat 0 wartende Aufträge. Der History-Endpunkt
   liefert während des laufenden Auftrags noch keinen Eintrag. Kein neuer Prompt
   wurde eingereiht.
-  Live-Poll nach dem M3U8-Exportpfad: Prompt-ID `51`, UUID
+  Live-Poll am 11.11.2026: Prompt-ID `51`, UUID
   `94e16fa1-ff24-4699-8bfe-d43d7a30bfc0`, Ausgabepräfix
-  `Film_x_batch/FX_0482`; Queue hat 0 wartende Aufträge.
-  Producer bleibt unberührt; kein Auftrag eingereiht, geändert oder abgebrochen. Frühere Ausgaben
+  `Film_x_batch/FX_0482`; Queue hat 0 wartende Aufträge. `/history/51` liefert
+  noch keinen Abschluss; Datei-/ffprobe-Nachweis fehlt. Producer bleibt
+  unberührt; kein Auftrag eingereiht, geändert oder abgebrochen. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
