@@ -10,7 +10,7 @@ Weg zum aktuellen Code. Sie ist keine Produktabnahme.
 2. [Produktleitlinie](../MEMORY.md), `hpg-orientation` und Fachskills führen zum Code.
 3. Der [Refaktorierungs- und Nachweisprotokoll](superpowers/plans/2026-10-30-gesamtrefaktorierung.md)
    enthält die aktuellen Änderungen und datierten Prüfnachweise. Der
-   [Gesamtstatus vom 09.11.2026](STATUSBERICHT_2026-11-09.md) bündelt den
+   [Gesamtstatus vom 11.11.2026](STATUSBERICHT_2026-11-11.md) bündelt den
    jüngsten Entwicklungsabgleich mit GitHub. Der
    [Quellen- und Nachweisstand](../PRODUCTION_STATUS.md) bewahrt den historischen
    Abgleich vom 26.10. samt damaliger Grenzen.
