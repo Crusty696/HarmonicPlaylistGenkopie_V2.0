@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Lokal und `origin/codex/gesamtrefaktorierung` stehen auf `c507efa5162070da202aa7391bde5b245c41e753`.
+**GitHub-Abgleich:** Der Code-Commit `c507efa5162070da202aa7391bde5b245c41e753` wurde auf `origin/codex/gesamtrefaktorierung` bestätigt. Dieser Statusbericht wurde anschließend separat gepusht.
 
 ## Kurzstatus
 
