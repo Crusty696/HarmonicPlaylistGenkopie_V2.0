@@ -42,9 +42,10 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   Varianten wurden auf Abruf im RAM gerendert und als 32-Sekunden-Vorschau
   abgespielt. Im schreibenden Dialog speicherte die GUI eine temporäre Note 3
   für `001_k1` in `bewertung.csv`; CSV danach auf den vorher leeren Stand
-  zurückgesetzt und verifiziert. Das ist technischer Speicher-/Preview-Nachweis,
+  zurückgesetzt und verifiziert. Nach erneutem Laden meldet das GUI `0/2`
+  Varianten bewertet. Das ist technischer Speicher-/Preview-/Fortsetzungsnachweis,
   keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. GUI-
-  Wiederaufnahme und Originalmusik-Abnahme bleiben offen.
+  Wiederaufnahme weiterer Modi und Originalmusik-Abnahme bleiben offen.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
@@ -354,13 +355,16 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `Film_x_batch/FX_0474`; Queue hat 0 wartende Aufträge. Der History-Endpunkt
   liefert während des laufenden Auftrags noch keinen Eintrag. Kein neuer Prompt
   wurde eingereiht.
-  Live-Poll am 11.11.2026: Prompt-ID `51`, UUID
-  `94e16fa1-ff24-4699-8bfe-d43d7a30bfc0`, Ausgabepräfix
-  `Film_x_batch/FX_0482`; Queue hat 0 wartende Aufträge. `/history/51` liefert
-  noch keinen Abschluss; Datei-/ffprobe-Nachweis fehlt. Producer bleibt
-  unberührt; kein Auftrag eingereiht, geändert oder abgebrochen. Frühere Ausgaben
-  `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
-  243 Frames und 10,125 Sekunden.
+  Prompt-ID `51`, UUID `94e16fa1-ff24-4699-8bfe-d43d7a30bfc0`, Ausgabe
+  `Film_x_batch/FX_0482` ist seit dem vorigen Poll abgeschlossen; die Datei
+  `E:\03_Video_&_Medien\Film_x_batch\FX_0482_00001_.mp4` liegt vor.
+  `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden.
+  Aktueller Live-Poll: Prompt-ID `52`, UUID
+  `58504f56-8bcd-452e-b1db-b8c5f843a14e`, Präfix `Film_x_batch/FX_0483`,
+  1 laufend, 0 wartend; History und Zieldatei für 0483 noch nicht vorhanden.
+  Producer blieb unangetastet; kein Auftrag eingereiht, geändert oder abgebrochen.
+  Frühere Ausgaben `FX_0436` bis `FX_0438` bestätigte `ffprobe` ebenfalls als
+  H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
   Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde, weil dieser
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
