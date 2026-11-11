@@ -544,11 +544,12 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
    Die Dateien `_00001_` und `_00002_` sind separat bestätigt. Der Folgepoll
    zeigt Prompt 72 aus `FX_0497` abgeschlossen und Prompt 73 / UUID
    `5a0f9ad9-7e82-433f-84f0-a79417d28340` mit Präfix `Film_x_batch/FX_0498`
-   aktiv (Producer-PID 10456, Queue 1/0). `FX_0497_00001_.mp4` liegt mit
+   aktiv (Producer-PID 10456, Queue 1/2). `FX_0497_00001_.mp4` liegt mit
    2.272.035 Bytes vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames
-   und 10,125 s. Die History für Prompt 72 war beim Poll bereits leer.
-   Den geplanten
-   H3-Vier-Clip-Batch erst nach Ende des aktuellen Producers starten und jede
+   und 10,125 s. Die History für Prompt 72 war beim Poll bereits leer. In der
+   Warteschlange stehen Prompt 74 und 75 für `PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_1` und `item_2`; diese Jobs bleiben unangetastet.
+   Den geplanten H3-Vier-Clip-Batch erst nach Ende aller aktiven und wartenden
+   Jobs starten, Queue-Eigentümer und freie Queue vorher erneut prüfen und jede
    Ausgabe über History und `ffprobe` prüfen.
    Desktopinventar: sechs Fenster aus isolierten `HPG-build-verification`-
    Builds sind noch offen. Die dazugehörigen HPG-Prozesse zeigten im 3-s-
@@ -578,8 +579,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   Frozen-Build; beides bleibt nach dem ComfyUI-Batch eingeplant.
 - Prompt 72 wurde im Folgepoll durch Prompt 73 ersetzt; ComfyUI-Queue zeigt
   Prompt 73 / UUID `5a0f9ad9-7e82-433f-84f0-a79417d28340`, Präfix `FX_0498`,
-  aktiv; Queue 1/0, Producer-PID 10456 lebt. `FX_0497_00001_.mp4`
-  (2.272.035 Bytes) ist vorhanden und mit `ffprobe` als H.264, 736×416, 24 fps,
-  243 Frames und 10,125 s bestätigt. Die History von Prompt 72 war beim Poll
-  bereits leer; daher stützt die Ausgabe-/Queue-Beobachtung den Abschluss, nicht
-  ein History-Eintrag. Queue und Producer blieben unangetastet.
+  aktiv; Queue 1/2, Producer-PID 10456 lebt. Wartend sind Prompt 74 und 75 mit
+  Präfixen `PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_1` und
+  `item_2`; sie blieben unberührt. `FX_0497_00001_.mp4` (2.272.035 Bytes) ist
+  mit `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s bestätigt.
+  Die History von Prompt 72 war beim Poll bereits leer; die Ausgabe-/Queue-
+  Beobachtung stützt den Abschluss, nicht ein History-Eintrag. Queue und
+  Producer blieben unangetastet.
