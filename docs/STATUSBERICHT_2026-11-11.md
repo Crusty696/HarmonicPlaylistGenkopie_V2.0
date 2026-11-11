@@ -7,12 +7,11 @@
 
 ## Kurzstatus
 
-Letzte Vollsuite nach dem Satzbrowser-Suchfilter: 6.644 Tests, 81,02 % Coverage.
-Der letzte isolierte Frozen-Build und Native-Smoke enthalten diesen Filter, aber
-noch nicht die spätere Playlistlängen-/Rotationsänderung. Dafür bestehen gezielte
-GUI-, Fit- und Exportprüfungen; Vollsuite und neuer Frozen-Build fehlen weiterhin.
-Originalmusik-Abnahme, vollständige manuelle GUI-Abnahme und ComfyUI-H3-Batch
-bleiben offen.
+Letzte Vollsuite vor Playlistrotation: 6.644 Tests, 81,02 % Coverage.
+Der aktuelle Source-Stand wurde danach isoliert eingefroren; PyInstaller-Build
+und Frozen-Native-Smoke bestehen. Der Smoke ist synthetisch und ersetzt weder
+Vollsuite nach Playlistrotation noch vollständige manuelle GUI- oder
+Originalmusik-Abnahme. Der offene ComfyUI-H3-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
 
@@ -84,7 +83,19 @@ bleiben offen.
   Zusätzlich bestanden **143 Browser-/Dialog-/Satzmodus-Preflight- und
   Workflowtests in 8,49 s** (`-n 0 --no-cov`), einschließlich Einzel-,
   Kandidaten- und Dramaturgie-Produktion.
-- Manueller GUI-Pfad des aktuellen Frozen-Builds (SHA-256
+- Neuer isolierter Frozen-Build für den Playlistrotations-Quellstand: Python 3.12.10,
+  PyInstaller 6.21.0; Build vollständig erfolgreich. EXE:
+  `E:\AI\HPG-build-verification-2026-11-11-playlist-rotation-4fe4a1757cfd4349877bcbd826904fdc\dist\HarmonicPlaylistGenerator.exe`,
+  SHA-256 `C0BF60E56B0E976391AC846DF084FC38F51A80FDA50E3A36DDCBFC304AD38573`.
+  Frozen-Native-Smoke: `ok=true`, Imports/Formulare, Spawn-Worker, RAM-Render
+  (16.000 Frames, 8 kHz Stereo) und isolierte CSV-Fit-Probe bestanden.
+  Algorithmusfingerprint: 117 Dateien, SHA-256
+  `591fae4d619aeb696ee706d27a4a31605dfbe0bb570fae47f6dc259bab3b97f5`.
+  Der normale GUI-Start wurde mit leerem isoliertem Profil sichtbar und
+  responsiv geprüft; Playlistlänge zeigte 0/„Alle“. Keine Analyse oder
+  Playlistgenerierung gestartet. Vollsuite nach Rotation und manuelle
+  Satz-/Fit-/Exportbedienung bleiben offen.
+- Manueller GUI-Pfad des vorherigen Satzbrowser-Frozen-Builds (SHA-256
   `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`) am
   11.11.2026 mit ausschließlich synthetischen Audios und isoliertem AppData:
   vorbereiteten Einzelsatz geöffnet, Vorschau im RAM gerendert/abgespielt,
@@ -92,8 +103,8 @@ bleiben offen.
   geöffnet. Beim erneuten Öffnen zeigte die App `Bewertet: 1/1` und
   `Vorhandene Noten geladen`; damit ist Save-/Reload-Verhalten für diese
   synthetische Einzelvariante manuell bestätigt. Die Testnote wurde danach nur
-  im isolierten Temp-Artefakt entfernt; die synthetische Paarzeile bleibt mit leerer Bewertung erhalten. Kein
-  Originalaudio, keine Analyse, kein Fit, kein Export und keine
+  im isolierten Temp-Artefakt entfernt; die synthetische Paarzeile bleibt mit leerer Bewertung erhalten.
+  Kein Originalaudio, keine Analyse, kein Fit, kein Export und keine
   musikalische Qualitätsbewertung. Vollständige GUI-Abnahme bleibt offen.
 - Vollsuite nach Satzbrowser-Änderung: **6.644/6.644 bestanden**, Coverage
   **81,02 %**, Exitcode 0. Isolierter PyInstaller-Build mit `HPG.spec`
@@ -278,8 +289,8 @@ bleiben offen.
   `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden
   für `FX_0460_00001_.mp4`. Auftrag `FX_0461` läuft (Prompt-ID `30`, UUID
   `dcb2a262-6c59-4d4a-8e00-be8a7a0eee14`), Queue hat 0 wartende Aufträge.
-  Live-Queue am 11.11.2026 zeigt Prompt-ID `39` (UUID
-  `6cc191bf-8f15-4594-a5e1-31895024cfad`) aktiv und 0 wartende Aufträge.
+  Live-Queue am 11.11.2026 zeigt Prompt-ID `40` (UUID
+  `bd96f494-2c49-430b-9b25-bfa85419aa84`) aktiv und 0 wartende Aufträge.
   Promptverlauf und Ausgabedatei sind noch nicht bestätigt. Auftrag und
   Batchproducer blieben unangetastet.
   Producer bleibt unberührt. Frühere Ausgaben
