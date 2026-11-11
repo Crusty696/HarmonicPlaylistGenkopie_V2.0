@@ -628,3 +628,29 @@ def test_candidate_fit_dialog_displays_full_report(qtbot, ram_set):
     assert "Neue Gewichte" in report_text
     assert "VOLLSTÄNDIGER MASCHINENLESBARER FITBERICHT" in report_text
     assert json.dumps(proposal["candidate_report"], ensure_ascii=False, indent=2) in report_text
+
+
+def test_candidate_audit_dialog_separates_replay_from_fit(qtbot, ram_set):
+    from PyQt6.QtWidgets import QPlainTextEdit
+    from hpg_core.hearing_panel import HearingAuditResultDialog
+    from hpg_core.hearing_calibration import compute_proposal
+
+    root, cache, operation, _calls, _tracks = ram_set
+    proposal = compute_proposal(root, cache, operation_root=operation, operation_id="1" * 32, fit=False, seed=1)
+    dialog = HearingAuditResultDialog(proposal)
+    qtbot.addWidget(dialog)
+    text = dialog.findChild(QPlainTextEdit).toPlainText()
+    assert "Replay gegen aktuellen Renderer" in text
+    assert "keinen Fit berechnet" in text
+    assert "Build-Bindung" in text and "Cache-Bindung" in text
+    assert proposal["audit_passed"] and proposal["fit_status"] == "not_requested"
+
+
+def test_candidate_audit_dialog_rejects_fit_proposal(qtbot, ram_set):
+    from hpg_core.hearing_panel import HearingAuditResultDialog
+    from hpg_core.hearing_calibration import compute_proposal
+
+    root, cache, operation, _calls, _tracks = ram_set
+    proposal = compute_proposal(root, cache, operation_root=operation, operation_id="1" * 32, fit=True, seed=1)
+    with pytest.raises(ValueError, match="ohne Fit"):
+        HearingAuditResultDialog(proposal)

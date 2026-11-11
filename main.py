@@ -4642,6 +4642,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         self._hearing_action = None
         self._hearing_pending_rating = None
         self._hearing_pending_proposal = None
+        self._hearing_pending_audit = None
         self._hearing_refresh_pending = False
         self._hearing_pending_discovery = None
         self._hearing_refresh_worker = None
@@ -5173,6 +5174,10 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         self._hearing_pending_proposal = None
         if proposal is not None and not self._close_pending:
             self._show_hearing_proposal(*proposal)
+        audit = self._hearing_pending_audit
+        self._hearing_pending_audit = None
+        if audit is not None and not self._close_pending:
+            self._show_hearing_audit(*audit)
         if self._hearing_refresh_pending and not self._close_pending:
             self._hearing_refresh_pending = False
             self._refresh_hearing_ranking()
@@ -5314,9 +5319,13 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f"Öffentliche Session: {result['public_path']}\nPrivater Zuordnungsschlüssel (CSV): {result['key_path']}"
             )
             return
-        if action in {"fit", "audit"} and "proposal" in result:
+        if action == "audit" and "proposal" in result:
+            self._hearing_pending_audit = (result["proposal"], result.get("cleanup_warning", ""))
+            self.analytics_panel.hearing_status.setText("Replay-Audit beendet; Fit nicht ausgeführt. Ergebnis folgt nach Threadende.")
+            return
+        if action == "fit" and "proposal" in result:
             self._hearing_pending_proposal = (result["proposal"], result.get("cleanup_warning", ""))
-            self.analytics_panel.hearing_status.setText("Auswertung beendet. Vorschlag ist noch nicht produktiv übernommen.")
+            self.analytics_panel.hearing_status.setText("Fit beendet. Vorschlag ist noch nicht produktiv übernommen.")
             return
         if action == "apply":
             state = result["apply_state"]
@@ -5897,6 +5906,23 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         worker = HearingCalibrationWorker(target, dialog.cache, fit=not audit_only,
                                           seed=dialog.seed, genres=dialog.genres, parent=self)
         self._start_hearing_worker(worker, "audit" if audit_only else "fit")
+
+    def _show_hearing_audit(self, proposal, cleanup_warning=""):
+        if not self._hearing_selection_allowed():
+            return
+        from hpg_core.hearing_panel import HearingAuditResultDialog
+        dialog = HearingAuditResultDialog(proposal, self, cleanup_warning=cleanup_warning)
+        self._hearing_native_active = True
+        self._update_hearing_buttons()
+        try:
+            dialog.exec()
+        finally:
+            self._hearing_native_active = False
+            self._update_hearing_buttons()
+        if not self._close_pending:
+            self.analytics_panel.hearing_status.setText(
+                "Kandidaten-Replay-Audit bestanden. Fit nicht ausgeführt; keine Gewichte oder Präferenzen geändert."
+            )
 
     def _show_hearing_proposal(self, proposal, cleanup_warning=""):
         if not self._hearing_selection_allowed():

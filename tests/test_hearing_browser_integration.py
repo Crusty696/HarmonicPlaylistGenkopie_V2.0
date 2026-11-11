@@ -479,7 +479,7 @@ def test_cancel_status_respects_publication_boundary(qtbot, monkeypatch, tmp_pat
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize("action", ["open", "prepare", "discover", "fit", "apply", "error"])
+@pytest.mark.parametrize("action", ["open", "prepare", "discover", "fit", "audit", "apply", "error"])
 def test_completion_during_close_has_no_ui_or_state_effect(qtbot, monkeypatch, tmp_path, action):
     window = _window(qtbot, monkeypatch)
     ordinary = _ordinary_state(window, tmp_path)
@@ -499,6 +499,7 @@ def test_completion_during_close_has_no_ui_or_state_effect(qtbot, monkeypatch, t
         assert window.analytics_panel.hearing_status.text() == status
         assert window._hearing_pending_discovery is None
         assert window._hearing_pending_rating is None and window._hearing_pending_proposal is None
+        assert window._hearing_pending_audit is None
         assert not window._hearing_refresh_pending
     finally:
         window._hearing_worker = None
@@ -513,10 +514,11 @@ def test_close_flag_precedes_wait_and_survives_acceptance(qtbot, monkeypatch):
     window._hearing_pending_discovery = ()
     window._hearing_pending_rating = ({}, "folder", False)
     window._hearing_pending_proposal = ({}, "")
+    window._hearing_pending_audit = ({}, "")
     status = window.analytics_panel.hearing_status.text()
     def forbidden(*args, **kwargs):
         raise AssertionError("Reentrantes Cleanup waehrend Close darf kein Modal oeffnen")
-    for name in ("_show_hearing_discovery", "_show_hearing_rating", "_show_hearing_proposal"):
+    for name in ("_show_hearing_discovery", "_show_hearing_rating", "_show_hearing_proposal", "_show_hearing_audit"):
         monkeypatch.setattr(window, name, forbidden)
     def wait(_timeout):
         observations.append(window._close_pending)
@@ -534,7 +536,7 @@ def test_close_flag_precedes_wait_and_survives_acceptance(qtbot, monkeypatch):
     assert event.isAccepted() and window._close_pending
     assert window._hearing_worker is None
     assert window._hearing_pending_discovery is None and window._hearing_pending_rating is None
-    assert window._hearing_pending_proposal is None
+    assert window._hearing_pending_proposal is None and window._hearing_pending_audit is None
     assert window.analytics_panel.hearing_status.text() == status
     monkeypatch.setattr(window, "_managed_workers_for_close", lambda: [])
 
@@ -857,3 +859,17 @@ def test_queued_remote_retry_rechecks_worker_and_native_guard(qtbot, monkeypatch
     finally:
         window._hearing_worker = None
         window._hearing_native_active = False
+
+
+@pytest.mark.gui
+def test_audit_completion_queues_distinct_result_dialog(qtbot, monkeypatch, tmp_path):
+    window = _window(qtbot, monkeypatch)
+    worker = QThread(window)
+    window._hearing_worker = worker
+    proposal = {"audit_passed": True, "fit_status": "not_requested"}
+    window._hearing_completed({"ok": True, "proposal": proposal}, "audit", worker)
+    assert window._hearing_pending_audit == (proposal, "")
+    assert window._hearing_pending_proposal is None
+    assert "Fit nicht ausgeführt" in window.analytics_panel.hearing_status.text()
+    window._hearing_worker = None
+    worker.deleteLater()

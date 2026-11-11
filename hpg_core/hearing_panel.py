@@ -1075,6 +1075,51 @@ class HearingFitDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class HearingAuditResultDialog(QDialog):
+    """Zeigt den Kandidaten-Replay ohne Fit oder produktive Uebernahme."""
+
+    def __init__(self, proposal, parent=None, cleanup_warning=""):
+        super().__init__(parent)
+        import json
+        from .hearing_calibration import validate_proposal
+        validate_proposal(proposal)
+        if (proposal["binding"]["mode"] != "kandidaten"
+                or proposal["audit_passed"] is not True
+                or proposal["fit_status"] != "not_requested"):
+            raise ValueError("Auditdialog benoetigt nur einen bestandenen Replay ohne Fit")
+        self.proposal = proposal
+        self.setWindowTitle("Kandidaten-Replay-Audit – Fit nicht ausgeführt")
+        self.resize(850, 620)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "REPLAY-AUDIT BESTANDEN · FIT NICHT AUSGEFÜHRT · KEINE PRÄFERENZEN GEÄNDERT"
+        ))
+        text = QPlainTextEdit()
+        text.setReadOnly(True)
+        binding = proposal["binding"]
+        receipt = proposal["audit"]
+        text.setPlainText(
+            "Audit-Befund\n"
+            "Replay gegen aktuellen Renderer und gebundene Quellen bestanden.\n"
+            "Dieser Lauf hat keinen Fit berechnet und keine Präferenzen übernommen.\n\n"
+            f"Satzmodus: {binding['mode']}\nSatz: {binding['set_path']}\n"
+            f"Cache: {binding['cache_path']}\nCache-Bindung: {json.dumps(binding['cache'], ensure_ascii=False, sort_keys=True)}\n"
+            f"Build-Bindung: {json.dumps(binding['build'], ensure_ascii=False, sort_keys=True)}\n"
+            f"Dateifingerprints: {json.dumps(binding['files'], ensure_ascii=False, sort_keys=True, indent=2)}\n"
+            f"Quellfingerprints: {json.dumps(binding['sources'], ensure_ascii=False, sort_keys=True, indent=2)}\n"
+            f"Audit-Receipt: {json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2)}\n"
+            f"Vorschlagsdigest: {proposal['proposal_sha256']}"
+        )
+        layout.addWidget(text)
+        status = cleanup_warning or "Temporäre RAM-Replay-Ressourcen wurden nach Prozessende bereinigt."
+        note = QLabel(status)
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
+        layout.addWidget(buttons)
+
+
 class HearingCalibrationResultDialog(QDialog):
     """Zeigt reale Gates und Vorschlag; aktive Uebernahme separat bestaetigen."""
 
