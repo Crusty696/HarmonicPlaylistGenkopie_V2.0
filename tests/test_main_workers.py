@@ -4722,8 +4722,8 @@ def test_preview_dialog_und_xml_export_nutzen_aktiven_paarvertrag(
 
   monkeypatch.setattr(main, "QMessageBox", _MessageBox)
   window.preview_transitions()
-  assert "Score: 71%" in shown["details"]
-  assert "Kandidat Rang 1" in shown["details"]
+  assert "Bewertung: 71%" in shown["details"]
+  assert "Kandidatenrang 1" in shown["details"]
   assert "Mix-Out: 164.6s" in shown["details"]
 
   exporter = Mock()
