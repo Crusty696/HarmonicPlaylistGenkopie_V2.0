@@ -16,6 +16,10 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
 
+- Veraltete Suite-Zahl in der README auf den letzten Vollteststand korrigiert.
+  Hörtest-CLI/GUI-Matrix auf Quellcommit `6285970870d41a69c842e2905d3dba53758ea97c`
+  nachgeführt; die späteren GUI-Änderungen betreffen nur Playlist-Startzustand
+  und Aktionsaktivierung, nicht die dort beschriebenen Hörtest-Verträge.
 - Leere Playlist-Aktionen waren aktiv, obwohl die Playlist fehlte. Export ist nun
   bei 0 Tracks deaktiviert, Übergangsprüfung erst ab 2 Tracks aktiv.
   `test_playlist_panel_schaltet_leerzustand_mit_playlistinhalt`: **1 bestanden**
