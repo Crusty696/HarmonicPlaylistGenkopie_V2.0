@@ -202,7 +202,7 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 - [x] Explizite Apply-Bestätigung, atomare Persistenz, Cache-Reset, neuer Scoring-Context, Playlist-Neuberechnung und Fehlerstatus sind durch vorhandene Services und fünf gezielte MainWindow-Regressionen geprüft.
 - [ ] GUI-Modus-/Option-Matrix vervollständigen: Seed/Genre und Dreinoten-Pilot getrennt abbilden; Kandidaten-`--genre` nicht als wirkungsvollen Filter anbieten; jede wirksame Option gegen CLI-Serviceausgabe testen.
 - [ ] Produktive Apply-Zustimmung mit realem gültigem gatebestandenem Kandidatenvorschlag einschließlich Ja/Nein, Persistenzfehler und Ranking-Rangwirkung in isolierter E2E-Fixture vollständig nachweisen.
-- [ ] Dreinoten-spezifische Gates/Deep-Feature-Abblation direkt und verständlich pro Featuregruppenbericht darstellen, nicht nur als JSON-Anhang.
+- [x] Dreinoten-Gates/Deep-Feature-Abblation je Featuregruppe in der Ergebnisübersicht lesbar darstellen: Status/Grund, Train-/Holdout-Clips und Cluster, Baseline-/erweiterte AUC samt Delta und explizit kein Einfluss auf den Produkt-Score; GUI-Test in `tests/test_hearing_calibration.py`.
 
 **Abnahmekriterium:** UI nennt operation „Präferenz-Fit/Kalibrierung“, nicht Modelltraining. Nutzer kann belegen, welche Ratings einflossen, welcher Bericht entstand und ob aktive App-Gewichte wirklich geschrieben und vom Ranking neu geladen wurden.
 

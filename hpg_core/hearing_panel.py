@@ -1157,7 +1157,28 @@ class HearingCalibrationResultDialog(QDialog):
         lines.append(f"\nGesamtdaten: {json.dumps(report['counts'], ensure_ascii=False, sort_keys=True)}")
         if report["dreinoten"]:
             deep = report["diagnose"].get("deep_feature_calibration", {})
-            lines.append(f"\nDreinoten-/Deep-Feature-Ergebnis: {json.dumps(deep, ensure_ascii=False, sort_keys=True)}")
+            lines.extend((
+                "\nDREINOTEN-/DEEP-FEATURE-ABBLATION",
+                f"  Gesamtstatus: {deep.get('status', 'nicht vorhanden')}",
+                f"  Grund: {deep.get('reason', 'keine Diagnose')}",
+                f"  Labels/Clips: {deep.get('labeled_clips', 'n/a')} / {deep.get('clips', 'n/a')}",
+                f"  deklarierte Cluster: {deep.get('declared_mix_clusters', 'n/a')}",
+                f"  Produkt-Score beeinflusst: {'JA' if deep.get('affects_score') else 'NEIN'}",
+            ))
+            for group, detail in sorted(deep.get("track_holdout_ablation", {}).items()):
+                baseline = detail.get("baseline_auc", "n/a")
+                augmented = detail.get("augmented_auc", "n/a")
+                delta = detail.get("auc_delta", "n/a")
+                lines.extend((
+                    f"\n  Featuregruppe {group}: {detail.get('status', 'unbekannt')}",
+                    f"    Begründung: {detail.get('reason', 'keine')}",
+                    f"    Train-/Holdout-Clips: {detail.get('train_clips', 'n/a')} / {detail.get('holdout_clips', 'n/a')}",
+                    f"    Train-/Holdout-Cluster: {detail.get('train_clusters', 'n/a')} / {detail.get('holdout_clusters', 'n/a')}",
+                    f"    AUC Baseline/erweitert/Delta: {baseline} / {augmented} / {delta}",
+                    f"    Baseline-Merkmale: {', '.join(detail.get('baseline_features', ())) or 'keine'}",
+                    f"    Deep-Merkmale: {', '.join(detail.get('deep_features', ())) or 'keine'}",
+                    f"    Produkt-Score beeinflusst: {'JA' if detail.get('affects_score') else 'NEIN'}",
+                ))
         return "\n".join(lines)
 
     @staticmethod
