@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen nach `git fetch origin` auf `57a7141ccc98d264ff928fa0303de8db3695c4ad` überein. `origin/main` ist Vorfahr; der Branch liegt 133 Commits voraus. `gh run list` meldet keine Branch-Runs; ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für den aktuellen HEAD ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, nach Push des GUI-Tests):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen nach `git fetch origin` auf `dc79d303b3464bf412f6e6a72b3661a77616de7c` überein. `origin/main` ist Vorfahr; der Branch liegt 134 Commits voraus. `gh run list` nach dem Push meldet keine Branch-Runs; ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
