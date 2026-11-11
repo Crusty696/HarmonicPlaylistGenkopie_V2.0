@@ -166,15 +166,16 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Live-Abfrage am 11.11.: FilmX-Batch **514 MP4-Dateien**, Warteschlange 0,
-  ein laufender Auftrag (ID `9559b1ca-575a-4ae2-b60b-ccfd55a077c6`; Prompt-
-  Prefix nicht erneut ausgelesen). Producer bleibt unberührt. Frühere Ausgaben
+- Aktuelle Live-Abfrage: FilmX-Batch **514 MP4-Dateien**, Auftrag `FX_0460`
+  (Prompt-ID `29`, UUID `676d873b-1edb-45a5-8a56-1a778b6f9e3c`) läuft;
+  Queue hat 0 wartende Aufträge. Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
   Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde, weil dieser
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
-  nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt.
+  nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt. Für den nächsten
+  H3-Lauf fehlen weiterhin die verbindlichen Prompttexte oder deren Quelldatei.
 
 ## Nächste Schritte
 
