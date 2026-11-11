@@ -44,7 +44,9 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   für `001_k1` in `bewertung.csv`; CSV danach auf den vorher leeren Stand
   zurückgesetzt und verifiziert. Nach erneutem Laden meldet das GUI `0/2`
   Varianten bewertet. Das ist technischer Speicher-/Preview-/Fortsetzungsnachweis,
-  keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. GUI-
+  keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. Der
+  Legacy-Browserknopf zeigt für quellenbasierte Sätze den Hinweis, dass er
+  vorhandene Hörclips erwartet; Server/Browser wurden nicht gestartet.
   Wiederaufnahme weiterer Modi und Originalmusik-Abnahme bleiben offen.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
