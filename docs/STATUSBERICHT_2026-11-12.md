@@ -2,7 +2,7 @@
 
 **Stand:** 12.11.2026
 **Branch:** `codex/gesamtrefaktorierung`
-**Lokaler und entfernter Branch:** `a3a22816b6f94fc394fe64d31bfd2b860dfaeb9c` (gleich; Statusbericht gepusht)
+**Lokaler und entfernter Branch:** `18bd9a01ca64fdf2420c826ae03297527f1d91ea` (gleich; zuletzt Referenzbereinigung gepusht)
 
 ## Geprüfte Fortschritte
 
@@ -35,8 +35,17 @@
   jüngsten Änderungen. Ein aktueller Vollsuite-Lauf fehlt.
 - Ein Frozen-Build aus genau diesem aktuellen Quellstand und dessen sichtbarer
   GUI-Smoke fehlen.
-- Eine vollständige manuelle App-Bedienung sowie eine musikalische Abnahme mit
-  Originalmusik sind nicht nachgewiesen.
+- Eine gezielte manuelle Frozen-GUI-Prüfung vom 11.11. deckt den Kandidaten-
+  Hörtest ab: isolierten Satz öffnen, beide Varianten im RAM rendern und
+  abspielen, eine Note speichern und nach erneutem Laden wiederfinden. Die
+  temporäre Testnote wurde entfernt. Nicht abgedeckt sind alle vier Satzmodi,
+  manuelle Pause-/Fehlerpfade, ein vollständiger Fit-/Exportablauf und eine
+  musikalische Abnahme mit Originalmusik. Der vollständige manuelle
+  Abnahmepunkt bleibt daher offen.
+- Der aktuelle Hörtest-Plan nennt als verbleibenden maschinenprüfbaren Punkt
+  einen Golden-Master-Lauf mit unveränderter CLI-Bindungsprüfung und allen
+  publizierten CSV-/JSON-Schemas. Die vorhandenen Producer-/Sitzungs- und
+  Fit-Rundreisen belegen Teilverträge, nicht diesen Gesamtvertrag.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.
