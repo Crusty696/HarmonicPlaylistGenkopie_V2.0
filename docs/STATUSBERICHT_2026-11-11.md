@@ -635,3 +635,4 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 ## Dokumentationslink-Audit
 
 - Read-only-Linkcheck für 45 lokale Markdown-Links in README, `docs/` und `specs/` fand einen defekten relativen README-Link in `docs/superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md`. Pfad von `../../README.md` auf `../../../README.md` korrigiert; erneuter Linkcheck: **45 geprüft, 0 fehlend**. Historischer Planinhalt blieb sonst unverändert.
+- Vollständiger Markdown-Linkcheck nach Beseitigung der toten `AGENTS.md`-Verweise: **183 Dateien, 57 lokale Links, 0 fehlende Ziele**. `OPENCLAW_HPG_SETUP.md` und `PRODUCTION_STATUS.md` verweisen nun auf das aktive `docs/PROJECT_KNOWLEDGE.md`; historische Inhaltspassagen sonst bewahrt.

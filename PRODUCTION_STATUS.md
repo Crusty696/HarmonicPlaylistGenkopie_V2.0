@@ -60,7 +60,7 @@ eine zu genau diesem Stand geprüfte EXE sind weiterhin nicht belegt.
 ## Quellen und Arbeitsregeln
 
 - [Projektwissen](docs/PROJECT_KNOWLEDGE.md)
-- [AGENTS.md](AGENTS.md)
+- [Aktive Arbeitsregeln](docs/PROJECT_KNOWLEDGE.md#aktive-arbeitsregeln)
 - [Deep-Analysis-Spezifikation und Verlauf](specs/REKORDBOX_DEEP_ANALYSIS_INTEGRATION.md)
 - [Historisches Archiv einschließlich Wächterbericht](docs/PROJECT_KNOWLEDGE.md#historisches-archiv)
 - [Bereinigung vom 26.10.2026](docs/CLEANUP_2026-10-26.md)

@@ -7,15 +7,17 @@ geprüft werden. Dieses Dokument behauptet keinen aktiven Runtimezustand.
 
 ## Projektvertrag
 
-[AGENTS.md](AGENTS.md) und der aktuelle Auftrag bestimmen die Arbeit.
+[Projektwissen](docs/PROJECT_KNOWLEDGE.md) und der aktuelle Auftrag bestimmen die Arbeit.
 Die verfügbaren Fachskills liegen unter `.agents/skills/`, Fachrollen unter
 `.agents/agents/`; keine feste historische Anzahl als Iststand übernehmen.
-Die Claude-Spiegel und Codex-Rollenbeschreibungen sollen denselben Inhalt tragen.
+Diese `.agents/`-Pfade sind kanonisch. Entfernte `.claude/`- und `.codex/`-
+Spiegel sind keine aktiven Quellen.
 Wächterprüfungen erfolgen auf Anforderung, ohne obligatorische Freigabetore.
 
 `SOUL.md`, `TOOLS.md`, `USER.md`, `IDENTITY.md` und `MEMORY.md` ergänzen
 Produktleitlinie und Arbeitsumgebung. Schutzregeln und Testausnahmen aus
-AGENTS.md gelten auch für OpenClaw. Installationen, Modell-/Providerwechsel
+Das Projektwissen und die Regeln der aktiven OpenClaw-Installation gelten für
+OpenClaw. Installationen, Modell-/Providerwechsel
 oder Berechtigungsänderungen werden durch dieses Dokument nicht beauftragt.
 
 ## Auftrag formulieren
