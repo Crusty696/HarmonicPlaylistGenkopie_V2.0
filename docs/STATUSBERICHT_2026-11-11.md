@@ -593,3 +593,9 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   `faad791c-1432-4256-be04-ab53b54a3b72`, Präfix `Film_x_batch/FX_0499`,
   läuft; Queue 1/0, Producer-PID 10456 lebt. History und Ausgabedatei waren
   beim letzten Poll noch nicht vorhanden. Keine Queue-Aktion vorgenommen.
+
+## Aktuelle Fortsetzung: Hearing-Panel und Queue
+
+- Hearing-Panel Playback-/Render-Gates isoliert erneut geprüft: **6/6 bestanden** (`test_native_memory_playback_retains_buffer_and_releases_on_reject`, `test_navigation_away_and_back_rejects_stale_render`, `test_native_spec_rating_requires_current_successful_render`, `test_native_spec_render_error_never_writes_negative_rating`, `test_spec_path_cannot_bypass_ram_render`, `test_group_best_choice_requires_all_rendered_and_error_revokes_it`; Python 3.12.10, `venv312`, `-n 0 --no-cov`, 0,53 s). Synthetische Qt-Verträge zu Buffer-Lebensdauer, veraltetem Render, Rating-Gates, Fehlerbehandlung und Gruppenwahl; keine Originalaudioanalyse.
+- Queue unmittelbar nach dem Test per ComfyUI-API geprüft: Prompt 76 / UUID `faad791c-1432-4256-be04-ab53b54a3b72`, Präfix `Film_x_batch/FX_0499`, läuft; 1 aktiv, 0 wartend. Kein Queue-Job verändert.
+- Berichtdatei war im `HEAD` bereits versioniert und ohne lokale Änderung; 93 andere bestehende Änderungen bleiben unangetastet.
