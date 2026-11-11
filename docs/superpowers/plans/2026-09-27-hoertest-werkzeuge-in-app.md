@@ -215,6 +215,15 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 
 **Schnittstellen:** GUI ruft einen intern importierbaren Blindtest-Service mit validiertem Manifest, erlaubtem Quellroot, neuem Sessionordner und getrenntem Schlüsselpfad auf; CLI ruft denselben Service auf. Ergebnis: öffentliche `blind_session.csv`/Clips und private Zuordnung. Bewertungsimport/Entblindung sind keine vorhandenen Werkzeugfunktionen.
 
+**Implementierungsnachweis 11.11.2026:** Der Qualitätsbereich bietet nun lokale
+Referenzen (bisheriger Default) oder portablen Export. Der portable GUI-Worker
+ruft `tools.prepare_dj_blind_test.prepare` direkt auf und erzeugt neutrale WAV-
+Kopien der Manifest-Clips sowie eine getrennte Zuordnungs-CSV; Originaltracks
+werden nicht kopiert. 143 fokussierte und 6.595 Gesamttests bestanden, ebenso
+ein isolierter Frozen-Build samt Native-Smoke. Der portable Worker ist nicht
+abbrechbar. Die vorhandene A/B-Integritätsprüfung liest bisher nur lokale
+Referenz-JSON; CSV-Export prüfen und erneut öffnen bleibt offen.
+
 - [ ] Tests für Pfadcontainment, doppelte/identische Clips, Dauer-/Samplerateabweichung, vorhandene Session und getrennten Schlüssel schreiben.
 - [ ] App führt Prüfung und Session-Erstellung aus; öffentliche Session und geheimer Zuordnungsschlüssel bleiben physisch getrennt.
 - [ ] App zeigt klare Ausgabeorte und trennt öffentliche Session von privatem Schlüssel; Schlüssel darf nie in öffentlichem Sessionordner, Browser oder Logs landen.
