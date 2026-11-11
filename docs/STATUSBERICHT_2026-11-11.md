@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026, vor dem aktuellen UI-Audit-Commit):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen auf `5c908ec3927c12a06e7422a033ed44123e377f59` überein; `origin/main` ist Vorfahr. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026):** Commit `95b8f6dae14fb9561c61b946be743afd4261d80e` mit dem UI-Lokalisierungsdelta ist auf `origin/codex/gesamtrefaktorierung`; `git fetch origin` bestätigte identische lokale und entfernte HEADs. `origin/main` ist Vorfahr. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -511,8 +511,13 @@ Der ergänzte synthetische Worker-Status-Test läuft ohne Audioanalyse.
 
 ## Nächste Schritte
 
-1. FilmX-Queue nicht unterbrechen; nach Ende des Producers H3-Vier-Clip-Batch
-   starten und jede Ausgabe per History und `ffprobe` prüfen.
+1. FilmX-Queue nicht unterbrechen. Live-Stand am 11.11.2026 nach dem UI-Commit:
+   Prompt 69, UUID `5cbddffd-1600-4611-8a65-7b34f526ee1b`, Präfix
+   `Film_x_batch/FX_0496`, Producer-PID 10456 aktiv, Queue 1 laufend/0 wartend.
+   Prompt 68/`FX_0495_00001_.mp4` ist in der History erfolgreich, 736×416,
+   24 fps, 243 Frames, 10,125 s. Den geplanten H3-Vier-Clip-Batch erst nach
+   Ende des aktuellen Producers starten und jede Ausgabe über History und
+   `ffprobe` prüfen.
 2. Nach Ende des laufenden Batches die Vollsuite gegen den aktuellen HEAD
    ausführen; die letzte Vollsuite vor jüngsten Änderungen bestand mit
    6.679/6.679 Tests und 81,11 % Coverage.
