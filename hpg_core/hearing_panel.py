@@ -986,8 +986,8 @@ class HearingBlindPrepareDialog(QDialog):
                 "Quellclips bleiben unverändert. Der Zuordnungsschlüssel ist eine "
                 "separate CSV-Datei außerhalb des Satzordners. Die Audios können "
                 "weiterhin anhand ihres Klangs erkennbar sein. Keine Bewertung oder "
-                "Statistik. Der Kopiervorgang läuft im Hintergrund und ist nach "
-                "Start nicht abbrechbar."
+                "Statistik. Der Kopiervorgang läuft im Hintergrund und kann bis "
+                "zur atomaren Veröffentlichung abgebrochen werden."
             )
         else:
             self.notice.setText(

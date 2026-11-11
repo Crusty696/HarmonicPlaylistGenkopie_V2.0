@@ -1,5 +1,6 @@
 import csv
 import hashlib
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -121,3 +122,121 @@ def test_validate_portable_session_rejects_changed_clip_and_in_session_key(tmp_p
   internal_key.write_bytes(key.read_bytes())
   with pytest.raises(ValueError, match="liegt im Session-Ordner"):
     validate_portable_session(public, internal_key)
+
+
+def test_prepare_portable_cancellation_discards_unpublished_session(tmp_path):
+  from hpg_core.hearing_workflow import CancellationToken
+
+  hpg = tmp_path / "hpg.wav"
+  baseline = tmp_path / "baseline.wav"
+  sf.write(hpg, np.zeros(16000), 8000)
+  sf.write(baseline, np.ones(16000) * 0.1, 8000)
+  manifest = tmp_path / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{hpg},{baseline}\n",
+    encoding="utf-8",
+  )
+  output = tmp_path / "session"
+  key = tmp_path / "private" / "key.csv"
+  cancel = CancellationToken()
+
+  def cancel_after_staging(_current, _total, _message):
+    assert cancel.request_cancel()
+
+  with pytest.raises(InterruptedError, match="abgebrochen"):
+    prepare(manifest, output, key, cancel=cancel, progress=cancel_after_staging)
+
+  assert not output.exists()
+  assert not key.exists()
+  assert not list(tmp_path.glob("hpg_blind_*"))
+
+
+def test_prepare_portable_never_overwrites_key_created_during_export(tmp_path):
+  hpg = tmp_path / "hpg.wav"
+  baseline = tmp_path / "baseline.wav"
+  sf.write(hpg, np.zeros(8000), 8000)
+  sf.write(baseline, np.ones(8000) * 0.1, 8000)
+  manifest = tmp_path / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{hpg},{baseline}\n",
+    encoding="utf-8",
+  )
+  output = tmp_path / "session"
+  key = tmp_path / "private" / "key.csv"
+  existing_key = b"another process owns this key"
+
+  def race_key_creation(_current, _total, _message):
+    key.parent.mkdir(parents=True, exist_ok=True)
+    key.write_bytes(existing_key)
+
+  with pytest.raises(FileExistsError):
+    prepare(manifest, output, key, progress=race_key_creation)
+
+  assert key.read_bytes() == existing_key
+  assert not output.exists()
+  assert not list(tmp_path.glob("hpg_blind_*"))
+  assert not list(key.parent.glob(".key.csv.*.tmp"))
+
+
+def test_prepare_portable_rollback_preserves_replaced_foreign_key(tmp_path, monkeypatch):
+  hpg = tmp_path / "hpg.wav"
+  baseline = tmp_path / "baseline.wav"
+  sf.write(hpg, np.zeros(8000), 8000)
+  sf.write(baseline, np.ones(8000) * 0.1, 8000)
+  manifest = tmp_path / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{hpg},{baseline}\n",
+    encoding="utf-8",
+  )
+  output = tmp_path / "session"
+  key = tmp_path / "private" / "key.csv"
+  foreign_key = b"replaced by another process"
+  original_rename = Path.rename
+
+  def fail_session_publish(staging, target):
+    if staging.name.startswith("hpg_blind_"):
+      key.unlink()
+      key.write_bytes(foreign_key)
+      raise PermissionError("simulated session publication race")
+    return original_rename(staging, target)
+
+  monkeypatch.setattr(Path, "rename", fail_session_publish)
+  with pytest.raises(PermissionError, match="publication race"):
+    prepare(manifest, output, key)
+
+  assert key.read_bytes() == foreign_key
+  assert not output.exists()
+  assert not list(tmp_path.glob("hpg_blind_*"))
+  assert not list(key.parent.glob(".key.csv.*.tmp"))
+
+
+def test_prepare_portable_rollback_preserves_replaced_foreign_key(tmp_path, monkeypatch):
+  hpg = tmp_path / "hpg.wav"
+  baseline = tmp_path / "baseline.wav"
+  sf.write(hpg, np.zeros(8000), 8000)
+  sf.write(baseline, np.ones(8000) * 0.1, 8000)
+  manifest = tmp_path / "manifest.csv"
+  manifest.write_text(
+    f"pair_id,hpg_clip,baseline_clip\np1,{hpg},{baseline}\n",
+    encoding="utf-8",
+  )
+  output = tmp_path / "session"
+  key = tmp_path / "private" / "key.csv"
+  foreign_key = b"replaced by another process"
+  original_rename = Path.rename
+
+  def fail_session_publish(staging, target):
+    if staging.name.startswith("hpg_blind_"):
+      key.unlink()
+      key.write_bytes(foreign_key)
+      raise PermissionError("simulated session publication race")
+    return original_rename(staging, target)
+
+  monkeypatch.setattr(Path, "rename", fail_session_publish)
+  with pytest.raises(PermissionError, match="publication race"):
+    prepare(manifest, output, key)
+
+  assert key.read_bytes() == foreign_key
+  assert not output.exists()
+  assert not list(tmp_path.glob("hpg_blind_*"))
+  assert not list(key.parent.glob(".key.csv.*.tmp"))

@@ -280,7 +280,12 @@ class HearingBlindExportWorker(QThread):
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
+        from .hearing_workflow import CancellationToken
         self.config = dict(config)
+        self.cancel = CancellationToken()
+
+    def request_cancel(self):
+        return self.cancel.request_cancel()
 
     def run(self):
         from tools.prepare_dj_blind_test import prepare
@@ -295,6 +300,8 @@ class HearingBlindExportWorker(QThread):
                 key_path=self.config["key_path"],
                 seed=self.config.get("seed"),
                 source_root=self.config.get("source_root"),
+                cancel=self.cancel,
+                progress=lambda current, total, message: self.status_update.emit(message),
             )
             result = {
                 "ok": True,
@@ -302,7 +309,8 @@ class HearingBlindExportWorker(QThread):
                 "key_path": str(key),
             }
         except Exception as exc:
-            result = {"ok": False, "output": str(exc)}
+            result = {"ok": False, "output": str(exc),
+                      "cancelled": isinstance(exc, InterruptedError)}
         self.completed.emit(result)
 
 

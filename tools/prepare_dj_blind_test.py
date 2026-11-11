@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import os
 import random
 import shutil
 import tempfile
@@ -40,7 +41,15 @@ def prepare(
   key_path: Path,
   seed: int | None = None,
   source_root: Path | None = None,
+  *,
+  cancel=None,
+  progress=None,
 ) -> tuple[Path, Path]:
+  def checkpoint():
+    if cancel is not None:
+      cancel.checkpoint()
+
+  checkpoint()
   if output_dir.exists():
     raise FileExistsError(f"Ausgabeordner existiert bereits: {output_dir}")
   if key_path.exists():
@@ -78,7 +87,8 @@ def prepare(
       if not source.is_file():
         raise ValueError(f"Clip fehlt in Paar {pair_id}: {source}")
       sources.append(source)
-    hashes = tuple(_sha256(source) for source in sources)
+    hashes = tuple(_sha256(source, checkpoint) for source in sources)
+    checkpoint()
     if hashes[0] == hashes[1]:
       raise ValueError(f"A/B-Clips sind byte-identisch: {pair_id}")
     pair_signature = tuple(sorted(hashes))
@@ -105,52 +115,91 @@ def prepare(
   public_rows = []
   key_rows = []
 
-  for index, ((pair_id, sources, _hashes), place_hpg_on_a) in enumerate(
-    zip(validated, hpg_on_a), 1
-  ):
-    hpg, baseline = sources
-    systems = [("HPG", hpg), ("baseline", baseline)]
-    if not place_hpg_on_a:
-      systems.reverse()
-    blinded = []
-    for side, (system, source) in zip(("A", "B"), systems):
-      candidate_id = f"pair_{index:03d}_{side}"
-      target = clips_dir / f"{candidate_id}.wav"
-      audio, sample_rate = sf.read(source, always_2d=True)
-      sf.write(target, audio, sample_rate, format="WAV", subtype="PCM_16")
-      blinded.append((candidate_id, target.relative_to(staging).as_posix()))
-      key_rows.append({
+  try:
+    for index, ((pair_id, sources, _hashes), place_hpg_on_a) in enumerate(
+      zip(validated, hpg_on_a), 1
+    ):
+      checkpoint()
+      if progress is not None:
+        progress(index - 1, len(validated), f"Kopiere A/B-Paar {index}/{len(validated)}")
+      hpg, baseline = sources
+      systems = [("HPG", hpg), ("baseline", baseline)]
+      if not place_hpg_on_a:
+        systems.reverse()
+      blinded = []
+      for side, (system, source) in zip(("A", "B"), systems):
+        candidate_id = f"pair_{index:03d}_{side}"
+        target = clips_dir / f"{candidate_id}.wav"
+        with sf.SoundFile(source, mode="r") as source_audio:
+          with sf.SoundFile(
+            target,
+            mode="w",
+            samplerate=source_audio.samplerate,
+            channels=source_audio.channels,
+            format="WAV",
+            subtype="PCM_16",
+          ) as target_audio:
+            while True:
+              checkpoint()
+              audio = source_audio.read(65536, dtype="float64", always_2d=True)
+              if len(audio) == 0:
+                break
+              target_audio.write(audio)
+        blinded.append((candidate_id, target.relative_to(staging).as_posix()))
+        key_rows.append({
+          "session_id": session_id,
+          "pair_id": pair_id,
+          "candidate": side,
+          "system": system,
+          "source_sha256": _sha256(source, checkpoint),
+          "blinded_sha256": _sha256(target, checkpoint),
+        })
+      public_rows.append({
         "session_id": session_id,
         "pair_id": pair_id,
-        "candidate": side,
-        "system": system,
-        "source_sha256": _sha256(source),
-        "blinded_sha256": _sha256(target),
+        "candidate_a_id": blinded[0][0],
+        "candidate_a_clip": blinded[0][1],
+        "candidate_b_id": blinded[1][0],
+        "candidate_b_clip": blinded[1][1],
       })
-    public_rows.append({
-      "session_id": session_id,
-      "pair_id": pair_id,
-      "candidate_a_id": blinded[0][0],
-      "candidate_a_clip": blinded[0][1],
-      "candidate_b_id": blinded[1][0],
-      "candidate_b_clip": blinded[1][1],
-    })
+  except Exception:
+    shutil.rmtree(staging, ignore_errors=True)
+    raise
 
   public_path = staging / "blind_session.csv"
-  _write_csv(public_path, public_rows)
-  key_path.parent.mkdir(parents=True, exist_ok=True)
   temporary_key = key_path.with_name(f".{key_path.name}.{uuid.uuid4().hex}.tmp")
-  _write_csv(temporary_key, key_rows)
+  try:
+    checkpoint()
+    _write_csv(public_path, public_rows)
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(temporary_key, key_rows)
+  except Exception:
+    shutil.rmtree(staging, ignore_errors=True)
+    temporary_key.unlink(missing_ok=True)
+    raise
   key_published = False
   try:
+    checkpoint()
+    if cancel is not None and not cancel.begin_publish():
+      checkpoint()
+      raise InterruptedError("Blindtest-Export abgebrochen")
     # Erst der private Schluessel, dann die Session. Schlaegt die zweite
     # Publikation fehl, wird der Schluessel wieder entfernt; eine sichtbare
     # Session ohne zugehoerigen Schluessel kann so nicht entstehen.
-    temporary_key.replace(key_path)
+    os.link(temporary_key, key_path)
     key_published = True
     staging.rename(output_dir)
+    if cancel is not None:
+      cancel.mark_complete()
   except Exception:
-    if key_published:
+    try:
+      owns_published_key = (
+        key_published and temporary_key.exists() and key_path.exists()
+        and os.path.samefile(temporary_key, key_path)
+      )
+    except OSError:
+      owns_published_key = False
+    if owns_published_key:
       key_path.unlink(missing_ok=True)
     raise
   finally:

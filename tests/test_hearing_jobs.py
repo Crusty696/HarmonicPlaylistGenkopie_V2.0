@@ -150,6 +150,51 @@ def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp
     assert cancel_signal.args[0]["cancelled"] and not cancel_signal.args[0]["ok"]
 
 
+def test_portable_blind_export_worker_cancels_before_publish_and_cleans_staging(
+    tmp_path, qtbot, monkeypatch
+):
+    import threading
+    from hpg_core import hearing_jobs
+    from tests.test_hearing_blind import _fixture
+    from tools import prepare_dj_blind_test
+
+    manifest, output, _key, root = _fixture(tmp_path, count=2)
+    key = tmp_path / "private" / "blind_key.csv"
+    entered, release = threading.Event(), threading.Event()
+    real_prepare = prepare_dj_blind_test.prepare
+
+    def paused_prepare(*args, **kwargs):
+        progress = kwargs["progress"]
+
+        def pause_after_staging(current, total, message):
+            progress(current, total, message)
+            entered.set()
+            assert release.wait(10)
+
+        kwargs["progress"] = pause_after_staging
+        return real_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(prepare_dj_blind_test, "prepare", paused_prepare)
+    worker = hearing_jobs.HearingBlindExportWorker({
+        "manifest": manifest, "output_dir": output, "key_path": key,
+        "source_root": root, "seed": 7,
+    })
+    try:
+        with qtbot.waitSignal(worker.completed, timeout=10000) as signal:
+            worker.start()
+            qtbot.waitUntil(entered.is_set, timeout=5000)
+            assert worker.request_cancel()
+            release.set()
+        assert worker.wait(5000)
+        assert signal.args[0]["cancelled"] is True
+        assert signal.args[0]["ok"] is False
+        assert not output.exists() and not key.exists()
+        assert not list(tmp_path.glob(".session.staging-*"))
+    finally:
+        release.set()
+        worker.wait(5000)
+
+
 def test_csv_single_worker_real_spawn_preserves_none_cache(tmp_path, monkeypatch, qtbot):
     from tests.test_hearing_calibration import _csv_single
     from hpg_core.hearing_jobs import HearingCalibrationWorker
