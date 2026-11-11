@@ -15,7 +15,7 @@
 
 **Vier-Modi-CLI/GUI-Sitzungsparität:** `tests/test_hearing_workflow.py::test_real_internal_producer_artifacts_match_cli_and_native_service` besteht **4/4** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 3,09 s). Einzel, Kandidaten, Dreinoten und Dramaturgie liefern identische logische Rating-Sessions und Clipzahlen. Der CLI-Pfad publiziert lesbare synthetische WAVs; der native Pfad publiziert strikt gebundene virtuelle Referenzen. Die Dramaturgie prüft die vollständige Acht-Strategien-Matrix. Der Beleg deckt noch keine Golden-Master-Rundreise sämtlicher Fit-/Blindtest- und Export-CSV/JSON-Schemas.
 
-**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512`–`FX_0517` erfolgreich; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s. `FX_0517` hat 1.768.390 Byte. Aktuell läuft `FX_0518` (UUID `404ca812-c32e-4c26-9fa4-07aa0ad7ca81`); Queue 1/0, `film_batch.py` PID 26284 lebt. Batch-Ende nicht festgestellt; Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
+**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512`–`FX_0518` erfolgreich; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s. `FX_0518` hat 2.036.428 Byte. Aktuell läuft `FX_0519` (UUID `2acb09c8-e61b-4f70-8704-9c30d99da838`); Queue 1/0, `film_batch.py` PID 26284 lebt. Batch-Ende nicht festgestellt; Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
@@ -732,7 +732,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Prompt `558de56e-c1ab-4044-985c-af6c33e2173e` / `FX_0515` meldet `success`. `Film_x_batch/FX_0515_00001_.mp4` existiert mit 1.961.825 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt `6a769380-4248-4c91-b491-02d422588931` / Präfix `Film_x_batch/FX_0516` meldet `success`. `FX_0516_00001_.mp4` existiert mit 2.086.830 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt `663944e9-546b-49fd-8e77-a24c75261083` / Präfix `Film_x_batch/FX_0517` meldet `success`. `FX_0517_00001_.mp4` existiert mit 1.768.390 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
-- Folgeprompt `404ca812-c32e-4c26-9fa4-07aa0ad7ca81` / Präfix `Film_x_batch/FX_0518` läuft; Queue 1/0, `film_batch.py` PID 26284 lebt. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
+- Prompt `404ca812-c32e-4c26-9fa4-07aa0ad7ca81` / Präfix `Film_x_batch/FX_0518` meldet `success`. `FX_0518_00001_.mp4` existiert mit 2.036.428 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Folgeprompt `2acb09c8-e61b-4f70-8704-9c30d99da838` / Präfix `Film_x_batch/FX_0519` läuft; Queue 1/0, `film_batch.py` PID 26284 lebt. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
 
 ## CLI-/Native-Medientransport getrennt validiert
 
