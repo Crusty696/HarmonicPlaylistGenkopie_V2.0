@@ -2,7 +2,7 @@
 
 **Stand:** 12.11.2026
 **Branch:** `codex/gesamtrefaktorierung`
-**Lokaler und entfernter Branch:** `3a156c1578e4d22c4d9fdae26d301e4277aa5b11` (gleich)
+**Lokaler und entfernter Branch:** `a3a22816b6f94fc394fe64d31bfd2b860dfaeb9c` (gleich; Statusbericht gepusht)
 
 ## Geprüfte Fortschritte
 
@@ -45,8 +45,8 @@
   von `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, drei HTML-Dokumenten und zwei
   historischen Memory-Dateien.
 - In diesem Fortsetzungsschritt wurde kein Produktcode geändert.
-- Der heutige Statusbericht ist der einzige neue Commit-Kandidat. Der entfernte
-  Feature-Branch stand vor dieser Dokumentation auf demselben Commit wie lokal.
+- Dieser Statusbericht wurde als `a3a22816` committed und gepusht. Der entfernte
+  Feature-Branch stimmt aktuell mit `HEAD` überein.
 
 ## Belege
 
