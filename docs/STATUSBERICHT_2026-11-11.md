@@ -402,14 +402,23 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Zusätzliche sichtbare Prüfung desselben isolierten Frozen-Builds am 11.11.:
   Playlist zeigt den Leerhinweis, Übergänge „Noch keine Übergänge vorhanden.
   Zuerst eine Playlist erstellen.“, Zeitlinie „Keine Playlist vorhanden.“;
-  Qualität zeigt Camelot-Rad und Hörtest-Aktionen. Kein Trackordner gewählt,
+  Qualität zeigt Camelot-Rad und Hörtest-Aktionen. Keine Tracks geladen,
   keine Analyse gestartet und keine Quelldatei verändert. Das ist eine Prüfung
   der leeren Startzustände, keine Abnahme des produktiven Playlist-/Fit-/Exportpfads.
+- Der Set-Erstellungsdialog wurde read-only geöffnet: Satztyp `Kandidaten`,
+  Original-Musikordner `F:\`. Der Dialog wurde abgebrochen. Sein OK startet im
+  Code erst eine frische Analyse dieses Ordners; deshalb keine Produktiv-Analyse
+  oder Set-Erstellung ohne iGPU-Freigabe. Read-only Abgleich der
+  Satzvorbereitungsmatrix am HEAD `4c9301e`: `HearingPrepareDialog.values`,
+  `_producer_namespace` und CLI-Parser stimmen für Modusabbildung und
+  aktivierte/deaktivierte Optionen überein; relevante Produktivdateien sind
+  seit dem in der Matrix gepinnten Quellcommit unverändert. Kein Code-Delta
+  gefunden. Fit-/Export-/Restmatrix- und Gesamt-Abnahme bleiben offen.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
-   und jede Ausgabe per History und `ffprobe` prüfen.
-2. Restlichen manuellen GUI-Pfad (Satz erstellen, Fit/Export und weitere Modi)
-   abnehmen; Matrix-Parität nach der erneuten Parser-/Producerprüfung unabhängig
-   read-only gegen den Code reviewen.
+   und jede Ausgabe per History und `ffprobe` prüfen. Fehlende H3-Prompttexte
+   bleiben dafür erforderlich.
+2. Restlichen manuellen GUI-Pfad (Fit/Export und weitere Modi) abnehmen;
+   restliche CLI/GUI-Matrix read-only prüfen.
 3. Parallelen nativen Smoke-Ausreißer untersuchen und Originalmusikabnahme
    abschließen, sobald die iGPU-/Analysefreigabe wieder gilt.
