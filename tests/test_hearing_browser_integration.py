@@ -949,6 +949,61 @@ def test_three_note_schema_starts_seeded_candidate_fit_worker(qtbot, monkeypatch
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize(
+    "schema,single,audit_only,three_note,expected_fit,expected_genres",
+    [
+        ("single", True, False, False, True, ("Techno",)),
+        ("candidate", False, False, False, True, ()),
+        ("three_note", False, False, True, True, ()),
+        ("candidate", False, True, False, False, ()),
+    ],
+)
+def test_fit_dialog_options_reach_calibration_worker(
+    qtbot, monkeypatch, tmp_path, schema, single, audit_only, three_note,
+    expected_fit, expected_genres,
+):
+    from tools import hoertest_server as hs
+
+    window = _window(qtbot, monkeypatch)
+    root = tmp_path / f"{schema}-set"
+    root.mkdir()
+    columns = {
+        "single": hs.BEWERTUNG_SPALTEN,
+        "candidate": hs.BEWERTUNG_KANDIDATEN_SPALTEN,
+        "three_note": hs.BEWERTUNG_DREINOTEN_SPALTEN,
+    }[schema]
+    (root / "bewertung.csv").write_text(",".join(columns) + "\n", encoding="utf-8")
+    cache = tmp_path / "snapshot.db"
+    cache.write_bytes(b"dialog-only cache placeholder")
+    window._hearing_set_path = str(root)
+    window._hearing_cache_path = str(cache)
+    expected_form = (audit_only, single, three_note)
+
+    class AcceptedForm:
+        def __init__(self, supplied_cache, *, audit_only, single, three_note, parent):
+            assert supplied_cache == str(cache)
+            assert (audit_only, single, three_note) == expected_form
+            self.cache = supplied_cache
+            self.seed = 29
+            self.genres = expected_genres
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(hearing_panel, "HearingFitDialog", AcceptedForm)
+    starts = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+    window._fit_hearing_set(audit_only=audit_only)
+
+    worker, action = starts[0]
+    assert isinstance(worker, hearing_jobs.HearingCalibrationWorker)
+    assert worker.fit is expected_fit
+    assert worker.seed == 29
+    assert worker.genres == expected_genres
+    assert action == ("fit" if expected_fit else "audit")
+
+
+@pytest.mark.gui
 @pytest.mark.parametrize("audit_only,expected", [(True, "Replay-Audit"), (False, "Dreinoten-Pilot")])
 def test_fit_dialog_explains_three_note_schema_and_disables_irrelevant_options(qtbot, tmp_path, audit_only, expected):
     from PyQt6.QtWidgets import QSpinBox

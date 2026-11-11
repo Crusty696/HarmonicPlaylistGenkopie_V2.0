@@ -29,6 +29,10 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   laufen und reproduziert gegensätzliche Gewichtungen samt realer Gate-Logik.
   Das belegt keinen Fit auf Originalmusik. Die Apply-E2E verwendet weiter einen
   injizierten Pass-Ausgang und bleibt als durchgehende Kette offen.
+- Fit-Optionsabbildung neu geprüft: **8/8 Dialog-/Workerfälle bestanden**.
+  Einzel-Fit reicht Genres weiter; Kandidaten-/Dreinoten-Fit deaktiviert den
+  unwirksamen Genrefilter; Replay-Audit deaktiviert den Seed. Artefakt-/Golden-
+  Master-Vergleich bleibt ein separates offenes Task-7-Kriterium.
 - Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
   `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
   Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine

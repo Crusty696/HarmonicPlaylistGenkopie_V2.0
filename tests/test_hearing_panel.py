@@ -28,6 +28,41 @@ def test_fit_dialog_does_not_ignore_required_or_supplied_bad_cache(qtbot, single
     assert dialog.error_label.text()
 
 
+@pytest.mark.parametrize(
+    "single,audit_only,three_note,genres_enabled,seed_enabled,expected_genres",
+    [
+        (True, False, False, True, True, ("Techno", "Psytrance")),
+        (False, False, False, False, True, ()),
+        (False, False, True, False, True, ()),
+        (False, True, False, False, False, ()),
+    ],
+)
+def test_fit_dialog_maps_only_effective_genre_and_seed_options(
+    qtbot, tmp_path, single, audit_only, three_note,
+    genres_enabled, seed_enabled, expected_genres,
+):
+    from PyQt6.QtWidgets import QDialog, QDialogButtonBox
+    from hpg_core.hearing_panel import HearingFitDialog
+
+    cache = tmp_path / "snapshot.db"
+    cache.write_bytes(b"dialog-only cache placeholder")
+    dialog = HearingFitDialog(
+        None if single else cache,
+        single=single,
+        audit_only=audit_only,
+        three_note=three_note,
+    )
+    qtbot.addWidget(dialog)
+    assert dialog.genres_edit.isEnabled() is genres_enabled
+    assert dialog.seed_box.isEnabled() is seed_enabled
+    dialog.genres_edit.setText("Techno, Psytrance")
+    dialog.seed_box.setValue(17)
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.genres == expected_genres
+    assert dialog.seed == 17
+
+
 def test_hearing_set_browser_search_filters_and_clears_hidden_selection(qtbot, tmp_path):
     from types import SimpleNamespace
     from hpg_core.hearing_panel import HearingSetBrowserDialog
