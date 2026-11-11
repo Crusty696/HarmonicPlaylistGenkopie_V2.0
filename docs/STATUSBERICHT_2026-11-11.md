@@ -313,6 +313,11 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   `805d4d33-05d5-4c9a-9023-851c8cecdf14`) aktiv und 0 wartende Aufträge.
   Promptverlauf und Ausgabedatei sind noch nicht bestätigt. Auftrag und
   Batchproducer blieben unangetastet.
+  Folgender Live-Poll am 11.11.2026: Prompt-ID `43`, UUID
+  `24d90852-cd71-4d86-9fc9-9d7dcc94a932`, läuft mit Ausgabepräfix
+  `Film_x_batch/FX_0474`; Queue hat 0 wartende Aufträge. Der History-Endpunkt
+  liefert während des laufenden Auftrags noch keinen Eintrag. Kein neuer Prompt
+  wurde eingereiht.
   Producer bleibt unberührt. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
@@ -340,6 +345,9 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Der neue Frozen-Build mit diesem Fix wurde isoliert gestartet und die
   sichtbare sowie barrierefreie Textdarstellung bestätigt; keine Analyse
   gestartet.
+- Eine Folgestart-Instanz für die Playlist-Ansicht blieb außerhalb der UI-
+  Inventur, obwohl der isolierte Prozess lief. Daher keine Aussage zum
+  sichtbaren Playlist-Leerzustand aus diesem Versuch; Prozess beendet.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
    und jede Ausgabe per History und `ffprobe` prüfen.
