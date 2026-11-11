@@ -873,3 +873,21 @@ def test_audit_completion_queues_distinct_result_dialog(qtbot, monkeypatch, tmp_
     assert "Fit nicht ausgeführt" in window.analytics_panel.hearing_status.text()
     window._hearing_worker = None
     worker.deleteLater()
+
+
+@pytest.mark.gui
+def test_audit_dialog_completion_reports_replay_without_fit(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    proposal = {"audit_passed": True, "fit_status": "not_requested"}
+    class Dialog:
+        def __init__(self, supplied, parent, *, cleanup_warning=""):
+            assert supplied is proposal
+            assert parent is window
+            self.warning = cleanup_warning
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(hearing_panel, "HearingAuditResultDialog", Dialog)
+    window._show_hearing_audit(proposal, "cleanup confirmed")
+    assert "Replay-Audit bestanden" in window.analytics_panel.hearing_status.text()
+    assert "Fit nicht ausgeführt" in window.analytics_panel.hearing_status.text()
+    assert not window._hearing_native_active
