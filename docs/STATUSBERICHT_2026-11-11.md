@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** `codex/gesamtrefaktorierung` und `origin/codex/gesamtrefaktorierung` stehen beide auf `3ee0d454b5ed1ee2a3e10da7603ac811046b2c1d`. `origin/main` ist Vorfahr und liegt 224 Commits zurück. Letzter Produktcode-Commit: `604db5542c66774cf71b9766763c099b9ff86c40`; danach folgten Statusbericht-Commits. `gh run list --branch codex/gesamtrefaktorierung` liefert keine Branch-Runs; `gh pr list --head codex/gesamtrefaktorierung --state open` liefert kein offenes PR. CI für diesen Feature-Branch ist nicht grün nachgewiesen.
+**GitHub-/CI-Abgleich (11.11.2026):** `codex/gesamtrefaktorierung` und `origin/codex/gesamtrefaktorierung` stehen beide auf `436cf595b2ce2936ba8d4824de16f33e0ca5e6bb`. `origin/main` ist Vorfahr und liegt 229 Commits zurück. Letzter Produktcode-Commit: `604db5542c66774cf71b9766763c099b9ff86c40`; danach folgten Test- und Dokumentationscommits, keine Produktquellenänderung. `gh run list --branch codex/gesamtrefaktorierung` liefert keine Branch-Runs; `gh pr list --head codex/gesamtrefaktorierung --state open` liefert kein offenes PR. CI für diesen Feature-Branch ist nicht grün nachgewiesen.
 
 ## Kurzstatus
 
@@ -15,7 +15,7 @@
 
 **Vier-Modi-CLI/GUI-Sitzungsparität:** `tests/test_hearing_workflow.py::test_real_internal_producer_artifacts_match_cli_and_native_service` besteht **4/4** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 3,09 s). Einzel, Kandidaten, Dreinoten und Dramaturgie liefern identische logische Rating-Sessions und Clipzahlen. Der CLI-Pfad publiziert lesbare synthetische WAVs; der native Pfad publiziert strikt gebundene virtuelle Referenzen. Die Dramaturgie prüft die vollständige Acht-Strategien-Matrix. Der Beleg deckt noch keine Golden-Master-Rundreise sämtlicher Fit-/Blindtest- und Export-CSV/JSON-Schemas.
 
-**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512`–`FX_0514` erfolgreich; `ffprobe` bestätigt jeweils H.264, 736×416, 24 fps, 243 Frames und 10,125 s. `FX_0514` hat 1.811.717 Byte. Folgeprompt `FX_0515` (UUID `558de56e-c1ab-4044-985c-af6c33e2173e`) läuft; Queue 1 aktiv, 0 wartend, Producer-PID 10456 lebt. Batch-Ende nicht festgestellt; Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
+**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512`–`FX_0514` erfolgreich; `ffprobe` bestätigt jeweils H.264, 736×416, 24 fps, 243 Frames und 10,125 s. `FX_0514` hat 1.811.717 Byte. `FX_0515` (UUID `558de56e-c1ab-4044-985c-af6c33e2173e`) läuft; Queue 1/0. Der aktuelle `film_batch.py`-Prozess ist PID 26284; der vorherige PID 10456 ist beendet. Batch-Ende nicht festgestellt; Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
@@ -565,7 +565,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 1. FilmX-Queue nicht unterbrechen. Live-Poll am 11.11.2026: `FX_0515`
    (UUID `558de56e-c1ab-4044-985c-af6c33e2173e`) läuft; Queue 1/0,
-   Producer-PID 10456 lebt. `FX_0514` ist erfolgreich und per `ffprobe`
+   aktueller `film_batch.py`-Prozess PID 26284. PID 10456 ist beendet.
+   `FX_0514` ist erfolgreich und per `ffprobe`
    geprüft (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Batch-Ende erst
    annehmen, wenn der Producer beendet ist und die Queue leer bleibt. Fremde
    Queue-Jobs nicht verändern.
@@ -729,7 +730,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Prompt `02106d71-4cd8-4cd1-a679-9c1cfb8e2c99` / `FX_0512` meldet in der ComfyUI-History `success`. `Film_x_batch/FX_0512_00001_.mp4` existiert mit 2.125.400 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt `56a12074-ae4d-4fd2-bdcd-f8ab05967796` / `FX_0513` meldet `success`. `Film_x_batch/FX_0513_00001_.mp4` existiert mit 2.047.495 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt `73ddd6a6-e467-4ad0-9c98-0bad98621545` / `FX_0514` meldet `success`. `Film_x_batch/FX_0514_00001_.mp4` existiert mit 1.811.717 Byte; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
-- Folgeprompt `558de56e-c1ab-4044-985c-af6c33e2173e` / Präfix `Film_x_batch/FX_0515` läuft; Queue 1/0, Producer-PID 10456 lebt. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
+- Folgeprompt `558de56e-c1ab-4044-985c-af6c33e2173e` / Präfix `Film_x_batch/FX_0515` läuft; Queue 1/0. Aktueller `film_batch.py`-Prozess PID 26284; PID 10456 ist beendet. Batch-Ende nicht festgestellt. Keine Queue-Aktion vorgenommen.
 
 ## CLI-/Native-Medientransport getrennt validiert
 
