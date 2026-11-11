@@ -9,6 +9,8 @@
 
 **Fortsetzung 11.11.2026:** CPU-/synthetische Integrationsprüfungen nachgeführt: Hearing-Browser 107/107, Hearing-Panel 42/42, MainWindow 22/22, Hearing-Workflow 32/32, Scoring/Strategien 182/182, Deep-Feature-Runtime 65/65, Native-Reader 36/36, Cache-Migration 8/8 und statische Release-Gates 38/38 bestanden. Zusätzlich bestanden 168 Playlist-/Layouttests, 13 Tabellen-/Detailpaneltests und 16 Hearing-Kartentests mit Exitcode 0. In drei Qt-Läufen erschien `Windows fatal exception: code 0x8001010d`: bei `qtbot.wait(50)`, Drag-Tests und Kartenaufbau im `pytestqt.plugin._process_events`. Alle Assertions bestanden; Ursache bleibt ungeklärt.
 
+**Rangwechsel-Gate:** Neue Regression `tests/test_hearing_end_to_end.py::test_applied_preferences_reorder_visible_mixpoint_ranking` besteht **1/1** (`venv312`, Python 3.12.10, `-n 0 --no-cov`). Persistierte synthetische BPM- und Harmoniegewichte gehen durch den echten MainWindow-Refresh und drehen die tatsächliche Mixpunktreihenfolge von 16/32 auf 32/16. Temporäre Fixturedateien; keine Originalmusik, Audioanalyse oder GPU. Das ergänzt den separaten Fit-/Apply-Integrationsnachweis; vollständige CSV/JSON-Rundreisen und manuelle App-Abnahme bleiben offen.
+
 **ComfyUI:** Prompts 76–79 (`FX_0499`–`FX_0502`) erfolgreich; die letzten vier Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 80 / `FX_0503` (UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.

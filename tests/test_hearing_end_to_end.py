@@ -98,6 +98,72 @@ def test_real_producer_audit_native_fit_confirm_apply_actual_ranking(tmp_path, q
     print(json.dumps({key: value for key, value in evidence.items() if key not in {"proposal", "audit"}}, default=str))
 
 
+@pytest.mark.gui
+@pytest.mark.integration
+def test_applied_preferences_reorder_visible_mixpoint_ranking(
+    tmp_path, qtbot, monkeypatch, request
+):
+    """Persistierte Gewichte muessen die sichtbare Mixpunktreihenfolge neu berechnen."""
+    from tests.hearing_e2e_fixtures import managed_hearing_jobs, producer_fixture
+    from tests.test_main_window import _window
+    from hpg_core import candidate_preferences as cp, playlist
+
+    preference_path = tmp_path / "candidate-preferences.json"
+    monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(preference_path))
+    cp.reset_cache()
+    request.addfinalizer(cp.reset_cache)
+
+    fixture_root = tmp_path / "synthetic"
+    fixture_root.mkdir()
+    config, tracks, _inventory = producer_fixture(fixture_root, count=1)
+    window = _window(qtbot, monkeypatch)
+    with managed_hearing_jobs(qtbot) as owned:
+        owned.append(window)
+        window.analyzed_raw_tracks = tracks
+
+        def persist_one_hot_weight(factor):
+            weights = {
+                key: 1.0 if key == f"kandidaten_{factor}_weight" else 0.0
+                for key in cp.GEWICHT_SCHLUESSEL
+            }
+            cp.merge_user_preferences_atomically({
+                "Psytrance": {**weights, "schema_rang": ["sektion"]}
+            })
+            cp.reset_cache()
+            playlist.reset_pair_candidate_cache()
+
+        def refresh_and_wait():
+            window._refresh_hearing_ranking()
+            qtbot.waitUntil(
+                lambda: window.playlist_worker is None
+                and window.current_generation_result is not None,
+                timeout=30000,
+            )
+            result = window.current_generation_result
+            assert len(result.boundaries) == 1
+            assert len(result.boundaries[0].snapshots) == 2
+            return result
+
+        persist_one_hot_weight("bpm")
+        before = refresh_and_wait()
+        before_order = [item.t_in for item in before.boundaries[0].snapshots]
+        assert before_order == [16.0, 32.0]
+        assert before.boundaries[0].snapshots[0].rang == 1
+
+        persist_one_hot_weight("harmonic")
+        after = refresh_and_wait()
+        after_order = [item.t_in for item in after.boundaries[0].snapshots]
+        assert after is not before
+        assert after_order == [32.0, 16.0]
+        assert after.boundaries[0].snapshots[0].rang == 1
+        assert after.scoring_context_dict()["candidate_tolerances_by_genre"]["Psytrance"][
+            "kandidaten_harmonic_weight"
+        ] == 1.0
+        assert json.loads(preference_path.read_text(encoding="utf-8"))["Psytrance"][
+            "kandidaten_harmonic_weight"
+        ] == 1.0
+
+
 @pytest.mark.parametrize("three_notes", [False, True])
 def test_numeric_fixture_real_gates_positive_without_seed_search(tmp_path, three_notes):
     rows = numeric_gate_rows(tmp_path, three_notes=three_notes)
