@@ -2426,6 +2426,45 @@ def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   warning.assert_called_once()
 
 
+@pytest.mark.parametrize(
+  ("selected_filter", "suffix", "exporter_name", "localized_error"),
+  [
+    (
+      "M3U8 Playlist (*.m3u8)", ".m3u8", "M3U8Exporter",
+      "M3U8-Export fehlgeschlagen",
+    ),
+    (
+      "Rekordbox XML (*.xml)", ".xml", "RekordboxXMLExporter",
+      "Rekordbox-XML-Export fehlgeschlagen",
+    ),
+  ],
+  ids=("m3u8", "rekordbox-xml"),
+)
+def test_mainwindow_export_errors_are_localized(
+  qtbot, monkeypatch, tmp_path, selected_filter, suffix, exporter_name,
+  localized_error,
+):
+  window = _window(qtbot, monkeypatch)
+  window.playlist = [Track(filePath="C:/synthetic/a.wav", fileName="a.wav")]
+  output = tmp_path / f"set{suffix}"
+  monkeypatch.setattr(
+    main.QFileDialog,
+    "getSaveFileName",
+    lambda *_args, **_kwargs: (str(output), selected_filter),
+  )
+  exporter = Mock()
+  exporter.export.side_effect = RuntimeError("synthetic exporter failure")
+  monkeypatch.setattr(main, exporter_name, lambda: exporter)
+  critical = Mock()
+  monkeypatch.setattr(main.QMessageBox, "critical", critical)
+
+  window.export_playlist()
+
+  critical.assert_called_once()
+  assert localized_error in critical.call_args.args[2]
+  assert "synthetic exporter failure" in critical.call_args.args[2]
+
+
 def test_playlist_panel_export_button_writes_m3u8(qtbot, monkeypatch, tmp_path):
   window = _window(qtbot, monkeypatch)
   track = Track(filePath="C:/synthetic/a.wav", fileName="a.wav")
