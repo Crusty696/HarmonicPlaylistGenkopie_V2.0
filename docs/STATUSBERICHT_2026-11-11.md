@@ -551,10 +551,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
    (`FX_0498`) ist inzwischen aus der Queue verschwunden; seine Ausgabe
    `FX_0498_00001_.mp4` (3.036.269 Bytes) wurde ebenso per `ffprobe` geprüft
    (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Seine History war bereits
-   leer. Prompt 74 ist aus der Queue verschwunden. Aktuell läuft Prompt 75 / UUID
-   `61e9a877-611f-48be-9a63-70142a59d658`,
-   `PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_2`; Queue 1/1.
-   Wartend ist Prompt 76 `Film_x_batch/FX_0499`.
+   leer. Prompts 74 und 75 sind aus der Queue verschwunden. Aktuell läuft
+   Prompt 76 / UUID `faad791c-1432-4256-be04-ab53b54a3b72`, Präfix
+   `Film_x_batch/FX_0499`; Queue 1/0, Producer-PID 10456 lebt. History und
+   Ausgabedatei waren beim Poll noch leer/nicht vorhanden.
    Kein fremder Queue-Job wird verändert. Den geplanten H3-Vier-Clip-Batch erst
    nach Ende aller aktiven und wartenden
    Jobs starten, Queue-Eigentümer und freie Queue vorher erneut prüfen und jede
@@ -589,8 +589,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Prompt 73 / `FX_0498` ist nicht mehr in der Queue; `FX_0498_00001_.mp4`
   (3.036.269 Bytes) ist per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames,
   10,125 s bestätigt. Die History war beim Poll bereits leer. Prompt 74 ist
-  nicht mehr gelistet. Aktuell läuft Prompt 75 / UUID
-  `61e9a877-611f-48be-9a63-70142a59d658`
-  (`PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_2`) läuft;
-  Queue 1/1. Prompt 76 (`Film_x_batch/FX_0499`) wartet. Producer-PID 10456
-  lebt. Fremde Jobs und Queue blieben unangetastet.
+  nicht mehr gelistet. Prompt 76 / UUID
+  `faad791c-1432-4256-be04-ab53b54a3b72`, Präfix `Film_x_batch/FX_0499`,
+  läuft; Queue 1/0, Producer-PID 10456 lebt. History und Ausgabedatei waren
+  beim letzten Poll noch nicht vorhanden. Keine Queue-Aktion vorgenommen.
