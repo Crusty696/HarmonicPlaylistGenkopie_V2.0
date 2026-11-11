@@ -1093,10 +1093,16 @@ class HearingCalibrationResultDialog(QDialog):
         ))
         text = QPlainTextEdit()
         text.setReadOnly(True)
-        text.setPlainText(json.dumps(proposal, ensure_ascii=False, indent=2))
         if proposal["candidate_report"] is not None:
-            text.appendPlainText("\nVOLLSTÄNDIGER KANDIDATEN-FITBERICHT\n")
+            text.setPlainText(self._candidate_report_summary(proposal["candidate_report"]))
+            text.appendPlainText("\nVOLLSTÄNDIGER MASCHINENLESBARER FITBERICHT\n")
             text.appendPlainText(json.dumps(proposal["candidate_report"], ensure_ascii=False, indent=2))
+            text.appendPlainText("\nBINDUNG, AUDIT UND VORSCHLAGSINTEGRITÄT\n")
+            text.appendPlainText(json.dumps({key: proposal[key] for key in (
+                "binding", "audit_passed", "audit", "fit_status", "gate_updates", "proposal_sha256",
+            )}, ensure_ascii=False, indent=2))
+        else:
+            text.setPlainText(json.dumps(proposal, ensure_ascii=False, indent=2))
         layout.addWidget(text)
         row = QHBoxLayout()
         self.apply_button = QPushButton("Diese Gewichte übernehmen und Playlist neu berechnen")
@@ -1113,6 +1119,38 @@ class HearingCalibrationResultDialog(QDialog):
         self.status_label = QLabel(cleanup_warning or "Temporäres Replay-Audio ist entfernt. Audit bleibt ein Nachweis des damaligen temporären Snapshots.")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
+
+    @staticmethod
+    def _candidate_report_summary(report):
+        import json
+        lines = ["KANDIDATEN-FIT: Ergebnis und Freigabe je Genre"]
+        diagnoses = report["diagnose"].get("genres", {})
+        updates = report["gate_updates"]
+        for genre in sorted(set(diagnoses) | set(updates)):
+            detail = diagnoses.get(genre, {})
+            status = "ÜBERNOMME" if detail.get("uebernommen") else "ABGELEHNT / KEINE ÄNDERUNG"
+            if genre in updates:
+                status = "FREIGEGEBEN – Vorschlag, noch nicht aktiv"
+            lines.extend((
+                f"\n{genre}: {status}",
+                f"  Begründung: {detail.get('grund') or detail.get('hinweis') or 'kein freigegebener Update-Block'}",
+                f"  Train-/Holdout-Tracks: {detail.get('train_tracks', 'n/a')} / {detail.get('holdout_tracks', 'n/a')}",
+                f"  Holdout-Treffer/Baseline: {detail.get('trefferquote_holdout', 'n/a')} / {detail.get('zufallsbasis_holdout', 'n/a')}",
+                f"  Holdout-AUC: {detail.get('auc_holdout', 'n/a')}",
+                f"  Identifizierbare Merkmale: {', '.join(detail.get('identifizierbar', ())) or 'keine'}",
+                f"  Nicht identifizierbar: {', '.join(detail.get('nicht_identifizierbar', ())) or 'keine'}",
+                f"  Konfidenzintervalle: {json.dumps(detail.get('intervalle_paarvergleich', {}), ensure_ascii=False, sort_keys=True)}",
+                f"  Neue Gewichte: {json.dumps(report['gewichte_je_genre'].get(genre, {}), ensure_ascii=False, sort_keys=True)}",
+                f"  Schema-Rang: {json.dumps(report['rangfolge'].get(genre), ensure_ascii=False)}",
+                f"  Gate-Update: {json.dumps(updates.get(genre, {}), ensure_ascii=False, sort_keys=True)}",
+            ))
+        if not diagnoses and not updates:
+            lines.append("\nKeine Genre-Auswertung vorhanden; siehe Bericht und Auditdetails unten.")
+        lines.append(f"\nGesamtdaten: {json.dumps(report['counts'], ensure_ascii=False, sort_keys=True)}")
+        if report["dreinoten"]:
+            deep = report["diagnose"].get("deep_feature_calibration", {})
+            lines.append(f"\nDreinoten-/Deep-Feature-Ergebnis: {json.dumps(deep, ensure_ascii=False, sort_keys=True)}")
+        return "\n".join(lines)
 
     def _export(self):
         path, _ = QFileDialog.getSaveFileName(self, "Kalibrierungsbericht speichern", "kalibrierung.json", "JSON (*.json)")

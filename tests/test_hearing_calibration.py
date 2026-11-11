@@ -614,5 +614,9 @@ def test_candidate_fit_dialog_displays_full_report(qtbot, ram_set):
     dialog = HearingCalibrationResultDialog(proposal)
     qtbot.addWidget(dialog)
     report_text = dialog.findChild(QPlainTextEdit).toPlainText()
-    assert "VOLLSTÄNDIGER KANDIDATEN-FITBERICHT" in report_text
+    assert "Ergebnis und Freigabe je Genre" in report_text
+    assert "Train-/Holdout-Tracks" in report_text
+    assert "Konfidenzintervalle" in report_text
+    assert "Neue Gewichte" in report_text
+    assert "VOLLSTÄNDIGER MASCHINENLESBARER FITBERICHT" in report_text
     assert json.dumps(proposal["candidate_report"], ensure_ascii=False, indent=2) in report_text
