@@ -23,6 +23,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   **87 Tests bestanden** für Pfadcontainment, Duplikate, Audioeigenschaften,
   No-overwrite, Schlüsseltrennung, portable Worker-Abbruch-/Rollback-Grenzen
   und native GUI-Weitergabe. Keine Entblindung oder Statistik implementiert.
+- Genre-Gate zusätzlich mit dem echten Fitverfahren geprüft:
+  `test_zwei_genres_lernen_gegensaetzliche_gewichte_real` besteht. Der Test lässt
+  120 synthetische, unabhängige Paare je Genre durch `_fit_kandidaten_genre`
+  laufen und reproduziert gegensätzliche Gewichtungen samt realer Gate-Logik.
+  Das belegt keinen Fit auf Originalmusik. Die Apply-E2E verwendet weiter einen
+  injizierten Pass-Ausgang und bleibt als durchgehende Kette offen.
 - Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
   `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
   Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine
