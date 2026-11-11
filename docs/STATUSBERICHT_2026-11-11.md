@@ -128,6 +128,11 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   bestand gezielt mit **1/1 in 33,48 s** (`venv312`, `-n 0 --no-cov`). Das
   bestätigt den Einzelpfad, noch nicht das Verhalten unter xdist-Vollsuite-Last;
   dafür bleibt der nächste Vollsuite-Lauf nach dem ComfyUI-Batch erforderlich.
+  Nachprüfung am 11.11.2026 nach dem Release-Metadaten-Gate: derselbe echte
+  Qt-/Spawn-/RAM-DSP-Smoke bestand erneut **1/1 in 34,54 s** aus einem fremden
+  Arbeitsverzeichnis. Der 60-s-Initializer, Worker-Reaping, private Numba-Cache,
+  synthetischer Render und abgelehnter CSV-Fit liefen damit erneut grün. Weiterhin
+  kein Nachweis unter xdist-Vollsuite-Last, kein Originalaudio und keine GPU-Inferenz.
 - Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
   `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
   Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine
