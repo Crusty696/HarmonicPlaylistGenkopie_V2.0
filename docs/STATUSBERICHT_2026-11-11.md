@@ -38,9 +38,13 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `E:\AI\HPG-build-verification-2026-11-11-manual-hearing-32012e5\hearing-set`;
   Quellhashes unverändert. Am 11.11.2026 im Frozen-GUI über den Satzbrowser
   vollständig geprüft und geöffnet. Accessibility-Tree meldet „Satz geladen
-  (kandidaten)“; Analyseherkunft bleibt unbekannt, kein Render-/Auditnachweis.
-  Kein Originalaudio und keine Analyse gestartet. Bewerten, Vorschau und
-  Wiederaufnahme dieses Kandidatensatzes bleiben noch manuell zu prüfen.
+  (kandidaten)“; Analyseherkunft bleibt unbekannt, kein Audit-Nachweis. Beide
+  Varianten wurden auf Abruf im RAM gerendert und als 32-Sekunden-Vorschau
+  abgespielt. Im schreibenden Dialog speicherte die GUI eine temporäre Note 3
+  für `001_k1` in `bewertung.csv`; CSV danach auf den vorher leeren Stand
+  zurückgesetzt und verifiziert. Das ist technischer Speicher-/Preview-Nachweis,
+  keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. GUI-
+  Wiederaufnahme und Originalmusik-Abnahme bleiben offen.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
