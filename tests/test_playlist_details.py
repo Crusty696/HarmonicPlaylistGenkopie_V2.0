@@ -28,7 +28,8 @@ def test_erweiterte_spalten_und_leere_details(qtbot, house_track):
     panel.set_playlist_data([house_track], {}, transition_recommendations=[])
     panel.table.setCurrentCell(0, 1)
     panel.set_playlist_data([], {}, transition_recommendations=[])
-    assert "Track auswählen" in panel.details_text.toPlainText()
+    assert "Titel auswählen" in panel.details_text.toPlainText()
+    assert panel.details_text.accessibleName() == "Titel- und Übergangsdetails"
 
 
 def test_tabellen_rollback_erhaelt_details_und_spaltenmodus(qtbot, house_track):

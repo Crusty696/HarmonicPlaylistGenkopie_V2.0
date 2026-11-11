@@ -21,6 +21,13 @@ gefundenen sichtbaren Texte sind jetzt konsistent deutsch. Gezielte Qt-Regressio
 decken Qualitätsstufen, Titelzähler, Worker-Status, Timeline, Preview und
 Exportmeldungen ab. Synthetische Worker-/UI-Tests ohne Audioanalyse.
 
+Die Sichtprüfung des vorhandenen isolierten Frozen-Builds bestätigte im
+Playlist-Leerzustand noch „Track auswählen“ im Detailfeld. Quelltext und
+Accessibility-Name verwenden jetzt „Titel auswählen“ bzw.
+„Titel- und Übergangsdetails“; `test_erweiterte_spalten_und_leere_details`
+besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`,
+0,69 s). Der Frozen-Build selbst stammt von vor diesem letzten Textdelta.
+
 ## Verifizierte Änderungen und Prüfungen
 - UI-Lokalisierungsdelta: Statuszähler, Analytics, Timeline, Tooltips und
   Worker-Text wurden vereinheitlicht. Die gezielte Qt-Regression bestand

@@ -2635,7 +2635,7 @@ class PlaylistPanel(QWidget):
         self._table_layout.addWidget(self._table_stack, 3)
         self.details_text = QPlainTextEdit()
         self.details_text.setReadOnly(True)
-        self.details_text.setAccessibleName("Track- und Übergangsdetails")
+        self.details_text.setAccessibleName("Titel- und Übergangsdetails")
         self.details_text.setMinimumWidth(240)
         self._table_layout.addWidget(self.details_text, 1)
         layout.addLayout(self._table_layout, 1)
@@ -2710,7 +2710,7 @@ class PlaylistPanel(QWidget):
     def _update_track_details(self, *_args):
         row = self.table.currentRow()
         if not 0 <= row < len(self.playlist):
-            self.details_text.setPlainText("Track auswählen, um Messungen und Übergänge zu prüfen.")
+            self.details_text.setPlainText("Titel auswählen, um Messungen und Übergänge zu prüfen.")
             return
         item = self.table.item(row, PlaylistColumn.TITLE)
         identity = item.data(Qt.ItemDataRole.UserRole) if item else None
