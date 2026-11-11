@@ -31,6 +31,17 @@ Frozen-Build liegt weiterhin nicht vor.
   auch der Hörtest-E2E-Vertrag mit Producer, Audit, nativem Fit, Bestätigung
   und Ranking-Aktualisierung. Das ersetzt keine menschliche Bedien- oder
   Klangabnahme.
+- Ein isolierter Frozen-Build mit Python 3.12.10 und PyInstaller 6.21.0 wurde
+  unter `E:\AI\HPG-build-verification-2026-11-11-def331d` erstellt; bestehende
+  Buildziele und die Root-EXE blieben außerhalb des Buildpfads. Die gebaute
+  EXE bestand `--hpg-native-smoke` mit `ok=true`: native Imports/Formulare,
+  Spawn-Worker, RAM-Audiorendering, Fit-Ablehnung und Cleanup waren erfolgreich.
+  EXE-SHA256: `1C64834FBAC22893135BBC0D78EE09582EE6AAB1E9B3484FA53EFB5BFCF72597`.
+  Die bestehende Root-EXE behielt SHA256
+  `07BBB91DF0A74B8C457156AB1DE368B5C9B8496D0528055C8A2E8FC1583AA3D4`.
+- PyInstaller meldete `tbb12.dll` für `numba.np.ufunc.tbbpool` nicht gefunden.
+  Der Build und Smoke waren trotzdem erfolgreich; eine explizite TBB-Backend-
+  Abnahme ist damit nicht belegt.
 - Commit `c507efa` enthält ausschließlich `main.py` und die beiden genannten
   Testdateien und wurde zu GitHub gepusht.
 
@@ -43,8 +54,8 @@ Frozen-Build liegt weiterhin nicht vor.
 - Der erhaltene Umsetzungsplan stammt vom 27.09.2026 und sein Checkbox-Status
   ist nicht gegen den heutigen Code synchronisiert. Er ist deshalb eine
   Anforderungssammlung, keine aktuelle Fertigstellungsanzeige.
-- Originalmusik-/GUI-Gesamtlauf und isolierter PyInstaller-Build mit
-  Smoke-Start bleiben offen.
+- Originalmusik-/manuelle GUI-Abnahme und eine explizite Prüfung des optionalen
+  TBB-Threading-Backends bleiben offen.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
   Dokumentation und Playlist-Längenspezifikation wurden nicht in `c507efa`
   aufgenommen und bleiben im Arbeitsbaum erhalten.
