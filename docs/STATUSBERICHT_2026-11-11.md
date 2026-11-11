@@ -153,6 +153,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   und erneutes Laden laufen; Render-Preflight und Wiedergabe-Payload sind
   synthetisch, ohne Audio-DSP oder Originalmusik.
 - Wiederholung dieser vier Modi am aktuellen HEAD bestand am 11.11. erneut **4/4 in 3,68 s** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`). Die Queue blieb dabei unverändert (FilmX Prompt 73 aktiv, zwei `PBStudio_T007`-Jobs wartend).
+- Native Worker-Lifecycle-Ergänzung: Persistenzfehler/-erfolg mit verspätetem Refresh erst nach eigenem Worker-Cleanup sowie Cancel-Reset bei unverändertem aktivem Playlistlauf bestanden **5/5** (`tests/test_hearing_native_integration.py`, `venv312`, Python 3.12.10, `-n 0 --no-cov`, 0,87 s). Synthetische Ergebnisse, keine Präferenzdateien oder Originalmusik geschrieben.
 - Read-only-Frischeprüfung der CLI/GUI-Matrix gegen den aktuellen HEAD:
   zwischen ihrem Quellstand `6285970` und HEAD änderte sich in den geprüften
   Matrix-Produktionsdateien nur `hpg_core/hearing_smoke.py`, außerhalb der
@@ -544,14 +545,17 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
    Prompt 71 / UUID `5874445e-04ac-4f13-a938-9a695bccdc4f` ist in History
    erfolgreich abgeschlossen. `FX_0496_00003_.mp4` liegt mit 3.512.006 Bytes
    vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
-   Die Dateien `_00001_` und `_00002_` sind separat bestätigt. Der Folgepoll
-   zeigt Prompt 72 aus `FX_0497` abgeschlossen und Prompt 73 / UUID
-   `5a0f9ad9-7e82-433f-84f0-a79417d28340` mit Präfix `Film_x_batch/FX_0498`
-   aktiv (Producer-PID 10456, Queue 1/2). `FX_0497_00001_.mp4` liegt mit
-   2.272.035 Bytes vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames
-   und 10,125 s. Die History für Prompt 72 war beim Poll bereits leer. In der
-   Warteschlange stehen Prompt 74 und 75 für `PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_1` und `item_2`; diese Jobs bleiben unangetastet.
-   Den geplanten H3-Vier-Clip-Batch erst nach Ende aller aktiven und wartenden
+   Die Dateien `_00001_` und `_00002_` sind separat bestätigt. Die Folgeausgabe
+   `FX_0497_00001_.mp4` liegt mit 2.272.035 Bytes vor und ist per `ffprobe`
+   als H.264, 736×416, 24 fps, 243 Frames und 10,125 s bestätigt. Prompt 73
+   (`FX_0498`) ist inzwischen aus der Queue verschwunden; seine Ausgabe
+   `FX_0498_00001_.mp4` (3.036.269 Bytes) wurde ebenso per `ffprobe` geprüft
+   (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Seine History war bereits
+   leer. Aktuell läuft Prompt 74 / UUID `2ea93448-a5b5-4e44-b753-21556d10cd2e`,
+   `PBStudio_T007/.../item_1`; Producer-PID 10456, Queue 1/2. Wartend sind
+   Prompt 75 `PBStudio_T007/.../item_2` und Prompt 76 `Film_x_batch/FX_0499`.
+   Kein fremder Queue-Job wird verändert. Den geplanten H3-Vier-Clip-Batch erst
+   nach Ende aller aktiven und wartenden
    Jobs starten, Queue-Eigentümer und freie Queue vorher erneut prüfen und jede
    Ausgabe über History und `ffprobe` prüfen.
    Desktopinventar: sechs Fenster aus isolierten `HPG-build-verification`-
@@ -580,12 +584,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   `tests/test_transition_weight_ui.py`: **12/12 bestanden** mit
   Python 3.12.10 (`venv312`, `-n 0 --no-cov`). Kein Vollsuite-Lauf und kein
   Frozen-Build; beides bleibt nach dem ComfyUI-Batch eingeplant.
-- Prompt 72 wurde im Folgepoll durch Prompt 73 ersetzt; ComfyUI-Queue zeigt
-  Prompt 73 / UUID `5a0f9ad9-7e82-433f-84f0-a79417d28340`, Präfix `FX_0498`,
-  aktiv; Queue 1/2, Producer-PID 10456 lebt. Wartend sind Prompt 74 und 75 mit
-  Präfixen `PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_1` und
-  `item_2`; sie blieben unberührt. `FX_0497_00001_.mp4` (2.272.035 Bytes) ist
-  mit `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s bestätigt.
-  Die History von Prompt 72 war beim Poll bereits leer; die Ausgabe-/Queue-
-  Beobachtung stützt den Abschluss, nicht ein History-Eintrag. Queue und
-  Producer blieben unangetastet.
+- Prompt 73 / `FX_0498` ist nicht mehr in der Queue; `FX_0498_00001_.mp4`
+  (3.036.269 Bytes) ist per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames,
+  10,125 s bestätigt. Die History war beim Poll bereits leer. Aktuell läuft
+  Prompt 74 / UUID `2ea93448-a5b5-4e44-b753-21556d10cd2e` (`PBStudio_T007/.../item_1`),
+  Queue 1/2. Wartend: Prompt 75 (`PBStudio_T007/.../item_2`) und Prompt 76
+  (`Film_x_batch/FX_0499`). Producer-PID 10456 lebt. Fremde Jobs und Queue
+  blieben unangetastet.
