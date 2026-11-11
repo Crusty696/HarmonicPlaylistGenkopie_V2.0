@@ -4,8 +4,8 @@ Nutzerleitlinie: Aus abgeschlossenen Arbeiten wiederverwendbare Erkenntnisse
 ableiten, anhand geeigneter Quellen prüfen und gezielt in die Projektquellen
 übernehmen. Umfang und Thema sollen zur tatsächlich ausgeführten Arbeit passen.
 
-Maßgeblich bleiben der aktuelle Auftrag und AGENTS.md. Für Implementierungs-
-aussagen den Code, für Laufzeitaussagen datierte Rohbelege prüfen. Erkenntnisse
+Maßgeblich bleiben der aktuelle Auftrag und `docs/PROJECT_KNOWLEDGE.md`. Für
+Implementierungsaussagen den Code, für Laufzeitaussagen datierte Rohbelege prüfen. Erkenntnisse
 im bestehenden `docs/PROJECT_KNOWLEDGE.md` konsolidieren; keine parallelen
 Statuskopien oder unbegründeten automatischen Promotions erzeugen.
 

@@ -897,7 +897,8 @@ RunState und Ergebnisveröffentlichung, gemeinsame Analyse-/Cache-Schritte sowie
 Strategie-/Timeline-/Übergangsmodule. Nachfolgende datierte Protokolle bewahren
 ihre tatsächlichen Prüfergebnisse und Grenzen. Die frühere Abschlusscheckbox
 ersetzt insbesondere keine frische Originaltrack-/Cache- oder musikalische Abnahme.
-AGENTS.md und der aktuelle Nutzerauftrag bestimmen jede weitere Ausführung.
+`docs/PROJECT_KNOWLEDGE.md` und der aktuelle Nutzerauftrag bestimmen jede
+weitere Ausführung.
 
 ## Fortschrittsprotokoll
 

@@ -25,6 +25,9 @@
   für Originalmusik.
 - Das KI-Hirn wurde vor der Arbeit abgefragt. Eine veraltete Erinnerung über
   fehlende Tempo-Integration wurde nach Code- und Testabgleich berichtigt.
+- Aktive Arbeitsdateien und die Deep-Analysis-Spezifikation verwiesen noch auf
+  die entfernte `AGENTS.md`. Diese Verweise zeigen jetzt auf
+  `docs/PROJECT_KNOWLEDGE.md`; datierte historische Übergaben bleiben erhalten.
 
 ## Fertigstellung noch nicht belegt
 
@@ -45,8 +48,8 @@
   von `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, drei HTML-Dokumenten und zwei
   historischen Memory-Dateien.
 - In diesem Fortsetzungsschritt wurde kein Produktcode geändert.
-- Dieser Statusbericht wurde als `a3a22816` committed und gepusht. Der entfernte
-  Feature-Branch stimmt aktuell mit `HEAD` überein.
+- Der Statusbericht wurde als `a3a22816` committed und gepusht. Die anschließende
+  Referenzbereinigung wird als eigener Dokumentationsschritt veröffentlicht.
 
 ## Belege
 

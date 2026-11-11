@@ -26,7 +26,8 @@
 > Snapshot-Wiederverwendung und Pedalboard-Stretch sind inzwischen erweitert.
 > Offene Deep-Sky-Provenienz, Gesamtplaylist-Lücken, fehlgeschlagener Volltest
 > und ausstehende musikalische Abnahme bleiben ausdrücklich offen.
-> Aktueller Auftrag und AGENTS.md gehen alten Fortsetzungsbefehlen vor.
+> Aktueller Auftrag und `docs/PROJECT_KNOWLEDGE.md` gehen alten
+> Fortsetzungsbefehlen vor.
 
 ## Historischer Plan und datierte Umsetzung bis 16.10.2026
 
@@ -107,7 +108,9 @@ Der Nutzer hat inzwischen die vollständige funktionale Umsetzung autorisiert.
 Priorität 1 ist der Analyse-/Rekordbox-Umbau; Playlistverbesserung und zuverlässige
 Hörproben-Erstellung/Bewertung gehören zum Gesamtziel. Der frühere Status
 „Vorbereitung“ beschreibt den vorherigen Arbeitsschritt, nicht die aktuelle Freigabe.
-Ausführungsvertrag: `AGENTS.md` im Projektroot und `.agents/skills/hpg-deep-analysis/SKILL.md`; die frühere separate Regeldatei wurde konsolidiert.
+Ausführungsvertrag: `docs/PROJECT_KNOWLEDGE.md` und
+`.agents/skills/hpg-deep-analysis/SKILL.md`; die frühere separate Regeldatei
+wurde konsolidiert.
 
 **Aktuelle Nutzerpriorisierung (14.10.2026, nach Statusbericht):** Stems und
 Embeddings werden für die erste Ausbaustufe zurückgestellt, sofern sie keine

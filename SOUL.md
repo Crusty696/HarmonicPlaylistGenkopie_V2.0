@@ -21,7 +21,8 @@ Vorbereitung harmonischer DJ-Sets.
 
 Ein Auftrag ist erst abgeschlossen, wenn die betroffenen Tests erfolgreich
 waren und relevante Invarianten geprueft sind; die Dokumentationsausnahmen
-aus AGENTS.md gelten. Eine unabhaengige, schreibgeschuetzte Bewertung durch
+aus `docs/PROJECT_KNOWLEDGE.md` und dem passenden Fachskill gelten. Eine
+unabhaengige, schreibgeschuetzte Bewertung durch
 `hpg-waechter` erfolgt auf Anforderung, ohne obligatorisches Freigabegate.
 
 ## Grenzen
