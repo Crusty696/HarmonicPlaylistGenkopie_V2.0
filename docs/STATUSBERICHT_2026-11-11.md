@@ -432,6 +432,8 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Folgepoll: derselbe Prompt 60 und PID 10456 weiterhin aktiv; keine History-Abschlussmeldung und keine fertige `FX_0491`-Datei. HPG-Arbeit blieb CPU-/Datei-isoliert, keine GPU- oder Originalmusik-Analyse gestartet.
 - Neuer Live-Poll: Prompt 60/UUID `537e8032-5083-4ccd-871b-180486ee0c7c` ist erfolgreich abgeschlossen. `E:\03_Video_&_Medien\Film_x_batch\FX_0491_00001_.mp4` liegt mit 2.608.249 Byte vor. ComfyUI-History meldet 736×416, 24 fps, 243 Frames, 10,125 s; FFmpeg liest H.264 High/AVC1 und Containerdauer 10,13 s.
 - Folgeauftrag: Prompt 61, UUID `f58ec805-d9fe-4ccb-82b5-b0e3d49937f3`, Präfix `Film_x_batch/FX_0492`, läuft; Producer-PID 10456 lebt, Queue 1 laufend/0 wartend. Kein Eingriff oder zusätzlicher Prompt.
+- Folgepoll: Prompt 61/UUID `f58ec805-d9fe-4ccb-82b5-b0e3d49937f3` ist erfolgreich abgeschlossen. `E:\03_Video_&_Medien\Film_x_batch\FX_0492_00001_.mp4` liegt mit 2.475.858 Byte vor. History: 736×416, 24 fps, 243 Frames, 10,125 s; FFmpeg: H.264 High/AVC1, 24 fps, 10,13 s.
+- Aktiver Folgeprompt 62/UUID `2979c237-f19f-406b-b947-e0b0ac3d5dda` verwendet erneut `Film_x_batch/FX_0492`; Queue 1 laufend/0 wartend, Producer-PID 10456 aktiv. Für Prompt 62 ist noch keine History und keine zweite Datei sichtbar. Doppeltes Präfix als ungeklärt notiert; keine Queue-Aktion.
 ## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände
