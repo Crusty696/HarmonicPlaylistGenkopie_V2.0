@@ -73,9 +73,20 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 - Erster CLI-/GUI-Publikationsvergleich bestanden (**1/1**): ein deterministischer
   Einzelmodus-Fixture-Producer erzeugt über beide Wrapper bytegleiche CSVs;
   Legacy- und Quellvalidator akzeptieren die Resultate. Der interne Algorithmus
-  war dabei absichtlich ersetzt. Das ist ein Wrapper-/Schema-Vertrag, kein
-  Golden Master für reale Producer; die übrigen Modi und JSON-Rundreisen bleiben
-  offen.
+  war dabei absichtlich ersetzt. Das ist ein reiner Wrapper-/Schema-Vertrag;
+  der nachfolgende Test ergänzt den Vergleich mit echten internen Produzenten.
+- CLI-/native Service-Parität der echten internen Producer am 11.11. ergänzt:
+  `test_real_internal_producer_artifacts_match_cli_and_native_service` prüft
+  Einzel, Kandidaten, Dreinoten und Dramaturgie; **4/4 bestanden** (`venv312`,
+  `-n 0 --no-cov`, 7,50 s). Der native Service lädt und validiert jeden erzeugten
+  Quellsatz. Gemeinsame CSV-/JSON-Artefakte stimmen bytegleich überein; beim
+  Dramaturgie-Manifest werden nur die absichtlich unterschiedlichen Clip-
+  Speicherbindungen auf den gemeinsamen relativen Pfad normalisiert. Cache-
+  Trackladen, Kandidaten-/Playlist-Eingaben und WAV-Rendern sind kontrollierte
+  synthetische Fixtures. Damit sind Producer-/Wrapperverträge abgedeckt, keine
+  echten Cache-/Such-/Scoringalgorithmen, Audio-Renderqualität, Rating-Fortsetzung
+  oder musikalische Qualität. Das gesamte Modul `tests/test_hearing_workflow.py`
+  bestand danach mit **32/32 Tests** (`-n 0 --no-cov`, 2,06 s).
 - Native Veröffentlichung mit den echten internen Producerfunktionen ergänzt
   geprüft: **3/3** für Einzel, Kandidaten und Dreinoten-Kandidaten. Alle Outputs
   werden vom späteren Quellmanifest-Loader eingelesen; Einzel zusätzlich vom

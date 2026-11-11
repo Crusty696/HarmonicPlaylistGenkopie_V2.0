@@ -93,6 +93,154 @@ def test_cli_and_native_single_prepare_csv_artifacts_match(config_fixture, monke
         assert (cli_config.output_dir / name).read_bytes() == (gui_config.output_dir / name).read_bytes()
 
 
+@pytest.mark.parametrize(
+    ("mode", "three_notes"),
+    (("einzel", False), ("kandidaten", False), ("kandidaten", True), ("dramaturgie", False)),
+)
+def test_real_internal_producer_artifacts_match_cli_and_native_service(
+    tmp_path, monkeypatch, mode, three_notes,
+):
+    """Vergleicht echte Producer beider Einstiegspfade mit synthetischen Quellen."""
+    import json
+    import wave
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from hpg_core.hearing_sources import SourceRenderSink, load_source_session
+    from hpg_core.hearing_workflow import _producer_namespace
+    from hpg_core.models import Track
+    from hpg_core.playlist import TransitionPlan
+    from tools import rate_transitions as rt
+
+    sources = tmp_path / "originals"
+    sources.mkdir()
+    track_count = 12 if mode == "dramaturgie" else 2
+    tracks = []
+    for index in range(track_count):
+        path = sources / f"track-{index:02d}.wav"
+        path.write_bytes(f"synthetic source {index}".encode())
+        tracks.append(Track(
+            str(path), path.name, duration=100., bpm=120., energy=float(index),
+            detected_genre="Psytrance", camelotCode="8A",
+            analysis_mode="librosa_full_or_tail",
+        ))
+
+    cache = tmp_path / "cache.db"
+    cache.write_bytes(b"isolated cache fingerprint")
+    monkeypatch.setattr(rt, "lade_tracks_aus_cache", lambda *_: tracks)
+
+    if mode == "dramaturgie":
+        variant = rt.dramaturgie_varianten()[0]
+        monkeypatch.setattr(rt, "dramaturgie_varianten", lambda: [variant])
+
+        def playlist(pool, strategy, **options):
+            occurrences = [SimpleNamespace(occurrence_id=("fixture", i)) for i in range(len(pool))]
+            recommendations = [SimpleNamespace(
+                index=i,
+                from_occurrence_id=occurrences[i].occurrence_id,
+                to_occurrence_id=occurrences[i + 1].occurrence_id,
+                plan=TransitionPlan(20., 0., 20., 28., 8., "smooth_blend"),
+            ) for i in range(len(pool) - 1)]
+            return SimpleNamespace(
+                tracks=pool, recommendations=recommendations, occurrences=occurrences,
+                scoring_context_dict=lambda: options["scoring_context"],
+                candidate_choice_snapshot_dict=lambda: options["candidate_choice_snapshot"],
+            )
+
+        monkeypatch.setattr(rt, "generate_playlist_result", playlist)
+        config = PrepareConfig(
+            "dramaturgie", tmp_path / "native-set", cache, sequence_tracks=12,
+            transitions_per_variant=4, source_roots=(sources,),
+        )
+    else:
+        from tests.test_audit_candidate_set import _candidate
+
+        candidate = _candidate()
+        candidate.rang = 1
+        candidate.out_a.lufs_lokal = -14.
+        candidate.in_b.lufs_lokal = -14.
+        pair = {
+            "track_a": tracks[0], "track_b": tracks[1],
+            "merkmale": candidate.teilwerte, "pair_candidates": [candidate],
+        }
+        monkeypatch.setattr(rt, "sammle_kandidaten", lambda *_a, **_kw: [pair])
+        monkeypatch.setattr(rt, "sammle_kandidaten_parallel", lambda *_a, **_kw: [pair])
+        if mode == "einzel":
+            plan = TransitionPlan(10., 12., 10., 26., 16., "pro_eq_swap")
+            recommendation = SimpleNamespace(
+                index=0, from_track=tracks[0], to_track=tracks[1], plan=plan,
+                kandidat_aktiv=1, kandidaten=[candidate.to_dict()],
+            )
+            monkeypatch.setattr(
+                rt, "compute_transition_recommendations", lambda *_a, **_kw: [recommendation],
+            )
+        config = PrepareConfig(
+            mode, tmp_path / "native-set", cache, count=1,
+            max_versions_per_pair=1 if mode == "kandidaten" else 5,
+            three_notes=three_notes, source_roots=(sources,),
+        )
+
+    def write_synthetic_clip(_spec, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(destination), "wb") as audio:
+            audio.setnchannels(2)
+            audio.setsampwidth(2)
+            audio.setframerate(8000)
+            audio.writeframes(b"\0\0\0\0" * 800)
+
+    monkeypatch.setattr(rt, "_rendere_atomar", write_synthetic_clip)
+
+    native_result = create_set(config)
+    assert native_result.status == "prepared"
+    native_session = load_source_session(native_result.output_dir)
+    assert native_session.mode == mode
+    assert native_session.status == "prepared"
+
+    cli_config = replace(config, output_dir=tmp_path / "cli-set")
+    cli_sink_root = tmp_path / "cli-sink"
+    cli_sink_root.mkdir()
+    cli_sink = SourceRenderSink(cli_sink_root, cli_config.source_roots)
+    cli_args = _producer_namespace(
+        cli_config, cli_config.output_dir, cli_config.output_dir,
+        cli_sink, CancellationToken(), None,
+    )
+    cli_args.hpg_render_sink = None
+    cli_args.out = cli_config.output_dir
+    cli_wrapper = {
+        "einzel": rt.befehl_prepare,
+        "kandidaten": rt.befehl_prepare_kandidaten,
+        "dramaturgie": rt.befehl_prepare_dramaturgie,
+    }[mode]
+    assert cli_wrapper(cli_args) == 0
+
+    if mode == "einzel":
+        from hpg_core.hearing_calibration import validate_set
+        assert validate_set(cli_config.output_dir)
+        common_files = ("merkmale.csv", "bewertung.csv")
+    elif mode == "kandidaten":
+        rt.validiere_kandidaten_csvs(
+            rt.lies_csv(cli_config.output_dir / "merkmale.csv"),
+            rt.lies_csv(cli_config.output_dir / "bewertung.csv"),
+        )
+        common_files = (
+            "merkmale.csv", "bewertung.csv", "reihenfolge.json", rt.KANDIDATEN_MANIFEST_NAME,
+        )
+    else:
+        common_files = ("bewertung.csv", "dramaturgie_bewertung.csv")
+        cli_manifest = json.loads((cli_config.output_dir / rt.DRAMATURGIE_MANIFEST_NAME).read_text())
+        native_manifest = json.loads((native_result.output_dir / rt.DRAMATURGIE_MANIFEST_NAME).read_text())
+        for manifest in (cli_manifest, native_manifest):
+            for variant in manifest["variants"]:
+                for transition in variant["transitions"]:
+                    transition["clip"] = {"path": transition["clip"]["path"]}
+        assert cli_manifest == native_manifest
+
+    for name in common_files:
+        assert (cli_config.output_dir / name).read_bytes() == (native_result.output_dir / name).read_bytes()
+    assert all(path.read_bytes().startswith(b"synthetic source") for path in sources.iterdir())
+    assert cache.read_bytes() == b"isolated cache fingerprint"
+
+
 def test_create_set_publishes_prepared_virtual_counts(config_fixture):
     updates = []
     result = create_set(config_fixture, progress=updates.append)
