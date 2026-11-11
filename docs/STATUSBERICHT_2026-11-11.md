@@ -28,6 +28,11 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   SHA-256 `26A6D36FE1B9F506BBEB81807CCF90F9209790EC77C6665F657A812F05700C95`.
   Sichtprüfung im isolierten Profil zeigt den Leerhinweis und deaktivierte Panel-
   Aktionen; Accessibility-Tree bestätigt beide Buttons als disabled. Keine Analyse gestartet.
+- Playlist-Exportklick zusätzlich mit einem Qt-MainWindow, einem synthetischen Track
+  und echtem M3U8-Exporter durchlaufen: temporäre Datei enthält `#EXTM3U` und den
+  Trackpfad. `test_playlist_panel_export_button_writes_m3u8`: **1 bestanden**
+  (`-n 0 --no-cov`, 0,74 s). Dies deckt den Button-/Signal-/Speicherpfad ab,
+  ersetzt keine manuelle Set-/Fit-/Rekordbox-XML-/Originalmusik-Abnahme.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit

@@ -2426,6 +2426,31 @@ def test_mainwindow_m3u8_and_partial_xml_export(qtbot, monkeypatch, tmp_path):
   warning.assert_called_once()
 
 
+def test_playlist_panel_export_button_writes_m3u8(qtbot, monkeypatch, tmp_path):
+  window = _window(qtbot, monkeypatch)
+  track = Track(filePath="C:/synthetic/a.wav", fileName="a.wav")
+  window.playlist = [track]
+  window.current_playlist_mode = "Harmonic Flow"
+  window.playlist_panel.set_playlist_data([track], {})
+  output_base = tmp_path / "ui-export"
+  monkeypatch.setattr(
+    main.QFileDialog,
+    "getSaveFileName",
+    lambda *_args, **_kwargs: (
+      str(output_base), "M3U8 Playlist (*.m3u8)"
+    ),
+  )
+  monkeypatch.setattr(window, "_playlist_history_file", lambda: tmp_path / "history.json")
+  monkeypatch.setattr(main.QMessageBox, "information", Mock())
+
+  window.playlist_panel.export_button.click()
+
+  output_path = tmp_path / "ui-export.m3u8"
+  assert output_path.is_file()
+  assert "#EXTM3U" in output_path.read_text(encoding="utf-8")
+  assert "C:/synthetic/a.wav" in output_path.read_text(encoding="utf-8")
+
+
 def test_restart_and_close_without_workers(qtbot, monkeypatch):
   window = _window(qtbot, monkeypatch)
   window.playlist = [Track(filePath="C:/a.wav", fileName="a.wav")]
