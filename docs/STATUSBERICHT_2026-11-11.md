@@ -37,6 +37,12 @@ Frozen-Build liegt weiterhin nicht vor.
   `tests/test_hearing_panel.py --no-cov --tb=short -q` bestand mit **26 Tests**.
   Die Vollsuite wurde vor genau dieser letzten kleinen GUI-Bereinigung
   ausgeführt und danach nicht wiederholt.
+- Die aktuelle Frozen-EXE startete auch im normalen GUI-Modus. Bibliotheks-
+  und Qualitätsbereich sowie der Hörtest-Erzeugungsdialog wurden sichtbar
+  geöffnet. Der Dialog wurde abgebrochen, bevor Analyse oder Satz-Erzeugung
+  startete. Die temporären Cache-/Logpfade lagen im Build-Scratch. Trotz
+  APPDATA/LOCALAPPDATA-Overrides erschien ein gespeicherter Musikordner im
+  Dialog; die Quelle dieser Voreinstellung wurde nicht separat geprüft.
 - Der aktuelle Quellstand wurde isoliert mit Python 3.12.10 und PyInstaller
   6.21.0 unter `E:\AI\HPG-build-verification-2026-11-11-final` gebaut.
   Bestehende Buildziele und Root-EXE blieben außerhalb des Buildpfads. Die
@@ -65,8 +71,8 @@ Frozen-Build liegt weiterhin nicht vor.
   den heutigen Code synchronisiert; er bleibt Anforderungssammlung, keine
   aktuelle Fertigstellungsanzeige. Der falsche Smoke-Schalter wurde auf den
   realen `--hpg-native-smoke`-Einstieg korrigiert.
-- Originalmusik-/manuelle GUI-Abnahme und eine explizite Prüfung des optionalen
-  TBB-Threading-Backends bleiben offen.
+- Originalmusik-/manuelle Bewertungsabnahme und eine explizite Prüfung des
+  optionalen TBB-Threading-Backends bleiben offen.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
   Dokumentation und Playlist-Längenspezifikation wurden nicht in `c507efa`
   aufgenommen und bleiben im Arbeitsbaum erhalten.
@@ -81,10 +87,12 @@ Frozen-Build liegt weiterhin nicht vor.
   Die Datei `E:\03_Video_&_Medien\Film_x_batch\FX_0431_00001_.mp4` wurde von
   ComfyUI als erfolgreich gemeldet und mit `ffprobe` als H.264, 736×416,
   24 fps, 243 Frames und 10,125 Sekunden bestätigt.
-- Der bestehende FilmX-Batch enthält **500 MP4-Dateien**; `FX_0431`,
-  `FX_0432` und `FX_0433` meldeten in der History `success`. `ffprobe`
-  bestätigte für alle drei H.264, 736×416, 24 fps, 243 Frames und 10,125
-  Sekunden. `FX_0434` ist aktuell in der Queue aktiv.
+- Der bestehende FilmX-Batch enthält **502 MP4-Dateien**; `FX_0431`,
+  `FX_0432`, `FX_0433` und `FX_0435` meldeten in der History `success`.
+  `ffprobe`
+  bestätigte `FX_0431` bis `FX_0433` als H.264, 736×416, 24 fps, 243 Frames und 10,125
+  Sekunden. `FX_0435` ist das letzte fertige Video; `FX_0436` ist aktuell in
+  der Queue aktiv.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
   Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde, weil dieser
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
@@ -97,5 +105,6 @@ Frozen-Build liegt weiterhin nicht vor.
    Mediendaten prüfen.
 2. Hörtest-Plan gegen den aktuellen Code abgleichen und nur belegte offene
    Paritätslücken weiter implementieren.
-3. Danach den vollständigen Test- und isolierten Build-/Smoke-Nachweis
-   ausführen.
+3. Verbleibende manuelle Hörtest-/Originalmusik-Abnahme und optionale
+   TBB-Backend-Prüfung getrennt bewerten; nach Produktänderungen gezielt
+   Vollsuite und Frozen-Smoke erneut ausführen.
