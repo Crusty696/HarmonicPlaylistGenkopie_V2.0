@@ -109,9 +109,9 @@ manueller kompletter GUI-Ablauf bleiben offen.
   [2026-09-27-hoertest-werkzeuge-in-app.md](superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md)
   zurückgeholt. Seine ursprünglichen Checkboxen und Matrix sind nicht gegen
   den heutigen Code synchronisiert; er bleibt Anforderungssammlung, keine
-  aktuelle Fertigstellungsanzeige. Einzel-Quellsätze werden bereits durch
-  `hpg_core.hearing_sources.load_source_session` mit dem Modusvalidator
-  `_single_metadata` geprüft; ein separates `validate_set`-API existiert nicht.
+  aktuelle Fertigstellungsanzeige. Einzel-Quellsätze werden durch
+  `hpg_core.hearing_sources.load_source_session`/`_single_metadata` geprüft;
+  Legacy-Einzel-CSV zusätzlich durch `hpg_core.hearing_calibration.validate_set`.
   Der falsche Smoke-Schalter wurde auf den realen `--hpg-native-smoke`-Einstieg
   korrigiert.
 - Originalmusik-/manuelle Bewertungsabnahme und eine explizite Prüfung des

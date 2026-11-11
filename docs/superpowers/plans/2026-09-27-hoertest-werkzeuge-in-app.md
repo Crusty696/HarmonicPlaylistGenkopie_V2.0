@@ -178,32 +178,31 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 
 **Dateien:** `main.py`, falls erforderlich Audit-Service-Schnittstelle, GUI-/Audit-Tests.
 
-**Schnittstellen:** Kandidaten-Audit-Service nimmt exakte Satz-/Cache-/Report-Pfade und gibt strukturierten Report/Fehler zurück. Dramaturgie nutzt `hoertest_server.validiere_dramaturgie_satz`; Einzel bekommt den oben spezifizierten neu zu implementierenden read-only Validator. Keiner der Modi wird fälschlich als Kandidaten-Replay-Audit behandelt. Fit-Voraussetzungen je Modus folgen dem jeweiligen CLI-Vertrag. GUI ruft diese Services direkt auf, nicht per CLI-Subprocess.
+**Schnittstellen:** Kandidaten-Audit-Service bindet Satz-/Cache-/Quell-/Build-Fingerprints und liefert einen strukturierten RAM-Receipt; Dramaturgie nutzt `hoertest_server.validiere_dramaturgie_satz`; Source-Einzel nutzt `load_source_session`/`_single_metadata`, Legacy-Einzel `hearing_calibration.validate_set`. Diese Prüfungen bleiben getrennt; kein Modus wird als Kandidaten-Replay-Audit ausgegeben. GUI ruft importierbare Services direkt auf, nicht per CLI-Subprocess.
 
-- [ ] Tests für Kandidaten-Audit-Erfolg, strukturierten Fehlerreport, Report-Kollision, Cachebindung, Cache-WAL/Änderung und während des Audits veränderten Satz schreiben.
-- [ ] Tests für den neu implementierten Einzel- und den vorhandenen Dramaturgie-Schema-/Manifest-Validator getrennt ergänzen; nicht vorgeben, dafür gäbe es denselben vollständigen Replay-Audit.
-- [ ] Audit-Ergebnis und Warnungen im Hörtestbereich lesbar darstellen; Auditdatei getrennt vom Satz und Cache anlegen.
-- [ ] Vollständigkeits-/Schema-/Paarwahl-Prüfung für jeden Fit-Modus an Kandidatenvalidator, neuen Einzelvalidator oder Dramaturgievalidator binden; keiner ersetzt einen anderen.
-- [ ] Kandidaten-Fit bis zum abgeschlossenen, erfolgreichen Satz-Audit deaktivieren; Audit-Report nicht vom Nutzer versehentlich verwechselbar machen.
-- [ ] Keine Schreiboperation am Audio, Cache oder existierenden Ratings während des Audits nachweisen.
+- [x] Kandidaten-Audit-Erfolg und -Fehler, Binding, Cachefamilie/WAL, Mutationen während Audit, Source-/Legacy-Einzelvalidator und isolierter Audit-Fit sind durch `tests/test_audit_candidate_set.py`, `tests/test_hearing_calibration.py`, `tests/test_hearing_sources_phase_v2.py` und `tests/test_hearing_ratings.py` abgedeckt; keinen Kandidatenbericht ohne erfolgreichen RAM-Audit akzeptieren.
+- [x] Kandidaten-Fit ist UI-seitig bis zur vollständigen Ratingprüfung freigegeben und Service-seitig an erfolgreiches Audit-Receipt und Fit-Binding gebunden; Apply validiert und prüft Binding erneut.
+- [x] Audit verändert keine Originalclips, Ratings, Quellen oder Cache; Kandidaten-Audit rendert in RAM und verifiziert Fingerprints.
+- [ ] Ein lesbarer Auditbericht samt Warnungen, Cache-/Build-Bindung und expliziter Trennung „Replay bestanden“ vs. „Fit bestanden“ direkt im Hörtestbereich anzeigen.
+- [ ] Nachweis der Report-Kollision/Publikation nur dann ergänzen, wenn ein persistenter Auditbericht weiterhin Produktanforderung ist; aktueller nativer Pfad verwendet gebundenen Vorschlag und optionalen Export.
 
 **Abnahmekriterium:** Kandidaten-Fit kann nicht ohne passenden erfolgreichen Audit starten. Für Modi ohne diesen Audit existiert eine dokumentierte, getestete, modusspezifische Freigabeprüfung; UI kennzeichnet deren geringeren/anderen Prüfstatus klar.
 
-**Testbelege:** erfolgreicher Kandidatenreport bindet finalen absoluten Satzpfad, Manifest-/CSV-Fingerprints und Cache; mutierte Bewertung, Manifest, Cache, WAL oder ersetzter Report verhindert Fit. Einzeltests prüfen den neuen Einzelvalidator; Dramaturgietests den vorhandenen Dramaturgievalidator. Beide dürfen keinen Kandidaten-Replay vortäuschen.
+**Testbelege:** `tests/test_audit_candidate_set.py`, `tests/test_hearing_calibration.py`, `tests/test_hearing_sources_phase_v2.py`, `tests/test_hearing_ratings.py` prüfen RAM-Receipt, Bindung, Mutation, modusspezifische Schema-Prüfung und den Nichtschreibvertrag. Der aktuelle Vertrag speichert keinen separaten Auditbericht; Auditdetails liegen im Integritäts-gebundenen Vorschlag und optionalen Export.
 
 ### Task 5 / Aufgabe 5: Fit, Trainingsergebnis und transparente Übernahme
 
 **Dateien:** `main.py`, gegebenenfalls Service-Schnittstelle, Fit-/GUI-Regressionstests.
 
-**Schnittstellen:** Fit-Service liefert typisiertes Resultat samt Report/Entwurf und Übernahmestatus. Produktive Präferenzen werden nur durch den existierenden atomaren Kandidatenpräferenz-Pfad verändert. CLI und GUI verwenden denselben Service.
+**Schnittstellen:** Einzelmodus liefert gebundene `gewichte.json`-Diagnose als Entwurf; Kandidatenmodus liefert vollständigen `CandidateFitResult`, Gates, Audit-Binding und atomaren Apply-Status. Produktive Präferenzen ändern sich nur nach ausdrücklicher Bestätigung; Ranking-Refresh verwendet danach neuen Scoring-Context.
 
-- [ ] Tests für Einzel- und Kandidatenmodus, Seed/Genre, unzureichende/unausgewogene Stichprobe, nicht-identifizierbare Merkmale, `uebernahme_erlaubt=False`, Dreinoten-Gates und atomare Fehlerfälle schreiben.
-- [ ] Fitparameter aus CLI sinnvoll im GUI anbieten; doppeldeutige `--genre`/`--nur-genre`-Bedeutungen getrennt beschriften.
-- [ ] Vor möglicher Änderung an produktiven Gewichten konkrete Bestätigung zeigen; Abbrechen muss Präferenzen byte-identisch belassen.
-- [ ] Ergebnisse aus realen Ausgabedateien rendern: Einzelmodus `gewichte.json` (nur Diagnose/Entwurf); Kandidatenmodus `dreinoten_fit_bericht.json` und tatsächlicher Override-/Entwurfsstatus. Keine Statusableitung aus leerer CLI-Ausgabe oder mtime-Heuristik.
-- [ ] Einzel-Fit nicht als direkt produktiv wirksam darstellen: falls Übernahme in App erwünscht, eigener expliziter, validierter Import-/Apply-Schritt mit Vorschau, atomarer Persistenz und Rollback-Test ergänzen; Standard bleibt Entwurf.
-- [ ] Kandidaten-Fit: Datengrundlage, Holdout-/Track-Trennung, Baseline, Unsicherheit/Identifizierbarkeit, Gates, Entscheidung und geänderte Genres anzeigen.
-- [ ] Nach tatsächlicher Übernahme Präferenz-Cache/Rankingzustand gezielt invalidieren und neu berechnen; testen, dass neue Kandidatenrankings aktive Gewichte verwenden und alte Results nicht still veraltet bleiben.
+- [x] Einzel-/Kandidaten-Fit, Seed/Einzel-Genre, schlechte Datenlage, Identifizierbarkeit, Gateablehnung und atomare Präferenzpersistenz besitzen bestehende Kern- und fokussierte GUI-Tests; die vollständige neue Fit-Matrix für alle Modi bleibt offen.
+- [x] Einzel-Fit zeigt Stichprobe, Klassen, Datenlage/Grund, aktive Faktoren, Koeffizienten und Bootstrapintervalle als ausdrücklich inaktiven Entwurf.
+- [x] Kandidaten-Fit zeigt Genre-Gates, Holdout/Train, Baseline, AUC, Identifizierbarkeit, Intervalle, neue Gewichte und Rangfolge; vollständiger maschinenlesbarer Fitbericht bleibt sichtbar/exportierbar.
+- [x] Explizite Apply-Bestätigung, atomare Persistenz, Cache-Reset, neuer Scoring-Context, Playlist-Neuberechnung und Fehlerstatus sind durch vorhandene Services und fünf gezielte MainWindow-Regressionen geprüft.
+- [ ] GUI-Modus-/Option-Matrix vervollständigen: Seed/Genre und Dreinoten-Pilot getrennt abbilden; Kandidaten-`--genre` nicht als wirkungsvollen Filter anbieten; jede wirksame Option gegen CLI-Serviceausgabe testen.
+- [ ] Produktive Apply-Zustimmung mit realem gültigem gatebestandenem Kandidatenvorschlag einschließlich Ja/Nein, Persistenzfehler und Ranking-Rangwirkung in isolierter E2E-Fixture vollständig nachweisen.
+- [ ] Dreinoten-spezifische Gates/Deep-Feature-Abblation direkt und verständlich pro Featuregruppenbericht darstellen, nicht nur als JSON-Anhang.
 
 **Abnahmekriterium:** UI nennt operation „Präferenz-Fit/Kalibrierung“, nicht Modelltraining. Nutzer kann belegen, welche Ratings einflossen, welcher Bericht entstand und ob aktive App-Gewichte wirklich geschrieben und vom Ranking neu geladen wurden.
 
