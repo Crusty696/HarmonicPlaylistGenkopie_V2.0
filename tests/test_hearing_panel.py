@@ -169,8 +169,15 @@ def test_prepare_form_maps_modes_and_disables_ineffective_fields(qtbot,index,mod
     assert values["three_notes"] is three
     assert dialog.count_box.isEnabled() is (mode != "dramaturgie")
     assert dialog.seed_box.isEnabled() is (mode != "dramaturgie")
-    assert dialog.workers_box.isEnabled() is (mode == "kandidaten")
+    assert dialog.bpm_box.isEnabled()
+    assert dialog.energy_box.isEnabled() is (mode != "dramaturgie")
+    assert dialog.genre_box.isEnabled() is (mode != "dramaturgie")
+    for widget in (dialog.harmonic_box, dialog.experimental_box, dialog.versions_box,
+                   dialog.tracks_once_box, dialog.profile_edit, dialog.workers_box,
+                   dialog.transition_box):
+        assert widget.isEnabled() is (mode == "kandidaten")
     assert dialog.sequence_tracks_box.isEnabled() is (mode == "dramaturgie")
+    assert dialog.transitions_box.isEnabled() is (mode == "dramaturgie")
 
 
 def test_prepare_form_exposes_all_effective_candidate_options(qtbot):
@@ -200,6 +207,74 @@ def test_prepare_form_exposes_all_effective_candidate_options(qtbot):
         "allow_experimental":False,"seed":42,"max_versions_per_pair":3,"three_notes":True,
         "tracks_once":True,"selection_profile":"C:/selection.json","workers":4,"transition_type_mode":"produktion",
     }
+
+
+@pytest.mark.parametrize("index,mode", [
+    (0, "einzel"), (1, "kandidaten"), (2, "kandidaten"), (3, "dramaturgie"),
+])
+def test_prepare_form_config_and_producer_namespace_parity(qtbot, monkeypatch, tmp_path, index, mode):
+    from hpg_core.hearing_panel import HearingPrepareDialog
+    from hpg_core.hearing_sources import SourceRenderSink
+    from hpg_core.hearing_workflow import CancellationToken, _producer_namespace
+    from tools import rate_transitions as rate
+
+    source_root = tmp_path / "originals"
+    source_root.mkdir()
+    profile = tmp_path / "selection.json"
+    profile.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    dialog = HearingPrepareDialog(folder=str(source_root))
+    qtbot.addWidget(dialog)
+    dialog.mode_box.setCurrentIndex(index)
+    dialog.count_box.setValue(12)
+    dialog.bpm_box.setValue(1.5)
+    dialog.energy_box.setCurrentText("down")
+    dialog.seed_box.setValue(31)
+    dialog.genre_box.setCurrentText("Techno")
+    dialog.harmonic_box.setValue(9)
+    dialog.experimental_box.setChecked(False)
+    dialog.versions_box.setValue(3)
+    dialog.tracks_once_box.setChecked(True)
+    dialog.profile_edit.setText(str(profile))
+    dialog.workers_box.setValue(4)
+    dialog.transition_box.setCurrentText("produktion")
+    dialog.sequence_tracks_box.setValue(18)
+    dialog.transitions_box.setValue(6)
+    dialog._accept_config()
+
+    config = dialog.config
+    assert config.mode == mode
+    assert config.source_roots == (source_root.resolve(),)
+    assert config.bpm_tolerance == 1.5
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    sink = SourceRenderSink(stage, config.source_roots)
+    args = _producer_namespace(config, stage, config.output_dir, sink,
+                               CancellationToken(), None)
+    assert args.modus == mode
+    assert args.anzahl == (100 if mode == "dramaturgie" else 12)
+    assert args.bpm_toleranz == 1.5
+    assert args.energy_direction == ("down" if mode != "dramaturgie" else None)
+    assert args.nur_genre == ("Techno" if mode != "dramaturgie" else None)
+    assert args.seed == (rate.STANDARD_SEED if mode == "dramaturgie" else 31)
+    assert args.harmonic_strictness == (9 if mode == "kandidaten" else 7)
+    assert args.allow_experimental is (False if mode == "kandidaten" else True)
+    assert args.max_versionen_pro_paar == (3 if mode == "kandidaten" else rate.STANDARD_MAX_VERSIONEN_PRO_PAAR)
+    assert args.dreinoten_pilot is (index == 2)
+    assert args.tracks_einmalig is (mode == "kandidaten")
+    assert args.auswahlprofil == (profile if mode == "kandidaten" else None)
+    assert args.workers == (4 if mode == "kandidaten" else 1)
+    assert args.transition_type_mode == ("produktion" if mode == "kandidaten" else "kontrolliert")
+    assert args.sequenz_tracks == (18 if mode == "dramaturgie" else rate.STANDARD_SEQUENZ_TRACKS)
+    assert args.uebergaenge_pro_variante == (
+        6 if mode == "dramaturgie" else rate.STANDARD_UEBERGAENGE_PRO_VARIANTE
+    )
+    if mode == "einzel":
+        assert config.only_genre == "Techno"
+    elif mode == "kandidaten":
+        assert config.only_genre == "Techno"
+    else:
+        assert config.only_genre is None
 
 
 def test_native_memory_playback_retains_buffer_and_releases_on_reject(qtbot):
