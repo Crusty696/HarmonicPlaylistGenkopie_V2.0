@@ -3,8 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-Abgleich:** Der VERITAS-Codeaudit prüfte Commit `149f5af1ad46eb99f3958a5ad28376d52ad11854`; der Branch ist inzwischen weiter. Der Bericht wird mit jedem bestätigten Schritt nachgeführt.
-**CI-Abgleich:** Beim Poll von `9a1661028bee5de162a6cace997697be1acb89d5` stimmten lokaler und Remote-HEAD überein. GitHub meldet für diesen Commit keine Statuschecks; ein offenes PR des Branches ist nicht vorhanden. `.github/workflows/test-installer.yml` läuft bei Push auf `main` oder PR nach `main`, nicht bei Push auf diesen Feature-Branch. CI-Ergebnis dieses HEAD ist daher unbekannt, nicht bestanden.
+**GitHub-/CI-Abgleich (11.11.2026):** Lokaler HEAD und `origin/codex/gesamtrefaktorierung` stimmen auf `00a99d1af346ac69dcd6b65eae77eb888141dc36` überein. `origin/main` ist Vorfahr; der Branch liegt 132 Commits voraus. GitHub meldet für diesen HEAD keine Statuschecks; ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert automatisch auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für den aktuellen HEAD ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
