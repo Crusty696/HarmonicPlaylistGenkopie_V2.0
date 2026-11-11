@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** `codex/gesamtrefaktorierung` und `origin/codex/gesamtrefaktorierung` stehen beide auf `c8ca7558bb74d493e3722138810a25a1e038fd02`. `origin/main` ist Vorfahr und liegt 230 Commits zurück. Letzter Produktcode-Commit: `604db5542c66774cf71b9766763c099b9ff86c40`; danach folgten Test- und Dokumentationscommits, keine Produktquellenänderung. `gh run list --branch codex/gesamtrefaktorierung` liefert keine Branch-Runs; `gh pr list --head codex/gesamtrefaktorierung --state open` liefert kein offenes PR. CI für diesen Feature-Branch ist nicht grün nachgewiesen.
+**GitHub-/CI-Abgleich (11.11.2026, Snapshot direkt vor diesem Berichtupdate):** Lokaler Branch und `origin/codex/gesamtrefaktorierung` standen beide auf `c8ca7558bb74d493e3722138810a25a1e038fd02`; `origin/main` ist Vorfahr. Dieser Statusbericht- und Teststand wurde anschließend auf den Feature-Branch gepusht. Letzter Produktcode-Commit: `604db5542c66774cf71b9766763c099b9ff86c40`; danach folgten Test- und Dokumentationscommits, keine Produktquellenänderung. `gh run list --branch codex/gesamtrefaktorierung` lieferte keine Branch-Runs; `gh pr list --head codex/gesamtrefaktorierung --state open` lieferte kein offenes PR. CI für diesen Feature-Branch ist nicht grün nachgewiesen.
 
 ## Kurzstatus
 
