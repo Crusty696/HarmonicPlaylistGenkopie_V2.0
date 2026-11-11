@@ -39,6 +39,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   war dabei absichtlich ersetzt. Das ist ein Wrapper-/Schema-Vertrag, kein
   Golden Master für reale Producer; die übrigen Modi und JSON-Rundreisen bleiben
   offen.
+- Native Veröffentlichung mit den echten internen Producerfunktionen ergänzt
+  geprüft: **3/3** für Einzel, Kandidaten und Dreinoten-Kandidaten. Alle Outputs
+  werden vom späteren Quellmanifest-Loader eingelesen; Einzel zusätzlich vom
+  Legacy-Validator. Analyse-Cache und Kandidatenfindung sind kontrollierte
+  Fixtures, Audios werden nicht dekodiert. Das deckt Loader-/Schemaannahme der
+  Producer-Ausgaben ab, aber keinen CLI-/GUI-Golden-Master oder Originalmusik.
 - Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
   `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
   Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine

@@ -222,6 +222,14 @@ def test_service_uses_real_internal_producers_with_source_sink(tmp_path, monkeyp
     result = create_set(config)
     assert result.status == "prepared"
     assert result.clip_count == result.pair_count == 1
+    from hpg_core.hearing_sources import load_source_session
+    session = load_source_session(result.output_dir)
+    assert session.mode == mode
+    assert session.status == "prepared"
+    assert session.clip_count == session.pair_count == 1
+    if mode == "einzel":
+        from hpg_core.hearing_calibration import validate_set
+        assert validate_set(result.output_dir)
     assert not list(result.output_dir.rglob("*.wav"))
     assert all(p.read_bytes() == b"synthetic original; no decode required" for p in paths)
 
