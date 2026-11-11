@@ -95,6 +95,15 @@ Verifikation des Batchlaufs bleiben offen.
   Abhängigkeitsgraph enthält `tools.prepare_dj_blind_test`. EXE-SHA256:
   `2626E2ECC32DF8F60836EA7C79246B5E49FB6E849482B3A89114A21ECCA1F67A`.
   Der Native-Smoke endete mit `ok=true`, Exitcode 0; Spawn, RAM-Render und CSV-Fit-Probe bestanden. Der xref enthält `tools.prepare_dj_blind_test`. PyInstaller meldete fehlendes optionales `tbb12.dll`. Das belegt Packaging/Smoke, nicht den manuellen Exportklick oder Klang.
+- Nach dem Vorschlagsdialog-Fix wurde Commit `bcf2fb70` erneut isoliert gebaut:
+  Scratch `E:\AI\HPG-build-verification-2026-11-11-candidate-report-fix`;
+  EXE `dist\HarmonicPlaylistGenerator.exe`, SHA-256
+  `C9D9E4A5CE9148AAB8054D0CDF873D4693EDB68FB8EB1B48604F242E2659B790`.
+  Der Native-Smoke-Report meldet `ok=true`: native Imports/Formulare,
+  isolierter Spawn-/Cleanup-Worker, RAM-Render (16.000 Frames, 8 kHz, Stereo)
+  und CSV-Fit-Probe ohne Audiodatei bestanden. Scope ist Packaging/Qt/Prozess/DSP,
+  keine musikalische oder vollständige App-Abnahme. PyInstaller meldete das
+  optionale `tbb12.dll` als fehlend.
 - Commit `c507efa` enthält ausschließlich `main.py` und die beiden genannten
   Testdateien und wurde zu GitHub gepusht.
 - Commit `0bba81e` ergänzt im Qualitätsbereich eine native Auswahl zwischen
