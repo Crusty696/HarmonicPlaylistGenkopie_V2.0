@@ -152,6 +152,7 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   `-n 0 --no-cov`). Reale Prepare-/Load-Worker, Rating-Speicherung, Dialogschluss
   und erneutes Laden laufen; Render-Preflight und Wiedergabe-Payload sind
   synthetisch, ohne Audio-DSP oder Originalmusik.
+- Wiederholung dieser vier Modi am aktuellen HEAD bestand am 11.11. erneut **4/4 in 3,68 s** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`). Die Queue blieb dabei unverändert (FilmX Prompt 73 aktiv, zwei `PBStudio_T007`-Jobs wartend).
 - Read-only-Frischeprüfung der CLI/GUI-Matrix gegen den aktuellen HEAD:
   zwischen ihrem Quellstand `6285970` und HEAD änderte sich in den geprüften
   Matrix-Produktionsdateien nur `hpg_core/hearing_smoke.py`, außerhalb der
