@@ -540,9 +540,12 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
    Prompt 71 / UUID `5874445e-04ac-4f13-a938-9a695bccdc4f` ist in History
    erfolgreich abgeschlossen. `FX_0496_00003_.mp4` liegt mit 3.512.006 Bytes
    vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
-   Die Dateien `_00001_` und `_00002_` sind separat bestätigt. Aktueller
-   Live-Stand: Prompt 72 / UUID `99361a91-c0b1-46c9-8cb4-02fe2cb6a657`,
-   Präfix `Film_x_batch/FX_0497`, Producer-PID 10456 aktiv, Queue 1/0.
+   Die Dateien `_00001_` und `_00002_` sind separat bestätigt. Der Folgepoll
+   zeigt Prompt 72 aus `FX_0497` abgeschlossen und Prompt 73 / UUID
+   `5a0f9ad9-7e82-433f-84f0-a79417d28340` mit Präfix `Film_x_batch/FX_0498`
+   aktiv (Producer-PID 10456, Queue 1/0). `FX_0497_00001_.mp4` liegt mit
+   2.272.035 Bytes vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames
+   und 10,125 s. Die History für Prompt 72 war beim Poll bereits leer.
    Den geplanten
    H3-Vier-Clip-Batch erst nach Ende des aktuellen Producers starten und jede
    Ausgabe über History und `ffprobe` prüfen.
@@ -572,8 +575,10 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
   `tests/test_transition_weight_ui.py`: **12/12 bestanden** mit
   Python 3.12.10 (`venv312`, `-n 0 --no-cov`). Kein Vollsuite-Lauf und kein
   Frozen-Build; beides bleibt nach dem ComfyUI-Batch eingeplant.
-- Prompt 71 ist laut ComfyUI-History erfolgreich abgeschlossen. Die dritte
-  Ausgabe `FX_0496_00003_.mp4` (3.512.006 Bytes) wurde mit `ffprobe` geprüft:
-  H.264, 736×416, 24 fps, 243 Frames, 10,125 s. Prompt 72 / UUID
-  `99361a91-c0b1-46c9-8cb4-02fe2cb6a657`, Präfix `FX_0497`, läuft; Queue 1/0,
-  Producer-PID 10456 aktiv. Queue und Producer blieben unangetastet.
+- Prompt 72 wurde im Folgepoll durch Prompt 73 ersetzt; ComfyUI-Queue zeigt
+  Prompt 73 / UUID `5a0f9ad9-7e82-433f-84f0-a79417d28340`, Präfix `FX_0498`,
+  aktiv; Queue 1/0, Producer-PID 10456 lebt. `FX_0497_00001_.mp4`
+  (2.272.035 Bytes) ist vorhanden und mit `ffprobe` als H.264, 736×416, 24 fps,
+  243 Frames und 10,125 s bestätigt. Die History von Prompt 72 war beim Poll
+  bereits leer; daher stützt die Ausgabe-/Queue-Beobachtung den Abschluss, nicht
+  ein History-Eintrag. Queue und Producer blieben unangetastet.
