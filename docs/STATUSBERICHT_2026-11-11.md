@@ -668,3 +668,9 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Read-only-Vergleich des vorhandenen Scratch-Build-Ausgangs `6ab75606f2d9d2f3761b46f950f0d63bba3517d6` mit App-Quellstand `a44c7b40acdd6225564895259e4070a26bd3dd96`: seit dem Build änderten sich `main.py`, `hpg_core/app_workers.py`, `hpg_core/hearing_smoke.py` und `hpg_core/measurement_panel.py` (unter anderem 126/122 Zeilen in `main.py`). Der alte Scratch-Build ist damit kein Frozen-Nachweis für den aktuellen App-Quellstand. Aktueller Isolated-Build und GUI-Abnahme bleiben nach Ende des aktiven ComfyUI-Batches erforderlich.
 - GitHub-Prüfung für Commit `a44c7b40acdd6225564895259e4070a26bd3dd96`: keine offenen PRs auf `codex/gesamtrefaktorierung` und keine PR-getriggerten Workflow-Läufe für diesen Commit. Das belegt keine CI-Ausführung oder grüne Checks.
 - Folgepoll: Prompt-ID `d07ad550-1972-45ab-b37d-ff38863cd593`, Präfix `Film_x_batch/FX_0505`, weiter aktiv; History ohne Abschluss, Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+
+## ComfyUI-Fortschritt nach FX_0505
+
+- Prompt-ID `d07ad550-1972-45ab-b37d-ff38863cd593` meldet `success` und `completed=true`. `E:\03_Video_&_Medien\Film_x_batch\FX_0505_00001_.mp4` liegt mit 1.521.253 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Prompt-ID `e3fe365d-8695-4609-8699-1cbd50d84aa0`, Präfix `Film_x_batch/FX_0506`, läuft; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+- Nachfolgender GitHub-/Quellstand `4b7d4adf2fb9757ade223d46b3e3e90075d9c241` wurde gepusht und remote verifiziert. Dieser Folgebericht ändert nur Dokumentation.
