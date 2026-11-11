@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** Commit `a2e9450895eddd80c0703fee7a25ceb6464fc31d` ist auf `origin/codex/gesamtrefaktorierung`; `git fetch origin` bestätigte identische lokale und entfernte HEADs. `origin/main` ist Vorfahr. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, vor dem folgenden UI-Delta):** Commit `73b248b2e3c297599d86c10160de225633963461` ist auf `origin/codex/gesamtrefaktorierung`; `git fetch origin` bestätigte identische lokale und entfernte HEADs. `origin/main` ist Vorfahr. `gh run list` zeigte keine Branch-Runs, ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -34,6 +34,11 @@ Exportmeldungen ab. Synthetische Worker-/UI-Tests ohne Audioanalyse.
   9.1.1, `-n 0 --no-cov`, 2,37 s gesamt). Ein erster Testlauf hatte einen
   Qt-Eltern-Lebensdauerfehler im neu angelegten Test; nach Korrektur bestand
   der Preview-Test separat. Kein Produktlauf, Frozen-Build oder Audiotest.
+- Weitere sichtbare Beschriftungen: Playlist-Details, Sammlungsinventar und
+  Hörtestdialog behalten einzelne Fachbegriffe wie „Track“ bei; sie sind im
+  DJ-Kontext üblich. Der jetzige Sprachdelta-Scan hat nur die eindeutigen
+  englischen Preview-Werte `Out`/`In` und `Track A/B` korrigiert; eine
+  vollständige Sichtprüfung aller Dialoge ist weiterhin nicht erfolgt.
 - Result-Identität bis zum konkreten UI-Export geprüft: `tests/test_run_lifecycle.py::test_generation_result_reorder_exportiert_dieselbe_occurrence_reihenfolge` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,58 s). Der Test veröffentlicht ein synthetisches `PlaylistGenerationResult`, sortiert anhand der Occurrence-IDs um, klickt den Button des danach aktuellen Panels und liest die tatsächlich geschriebene M3U8-Reihenfolge zurück. Keine Originalaudios oder Modellinferenz; keine musikalische Bewertung.
 - Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade.
 - Leichtgewichtiger Quellsyntax-Gate am aktuellen Quellstand bestanden: `venv312\Scripts\python.exe -m compileall -q main.py hpg_core tools` (Exitcode 0). Keine GPU-/Audioarbeit; ersetzt weder Vollsuite noch Frozen-Build.
