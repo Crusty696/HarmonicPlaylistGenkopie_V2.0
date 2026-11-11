@@ -75,6 +75,13 @@ def test_timeline_panel_zeigt_planstatus_overlap_und_praezision(qtbot):
   assert "—" in text
 
 
+def test_timeline_panel_zeigt_leerzustand_beim_start(qtbot):
+  panel = main.TimelinePanel()
+  qtbot.addWidget(panel)
+
+  assert "Keine Playlist vorhanden." in panel.text_edit.toPlainText()
+
+
 def test_timeline_panel_meldet_ungueltige_kante_ohne_fallback(
   qtbot, monkeypatch
 ):

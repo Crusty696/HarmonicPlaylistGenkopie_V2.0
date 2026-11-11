@@ -95,6 +95,13 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   `591fae4d619aeb696ee706d27a4a31605dfbe0bb570fae47f6dc259bab3b97f5`.
   Vollsuite nach Rotation sowie vollständige manuelle Set-/Fit-/Export- und
   Originalmusik-Abnahme bleiben offen.
+- Nach dem Timeline-Startzustandsfix erneut isoliert gebaut: Python 3.12.10,
+  PyInstaller 6.21.0. EXE:
+  `E:\AI\HPG-build-verification-2026-11-11-timeline-empty-1dfe5c20c07946b8828db8b50e56fa30\dist\HarmonicPlaylistGenerator.exe`,
+  SHA-256 `3894A9827D5537ADA59ECA67F6AB86CE36C65DCDE6EFDE15FBF514FE3CE2F4C3`.
+  Im isolierten GUI-Profil gestartet; Timeline zeigte sichtbar und im
+  Accessibility-Tree „Keine Playlist vorhanden.“ Keine Analyse gestartet.
+  Gezielt 2/2 Timeline-Tests bestanden (`-n 0 --no-cov`).
 - Voriger Frozen-Build für den Playlistrotations-Quellstand: Python 3.12.10,
   PyInstaller 6.21.0; Build vollständig erfolgreich. EXE:
   `E:\AI\HPG-build-verification-2026-11-11-playlist-rotation-4fe4a1757cfd4349877bcbd826904fdc\dist\HarmonicPlaylistGenerator.exe`,
@@ -315,6 +322,23 @@ Originalmusik-Abnahme. Der laufende ComfyUI-Batch bleibt unangetastet.
   H3-Lauf fehlen weiterhin die verbindlichen Prompttexte oder deren Quelldatei.
 
 ## Nächste Schritte
+
+### Nachprüfung GUI-Startzustände
+
+- Beim manuellen Start des isolierten Builds war die Timeline-Ansicht vollständig
+  leer, obwohl `TimelinePanel.set_timeline([], [])` bereits den korrekten Text
+  „Keine Playlist vorhanden.“ setzt. Ursache: Beim Erzeugen des Panels wurde
+  `set_timeline` noch nicht aufgerufen. Der Startzustand ist nun direkt im
+  schreibgeschützten Textfeld vorbelegt.
+- Regressionstest `test_timeline_panel_zeigt_leerzustand_beim_start` und
+  bestehender Timeline-Renderingstest: **2/2 bestanden** mit dem Projektinterpreter
+  (`venv312`, `-n 0 --no-cov`). Ein erster Aufruf mit globalem Python fand
+  `librosa` nicht; der korrigierte Aufruf nutzte die Projektumgebung.
+- Der Qualitäts-Tab zeigt beim Start das Camelot-Rad, seine Hörtest-Aktionen
+  und den erklärenden Text. Keine zweite leere Hauptansicht festgestellt.
+- Der neue Frozen-Build mit diesem Fix wurde isoliert gestartet und die
+  sichtbare sowie barrierefreie Textdarstellung bestätigt; keine Analyse
+  gestartet.
 
 1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
    und jede Ausgabe per History und `ffprobe` prüfen.

@@ -4137,6 +4137,7 @@ class TimelinePanel(QWidget):
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
+        self.text_edit.setHtml("<p>Keine Playlist vorhanden.</p>")
         layout.addWidget(self.text_edit)
 
     def set_timeline(
