@@ -51,9 +51,13 @@ Frozen-Build liegt weiterhin nicht vor.
   deckt zentrale Erzeugungs-, Audit-, Fit-, Blindtest- und Rankingpfade ab;
   vollständige Zuordnung aller Werkzeugoptionen zu GUI-Aktionen und ein
   manueller App-Ablauf sind nicht abgenommen.
-- Der erhaltene Umsetzungsplan stammt vom 27.09.2026 und sein Checkbox-Status
-  ist nicht gegen den heutigen Code synchronisiert. Er ist deshalb eine
-  Anforderungssammlung, keine aktuelle Fertigstellungsanzeige.
+- Der erhaltene Umsetzungsplan vom 27.09.2026 wurde nach Hashvergleich aus dem
+  gesicherten Branch-Commit nach
+  [2026-09-27-hoertest-werkzeuge-in-app.md](superpowers/plans/2026-09-27-hoertest-werkzeuge-in-app.md)
+  zurückgeholt. Seine ursprünglichen Checkboxen und Matrix sind nicht gegen
+  den heutigen Code synchronisiert; er bleibt Anforderungssammlung, keine
+  aktuelle Fertigstellungsanzeige. Der falsche Smoke-Schalter wurde auf den
+  realen `--hpg-native-smoke`-Einstieg korrigiert.
 - Originalmusik-/manuelle GUI-Abnahme und eine explizite Prüfung des optionalen
   TBB-Threading-Backends bleiben offen.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
