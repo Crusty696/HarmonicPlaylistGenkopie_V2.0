@@ -739,8 +739,8 @@ class MeasurementDialog(QDialog):
         self._snapshots = tuple(_snapshot(track) for track in tracks)
         layout = QVBoxLayout(self)
         self.status_label = QLabel(
-            f"{len(self._snapshots)} Tracks – gespeicherte RAM-Diagnosen, nicht frisch geprüft."
-            if self._snapshots else "Keine analysierten Tracks übergeben. Keine Messdiagnosen verfügbar.")
+            f"{len(self._snapshots)} Titel – gespeicherte RAM-Diagnosen, nicht frisch geprüft."
+            if self._snapshots else "Keine analysierten Titel übergeben. Keine Messdiagnosen verfügbar.")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
         self.track_table = QTableView(self)

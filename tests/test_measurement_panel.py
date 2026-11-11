@@ -108,7 +108,7 @@ def cell(table, row, column):
 def test_empty_input_is_explicit(qtbot):
     dialog = make(qtbot, ())
     assert dialog.track_table.model().rowCount() == 0
-    assert "Keine analysierten Tracks" in dialog.status_label.text()
+    assert "Keine analysierten Titel" in dialog.status_label.text()
     assert dialog.window_table.rowCount() == 0
 
 
@@ -289,6 +289,7 @@ def test_all_2500_tracks_but_only_selected_window_details(qtbot):
     assert dialog.window_table.rowCount() == 100
     assert cell(dialog.window_table, 99, 0) == "99.000"
     assert "2500" in dialog.status_label.text()
+    assert "Titel" in dialog.status_label.text()
 
 
 def test_central_validator_is_used_for_each_snapshot(qtbot, monkeypatch):

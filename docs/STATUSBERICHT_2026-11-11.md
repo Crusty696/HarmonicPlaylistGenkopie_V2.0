@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** Commit `95b8f6dae14fb9561c61b946be743afd4261d80e` mit dem UI-Lokalisierungsdelta ist auf `origin/codex/gesamtrefaktorierung`; `git fetch origin` bestätigte identische lokale und entfernte HEADs. `origin/main` ist Vorfahr. `gh run list` zeigt keine Branch-Runs, ein offenes PR gibt es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Branch ist unbekannt, nicht grün.
+**GitHub-/CI-Abgleich (11.11.2026, vor dem Preview-Lokalisierungsdelta):** Commit `d322a0b240ddecfc7b2ad448c75abae85238ca5a` mit Lagebericht- und UI-Lokalisierungsupdate war auf `origin/codex/gesamtrefaktorierung`; `git fetch origin` bestätigte identische lokale und entfernte HEADs. `origin/main` ist Vorfahr. `gh run list` zeigte keine Branch-Runs, ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün.
 
 ## Kurzstatus
 
@@ -15,11 +15,11 @@ visuell sowie barrierefrei geprüft. Die vollständige manuelle GUI-/Originalmus
 Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 Aktueller UI-Audit: Der Bericht in `AnalyticsPanel` zeigte noch englische
-Überschriften, Messwerte und Empfehlungen; Statuszähler, Tooltips, Exportmeldungen
-und Teile des Timeline-Berichts mischten ebenfalls Englisch und Deutsch. Diese
-sichtbaren Texte sind jetzt konsistent deutsch. Gezielte Qt-Regressionen decken
-Qualitätsstufen, Titelzähler, Worker-Status, Timeline und Exportmeldungen ab.
-Der ergänzte synthetische Worker-Status-Test läuft ohne Audioanalyse.
+Überschriften, Messwerte und Empfehlungen; Statuszähler, Tooltips, Exportmeldungen,
+Preview und Messdiagnose-Dialog mischten ebenfalls Englisch und Deutsch. Diese
+gefundenen sichtbaren Texte sind jetzt konsistent deutsch. Gezielte Qt-Regressionen
+decken Qualitätsstufen, Titelzähler, Worker-Status, Timeline, Preview und
+Exportmeldungen ab. Synthetische Worker-/UI-Tests ohne Audioanalyse.
 
 ## Verifizierte Änderungen und Prüfungen
 - UI-Lokalisierungsdelta: Statuszähler, Analytics, Timeline, Tooltips und
@@ -28,6 +28,12 @@ Der ergänzte synthetische Worker-Status-Test läuft ohne Audioanalyse.
   der ergänzte synthetische Worker-Status-Test bestand **1/1** (0,67 s).
   `git diff --check` ist sauber. Keine Vollsuite, kein Frozen-Build und keine
   Audio-/Originaltrack-Prüfung für dieses Delta.
+- Folge-UI-Prüfung: Preview-Beschriftungen/Tooltips und Messdiagnose-Zähler
+  wurden ebenfalls lokalisiert. Regressionen für Preview und leeren sowie
+  2.500-Titel-Messdialog bestanden **3/3** (`venv312`, Python 3.12.10, pytest
+  9.1.1, `-n 0 --no-cov`, 2,37 s gesamt). Ein erster Testlauf hatte einen
+  Qt-Eltern-Lebensdauerfehler im neu angelegten Test; nach Korrektur bestand
+  der Preview-Test separat. Kein Produktlauf, Frozen-Build oder Audiotest.
 - Result-Identität bis zum konkreten UI-Export geprüft: `tests/test_run_lifecycle.py::test_generation_result_reorder_exportiert_dieselbe_occurrence_reihenfolge` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,58 s). Der Test veröffentlicht ein synthetisches `PlaylistGenerationResult`, sortiert anhand der Occurrence-IDs um, klickt den Button des danach aktuellen Panels und liest die tatsächlich geschriebene M3U8-Reihenfolge zurück. Keine Originalaudios oder Modellinferenz; keine musikalische Bewertung.
 - Vollständige Analytics-Panel-Aktionsverdrahtung geprüft: neuer Qt-Regressionstest klickt alle 14 sichtbaren Aktionen (Sammlung, Messdiagnosen und zwölf Hörtestaktionen) und prüft den erreichten `MainWindow`-Handler samt Audit-Parameter. `tests/test_main_window.py::test_quality_panel_actions_reach_mainwindow_handlers` besteht **1/1** (`venv312`, Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`, 0,64 s). Das verifiziert Button→Signal→Handler im Qt-Test; reale Dialog-/Server-/Audioabläufe bleiben getrennte Abnahmepfade.
 - Leichtgewichtiger Quellsyntax-Gate am aktuellen Quellstand bestanden: `venv312\Scripts\python.exe -m compileall -q main.py hpg_core tools` (Exitcode 0). Keine GPU-/Audioarbeit; ersetzt weder Vollsuite noch Frozen-Build.

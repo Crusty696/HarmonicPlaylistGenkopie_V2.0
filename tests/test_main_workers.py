@@ -2130,6 +2130,26 @@ def test_preview_error_shows_message_in_widget_and_allows_retry(qtbot):
   button.deleteLater()
 
 
+def test_transition_preview_labels_and_tooltips_are_german(qtbot):
+  transition = SimpleNamespace(
+    from_track=Track(filePath="C:/a.wav", fileName="a.wav"),
+    to_track=Track(filePath="C:/b.wav", fileName="b.wav"),
+    plan=SimpleNamespace(mix_out_a=30.0, mix_in_b=0.0, overlap=8.0),
+    transition_type="blend",
+  )
+  panel = main.MixTipsPanel()
+  qtbot.addWidget(panel)
+  widget = main.TransitionPreviewWidget(0, transition, panel)
+
+  assert "Ausgang: 30.0s" in widget.lbl_a.text()
+  assert "Eingang: 0.0s" in widget.lbl_b.text()
+  assert "Titel A:" in widget.lbl_a.toolTip()
+  assert "Originaltitels A" in widget.lbl_a.toolTip()
+  assert "Titel B:" in widget.lbl_b.toolTip()
+  assert "nur Titel A" in widget._info_timeline_label.text()
+  assert "Track" not in widget._info_timeline_label.text()
+
+
 def test_preview_cancel_leert_queue_und_stellt_buttons_wieder_her(qtbot):
   panel = main.MixTipsPanel()
   qtbot.addWidget(panel)

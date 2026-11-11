@@ -704,12 +704,12 @@ class TransitionPreviewWidget(QWidget):
             "font-weight: bold; border: 1px solid {bd}; border-radius: 3px; "
             "padding: 4px 6px; }}"
         )
-        self.lbl_a = QLabel(f"A: {from_name}\n(Out: {mix_out:.1f}s)")
+        self.lbl_a = QLabel(f"A: {from_name}\n(Ausgang: {mix_out:.1f}s)")
         self.lbl_a.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_a.setStyleSheet(seg_style.format(
             bg=COLORS["accent_secondary_bg"], fg=COLORS["accent_secondary"],
             bd=COLORS["accent_secondary"]))
-        self.lbl_a.setToolTip(f"Track A: {from_track.fileName}\nSpielt von 0s bis 30s in dieser Vorschau.\nÜbergang startet bei Sekunde {mix_out:.1f} des Original-Tracks A.")
+        self.lbl_a.setToolTip(f"Titel A: {from_track.fileName}\nSpielt von 0s bis 30s in dieser Vorschau.\nÜbergang startet bei Sekunde {mix_out:.1f} des Originaltitels A.")
 
         self.lbl_mix = QLabel(f"⇄ MIX ({crossfade:.1f}s)\n{t_label}")
         self.lbl_mix.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -718,11 +718,11 @@ class TransitionPreviewWidget(QWidget):
             bd=COLORS["accent_primary"]))
         self.lbl_mix.setToolTip(f"Mischbereich (Crossfade) für {crossfade:.1f} Sekunden.\nSpielt von 30.0s bis {30.0+crossfade:.1f}s in dieser Vorschau.")
 
-        self.lbl_b = QLabel(f"B: {to_name}\n(In: {mix_in:.1f}s)")
+        self.lbl_b = QLabel(f"B: {to_name}\n(Eingang: {mix_in:.1f}s)")
         self.lbl_b.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_b.setStyleSheet(seg_style.format(
             bg="#12233a", fg=COLORS["accent_success"], bd=COLORS["accent_success"]))
-        self.lbl_b.setToolTip(f"Track B: {to_track.fileName}\nSpielt ab Sekunde {30.0+crossfade:.1f} der Vorschau bis zum Ende.\nÜbergang startet bei Sekunde {mix_in:.1f} des Original-Tracks B.")
+        self.lbl_b.setToolTip(f"Titel B: {to_track.fileName}\nSpielt ab Sekunde {30.0+crossfade:.1f} der Vorschau bis zum Ende.\nÜbergang startet bei Sekunde {mix_in:.1f} des Originaltitels B.")
 
         # Proportionale Weiten: 30s vor dem Mix, crossfade Sekunden mixen, 30s nach dem Mix
         self.segments_layout.addWidget(self.lbl_a, 300)
@@ -762,7 +762,7 @@ class TransitionPreviewWidget(QWidget):
 
         # 4. Info-Struktur-Zeile
         self._info_timeline_label = QLabel(
-            f"Vorschau-Struktur: 0:00-0:30: Nur Track A | 0:30-{30.0+crossfade:.1f}s: Mix ({t_label}) | ab {30.0+crossfade:.1f}s: Nur Track B"
+            f"Vorschau: 0:00–0:30 nur Titel A | 0:30–{30.0+crossfade:.1f}s Mischung ({t_label}) | ab {30.0+crossfade:.1f}s nur Titel B"
         )
         self._info_timeline_label.setStyleSheet("QLabel { font-size: 10px; color: #8b949e; font-style: italic; }")
         layout.addWidget(self._info_timeline_label)
