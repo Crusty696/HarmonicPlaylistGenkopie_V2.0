@@ -581,14 +581,15 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - Weitere noch sichtbare ASCII-Umschriften in Genre-/Kandidatengewicht-
   Tooltips und Statusmeldungen korrigiert; einschließlich der Statusmeldung
   „ungültig“ und des Hinweises auf den nächsten Lauf.
+- A/B-Integritätsbutton mit echtem Worker, getrenntem Schlüssel und synthetischer portabler CSV-Session nachgeprüft: gültig, ungültig, Abbruch und Schließen bestehen **4/4** (`tests/test_hearing_browser_integration.py::test_blind_check_button_slow_actual_worker_no_modal_or_state_change`, `venv312`, Python 3.12.10, `-n 0 --no-cov`, 1,06 s). Read-only; keine Ratings/Statistik, Originalaudio oder Queue-Aktionen.
 - Neuer Qt-Regressionstest
   `tests/test_transition_weight_ui.py`: **12/12 bestanden** mit
   Python 3.12.10 (`venv312`, `-n 0 --no-cov`). Kein Vollsuite-Lauf und kein
   Frozen-Build; beides bleibt nach dem ComfyUI-Batch eingeplant.
 - Prompt 73 / `FX_0498` ist nicht mehr in der Queue; `FX_0498_00001_.mp4`
   (3.036.269 Bytes) ist per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames,
-  10,125 s bestätigt. Die History war beim Poll bereits leer. Aktuell läuft
-  Prompt 74 ist nicht mehr gelistet. Prompt 75 / UUID
+  10,125 s bestätigt. Die History war beim Poll bereits leer. Prompt 74 ist
+  nicht mehr gelistet. Aktuell läuft Prompt 75 / UUID
   `61e9a877-611f-48be-9a63-70142a59d658`
   (`PBStudio_T007/g1_6daef520-735b-4534-941d-c71665559440/item_2`) läuft;
   Queue 1/1. Prompt 76 (`Film_x_batch/FX_0499`) wartet. Producer-PID 10456
