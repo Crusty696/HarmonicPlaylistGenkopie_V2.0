@@ -8,9 +8,9 @@
 ## Kurzstatus
 
 Die App ist weiter in Entwicklung. Ein Repository-Audit und gezielte
-Bereinigungen sind erfolgt. Eine vollständige Produktabnahme liegt nicht vor:
-Volltestsuite, Originalmusik-/GUI-Gesamtlauf und neuer Frozen-Build sind nicht
-nachgewiesen.
+Bereinigungen sind erfolgt. Die vollständige automatisierte Testsuite besteht;
+eine Produktabnahme mit Originalmusik, manuellem GUI-Gesamtlauf und neuem
+Frozen-Build liegt weiterhin nicht vor.
 
 ## Verifizierte Änderungen und Prüfungen
 
@@ -26,19 +26,25 @@ nachgewiesen.
 - `tests/test_main_window.py` und
   `tests/test_hearing_native_integration.py` bestanden nach der Bereinigung
   mit dem Python-3.12-Projektinterpreter. `git diff --check` war sauber.
+- Die vollständige Suite `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q`
+  bestand mit **6.591 Tests** in 770,27 Sekunden (Exitcode 0). Darin bestand
+  auch der Hörtest-E2E-Vertrag mit Producer, Audit, nativem Fit, Bestätigung
+  und Ranking-Aktualisierung. Das ersetzt keine menschliche Bedien- oder
+  Klangabnahme.
 - Commit `c507efa` enthält ausschließlich `main.py` und die beiden genannten
   Testdateien und wurde zu GitHub gepusht.
 
 ## Verbleibende HPG-Arbeit
 
-- Native Hörtest-Module und GUI-Aktionen sind im Code vorhanden. Vollständige
-  Parität für alle Satzmodi, Audit-/Fit-Gates, Blindtest-Erstellung und
-  persistente Ranking-Aktualisierung ist hier nicht Ende-zu-Ende nachgewiesen.
+- Native Hörtest-Module und GUI-Aktionen sind im Code vorhanden. Die Suite
+  deckt zentrale Erzeugungs-, Audit-, Fit-, Blindtest- und Rankingpfade ab;
+  vollständige Zuordnung aller Werkzeugoptionen zu GUI-Aktionen und ein
+  manueller App-Ablauf sind nicht abgenommen.
 - Der erhaltene Umsetzungsplan stammt vom 27.09.2026 und sein Checkbox-Status
   ist nicht gegen den heutigen Code synchronisiert. Er ist deshalb eine
   Anforderungssammlung, keine aktuelle Fertigstellungsanzeige.
-- Ein echter Musik-/App-Ablauf, die vollständige Testsuite und ein isolierter
-  PyInstaller-Build mit Smoke-Start bleiben offen.
+- Originalmusik-/GUI-Gesamtlauf und isolierter PyInstaller-Build mit
+  Smoke-Start bleiben offen.
 - Bereits vorher vorhandene lokale Änderungen an Agenten-/Skill-Spiegeln,
   Dokumentation und Playlist-Längenspezifikation wurden nicht in `c507efa`
   aufgenommen und bleiben im Arbeitsbaum erhalten.
