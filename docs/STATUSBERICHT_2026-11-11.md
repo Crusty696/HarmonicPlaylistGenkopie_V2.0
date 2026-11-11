@@ -11,6 +11,8 @@
 
 **Rangwechsel-Gate:** Neue Regression `tests/test_hearing_end_to_end.py::test_applied_preferences_reorder_visible_mixpoint_ranking` besteht **1/1** (`venv312`, Python 3.12.10, `-n 0 --no-cov`). Persistierte synthetische BPM- und Harmoniegewichte gehen durch den echten MainWindow-Refresh und drehen die tatsächliche Mixpunktreihenfolge von 16/32 auf 32/16. Temporäre Fixturedateien; keine Originalmusik, Audioanalyse oder GPU. Das ergänzt den separaten Fit-/Apply-Integrationsnachweis; vollständige CSV/JSON-Rundreisen und manuelle App-Abnahme bleiben offen.
 
+**Einzel-Fit-App-Pfad:** `tests/test_hearing_calibration.py::test_single_fit_from_app_button_shows_real_draft_without_applying` besteht **1/1** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 2,08 s). Echter CSV-Fit-Button, `HearingCalibrationWorker`-Spawn, Fitberechnung und Ergebnisdialog; synthetische Zwei-Zeilen-CSV, kein Cache oder Audio. Dialog kennzeichnet Gewichte als nicht übernommen; aktive Präferenzen und Quelldateien bleiben unverändert. Kein vollständiger CSV/JSON-Golden-Master-Rundlauf.
+
 **ComfyUI:** Prompts 76–80 (`FX_0499`–`FX_0503`) erfolgreich; alle fünf Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 81 / `FX_0504` (UUID `d2fe4670-d775-400a-8970-240546e3f066`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
@@ -641,3 +643,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 - ComfyUI-History meldet Prompt 80 / UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156` erfolgreich. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0503_00001_.mp4` liegt mit 2.567.714 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt 81 / UUID `d2fe4670-d775-400a-8970-240546e3f066`, Präfix `Film_x_batch/FX_0504`, ist aktiv; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+
+## Einzel-Fit-Gap geschlossen, Gesamt-Abnahme offen
+
+- Die App-Einzel-Fit-Kette wurde vom sichtbaren Button bis zum Ergebnisdialog mit dem echten Worker und isolierter CSV geprüft: **1/1 bestanden**. Der Fit erzeugt einen Vorschlag, schreibt keine aktiven Kandidatenpräferenzen und verändert keine Quelldatei. Beleg: `tests/test_hearing_calibration.py::test_single_fit_from_app_button_shows_real_draft_without_applying`.
+- Prompt 81 / UUID `d2fe4670-d775-400a-8970-240546e3f066`, Präfix `Film_x_batch/FX_0504`, war beim Queue-Poll aktiv; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.

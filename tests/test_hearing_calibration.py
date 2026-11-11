@@ -186,6 +186,70 @@ def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, 
     export_proposal(proposal, tmp_path / "report.json")
 
 
+@pytest.mark.gui
+@pytest.mark.integration
+def test_single_fit_from_app_button_shows_real_draft_without_applying(
+    tmp_path, monkeypatch, qtbot
+):
+    from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QPlainTextEdit
+    from hpg_core import candidate_preferences, hearing_panel
+    from tests.hearing_e2e_fixtures import managed_hearing_jobs
+    from tests.test_main_window import _window
+    import main
+
+    root = _csv_single(tmp_path, rated=True)
+    before_files = {path.name: path.read_bytes() for path in root.iterdir() if path.is_file()}
+    preference_path = tmp_path / "active-preferences.json"
+    monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(preference_path))
+    candidate_preferences.reset_cache()
+    before_preferences = candidate_preferences.load_candidate_preferences()
+    window = _window(qtbot, monkeypatch)
+    monkeypatch.setattr(main.QFileDialog, "getExistingDirectory", lambda *_args: str(root))
+
+    def accept_fit_options(dialog):
+        dialog.findChild(QDialogButtonBox).accepted.emit()
+        return dialog.result()
+
+    monkeypatch.setattr(hearing_panel.HearingFitDialog, "exec", accept_fit_options)
+    proposals, dialog_texts = [], []
+
+    def inspect_real_result(dialog):
+        qtbot.addWidget(dialog)
+        proposals.append(dialog.proposal)
+        dialog_texts.append(dialog.findChild(QPlainTextEdit).toPlainText())
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(
+        hearing_panel.HearingCalibrationResultDialog, "exec", inspect_real_result
+    )
+    with managed_hearing_jobs(qtbot) as owned:
+        owned.append(window)
+        button = window.analytics_panel.hearing_csv_fit_button
+        assert button.isEnabled()
+        button.click()
+        worker = window._hearing_worker
+        assert worker is not None and window._hearing_action == "fit"
+        qtbot.waitUntil(
+            lambda: window._hearing_worker is None and len(proposals) == 1,
+            timeout=60000,
+        )
+
+    proposal = proposals[0]
+    assert proposal["fit_status"] == "passed"
+    assert proposal["single_proposal"]
+    assert proposal["candidate_report"] is None
+    assert proposal["gate_updates"] == {}
+    assert "Gewichtsentwurf – NICHT aktiv übernommen" in dialog_texts[0]
+    assert "Aktive App-Gewichte blieben unverändert" in dialog_texts[0]
+    assert not preference_path.exists()
+    candidate_preferences.reset_cache()
+    assert candidate_preferences.load_candidate_preferences() == before_preferences
+    assert {path.name: path.read_bytes() for path in root.iterdir() if path.is_file()} == before_files
+    assert window._hearing_pending_proposal is None
+    assert not window._hearing_native_active
+    assert "Vorschlag ist noch nicht produktiv übernommen" in window.analytics_panel.hearing_status.text()
+
+
 @pytest.mark.parametrize("change", ["mutation", "creation", "removal"])
 def test_csv_single_old_output_inventory_is_bound(tmp_path, change):
     from hpg_core.hearing_calibration import snapshot, verify_binding, _materialize
