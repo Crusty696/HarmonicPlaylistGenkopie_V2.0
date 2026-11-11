@@ -581,8 +581,38 @@ def test_real_candidate_audit_fit_red_gates_returns_no_active_updates(ram_set):
     assert proposal["gate_updates"] == {}
     assert proposal["live_applied"] is False
     assert proposal["diagnose"]
+    assert proposal["candidate_report"]["diagnose"] == proposal["diagnose"]
+    assert proposal["candidate_report"]["ergebnis"]
+    assert set(proposal["candidate_report"]["counts"]) == {"clips", "reine", "ohne", "verworfen"}
     assert audit._fingerprint_tree(root) == before
     assert not (op / "child_preferences.json").exists()
     assert len(calls) == 1
     with pytest.raises(ValueError, match="gatebestandener"):
         apply_proposal(proposal)
+
+
+
+def test_candidate_report_tampering_breaks_proposal_digest(ram_set):
+    from copy import deepcopy
+    from hpg_core.hearing_calibration import compute_proposal, validate_proposal
+    root, cache, op, _calls, _unused = ram_set
+    proposal = compute_proposal(root, cache, operation_root=op, operation_id="1" * 32, seed=1)
+    changed = deepcopy(proposal)
+    changed["candidate_report"]["counts"]["clips"] += 1
+    with pytest.raises(ValueError, match="veraendert"):
+        validate_proposal(changed)
+
+
+def test_candidate_fit_dialog_displays_full_report(qtbot, ram_set):
+    import json
+    from PyQt6.QtWidgets import QPlainTextEdit
+    from hpg_core.hearing_panel import HearingCalibrationResultDialog
+    from hpg_core.hearing_calibration import compute_proposal
+
+    root, cache, operation, _calls, _tracks = ram_set
+    proposal = compute_proposal(root, cache, operation_root=operation, operation_id="1" * 32, seed=1)
+    dialog = HearingCalibrationResultDialog(proposal)
+    qtbot.addWidget(dialog)
+    report_text = dialog.findChild(QPlainTextEdit).toPlainText()
+    assert "VOLLSTÄNDIGER KANDIDATEN-FITBERICHT" in report_text
+    assert json.dumps(proposal["candidate_report"], ensure_ascii=False, indent=2) in report_text

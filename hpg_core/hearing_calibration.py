@@ -287,7 +287,7 @@ def compute_proposal(directory, cache, *, operation_root, operation_id, fit=True
     binding = snapshot(directory, cache, seed=seed, genres=genres)
     result = {"format": "hpg_calibration_proposal", "version": 2, "operation_id": operation_id,
               "binding": binding, "audit_passed": False, "audit": None, "fit_status": "not_requested",
-              "gate_updates": {}, "diagnose": {}, "single_proposal": None, "live_applied": False, "output": ""}
+              "gate_updates": {}, "diagnose": {}, "single_proposal": None, "candidate_report": None, "live_applied": False, "output": ""}
     if binding["mode"] == "kandidaten":
         inputs = audit.prepare_candidate_inputs(directory, cache, seed=seed, genres=genres)
         if _encoded(inputs.as_dict()["binding"]) != _encoded(binding):
@@ -310,6 +310,7 @@ def compute_proposal(directory, cache, *, operation_root, operation_id, fit=True
                     status = 0
                     result["gate_updates"] = cp._normalisiere_updates(fitted["gate_updates"]) if fitted["gate_updates"] else {}
                     result["diagnose"] = fitted["diagnose"]
+                    result["candidate_report"] = fitted
             else:
                 staged = _materialize(binding, operation_root)
                 args = argparse.Namespace(dir=staged, cache=binding["cache_path"], seed=seed, genre=list(genres) or None)
@@ -341,7 +342,7 @@ def calibration_child(connection, directory, cache, operation_root, operation_id
 
 def validate_proposal(proposal, expected_operation_id=None):
     expected = {"format", "version", "operation_id", "binding", "audit_passed", "audit", "fit_status",
-                "gate_updates", "diagnose", "single_proposal", "live_applied", "output", "proposal_sha256"}
+                "gate_updates", "diagnose", "single_proposal", "candidate_report", "live_applied", "output", "proposal_sha256"}
     if type(proposal) is not dict or set(proposal) != expected or proposal["format"] != "hpg_calibration_proposal" or type(proposal["version"]) is not int or proposal["version"] != 2:
         raise ValueError("Unbekannter Kalibrierungsvorschlag")
     unsigned = {key: value for key, value in proposal.items() if key != "proposal_sha256"}
@@ -420,6 +421,24 @@ def validate_proposal(proposal, expected_operation_id=None):
         raise ValueError("Auditbericht ohne bestandenen Audit")
     if proposal["single_proposal"] is not None and (type(proposal["single_proposal"]) is not dict or binding["mode"] != "einzel" or proposal["fit_status"] != "passed"):
         raise ValueError("Einzelvorschlag ungueltig")
+    candidate_report = proposal["candidate_report"]
+    if candidate_report is not None:
+        if (type(candidate_report) is not dict or binding["mode"] != "kandidaten"
+                or proposal["fit_status"] != "passed"
+                or set(candidate_report) != {"status", "gate_updates", "diagnose", "dreinoten", "ergebnis", "gewichte_je_genre", "rangfolge", "counts"}
+                or candidate_report["status"] != "passed"
+                or type(candidate_report["dreinoten"]) is not bool
+                or type(candidate_report["ergebnis"]) is not dict
+                or type(candidate_report["gewichte_je_genre"]) is not dict
+                or type(candidate_report["rangfolge"]) is not dict
+                or type(candidate_report["counts"]) is not dict
+                or set(candidate_report["counts"]) != {"clips", "reine", "ohne", "verworfen"}
+                or any(type(value) is not int or value < 0 for value in candidate_report["counts"].values())
+                or candidate_report["gate_updates"] != proposal["gate_updates"]
+                or candidate_report["diagnose"] != proposal["diagnose"]):
+            raise ValueError("Kandidaten-Fitbericht ungueltig oder nicht an Vorschlag gebunden")
+    elif binding["mode"] == "kandidaten" and proposal["fit_status"] == "passed":
+        raise ValueError("Bestandener Kandidaten-Fit benoetigt vollstaendigen Bericht")
     return unsigned
 
 

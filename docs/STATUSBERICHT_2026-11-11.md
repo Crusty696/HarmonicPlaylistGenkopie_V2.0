@@ -94,6 +94,8 @@ manueller kompletter GUI-Ablauf bleiben offen.
   Fehlerpfad sind mit 143 fokussierten Tests geprüft.
 
 - Beim Fortsetzen wurde ein Fehler im Legacy-Einzel-CSV-Fit gefunden: doppelte oder inkonsistente Paar-IDs konnten die Snapshot-Grenze passieren; der Fit-Merge konnte doppelte Bewertungen überschreiben. `hpg_core.hearing_calibration.validate_set` validiert jetzt CSV-Schema, IDs, Noten, Faktoren und 1:1-Bindung, ohne Clipdateien zu traversieren. `tests/test_hearing_calibration.py -k csv_single`: **30 bestanden**. Kein Volltest nach dieser Änderung. Commit `f5b45a8a` enthält Fix, Regressionstests, Plan-Korrektur und VERITAS-Wissenssync.
+- Nächste geprüfte GUI-Lücke: Der Kandidaten-Fit-Service verwarf `ergebnis`, Genregewichte, Schema-Rangfolge und Zählwerte aus `CandidateFitResult`; angezeigt wurde damit nicht der vollständige tatsächliche Fitbericht. Der gebundene Vorschlag transportiert nun den kompletten strukturierten Report aus demselben RAM-Fit. Der Qt-Ergebnisdialog zeigt ihn zusätzlich explizit an. Vorschlagsdigest, Report-Schema und Konsistenz mit Diagnose/Gate-Updates werden validiert. Drei gezielte Tests bestanden: echter Kandidaten-Audit/Fit, Digest-Manipulation und Qt-Berichtsanzeige. Kein Volltest oder Build nach dieser Änderung.
+
 ## Verbleibende HPG-Arbeit
 
 - Native Hörtest-Module und GUI-Aktionen sind im Code vorhanden. Vollständige

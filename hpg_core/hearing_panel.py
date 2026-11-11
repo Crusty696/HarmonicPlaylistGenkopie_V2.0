@@ -1094,6 +1094,9 @@ class HearingCalibrationResultDialog(QDialog):
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText(json.dumps(proposal, ensure_ascii=False, indent=2))
+        if proposal["candidate_report"] is not None:
+            text.appendPlainText("\nVOLLSTÄNDIGER KANDIDATEN-FITBERICHT\n")
+            text.appendPlainText(json.dumps(proposal["candidate_report"], ensure_ascii=False, indent=2))
         layout.addWidget(text)
         row = QHBoxLayout()
         self.apply_button = QPushButton("Diese Gewichte übernehmen und Playlist neu berechnen")
