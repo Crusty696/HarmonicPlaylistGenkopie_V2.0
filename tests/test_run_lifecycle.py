@@ -390,17 +390,26 @@ def test_playlist_panel_schaltet_leerzustand_mit_playlistinhalt(qtbot):
 
   assert panel._table_stack.currentWidget() is panel.empty_playlist_label
   assert "Noch keine Playlist vorhanden." in panel.empty_playlist_label.text()
+  assert not panel.export_button.isEnabled()
+  assert not panel.preview_button.isEnabled()
 
   track = Track(filePath="C:/set/track.wav", fileName="track.wav", bpm=128.0)
   panel.set_playlist_data([track], {})
 
   assert panel._table_stack.currentWidget() is panel.table
   assert panel.table.rowCount() == 1
+  assert panel.export_button.isEnabled()
+  assert not panel.preview_button.isEnabled()
+
+  panel.set_playlist_data([track, track], {}, transition_recommendations=[])
+  assert panel.preview_button.isEnabled()
 
   panel.set_playlist_data([], {})
 
   assert panel._table_stack.currentWidget() is panel.empty_playlist_label
   assert panel.table.rowCount() == 0
+  assert not panel.export_button.isEnabled()
+  assert not panel.preview_button.isEnabled()
 
 
 def test_generation_result_reorder_nutzt_occurrences_bei_gleichem_pfad(

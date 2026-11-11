@@ -5,9 +5,12 @@ HPG analysiert ausgewählte Musik, bewertet Trackpaarungen und Mixpunkte,
 erstellt eine Playlist und macht geplante Übergänge als Vorschau hörbar.
 Die Ergebnisse lassen sich als M3U8 oder Rekordbox-XML exportieren.
 
-**Stand 11.11.2026:** Der aktuelle Quellstand besteht die konfigurierte Suite
-mit **6.679 Tests und 81,11 % Coverage** (Exitcode 0; Details im Entwicklungsbericht). Der isolierte Frozen-Build samt
-Native-Smoke besteht ebenfalls. Das belegt Tests und Paketierung, keine
+**Stand 11.11.2026:** Die letzte Vollsuite bestand mit **6.679 Tests und
+81,11 % Coverage** (Exitcode 0). Der neueste Playlist-Aktionszustandsfix besteht
+den gezielten Qt-Test und wurde im isolierten Frozen-Build geprüft. Details und
+Verifikationsgrenzen stehen im Entwicklungsbericht. Ein vorheriger isolierter
+Frozen-Build samt Native-Smoke bestand. Der aktuelle GUI-Build wurde separat
+geprüft. Das belegt Tests und Paketierung, keine
 vollständige manuelle Audio-/Usability-Abnahme. Offene Punkte, Build-Hash,
 ComfyUI-Live-Status und genaue Verifikationsgrenzen stehen im
 [aktuellen Entwicklungsbericht](docs/STATUSBERICHT_2026-11-11.md). Frühere

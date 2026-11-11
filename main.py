@@ -2663,6 +2663,7 @@ class PlaylistPanel(QWidget):
         self.export_button = QPushButton("PLAYLIST EXPORTIEREN")
         self.export_button.setObjectName("btn_primary")
         self.export_button.setMinimumHeight(36)
+        self.export_button.setEnabled(False)
         self.export_button.setToolTip(
             "Exportiert die Playlist als M3U oder Rekordbox XML."
         )
@@ -2671,6 +2672,7 @@ class PlaylistPanel(QWidget):
         self.preview_button = QPushButton("ÜBERGÄNGE PRÜFEN")
         self.preview_button.setObjectName("btn_secondary")
         self.preview_button.setMinimumHeight(36)
+        self.preview_button.setEnabled(False)
         self.preview_button.setToolTip("Zeigt eine Vorschau der Uebergaenge.")
         self.preview_button.clicked.connect(self.preview_clicked.emit)
 
@@ -2967,6 +2969,8 @@ class PlaylistPanel(QWidget):
 
     def _populate_table(self):
         """Tabelle mit Performance-Optimierung befuellen."""
+        self.export_button.setEnabled(bool(self.playlist))
+        self.preview_button.setEnabled(len(self.playlist) >= 2)
         self._table_stack.setCurrentWidget(
             self.table if self.playlist else self.empty_playlist_label
         )

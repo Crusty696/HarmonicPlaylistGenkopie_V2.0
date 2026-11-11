@@ -7,15 +7,23 @@
 
 ## Kurzstatus
 
-Vollsuite nach Playlist-Startzustandsfix am 11.11.2026: **6.679/6.679 bestanden**,
-Coverage **81,11 %**, Exitcode 0 (`venv312`, Python 3.12.10,
-`pytest tests/ --tb=short -q -n 2`, Laufzeit 22:51). Timeline- und Playlist-Leerzustände
-sind im isolierten Frozen-Build sichtbar geprüft. Die
-vollständige manuelle GUI-/Originalmusik-Abnahme bleibt offen. Der laufende
-ComfyUI-Batch bleibt unangetastet.
+Letzte Vollsuite vor dem neuen Playlist-Aktionszustandsfix am 11.11.2026:
+**6.679/6.679 bestanden**, Coverage **81,11 %**, Exitcode 0 (`venv312`, Python
+3.12.10, `pytest tests/ --tb=short -q -n 2`, Laufzeit 22:51). Der aktuelle
+Aktionszustandsfix besteht den gezielten Qt-Test und ist im isolierten Frozen-Build
+visuell sowie barrierefrei geprüft. Die vollständige manuelle GUI-/Originalmusik-
+Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
 
+- Leere Playlist-Aktionen waren aktiv, obwohl die Playlist fehlte. Export ist nun
+  bei 0 Tracks deaktiviert, Übergangsprüfung erst ab 2 Tracks aktiv.
+  `test_playlist_panel_schaltet_leerzustand_mit_playlistinhalt`: **1 bestanden**
+  (`-n 0 --no-cov`, 6,79 s). PyInstaller 6.21.0 Build mit Python 3.12.10:
+  `E:\AI\HPG-build-verification-2026-11-11-playlist-actions-6ab75606\dist\HarmonicPlaylistGenerator.exe`,
+  SHA-256 `26A6D36FE1B9F506BBEB81807CCF90F9209790EC77C6665F657A812F05700C95`.
+  Sichtprüfung im isolierten Profil zeigt den Leerhinweis und deaktivierte Panel-
+  Aktionen; Accessibility-Tree bestätigt beide Buttons als disabled. Keine Analyse gestartet.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
@@ -325,9 +333,9 @@ ComfyUI-Batch bleibt unangetastet.
   `Film_x_batch/FX_0474`; Queue hat 0 wartende Aufträge. Der History-Endpunkt
   liefert während des laufenden Auftrags noch keinen Eintrag. Kein neuer Prompt
   wurde eingereiht.
-  Nach der aktuellen Vollsuite bestätigter Live-Stand: Prompt-ID `49`, UUID
-  `dfe9b25b-0f0c-4408-93c3-6b7531616ede`, Ausgabepräfix
-  `Film_x_batch/FX_0480`; Queue hat 0 wartende Aufträge.
+  Live-Poll nach dem Aktionszustandsfix: Prompt-ID `50`, UUID
+  `587b1a75-94c5-4edb-9a99-5de56d743675`, Ausgabepräfix
+  `Film_x_batch/FX_0481`; Queue hat 0 wartende Aufträge.
   Producer bleibt unberührt; kein Auftrag eingereiht, geändert oder abgebrochen. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
