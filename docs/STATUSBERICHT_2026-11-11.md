@@ -400,7 +400,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
   nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt. Die Datei `prompts_h3_clips_11_14.json` wurde im Ordner Colab-ComfyUI gefunden. H3 bleibt bis zum Ende des laufenden FilmX-Producers zurückgestellt.
 
-## Nächste Schritte
+## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände
 
@@ -437,9 +437,14 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   seit dem in der Matrix gepinnten Quellcommit unverändert. Kein Code-Delta
   gefunden. Fit-/Export-/Restmatrix- und Gesamt-Abnahme bleiben offen.
 
+## Nächste Schritte
+
 1. FilmX-Queue nicht unterbrechen; nach Ende des Producers H3-Vier-Clip-Batch
    starten und jede Ausgabe per History und `ffprobe` prüfen.
-2. Restlichen manuellen GUI-Pfad (Fit/Export und weitere Modi) abnehmen;
-   restliche CLI/GUI-Matrix read-only prüfen.
-3. Parallelen nativen Smoke-Ausreißer untersuchen und Originalmusikabnahme
-   abschließen, sobald die iGPU-/Analysefreigabe wieder gilt.
+2. Nach Ende des laufenden Batches die Vollsuite gegen den aktuellen HEAD
+   ausführen; die letzte Vollsuite vor jüngsten Änderungen bestand mit
+   6.679/6.679 Tests und 81,11 % Coverage.
+3. Parallelen nativen Smoke-Ausreißer untersuchen und restliche CLI/GUI-Matrix
+   read-only prüfen.
+4. Manuellen Fit-/Exportpfad und weitere Modi abnehmen; Originalmusik- und
+   Native-Analyse erst prüfen, wenn die iGPU-/Analysefreigabe wieder gilt.
