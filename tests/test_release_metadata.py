@@ -256,6 +256,17 @@ def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   assert "dist/HarmonicPlaylistGenerator.exe" not in installer_ci
 
 
+def test_build_preserves_existing_executable_until_new_build_is_published():
+  build = (ROOT / "build.bat").read_text(encoding="utf-8")
+  build_step = build.index('"!PYTHON_EXE!" -m PyInstaller --clean --noconfirm HPG.spec')
+  publish_step = build.index('move /y "dist\\HarmonicPlaylistGenerator.exe" "HarmonicPlaylistGenerator.exe"')
+
+  assert 'del /q HarmonicPlaylistGenerator.exe' not in build
+  assert build_step < publish_step
+  assert "if errorlevel 1 (" in build[publish_step:]
+  assert 'if not exist "HarmonicPlaylistGenerator.exe" (' in build[publish_step:]
+
+
 def test_release_and_main_ci_share_one_strong_installer_runtime_gate():
   release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
   installer_ci = (

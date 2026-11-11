@@ -110,7 +110,6 @@ REM Clean previous builds
 echo [5/6] Cleaning previous builds...
 if exist "build\" rmdir /s /q build
 if exist "dist\" rmdir /s /q dist
-if exist "HarmonicPlaylistGenerator.exe" del /q HarmonicPlaylistGenerator.exe
 echo [SUCCESS] Cleaned
 echo.
 
@@ -131,6 +130,14 @@ REM Move executable to root
 echo [INFO] Finalizing...
 if exist "dist\HarmonicPlaylistGenerator.exe" (
     move /y "dist\HarmonicPlaylistGenerator.exe" "HarmonicPlaylistGenerator.exe" >nul
+    if errorlevel 1 (
+        echo [ERROR] Could not publish the new executable; move failed.
+        exit /b 1
+    )
+    if not exist "HarmonicPlaylistGenerator.exe" (
+        echo [ERROR] Executable move reported success but the root executable is missing.
+        exit /b 1
+    )
     echo [SUCCESS] Executable: HarmonicPlaylistGenerator.exe
 ) else (
     echo [ERROR] Executable not found in dist folder!
