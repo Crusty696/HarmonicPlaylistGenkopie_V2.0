@@ -662,3 +662,9 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 - GUI-Exporttest-Probe wurde nach zwei fehlgeschlagenen Fixture-Aufrufen entfernt. Verifizierte Voraussetzung: `compute_proposal` verlangt `HPG_CANDIDATE_PREFERENCES_FILE` gleich `<operation_root>\\child_preferences.json`; der Pfad muss vor dem Fit fehlen. Das ist die Child-Präferenzisolation, kein nachgewiesener Produktfehler.
 - Aktueller ComfyUI-Poll: Präfix `Film_x_batch/FX_0505`, Queue 1 aktiv / 0 wartend; Prompt-ID `d07ad550-1972-45ab-b37d-ff38863cd593`, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
 - Repo-HEAD und GitHub-Branch `codex/gesamtrefaktorierung` stimmen auf `7fbafed931e1a5733312c83164cfb233443a5002` überein. 93 lokale Arbeitsänderungen bleiben unangetastet. Vollsuite, aktueller Frozen-Build und GUI-Abnahme bleiben bis nach dem ComfyUI-Batch offen.
+
+## Release-Abstand nach dem Folgebericht
+
+- Read-only-Vergleich des vorhandenen Scratch-Build-Ausgangs `6ab75606f2d9d2f3761b46f950f0d63bba3517d6` mit App-Quellstand `a44c7b40acdd6225564895259e4070a26bd3dd96`: seit dem Build änderten sich `main.py`, `hpg_core/app_workers.py`, `hpg_core/hearing_smoke.py` und `hpg_core/measurement_panel.py` (unter anderem 126/122 Zeilen in `main.py`). Der alte Scratch-Build ist damit kein Frozen-Nachweis für den aktuellen App-Quellstand. Aktueller Isolated-Build und GUI-Abnahme bleiben nach Ende des aktiven ComfyUI-Batches erforderlich.
+- GitHub-Prüfung für Commit `a44c7b40acdd6225564895259e4070a26bd3dd96`: keine offenen PRs auf `codex/gesamtrefaktorierung` und keine PR-getriggerten Workflow-Läufe für diesen Commit. Das belegt keine CI-Ausführung oder grüne Checks.
+- Folgepoll: Prompt-ID `d07ad550-1972-45ab-b37d-ff38863cd593`, Präfix `Film_x_batch/FX_0505`, weiter aktiv; History ohne Abschluss, Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
