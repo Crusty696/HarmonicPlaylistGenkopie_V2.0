@@ -44,14 +44,11 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   für `001_k1` in `bewertung.csv`; CSV danach auf den vorher leeren Stand
   zurückgesetzt und verifiziert. Nach erneutem Laden meldet das GUI `0/2`
   Varianten bewertet; „Bewertungen auswerten“ bleibt ohne Noten deaktiviert.
-  Der Fit-Dialog/Worker wurde nicht gestartet. „Einzel-CSV auswerten“ öffnet
-  einen getrennten Ordnerwähler; dieser wurde abgebrochen, ohne den geladenen
-  Satz zu wechseln oder einen Worker zu starten. Das ist technischer
-  Speicher-/Preview-/Fortsetzungsnachweis,
-  keine Musikbewertung. Kein Originalaudio und keine Analyse verwendet. Der
+  Der Kandidaten-Fit blieb wegen leerer Bewertungen deaktiviert. Der separate Einzel-CSV-Pfad wurde danach mit einer synthetischen Fixture geprüft; das ist keine Musikbewertung. Für beide GUI-Prüfungen wurden weder Originalaudio noch Analyse verwendet. Der
   Legacy-Browserknopf zeigt für quellenbasierte Sätze den Hinweis, dass er
   vorhandene Hörclips erwartet; Server/Browser wurden nicht gestartet.
   Wiederaufnahme weiterer Modi und Originalmusik-Abnahme bleiben offen.
+- Einzel-CSV-Fit am 11.11.2026 mit isolierter synthetischer Fixture (`E:\AI\HPG-build-verification-2026-11-11-csv-fit-ui`, zwei Bewertungen, keine Audios und kein Cache) im Frozen-GUI ausgeführt. Fitstatus `passed`; Ergebnis 2 Bewertungen (1 gut, 1 nicht gut), Datenlage nicht belastbar. Produktive Übernahme war deaktiviert. Dialog zeigte Datei-Hashes, Build-Fingerprint und Vorschlagsdigest; aktive Gewichte blieben laut Dialog unverändert. Kein Vorschlag wurde übernommen oder gespeichert.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
@@ -374,13 +371,13 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   10,125 Sekunden. Der Producer hat anschließend Prompt 53 (UUID
   `2317eeec-4883-4498-a4aa-ffdd550b1327`, Präfix `Film_x_batch/FX_0484`)
   gestartet; Queue: 1 laufend, 0 wartend. Keine Queue- oder Produceränderung.
+  Prompt 53 wurde danach abgeschlossen; `FX_0484_00001_.mp4` wurde per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden bestätigt. Anschließend startete der Producer Prompt 54 (UUID `45db9fc5-ea21-4067-96a1-33e9d2c64bea`, Präfix `Film_x_batch/FX_0485`). Live-Poll 11.11.2026 17:05 UTC: Producer-PID 10456 aktiv, `rendert`, 484/558 fertig, Prompt 54 läuft, 1 laufend und 0 wartend. Kein zusätzlicher Prompt wurde eingereiht.
   Frühere Ausgaben `FX_0436` bis `FX_0438` bestätigte `ffprobe` ebenfalls als
   H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom
   Batchskript sicher abgewiesen, bevor ein Prompt gesendet wurde, weil dieser
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
-  nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt. Für den nächsten
-  H3-Lauf fehlen weiterhin die verbindlichen Prompttexte oder deren Quelldatei.
+  nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt. Die Datei `prompts_h3_clips_11_14.json` wurde im Ordner Colab-ComfyUI gefunden. H3 bleibt bis zum Ende des laufenden FilmX-Producers zurückgestellt.
 
 ## Nächste Schritte
 
@@ -419,9 +416,8 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   seit dem in der Matrix gepinnten Quellcommit unverändert. Kein Code-Delta
   gefunden. Fit-/Export-/Restmatrix- und Gesamt-Abnahme bleiben offen.
 
-1. FilmX-Queue nicht unterbrechen; nach Leerlauf H3-Vier-Clip-Batch starten
-   und jede Ausgabe per History und `ffprobe` prüfen. Fehlende H3-Prompttexte
-   bleiben dafür erforderlich.
+1. FilmX-Queue nicht unterbrechen; nach Ende des Producers H3-Vier-Clip-Batch
+   starten und jede Ausgabe per History und `ffprobe` prüfen.
 2. Restlichen manuellen GUI-Pfad (Fit/Export und weitere Modi) abnehmen;
    restliche CLI/GUI-Matrix read-only prüfen.
 3. Parallelen nativen Smoke-Ausreißer untersuchen und Originalmusikabnahme
