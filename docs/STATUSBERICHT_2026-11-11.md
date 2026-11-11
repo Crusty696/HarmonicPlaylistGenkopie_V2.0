@@ -14,6 +14,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
 
 ## Verifizierte Änderungen und Prüfungen
 
+- Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
+  **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
+  Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
+  `--no-cov`; er belegt diese Gruppen, nicht die vollständige Suite oder reale
+  Decoder-/Musikabnahme.
+
 - Neuester Stand: Satzbrowser filtert vorhandene Sets nach Ordner, Format,
   Fortschritt, Status und Fehlern; eine beim Filtern ausgeblendete Auswahl wird
   gelöscht. Gezielt und in der vollständigen Suite verifiziert. Der native UI-

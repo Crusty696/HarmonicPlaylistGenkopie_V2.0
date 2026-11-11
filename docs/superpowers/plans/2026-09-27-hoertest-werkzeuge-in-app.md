@@ -164,13 +164,15 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 
 **Schnittstellen:** In-App-Rating nutzt denselben validierten Speicher-/Merge-Pfad wie `HoertestHandler`; der vorhandene Loopback-Server bleibt optionaler Remote-Client desselben Satzes. GUI zeigt nie eine zweite, divergierende Ratinglogik.
 
-- [ ] Tests pro Satzschema für Status/Completeness und Ratingsfortschreibung ergänzen.
-- [ ] In der App für jeden Modus alle aktuell möglichen Nutzeraktionen nativ anbieten: Clip abspielen/wechseln, 1–5-Noten; Kandidaten „bester“ markieren und Bewertungsdimensionen; Dramaturgie-Transition- und Varianten-Noten. Bereits vorhandene DSP-Preview-/Playback-Komponenten wiederverwenden, keine zweite Audioengine bauen.
-- [ ] GUI und optionalen Remote-Browser mit denselben Satz-/Rating-Servicefunktionen verbinden; Bestehende CSV-Schemata, sofortiges Speichern, `zeit`-Felder, Wahlregeln und Fortsetzung unverändert erfüllen.
-- [ ] Satz wählen, optional Remote-Rating starten, Browser öffnen, URL/Status/Port anzeigen, Server stoppen und später denselben Satz fortsetzen in der GUI bereitstellen.
-- [ ] Keine fremden Prozesse am Port beenden; freien Loopback-Port reservieren und gebundene `QProcess`-Instanz mit begrenzter Retry-Logik verwalten.
-- [ ] Contract-Tests je Bewertungsdimension und HTTP-Aktion (GET `/daten*`, Range `/clips`, POST `/note`, `/bester`, `/transition-note`, `/dramaturgie-note`) plus native UI-Aktion auf denselben erwarteten CSV-Zustand.
-- [ ] Stale-Signale, Fenster schließen, Serverfehler und Nutzerabbruch testen.
+- [x] Tests pro Satzschema für Status/Completeness und Ratingsfortschreibung ergänzen. `tests/test_hearing_ratings.py`, `tests/test_hoertest_server.py` und `tests/test_main_window.py` bestanden im fokussierten Lauf.
+- [x] In der App für jeden Modus alle aktuell möglichen Nutzeraktionen nativ anbieten: Clip abspielen/wechseln, 1–5-Noten; Kandidaten „bester“ markieren und Bewertungsdimensionen; Dramaturgie-Transition- und Varianten-Noten. Bereits vorhandene DSP-Preview-/Playback-Komponenten wiederverwenden, keine zweite Audioengine bauen. Modus-/Karten-/Player-Regressionen: `tests/test_hearing_panel_cards.py`, `tests/test_hearing_native_integration.py`.
+- [x] GUI und optionalen Remote-Browser mit denselben Satz-/Rating-Servicefunktionen verbinden; Bestehende CSV-Schemata, sofortiges Speichern, `zeit`-Felder, Wahlregeln und Fortsetzung unverändert erfüllen. Native Callback und HTTP-Handler verwenden `hearing_ratings.save_rating`; geprüft durch Ratings-/Server-/Paneltests.
+- [x] Satz wählen, optional Remote-Rating starten, Browser öffnen, URL/Status/Port anzeigen, Server stoppen und später denselben Satz fortsetzen in der GUI bereitstellen. UI-Vertrag in `tests/test_main_window.py`; Fortsetzung/Schema in `tests/test_hearing_native_integration.py`.
+- [x] Keine fremden Prozesse am Port beenden; freien Loopback-Port reservieren und gebundene `QProcess`-Instanz mit begrenzter Retry-Logik verwalten. `test_hearing_server_retries_only_owned_process_and_stops_on_close` und `tests/test_hoertest_server.py`.
+- [x] Contract-Tests je Bewertungsdimension und HTTP-Aktion (GET `/daten*`, Range `/clips`, POST `/note`, `/bester`, `/transition-note`, `/dramaturgie-note`) plus native UI-Aktion auf denselben erwarteten CSV-Zustand. HTTP-Routen und Ratingschemas in `tests/test_hoertest_server.py`/`tests/test_hearing_ratings.py`; UI-Payloads in `tests/test_hearing_panel_cards.py`.
+- [x] Stale-Signale, Fenster schließen, Serverfehler und Nutzerabbruch testen. Karten-/Navigationsrennen in `tests/test_hearing_panel_cards.py`, Close-/Cancel-Regressionen in `tests/test_hearing_browser_integration.py`, kontrollierte Serverfehler in `tests/test_hoertest_server.py`.
+
+**Verifikation 11.11.2026:** 323 Fälle aus `test_hearing_ratings.py`, `test_hoertest_server.py`, `test_hearing_panel_cards.py`, `test_hearing_native_integration.py` und `test_main_window.py` bestanden mit `pytest ... --no-cov -q`. Playback-Signal-/Seek-Vertrag ist automatisiert abgedeckt; eine manuelle Prüfung realer Decoder-/Audioausgabe bleibt Teil der offenen Usability-Abnahme.
 
 **Abnahmekriterium:** Alle Bewertungen können innerhalb der Desktop-App ohne externen Browser/Launcher/CLI vollständig erstellt, geändert und fortgesetzt werden. Remote-Browser bleibt optional und interoperabel.
 
