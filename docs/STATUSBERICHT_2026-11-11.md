@@ -3,7 +3,7 @@
 **Stand:** 11.11.2026
 
 **Branch:** `codex/gesamtrefaktorierung`
-**GitHub-/CI-Abgleich (11.11.2026):** Der letzte Produktcode-Commit `a220ca69b989eb6f5e6863ac9e01672a10f435aa` ist auf `origin/codex/gesamtrefaktorierung`. `origin/main` ist Vorfahr; bis zu diesem Produktcode-Commit liegt `main` 150 Commits zurück. `gh run list --branch codex/gesamtrefaktorierung` zeigte beim frischen Abgleich keine Branch-Runs; ein offenes PR gab es nicht. `.github/workflows/test-installer.yml` triggert auf Push nach `main` oder PR nach `main`, nicht auf diesen Feature-Branch. CI für diesen Feature-Branch ist unbekannt, nicht grün. Nachfolgende Änderungen auf dem Feature-Branch waren reine Statusbericht-Commits.
+**GitHub-/CI-Abgleich (11.11.2026):** `codex/gesamtrefaktorierung` und `origin/codex/gesamtrefaktorierung` stehen beide auf `3ee0d454b5ed1ee2a3e10da7603ac811046b2c1d`. `origin/main` ist Vorfahr und liegt 224 Commits zurück. Letzter Produktcode-Commit: `604db5542c66774cf71b9766763c099b9ff86c40`; danach folgten Statusbericht-Commits. `gh run list --branch codex/gesamtrefaktorierung` liefert keine Branch-Runs; `gh pr list --head codex/gesamtrefaktorierung --state open` liefert kein offenes PR. CI für diesen Feature-Branch ist nicht grün nachgewiesen.
 
 ## Kurzstatus
 
@@ -15,7 +15,7 @@
 
 **Vier-Modi-CLI/GUI-Sitzungsparität:** `tests/test_hearing_workflow.py::test_real_internal_producer_artifacts_match_cli_and_native_service` besteht **4/4** (`venv312`, Python 3.12.10, `-n 0 --no-cov`, 2,29 s). Für Einzel, Kandidaten, Dreinoten und Dramaturgie werden synthetische Producer-Artefakte verglichen; CLI-Legacy-Loader und nativer Quell-Loader liefern identische logische Rating-Sessions. Dramaturgie prüft die vollständige Acht-Strategien-Matrix. Das belegt noch keine Golden-Master-Rundreise sämtlicher Fit-/Blindtest- und Export-CSV/JSON-Schemas.
 
-**ComfyUI:** Prompts 76–80 (`FX_0499`–`FX_0503`) erfolgreich; alle fünf Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 81 / `FX_0504` (UUID `d2fe4670-d775-400a-8970-240546e3f066`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
+**ComfyUI (Live-Abgleich 11.11.2026):** `FX_0512` (UUID `02106d71-4cd8-4cd1-a679-9c1cfb8e2c99`) erfolgreich; MP4 per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames und 10,125 s geprüft. Folgeprompt `FX_0513` (UUID `56a12074-ae4d-4fd2-bdcd-f8ab05967796`) läuft; Queue 1 aktiv, 0 wartend, Producer-PID 10456 lebt. Queue unberührt. Frühere FX_0499–FX_0504-Einträge weiter unten sind historische Momentaufnahmen.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
