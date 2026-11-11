@@ -97,6 +97,13 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   Legacy-Validator. Analyse-Cache und Kandidatenfindung sind kontrollierte
   Fixtures, Audios werden nicht dekodiert. Das deckt Loader-/Schemaannahme der
   Producer-Ausgaben ab, aber keinen CLI-/GUI-Golden-Master oder Originalmusik.
+- Hörtest-Smoke-Ausreißer nachgeprüft: der archivierte Vollsuite-Fehler entstand
+  in `_check_parallel_initializer` bei `future.result(timeout=30)`; der isolierte
+  Lauf bestand zuvor in 34,24 s Gesamtlaufzeit. Die interne, weiterhin begrenzte
+  Spawn-Frist ist auf 60 s erhöht. Der aktuelle synthetische Diagnose-Smoke
+  bestand gezielt mit **1/1 in 33,48 s** (`venv312`, `-n 0 --no-cov`). Das
+  bestätigt den Einzelpfad, noch nicht das Verhalten unter xdist-Vollsuite-Last;
+  dafür bleibt der nächste Vollsuite-Lauf nach dem ComfyUI-Batch erforderlich.
 - Zusätzlicher CLI-/GUI-Paritätsabgleich fand den vorhandenen optionalen
   `Start_Hoertest.bat`-Launcher, der in der ersten Matrixfassung fehlte. Der
   Launcher ist getesteter Kompatibilitätsweg, kein verwaister Starter: seine
@@ -393,6 +400,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   Folge-Poll 11.11.2026 17:11:30 +01:00: Prompt 54/`FX_0485` abgeschlossen; `FX_0485_00001_.mp4` (1.266.834 Bytes) liegt vor. `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden. Prompt 55 läuft: UUID `7e3b88f4-5c6e-448b-b3df-a483a54b5cd6`, Präfix `Film_x_batch/FX_0486`; Producer-PID 10456 aktiv, 485/558 fertig, Queue 1 laufend/0 wartend, Heartbeat 17:11:29. Kein zusätzlicher Prompt eingereiht.
   Folge-Poll 11.11.2026 17:20 +01:00: Prompt 55/`FX_0486` ist in der ComfyUI-History erfolgreich abgeschlossen. `FX_0486_00001_.mp4` (1.517.764 Bytes) liegt vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden. Prompt 56 läuft mit UUID `dde5a945-30ad-4d8b-a65f-71b769dac2a0` und Präfix `Film_x_batch/FX_0487`; Producer-PID 10456 aktiv, Queue 1 laufend/0 wartend. Kein zusätzlicher Prompt eingereiht.
   Folge-Poll 11.11.2026 17:33 +01:00: Prompt 56/`FX_0487` ist in der History erfolgreich abgeschlossen. `FX_0487_00001_.mp4` (264.855 Bytes) liegt vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden. Prompt 57 läuft mit UUID `2b215237-d6bc-43e4-a311-a5971481dc4c` und Präfix `Film_x_batch/FX_0488`; Producer-PID 10456 (`film_batch.py`) aktiv, Queue 1 laufend/0 wartend. Kein zusätzlicher Prompt eingereiht.
+  Folge-Poll danach: `FX_0488_00001_.mp4` (2.194.175 Bytes) ist vorhanden; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden. Prompt 58 läuft mit UUID `da9c0372-d76a-494d-8a0b-57c0fbcfbe48`, Präfix `Film_x_batch/FX_0489`; Producer-PID 10456 aktiv, Queue 1 laufend/0 wartend. Keine Queue- oder Produceränderung.
   Frühere Ausgaben `FX_0436` bis `FX_0438` bestätigte `ffprobe` ebenfalls als
   H.264, 736×416, 24 fps, 243 Frames und 10,125 Sekunden.
 - Der separate Vier-Prompt-Auftrag `H3_Clip_11` bis `H3_Clip_14` wurde vom

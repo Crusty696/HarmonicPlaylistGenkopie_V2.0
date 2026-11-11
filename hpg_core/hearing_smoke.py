@@ -31,8 +31,12 @@ def _probe_parallel_initializer():
     }
 
 
-def _check_parallel_initializer(*, timeout=30):
-    """Eigener Produktions-Pool; begrenztes Warten, Cleanup unabhaengig nachpruefen."""
+def _check_parallel_initializer(*, timeout=60):
+    """Eigener Produktions-Pool; begrenztes Warten, Cleanup unabhaengig nachpruefen.
+
+    Spawn, Numba-Initialisierung und der erste Librosa-Import brauchen unter
+    paralleler Testsuite-Last gelegentlich mehr als 30 Sekunden.
+    """
     from .parallel_analyzer import _create_executor, _shutdown_executor
     parent_environment = dict(os.environ)
     executor = _create_executor(1)
