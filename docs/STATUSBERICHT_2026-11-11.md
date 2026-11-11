@@ -7,6 +7,12 @@
 
 ## Kurzstatus
 
+**Fortsetzung 11.11.2026:** CPU-/synthetische Integrationsprüfungen nachgeführt: Hearing-Browser 107/107, Hearing-Panel 42/42, MainWindow 22/22, Hearing-Workflow 32/32, Scoring/Strategien 182/182, Deep-Feature-Runtime 65/65, Native-Reader 36/36, Cache-Migration 8/8 und statische Release-Gates 38/38 bestanden. Zusätzlich 168 Playlist-/Layouttests Exitcode 0; der erste Qt-Layouttest meldete dabei einen ungeklärten `Windows fatal exception: code 0x8001010d` aus `qtbot.wait(50)`, also kein störungsfreier Lauf.
+
+**ComfyUI:** Prompt 76 / `FX_0499` erfolgreich beendet; MP4 per `ffprobe` geprüft (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Prompt 77 / `FX_0500` läuft; letzter Queue-Poll 1 aktiv, 0 wartend. Queue unberührt.
+
+**Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
+
 Letzte Vollsuite vor dem neuen Playlist-Aktionszustandsfix am 11.11.2026:
 **6.679/6.679 bestanden**, Coverage **81,11 %**, Exitcode 0 (`venv312`, Python
 3.12.10, `pytest tests/ --tb=short -q -n 2`, Laufzeit 22:51). Der aktuelle
