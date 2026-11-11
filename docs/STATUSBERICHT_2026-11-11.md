@@ -49,6 +49,7 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   vorhandene Hörclips erwartet; Server/Browser wurden nicht gestartet.
   Wiederaufnahme weiterer Modi und Originalmusik-Abnahme bleiben offen.
 - Einzel-CSV-Fit am 11.11.2026 mit isolierter synthetischer Fixture (`E:\AI\HPG-build-verification-2026-11-11-csv-fit-ui`, zwei Bewertungen, keine Audios und kein Cache) im Frozen-GUI ausgeführt. Fitstatus `passed`; Ergebnis 2 Bewertungen (1 gut, 1 nicht gut), Datenlage nicht belastbar. Produktive Übernahme war deaktiviert. Dialog zeigte Datei-Hashes, Build-Fingerprint und Vorschlagsdigest; aktive Gewichte blieben laut Dialog unverändert. Kein Vorschlag wurde übernommen oder gespeichert.
+- „Messdiagnosen anzeigen“ am 11.11.2026 im isolierten Frozen-GUI geöffnet: ohne übergebene Tracks meldet die App „Keine analysierten Tracks übergeben. Keine Messdiagnosen verfügbar.“ Beide Tabellen bleiben leer und melden keine Trackauswahl. Dialog danach geschlossen; keine Analyse oder Änderung ausgelöst.
 - Hörtest-Bewertung/Remote-Vertrag am 11.11.2026 erneut fokussiert geprüft:
   **323 Tests bestanden** in Ratingspeicher, HTTP-Routen/Range, nativen
   Bewertungskarten, Satzfortsetzung und MainWindow-Serverlebenszyklus. Lauf mit
