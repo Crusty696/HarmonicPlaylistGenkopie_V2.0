@@ -563,24 +563,23 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 ## Nächste Schritte
 
-1. FilmX-Queue nicht unterbrechen. Letzter Live-Poll am 11.11.2026:
-   Prompt 81 / UUID `d2fe4670-d775-400a-8970-240546e3f066`, Präfix
-   `Film_x_batch/FX_0504`, aktiv; Queue 1/0, Producer-PID 10456 lebt.
-   Prompt 80 / `FX_0503` ist in der History erfolgreich abgeschlossen. Die
-   Ausgabe `FX_0503_00001_.mp4` liegt mit 2.567.714 Byte vor; `ffprobe`
-   bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s. Fremde
+1. FilmX-Queue nicht unterbrechen. Live-Poll am 11.11.2026: `FX_0515`
+   (UUID `558de56e-c1ab-4044-985c-af6c33e2173e`) läuft; Queue 1/0,
+   Producer-PID 10456 lebt. `FX_0514` ist erfolgreich und per `ffprobe`
+   geprüft (H.264, 736×416, 24 fps, 243 Frames, 10,125 s). Batch-Ende erst
+   annehmen, wenn der Producer beendet ist und die Queue leer bleibt. Fremde
    Queue-Jobs nicht verändern.
-2. Nach Ende aller aktiven und wartenden ComfyUI-Jobs die Vollsuite gegen den
-   dann aktuellen HEAD ausführen. Der letzte dokumentierte Volltest vor den
-   jüngsten Änderungen bestand mit 6.679/6.679 Tests und 81,11 % Coverage.
-   Im Lauf zusätzlich prüfen, ob die auf 60 Sekunden verlängerte Smoke-Spawn-
-   Frist den dokumentierten xdist-Timeout beseitigt.
-3. Danach einen isolierten Frozen-Build vom aktuellen HEAD erstellen und genau
-   diesen Build für die noch offene sichtbare GUI-Abnahme verwenden. Fit-,
-   Export- und weitere Modi bleiben bis zu dieser Abnahme offen.
-4. Originalmusik- und native GPU-Prüfungen erst nach Ende des Batches und nur
-   nach der vereinbarten iGPU-/Analysefreigabe durchführen. Keine Musik- oder
-   Produktivcache-Dateien verschieben oder überschreiben.
+2. Nach Ende des gesamten ComfyUI-Batches die Vollsuite gegen den dann
+   aktuellen HEAD ausführen. Letzter dokumentierter Volltest vor den jüngsten
+   Änderungen: 6.679/6.679 Tests, 81,11 % Coverage. Prüfen, ob die auf
+   60 Sekunden verlängerte Smoke-Spawn-Frist den dokumentierten xdist-Timeout
+   beseitigt.
+3. Danach einen isolierten Frozen-Build vom aktuellen HEAD erstellen und
+   genau diesen Build für die noch offene sichtbare GUI-Abnahme verwenden.
+   Fit-, Export- und weitere Modi bleiben bis zu dieser Abnahme offen.
+4. Originalmusik- und native GPU-Prüfungen erst nach Batchende und nur nach
+   der vereinbarten iGPU-/Analysefreigabe durchführen. Die iGPU bleibt frei.
+   Keine Musik- oder Produktivcache-Dateien verschieben oder überschreiben.
 
 ## UI-Sprachkorrektur 11.11.2026
 
