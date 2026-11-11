@@ -7,13 +7,25 @@
 
 ## Kurzstatus
 
-Die konfigurierte Suite besteht aktuell mit 6.643 Tests und 81,01 % Coverage.
-Ein xdist-Worker gab im Lauf eine Windows-COM-Fatalmeldung aus, wurde ersetzt;
-Pytest endete trotzdem erfolgreich. Der isolierte Frozen-Smoke besteht.
-Originalmusik-Abnahme, vollständige manuelle GUI-Abnahme und abschließende
-Verifikation des Batchlaufs bleiben offen.
+Die konfigurierte Suite besteht aktuell mit 6.644 Tests und 81,02 % Coverage.
+Der isolierte Frozen-Build samt Native-Smoke besteht auch mit dem aktuellen
+Satzbrowser-Suchfilter. Originalmusik-Abnahme, vollständige manuelle GUI-
+Abnahme und ComfyUI-H3-Batch bleiben offen.
 
 ## Verifizierte Änderungen und Prüfungen
+
+- Neuester Stand: Satzbrowser filtert vorhandene Sets nach Ordner, Format,
+  Fortschritt, Status und Fehlern; eine beim Filtern ausgeblendete Auswahl wird
+  gelöscht. Gezielt und in der vollständigen Suite verifiziert. Der native UI-
+  Klickpfad ließ sich in dieser Sitzung nicht zuverlässig bedienen.
+- Vollsuite nach Satzbrowser-Änderung: **6.644/6.644 bestanden**, Coverage
+  **81,02 %**, Exitcode 0. Isolierter PyInstaller-Build mit `HPG.spec`
+  abgeschlossen; Native-Smoke `ok=true` (Imports/Formulare, Spawn/Worker-
+  Cleanup, 16.000 RAM-Audioframes bei 8 kHz Stereo, CSV-Fit-Probe). EXE:
+  `E:\AI\HPG-build-verification-2026-11-11-set-browser-search\dist\HarmonicPlaylistGenerator.exe`,
+  SHA-256 `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`.
+  Smoke belegt Paketierung und synthetische Verträge, keine vollständige
+  GUI- oder Musikabnahme.
 
 - Vollsuite nach dem Dialog-/Fit-Fix erneut ausgeführt: **6.643/6.643 bestanden**,
   Coverage **81,01 %**, Exitcode 0 (`venv312\Scripts\python.exe -m pytest

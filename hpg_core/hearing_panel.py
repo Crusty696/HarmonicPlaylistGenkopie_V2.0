@@ -902,6 +902,10 @@ class HearingSetBrowserDialog(QDialog):
         self.resize(950, 480)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Nur gewählter Ordner und direkte Unterordner. Kein Quellen- oder Auditnachweis.\nÖffnen prüft den gewählten Satz vollständig im Hintergrund."))
+        self.search_edit = QLineEdit(self)
+        self.search_edit.setPlaceholderText("Sätze nach Ordner, Typ, Fortschritt, Status oder Fehler suchen")
+        self.search_edit.setClearButtonEnabled(True)
+        layout.addWidget(self.search_edit)
         self.table = QTableWidget(len(self.summaries), 5)
         self.table.setHorizontalHeaderLabels(["Ordner", "Typ", "Bewertungen", "Status", "Fehler"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -916,15 +920,35 @@ class HearingSetBrowserDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel)
         self.open_button = buttons.button(QDialogButtonBox.StandardButton.Open)
         self.open_button.setEnabled(False)
+        self.search_edit.textChanged.connect(self._apply_search)
         self.table.itemSelectionChanged.connect(self._selection)
         self.table.cellDoubleClicked.connect(lambda *_args: self._open_selected())
         buttons.accepted.connect(self._open_selected)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _apply_search(self, text):
+        needle = text.strip().casefold()
+        selected_row = self.table.currentRow()
+        visible = []
+        for row in range(self.table.rowCount()):
+            content = " ".join(
+                self.table.item(row, column).text()
+                for column in range(self.table.columnCount())
+                if self.table.item(row, column) is not None
+            ).casefold()
+            matches = not needle or needle in content
+            visible.append(matches)
+            self.table.setRowHidden(row, not matches)
+        if selected_row >= 0 and not visible[selected_row]:
+            self.table.clearSelection()
+            self.table.setCurrentCell(-1, -1)
+        self._selection()
+
     def _selection(self):
         row = self.table.currentRow()
-        enabled = 0 <= row < len(self.summaries) and self.summaries[row].status not in {"error", "empty"}
+        enabled = (0 <= row < len(self.summaries) and not self.table.isRowHidden(row)
+                   and self.summaries[row].status not in {"error", "empty"})
         self.open_button.setEnabled(enabled)
 
     def _open_selected(self):

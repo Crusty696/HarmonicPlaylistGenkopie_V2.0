@@ -28,6 +28,39 @@ def test_fit_dialog_does_not_ignore_required_or_supplied_bad_cache(qtbot, single
     assert dialog.error_label.text()
 
 
+def test_hearing_set_browser_search_filters_and_clears_hidden_selection(qtbot, tmp_path):
+    from types import SimpleNamespace
+    from hpg_core.hearing_panel import HearingSetBrowserDialog
+
+    summaries = [
+        SimpleNamespace(path=tmp_path / "single-set", type="Einzel", rated=1, total=4,
+                        status="new", errors=()),
+        SimpleNamespace(path=tmp_path / "candidate-set", type="Kandidaten", rated=3, total=6,
+                        status="resume", errors=()),
+        SimpleNamespace(path=tmp_path / "dramaturgy-set", type="Dramaturgie", rated=2, total=5,
+                        status="resume", errors=()),
+    ]
+    dialog = HearingSetBrowserDialog(summaries)
+    qtbot.addWidget(dialog)
+
+    dialog.table.selectRow(0)
+    assert dialog.open_button.isEnabled()
+    dialog.search_edit.setText("dramaturgie")
+    assert [dialog.table.isRowHidden(row) for row in range(3)] == [True, True, False]
+    assert dialog.table.currentRow() == -1
+    assert not dialog.open_button.isEnabled()
+
+    dialog.search_edit.setText("no matching set")
+    assert all(dialog.table.isRowHidden(row) for row in range(3))
+    assert not dialog.open_button.isEnabled()
+
+    dialog.search_edit.setText("dramaturgie")
+    dialog.table.selectRow(2)
+    assert dialog.open_button.isEnabled()
+    dialog._open_selected()
+    assert dialog.selected_path == summaries[2].path
+
+
 def test_blind_prepare_form_maps_portable_copy_and_csv_key(qtbot, tmp_path):
     from PyQt6.QtWidgets import QDialog
     from hpg_core.hearing_panel import HearingBlindPrepareDialog
