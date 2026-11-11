@@ -58,6 +58,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   geprüft: Ordner-, Status- und Fortschrittsfilter funktionieren; beim
   Ausblenden der ausgewählten Zeile wird „Öffnen“ deaktiviert. Kein Satz wurde
   geöffnet, keine Analyse gestartet.
+- Manuelle Sichtprüfung des aktuellen Frozen-Builds (SHA-256
+  `54109AC5DC376B877912839BD310D6BB55E030910B85ECA619F2CCF7BEB7CD9D`): App
+  startete und blieb bedienbar; QA-Ansicht, Hörtestformular und erweiterte
+  Vorbereitungsoptionen öffneten sich. Formular ohne Auftrag geschlossen.
+  Kein Ordner ausgewählt, keine Analyse, Satz-Erzeugung, Wiedergabe oder
+  vollständige GUI-Abnahme durchgeführt.
 - Vollsuite nach Satzbrowser-Änderung: **6.644/6.644 bestanden**, Coverage
   **81,02 %**, Exitcode 0. Isolierter PyInstaller-Build mit `HPG.spec`
   abgeschlossen; Native-Smoke `ok=true` (Imports/Formulare, Spawn/Worker-
