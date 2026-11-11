@@ -15,6 +15,8 @@ visuell sowie barrierefrei geprüft. Die vollständige manuelle GUI-/Originalmus
 Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
 
 ## Verifizierte Änderungen und Prüfungen
+- Delta-Audit: identische doppelte Definition von `test_prepare_portable_rollback_preserves_replaced_foreign_key` aus `tests/test_prepare_dj_blind_test.py` entfernt. Die zweite Definition hatte die erste beim Python-Modulimport überschrieben; ein Rollback-Regressionsfall wird jetzt einmal gesammelt und ausgeführt. Gezielter Test bestanden (1/1; Python 3.12.10, pytest 9.1.1, `-n 0 --no-cov`). `git diff --check` sauber. Noch kein neuer Gesamt-Audit oder Vollsuite.
+- Vorhandene Root-EXE zuletzt geschrieben am 04.10.2026; Frozen-Build gegen aktuellen HEAD `b9b72f9c` fehlt. Build bleibt bis nach dem aktiven ComfyUI-GPU-Batch offen.
 
 - Veraltete Suite-Zahl in der README auf den letzten Vollteststand korrigiert.
   Hörtest-CLI/GUI-Matrix auf Quellcommit `6285970870d41a69c842e2905d3dba53758ea97c`
@@ -423,6 +425,8 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   bestehende Producer die Queue belegt. Dieser zusätzliche H3-Lauf ist noch
   nicht ausgeführt; der laufende FilmX-Batch bleibt unberührt. Die Datei `prompts_h3_clips_11_14.json` wurde im Ordner Colab-ComfyUI gefunden. H3 bleibt bis zum Ende des laufenden FilmX-Producers zurückgestellt.
 
+- Live-Poll danach: Producer-PID 10456 lebt weiter. ComfyUI meldet Prompt 60, UUID `537e8032-5083-4ccd-871b-180486ee0c7c`, Queue 1 laufend/0 wartend. Die History enthält noch keinen Abschluss; `FX_0491` ist nicht als fertige Datei bestätigt. Kein Queue-Eingriff.
+- Folgepoll: derselbe Prompt 60 und PID 10456 weiterhin aktiv; keine History-Abschlussmeldung und keine fertige `FX_0491`-Datei. HPG-Arbeit blieb CPU-/Datei-isoliert, keine GPU- oder Originalmusik-Analyse gestartet.
 ## Erledigte GUI-Startzustandsprüfung
 
 ### Nachprüfung GUI-Startzustände
