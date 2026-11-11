@@ -1,7 +1,8 @@
 # Hörtest-Werkzeuge: CLI- und GUI-Matrix
 
 **Stand:** 11.11.2026
-**Codebasis:** Branch `codex/gesamtrefaktorierung`, Produkt-/Werkzeugabgleich auf Commit `3707d71e` (die Folgecommits ändern nur Nachweise/Tests).
+**Codebasis:** Branch `codex/gesamtrefaktorierung`, Quellstand `227faac9d0598b93544ba6468381dd20465bbc07`.
+**Delta zum vorherigen Prüfsnapshot `3707d71e`:** spätere `main.py`-Änderungen ergänzen initiale Leerzustände und den GUI-Zustandswechsel. `hpg_core/hearing_panel.py`, `hpg_core/hearing_workflow.py`, `tools/rate_transitions.py` und die Hörtest-Serverpfade blieben unverändert; die unten genannten Verträge wurden gegen diesen aktuellen Stand nachgeprüft.
 **Zweck:** Werkzeugverhalten, Nutzeraktionen, absichtliche Unterschiede und Regressionen direkt gegeneinander abgleichen. CLI-Optionen, die Pfade/Prozesse für Entwickler steuern, werden nicht als fehlende Nutzerfunktion gewertet, wenn die App sie kontrolliert ableitet.
 
 ## Satzvorbereitung
