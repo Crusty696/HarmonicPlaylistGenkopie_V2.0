@@ -209,8 +209,12 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
   Legacy-Einzel-CSV zusätzlich durch `hpg_core.hearing_calibration.validate_set`.
   Der falsche Smoke-Schalter wurde auf den realen `--hpg-native-smoke`-Einstieg
   korrigiert.
-- Originalmusik-/manuelle Bewertungsabnahme und eine explizite Prüfung des
-  optionalen TBB-Threading-Backends bleiben offen.
+- Originalmusik-/manuelle Bewertungsabnahme bleibt offen. Das optionale
+  Threading-Backend wurde im Projektinterpreter geprüft: NumPy meldet
+  OpenBLAS `pthreads` mit 16 Threads; HPG-Quellen, Spec und Requirements
+  referenzieren TBB nicht. Die beim PyInstaller-Lauf fehlende optionale
+  `tbb12.dll` ist damit kein belegter HPG-Laufzeitbedarf. Die geladenen
+  Threadpools der Frozen-EXE wurden nicht separat inventarisiert.
 - Der alte Deep-Sky-Provenienzfehler ist im vorbereiteten Artefaktstand vom
   01.11. behoben: `dict_to_track` lädt `hpg-deepsky-fresh-20261101-8ceqex1v/track.json`
   mit aktuellem Code; native Kandidatenherkunft bleibt bei
@@ -268,5 +272,5 @@ Abnahme und ComfyUI-H3-Batch bleiben offen.
 2. Restlichen manuellen GUI-Pfad (Satz erstellen, Fit/Export und weitere Modi)
    abnehmen; Matrix-Parität nach der erneuten Parser-/Producerprüfung unabhängig
    read-only gegen den Code reviewen.
-3. Parallelen nativen Smoke-Ausreißer untersuchen; Originalmusikabnahme und
-   optionales TBB-Backend getrennt prüfen.
+3. Parallelen nativen Smoke-Ausreißer untersuchen und Originalmusikabnahme
+   abschließen, sobald die iGPU-/Analysefreigabe wieder gilt.
