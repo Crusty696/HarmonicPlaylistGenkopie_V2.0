@@ -26,6 +26,52 @@ def test_fit_dialog_does_not_ignore_required_or_supplied_bad_cache(qtbot, single
     assert dialog.error_label.text()
 
 
+def test_blind_prepare_form_maps_portable_copy_and_csv_key(qtbot, tmp_path):
+    from PyQt6.QtWidgets import QDialog
+    from hpg_core.hearing_panel import HearingBlindPrepareDialog
+
+    dialog = HearingBlindPrepareDialog()
+    qtbot.addWidget(dialog)
+    dialog.delivery_box.setCurrentIndex(1)
+    paths = {
+        "manifest": tmp_path / "manifest.csv",
+        "output_dir": tmp_path / "session",
+        "key_path": tmp_path / "private" / "key.csv",
+        "source_root": tmp_path,
+    }
+    for name, path in paths.items():
+        dialog.edits[name].setText(str(path))
+
+    dialog._accept_config()
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.config == {**paths, "seed": None, "delivery_mode": "portable_copy"}
+    assert "neutralen WAV-Namen" in dialog.notice.text()
+    assert "Originaltracks" in dialog.notice.text()
+
+
+def test_blind_prepare_form_rejects_wrong_key_extension(qtbot, tmp_path):
+    from PyQt6.QtWidgets import QDialog
+    from hpg_core.hearing_panel import HearingBlindPrepareDialog
+
+    dialog = HearingBlindPrepareDialog()
+    qtbot.addWidget(dialog)
+    paths = {
+        "manifest": tmp_path / "manifest.csv",
+        "output_dir": tmp_path / "session",
+        "key_path": tmp_path / "private" / "key.json",
+        "source_root": tmp_path,
+    }
+    for name, path in paths.items():
+        dialog.edits[name].setText(str(path))
+    dialog.delivery_box.setCurrentIndex(1)
+
+    dialog._accept_config()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert ".csv" in dialog.error_label.text()
+
+
 @pytest.mark.parametrize("mode", ["einzel", "kandidaten", "dreinoten", "dramaturgie"])
 def test_native_rating_dialog_exposes_every_supported_schema(qtbot, mode):
     from hpg_core.hearing_panel import HearingRatingDialog

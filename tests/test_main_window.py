@@ -50,6 +50,38 @@ def test_quality_panel_exposes_existing_hearing_workflow(qtbot):
     assert panel.hearing_server_button.isEnabled() is False
 
 
+def test_portable_blind_selection_starts_native_export_worker(qtbot, monkeypatch, tmp_path):
+    from hpg_core import hearing_jobs, hearing_panel
+
+    window = _window(qtbot, monkeypatch)
+    config = {
+        "manifest": tmp_path / "manifest.csv",
+        "output_dir": tmp_path / "session",
+        "key_path": tmp_path / "private" / "key.csv",
+        "source_root": tmp_path,
+        "seed": 23,
+        "delivery_mode": "portable_copy",
+    }
+
+    class AcceptedDialog:
+        def __init__(self, _parent):
+            self.config = config
+
+        def exec(self):
+            return main.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(hearing_panel, "HearingBlindPrepareDialog", AcceptedDialog)
+    starts = []
+    monkeypatch.setattr(window, "_start_hearing_worker", lambda worker, action: starts.append((worker, action)))
+
+    window._prepare_hearing_blind()
+
+    worker, action = starts[0]
+    assert isinstance(worker, hearing_jobs.HearingBlindExportWorker)
+    assert action == "blind_export"
+    assert worker.config == {key: value for key, value in config.items() if key != "delivery_mode"}
+
+
 def test_fit_requires_confirmation_and_cancel_keeps_preferences_untouched(
     qtbot, monkeypatch, tmp_path
 ):

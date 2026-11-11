@@ -292,7 +292,7 @@ def test_blind_form_exact_mapping_real_worker_preserves_ordinary_set(qtbot, monk
     elif outcome == "key_inside":
         key = output / "private.json"
     expected = {"manifest": manifest, "output_dir": output, "key_path": key,
-                "source_root": root, "seed": seed}
+                "source_root": root, "seed": seed, "delivery_mode": "local_references"}
     window = _window(qtbot, monkeypatch)
     ordinary = _ordinary_state(window, tmp_path)
     ordinary_before = _fingerprints(Path(ordinary[0]))
@@ -316,7 +316,7 @@ def test_blind_form_exact_mapping_real_worker_preserves_ordinary_set(qtbot, monk
             qtbot.addWidget(self)
             assert not self.seed_box.isEnabled()
             for name, path in expected.items():
-                if name != "seed":
+                if name not in {"seed", "delivery_mode"}:
                     self.edits[name].setText(f" {path} ")
             self.seed_enabled.setChecked(seed is not None)
             assert self.seed_box.isEnabled() is (seed is not None)
@@ -333,7 +333,7 @@ def test_blind_form_exact_mapping_real_worker_preserves_ordinary_set(qtbot, monk
         window._prepare_hearing_blind()
         worker, action = trace.starts[0]
         assert isinstance(worker, hearing_jobs.HearingBlindWorker) and action == "blind"
-        assert worker.config == expected
+        assert worker.config == {key: value for key, value in expected.items() if key != "delivery_mode"}
         qtbot.waitUntil(lambda: bool(trace.results), timeout=15000)
         assert worker.isRunning() and window._hearing_worker is worker
         assert not window.analytics_panel.hearing_blind_button.isEnabled()

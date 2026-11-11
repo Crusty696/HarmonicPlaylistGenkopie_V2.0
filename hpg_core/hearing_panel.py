@@ -918,15 +918,22 @@ class HearingSetBrowserDialog(QDialog):
 
 
 class HearingBlindPrepareDialog(QDialog):
-    """Vorhandene HPG/Baseline-Clips referenzieren; keine neuen Musikdateien."""
+    """Lokale Referenzen oder portable, neutral benannte Clipkopien erstellen."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("A/B-Blindsatz vorbereiten – nur lokale Referenzen")
+        self.setWindowTitle("A/B-Blindsatz vorbereiten")
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        self.delivery_box = QComboBox()
+        self.delivery_box.addItems(("Lokale Referenzen", "Portable neutrale Clipkopien"))
+        self.delivery_box.setToolTip(
+            "Lokale Referenzen behalten Quellpfade und benötigen dieselben Dateien. "
+            "Portable Clipkopien schreiben neutrale WAVs in den neuen Sessionordner."
+        )
+        form.addRow("Ausgabeart", self.delivery_box)
         self.edits = {}
-        labels = {"manifest": "A/B-Manifest CSV", "output_dir": "Neuer Satzordner", "key_path": "Neuer privater Schlüssel JSON",
+        labels = {"manifest": "A/B-Manifest CSV", "output_dir": "Neuer Satzordner", "key_path": "Privater Zuordnungsschlüssel",
                   "source_root": "Erlaubter Quellordner"}
         for key, label in labels.items():
             edit = QLineEdit()
@@ -945,9 +952,11 @@ class HearingBlindPrepareDialog(QDialog):
         self.seed_enabled.toggled.connect(self.seed_box.setEnabled)
         form.addRow(self.seed_enabled, self.seed_box)
         layout.addLayout(form)
-        notice = QLabel("LOCAL UI BLIND: Nur neutrale IDs, Originalpfade bleiben in den Metadaten sichtbar.\nNicht metadatenblind, nicht portabel. Nur Vorbereitung; keine Blindbewertung/Statistik.\nSchlüssel muss außerhalb des Satzordners liegen. Ein Absturz zwischen beiden Publikationen kann einen verwaisten Schlüssel hinterlassen.")
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
+        self.notice = QLabel()
+        self.notice.setWordWrap(True)
+        self.delivery_box.currentIndexChanged.connect(self._update_notice)
+        self._update_notice()
+        layout.addWidget(self.notice)
         self.error_label = QLabel()
         layout.addWidget(self.error_label)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -961,16 +970,45 @@ class HearingBlindPrepareDialog(QDialog):
         elif key == "manifest":
             path, _ = QFileDialog.getOpenFileName(self, "Manifest wählen", "", "CSV (*.csv)")
         else:
-            path, _ = QFileDialog.getSaveFileName(self, "Neues Ziel wählen", "", "JSON (*.json)" if key == "key_path" else "Alle (*)")
+            if key == "key_path":
+                file_filter = "CSV (*.csv)" if self.delivery_box.currentIndex() == 1 else "JSON (*.json)"
+            else:
+                file_filter = "Alle (*)"
+            path, _ = QFileDialog.getSaveFileName(self, "Neues Ziel wählen", "", file_filter)
         if path:
             self.edits[key].setText(path)
+
+    def _update_notice(self, _index=None):
+        if self.delivery_box.currentIndex() == 1:
+            self.notice.setText(
+                "PORTABLER A/B-SATZ: Kopiert nur die im Manifest gelisteten "
+                "Übergangsclips unter neutralen WAV-Namen. Originaltracks und "
+                "Quellclips bleiben unverändert. Der Zuordnungsschlüssel ist eine "
+                "separate CSV-Datei außerhalb des Satzordners. Die Audios können "
+                "weiterhin anhand ihres Klangs erkennbar sein. Keine Bewertung oder "
+                "Statistik. Der Kopiervorgang läuft im Hintergrund und ist nach "
+                "Start nicht abbrechbar."
+            )
+        else:
+            self.notice.setText(
+                "LOCAL UI BLIND: Nur neutrale IDs; Originalpfade bleiben in den "
+                "Metadaten sichtbar. Nicht metadatenblind, nicht portabel. "
+                "Keine Audiokopien, keine Bewertung oder Statistik. Schlüssel muss "
+                "außerhalb des Satzordners liegen. Ein Prozessabsturz zwischen den "
+                "Publikationen kann einen verwaisten privaten Schlüssel hinterlassen."
+            )
 
     def _accept_config(self):
         if any(not edit.text().strip() or not Path(edit.text().strip()).is_absolute() for edit in self.edits.values()):
             self.error_label.setText("Alle vier vollständigen Pfade angeben.")
             return
+        key_suffix = ".csv" if self.delivery_box.currentIndex() == 1 else ".json"
+        if Path(self.edits["key_path"].text().strip()).suffix.casefold() != key_suffix:
+            self.error_label.setText(f"Der private Schlüssel braucht die Endung {key_suffix}.")
+            return
         self.config = {key: Path(edit.text().strip()) for key, edit in self.edits.items()}
         self.config["seed"] = self.seed_box.value() if self.seed_enabled.isChecked() else None
+        self.config["delivery_mode"] = "portable_copy" if self.delivery_box.currentIndex() == 1 else "local_references"
         self.accept()
 
 

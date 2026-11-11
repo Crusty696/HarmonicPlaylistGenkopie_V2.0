@@ -272,6 +272,40 @@ class HearingBlindWorker(QThread):
         self.completed.emit(result)
 
 
+class HearingBlindExportWorker(QThread):
+    """Kopiert vorhandene Uebergangsclips in einen portablen Blindsatz."""
+
+    status_update = pyqtSignal(str)
+    completed = pyqtSignal(object)
+
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.config = dict(config)
+
+    def run(self):
+        from tools.prepare_dj_blind_test import prepare
+
+        try:
+            self.status_update.emit(
+                "Prüfe A/B-Clips und erstelle neutrale Sessionkopien; Originaldateien bleiben unverändert …"
+            )
+            public, key = prepare(
+                manifest=self.config["manifest"],
+                output_dir=self.config["output_dir"],
+                key_path=self.config["key_path"],
+                seed=self.config.get("seed"),
+                source_root=self.config.get("source_root"),
+            )
+            result = {
+                "ok": True,
+                "public_path": str(public),
+                "key_path": str(key),
+            }
+        except Exception as exc:
+            result = {"ok": False, "output": str(exc)}
+        self.completed.emit(result)
+
+
 class HearingBlindCheckWorker(QThread):
     """Prueft bestehende Referenzen lesend; gibt keine Schluesseldaten weiter."""
 

@@ -93,6 +93,49 @@ def test_blind_check_worker_cooperative_cancel_during_real_hash(tmp_path, qtbot,
         worker.wait(5000)
 
 
+def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp_path, qtbot):
+    import csv
+    from hpg_core.hearing_jobs import HearingBlindExportWorker
+    from tests.test_hearing_blind import _fixture
+    from tests.test_hearing_native_integration import _fingerprints
+
+    manifest, output, _key, root = _fixture(tmp_path, count=2)
+    key = tmp_path / "private" / "blind_key.csv"
+    before = _fingerprints(root)
+    worker = HearingBlindExportWorker({
+        "manifest": manifest,
+        "output_dir": output,
+        "key_path": key,
+        "source_root": root,
+        "seed": 7,
+    })
+    messages = []
+    worker.status_update.connect(messages.append)
+
+    with qtbot.waitSignal(worker.completed, timeout=10000) as signal:
+        worker.start()
+    assert worker.wait(5000)
+
+    result = signal.args[0]
+    assert result == {
+        "ok": True,
+        "public_path": str(output / "blind_session.csv"),
+        "key_path": str(key),
+    }
+    public_path = output / "blind_session.csv"
+    public_rows = list(csv.DictReader(public_path.open(encoding="utf-8")))
+    key_rows = list(csv.DictReader(key.open(encoding="utf-8")))
+    assert len(public_rows) == 2 and len(key_rows) == 4
+    assert all((output / row[field]).is_file() for row in public_rows for field in (
+        "candidate_a_clip", "candidate_b_clip"
+    ))
+    assert all("hpg" not in row[field].casefold() and "baseline" not in row[field].casefold()
+               for row in public_rows for field in ("candidate_a_clip", "candidate_b_clip"))
+    assert {row["system"] for row in key_rows} == {"HPG", "baseline"}
+    assert key.parent != output and "erstelle neutrale Sessionkopien" in messages[0]
+    assert _fingerprints(root) == before
+
+
 def test_csv_single_worker_real_spawn_preserves_none_cache(tmp_path, monkeypatch, qtbot):
     from tests.test_hearing_calibration import _csv_single
     from hpg_core.hearing_jobs import HearingCalibrationWorker

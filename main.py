@@ -4491,8 +4491,8 @@ class AnalyticsPanel(QWidget):
         self.hearing_open_button = QPushButton("Satz öffnen")
         self.hearing_discovery_button = QPushButton("Sätze / Fortschritt")
         self.hearing_blind_button = QPushButton("A/B-Blindsatz vorbereiten")
-        self.hearing_blind_check_button = QPushButton("A/B-Integrität prüfen")
-        self.hearing_blind_check_button.setToolTip("Bestehende Referenz-JSON und getrennten Schlüssel nur prüfen. Keine Bewertung, Statistik oder Audiokopie.")
+        self.hearing_blind_check_button = QPushButton("Lokale A/B-Referenzen prüfen")
+        self.hearing_blind_check_button.setToolTip("Nur bestehende lokale Referenz-JSON und getrennten Schlüssel prüfen. Portable Clipkopien haben einen CSV-Schlüssel und werden hier nicht geprüft.")
         self.hearing_preview_button = QPushButton("Höransicht")
         self.hearing_rating_button = QPushButton("In der App bewerten")
         self.hearing_rating_button.setEnabled(False)
@@ -5300,6 +5300,13 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f"Satz: {result['public_path']}\nPrivater Schlüssel: {result['key_path']}"
             )
             return
+        if action == "blind_export":
+            self.analytics_panel.hearing_status.setText(
+                "Portabler A/B-Satz erstellt. Nur vorhandene Übergangsclips wurden unter neutralen Namen kopiert; "
+                "Originaldateien blieben unverändert. Keine Bewertung oder Statistik.\n"
+                f"Öffentliche Session: {result['public_path']}\nPrivater Zuordnungsschlüssel (CSV): {result['key_path']}"
+            )
+            return
         if action in {"fit", "audit"} and "proposal" in result:
             self._hearing_pending_proposal = (result["proposal"], result.get("cleanup_warning", ""))
             self.analytics_panel.hearing_status.setText("Auswertung beendet. Vorschlag ist noch nicht produktiv übernommen.")
@@ -5476,7 +5483,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         if not self._hearing_selection_allowed():
             return
         from hpg_core.hearing_panel import HearingBlindPrepareDialog
-        from hpg_core.hearing_jobs import HearingBlindWorker
+        from hpg_core.hearing_jobs import HearingBlindExportWorker, HearingBlindWorker
         dialog = HearingBlindPrepareDialog(self)
         self._hearing_native_active = True
         self._update_hearing_buttons()
@@ -5486,7 +5493,15 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             self._hearing_native_active = False
             self._update_hearing_buttons()
         if accepted and self._hearing_selection_allowed():
-            self._start_hearing_worker(HearingBlindWorker(dialog.config, self), "blind")
+            config = dict(dialog.config)
+            delivery_mode = config.pop("delivery_mode", "local_references")
+            if delivery_mode == "portable_copy":
+                worker = HearingBlindExportWorker(config, self)
+                action = "blind_export"
+            else:
+                worker = HearingBlindWorker(config, self)
+                action = "blind"
+            self._start_hearing_worker(worker, action)
 
     def _check_hearing_blind(self):
         if not self._hearing_selection_allowed() or self._run_is_active():
