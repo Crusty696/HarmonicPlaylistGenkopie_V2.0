@@ -583,7 +583,7 @@ def test_single_csv_quality_entry_preserves_selection_and_passes_true_none(qtbot
     button = window.analytics_panel.hearing_csv_fit_button
     assert button.text() == "Einzel-CSV auswerten" and button.isEnabled()
     button.click()
-    assert calls == [(None, {"audit_only": False, "single": True, "parent": window})]
+    assert calls == [(None, {"audit_only": False, "single": True, "three_note": False, "parent": window})]
     worker, action = starts[0]
     assert isinstance(worker, hearing_jobs.HearingCalibrationWorker)
     assert worker.directory == str(selected) and worker.cache is None
@@ -945,6 +945,21 @@ def test_three_note_schema_starts_seeded_candidate_fit_worker(qtbot, monkeypatch
     worker, action = starts[0]
     assert isinstance(worker, hearing_jobs.HearingCalibrationWorker)
     assert worker.seed == 23 and worker.fit and action == "fit"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("audit_only,expected", [(True, "Replay-Audit"), (False, "Dreinoten-Pilot")])
+def test_fit_dialog_explains_three_note_schema_and_disables_irrelevant_options(qtbot, tmp_path, audit_only, expected):
+    from PyQt6.QtWidgets import QSpinBox
+    dialog = hearing_panel.HearingFitDialog(
+        tmp_path / "snapshot.db", audit_only=audit_only, single=False, three_note=True,
+    )
+    qtbot.addWidget(dialog)
+    labels = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+    assert expected in labels
+    seed = dialog.findChild(QSpinBox)
+    assert seed.isEnabled() is not audit_only
+    assert not dialog.genres_edit.isEnabled()
 
 
 def test_normal_candidate_apply_uses_existing_apply_worker_without_extra_prompt(qtbot, monkeypatch):

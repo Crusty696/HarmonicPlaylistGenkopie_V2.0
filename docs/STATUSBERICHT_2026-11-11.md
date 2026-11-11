@@ -98,7 +98,7 @@ manueller kompletter GUI-Ablauf bleiben offen.
 
 ## Verbleibende HPG-Arbeit
 
-- Dreinoten-Fit war im GUI-Start zwar schemaerkennbar, aber die Erkennung wurde nicht an den Optionsdialog gegeben und die zweite Apply-Bestätigung hatte keinen Ja-Pfad-Test. Dialog zeigt jetzt explizit Dreinoten-Pilot; Fit bleibt unverändert ein Vorschlag. Übernahme startet nur nach bestandenem Gate, erster Dialogfreigabe und separater zweiter Ja-Bestätigung; Nein lässt Präferenzen unberührt. `tests/test_hearing_browser_integration.py` plus `tests/test_hearing_calibration.py`: **7 gezielte Tests bestanden** (11.11.2026). Kein Volltest, Build oder manueller App-Lauf.
+- Dreinoten-Fit war im GUI-Start zwar schemaerkennbar, aber die Erkennung wurde nicht an den Optionsdialog gegeben und die zweite Apply-Bestätigung hatte keinen Ja-Pfad-Test. Dialog zeigt jetzt explizit Dreinoten-Pilot; Fit bleibt unverändert ein Vorschlag. Übernahme startet nur nach bestandenem Gate, erster Dialogfreigabe und separater zweiter Ja-Bestätigung; Nein lässt Präferenzen unberührt. Optionsmatrix bestätigt: Seed bleibt im Fit aktiv, Audit deaktiviert Seed, Genre gilt nur für Einzel-Fit. GUI-Modustext und deaktivierte irrelevante Optionen geprüft. `tests/test_hearing_browser_integration.py` plus `tests/test_hearing_calibration.py`: **10 gezielte Tests bestanden** (11.11.2026). Kein Volltest, Build oder manueller App-Lauf.
 - Native Hörtest-Module und GUI-Aktionen sind im Code vorhanden. Vollständige
   Zuordnung aller Werkzeugoptionen zu GUI-Aktionen und manueller App-Ablauf sind
   nicht abgenommen. Portable CSV-Sessions lassen sich gegen die getrennte
