@@ -342,9 +342,9 @@ Abnahme bleibt offen. Der laufende ComfyUI-Batch bleibt unangetastet.
   `Film_x_batch/FX_0474`; Queue hat 0 wartende Aufträge. Der History-Endpunkt
   liefert während des laufenden Auftrags noch keinen Eintrag. Kein neuer Prompt
   wurde eingereiht.
-  Live-Poll nach dem Aktionszustandsfix: Prompt-ID `50`, UUID
-  `587b1a75-94c5-4edb-9a99-5de56d743675`, Ausgabepräfix
-  `Film_x_batch/FX_0481`; Queue hat 0 wartende Aufträge.
+  Live-Poll nach dem M3U8-Exportpfad: Prompt-ID `51`, UUID
+  `94e16fa1-ff24-4699-8bfe-d43d7a30bfc0`, Ausgabepräfix
+  `Film_x_batch/FX_0482`; Queue hat 0 wartende Aufträge.
   Producer bleibt unberührt; kein Auftrag eingereiht, geändert oder abgebrochen. Frühere Ausgaben
   `FX_0436` bis `FX_0438` bestätigte `ffprobe` als H.264, 736×416, 24 fps,
   243 Frames und 10,125 Sekunden.
