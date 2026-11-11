@@ -11,7 +11,7 @@
 
 **Rangwechsel-Gate:** Neue Regression `tests/test_hearing_end_to_end.py::test_applied_preferences_reorder_visible_mixpoint_ranking` besteht **1/1** (`venv312`, Python 3.12.10, `-n 0 --no-cov`). Persistierte synthetische BPM- und Harmoniegewichte gehen durch den echten MainWindow-Refresh und drehen die tatsächliche Mixpunktreihenfolge von 16/32 auf 32/16. Temporäre Fixturedateien; keine Originalmusik, Audioanalyse oder GPU. Das ergänzt den separaten Fit-/Apply-Integrationsnachweis; vollständige CSV/JSON-Rundreisen und manuelle App-Abnahme bleiben offen.
 
-**ComfyUI:** Prompts 76–79 (`FX_0499`–`FX_0502`) erfolgreich; die letzten vier Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 80 / `FX_0503` (UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
+**ComfyUI:** Prompts 76–80 (`FX_0499`–`FX_0503`) erfolgreich; alle fünf Ausgaben sind per `ffprobe` als H.264, 736×416, 24 fps, 243 Frames, 10,125 s geprüft. Prompt 81 / `FX_0504` (UUID `d2fe4670-d775-400a-8970-240546e3f066`) läuft; Live-Queue 1 aktiv, 0 wartend. Queue unberührt.
 
 **Noch offen:** Vollsuite, aktueller Frozen-Build und vollständige sichtbare App-Abnahme nach Batchende; Originalmusik/native GPU-Prüfung erst nach Freigabe, iGPU bleibt frei. 93 vorbestehende Arbeitsbaumänderungen bleiben geschützt.
 
@@ -550,10 +550,12 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 ## Nächste Schritte
 
 1. FilmX-Queue nicht unterbrechen. Letzter Live-Poll am 11.11.2026:
-   Prompt 80 / UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`, Präfix
-   `Film_x_batch/FX_0503`, aktiv; Queue 1/0, Producer-PID 10456 lebt.
-   Prompt 79 / `FX_0502` ist in der History erfolgreich abgeschlossen; die
-   Ausgabe wurde mit `ffprobe` geprüft. Fremde Queue-Jobs nicht verändern.
+   Prompt 81 / UUID `d2fe4670-d775-400a-8970-240546e3f066`, Präfix
+   `Film_x_batch/FX_0504`, aktiv; Queue 1/0, Producer-PID 10456 lebt.
+   Prompt 80 / `FX_0503` ist in der History erfolgreich abgeschlossen. Die
+   Ausgabe `FX_0503_00001_.mp4` liegt mit 2.567.714 Byte vor; `ffprobe`
+   bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s. Fremde
+   Queue-Jobs nicht verändern.
 2. Nach Ende aller aktiven und wartenden ComfyUI-Jobs die Vollsuite gegen den
    dann aktuellen HEAD ausführen. Der letzte dokumentierte Volltest vor den
    jüngsten Änderungen bestand mit 6.679/6.679 Tests und 81,11 % Coverage.
@@ -634,3 +636,8 @@ End-to-End-Rekordboxwarnung und neue Status-/Tooltip-Regression bestanden
 
 - ComfyUI-History meldet Prompt 79 / UUID `15139be3-cc17-44a2-885c-56c2cc8e86a1` erfolgreich. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0502_00001_.mp4` liegt mit 2.471.871 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
 - Prompt 80 / UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156`, Präfix `Film_x_batch/FX_0503`, ist aktiv; Queue 1/0. Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
+
+## ComfyUI-Fortschritt nach Prompt 80
+
+- ComfyUI-History meldet Prompt 80 / UUID `644d430c-0dbf-446d-8f62-4fb5a8fdf156` erfolgreich. Ausgabe `E:\03_Video_&_Medien\Film_x_batch\FX_0503_00001_.mp4` liegt mit 2.567.714 Byte vor; `ffprobe` bestätigt H.264, 736×416, 24 fps, 243 Frames und 10,125 s.
+- Prompt 81 / UUID `d2fe4670-d775-400a-8970-240546e3f066`, Präfix `Film_x_batch/FX_0504`, ist aktiv; Queue 1/0, Producer-PID 10456 lebt. Keine Queue-Aktion vorgenommen.
