@@ -4,6 +4,17 @@
 **Branch:** `codex/gesamtrefaktorierung`
 **Ausgangsrevision der heutigen Artefaktprüfung:** `ead15b2dcb4b663fda68aab91ad874c135e533b7` (lokaler und entfernter Branch gleich)
 
+## Aktuelle Vollsuite
+
+- Der serielle Standardlauf nach Korrektur der zwei veralteten UI-Textassertions
+  bestand **6.718 Tests; 46 `slow`-Tests abgewählt; 0 Fehler in 2.337,11 s
+  (38:57)** mit `venv312\Scripts\python.exe -m pytest tests/ --tb=short -q
+  -n 0 --no-cov`. Die reparierten Rekordbox-/Genre-Tooltip-Tests sind im
+  Gesamtstand enthalten. Der vorherige Lauf hatte 6.716 bestanden und genau
+  diese zwei veralteten Wortlautassertions beanstandet. Coverage wurde bei
+  diesem seriellen Nachweis nicht berechnet; der konfigurierte Standardlauf
+  mit Coverage/xdist ist davon getrennt.
+
 ## Geprüfte Fortschritte
 
 - Der CLI-Einzel-Fit publizierte `gewichte.json` bisher mit permissivem
@@ -30,7 +41,8 @@
   Dateiinventar und CSV-Spaltenfolgen der CLI-Ausgabe und des nativen
   Quellsatzes für Einzel, Kandidaten, Dreinoten und Dramaturgie. Der gezielte
   Lauf bestand **4/4 in 5,70 s** mit `-n 0 --no-cov`; die Fixtures sind
-  synthetisch. Vollsuite und andere JSON-Artefakte bleiben offen.
+  synthetisch. Eine gemeinsame Golden-Master-Rundreise aller JSON-Artefakte
+  bleibt offen.
 - Die erfolgreiche CLI-Publikation eines Kandidaten-Auditreports hat jetzt
   einen direkten Vertragstest für exakte Root- und Satzbindungsfelder.
   `test_vollstaendiger_stretch_fall_ist_read_only` bestand **1/1 in 0,48 s**.

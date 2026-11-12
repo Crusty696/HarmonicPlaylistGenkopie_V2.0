@@ -2874,8 +2874,8 @@ def test_running_rekordbox_produces_stale_metadata_warning():
   )
 
   assert recorded["status"] is not None
-  assert "Rekordbox laeuft" in recorded["tooltip"]
-  assert "schliessen" in recorded["tooltip"]
+  assert "Rekordbox läuft" in recorded["tooltip"]
+  assert "Rekordbox schließen" in recorded["tooltip"]
 
 
 def test_closed_rekordbox_produces_no_warning():
@@ -4469,8 +4469,8 @@ def test_genre_regler_tooltip_beschreibt_getrennte_wirkungen(qtbot):
 
   tooltip = widget.genre_weight.toolTip()
 
-  assert "Genre-Prioritaet in der Sortierung" in tooltip
-  assert "lokale Uebergangskandidatenscore" in tooltip
+  assert "Genre-Priorität in der Sortierung" in tooltip
+  assert "lokale Übergangskandidatenscore" in tooltip
   assert "komplett ignoriert" not in tooltip
   assert "wichtigster Faktor" not in tooltip
 
