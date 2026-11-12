@@ -377,11 +377,23 @@ def _sicherer_dramaturgie_clip(ordner: Path, relativer_pfad: object) -> Path:
     return ziel
 
 
+def _json_object_without_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Doppelter JSON-Schluessel: {key!r}")
+        result[key] = value
+    return result
+
+
 def validiere_dramaturgie_satz(ordner: Path, *, pruefe_dateien: bool = True) -> dict:
     """Prueft Manifest, beide CSVs und ihre Referenzen fail-closed."""
     manifest_pfad = ordner / DRAMATURGIE_MANIFEST_NAME
     try:
-        manifest = json.loads(manifest_pfad.read_text(encoding="utf-8"))
+        manifest = json.loads(
+            manifest_pfad.read_text(encoding="utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Dramaturgie-Manifest ist nicht lesbar") from exc
     top_keys = {
@@ -1257,8 +1269,11 @@ class HoertestHandler(BaseHTTPRequestHandler):
             self._sende(413, "text/plain; charset=utf-8", b"Nutzlast zu gross")
             return None
         try:
-            daten = json.loads(self.rfile.read(laenge) or b"{}")
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            daten = json.loads(
+                self.rfile.read(laenge) or b"{}",
+                object_pairs_hook=_json_object_without_duplicates,
+            )
+        except (ValueError, UnicodeDecodeError):
             self._sende(400, "text/plain; charset=utf-8", b"ungueltiges JSON")
             return None
         if not isinstance(daten, dict):

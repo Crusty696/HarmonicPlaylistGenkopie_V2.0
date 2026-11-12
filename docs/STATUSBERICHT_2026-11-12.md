@@ -160,6 +160,11 @@
   Lesern für `kandidaten_manifest.json` und `reihenfolge.json`. Beide lesen
   jetzt mit Duplicate-Key-Hook; direkte Fail-closed Regressionen bestanden
   seriell **2/2 in 0,36 s** (`-n 0 --no-cov`).
+- Der lokale Hörtest-Server wies doppelte JSON-Schlüssel in einem POST bisher
+  nicht ab; zwei `pair_id`-Felder konnten dadurch die bewertete Zeile
+  verschieben. Dramaturgie-Manifest und HTTP-POST verwenden jetzt ebenfalls
+  den Duplikat-Hook. CSV-Unverändertheit nach POST-Ablehnung und Manifestfehler
+  bestanden **2/2 in 0,72 s** (`-n 0 --no-cov`).
 
 ## Belege
 

@@ -121,6 +121,21 @@ def test_dramaturgie_satz_bindet_manifest_clips_und_beide_bewertungen(tmp_path):
     validiere_dramaturgie_satz(tmp_path)
 
 
+def test_dramaturgie_manifest_verwirft_doppelte_json_schluessel(tmp_path):
+  _dramaturgie_satz(tmp_path)
+  manifest_path = tmp_path / "dramaturgie_manifest.json"
+  raw = manifest_path.read_text(encoding="utf-8")
+  raw = raw.replace(
+    '"format_version": 1,',
+    '"format_version": 1,\n  "format_version": 1,',
+    1,
+  )
+  manifest_path.write_text(raw, encoding="utf-8")
+
+  with pytest.raises(ValueError, match="Doppelter JSON-Schluessel"):
+    validiere_dramaturgie_satz(tmp_path)
+
+
 def test_launcher_fortschritt_nutzt_gueltigen_dramaturgie_vertrag(tmp_path):
   from tools import hoertest_launcher
 
@@ -345,9 +360,9 @@ def test_schreibe_csv_belaesst_alte_datei_wenn_replace_scheitert(monkeypatch, tm
   assert list(tmp_path.glob(".bewertung.csv.*.tmp")) == []
 
 
-def _server_post(server, pfad: str, daten: dict) -> int:
+def _server_post(server, pfad: str, daten: dict | str) -> int:
   verbindung = http.client.HTTPConnection(*server.server_address, timeout=5)
-  koerper = json.dumps(daten).encode("utf-8")
+  koerper = daten.encode("utf-8") if isinstance(daten, str) else json.dumps(daten).encode("utf-8")
   verbindung.request("POST", pfad, body=koerper, headers={"Content-Type": "application/json"})
   antwort = verbindung.getresponse()
   antwort.read()
@@ -461,6 +476,15 @@ def test_dramaturgie_server_liefert_reihenfolge_und_speichert_urteile_getrennt(
 def test_post_unbekanntes_paar_ist_keine_falsche_erfolgsmeldung(hoertest_server):
   server, _ = hoertest_server
   assert _server_post(server, "/note", {"pair_id": "999", "note": 5}) == 404
+
+
+def test_post_duplicate_json_field_is_rejected_without_csv_write(hoertest_server):
+  server, ordner = hoertest_server
+  before = (ordner / "bewertung.csv").read_bytes()
+  payload = '{"pair_id":"001","pair_id":"002","note":5}'
+
+  assert _server_post(server, "/note", payload) == 400
+  assert (ordner / "bewertung.csv").read_bytes() == before
 
 
 @pytest.mark.parametrize(
