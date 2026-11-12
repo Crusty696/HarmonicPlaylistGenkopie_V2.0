@@ -272,6 +272,8 @@ Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-
 
 **Kandidatenmanifest-/Reihenfolge-Verifikation 12.11.2026:** Producer-Manifest mit exaktem Schema, Audit-Bindung des gespeicherten Seeds/Shuffles, kanonische CSV-Zeilenfolge und Duplicate-JSON-Key-Abweisung für Kandidaten/Dreinoten bestanden **8/8 in 0,70 s** (`venv312`, `-n 0 --no-cov`).
 
+**Direkter Ratings-Report-Vertrag 12.11.2026:** `test_transition_ratings_report_validates_input_and_emits_read_only_json` bestand **1/1 in 2,35 s**. Der Test prüft das exakte Eingabeformat `hpg_transition_ratings_v1`, erfolgreiche JSON-Ausgabe samt Hash/Abdeckung/`weights_applied=false`, unveränderte Quelldatei und Ablehnung zusätzlicher Top-Level-Felder. Damit ist dieser separate Diagnose-CLI-Pfad abgedeckt; die vollständige versionsübergreifende Golden-Master-Rundreise bleibt offen.
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.

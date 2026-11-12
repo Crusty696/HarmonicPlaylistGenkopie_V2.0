@@ -148,3 +148,32 @@ def test_ram_rating_persists_metadata_reopens_and_rejects_changed_source(monkeyp
     assert entry["source"]["render_spec"]["mix_out_sec"] == 60.
     assert {path.name for path in tmp_path.iterdir()} == {"a.wav", "b.wav", ratings.name}
     assert audio.decode() not in saved_bytes.decode()
+
+
+def test_transition_ratings_report_validates_input_and_emits_read_only_json(tmp_path, capsys):
+    from tools import rate_transitions
+
+    ratings = tmp_path / "transition_ratings.json"
+    ratings.write_text(json.dumps({"format": "hpg_transition_ratings_v1", "ratings": {}}),
+                       encoding="utf-8")
+    original = ratings.read_bytes()
+
+    assert rate_transitions.main([
+        "transition-ratings-report", "--file", str(ratings), "--seed", "7"
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["source"] == "transition_ratings.json"
+    assert report["ratings_file_sha256"] == hashlib.sha256(original).hexdigest()
+    assert report["weights_applied"] is False
+    assert report["complete_candidate_sets"] == 0
+    assert ratings.read_bytes() == original
+
+    ratings.write_text(json.dumps({"format": "hpg_transition_ratings_v1",
+                                   "ratings": {}, "unexpected": True}),
+                       encoding="utf-8")
+    assert rate_transitions.main([
+        "transition-ratings-report", "--file", str(ratings)
+    ]) == 2
+    error = capsys.readouterr()
+    assert "hat kein bekanntes Schema" in error.err
+    assert error.out == ""
