@@ -107,6 +107,16 @@ from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
+# Qt's private Windows redistributable can pre-empt the system C++ runtime
+# in source runs. The frozen build already excludes those private copies.
+if sys.platform == "win32" and not getattr(sys, "frozen", False):
+    import ctypes
+    try:
+        _system_cpp_runtime = ctypes.WinDLL("msvcp140.dll", winmode=0x800)
+    except FileNotFoundError:
+        # Machines without the system redistributable still use Qt's copy.
+        pass
+
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
