@@ -148,6 +148,10 @@
   Planinventur wurde um das Artefakt ergänzt; Commits `112c449f` und `85983c9`
   sind auf `codex/gesamtrefaktorierung` gepusht und der Remote entsprach zuletzt
   `85983c98bc5bb0685a84b41300c68e45b00e6dce`.
+- `_lade_json_strikt` wird zusätzlich für Kandidaten-/Dramaturgiemanifeste und
+  Auditberichte verwendet; deren Lesewege profitieren ebenfalls von der
+  Duplikatschlüssel-Abweisung. Bugfix-Commit `03a230d5` ist gepusht; lokaler
+  und entfernter Branch stehen auf `03a230d5f62c0b0fe0be30564cf6c14572a08e12`.
 
 ## Belege
 
