@@ -21,6 +21,10 @@
   `test_vollstaendiger_stretch_fall_ist_read_only` bestand **1/1 in 0,48 s**.
   Der Test nutzt synthetische Cache-/Trackdaten und kopiert Fixture-Render;
   Produktionsranking und Renderer sind damit nicht neu qualifiziert.
+- Eine gezielte JSON-Schema-Auswahl für Fit, Proposal, Blindtest, Quellmanifest
+  und Dramaturgie-Kontext bestand **20/20 in 9,43 s** (`-n 0 --no-cov`).
+  Zusammen mit den Producer- und Audit-Tests bleiben die Gesamt-Golden-Master-
+  Rundreise, Vollsuite und JSON-Versionen außerhalb dieser Auswahl offen.
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
@@ -126,6 +130,7 @@
 - `ad2026f3` ergänzt die CSV-Spaltenfolgen, `c7abf2d` dokumentiert die statische Packaging-Prüfung. Vor dieser Statuskorrektur bestätigte `git ls-remote` lokal und remote `c7abf2d1191a54bd52e5d6b255af1d961be0592c`.
 - Der Producer-Contract-Test lief anschließend seriell **4/4 in 5,70 s**; er prüft exaktes Dateiinventar, CSV-Spaltenfolgen und bestehende CLI-/native Producer-Parität. Der Test ist synthetisch und ersetzt keine Vollsuite oder Originalmusik-Abnahme.
 - Der Audit-Erfolgsreport-Contract lief **1/1 in 0,48 s**; geändert wurde nur der Testvertrag, kein Produktcode.
+- Die ausgewählte Fit-/Proposal-/Blindtest-/Manifest-Schemafolge lief **20/20 in 9,43 s**. Alle Testdaten sind synthetisch; kein Originalmusikpfad wurde benutzt.
 
 ## Belege
 
