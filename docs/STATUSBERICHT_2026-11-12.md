@@ -70,9 +70,13 @@
   `_lade_json_strikt` akzeptierte doppelte Feldnamen. Der Loader weist diese
   jetzt mit `object_pairs_hook` ab; Producer- und Report-Tests bestehen samt
   Duplikatfall **2/2 in 4,73 s** (`venv312`; xdist-Standardeinstellung, acht Worker).
-- Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
-  Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
-  versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
+- Das Hörtest-Artefaktinventar enthält jetzt im Umsetzungsplan eine explizite
+  Schema-/Versionsliste für Prepare, Fit, Audit, Ratings, Blindtest und private
+  Snapshot-Zuordnung samt Producer-/Reader-Tests. Direkte versionsübergreifende
+  Reader-Rundreisen bestehen für Source Manifest v1–v3 und Association v1–v2.
+  Offen bleibt der normalisierte Producer→Reader-Golden-Master-Lauf über jedes
+  publizierte Artefakt; die 26 Tests des `artifact_contract`-Gates sind hierfür
+  Teilbelege, kein vollständiger Ersatz.
 - Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist ausdrücklich als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte einen abweichenden Algorithmus-Fingerprint; dieser Stand wurde inzwischen isoliert neu gebaut und per Native-Smoke geprüft (Nachweis oben).
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert
