@@ -224,6 +224,27 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         },
     }
     expected_metadata = metadata_by_mode[mode]
+    expected_csv_headers_by_mode = {
+        "einzel": {
+            "bewertung.csv": ("pair_id", "clip", "bewertung"),
+            "merkmale.csv": (
+                "pair_id", *rt.ALLE_FAKTOREN, "crossfade_sek", *rt.ZUSATZ_SPALTEN,
+                *rt.PLAN_AUDIT_SPALTEN, "track_a", "track_b",
+            ),
+        },
+        "kandidaten": {
+            "bewertung.csv": (
+                rt.BEWERTUNG_DREINOTEN_SPALTEN if three_notes
+                else rt.BEWERTUNG_KANDIDATEN_SPALTEN
+            ),
+            "merkmale.csv": rt.MERKMALE_KANDIDATEN_SPALTEN,
+        },
+        "dramaturgie": {
+            "bewertung.csv": rt.BEWERTUNG_DREINOTEN_SPALTEN,
+            "dramaturgie_bewertung.csv": rt.DRAMATURGIE_BEWERTUNG_SPALTEN,
+        },
+    }
+    expected_csv_headers = expected_csv_headers_by_mode[mode]
 
     def file_inventory(directory):
         return {
@@ -240,6 +261,11 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     }
     assert cli_files == expected_metadata | cli_clip_files
     assert cli_clip_files
+
+    for directory in (native_result.output_dir, cli_config.output_dir):
+        for name, expected_header in expected_csv_headers.items():
+            with (directory / name).open(encoding="utf-8", newline="") as handle:
+                assert tuple(next(csv.reader(handle))) == tuple(expected_header)
 
     from hpg_core.hearing_ratings import load_session as load_rating_session
 
