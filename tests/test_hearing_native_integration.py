@@ -40,6 +40,7 @@ def _silence_wav():
 @pytest.mark.gui
 @pytest.mark.integration
 @pytest.mark.parametrize("mode", ["einzel", "kandidaten", "dreinoten", "dramaturgie"])
+@pytest.mark.artifact_contract
 def test_native_prepare_load_edit_reopen_source_metadata(qtbot, monkeypatch, tmp_path, mode):
     producer_mode = "kandidaten" if mode == "dreinoten" else mode
     config = _source_service_config(monkeypatch, tmp_path, producer_mode)
