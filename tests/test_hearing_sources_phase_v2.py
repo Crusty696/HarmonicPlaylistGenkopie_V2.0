@@ -36,12 +36,19 @@ def test_source_session_and_discovery_read_both_versions(source_fixture):
     path = write_source_manifest(stage, 'einzel', sink)
     assert _source_metadata(stage)['format_version'] == 3
     load_source_session(stage)
+    version_two = json.loads(path.read_text(encoding='utf8'))
+    version_two['format_version'] = 2
+    for entry in version_two['specs'].values():
+        entry.pop('bass_swap_fraction')
+    path.write_text(json.dumps(version_two), encoding='utf8')
+    assert _source_metadata(stage)['format_version'] == 2
+    load_source_session(stage)
     legacy = json.loads(path.read_text(encoding='utf8'))
     legacy['format_version'] = 1
     for entry in legacy['specs'].values():
         entry.pop('phase_method_a')
         entry.pop('phase_method_b')
-        entry.pop('bass_swap_fraction')
+        entry.pop('bass_swap_fraction', None)
     path.write_text(json.dumps(legacy), encoding='utf8')
     assert _source_metadata(stage)['format_version'] == 1
     load_source_session(stage)
