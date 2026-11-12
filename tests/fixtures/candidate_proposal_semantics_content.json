@@ -1,0 +1,17 @@
+{
+  "artifact": "candidate calibration proposal semantic content",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "binding.set_path": "$SET_ROOT",
+    "binding.cache_path": "$CACHE_FILE",
+    "binding.files": "inventory names only; their content hashes are bound by producer goldens and proposal validation",
+    "binding.sources": "paths omitted; source size and SHA256 retained",
+    "binding.build.sha256": "$ALGORITHM_BUILD_SHA256",
+    "audit": "RAM replay evidence projection; spec hashes normalized; full dynamic receipt binding checked by validate_proposal",
+    "proposal_sha256": "not included in semantic projection"
+  },
+  "sha256_by_mode": {
+    "normal": "cdc57bce34c2900af31b6c986fa826eeed2ea42e6612fdda9bc4a46ab7e77d6f",
+    "three_notes": "29126e4a0f92945446c051f668458f0296082a59f8c474c813bce9967b0c5d72"
+  }
+}

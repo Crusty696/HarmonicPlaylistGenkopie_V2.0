@@ -55,6 +55,62 @@ def _assert_candidate_fit_publication_golden(document, mode):
     assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
 
 
+def _candidate_proposal_content_projection(proposal):
+    binding = proposal["binding"]
+    return {
+        "artifact": {
+            "format": proposal["format"],
+            "version": proposal["version"],
+            "operation_id": proposal["operation_id"],
+            "audit_passed": proposal["audit_passed"],
+            "audit_evidence": _ram_audit_evidence_projection(proposal["audit"]),
+            "fit_status": proposal["fit_status"],
+            "gate_updates": proposal["gate_updates"],
+            "diagnose": proposal["diagnose"],
+            "single_proposal": proposal["single_proposal"],
+            "candidate_report": proposal["candidate_report"],
+            "live_applied": proposal["live_applied"],
+            "output": proposal["output"],
+        },
+        "binding_contract": {
+            "set_path": "$SET_ROOT",
+            "cache_path": "$CACHE_FILE",
+            "mode": binding["mode"],
+            "purpose": binding["purpose"],
+            "files": sorted(binding["files"]),
+            "sources": sorted(
+                [
+                    {"size": source["size"], "sha256": source["sha256"]}
+                    for source in binding["sources"].values()
+                ],
+                key=lambda value: (value["size"], value["sha256"]),
+            ),
+            "cache": binding["cache"],
+            "build": {
+                "scheme": binding["build"]["scheme"],
+                "files": binding["build"]["files"],
+                "sha256": "$ALGORITHM_BUILD_SHA256",
+            },
+            "seed": binding["seed"],
+            "genres": binding["genres"],
+        },
+    }
+
+
+def _assert_candidate_proposal_content_golden(proposal, mode):
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "candidate_proposal_semantics_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    projection = _candidate_proposal_content_projection(proposal)
+    canonical = json.dumps(
+        projection, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
+
+
 @pytest.fixture
 def ram_set(tmp_path, monkeypatch):
     root, sources = tmp_path / "set", tmp_path / "sources"
@@ -194,10 +250,13 @@ def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate
     native = calibration.compute_proposal(
         root, cache, operation_root=op, operation_id="3" * 32, seed=1
     )
+    calibration.validate_proposal(native, expected_operation_id="3" * 32)
+    calibration.verify_binding(native["binding"])
     assert native["fit_status"] == "passed"
     assert native["candidate_report"] == calculated_reports[-1]
     assert native["gate_updates"] == {}
     assert not (op / "child_preferences.json").exists()
+    _assert_candidate_proposal_content_golden(native, "normal")
 
     inputs = audit.prepare_candidate_inputs(root, cache).as_dict()
     token = (
@@ -268,11 +327,14 @@ def test_three_note_cli_and_native_fit_share_report_but_publish_separately(
     native = calibration.compute_proposal(
         root, cache, operation_root=op, operation_id="4" * 32, seed=1
     )
+    calibration.validate_proposal(native, expected_operation_id="4" * 32)
+    calibration.verify_binding(native["binding"])
     assert native["fit_status"] == "passed"
     assert native["candidate_report"] == calculated_reports[-1]
     assert native["candidate_report"]["ergebnis"]["aktiviert_candidate_preferences"] is False
     assert set(native["gate_updates"]) == {"Psytrance"}
     assert not (op / "child_preferences.json").exists()
+    _assert_candidate_proposal_content_golden(native, "three_notes")
 
     inputs = audit.prepare_candidate_inputs(root, cache).as_dict()
     token = (
