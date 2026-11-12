@@ -205,6 +205,7 @@ def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, 
 
 @pytest.mark.artifact_contract
 def test_single_fit_cli_output_matches_native_report_and_roundtrips(tmp_path, monkeypatch):
+    import hashlib
     from types import SimpleNamespace
 
     from hpg_core.hearing_calibration import compute_proposal, export_proposal, validate_proposal
@@ -225,6 +226,16 @@ def test_single_fit_cli_output_matches_native_report_and_roundtrips(tmp_path, mo
     assert rate.befehl_fit(SimpleNamespace(dir=root, seed=1, genre=None)) == 0
     cli_report = json.loads((root / "gewichte.json").read_bytes())
     assert cli_report == native["single_proposal"]
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "single_fit_report_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    canonical = json.dumps(
+        cli_report, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
 
     export_path = export_proposal(native, tmp_path / "single-fit-proposal.json")
     exported = json.loads(export_path.read_bytes())
