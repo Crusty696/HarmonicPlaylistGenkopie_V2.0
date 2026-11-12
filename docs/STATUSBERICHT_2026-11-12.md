@@ -32,11 +32,11 @@
   Producer-Rootfeldern und Version `hpg_transition_ratings_v1` geprüft. Der
   separate Diagnose-CLI-Test validiert JSON-Ausgabe, Dateihash, Read-only-
   Verhalten und Ablehnung zusätzlicher Felder. Beide Tests bestanden **2/2 in
-  4,93 s** (`venv312`, `-n 0 --no-cov`).
+  4,93 s** (`venv312`; xdist-Standardeinstellung, acht Worker).
 - Beim CLI-Einlesen wurde ein realer Strict-JSON-Fehler gefunden und behoben:
   `_lade_json_strikt` akzeptierte doppelte Feldnamen. Der Loader weist diese
   jetzt mit `object_pairs_hook` ab; Producer- und Report-Tests bestehen samt
-  Duplikatfall **2/2 in 4,73 s** (`venv312`, `-n 0 --no-cov`).
+  Duplikatfall **2/2 in 4,73 s** (`venv312`; xdist-Standardeinstellung, acht Worker).
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
@@ -144,7 +144,8 @@
 - Der Audit-Erfolgsreport-Contract lief **1/1 in 0,48 s**; geändert wurde nur der Testvertrag, kein Produktcode.
 - Die ausgewählte Fit-/Proposal-/Blindtest-/Manifest-Schemafolge lief **20/20 in 9,43 s**. Alle Testdaten sind synthetisch; kein Originalmusikpfad wurde benutzt.
 - Kandidatenmanifest-/Reihenfolge-Regressionsfolge bestand **8/8 in 0,70 s**; kein Produktcode geändert.
-- Der Ratings-Producer-/Diagnose-CLI-Vertrag bestand **2/2 in 4,93 s**. Die
+- Der Ratings-Producer-/Diagnose-CLI-Vertrag bestand **2/2 in 4,93 s** mit
+  Pytests xdist-Standardeinstellung (acht Worker). Die
   Planinventur wurde um das Artefakt ergänzt; Commits `112c449f` und `85983c9`
   sind auf `codex/gesamtrefaktorierung` gepusht und der Remote entsprach zuletzt
   `85983c98bc5bb0685a84b41300c68e45b00e6dce`.
