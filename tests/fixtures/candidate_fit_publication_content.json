@@ -1,0 +1,9 @@
+{
+  "artifact": "CLI candidate fit publication",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {},
+  "sha256_by_mode": {
+    "normal": "e4a92f5593054bc29f7ed68b9503114f3a16e78cf86d7b1462ab000990f8fd17",
+    "three_notes": "7385ff3e6340395ebcb0b805de966028d9618546e0eec8f4e4e4c31a1d513198"
+  }
+}

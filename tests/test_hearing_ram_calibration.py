@@ -42,6 +42,19 @@ def _assert_candidate_fit_report_golden(report, mode):
     assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
 
 
+def _assert_candidate_fit_publication_golden(document, mode):
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "candidate_fit_publication_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    canonical = json.dumps(
+        document, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
+
+
 @pytest.fixture
 def ram_set(tmp_path, monkeypatch):
     root, sources = tmp_path / "set", tmp_path / "sources"
@@ -207,6 +220,10 @@ def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate
     assert calculated_reports[-1] == native["candidate_report"]
     _assert_candidate_fit_report_golden(native["candidate_report"], "normal")
     assert (root / "candidate_preferences_entwurf.json").is_file()
+    _assert_candidate_fit_publication_golden(
+        json.loads((root / "candidate_preferences_entwurf.json").read_text(encoding="utf-8")),
+        "normal",
+    )
     assert not (op / "child_preferences.json").exists()
 
 
@@ -285,6 +302,7 @@ def test_three_note_cli_and_native_fit_share_report_but_publish_separately(
     expected_cli_report = deepcopy(native["candidate_report"]["ergebnis"])
     expected_cli_report["aktiviert_candidate_preferences"] = True
     assert cli_report == expected_cli_report
+    _assert_candidate_fit_publication_golden(cli_report, "three_notes")
     assert not (op / "child_preferences.json").exists()
 
 
