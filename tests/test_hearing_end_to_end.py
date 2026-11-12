@@ -183,6 +183,135 @@ def test_three_note_native_fit_worker_returns_bound_draft_from_real_producer(
 
 @pytest.mark.gui
 @pytest.mark.integration
+def test_three_note_gated_proposal_requires_confirmation_then_applies_and_reloads(
+    tmp_path, qtbot, monkeypatch, request,
+):
+    """Echter Producer/Audit/Fit-Pfad bis Apply; nur positives Gate ist injiziert."""
+    import json
+    from dataclasses import replace
+
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QMessageBox
+
+    from hpg_core import candidate_preferences as cp, hearing_jobs, hearing_panel
+    from hpg_core.hearing_calibration import compute_proposal
+    from hpg_core.hearing_ratings import save_rating
+    from hpg_core.hearing_workflow import create_set
+    from tests.hearing_e2e_fixtures import FIT_SEED, managed_hearing_jobs, producer_fixture
+    from tests.test_main_window import _window
+    from tools import rate_transitions as rate
+    import main
+
+    config, _tracks, _inventory = producer_fixture(tmp_path, count=1)
+    config = replace(config, three_notes=True)
+    prepared = create_set(config)
+    metric_rows = rate.lies_csv(prepared.output_dir / "merkmale.csv")
+    best = max(metric_rows, key=lambda row: float(row["loudness"]))
+    for row in metric_rows:
+        note = 5 if float(row["loudness"]) > .5 else 2
+        for dimension in ("track_note", "technik_note", "gesamt_note"):
+            save_rating(prepared.output_dir, "/note", {
+                "pair_id": row["pair_id"], "clip_id": row["clip_id"],
+                "dimension": dimension, "note": note,
+            })
+    save_rating(prepared.output_dir, "/bester", {
+        "pair_id": best["pair_id"], "clip_id": best["clip_id"],
+    })
+
+    operation_root = tmp_path / "operations"
+    operation_root.mkdir()
+    preference_path = operation_root / "child_preferences.json"
+    monkeypatch.setenv("HPG_CANDIDATE_PREFERENCES_FILE", str(preference_path))
+    cp.reset_cache()
+    request.addfinalizer(cp.reset_cache)
+    original_fit = rate._compute_candidate_fit
+    weights = {name: .1 for name in rate.KANDIDATEN_TEILWERTE}
+    gate_updates = {
+        "Psytrance": {f"kandidaten_{name}_weight": value for name, value in weights.items()}
+    }
+
+    def accepted_three_note_gate(rows, ratings, manifest, genres, seed):
+        report = original_fit(rows, ratings, manifest, genres, seed)
+        assert report["dreinoten"]
+        assert report["gate_updates"] == {}
+        report["gate_updates"] = gate_updates
+        report["gewichte_je_genre"] = {"Psytrance": weights}
+        report["diagnose"]["genres"]["Psytrance"] = {
+            "uebernommen": True, "grund": "isolierter Apply-Vertrag; Gate injiziert",
+        }
+        report["ergebnis"] = {
+            "format_version": 2, "typ": "dreinoten_kandidaten_fit",
+            "aktiviert_candidate_preferences": False, "diagnose": report["diagnose"],
+        }
+        return report
+
+    monkeypatch.setattr(rate, "_compute_candidate_fit", accepted_three_note_gate)
+    proposal = compute_proposal(
+        prepared.output_dir, config.cache, operation_root=operation_root,
+        operation_id="8" * 32, fit=True, seed=FIT_SEED,
+    )
+    assert proposal["audit_passed"] and proposal["fit_status"] == "passed"
+    assert proposal["candidate_report"]["dreinoten"]
+    assert proposal["gate_updates"] == gate_updates
+    assert not preference_path.exists()
+
+    window = _window(qtbot, monkeypatch)
+    window._hearing_set_path = str(prepared.output_dir)
+    window._hearing_cache_path = str(config.cache)
+    refreshed = []
+
+    def refresh_ranking():
+        cp.reset_cache()
+        effective = cp.kandidaten_gewichte("Psytrance")
+        assert effective == gate_updates["Psytrance"]
+        refreshed.append(effective)
+
+    monkeypatch.setattr(window, "_refresh_hearing_ranking", refresh_ranking)
+    real_dialog_exec = hearing_panel.HearingCalibrationResultDialog.exec
+
+    def accept_result_dialog(dialog):
+        assert dialog.confirm_apply
+        assert dialog.apply_button.isEnabled()
+        assert "Gated Dreinoten-Gewichte übernehmen" in dialog.apply_button.text()
+        QTimer.singleShot(0, dialog.apply_button.click)
+        return real_dialog_exec(dialog)
+
+    monkeypatch.setattr(
+        hearing_panel.HearingCalibrationResultDialog, "exec", accept_result_dialog,
+    )
+    confirmations = []
+    monkeypatch.setattr(
+        main.QMessageBox, "question",
+        lambda *args: confirmations.append(args) or QMessageBox.StandardButton.Yes,
+    )
+    starts, results = [], []
+    real_start = window._start_hearing_worker
+
+    def start_apply(worker, action):
+        starts.append((worker, action))
+        worker.completed.connect(lambda result: results.append((action, result)))
+        return real_start(worker, action)
+
+    monkeypatch.setattr(window, "_start_hearing_worker", start_apply)
+    with managed_hearing_jobs(qtbot) as owned:
+        owned.append(window)
+        window._show_hearing_proposal(proposal)
+        qtbot.waitUntil(
+            lambda: window._hearing_worker is None and bool(results), timeout=30000,
+        )
+
+    assert len(confirmations) == 1
+    assert len(starts) == 1 and starts[0][1] == "apply"
+    assert isinstance(starts[0][0], hearing_jobs.HearingApplyWorker)
+    apply_result = next(result["apply_state"] for action, result in results if action == "apply")
+    assert apply_result["persisted"] and apply_result["effective_reload"]
+    stored = json.loads(preference_path.read_text(encoding="utf-8"))
+    assert {key: stored["Psytrance"][key] for key in gate_updates["Psytrance"]} == gate_updates["Psytrance"]
+    assert len(refreshed) == 1 and refreshed[0] == gate_updates["Psytrance"]
+
+
+@pytest.mark.gui
+@pytest.mark.integration
 def test_applied_preferences_reorder_visible_mixpoint_ranking(
     tmp_path, qtbot, monkeypatch, request
 ):

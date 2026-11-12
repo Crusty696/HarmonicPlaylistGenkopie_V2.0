@@ -65,10 +65,16 @@
   unabhängigen Paar bleibt das Übernahme-Gate korrekt geschlossen; der Test
   belegt keine Gewichtsübernahme. Zusammen mit dem Kandidaten-Apply-E2E, dem
   Einzel-Fit-Draft und dem Vier-Modi-Resume sind die automatisierten
-  Teilpfade einzeln belegt; der bestätigte Dreinoten-Apply-Pfad mit bestandenem Gate ist nicht E2E-verifiziert. Laut Matrix ist Dramaturgie-Fit bewusst nicht vorgesehen.
+  Teilpfade einzeln belegt; der Dreinoten-Applypfad ist jetzt im GUI-Vertrag getestet, aber sein positives Gate ist injiziert; die numerische Gateberechnung ist getrennt getestet. Laut Matrix ist Dramaturgie-Fit bewusst nicht vorgesehen.
+- Der Dreinoten-Applypfad besteht jetzt gezielt **1/1 in 8,55 s**:
+  echter synthetischer Producer, RAM-Audit/Fit, Ergebnisdialog, zweite
+  Bestätigung, Apply-Worker und Präferenzpersistenz/-Reload. Das positive
+  Gate-Update ist injiziert. Numerische positive/negative Gatefälle bestanden
+  separat **4/4 in 2,26 s**. Keine echte statistische oder musikalische Gateaussage.
 - Der unabhängige Abschlussreview prüfte read-only alle vier Dateien seit `ead15b2`;
   zwei überzogene Plan-Haken wurden korrigiert und nachgeprüft. Dramaturgie-Fit ist
-  bewusst ausgeschlossen. Ein gate-freigegebener Dreinoten-Apply bleibt offen.
+  bewusst ausgeschlossen. Der Apply-Vertrag nutzt injizierte Gatewerte; eine
+  durchgehend numerisch bestandene Gate-bis-Apply-Folge bleibt offen.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.
