@@ -1,0 +1,13 @@
+{
+  "artifact": "managed private hearing association content",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "source_folder/source_roots": "absolute paths replaced with stable root IDs; multi-root order preserved",
+    "cache_sha256": "$CACHE_SHA256",
+    "manifest_sha256": "$MANIFEST_SHA256"
+  },
+  "sha256_by_mode": {
+    "single": "66a635803857a9d128e913dd6f812864448c4ea018f7120085337e8c64453923",
+    "multi": "c461e1cb1b296bac8af97c03c05e1dac312603ca867efd2d11a2219c830d8f0c"
+  }
+}

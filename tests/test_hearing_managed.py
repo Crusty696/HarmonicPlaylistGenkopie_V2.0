@@ -1,10 +1,37 @@
 """Isolierte Vertraege fuer private Hoertest-Snapshots."""
+import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from hpg_core.models import Track
+
+
+def _assert_managed_association_content_golden(association):
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "managed_association_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    normalized = association | {
+        "cache_sha256": "$CACHE_SHA256",
+        "manifest_sha256": "$MANIFEST_SHA256",
+    }
+    if association["format"] == "hpg-hearing-association-v1":
+        normalized["source_folder"] = "$SOURCE_ROOT"
+        mode = "single"
+    else:
+        normalized["source_roots"] = [
+            f"$SOURCE_{index + 1}" for index, _root in enumerate(association["source_roots"])
+        ]
+        mode = "multi"
+    canonical = json.dumps(
+        normalized, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
 
 
 def test_snapshot_is_detached_and_filters_other_folders(tmp_path):
@@ -41,6 +68,7 @@ def test_private_database_strict_reader_and_reopen_binding(tmp_path, monkeypatch
     }
     assert association["format"] == "hpg-hearing-association-v1"
     assert association["source_folder"] == str(root.resolve())
+    _assert_managed_association_content_golden(association)
     assert resolve_association(config.output_dir) == config.cache
     assert not (config.output_dir / "association.json").exists()
     with config.cache.open("ab") as stream:
@@ -430,6 +458,7 @@ def test_multiroot_private_snapshot_and_v2_association_roundtrip(tmp_path, monke
                                 "cache_sha256", "manifest_sha256"}
     assert association["format"] == "hpg-hearing-association-v2"
     assert association["source_roots"] == [str(root) for root in config.source_roots]
+    _assert_managed_association_content_golden(association)
     assert managed.resolve_association(config.output_dir) == config.cache
 
 
