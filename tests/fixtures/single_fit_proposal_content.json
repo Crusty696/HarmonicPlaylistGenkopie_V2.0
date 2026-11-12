@@ -1,0 +1,11 @@
+{
+  "artifact": "single fit hpg_calibration_proposal",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "binding.set_path": "$SET_ROOT",
+    "binding.build.sha256": "$ALGORITHM_BUILD_SHA256",
+    "output snapshot path": "$SNAPSHOT_ROOT",
+    "proposal_sha256": "recomputed after normalization"
+  },
+  "sha256": "df60c65b22db91bcdf339cdbf79bb3626aed408eb6dbb6d46b4032e18e612197"
+}

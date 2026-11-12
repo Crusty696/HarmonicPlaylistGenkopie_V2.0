@@ -31,6 +31,19 @@ def _csv_single(tmp_path, *, rated=False):
     return root
 
 
+def _normalize_single_proposal_for_golden(proposal, snapshot_root):
+    from hpg_core.hearing_calibration import _digest
+
+    normalized = json.loads(json.dumps(proposal, allow_nan=False))
+    normalized["binding"]["set_path"] = "$SET_ROOT"
+    normalized["binding"]["build"]["sha256"] = "$ALGORITHM_BUILD_SHA256"
+    normalized["output"] = normalized["output"].replace(str(snapshot_root), "$SNAPSHOT_ROOT")
+    normalized["proposal_sha256"] = _digest(
+        {key: value for key, value in normalized.items() if key != "proposal_sha256"}
+    )
+    return normalized
+
+
 def test_csv_single_existing_clips_are_never_traversed_read_hashed_or_copied(tmp_path, monkeypatch):
     from hpg_core import hearing_sources
     from hpg_core.hearing_calibration import compute_proposal, validate_proposal
@@ -222,6 +235,19 @@ def test_single_fit_cli_output_matches_native_report_and_roundtrips(tmp_path, mo
         root, None, operation_root=operation_root, operation_id="7" * 32, seed=1,
     )
     validate_proposal(native)
+    proposal_golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "single_fit_proposal_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    normalized_proposal = _normalize_single_proposal_for_golden(
+        native, operation_root / "snapshot"
+    )
+    canonical_proposal = json.dumps(
+        normalized_proposal, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical_proposal).hexdigest() == proposal_golden["sha256"]
 
     assert rate.befehl_fit(SimpleNamespace(dir=root, seed=1, genre=None)) == 0
     cli_report = json.loads((root / "gewichte.json").read_bytes())
