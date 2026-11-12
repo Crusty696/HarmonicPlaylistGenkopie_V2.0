@@ -181,6 +181,10 @@
   Duplicate-Key-Prüfung: lesender Fallback protokolliert mehrdeutige Dateien,
   atomare Schreibpfade lehnen sie ohne Änderung ab. Negativfälle bestanden
   **7/7 in 0,50 s**; gültige Rundreisen **2/2 in 0,10 s** (`-n 0 --no-cov`).
+- Playlist-Toleranz-Overrides verwenden jetzt denselben Fail-closed-Vertrag.
+  Mehrdeutige Dateien fallen lesend auf Genre-Defaults zurück und bleiben bei
+  Schreibversuchen unverändert; gültiger Override bleibt funktionsfähig.
+  Gezielte Fälle bestanden seriell **5/5 in 0,18 s** (`-n 0 --no-cov`).
 
 ## Belege
 

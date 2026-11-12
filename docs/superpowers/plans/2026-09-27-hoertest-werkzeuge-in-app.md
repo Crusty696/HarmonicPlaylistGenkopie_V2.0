@@ -281,6 +281,8 @@ Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-
 
 **Persistierte Ranking-Einstellungen 12.11.2026:** Kandidatengewichte und Mixpunkt-Auswahlen weisen doppelte JSON-Felder jetzt fail-closed ab. Tolerantes Lesen ignoriert die mehrdeutige Datei mit Warnung; atomare Mutationen schreiben sie nicht um. Fehlerfälle bestanden **7/7 in 0,50 s**; gültige Preference- und Choice-Rundreisen **2/2 in 0,10 s** (`-n 0 --no-cov`).
 
+**Playlist-Toleranz-Overrides 12.11.2026:** Lade- und Schreibpfade prüfen jetzt doppelte JSON-Felder. Ein mehrdeutiger Override führt beim Lesen zurück zu Genre-Defaults und bleibt bei atomaren Schreibversuchen bytegleich erhalten. Override-Fehler- und gültiger Übernahmepfad bestanden **5/5 in 0,18 s** (`-n 0 --no-cov`).
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.

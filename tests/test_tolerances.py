@@ -90,9 +90,13 @@ def test_unvollstaendiger_track_gewichtskreis_wird_atomar_ignoriert(
     )
 
 
-def test_kaputtes_json_faellt_auf_defaults_ohne_ausnahme(tmp_path, monkeypatch):
+@pytest.mark.parametrize("raw", [
+    "{ das ist kein json",
+    '{"Psytrance":{"groove_weight":0.42,"groove_weight":0.99}}',
+])
+def test_kaputtes_json_faellt_auf_defaults_ohne_ausnahme(tmp_path, monkeypatch, raw):
     datei = tmp_path / "transition_tolerances.json"
-    datei.write_text("{ das ist kein json", encoding="utf-8")
+    datei.write_text(raw, encoding="utf-8")
     monkeypatch.setenv("HPG_TOLERANCES_FILE", str(datei))
 
     werte = load_tolerances()
@@ -422,13 +426,16 @@ def test_remove_candidate_overrides_belaesst_kaputtes_json_unveraendert(
     assert datei.read_bytes() == vorher
 
 
+@pytest.mark.parametrize("vorher", [
+    b"{ kaputt",
+    b'{"Psytrance":{"kandidaten_groove_weight":0.2,"kandidaten_groove_weight":0.3}}',
+])
 def test_write_belaesst_kaputtes_json_unveraendert_ohne_replace(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, vorher
 ):
     from hpg_core import tolerances
 
     datei = tmp_path / "transition_tolerances.json"
-    vorher = b"{ kaputt"
     datei.write_bytes(vorher)
     monkeypatch.setenv("HPG_TOLERANCES_FILE", str(datei))
     replace = []

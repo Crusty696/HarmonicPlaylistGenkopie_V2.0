@@ -20,6 +20,15 @@ from .genres import CANONICAL_GENRES, GENRE_TRANSITION_TOLERANCES
 
 logger = logging.getLogger(__name__)
 
+
+def _json_object_without_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Doppelter JSON-Schluessel: {key!r}")
+        result[key] = value
+    return result
+
 _MITGELIEFERT = Path(__file__).parent / "data" / "transition_tolerances.json"
 
 _cache: dict[str, dict] | None = None
@@ -182,9 +191,15 @@ def _lade_toleranzen_unter_lock() -> dict[str, dict]:
             if pfad == _override_pfad():
                 roh = _lies_override_bytes(pfad)
                 if roh is not None:
-                    _merge(werte, json.loads(roh.decode("utf-8")))
+                    _merge(werte, json.loads(
+                        roh.decode("utf-8"),
+                        object_pairs_hook=_json_object_without_duplicates,
+                    ))
             elif pfad.is_file():
-                _merge(werte, json.loads(pfad.read_text(encoding="utf-8")))
+                _merge(werte, json.loads(
+                    pfad.read_text(encoding="utf-8"),
+                    object_pairs_hook=_json_object_without_duplicates,
+                ))
         except (json.JSONDecodeError, OSError, ValueError,
                 TypeError, AttributeError) as exc:
             logger.warning(f"Toleranz-Datei {pfad} nicht lesbar: {exc}")
@@ -390,8 +405,11 @@ def _lies_override_bytes(pfad: Path) -> bytes | None:
     if marke is None:
         return roh
     try:
-        daten = json.loads(marke.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        daten = json.loads(
+            marke.decode("utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+        )
+    except (UnicodeDecodeError, ValueError):
         logger.warning("Ungueltige Delete-Marke fuer %s wird ignoriert", pfad)
         return roh
     if (
@@ -406,8 +424,11 @@ def _lies_override_bytes(pfad: Path) -> bytes | None:
 
 def _dekodiere_override(roh: bytes) -> dict:
     try:
-        daten = json.loads(roh.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        daten = json.loads(
+            roh.decode("utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"Override-Datei enthaelt ungueltiges JSON: {exc}") from exc
     if not isinstance(daten, dict):
         raise ValueError("Override-Datei ist kein JSON-Objekt")
