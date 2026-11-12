@@ -62,6 +62,7 @@ from hpg_core import (
     config as hpg_config,
     tolerances,
 )
+from hpg_core.hearing_ratings import TRANSITION_RATINGS_FORMAT
 from hpg_core.caching import (
     CACHE_FILE,
     CACHE_VERSION,
@@ -2276,7 +2277,7 @@ def transition_ratings_as_candidate_rows(path):
     """Map fully rated in-app candidate sets to the offline feature-report schema."""
     document = _lade_json_strikt(Path(path), "transition_ratings.json")
     if (type(document) is not dict or set(document) != {"format", "ratings"}
-            or document["format"] != "hpg_transition_ratings_v1"
+            or document["format"] != TRANSITION_RATINGS_FORMAT
             or type(document["ratings"]) is not dict):
         raise ValueError("transition_ratings.json hat kein bekanntes Schema")
     grouped = {}

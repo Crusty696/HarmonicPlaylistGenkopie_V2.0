@@ -1,0 +1,50 @@
+{
+  "hearing_source_manifest": {
+    "format": "hpg_hearing_source_refs",
+    "version_field": "format_version",
+    "supported_versions": [1, 2, 3]
+  },
+  "candidate_manifest": {
+    "version_field": "format_version",
+    "normal_version": 1,
+    "three_notes_version": 2
+  },
+  "dramaturgy_manifest": {
+    "version_field": "format_version",
+    "supported_versions": [1]
+  },
+  "calibration_proposal": {
+    "format": "hpg_calibration_proposal",
+    "version_field": "version",
+    "supported_versions": [2]
+  },
+  "candidate_audit_report": {
+    "version_field": "format_version",
+    "supported_versions": [1]
+  },
+  "candidate_ram_audit": {
+    "format": "hpg_candidate_ram_audit",
+    "version_field": "version",
+    "supported_versions": [2]
+  },
+  "local_blind_public": {
+    "format": "hpg_local_ui_blind_refs",
+    "version_field": "format_version",
+    "supported_versions": [1]
+  },
+  "local_blind_private": {
+    "format": "hpg_local_ui_blind_refs_key",
+    "version_field": "format_version",
+    "supported_versions": [1]
+  },
+  "transition_ratings": {
+    "format": "hpg_transition_ratings_v1",
+    "format_encodes_version": 1
+  },
+  "managed_association": {
+    "supported_formats": [
+      "hpg-hearing-association-v1",
+      "hpg-hearing-association-v2"
+    ]
+  }
+}

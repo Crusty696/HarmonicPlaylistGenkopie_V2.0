@@ -14,6 +14,9 @@ from urllib.parse import quote
 from .caching import CACHE_VERSION, track_to_dict, validate_track_dict
 from .hearing_workflow import PrepareConfig
 
+ASSOCIATION_FORMAT_SINGLE = "hpg-hearing-association-v1"
+ASSOCIATION_FORMAT_MULTI = "hpg-hearing-association-v2"
+
 
 @dataclass(frozen=True)
 class FileIdentity:
@@ -338,7 +341,7 @@ def bind_set(config, *, ownership=None):
     roots = _validated_roots(config.source_roots)
     if len(roots) > 1 and _manifest_roots(config.output_dir / "hearing_source_manifest.json") != roots:
         raise ValueError("Quellordner des Manifests stimmen nicht ueberein")
-    association = {"format": "hpg-hearing-association-v2" if len(roots) > 1 else "hpg-hearing-association-v1",
+    association = {"format": ASSOCIATION_FORMAT_MULTI if len(roots) > 1 else ASSOCIATION_FORMAT_SINGLE,
                    "cache_version": CACHE_VERSION, "cache": "analysis.sqlite", "set": "set",
                    "cache_sha256": _sha(config.cache),
                    "manifest_sha256": _sha(config.output_dir / "hearing_source_manifest.json")}
@@ -397,15 +400,15 @@ def resolve_association(folder) -> Path | None:
     data = strict_json_bytes(association.read_bytes())
     common = {"format", "cache_version", "cache", "set", "cache_sha256", "manifest_sha256"}
     if (type(data) is not dict or data.get("format") not in
-            ("hpg-hearing-association-v1", "hpg-hearing-association-v2")
-            or set(data) != common | ({"source_folder"} if data["format"].endswith("v1")
+            (ASSOCIATION_FORMAT_SINGLE, ASSOCIATION_FORMAT_MULTI)
+            or set(data) != common | ({"source_folder"} if data["format"] == ASSOCIATION_FORMAT_SINGLE
                                      else {"source_roots"})
             or type(data["cache_version"]) is not int
             or not 0 < data["cache_version"] <= CACHE_VERSION
             or data["cache"] != "analysis.sqlite" or data["set"] != "set"
             or any(type(data[key]) is not str for key in ("cache_sha256", "manifest_sha256"))):
         raise ValueError("Ungueltige Hoertest-Zuordnung")
-    if data["format"].endswith("v2"):
+    if data["format"] == ASSOCIATION_FORMAT_MULTI:
         roots = _stored_roots(data["source_roots"])
         if len(roots) < 2 or _manifest_roots(directory / "hearing_source_manifest.json") != roots:
             raise ValueError("Quellordner stimmen nicht mit dem Manifest ueberein")

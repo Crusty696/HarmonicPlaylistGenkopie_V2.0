@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+TRANSITION_RATINGS_FORMAT = "hpg_transition_ratings_v1"
+
 
 class RatingError(ValueError):
     """Kontrollierter Eingabefehler mit HTTP-kompatiblem Status."""

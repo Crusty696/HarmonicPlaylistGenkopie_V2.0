@@ -13,6 +13,9 @@ import re
 import tempfile
 from pathlib import Path
 
+PROPOSAL_FORMAT = "hpg_calibration_proposal"
+PROPOSAL_VERSION = 2
+
 
 def _encoded(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
@@ -285,7 +288,7 @@ def compute_proposal(directory, cache, *, operation_root, operation_id, fit=True
         raise ValueError("Frische Child-Praeferenzisolation fehlt")
     cp.reset_cache()
     binding = snapshot(directory, cache, seed=seed, genres=genres)
-    result = {"format": "hpg_calibration_proposal", "version": 2, "operation_id": operation_id,
+    result = {"format": PROPOSAL_FORMAT, "version": PROPOSAL_VERSION, "operation_id": operation_id,
               "binding": binding, "audit_passed": False, "audit": None, "fit_status": "not_requested",
               "gate_updates": {}, "diagnose": {}, "single_proposal": None, "candidate_report": None, "live_applied": False, "output": ""}
     if binding["mode"] == "kandidaten":
@@ -343,7 +346,10 @@ def calibration_child(connection, directory, cache, operation_root, operation_id
 def validate_proposal(proposal, expected_operation_id=None):
     expected = {"format", "version", "operation_id", "binding", "audit_passed", "audit", "fit_status",
                 "gate_updates", "diagnose", "single_proposal", "candidate_report", "live_applied", "output", "proposal_sha256"}
-    if type(proposal) is not dict or set(proposal) != expected or proposal["format"] != "hpg_calibration_proposal" or type(proposal["version"]) is not int or proposal["version"] != 2:
+    if (type(proposal) is not dict or set(proposal) != expected
+            or proposal["format"] != PROPOSAL_FORMAT
+            or type(proposal["version"]) is not int
+            or proposal["version"] != PROPOSAL_VERSION):
         raise ValueError("Unbekannter Kalibrierungsvorschlag")
     unsigned = {key: value for key, value in proposal.items() if key != "proposal_sha256"}
     if _digest(unsigned) != proposal["proposal_sha256"] or proposal["live_applied"] is not False:

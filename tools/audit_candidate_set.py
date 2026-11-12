@@ -82,6 +82,9 @@ SET_ROOT_NAMES = frozenset({
 })
 RAM_BINDING_KEYS = {"set_path", "cache_path", "mode", "purpose", "files", "sources",
                     "cache", "build", "seed", "genres"}
+AUDIT_REPORT_VERSION = 1
+RAM_AUDIT_FORMAT = "hpg_candidate_ram_audit"
+RAM_AUDIT_VERSION = 2
 
 
 class AuditError(ValueError):
@@ -835,7 +838,7 @@ def audit_set(
     if before_cache != _fingerprint_cache_family(cache):
         raise AuditError("Cache oder Begleitdatei wurde waehrend des Audits veraendert")
     return {
-        "format_version": 1,
+        "format_version": AUDIT_REPORT_VERSION,
         "status": "passed",
         "ok": True,
         "set": {
@@ -1025,7 +1028,7 @@ def audit_candidates(inputs):
     digest = _sha(_json_bytes(binding))
     evidence_kind = ("spec_verified_ram_replay" if data["transport"] == "source_refs_ram"
                      else "reference_pcm_verified_replay")
-    report = {"format": "hpg_candidate_ram_audit", "version": 2, "transport": data["transport"],
+    report = {"format": RAM_AUDIT_FORMAT, "version": RAM_AUDIT_VERSION, "transport": data["transport"],
               "evidence_kind": evidence_kind, "purpose": binding["purpose"],
               "status": "passed", "ok": True, "binding": binding,
               "before_sha256": digest, "after_sha256": digest,
@@ -1048,7 +1051,7 @@ def validate_ram_receipt(report, binding):
                         "after_sha256", "manifest_text", "source_manifest_text", "manifest_sha256", "pairs", "clips", "candidates"}, "RAM-Audit")
     transport = "source_refs_ram" if SOURCE_MANIFEST_NAME in binding["files"] else "legacy_wav_ram"
     evidence_kind = "spec_verified_ram_replay" if transport == "source_refs_ram" else "reference_pcm_verified_replay"
-    if (report["format"] != "hpg_candidate_ram_audit" or type(report["version"]) is not int or report["version"] != 2
+    if (report["format"] != RAM_AUDIT_FORMAT or type(report["version"]) is not int or report["version"] != RAM_AUDIT_VERSION
             or type(report["purpose"]) is not str or report["purpose"] != "regular"
             or report["evidence_kind"] != evidence_kind
             or report["transport"] != transport or report["status"] != "passed" or report["ok"] is not True):

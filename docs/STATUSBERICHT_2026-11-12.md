@@ -4,7 +4,7 @@
 **Branch:** `codex/gesamtrefaktorierung`
 **Ausgangsrevision der heutigen Artefaktprüfung:** `ead15b2dcb4b663fda68aab91ad874c135e533b7` (lokaler und entfernter Branch gleich)
 
-## Aktuelle Vollsuite
+## Letzte Vollsuite vor Zentralisierung der Artefaktversionen
 
 - Der serielle Standardlauf nach Korrektur der zwei veralteten UI-Textassertions
   bestand **6.718 Tests; 46 `slow`-Tests abgewählt; 0 Fehler in 2.337,11 s
@@ -14,6 +14,10 @@
   diese zwei veralteten Wortlautassertions beanstandet. Coverage wurde bei
   diesem seriellen Nachweis nicht berechnet; der konfigurierte Standardlauf
   mit Coverage/xdist ist davon getrennt.
+
+Seit diesem Volltest wurden zusätzlich mehrere bereits vorhandene JSON-Format-
+und Versionsliterale zentralisiert und der Golden-Katalog ergänzt. Dafür liegt
+noch kein neuer Vollsuite-/Coverage-Lauf vor.
 
 ## Geprüfte Fortschritte
 
@@ -25,7 +29,7 @@
   CLI/native Rundlauf plus No-clobber- und NaN-Regressionen bestanden **3/3 in
   0,54 s** (`venv312`, `-n 0 --no-cov`).
 - Ein gemeinsamer Artefakt-Vertragslauf bestand **18/18 in 10,48 s** (`venv312`, `-n 0 --no-cov`): vier Producer-Modi sowie Single-/Kandidaten-/Dreinoten-Fit, Proposal-Rundlauf, Kandidaten-Audit, Ratingsreport und lokale/portable Blindtest-Referenzen. Synthetische Quellen; kein Coverage-, Slow-Test-, Originalmusik- oder manueller Usability-Nachweis.
-- Die Vertragsauswahl ist jetzt als gemeinsamer pytest-Marker `artifact_contract` wiederholbar: `venv312\Scripts\python.exe -m pytest tests/ -m artifact_contract --tb=short -q -n 0 --no-cov` bestand **26/26 in 15,40 s**; 6.738 andere Tests wurden abgewählt. Sie bindet Producer, unterstützte Versionen, Validatoren, GUI-Exportklick und native Erstellen/Bewerten/Wiederöffnen-Folge in allen vier Modi zusammen; kein Coverage-, Slow-Test- oder sichtbarer manueller Usability-/Audio-Nachweis.
+- Die Vertragsauswahl ist als gemeinsamer pytest-Marker `artifact_contract` wiederholbar. Nach Zentralisierung der Format-/Versionsliterale und Ergänzung des Golden-Katalogtests bestand `venv312\Scripts\python.exe -m pytest tests/ -m artifact_contract --tb=short -q -n 0 --no-cov` **27/27 in 14,87 s**; 6.738 andere Tests wurden abgewählt. Das Gate bindet Producer, unterstützte Versionen, Validatoren, GUI-Exportklick und native Erstellen/Bewerten/Wiederöffnen-Folge in allen vier Modi zusammen; kein Coverage-, Slow-Test- oder sichtbarer manueller Usability-/Audio-Nachweis.
 - Der gespeicherte In-App-Übergangsratings-Satz wurde zusätzlich geprüft: `test_ram_rating_persists_metadata_reopens_and_rejects_changed_source` bestand **1/1 in 6,15 s**; Persistenz, Wiederöffnung und Ablehnung veränderter Quelldaten sind abgedeckt.
 - Der private Snapshot-Vertrag `association.json` ist nun für beide Producerformen explizit geprüft: Einquellen-v1 mit exakten Rootfeldern und Wiederöffnung bestand **1/1 in 0,22 s**, Mehrquellen-v2 mit Schema-/Roundtrip **1/1 in 0,24 s**; für v2 bestehen zusätzlich Strict-Negativtests.
 - Die unterstützten Quellmanifest-Versionen **1, 2 und 3** werden jetzt in einer einzigen Kompatibilitätsrundreise jeweils durch Discovery und vollständigen Loader geprüft. `test_source_session_and_discovery_read_both_versions` bestand **1/1 in 0,15 s**; v2 lag zuvor zwischen den getesteten v1-/v3-Ständen ungetestet.
@@ -70,13 +74,12 @@
   `_lade_json_strikt` akzeptierte doppelte Feldnamen. Der Loader weist diese
   jetzt mit `object_pairs_hook` ab; Producer- und Report-Tests bestehen samt
   Duplikatfall **2/2 in 4,73 s** (`venv312`; xdist-Standardeinstellung, acht Worker).
-- Das Hörtest-Artefaktinventar enthält jetzt im Umsetzungsplan eine explizite
-  Schema-/Versionsliste für Prepare, Fit, Audit, Ratings, Blindtest und private
-  Snapshot-Zuordnung samt Producer-/Reader-Tests. Direkte versionsübergreifende
-  Reader-Rundreisen bestehen für Source Manifest v1–v3 und Association v1–v2.
-  Offen bleibt der normalisierte Producer→Reader-Golden-Master-Lauf über jedes
-  publizierte Artefakt; die 26 Tests des `artifact_contract`-Gates sind hierfür
-  Teilbelege, kein vollständiger Ersatz.
+- Das Hörtest-Artefaktinventar führt Schema/Version und Producer-/Reader-Tests
+  pro Prepare-, Fit-, Audit-, Rating-, Blindtest- und Snapshot-Artefakt auf.
+  `tests/fixtures/hearing_artifact_schema_versions.json` ist ein unabhängiger
+  Kennungskatalog, geprüft durch `test_published_hearing_json_versions_match_golden_catalog`.
+  Das `artifact_contract`-Gate besteht jetzt 27/27. Offen bleibt ein normalisierter
+  Producer→Reader-Golden-Master-Lauf über sämtliche dynamischen Ausgaben.
 - Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist ausdrücklich als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte einen abweichenden Algorithmus-Fingerprint; dieser Stand wurde inzwischen isoliert neu gebaut und per Native-Smoke geprüft (Nachweis oben).
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert
