@@ -5,11 +5,14 @@
 #ifndef SourceExe
   #define SourceExe "HarmonicPlaylistGenerator.exe"
 #endif
+#ifndef AppVersion
+  #define AppVersion "3.7.2"
+#endif
 
 [Setup]
 ; Application Information
 AppName=Harmonic Playlist Generator
-AppVersion=3.7.2
+AppVersion={#AppVersion}
 AppPublisher=HPG Team
 AppPublisherURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0
 AppSupportURL=https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/issues
@@ -19,7 +22,7 @@ DefaultGroupName=Harmonic Playlist Generator
 AllowNoIcons=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
-OutputBaseFilename=HPG_v3.7.2_Setup
+OutputBaseFilename=HPG_v{#AppVersion}_Setup
 SetupIconFile=icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

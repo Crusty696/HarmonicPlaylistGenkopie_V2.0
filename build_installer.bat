@@ -2,6 +2,9 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
+set "APP_VERSION=%~1"
+if not defined APP_VERSION set "APP_VERSION=3.7.2"
+
 echo ========================================
 echo Harmonic Playlist Generator - Installer bauen
 echo ========================================
@@ -39,16 +42,16 @@ echo [3/4] Ausgabeverzeichnis bereit: installer_output\
 rem --- 4/4: Installer kompilieren ---------------------------------------
 echo [4/4] Kompiliere installer.iss ^(dauert 1-2 Minuten^)...
 echo.
-"!INNO_PATH!" "installer.iss"
+"!INNO_PATH!" /DAppVersion="!APP_VERSION!" "installer.iss"
 if errorlevel 1 (
     echo.
     echo [FEHLER] Installer-Build fehlgeschlagen - Meldungen oben pruefen.
     exit /b 1
 )
 
-if not exist "installer_output\HPG_v3.7.2_Setup.exe" (
+if not exist "installer_output\HPG_v!APP_VERSION!_Setup.exe" (
     echo [FEHLER] Erwartetes Installer-Artefakt wurde nicht erzeugt:
-    echo [INFO]   installer_output\HPG_v3.7.2_Setup.exe
+    echo [INFO]   installer_output\HPG_v!APP_VERSION!_Setup.exe
     exit /b 1
 )
 

@@ -26,7 +26,9 @@ jobs:
       shell: pwsh
       run: |
         $VERSION = "${{ github.ref_name }}"
+        $APP_VERSION = $VERSION.TrimStart('v')
         echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+        echo "APP_VERSION=$APP_VERSION" >> $env:GITHUB_OUTPUT
         echo "Version: $VERSION"
 
     - name: Verify tag matches application version
@@ -72,7 +74,7 @@ jobs:
 
     - name: Build installer
       shell: cmd
-      run: call build_installer.bat
+      run: call build_installer.bat "${{ steps.get_version.outputs.APP_VERSION }}"
 
     - name: Verify installer
       shell: pwsh
