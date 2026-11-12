@@ -4,7 +4,24 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import hashlib
 import json
+from pathlib import Path
 import pytest
+
+
+def _normalize_transition_ratings_for_golden(document):
+    normalized = json.loads(json.dumps(document, allow_nan=False))
+    record = next(iter(normalized["ratings"].values()))
+    normalized["ratings"] = {"$PAIR_ID": record}
+    record["rated_at"] = "$RATED_AT"
+    source = record["source"]
+    source["from_path"] = Path(source["from_path"]).name
+    source["to_path"] = Path(source["to_path"]).name
+    source["from_file_identity"] = "$FILE_IDENTITY"
+    source["to_file_identity"] = "$FILE_IDENTITY"
+    source["candidate_set_id"] = "$CANDIDATE_SET_ID"
+    for field in ("track_a_path", "track_b_path"):
+        source["render_spec"][field] = Path(source["render_spec"][field]).name
+    return normalized
 
 
 def test_main_passes_preview_bytes_to_rating_without_temporary_audio(monkeypatch, tmp_path):
@@ -144,6 +161,17 @@ def test_ram_rating_persists_metadata_reopens_and_rejects_changed_source(monkeyp
     persisted = json.loads(saved_bytes)
     assert set(persisted) == {"format", "ratings"}
     assert persisted["format"] == "hpg_transition_ratings_v1"
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "transition_ratings_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    normalized = _normalize_transition_ratings_for_golden(persisted)
+    canonical = json.dumps(
+        normalized, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
     records = persisted["ratings"]
     assert len(records) == 1
     entry = next(iter(records.values()))

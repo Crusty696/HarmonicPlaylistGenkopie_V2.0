@@ -1,0 +1,12 @@
+{
+  "artifact": "transition_ratings.json",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "rating map key": "$PAIR_ID",
+    "rated_at": "$RATED_AT",
+    "from_path/to_path/render_spec paths": "basename",
+    "from_file_identity/to_file_identity": "$FILE_IDENTITY",
+    "candidate_set_id": "$CANDIDATE_SET_ID"
+  },
+  "sha256": "1d48464ba0b19df015022b4821fd8ea6c0a361738eaf88a63c11204327f908e8"
+}
