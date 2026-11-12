@@ -26,6 +26,7 @@
   0,54 s** (`venv312`, `-n 0 --no-cov`).
 - Ein gemeinsamer Artefakt-Vertragslauf bestand **18/18 in 10,48 s** (`venv312`, `-n 0 --no-cov`): vier Producer-Modi sowie Single-/Kandidaten-/Dreinoten-Fit, Proposal-Rundlauf, Kandidaten-Audit, Ratingsreport und lokale/portable Blindtest-Referenzen. Synthetische Quellen; kein Coverage-, Slow-Test-, Originalmusik- oder manueller Usability-Nachweis.
 - Der gespeicherte In-App-Übergangsratings-Satz wurde zusätzlich geprüft: `test_ram_rating_persists_metadata_reopens_and_rejects_changed_source` bestand **1/1 in 6,15 s**; Persistenz, Wiederöffnung und Ablehnung veränderter Quelldaten sind abgedeckt.
+- Der private Snapshot-Vertrag `association.json` ist nun für beide Producerformen explizit geprüft: Einquellen-v1 mit exakten Rootfeldern und Wiederöffnung bestand **1/1 in 0,22 s**, Mehrquellen-v2 mit Schema-/Roundtrip **1/1 in 0,24 s**; für v2 bestehen zusätzlich Strict-Negativtests.
 - Der GUI-Button „Bericht / Vorschlag speichern“ wurde auf dem aktuellen Checkout verifiziert: `test_csv_single_real_fit_without_cache_audio_preserves_old_output` bestand **2/2 in 7,21 s**. Beide Varianten laden den exportierten JSON-Vorschlag zurück und validieren ihn; eine vorhandene `gewichte.json` bleibt unverändert. Synthetische CSV, keine Audioanalyse.
 - Der aktuelle Frozen-Build wurde gemäß Task-7-Methode isoliert unter
   `%TEMP%\hpg-final-build-8db92de2cc2f42cab91a6e4e869efa58` erstellt; bestehende

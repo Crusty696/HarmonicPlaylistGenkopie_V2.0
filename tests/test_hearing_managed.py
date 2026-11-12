@@ -32,6 +32,14 @@ def test_private_database_strict_reader_and_reopen_binding(tmp_path, monkeypatch
     config.output_dir.mkdir()
     (config.output_dir / "hearing_source_manifest.json").write_text("{}")
     bind_set(config)
+    association_path = config.cache.parent / "association.json"
+    association = json.loads(association_path.read_text(encoding="utf-8"))
+    assert set(association) == {
+        "format", "cache_version", "cache", "set", "cache_sha256",
+        "manifest_sha256", "source_folder",
+    }
+    assert association["format"] == "hpg-hearing-association-v1"
+    assert association["source_folder"] == str(root.resolve())
     assert resolve_association(config.output_dir) == config.cache
     assert not (config.output_dir / "association.json").exists()
     with config.cache.open("ab") as stream:
