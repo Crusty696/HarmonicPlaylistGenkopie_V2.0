@@ -52,6 +52,15 @@ def _canonical_manifest_sha256(manifest):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _normalize_candidate_manifest_for_golden(manifest):
+    normalized = json.loads(json.dumps(manifest, allow_nan=False))
+    normalized["algorithm_build"] = "$ALGORITHM_BUILD"
+    for pair in normalized["pairs"]:
+        pair["track_a"] = Path(pair["track_a"]).name
+        pair["track_b"] = Path(pair["track_b"]).name
+    return normalized
+
+
 def producer_for(source_a, source_b):
     def produce(args):
         from tools import rate_transitions as rt
@@ -260,6 +269,21 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         "dramaturgie": rt.befehl_prepare_dramaturgie,
     }[mode]
     assert cli_wrapper(cli_args) == 0
+    if mode == "kandidaten":
+        candidate_manifest = json.loads(
+            (cli_config.output_dir / rt.KANDIDATEN_MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        candidate_golden = json.loads(
+            (
+                Path(__file__).parent
+                / "fixtures"
+                / "candidate_manifest_content.json"
+            ).read_text(encoding="utf-8")
+        )
+        candidate_key = "three_notes" if three_notes else "normal"
+        assert _canonical_manifest_sha256(
+            _normalize_candidate_manifest_for_golden(candidate_manifest)
+        ) == candidate_golden["sha256_by_mode"][candidate_key]
 
     metadata_by_mode = {
         "einzel": {"merkmale.csv", "bewertung.csv"},

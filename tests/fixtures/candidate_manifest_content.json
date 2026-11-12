@@ -1,0 +1,12 @@
+{
+  "artifact": "kandidaten_manifest.json",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "algorithm_build": "$ALGORITHM_BUILD",
+    "pair_track_paths": "basename relative to synthetic source root"
+  },
+  "sha256_by_mode": {
+    "normal": "99d6396ba977282c7828d06ca409b688d0d2a5852822c76bf72819455e566eaf",
+    "three_notes": "e38c662f303f16ef63b7b8eb87d06c9833ce8ac03a609f8c0578eeeb24a45210"
+  }
+}
