@@ -99,9 +99,13 @@
   `.agents/skills/hpg-veritas/references/active-learnings.md`, die Löschungen
   von `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, drei HTML-Dokumenten und zwei
   historischen Memory-Dateien.
-- In diesem Fortsetzungsschritt wurde kein Produktcode geändert.
+- In diesem Fortsetzungsschritt wurde kein Produktcode geändert. Commit
+  `c90c5e4a` ergänzt Inventar-Assertions im Producer-Paritätstest und
+  korrigiert/erweitert den Hörtest-Plan. AST-Parse und `git diff --check`
+  bestanden; der fokussierte Pytest-Lauf wurde nicht gestartet.
 - Der Dreinoten-GUI-Fitworker wurde in `0c88d8eb` ergänzt; `ccd1c929` klärte den Build-Status, `7bb79cca` öffnete überzogene Artefakt-/E2E-Haken und `b7742ccc` benannte den noch offenen Dreinoten-Apply-Nachweis. Vor diesem Statusabgleich stimmten lokaler und entfernter Branch auf `b7742ccc` überein.
 - Die Folgecommits 1d019e64 und 6e390ac9 synchronisierten Status und unabhängige Prüfung; 44fdfa92 ergänzt den Dreinoten-Apply-Test. Nach dessen Push stimmten lokaler und entfernter Branch bei 44fdfa92 überein.
+- `368d3076` dokumentierte den Apply-Push; `c90c5e4a` ergänzt das Artefaktinventar. `git ls-remote` bestätigte danach lokal und remote `c90c5e4abc3fed76c7b24ec17ccf97d2dd5d160b`.
 
 ## Belege
 
