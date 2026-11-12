@@ -84,6 +84,8 @@ for index, path in enumerate(sys.argv[1:]):
     $workerInfo.FileName = $installedExe
     $workerInfo.UseShellExecute = $false
     $workerInfo.CreateNoWindow = $true
+    $workerLocalAppData = Join-Path $smokeRoot "worker-localappdata"
+    $workerInfo.Environment["LOCALAPPDATA"] = $workerLocalAppData
     [void]$workerInfo.ArgumentList.Add("--worker-smoke")
     [void]$workerInfo.ArgumentList.Add($audioA)
     [void]$workerInfo.ArgumentList.Add($audioB)
@@ -92,7 +94,13 @@ for index, path in enumerate(sys.argv[1:]):
         throw "Frozen worker smoke timed out"
     }
     if ($workerSmoke.ExitCode -ne 0) {
-        throw "Frozen worker smoke failed with $($workerSmoke.ExitCode)"
+        $workerLogPath = Join-Path $workerLocalAppData "HPG\logs\hpg.log"
+        $workerLogTail = if (Test-Path -LiteralPath $workerLogPath -PathType Leaf) {
+            (Get-Content -LiteralPath $workerLogPath -Tail 60) -join [Environment]::NewLine
+        } else {
+            "Worker log was not created at $workerLogPath"
+        }
+        throw "Frozen worker smoke failed with $($workerSmoke.ExitCode):`n$workerLogTail"
     }
     if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
         throw "Frozen worker smoke did not create its isolated cache"

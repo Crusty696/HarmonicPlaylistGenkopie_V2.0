@@ -292,6 +292,8 @@ def test_release_and_main_ci_share_one_strong_installer_runtime_gate():
     "--worker-smoke",
     "Frozen worker smoke cache track rows:",
     "version_markers",
+    "worker-localappdata",
+    "Worker log was not created",
     "SELECT COUNT(*) FROM cache WHERE key <> ?",
     "Installed application exited",
     "MainWindowHandle",
