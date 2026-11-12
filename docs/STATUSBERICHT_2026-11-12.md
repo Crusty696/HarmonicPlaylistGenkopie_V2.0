@@ -6,6 +6,20 @@
 
 ## Geprüfte Fortschritte
 
+- Der aktuelle Checkout enthält `Start_Hoertest.bat`,
+  `tools/hoertest_launcher.py` und `tests/test_hoertest_launcher.py`.
+  Eine widersprechende historische Inventaraussage im Hörtest-Plan wurde
+  berichtigt; die CLI-/GUI-Matrix beschreibt den Launcher bereits als
+  optionalen Kompatibilitätsweg.
+- Der Vier-Modi-Producervergleich prüft jetzt zusätzlich das exakte
+  Dateiinventar der CLI-Ausgabe und des nativen Quellsatzes für Einzel,
+  Kandidaten, Dreinoten und Dramaturgie. Der Test wurde syntaktisch geparst;
+  der fokussierte Pytest-Lauf ist noch offen. Daraus folgt noch kein neuer
+  Laufzeitnachweis.
+- Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
+  Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
+  versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
+
 - Drei unabhängige, rein statische VERITAS-Pässe über Anwendung, Analyse,
   Playlist, GUI/Worker, Export, Build, Installer, Tests, CI und aktive
   Projektdokumentation sind abgeschlossen. Kein Produktfehler wurde in zwei

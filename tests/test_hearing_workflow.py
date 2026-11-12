@@ -106,7 +106,9 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     from dataclasses import replace
     from types import SimpleNamespace
 
-    from hpg_core.hearing_sources import SourceRenderSink, load_source_session
+    from hpg_core.hearing_sources import (
+        SOURCE_MANIFEST_NAME, SourceRenderSink, load_source_session,
+    )
     from hpg_core.hearing_workflow import _producer_namespace
     from hpg_core.models import Track
     from hpg_core.playlist import TransitionPlan
@@ -209,6 +211,36 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         "dramaturgie": rt.befehl_prepare_dramaturgie,
     }[mode]
     assert cli_wrapper(cli_args) == 0
+
+    metadata_by_mode = {
+        "einzel": {"merkmale.csv", "bewertung.csv"},
+        "kandidaten": {
+            "merkmale.csv", "bewertung.csv", "reihenfolge.json",
+            rt.KANDIDATEN_MANIFEST_NAME, "LIESMICH-kandidaten.txt",
+        },
+        "dramaturgie": {
+            "dramaturgie_manifest.json", "bewertung.csv",
+            "dramaturgie_bewertung.csv", "README.md",
+        },
+    }
+    expected_metadata = metadata_by_mode[mode]
+
+    def file_inventory(directory):
+        return {
+            path.relative_to(directory).as_posix()
+            for path in directory.rglob("*")
+            if path.is_file()
+        }
+
+    native_files = file_inventory(native_result.output_dir)
+    assert native_files == expected_metadata | {SOURCE_MANIFEST_NAME}
+    cli_files = file_inventory(cli_config.output_dir)
+    cli_clip_files = {
+        path for path in cli_files if path.startswith("clips/")
+    }
+    assert cli_files == expected_metadata | cli_clip_files
+    assert cli_clip_files
+
     from hpg_core.hearing_ratings import load_session as load_rating_session
 
     def logical_session(session):

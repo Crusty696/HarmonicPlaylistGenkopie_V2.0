@@ -52,7 +52,7 @@ Inventarquelle ist der aktuelle Code, nicht alte Statusdokumente:
 3. `tools/audit_candidate_set.py`: ausschließlich strenger Kandidatensatz-Audit mit exakt gebundenem Cache/Manifest/Algorithmus und Render-Replay. Er ist **keine** generische Prüfung für Einzel- oder Dramaturgiesätze. Kandidaten-Fit verlangt den passenden erfolgreichen Report.
 4. `tools/rate_transitions.py fit`: Einzelmodus erzeugt `gewichte.json` und Diagnose, aber aktiviert keine Nutzerpräferenzen; Kandidatenmodus validiert Audit-/Cache-/Satzbindung und Ratings, berechnet Holdout/Diagnosen und kann nur bei Gates Kandidatenpräferenzen atomar übernehmen. Kandidaten-Dreinoten-Auswertung hat zusätzliche Freigabegates. Optionen: `--dir`, `--seed`, wiederholbares `--genre`, `--modus`, Kandidaten-`--cache`, Kandidaten-`--audit-report`.
 5. `tools/prepare_dj_blind_test.py`: validiert Manifest, Pfadroot, Clip-Dauer/Format/Hash, erzeugt neutrale A/B-Clips und trennt öffentliche Session und geheimen Schlüssel. Das Skript stellt **keine** Rating-Erfassung, Entblindung oder statistische Auswertung bereit. Eine solche Blindtest-End-to-End-Funktion ist nicht Teil der Ist-Parität; separat spezifizieren/freigeben, falls gewünscht.
-6. Launcher-Inventar: Im sauberen Baseline-HEAD existiert **keine** `tools/hoertest_launcher.py` und keine `Start_Hoertest.bat`/`Hoertest*.bat` (Dateiinventar per `rg --files`). Frühere Launcher-/BAT-Verweise stammen nicht aus diesem verifizierten Checkout und werden daher nicht als Ist-Funktion oder Paritätsanforderung behauptet. Neue App-Aktionen beschränken sich auf nachweislich vorhandene Producer-/Rating-/Audit-/Blindtestfunktionen.
+6. Launcher-Inventar im aktuellen Checkout: `tools/hoertest_launcher.py`, `Start_Hoertest.bat` und `tests/test_hoertest_launcher.py` sind vorhanden und versioniert. Der Konsolen-/Browserlauncher bleibt ein optionaler Kompatibilitätsweg; die native Satzsuche und Browseraktion in der App erfüllen denselben Nutzerablauf ohne BAT. Die App darf dafür keine zweite Rating- oder Serverlogik einführen.
 7. Frozen-Dispatch in `main.py`: keine vorhandenen Hearing-CLI-Tool-Dispatches in diesem Baseline-Checkout als App-Integration voraussetzen. Die App muss nachweisen, dass neue intern benötigte Module paketiert starten; CLI-Dateien bleiben optional kompatible Entwicklerwege.
 
 ### Verbindliche Werkzeug-zu-App-Matrix
@@ -247,6 +247,20 @@ Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand.
 **Testbelege:** bestehende `tests/test_prepare_dj_blind_test.py` bleibt Producer-Vertrag; GUI-Tests prüfen nur sichere Parameterweitergabe, unabhängige Zielpfade und Fehlerdarstellung. Kein Real-Musiklauf als automatisierter Test und kein geheimes Mapping im Screenshot/Log.
 
 ### Task 7 / Aufgabe 7: Werkzeugparität, Packaging und Ende-zu-Ende-Verifikation
+
+#### Publizierte Artefakte – Inventarstand 12.11.2026
+
+| Producer | Artefakte im öffentlichen Satz | Vertragsbelege |
+|---|---|---|
+| Einzel-Prepare | `bewertung.csv`, `merkmale.csv`, CLI zusätzlich `clips/*.wav`; native Quelle zusätzlich `hearing_source_manifest.json`, keine kopierten Clips | `test_real_internal_producer_artifacts_match_cli_and_native_service[einzel-False]` |
+| Kandidaten-Prepare, normal oder Dreinoten | `bewertung.csv`, `merkmale.csv`, `reihenfolge.json`, `kandidaten_manifest.json`, `LIESMICH-kandidaten.txt`, CLI zusätzlich `clips/*.wav`; native Quelle zusätzlich `hearing_source_manifest.json` | `test_real_internal_producer_artifacts_match_cli_and_native_service[kandidaten-False]` und `[kandidaten-True]`; Kandidatenvalidierung plus Fit-Rundreisen |
+| Dramaturgie-Prepare | `bewertung.csv`, `dramaturgie_bewertung.csv`, `dramaturgie_manifest.json`, `README.md`, CLI zusätzlich `clips/*.wav`; native Quelle zusätzlich `hearing_source_manifest.json` | `test_real_internal_producer_artifacts_match_cli_and_native_service[dramaturgie-False]`; Dramaturgie-Validator und Manifestvergleich nach Clippfad-Normalisierung |
+| Einzel-Fit | CLI publiziert `gewichte.json`; nativer Pfad bindet den Bericht in `single_proposal` und exportiert auf Nutzeraktion einen JSON-Vorschlag | `test_single_fit_cli_output_matches_native_report_and_roundtrips`, `test_export_new_report_is_no_clobber` |
+| Kandidaten-Fit | Normal: Präferenz-Override bei erfolgreichem Gate oder `candidate_preferences_entwurf.json` bei Ablehnung/Schreibfehler. Dreinoten: `dreinoten_fit_bericht.json` plus bedingtes Präferenz-Update. GUI liefert gebundenen Vorschlag und optionalen Export statt CLI-Satzdateien | `test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate`, `test_three_note_cli_and_native_fit_share_report_but_publish_separately`, Apply-/Persistenztests |
+| Kandidaten-Audit | optionaler externer JSON-Report mit `format_version`, `status`, `ok`, Satz-/Cache-/Build-Bindung und Replay-Ergebnissen; nativer RAM-Audit liefert Receipt ohne Pflichtdatei | `tests/test_audit_candidate_set.py`, `test_export_valid_native_receipt_and_canonical_binding_roundtrip` |
+| Blindtest | Portable Variante: `blind_session.csv`, separater Schlüssel-CSV und neutrale `clips/*.wav`. Lokale Referenzvariante: `blind_session.json` und separater privater JSON-Schlüssel, ohne Clipkopien | `tests/test_prepare_dj_blind_test.py`, `test_portable_blind_export_worker_copies_neutral_clips_and_separates_key`, `tests/test_hearing_blind.py` |
+
+Die Inventartabelle trennt Hörsatzdateien von Fit-, Audit- und Blindtest-Ausgaben. Sie ist kein pauschaler Golden-Master-Nachweis. Fit-Ausgaben und beide Blindtest-Varianten haben eigene Producer/Validatoren; eine gemeinsame, versionsübergreifende Schema-Fixture über alle JSON-Schemas bleibt offen.
 
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
