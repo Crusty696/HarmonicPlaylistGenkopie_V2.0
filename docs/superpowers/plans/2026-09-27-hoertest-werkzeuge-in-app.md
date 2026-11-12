@@ -188,7 +188,7 @@ Service-Tests werden konkret benannt: `tests/test_hearing_workflow.py::test_crea
 - [x] Kandidaten-Fit ist UI-seitig bis zur vollständigen Ratingprüfung freigegeben und Service-seitig an erfolgreiches Audit-Receipt und Fit-Binding gebunden; Apply validiert und prüft Binding erneut.
 - [x] Audit verändert keine Originalclips, Ratings, Quellen oder Cache; Kandidaten-Audit rendert in RAM und verifiziert Fingerprints.
 - [x] Separater Auditdialog zeigt erfolgreiches Replay, ausdrücklich nicht ausgeführten Fit, Cache-/Build-/Quell-/Datei-Bindung und Integritätsdigest; Audit- und Fit-Completion bleiben getrennt und Close-sicher. Geprüft in `tests/test_hearing_calibration.py` und `tests/test_hearing_browser_integration.py`.
-- [ ] Nachweis der Report-Kollision/Publikation nur dann ergänzen, wenn ein persistenter Auditbericht weiterhin Produktanforderung ist; aktueller nativer Pfad verwendet gebundenen Vorschlag und optionalen Export.
+- [x] Nicht erforderlich: Der aktuelle native Produktvertrag verlangt keinen persistenten Audit-Zwischenbericht. Der RAM-Receipt ist an den Vorschlag gebunden; ein Export bleibt optional. Exakte CLI-Reportfelder und No-clobber/Export-Rundreisen sind in `tests/test_audit_candidate_set.py`, `test_export_valid_native_receipt_and_canonical_binding_roundtrip` und `test_vollstaendiger_stretch_fall_ist_read_only` geprüft. Es gibt daher keinen persistenten GUI-Report-Publikationspfad, dessen Kollision separat getestet werden müsste.
 
 **Abnahmekriterium:** Kandidaten-Fit kann nicht ohne passenden erfolgreichen Audit starten. Für Modi ohne diesen Audit existiert eine dokumentierte, getestete, modusspezifische Freigabeprüfung; UI kennzeichnet deren geringeren/anderen Prüfstatus klar.
 
