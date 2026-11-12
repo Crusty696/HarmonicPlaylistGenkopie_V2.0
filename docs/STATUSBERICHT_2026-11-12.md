@@ -29,7 +29,7 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   CLI/native Rundlauf plus No-clobber- und NaN-Regressionen bestanden **3/3 in
   0,54 s** (`venv312`, `-n 0 --no-cov`).
 - Ein gemeinsamer Artefakt-Vertragslauf bestand **18/18 in 10,48 s** (`venv312`, `-n 0 --no-cov`): vier Producer-Modi sowie Single-/Kandidaten-/Dreinoten-Fit, Proposal-Rundlauf, Kandidaten-Audit, Ratingsreport und lokale/portable Blindtest-Referenzen. Synthetische Quellen; kein Coverage-, Slow-Test-, Originalmusik- oder manueller Usability-Nachweis.
-- Die Vertragsauswahl ist als gemeinsamer pytest-Marker `artifact_contract` wiederholbar. Nach Zentralisierung der Format-/Versionsliterale und Ergänzung des Golden-Katalogtests bestand `venv312\Scripts\python.exe -m pytest tests/ -m artifact_contract --tb=short -q -n 0 --no-cov` **27/27 in 14,87 s**; 6.738 andere Tests wurden abgewählt. Das Gate bindet Producer, unterstützte Versionen, Validatoren, GUI-Exportklick und native Erstellen/Bewerten/Wiederöffnen-Folge in allen vier Modi zusammen; kein Coverage-, Slow-Test- oder sichtbarer manueller Usability-/Audio-Nachweis.
+- Die Vertragsauswahl ist als gemeinsamer pytest-Marker `artifact_contract` wiederholbar. Nach Ergänzung des Root-Schema-Katalogs bestand `venv312\Scripts\python.exe -m pytest tests/ -m artifact_contract --tb=short -q -n 0 --no-cov` **27/27 in 14,52 s**; 6.738 andere Tests wurden abgewählt. Das Gate bindet Producer, unterstützte Versionen, Root-Validatoren, GUI-Exportklick und native Erstellen/Bewerten/Wiederöffnen-Folge in allen vier Modi zusammen; kein Coverage-, Slow-Test- oder sichtbarer manueller Usability-/Audio-Nachweis.
 - Der gespeicherte In-App-Übergangsratings-Satz wurde zusätzlich geprüft: `test_ram_rating_persists_metadata_reopens_and_rejects_changed_source` bestand **1/1 in 6,15 s**; Persistenz, Wiederöffnung und Ablehnung veränderter Quelldaten sind abgedeckt.
 - Der private Snapshot-Vertrag `association.json` ist nun für beide Producerformen explizit geprüft: Einquellen-v1 mit exakten Rootfeldern und Wiederöffnung bestand **1/1 in 0,22 s**, Mehrquellen-v2 mit Schema-/Roundtrip **1/1 in 0,24 s**; für v2 bestehen zusätzlich Strict-Negativtests.
 - Die unterstützten Quellmanifest-Versionen **1, 2 und 3** werden jetzt in einer einzigen Kompatibilitätsrundreise jeweils durch Discovery und vollständigen Loader geprüft. `test_source_session_and_discovery_read_both_versions` bestand **1/1 in 0,15 s**; v2 lag zuvor zwischen den getesteten v1-/v3-Ständen ungetestet.
@@ -77,9 +77,10 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
 - Das Hörtest-Artefaktinventar führt Schema/Version und Producer-/Reader-Tests
   pro Prepare-, Fit-, Audit-, Rating-, Blindtest- und Snapshot-Artefakt auf.
   `tests/fixtures/hearing_artifact_schema_versions.json` ist ein unabhängiger
-  Kennungskatalog, geprüft durch `test_published_hearing_json_versions_match_golden_catalog`.
-  Das `artifact_contract`-Gate besteht jetzt 27/27. Offen bleibt ein normalisierter
-  Producer→Reader-Golden-Master-Lauf über sämtliche dynamischen Ausgaben.
+  Kennungs-/Root-Schema-Katalog, geprüft durch
+  `test_published_hearing_json_versions_match_golden_catalog`; das Gesamt-Gate
+  besteht 27/27. Offen bleibt der normalisierte Inhaltsvergleich sämtlicher
+  Producer-Ausgaben samt Reader-Rundreise.
 - Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist ausdrücklich als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte einen abweichenden Algorithmus-Fingerprint; dieser Stand wurde inzwischen isoliert neu gebaut und per Native-Smoke geprüft (Nachweis oben).
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert

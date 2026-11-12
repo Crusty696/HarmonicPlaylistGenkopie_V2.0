@@ -62,7 +62,7 @@ from hpg_core import (
     config as hpg_config,
     tolerances,
 )
-from hpg_core.hearing_ratings import TRANSITION_RATINGS_FORMAT
+from hpg_core.hearing_ratings import TRANSITION_RATINGS_FORMAT, TRANSITION_RATINGS_KEYS
 from hpg_core.caching import (
     CACHE_FILE,
     CACHE_VERSION,
@@ -240,6 +240,10 @@ KANDIDATEN_MANIFEST_NAME = "kandidaten_manifest.json"
 DRAMATURGIE_MANIFEST_VERSION = 1
 DRAMATURGIE_MANIFEST_NAME = "dramaturgie_manifest.json"
 DRAMATURGIE_CONTRACT = "strategy_dramaturgy_and_transition_v1"
+DRAMATURGIE_MANIFEST_KEYS = {
+    "format_version", "contract", "app_version", "algorithm_build", "cache",
+    "pool_hash", "ordered_pool_track_ids", "candidate_choice_hash", "variants",
+}
 STANDARD_SEQUENZ_TRACKS = 16
 STANDARD_UEBERGAENGE_PRO_VARIANTE = 5
 MIN_SEQUENZ_TRACKS = 12
@@ -1928,11 +1932,7 @@ def _validiere_dramaturgie_satz(
     dramaturgie_zeilen: list[dict],
     uebergaenge_pro_variante: int,
 ) -> None:
-    if set(manifest) != {
-        "format_version", "contract", "app_version", "algorithm_build",
-        "cache", "pool_hash", "ordered_pool_track_ids",
-        "candidate_choice_hash", "variants",
-    }:
+    if set(manifest) != DRAMATURGIE_MANIFEST_KEYS:
         raise ValueError("dramaturgie_manifest.json hat kein exaktes Top-Level-Schema")
     if manifest["format_version"] != DRAMATURGIE_MANIFEST_VERSION:
         raise ValueError("Dramaturgie-Manifestversion stimmt nicht")
@@ -2276,7 +2276,7 @@ def _deep_feature_csv_values(candidate) -> dict[str, str | float]:
 def transition_ratings_as_candidate_rows(path):
     """Map fully rated in-app candidate sets to the offline feature-report schema."""
     document = _lade_json_strikt(Path(path), "transition_ratings.json")
-    if (type(document) is not dict or set(document) != {"format", "ratings"}
+    if (type(document) is not dict or set(document) != TRANSITION_RATINGS_KEYS
             or document["format"] != TRANSITION_RATINGS_FORMAT
             or type(document["ratings"]) is not dict):
         raise ValueError("transition_ratings.json hat kein bekanntes Schema")

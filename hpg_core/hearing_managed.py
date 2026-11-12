@@ -16,6 +16,11 @@ from .hearing_workflow import PrepareConfig
 
 ASSOCIATION_FORMAT_SINGLE = "hpg-hearing-association-v1"
 ASSOCIATION_FORMAT_MULTI = "hpg-hearing-association-v2"
+ASSOCIATION_COMMON_KEYS = {
+    "format", "cache_version", "cache", "set", "cache_sha256", "manifest_sha256",
+}
+ASSOCIATION_SINGLE_KEYS = ASSOCIATION_COMMON_KEYS | {"source_folder"}
+ASSOCIATION_MULTI_KEYS = ASSOCIATION_COMMON_KEYS | {"source_roots"}
 
 
 @dataclass(frozen=True)
@@ -398,11 +403,10 @@ def resolve_association(folder) -> Path | None:
     if association.is_symlink() or association.resolve().parent != directory.parent:
         raise ValueError("Ungueltiger Zuordnungspfad")
     data = strict_json_bytes(association.read_bytes())
-    common = {"format", "cache_version", "cache", "set", "cache_sha256", "manifest_sha256"}
     if (type(data) is not dict or data.get("format") not in
             (ASSOCIATION_FORMAT_SINGLE, ASSOCIATION_FORMAT_MULTI)
-            or set(data) != common | ({"source_folder"} if data["format"] == ASSOCIATION_FORMAT_SINGLE
-                                     else {"source_roots"})
+            or set(data) != (ASSOCIATION_SINGLE_KEYS if data["format"] == ASSOCIATION_FORMAT_SINGLE
+                             else ASSOCIATION_MULTI_KEYS)
             or type(data["cache_version"]) is not int
             or not 0 < data["cache_version"] <= CACHE_VERSION
             or data["cache"] != "analysis.sqlite" or data["set"] != "set"

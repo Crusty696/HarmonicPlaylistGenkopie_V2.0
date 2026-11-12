@@ -15,6 +15,11 @@ from pathlib import Path
 
 PROPOSAL_FORMAT = "hpg_calibration_proposal"
 PROPOSAL_VERSION = 2
+PROPOSAL_KEYS = {
+    "format", "version", "operation_id", "binding", "audit_passed", "audit", "fit_status",
+    "gate_updates", "diagnose", "single_proposal", "candidate_report", "live_applied",
+    "output", "proposal_sha256",
+}
 
 
 def _encoded(value):
@@ -344,9 +349,7 @@ def calibration_child(connection, directory, cache, operation_root, operation_id
 
 
 def validate_proposal(proposal, expected_operation_id=None):
-    expected = {"format", "version", "operation_id", "binding", "audit_passed", "audit", "fit_status",
-                "gate_updates", "diagnose", "single_proposal", "candidate_report", "live_applied", "output", "proposal_sha256"}
-    if (type(proposal) is not dict or set(proposal) != expected
+    if (type(proposal) is not dict or set(proposal) != PROPOSAL_KEYS
             or proposal["format"] != PROPOSAL_FORMAT
             or type(proposal["version"]) is not int
             or proposal["version"] != PROPOSAL_VERSION):

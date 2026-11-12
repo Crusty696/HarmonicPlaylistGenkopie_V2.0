@@ -5770,7 +5770,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         identity = hashlib.sha256(source_bytes).hexdigest()
         pair_id = f"transition:{identity}"
         data_path = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / "transition_ratings.json"
-        from hpg_core.hearing_ratings import TRANSITION_RATINGS_FORMAT
+        from hpg_core.hearing_ratings import TRANSITION_RATINGS_FORMAT, TRANSITION_RATINGS_KEYS
 
         def load_records():
             if not data_path.exists():
@@ -5786,7 +5786,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             stored = json.loads(data_path.read_text(encoding="utf-8"),
                                 object_pairs_hook=unique_pairs)
             if (not isinstance(stored, dict)
-                    or set(stored) != {"format", "ratings"}
+                    or set(stored) != TRANSITION_RATINGS_KEYS
                     or stored.get("format") != TRANSITION_RATINGS_FORMAT
                     or not isinstance(stored.get("ratings"), dict)):
                 raise ValueError("Bewertungsdatei hat unbekanntes Format")

@@ -2,49 +2,61 @@
   "hearing_source_manifest": {
     "format": "hpg_hearing_source_refs",
     "version_field": "format_version",
-    "supported_versions": [1, 2, 3]
+    "supported_versions": [1, 2, 3],
+    "root_keys": ["format", "format_version", "immutable_metadata", "mode", "source_roots", "sources", "specs", "status"]
   },
   "candidate_manifest": {
     "version_field": "format_version",
     "normal_version": 1,
-    "three_notes_version": 2
+    "three_notes_version": 2,
+    "normal_root_keys": ["algorithm_build", "app_version", "cache", "format_version", "hearing_test_contract", "pairs", "render_args", "scoring_snapshot"],
+    "three_notes_root_keys": ["algorithm_build", "app_version", "cache", "format_version", "hearing_test_contract", "pairs", "rating_schema", "render_args", "scoring_snapshot"]
   },
   "dramaturgy_manifest": {
     "version_field": "format_version",
-    "supported_versions": [1]
+    "supported_versions": [1],
+    "root_keys": ["algorithm_build", "app_version", "cache", "candidate_choice_hash", "contract", "format_version", "ordered_pool_track_ids", "pool_hash", "variants"]
   },
   "calibration_proposal": {
     "format": "hpg_calibration_proposal",
     "version_field": "version",
-    "supported_versions": [2]
+    "supported_versions": [2],
+    "root_keys": ["audit", "audit_passed", "binding", "candidate_report", "diagnose", "fit_status", "format", "gate_updates", "live_applied", "operation_id", "output", "proposal_sha256", "single_proposal", "version"]
   },
   "candidate_audit_report": {
     "version_field": "format_version",
-    "supported_versions": [1]
+    "supported_versions": [1],
+    "root_keys": ["algorithm_build", "cache", "candidates", "clips", "format_version", "ok", "pairs", "set", "status"]
   },
   "candidate_ram_audit": {
     "format": "hpg_candidate_ram_audit",
     "version_field": "version",
-    "supported_versions": [2]
+    "supported_versions": [2],
+    "root_keys": ["after_sha256", "before_sha256", "binding", "candidates", "clips", "evidence_kind", "format", "manifest_sha256", "manifest_text", "ok", "pairs", "purpose", "source_manifest_text", "status", "transport", "version"]
   },
   "local_blind_public": {
     "format": "hpg_local_ui_blind_refs",
     "version_field": "format_version",
-    "supported_versions": [1]
+    "supported_versions": [1],
+    "root_keys": ["format", "format_version", "manifest", "metadata_blinded", "notice", "pairs", "scope", "session_id", "source_root"]
   },
   "local_blind_private": {
     "format": "hpg_local_ui_blind_refs_key",
     "version_field": "format_version",
-    "supported_versions": [1]
+    "supported_versions": [1],
+    "root_keys": ["format", "format_version", "manifest", "pairs", "public_sha256", "session_id"]
   },
   "transition_ratings": {
     "format": "hpg_transition_ratings_v1",
-    "format_encodes_version": 1
+    "format_encodes_version": 1,
+    "root_keys": ["format", "ratings"]
   },
   "managed_association": {
     "supported_formats": [
       "hpg-hearing-association-v1",
       "hpg-hearing-association-v2"
-    ]
+    ],
+    "single_root_keys": ["cache", "cache_sha256", "cache_version", "format", "manifest_sha256", "set", "source_folder"],
+    "multi_root_keys": ["cache", "cache_sha256", "cache_version", "format", "manifest_sha256", "set", "source_roots"]
   }
 }

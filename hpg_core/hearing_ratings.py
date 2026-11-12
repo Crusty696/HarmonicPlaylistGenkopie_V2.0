@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 TRANSITION_RATINGS_FORMAT = "hpg_transition_ratings_v1"
+TRANSITION_RATINGS_KEYS = {"format", "ratings"}
 
 
 class RatingError(ValueError):

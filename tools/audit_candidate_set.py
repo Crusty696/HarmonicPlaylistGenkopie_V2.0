@@ -83,8 +83,17 @@ SET_ROOT_NAMES = frozenset({
 RAM_BINDING_KEYS = {"set_path", "cache_path", "mode", "purpose", "files", "sources",
                     "cache", "build", "seed", "genres"}
 AUDIT_REPORT_VERSION = 1
+AUDIT_REPORT_KEYS = {
+    "format_version", "status", "ok", "set", "cache", "algorithm_build",
+    "pairs", "clips", "candidates",
+}
 RAM_AUDIT_FORMAT = "hpg_candidate_ram_audit"
 RAM_AUDIT_VERSION = 2
+RAM_AUDIT_KEYS = {
+    "format", "version", "transport", "evidence_kind", "purpose", "status", "ok",
+    "binding", "before_sha256", "after_sha256", "manifest_text", "source_manifest_text",
+    "manifest_sha256", "pairs", "clips", "candidates",
+}
 
 
 class AuditError(ValueError):
@@ -1047,8 +1056,7 @@ def validate_ram_receipt(report, binding):
         validate_spec_v1, validate_spec_v2, validate_spec_v3,
     )
     _validate_regular_binding(binding)
-    _exact_dict(report, {"format", "version", "transport", "evidence_kind", "purpose", "status", "ok", "binding", "before_sha256",
-                        "after_sha256", "manifest_text", "source_manifest_text", "manifest_sha256", "pairs", "clips", "candidates"}, "RAM-Audit")
+    _exact_dict(report, RAM_AUDIT_KEYS, "RAM-Audit")
     transport = "source_refs_ram" if SOURCE_MANIFEST_NAME in binding["files"] else "legacy_wav_ram"
     evidence_kind = "spec_verified_ram_replay" if transport == "source_refs_ram" else "reference_pcm_verified_replay"
     if (report["format"] != RAM_AUDIT_FORMAT or type(report["version"]) is not int or report["version"] != RAM_AUDIT_VERSION
