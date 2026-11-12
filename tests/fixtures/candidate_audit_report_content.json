@@ -1,0 +1,13 @@
+{
+  "artifact": "candidate audit success report",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "set.path": "$SET_ROOT",
+    "set.manifest_sha256": "$MANIFEST_SHA256",
+    "set.sha256": "$SET_SHA256",
+    "cache.size": "$CACHE_SIZE",
+    "cache.sha256": "$CACHE_SHA256",
+    "algorithm_build.sha256": "$ALGORITHM_BUILD_SHA256"
+  },
+  "sha256": "b69e315e021a5a04b688e925ddcc9629d229f128db74cf6ca7d01809070a1df1"
+}

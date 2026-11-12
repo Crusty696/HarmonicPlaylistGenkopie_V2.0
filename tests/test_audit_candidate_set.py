@@ -225,6 +225,17 @@ def _write_manifest(set_dir: Path, manifest: dict) -> None:
     )
 
 
+def _normalize_audit_report_for_golden(report: dict) -> dict:
+    normalized = json.loads(json.dumps(report, allow_nan=False))
+    normalized["set"]["path"] = "$SET_ROOT"
+    normalized["set"]["manifest_sha256"] = "$MANIFEST_SHA256"
+    normalized["set"]["sha256"] = "$SET_SHA256"
+    normalized["cache"]["size"] = "$CACHE_SIZE"
+    normalized["cache"]["sha256"] = "$CACHE_SHA256"
+    normalized["algorithm_build"]["sha256"] = "$ALGORITHM_BUILD_SHA256"
+    return normalized
+
+
 @pytest.mark.artifact_contract
 def test_vollstaendiger_stretch_fall_ist_read_only(candidate_set, monkeypatch):
     set_dir, cache, _, _ = candidate_set
@@ -276,6 +287,17 @@ def test_vollstaendiger_stretch_fall_ist_read_only(candidate_set, monkeypatch):
     published = json.loads(report_path.read_text(encoding="utf-8"))
     assert published == result
     assert set(published) == expected_report_keys
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "candidate_audit_report_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    normalized = _normalize_audit_report_for_golden(published)
+    canonical = json.dumps(
+        normalized, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
 
 
 @pytest.mark.parametrize(
