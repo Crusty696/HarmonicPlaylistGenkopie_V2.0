@@ -1,0 +1,14 @@
+{
+  "artifact": "RAM candidate audit receipt full content projection",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "binding": "set/cache paths normalized; source paths replaced by sorted stable source IDs; source size and SHA256 retained; file inventory retained; algorithm build SHA normalized",
+    "manifest_text": "parsed and canonically serialized; source paths and algorithm build SHA normalized",
+    "source_manifest_text": "parsed and canonically serialized; source roots/paths normalized; path-dependent candidate manifest and merkmale.csv sizes/SHA values normalized",
+    "before_sha256/after_sha256": "recomputed over normalized binding contract",
+    "manifest_sha256": "recomputed over normalized manifest object",
+    "replay_spec_sha256/source_spec_sha256": "path-bound spec digests normalized; validate_ram_receipt enforces their equality against exact source specs",
+    "PCM hash/format, lags, audit state, manifest semantics and stable bindings": "exact"
+  },
+  "sha256": "3da481f24aca7060cd6fcbf3ff8cbf3fe64bfbd55c89cc94b5da38d683a7011a"
+}

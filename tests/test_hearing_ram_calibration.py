@@ -55,8 +55,32 @@ def _assert_candidate_fit_publication_golden(document, mode):
     assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
 
 
+def _binding_content_projection(binding):
+    return {
+        "set_path": "$SET_ROOT",
+        "cache_path": "$CACHE_FILE",
+        "mode": binding["mode"],
+        "purpose": binding["purpose"],
+        "files": sorted(binding["files"]),
+        "sources": sorted(
+            [
+                {"size": source["size"], "sha256": source["sha256"]}
+                for source in binding["sources"].values()
+            ],
+            key=lambda value: (value["size"], value["sha256"]),
+        ),
+        "cache": binding["cache"],
+        "build": {
+            "scheme": binding["build"]["scheme"],
+            "files": binding["build"]["files"],
+            "sha256": "$ALGORITHM_BUILD_SHA256",
+        },
+        "seed": binding["seed"],
+        "genres": binding["genres"],
+    }
+
+
 def _candidate_proposal_content_projection(proposal):
-    binding = proposal["binding"]
     return {
         "artifact": {
             "format": proposal["format"],
@@ -72,28 +96,7 @@ def _candidate_proposal_content_projection(proposal):
             "live_applied": proposal["live_applied"],
             "output": proposal["output"],
         },
-        "binding_contract": {
-            "set_path": "$SET_ROOT",
-            "cache_path": "$CACHE_FILE",
-            "mode": binding["mode"],
-            "purpose": binding["purpose"],
-            "files": sorted(binding["files"]),
-            "sources": sorted(
-                [
-                    {"size": source["size"], "sha256": source["sha256"]}
-                    for source in binding["sources"].values()
-                ],
-                key=lambda value: (value["size"], value["sha256"]),
-            ),
-            "cache": binding["cache"],
-            "build": {
-                "scheme": binding["build"]["scheme"],
-                "files": binding["build"]["files"],
-                "sha256": "$ALGORITHM_BUILD_SHA256",
-            },
-            "seed": binding["seed"],
-            "genres": binding["genres"],
-        },
+        "binding_contract": _binding_content_projection(proposal["binding"]),
     }
 
 
@@ -109,6 +112,86 @@ def _assert_candidate_proposal_content_golden(proposal, mode):
         separators=(",", ":"),
     ).encode("utf-8")
     assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
+
+
+def _ram_audit_receipt_content_projection(receipt):
+    binding = receipt["binding"]
+    source_paths = sorted(binding["sources"])
+    source_ids = {path: f"$SOURCE_{index + 1}" for index, path in enumerate(source_paths)}
+    manifest = json.loads(receipt["manifest_text"])
+    manifest["algorithm_build"]["sha256"] = "$ALGORITHM_BUILD_SHA256"
+    for pair in manifest["pairs"]:
+        pair["track_a"] = source_ids[pair["track_a"]]
+        pair["track_b"] = source_ids[pair["track_b"]]
+    source_manifest = json.loads(receipt["source_manifest_text"])
+    source_manifest["source_roots"] = ["$SOURCE_ROOT"]
+    normalized_specs = {}
+    for clip_id, spec in source_manifest["specs"].items():
+        normalized_specs[clip_id] = spec | {
+            "track_a_path": source_ids[spec["track_a_path"]],
+            "track_b_path": source_ids[spec["track_b_path"]],
+        }
+    source_manifest["specs"] = normalized_specs
+    normalized_sources = {}
+    for path, source in source_manifest["sources"].items():
+        normalized_sources[source_ids[path]] = source | {
+            "path": source_ids[path],
+            "root": "$SOURCE_ROOT",
+        }
+    source_manifest["sources"] = normalized_sources
+    for name in source_manifest["immutable_metadata"]:
+        if name in {"kandidaten_manifest.json", "merkmale.csv"}:
+            source_manifest["immutable_metadata"][name] = {
+                "size": "$PATH_BOUND_SIZE",
+                "sha256": "$PATH_BOUND_SHA256",
+            }
+    normalized_manifest_digest = hashlib.sha256(json.dumps(
+        manifest, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    normalized_binding = _binding_content_projection(binding)
+    normalized_binding_digest = hashlib.sha256(json.dumps(
+        normalized_binding, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    candidates = []
+    for candidate in receipt["candidates"]:
+        candidates.append(candidate | {
+            "replay_spec_sha256": "$PATH_BOUND_SPEC_SHA256",
+            "source_spec_sha256": "$PATH_BOUND_SPEC_SHA256",
+        })
+    return {
+        "format": receipt["format"],
+        "version": receipt["version"],
+        "transport": receipt["transport"],
+        "evidence_kind": receipt["evidence_kind"],
+        "purpose": receipt["purpose"],
+        "status": receipt["status"],
+        "ok": receipt["ok"],
+        "binding": normalized_binding,
+        "before_sha256": normalized_binding_digest,
+        "after_sha256": normalized_binding_digest,
+        "manifest_text": manifest,
+        "source_manifest_text": source_manifest,
+        "manifest_sha256": normalized_manifest_digest,
+        "pairs": receipt["pairs"],
+        "clips": receipt["clips"],
+        "candidates": candidates,
+    }
+
+
+def _assert_ram_audit_receipt_content_golden(receipt):
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "ram_audit_receipt_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    projection = _ram_audit_receipt_content_projection(receipt)
+    canonical = json.dumps(
+        projection, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
 
 
 @pytest.fixture
@@ -767,6 +850,7 @@ def test_export_valid_native_receipt_and_canonical_binding_roundtrip(ram_set, tm
         separators=(",", ":"),
     ).encode("utf-8")
     assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
+    _assert_ram_audit_receipt_content_golden(result["audit"])
     target = calibration.export_proposal(result, tmp_path / "report.json")
     roundtrip = json.loads(target.read_bytes())
     calibration.validate_proposal(roundtrip)
