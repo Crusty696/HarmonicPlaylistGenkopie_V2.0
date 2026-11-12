@@ -66,6 +66,9 @@
   belegt keine Gewichtsübernahme. Zusammen mit dem Kandidaten-Apply-E2E, dem
   Einzel-Fit-Draft und dem Vier-Modi-Resume sind die automatisierten
   Teilpfade einzeln belegt; der bestätigte Dreinoten-Apply-Pfad mit bestandenem Gate ist nicht E2E-verifiziert. Laut Matrix ist Dramaturgie-Fit bewusst nicht vorgesehen.
+- Der unabhängige Abschlussreview prüfte read-only alle vier Dateien seit `ead15b2`;
+  zwei überzogene Plan-Haken wurden korrigiert und nachgeprüft. Dramaturgie-Fit ist
+  bewusst ausgeschlossen. Ein gate-freigegebener Dreinoten-Apply bleibt offen.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.
