@@ -55,6 +55,7 @@ def test_single_track_quality():
     print("=" * 60)
 
     from hpg_core.analysis import analyze_track
+    from hpg_core.config import MIX_POINT_UNSET
 
     files = get_test_files(3)
 
@@ -105,13 +106,17 @@ def test_single_track_quality():
               f"bass={track.bass_intensity}")
 
         # Mix Points
-        check(f"{fname}: mix_in < mix_out",
-              track.mix_in_point < track.mix_out_point,
-              f"in={track.mix_in_point}, out={track.mix_out_point}")
-        check(f"{fname}: mix_in >= 0", track.mix_in_point >= 0)
-        check(f"{fname}: mix_out <= duration",
-              track.mix_out_point <= track.duration + 1,
-              f"out={track.mix_out_point}, dur={track.duration}")
+        if track.mix_in_point == MIX_POINT_UNSET:
+            check(f"{fname}: fehlende Mixpunkte konsistent",
+                  track.mix_out_point == MIX_POINT_UNSET
+                  and track.mix_in_bars == track.mix_out_bars == 0)
+            check(f"{fname}: Raster oder Taktphase unbestätigt",
+                  track.beatgrid_status != "verified" or
+                  track.bar_position_status in {"blocked", "unknown", "reference_candidate"})
+        else:
+            check(f"{fname}: Mixpunkte geordnet und im Track",
+                  0 <= track.mix_in_point < track.mix_out_point <= track.duration + 1,
+                  f"in={track.mix_in_point}, out={track.mix_out_point}, dur={track.duration}")
 
         # DJ Brain Fields
         check(f"{fname}: detected_genre gesetzt", bool(track.detected_genre),
