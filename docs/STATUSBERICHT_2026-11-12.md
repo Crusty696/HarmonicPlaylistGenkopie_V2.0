@@ -19,6 +19,13 @@
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
+- Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
+  `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert
+  die Hearing-Services. Diese referenzieren die benötigten Module unter
+  `tools/`; `HPG.spec` nimmt `tools/rate_transitions.py` und die
+  `hpg_core`-Quellen in die Builddaten auf. Das zeigt Quell-/Smoke-Abdeckung,
+  beweist aber weder Frozen-Importauflösung noch GUI-Laufzeit. Build und
+  Frozen-Smoke bleiben offen.
 
 - Drei unabhängige, rein statische VERITAS-Pässe über Anwendung, Analyse,
   Playlist, GUI/Worker, Export, Build, Installer, Tests, CI und aktive
