@@ -34,14 +34,14 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
 - Für den Einzel-Fit ist `gewichte.json` zusätzlich in `tests/fixtures/single_fit_report_content.json` als exakter kanonischer Inhalts-Golden verankert; der CLI/native Fit-Rundlauf bestand **1/1 in 0,73 s**. Danach bestand das aktuelle `artifact_contract`-Gate **27/27 in 19,27 s** (6.738 abgewählt). Kandidaten-/Dreinoten-Fit, Audit-Receipts, Blindtest und Ratings besitzen weiterhin noch keine vollständigen Inhalts-Goldens.
 - Die gemeinsame Kandidaten-/Dreinoten-Fitberechnung hat jetzt mode-spezifische Inhalts-Goldens in `tests/fixtures/candidate_fit_report_content.json`; beide CLI/native-Paritätsfälle bestanden **2/2 in 2,66 s**. Das `artifact_contract`-Gate bestand danach **27/27 in 14,27 s** (6.738 abgewählt). Die separaten CLI-/GUI-Ausgabecontainer sind dadurch noch nicht vollständig golden-geprüft.
 - Der Kandidaten-Audit-Erfolgsreport ist in `tests/fixtures/candidate_audit_report_content.json` als Inhalts-Golden gebunden; Satz-/Manifest-/Cache-/Build-Fingerprints und absoluter Satzpfad sind die einzigen normalisierten Bindungen. Der read-only Audit-/CLI-Publikationstest bestand **1/1 in 0,41 s**; das Gate danach **27/27 in 14,65 s** (6.738 abgewählt). Das RAM-Receipt bleibt gesondert offen.
-- Die RAM-Receipt-Evidenzprojektion besitzt jetzt einen Golden in `tests/fixtures/ram_audit_evidence_content.json`: Replay-/Source-Spec-Hashes werden als pfadgebundene Bindungen markiert; PCM-Hash, Metadaten, Kick-Lags und Ergebnis bleiben exakt. Proposal-Export-/Receipt-Rundlauf **1/1 in 0,90 s**; `artifact_contract` danach **27/27 in 15,27 s** (6.738 abgewählt). Vollständige dynamische Receipt-Bindungen bleiben absichtlich separat zu prüfen.
+- Damaliger Zwischenstand zur RAM-Receipt-Evidenzprojektion: Der Golden in `tests/fixtures/ram_audit_evidence_content.json` markierte Replay-/Source-Spec-Hashes als pfadgebundene Werte; PCM-Hash, Metadaten und Kick-Lags blieben exakt. Proposal-Export-/Receipt-Rundlauf **1/1 in 0,90 s**; `artifact_contract` **27/27 in 15,27 s** (6.738 abgewählt). Das vollständige normalisierte Receipt-Golden wurde später ergänzt (siehe Folgeeintrag).
 - Lokale öffentliche/private Blindtest-Referenzen haben Inhalts-Goldens für 1/4/5 Paare in `tests/fixtures/blind_refs_content.json`; Pfad, Session-ID und OS-Dateiidentität werden normalisiert, Audio- und Manifest-Hashes sowie HPG-/Baseline-Zuordnung bleiben exakt. Die Fälle bestanden **3/3 in 0,53 s**; das Gate danach **27/27 in 15,99 s** (6.738 abgewählt).
 - Das gespeicherte `transition_ratings.json` besitzt jetzt einen Inhalts-Golden in `tests/fixtures/transition_ratings_content.json`. Bewertung, Preview-Hash und Renderparameter bleiben exakt; Zeitstempel, Dateisystemidentitäten und davon abgeleitete IDs werden normalisiert. Producer-/Wiederöffnungs-Test **1/1 in 0,45 s**, `artifact_contract` danach **27/27 in 14,60 s** (6.738 abgewählt).
 - Der portable Blindtest-Export hat jetzt einen Golden in `tests/fixtures/portable_blind_publication_content.json`, der öffentliche/private CSV und vier kopierte WAV-Inhalts-Hashes bindet; nur die zufällige Session-ID wird normalisiert. Export-, Integritäts- und Abbruchfolge bestand im Zieltest **1/1 in 0,66 s**; das Gesamtgate danach **27/27 in 16,95 s** (6.738 abgewählt).
 - Die separaten CLI-Fitpublikationen für normale und Dreinoten-Kandidaten besitzen jetzt Goldens in `tests/fixtures/candidate_fit_publication_content.json`; native Proposal/CLI-Ausgabe-Parität bestand **2/2 in 2,61 s**. Das `artifact_contract`-Gate danach bestand **27/27 in 19,55 s** (6.738 abgewählt).
 - Der native Einzel-Fit-Vorschlag `hpg_calibration_proposal` besitzt jetzt ebenfalls einen Inhalts-Golden in `tests/fixtures/single_fit_proposal_content.json`; normalisiert werden Satz-/Build-Bindung und Child-Snapshot-Pfad, die Bindung wird danach neu gehasht. Test **1/1 in 0,35 s**; Artefakt-Gate **27/27 in 18,48 s** (6.738 abgewählt).
 - Normale und Dreinoten-Kandidaten-Proposals haben jetzt mode-spezifische semantische Inhalts-Goldens in `tests/fixtures/candidate_proposal_semantics_content.json`. Sie binden Proposal-Zustand, Audit-Evidenzprojektion, Gate-Updates, Diagnose und vollständigen Fitbericht; variable Satz-/Cache-/Quellpfade und Build-Hash sind ausgewiesen normalisiert. Beide Proposal-Tests rufen zusätzlich `validate_proposal` und `verify_binding` auf und bestanden **2/2 in 2,88 s**.
-- Das RAM-Audit-Receipt hat zusätzlich ein vollständiges normalisiertes Golden in `tests/fixtures/ram_audit_receipt_content.json`: Receipt-Binding, Kandidaten-/Source-Manifeste und Vorher-/Nachher-Digests sind in der Projektion enthalten; Replay-/Source-Pfade und davon abhängige Fingerprints sind explizit normalisiert. PCM-Hash/Metadaten, Lags, stabiler Cache-/Quellinhalt und Audit-Zustand bleiben gebunden. `test_export_valid_native_receipt_and_canonical_binding_roundtrip` bestand **1/1 in 1,02 s**. Das anschließende `artifact_contract`-Gate bestand **27/27 in 14,22 s** (6.738 abgewählt). Weitere publizierte JSON-Artefakte, Coverage/Slow-Tests und manuelle GUI-Abnahme bleiben offen.
+- Das RAM-Audit-Receipt hat zusätzlich ein vollständiges normalisiertes Golden in `tests/fixtures/ram_audit_receipt_content.json`: Receipt-Binding, Kandidaten-/Source-Manifeste und Vorher-/Nachher-Digests sind in der Projektion enthalten; Replay-/Source-Pfade und davon abhängige Fingerprints sind explizit normalisiert. PCM-Hash/Metadaten, Lags, stabiler Cache-/Quellinhalt und Audit-Zustand bleiben gebunden. `test_export_valid_native_receipt_and_canonical_binding_roundtrip` bestand **1/1 in 1,02 s**. Das damalige anschließende `artifact_contract`-Gate bestand **27/27 in 14,22 s** (6.738 abgewählt); Ratings-, Association- und CSV-Goldens kamen danach hinzu.
 - Der Diagnose-CLI-Output `transition-ratings-report` besitzt jetzt ein vollständiges Inhalts-Golden in `tests/fixtures/transition_ratings_report_content.json`; normalisiert wird allein der absolute Eingabepfad, Dateihash, Diagnose-/Abdeckungswerte und `weights_applied=false` bleiben exakt. Der Test bestand **1/1 in 0,12 s**; `artifact_contract` bestand danach **27/27 in 19,50 s** (6.738 abgewählt).
 - Die private `association.json` besitzt jetzt Inhalts-Goldens für Single-Root v1 und Multi-Root v2 in `tests/fixtures/managed_association_content.json`. Cache-/Manifest-Hashes und absolute Quellwurzeln werden normalisiert; Format, Cacheversion, Layout und Rootreihenfolge bleiben exakt. Producer-/Reopen-Fälle bestanden **2/2 in 0,21 s**; `artifact_contract` danach **27/27 in 14,77 s** (6.738 abgewählt). Die übrigen offenen Abschlussnachweise bleiben getrennt.
 - CSV-Produkte aus Einzel, Kandidaten, Dreinoten und Dramaturgie haben jetzt Inhalts-Goldens in `tests/fixtures/hearing_csv_content.json`. Zeilen, Spalten und alle Zellwerte bleiben gebunden; nur synthetische Quellpfade und pfadbasierte Dramaturgie-Track-IDs werden normalisiert. Native und CLI-Ausgaben stimmen in allen vier Modi überein. Producer-Test **4/4 in 4,55 s**; `artifact_contract` danach **27/27 in 14,07 s** (6.738 abgewählt). Damit sind alle aktuellen Producer-Outputs aus dem Artefaktinventar golden-gebunden; alte Source-Manifest-Versionen bleiben Reader-only. Coverage/Slow-Tests und manuelle GUI-Abnahme bleiben offen.
@@ -72,8 +72,9 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   einen kanonischen Inhaltshash, der für normale und Dreinoten-Kandidaten
   identisch ist; beide gezielten Fälle bestanden **2/2 in 2,70 s**. Die
   Kandidatenmanifest-Fixture normalisiert temporäre Quellpfade und den
-  Build-Fingerprint, andere Manifestwerte bleiben exakt. Die vollständigen
-  Goldens aller publizierten JSON-Artefakte bleiben offen. Das
+  Build-Fingerprint, andere Manifestwerte bleiben exakt. In diesem damaligen
+  Zwischenstand fehlten noch Goldens für weitere JSON-Artefakte; die Ergänzungen
+  stehen in den Folgeeinträgen. Das
   Dramaturgiemanifest besitzt jetzt ebenfalls einen Inhalts-Golden. Er
   normalisiert Algorithmus-/Cache-Fingerprint und ersetzt nur pfadbasierte
   synthetische Track-IDs durch stabile Fixture-IDs; Poolreihenfolge und
@@ -91,11 +92,11 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
 - Kandidatenmanifest und Reihenfolge sind zusätzlich mit Producer-Rootschema,
   gebundenem Seed/Shuffle, kanonischer CSV-Reihenfolge und Duplicate-Key-
   Abweisung abgedeckt; gezielter Lauf **8/8 in 0,70 s** (`-n 0 --no-cov`).
-- Das In-App-Rating-Artefakt `transition_ratings.json` ist jetzt mit exakten
-  Producer-Rootfeldern und Version `hpg_transition_ratings_v1` geprüft. Der
-  separate Diagnose-CLI-Test validiert JSON-Ausgabe, Dateihash, Read-only-
-  Verhalten und Ablehnung zusätzlicher Felder. Beide Tests bestanden **2/2 in
-  4,93 s** (`venv312`; xdist-Standardeinstellung, acht Worker).
+- Damaliger Zwischenstand zu `transition_ratings.json`: Producer-Rootfelder
+  und Version `hpg_transition_ratings_v1` waren geprüft; der Diagnose-CLI-Test
+  validierte JSON-Ausgabe, Dateihash, Read-only-Verhalten und Ablehnung
+  zusätzlicher Felder (**2/2 in 4,93 s**, acht Worker). Ein vollständiges
+  normalisiertes Inhalts-Golden für den Diagnosebericht kam später hinzu.
 - Beim CLI-Einlesen wurde ein realer Strict-JSON-Fehler gefunden und behoben:
   `_lade_json_strikt` akzeptierte doppelte Feldnamen. Der Loader weist diese
   jetzt mit `object_pairs_hook` ab; Producer- und Report-Tests bestehen samt
@@ -104,15 +105,16 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   pro Prepare-, Fit-, Audit-, Rating-, Blindtest- und Snapshot-Artefakt auf.
   `tests/fixtures/hearing_artifact_schema_versions.json` ist ein unabhängiger
   Kennungs-/Root-Schema-Katalog, geprüft durch
-  `test_published_hearing_json_versions_match_golden_catalog`; das Gesamt-Gate
-  besteht 27/27. Offen bleibt der normalisierte Inhaltsvergleich sämtlicher
-  Producer-Ausgaben samt Reader-Rundreise.
-- Für `hearing_source_manifest.json` v3 besteht jetzt zusätzlich ein normalisierter
-  Inhalts-Golden-Vergleich in allen vier Prepare-Modi (**4/4**, synthetische
-  Quellen); das Gesamt-Gate bestand danach **27/27 in 15,89 s**. Source-SHA256
-  und Transition-Specs bleiben exakt; Source-Pfade werden relativiert und nur
-  pfadabhängige immutable-Metadata-Größen/Hashes redigiert. Goldens für
-  Kandidaten-/Dramaturgiemanifeste, Fit/Audit, Blindtest und Ratings fehlen.
+  `test_published_hearing_json_versions_match_golden_catalog`; das damalige
+  Gate bestand 27/27. Der damals offene normalisierte Inhaltsvergleich aller
+  aktiven Producer-Ausgaben ist in den Folgeeinträgen abgeschlossen;
+  breite Laufzeit-/Coverage-/GUI-Abnahmen bleiben separat.
+- Historischer Zwischenstand der Source-Manifest-v3-Goldens: Inhaltsvergleich
+  in allen vier Prepare-Modi (**4/4**, synthetische Quellen); das damalige
+  Gesamt-Gate bestand **27/27 in 15,89 s**. Source-SHA256 und Transition-Specs
+  blieben exakt; Source-Pfade wurden relativiert und nur pfadabhängige
+  immutable-Metadata-Größen/Hashes redigiert. Die damals fehlenden Goldens für
+  weitere Artefakte wurden in den unten datierten Folgeeinträgen ergänzt.
 - Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist ausdrücklich als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte einen abweichenden Algorithmus-Fingerprint; dieser Stand wurde inzwischen isoliert neu gebaut und per Native-Smoke geprüft (Nachweis oben).
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert
@@ -125,6 +127,13 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   Playlist, GUI/Worker, Export, Build, Installer, Tests, CI und aktive
   Projektdokumentation sind abgeschlossen. Kein Produktfehler wurde in zwei
   Pässen bestätigt.
+- Eine ältere KI-Hirn-Notiz vom 13.10. zu fehlenden Paar-Ablehnungsgründen und
+  fehlenden Texture-Fingerprints war veraltet. Aktuell transportiert
+  `rank_pair_candidates` die Ablehnungsgründe bis in Playlist-Snapshot und
+  GUI; fehlende oder ungültige Texturwerte erscheinen als „unbekannt“.
+  `tests/test_pair_rejection_diagnostics.py` und
+  `tests/test_transition_labels.py` bestanden am aktuellen Checkout **16/16 in
+  0,74 s** (`venv312`, `-n 0 --no-cov`). Produktcode blieb unverändert.
 - Pass 3 meldete einen Installer-Namenskonflikt. Der getrennte Verifikator
   verwarf ihn: Der Release-Workflow stoppt vor dem Installer-Build, wenn der
   Tag nicht `APP_VERSION` entspricht. Der aktuelle Stand `3.7.2` ist in
