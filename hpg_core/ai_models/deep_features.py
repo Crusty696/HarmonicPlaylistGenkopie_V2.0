@@ -494,10 +494,10 @@ def validate(value, *, kind, duration, duration_tolerance=1/16000.):
         raise ValueError('Successful feature has failure reason')
     data = value['data']
     measured_duration = value['duration']
-    from .native_audio_reader import CONTRACT as audio_reader_contract
+    from .native_audio_reader import READABLE_CONTRACTS
     if (value['version'] >= 2 and data.get('reader_backend') not in READER_BACKENDS
             or value['version'] == 1 and 'reader_backend' in data
-            or value['version'] in (3, 4, 5) and data.get('reader_contract') != audio_reader_contract
+            or value['version'] in (3, 4, 5) and data.get('reader_contract') not in READABLE_CONTRACTS
             or value['version'] < 3 and 'reader_contract' in data):
         raise ValueError('Invalid deep-feature reader provenance')
     if kind == 'stems':

@@ -18,6 +18,7 @@ from .native_beat_selection import (
     validate_selection, is_chunk_seam_pair,
 )
 from .native_audio_reader import CONTRACT as READER_CONTRACT
+from .native_audio_reader import READABLE_CONTRACTS
 from .reader_contract import (
     NATIVE_BEAT_INPUT_CONVENTIONS, convention_duration_tolerance,
     reader_duration_tolerance, SOURCE_BIT_DEPTH_REQUIRED_BACKENDS,
@@ -230,7 +231,7 @@ def validate_reader(reader, frames, duration, input_convention):
     fields = {'contract', 'source_sample_rate', 'source_channels', 'output_channels', 'source_bit_depth',
               'source_frames', 'output_sample_rate', 'output_frames', 'backend'}
     if (type(reader) is not dict or set(reader) != fields
-            or reader['contract'] != READER_CONTRACT
+            or reader['contract'] not in READABLE_CONTRACTS
             or type(reader['backend']) is not str
             or reader['backend'] not in NATIVE_BEAT_INPUT_CONVENTIONS
             or input_convention != NATIVE_BEAT_INPUT_CONVENTIONS[reader['backend']]

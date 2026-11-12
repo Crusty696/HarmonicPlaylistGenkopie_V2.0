@@ -19,6 +19,8 @@ from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
 CONTRACT = 'rb-7.2.19-file-reader-v34'
+# v34 changes MP3 routing, not the format of recorded PCM provenance.
+READABLE_CONTRACTS = (CONTRACT, 'rb-7.2.19-file-reader-v33')
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {

@@ -26,10 +26,11 @@ def test_native_job_timeout_rejects_invalid_duration(duration):
         native_track_job_timeout_seconds(duration)
 
 
-def test_mp3_reader_provenance_accepts_lossy_duration_and_unknown_pcm_depth():
+@pytest.mark.parametrize("contract", [native.READER_CONTRACT, "rb-7.2.19-file-reader-v33"])
+def test_mp3_reader_provenance_accepts_lossy_duration_and_unknown_pcm_depth(contract):
     data = snapshot(48.2)
     data['input_convention'] = 'rekordbox-builtin-mp3-planar-float32'
-    data['reader'].update(backend='rekordbox-builtin-mp3', source_bit_depth=0)
+    data['reader'].update(contract=contract, backend='rekordbox-builtin-mp3', source_bit_depth=0)
     native.validate_snapshot(data, duration=48.2)
 
 
