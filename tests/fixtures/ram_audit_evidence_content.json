@@ -1,0 +1,9 @@
+{
+  "artifact": "RAM candidate audit evidence projection",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "replay_spec_sha256": "$REPLAY_SPEC_SHA256",
+    "source_spec_sha256": "$SOURCE_SPEC_SHA256"
+  },
+  "sha256": "a7f7e24cf68054b10e1da5e23dcf4a49bf36c002a2b0f641c5e0ad1f2748357b"
+}

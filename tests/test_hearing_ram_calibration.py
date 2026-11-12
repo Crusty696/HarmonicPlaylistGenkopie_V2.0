@@ -346,6 +346,25 @@ def _proposal(ram_set):
     return calibration.compute_proposal(root, cache, operation_root=op, operation_id="1" * 32, fit=False)
 
 
+def _ram_audit_evidence_projection(receipt):
+    return {
+        key: receipt[key]
+        for key in (
+            "format", "version", "transport", "evidence_kind", "purpose",
+            "status", "ok", "pairs", "clips",
+        )
+    } | {
+        "candidates": [
+            candidate
+            | {
+                "replay_spec_sha256": "$REPLAY_SPEC_SHA256",
+                "source_spec_sha256": "$SOURCE_SPEC_SHA256",
+            }
+            for candidate in receipt["candidates"]
+        ],
+    }
+
+
 @pytest.mark.parametrize("mutation", ["version", "transport", "old_report", "order", "topn", "manifest",
                                      "source_manifest", "source_digest", "pcm_digest", "pcm_type", "lag",
                                      "before", "after", "rating_binding", "cache_binding", "build_binding"])
@@ -657,6 +676,17 @@ def test_source_and_cache_mutations_during_fit_are_rejected(ram_set, monkeypatch
 @pytest.mark.artifact_contract
 def test_export_valid_native_receipt_and_canonical_binding_roundtrip(ram_set, tmp_path):
     result = _proposal(ram_set)
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "ram_audit_evidence_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    projection = _ram_audit_evidence_projection(result["audit"])
+    canonical = json.dumps(
+        projection, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
     target = calibration.export_proposal(result, tmp_path / "report.json")
     roundtrip = json.loads(target.read_bytes())
     calibration.validate_proposal(roundtrip)
