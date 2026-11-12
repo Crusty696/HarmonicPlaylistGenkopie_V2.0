@@ -1,0 +1,18 @@
+{
+  "artifact": "local blind reference public/private pair",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "session_id": "$SESSION_ID",
+    "public_sha256": "$PUBLIC_SHA256",
+    "source_root": "$SOURCE_ROOT",
+    "source.path": "basename",
+    "source.identity": "$FILESYSTEM_IDENTITY",
+    "source.root": "$SOURCE_ROOT",
+    "private.manifest.path": "$SOURCE_ROOT/manifest.csv"
+  },
+  "sha256_by_count": {
+    "1": "55c38d6c9e3bcf51941a20cabf2070cd6ca100fa0ab4034654b7674471c8d904",
+    "4": "46ba0cf0892b17c7f344c4d49361d03e3ad826836876ab5a72cb10f2ffa0ab6b",
+    "5": "3cfb65c9e97824213979b5a4cda1b5d036644dcb1bcbdf1570c16abb79b9832f"
+  }
+}

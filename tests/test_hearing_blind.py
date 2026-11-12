@@ -37,6 +37,23 @@ def _hashes(root):
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir() if p.is_file()}
 
 
+def _normalize_blind_refs_for_golden(public, private):
+    public = json.loads(json.dumps(public, allow_nan=False))
+    private = json.loads(json.dumps(private, allow_nan=False))
+    public["session_id"] = "$SESSION_ID"
+    public["source_root"] = "$SOURCE_ROOT"
+    private["session_id"] = "$SESSION_ID"
+    private["public_sha256"] = "$PUBLIC_SHA256"
+    private["manifest"]["path"] = "$SOURCE_ROOT/manifest.csv"
+    for pair in public["pairs"]:
+        for field in ("candidate_a", "candidate_b"):
+            source = pair[field]["source"]
+            source["path"] = Path(source["path"]).name
+            source["root"] = "$SOURCE_ROOT"
+            source["identity"] = "$FILESYSTEM_IDENTITY"
+    return {"public": public, "private": private}
+
+
 @pytest.mark.parametrize("count", [1, 4, 5])
 @pytest.mark.artifact_contract
 def test_prepare_refs_balance_private_ids_no_audio(tmp_path, count):
@@ -58,6 +75,17 @@ def test_prepare_refs_balance_private_ids_no_audio(tmp_path, count):
     if count > 1:
         assert [p["original_pair_id"] for p in private["pairs"]] != [f"original_{i}" for i in range(count)]
     assert not list(output.rglob("*.wav")) and not list(output.rglob("*.mp3"))
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "blind_refs_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    normalized = _normalize_blind_refs_for_golden(public, private)
+    canonical = json.dumps(
+        normalized, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_count"][str(count)]
     assert _hashes(root) == before
     assert not list(tmp_path.glob(".session.staging-*"))
     assert not list(key.parent.glob(".key.json.*"))
