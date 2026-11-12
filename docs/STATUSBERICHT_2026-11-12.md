@@ -65,7 +65,7 @@
   unabhängigen Paar bleibt das Übernahme-Gate korrekt geschlossen; der Test
   belegt keine Gewichtsübernahme. Zusammen mit dem Kandidaten-Apply-E2E, dem
   Einzel-Fit-Draft und dem Vier-Modi-Resume sind die automatisierten
-  Teilpfade einzeln belegt; eine vollständige Fit-/Resume-Abdeckung aller Satzmodi ist nicht belegt.
+  Teilpfade einzeln belegt; der bestätigte Dreinoten-Apply-Pfad mit bestandenem Gate ist nicht E2E-verifiziert. Laut Matrix ist Dramaturgie-Fit bewusst nicht vorgesehen.
 - Die statische VERITAS-Prüfung ersetzt keine dynamischen Laufzeit-, Audio- oder
   Build-Nachweise. Der Wissens-Sync wurde nicht angewandt: Sein Dry-Run plante
   externe Wiki-Änderungen für einen verworfenen Einzelpass-Befund.
