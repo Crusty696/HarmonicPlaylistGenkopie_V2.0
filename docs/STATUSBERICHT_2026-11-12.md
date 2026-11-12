@@ -16,9 +16,18 @@
   Quellsatzes für Einzel, Kandidaten, Dreinoten und Dramaturgie. Der gezielte
   Lauf bestand **4/4 in 5,70 s** mit `-n 0 --no-cov`; die Fixtures sind
   synthetisch. Vollsuite und andere JSON-Artefakte bleiben offen.
+- Die erfolgreiche CLI-Publikation eines Kandidaten-Auditreports hat jetzt
+  einen direkten Vertragstest für exakte Root- und Satzbindungsfelder.
+  `test_vollstaendiger_stretch_fall_ist_read_only` bestand **1/1 in 0,48 s**.
+  Der Test nutzt synthetische Cache-/Trackdaten und kopiert Fixture-Render;
+  Produktionsranking und Renderer sind damit nicht neu qualifiziert.
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
+- Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist jetzt ausdrücklich
+  als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte
+  einen abweichenden Algorithmus-Fingerprint; aktueller Frozen-Build bleibt
+  daher zu Recht offen.
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert
   die Hearing-Services. Diese referenzieren die benötigten Module unter
@@ -116,6 +125,7 @@
 - `368d3076` dokumentierte den Apply-Push; `c90c5e4a` ergänzt das Artefaktinventar. `git ls-remote` bestätigte danach lokal und remote `c90c5e4abc3fed76c7b24ec17ccf97d2dd5d160b`.
 - `ad2026f3` ergänzt die CSV-Spaltenfolgen, `c7abf2d` dokumentiert die statische Packaging-Prüfung. Vor dieser Statuskorrektur bestätigte `git ls-remote` lokal und remote `c7abf2d1191a54bd52e5d6b255af1d961be0592c`.
 - Der Producer-Contract-Test lief anschließend seriell **4/4 in 5,70 s**; er prüft exaktes Dateiinventar, CSV-Spaltenfolgen und bestehende CLI-/native Producer-Parität. Der Test ist synthetisch und ersetzt keine Vollsuite oder Originalmusik-Abnahme.
+- Der Audit-Erfolgsreport-Contract lief **1/1 in 0,48 s**; geändert wurde nur der Testvertrag, kein Produktcode.
 
 ## Belege
 

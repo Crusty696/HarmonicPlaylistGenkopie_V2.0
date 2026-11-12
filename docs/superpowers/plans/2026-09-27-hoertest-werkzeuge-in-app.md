@@ -232,7 +232,11 @@ Hashing und 65.536-Frame-Audioblöcken kooperativ abgebrochen werden; unpublizie
 Staging wird entfernt. Schlüsselpublikation nutzt atomaren No-Clobber-Link.
 Nach letzter Änderung bestanden 11 fokussierte Tests; der letzte Volltest hatte
 6.599/6.600 Tests grün, ein paralleler Smoke-Subprozessfehler bestand isoliert.
-Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand.
+Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand am 11.11.2026
+auf dem damaligen Quellstand. Dieser historische Task-6-Nachweis schließt
+Task 7 nicht: Der spätere isolierte Build `412A062C3683020F8FE10DB8EE70B217697048D2275B623FE5240A42D5F7675B`
+hat laut [Statusbericht](../../STATUSBERICHT_2026-11-11.md) einen abweichenden
+Algorithmus-Fingerprint; ein aktueller Frozen-Build bleibt offen.
 
 - [x] Tests für Pfadcontainment, doppelte/identische Clips, Dauer-/Samplerateabweichung, vorhandene Session und getrennten Schlüssel schreiben. Producer- und Blind-Contract-Regressionen bestanden im fokussierten Lauf.
 - [x] App führt Prüfung und Session-Erstellung aus; öffentliche Session und geheimer Zuordnungsschlüssel bleiben physisch getrennt. Native Export-/Checkworker und echte Producerintegration bestanden.
@@ -257,7 +261,7 @@ Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand.
 | Dramaturgie-Prepare | `bewertung.csv`, `dramaturgie_bewertung.csv`, `dramaturgie_manifest.json`, `README.md`, CLI zusätzlich `clips/*.wav`; native Quelle zusätzlich `hearing_source_manifest.json` | `test_real_internal_producer_artifacts_match_cli_and_native_service[dramaturgie-False]`: Datei-Inventar, CSV-Spaltenfolgen, Dramaturgie-Validator und Manifestvergleich nach Clippfad-Normalisierung |
 | Einzel-Fit | CLI publiziert `gewichte.json`; nativer Pfad bindet den Bericht in `single_proposal` und exportiert auf Nutzeraktion einen JSON-Vorschlag | `test_single_fit_cli_output_matches_native_report_and_roundtrips`, `test_export_new_report_is_no_clobber` |
 | Kandidaten-Fit | Normal: Präferenz-Override bei erfolgreichem Gate oder `candidate_preferences_entwurf.json` bei Ablehnung/Schreibfehler. Dreinoten: `dreinoten_fit_bericht.json` plus bedingtes Präferenz-Update. GUI liefert gebundenen Vorschlag und optionalen Export statt CLI-Satzdateien | `test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate`, `test_three_note_cli_and_native_fit_share_report_but_publish_separately`, Apply-/Persistenztests |
-| Kandidaten-Audit | optionaler externer JSON-Report mit `format_version`, `status`, `ok`, Satz-/Cache-/Build-Bindung und Replay-Ergebnissen; nativer RAM-Audit liefert Receipt ohne Pflichtdatei | `tests/test_audit_candidate_set.py`, `test_export_valid_native_receipt_and_canonical_binding_roundtrip` |
+| Kandidaten-Audit | optionaler externer JSON-Report mit `format_version`, `status`, `ok`, Satz-/Cache-/Build-Bindung und Replay-Ergebnissen; nativer RAM-Audit liefert Receipt ohne Pflichtdatei | `test_vollstaendiger_stretch_fall_ist_read_only` prüft jetzt zusätzlich exakte Erfolgs-Rootfelder und CLI-Publikation (**1/1**, 0,48 s); `tests/test_audit_candidate_set.py`, `test_export_valid_native_receipt_and_canonical_binding_roundtrip` |
 | Blindtest | Portable Variante: `blind_session.csv`, separater Schlüssel-CSV und neutrale `clips/*.wav`. Lokale Referenzvariante: `blind_session.json` und separater privater JSON-Schlüssel, ohne Clipkopien | `tests/test_prepare_dj_blind_test.py`, `test_portable_blind_export_worker_copies_neutral_clips_and_separates_key`, `tests/test_hearing_blind.py` |
 
 Die Inventartabelle trennt Hörsatzdateien von Fit-, Audit- und Blindtest-Ausgaben. Sie ist kein pauschaler Golden-Master-Nachweis. Fit-Ausgaben und beide Blindtest-Varianten haben eigene Producer/Validatoren; eine gemeinsame, versionsübergreifende Schema-Fixture über alle JSON-Schemas bleibt offen.

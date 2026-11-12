@@ -261,6 +261,21 @@ def test_vollstaendiger_stretch_fall_ist_read_only(candidate_set, monkeypatch):
     assert not Path(f"{cache}-wal").exists()
     assert not Path(f"{cache}-shm").exists()
 
+    expected_report_keys = {
+        "format_version", "status", "ok", "set", "cache", "algorithm_build",
+        "pairs", "clips", "candidates",
+    }
+    assert set(result) == expected_report_keys
+    assert set(result["set"]) == {"path", "manifest_sha256", "files", "sha256"}
+    report_path = set_dir.parent / "audit-success.json"
+    monkeypatch.setattr(audit, "audit_set", lambda *_args: result)
+    assert audit.main([
+        "--set-dir", str(set_dir), "--cache", str(cache), "--report", str(report_path),
+    ]) == 0
+    published = json.loads(report_path.read_text(encoding="utf-8"))
+    assert published == result
+    assert set(published) == expected_report_keys
+
 
 @pytest.mark.parametrize(
     "mutation",
