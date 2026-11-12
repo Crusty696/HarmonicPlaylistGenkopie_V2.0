@@ -144,9 +144,15 @@ print(json.dumps({"track_rows": track_rows, "version_markers": version_markers})
         if ($app.HasExited) {
             throw "Installed application exited with $($app.ExitCode)"
         }
-        $app.Refresh()
-        if ($app.MainWindowHandle -ne [IntPtr]::Zero -and
-            -not [string]::IsNullOrWhiteSpace($app.MainWindowTitle)) {
+        # The PyInstaller one-file child owns the Qt window. Both processes
+        # run from the executable in this smoke test's unique install folder.
+        $guiProcess = Get-Process -Name $app.ProcessName -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Path -eq $installedExe -and
+                $_.MainWindowHandle -ne [IntPtr]::Zero -and
+                $_.MainWindowTitle -like "Harmonic Playlist Generator v*"
+            } | Select-Object -First 1
+        if ($null -ne $guiProcess) {
             $mainWindowReady = $true
             break
         }
