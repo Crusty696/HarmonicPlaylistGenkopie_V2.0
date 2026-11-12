@@ -1,4 +1,4 @@
-; Inno Setup Script for Harmonic Playlist Generator v3.7.2
+; Inno Setup Script for Harmonic Playlist Generator
 ; Creates professional Windows installer with Desktop icon and Start Menu entry
 ; Download Inno Setup: https://jrsoftware.org/isdl.php
 
@@ -6,7 +6,7 @@
   #define SourceExe "HarmonicPlaylistGenerator.exe"
 #endif
 #ifndef AppVersion
-  #define AppVersion "3.7.2"
+  #error AppVersion must be supplied by build_installer.bat or the release workflow.
 #endif
 
 [Setup]
@@ -84,7 +84,7 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   if not WizardSilent then
-    MsgBox('Welcome to Harmonic Playlist Generator v3.7.2 Setup!' + #13#10 + #13#10 +
+    MsgBox('Welcome to Harmonic Playlist Generator v{#AppVersion} Setup!' + #13#10 + #13#10 +
            'This installer will install HPG on your computer.' + #13#10 + #13#10 +
            'Features:' + #13#10 +
            '  - 4-6x faster audio analysis (multi-core)' + #13#10 +

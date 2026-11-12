@@ -284,8 +284,13 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   übergeben; Installer-Metadaten, Dateiname und Batch-Ausgabekontrolle verwenden
   dieselbe Version. Commit `d60ab452` ist auf `codex/gesamtrefaktorierung`
   gepusht; lokaler und entfernter HEAD stimmten überein.
-- Sechs gezielte statische Assertions und `git diff --check` bestanden. Inno-
-  Build, Installer-Smoke und sichtbare GUI-Abnahme wurden nicht ausgeführt.
+- Beim Folgefix liest auch der lokale Installer-Build `APP_VERSION` aus
+  `hpg_core.app_metadata`; CI übergibt die validierte Tag-Version. Ein direkter
+  Inno-Aufruf ohne Versionsmacro wird fail-closed abgewiesen. Der bestehende
+  Release-Metadaten-Test bindet diesen Vertrag jetzt dynamisch.
+- Sieben gezielte statische Assertions, Python-AST-Parse des geänderten
+  Testmoduls und `git diff --check` bestanden. Pytest, Inno-Build,
+  Installer-Smoke und sichtbare GUI-Abnahme wurden nicht ausgeführt.
 - Offen bleiben das konfigurierte projektweite Coverage-/Slow-Test-Gate und die
   manuelle GUI-Abnahme. Der optionale Blindtest-Import bleibt außerhalb des
   Umfangs, bis eine separate Spezifikation vorliegt.

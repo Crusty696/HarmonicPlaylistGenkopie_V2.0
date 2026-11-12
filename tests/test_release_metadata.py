@@ -29,17 +29,21 @@ def _exact_requirement_pins(path):
 
 def test_version_is_consistent_across_user_facing_release_files():
   assert f"v{APP_VERSION}" in (ROOT / "README.md").read_text(encoding="utf-8")
-  assert f"AppVersion={APP_VERSION}" in (ROOT / "installer.iss").read_text(encoding="utf-8")
+  installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+  assert "#ifndef AppVersion" in installer
+  assert "#error AppVersion must be supplied" in installer
   assert f"ProductVersion', u'{APP_VERSION}'" in (
     ROOT / "version_info.txt"
   ).read_text(encoding="utf-8")
   assert f"v{APP_VERSION}" in (ROOT / "build.bat").read_text(encoding="utf-8")
   installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
-  assert f"OutputBaseFilename=HPG_v{APP_VERSION}_Setup" in installer
-  assert f"v{APP_VERSION} Setup" in installer
-  assert f"HPG_v{APP_VERSION}_Setup.exe" in (
-    ROOT / "build_installer.bat"
-  ).read_text(encoding="utf-8")
+  assert "AppVersion={#AppVersion}" in installer
+  assert "OutputBaseFilename=HPG_v{#AppVersion}_Setup" in installer
+  assert "v{#AppVersion} Setup" in installer
+  installer_build = (ROOT / "build_installer.bat").read_text(encoding="utf-8")
+  assert 'from hpg_core.app_metadata import APP_VERSION' in installer_build
+  assert '"/DAppVersion=!APP_VERSION!"' in installer_build
+  assert 'HPG_v!APP_VERSION!_Setup.exe' in installer_build
 
 
 def test_package_version_mirrors_single_metadata_source():
@@ -245,6 +249,8 @@ def test_build_and_ci_use_pinned_pyinstaller_and_hard_release_gates():
   assert "sys.version_info >= (3, 12, 1)" in build
   assert "Run release test gate" in release
   assert "Verify tag matches application version" in release
+  assert "$APP_VERSION = $VERSION.TrimStart('v')" in release
+  assert "steps.get_version.outputs.APP_VERSION" in release
   assert "Create release manifest" in release
   assert "build_installer.bat" in release
   assert "HPG_${{ github.ref_name }}_Setup.exe" in release

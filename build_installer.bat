@@ -3,7 +3,32 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "APP_VERSION=%~1"
-if not defined APP_VERSION set "APP_VERSION=3.7.2"
+if defined APP_VERSION goto version_resolved
+if defined GITHUB_ACTIONS goto version_from_ci
+if exist "venv312\Scripts\python.exe" goto version_from_venv
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" goto version_from_local
+goto version_from_launcher
+
+:version_from_ci
+for /f "delims=" %%V in ('python -c "from hpg_core.app_metadata import APP_VERSION; print(APP_VERSION)"') do set "APP_VERSION=%%V"
+goto version_resolved
+
+:version_from_venv
+for /f "delims=" %%V in ('"venv312\Scripts\python.exe" -c "from hpg_core.app_metadata import APP_VERSION; print(APP_VERSION)"') do set "APP_VERSION=%%V"
+goto version_resolved
+
+:version_from_local
+for /f "delims=" %%V in ('"%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -c "from hpg_core.app_metadata import APP_VERSION; print(APP_VERSION)"') do set "APP_VERSION=%%V"
+goto version_resolved
+
+:version_from_launcher
+for /f "delims=" %%V in ('py -3.12 -c "from hpg_core.app_metadata import APP_VERSION; print(APP_VERSION)"') do set "APP_VERSION=%%V"
+
+:version_resolved
+if not defined APP_VERSION (
+    echo [FEHLER] APP_VERSION konnte nicht aus hpg_core.app_metadata gelesen werden.
+    exit /b 1
+)
 
 echo ========================================
 echo Harmonic Playlist Generator - Installer bauen
@@ -42,7 +67,7 @@ echo [3/4] Ausgabeverzeichnis bereit: installer_output\
 rem --- 4/4: Installer kompilieren ---------------------------------------
 echo [4/4] Kompiliere installer.iss ^(dauert 1-2 Minuten^)...
 echo.
-"!INNO_PATH!" /DAppVersion="!APP_VERSION!" "installer.iss"
+"!INNO_PATH!" "/DAppVersion=!APP_VERSION!" "installer.iss"
 if errorlevel 1 (
     echo.
     echo [FEHLER] Installer-Build fehlgeschlagen - Meldungen oben pruefen.
