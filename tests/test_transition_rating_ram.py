@@ -140,7 +140,10 @@ def test_ram_rating_persists_metadata_reopens_and_rejects_changed_source(monkeyp
     main.MainWindow._rate_transition_preview(window, transition, (None, audio))
 
     assert ratings.read_bytes() == saved_bytes
-    records = json.loads(saved_bytes)["ratings"]
+    persisted = json.loads(saved_bytes)
+    assert set(persisted) == {"format", "ratings"}
+    assert persisted["format"] == "hpg_transition_ratings_v1"
+    records = persisted["ratings"]
     assert len(records) == 1
     entry = next(iter(records.values()))
     assert entry["note"] == 3
