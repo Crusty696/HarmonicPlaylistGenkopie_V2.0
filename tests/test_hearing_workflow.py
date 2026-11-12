@@ -52,6 +52,21 @@ def _canonical_manifest_sha256(manifest):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _csv_content_projection(directory, source_id_map, track_id_map):
+    artifacts = {}
+    for path in sorted(Path(directory).glob("*.csv")):
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            rows = []
+            for row in reader:
+                rows.append({
+                    key: source_id_map.get(value, track_id_map.get(value, value))
+                    for key, value in row.items()
+                })
+            artifacts[path.name] = {"columns": reader.fieldnames, "rows": rows}
+    return artifacts
+
+
 def _normalize_candidate_manifest_for_golden(manifest):
     normalized = json.loads(json.dumps(manifest, allow_nan=False))
     normalized["algorithm_build"] = "$ALGORITHM_BUILD"
@@ -203,6 +218,12 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     monkeypatch.setattr(rt, "lade_tracks_aus_cache", lambda *_: tracks)
 
     if mode == "dramaturgie":
+        track_id_map = {
+            hashlib.sha256(
+                rt._windows_pfadschluessel(str(sources / f"track-{index:02d}.wav")).encode("utf-8")
+            ).hexdigest(): f"$TRACK_{index:02d}"
+            for index in range(track_count)
+        }
         def playlist(pool, strategy, **options):
             occurrences = [SimpleNamespace(occurrence_id=("fixture", i)) for i in range(len(pool))]
             recommendations = [SimpleNamespace(
@@ -314,12 +335,6 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         )
         assert _canonical_manifest_sha256(order) == order_golden["sha256_by_mode"][candidate_key]
     elif mode == "dramaturgie":
-        track_id_map = {
-            hashlib.sha256(
-                rt._windows_pfadschluessel(str(sources / f"track-{index:02d}.wav")).encode("utf-8")
-            ).hexdigest(): f"$TRACK_{index:02d}"
-            for index in range(track_count)
-        }
         dramaturgy_manifest = json.loads(
             (cli_config.output_dir / rt.DRAMATURGIE_MANIFEST_NAME).read_text(encoding="utf-8")
         )
@@ -365,6 +380,19 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         },
     }
     expected_csv_headers = expected_csv_headers_by_mode[mode]
+
+    source_id_map = {
+        str((sources / f"track-{index:02d}.wav").resolve()): f"$TRACK_{index:02d}"
+        for index in range(track_count)
+    }
+    native_csv = _csv_content_projection(native_result.output_dir, source_id_map, track_id_map if mode == "dramaturgie" else {})
+    cli_csv = _csv_content_projection(cli_config.output_dir, source_id_map, track_id_map if mode == "dramaturgie" else {})
+    assert native_csv == cli_csv
+    csv_golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "hearing_csv_content.json").read_text(encoding="utf-8")
+    )
+    csv_mode = "three_notes" if mode == "kandidaten" and three_notes else mode
+    assert _canonical_manifest_sha256(cli_csv) == csv_golden["sha256_by_mode"][csv_mode]
 
     def file_inventory(directory):
         return {

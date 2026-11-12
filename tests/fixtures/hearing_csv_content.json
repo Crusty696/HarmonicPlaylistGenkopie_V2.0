@@ -1,0 +1,15 @@
+{
+  "artifact": "hearing producer CSV content",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "source_paths": "exact synthetic source paths replaced with stable track IDs",
+    "dramaturgy_track_ids": "path-derived track IDs replaced with stable track IDs",
+    "CSV": "parsed into ordered columns and ordered rows; all other cell values exact"
+  },
+  "sha256_by_mode": {
+    "einzel": "ad6c4d2d5e93828016f057db8cc05e49370bf6692131016af98242c563ca4434",
+    "kandidaten": "fae4eef00e9b4cd15e23c98aa847b744990585c83d77abf6703250a502c7700d",
+    "three_notes": "ca8fcb55f63a6ab9c713cfd2387d1ed6d3d71288966ba603d4b84cd37411d418",
+    "dramaturgie": "6d58c774a3f4c3371156d30c40fc34c5bed726c77cb26328ddbffe91e1803f5e"
+  }
+}
