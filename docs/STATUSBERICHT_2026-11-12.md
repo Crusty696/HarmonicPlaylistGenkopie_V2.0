@@ -156,6 +156,10 @@
 - Kandidaten-Fit-Regressionsfälle prüfen nun beide kritischen Leser (Manifest
   und Audit-Report) mit doppelten Feldern. Die zwei synthetischen Fälle
   bestanden seriell **2/2 in 0,35 s** (`-n 0 --no-cov`).
+- Der separate CLI-Kandidaten-Auditor hatte dieselbe Parserlücke in eigenen
+  Lesern für `kandidaten_manifest.json` und `reihenfolge.json`. Beide lesen
+  jetzt mit Duplicate-Key-Hook; direkte Fail-closed Regressionen bestanden
+  seriell **2/2 in 0,36 s** (`-n 0 --no-cov`).
 
 ## Belege
 

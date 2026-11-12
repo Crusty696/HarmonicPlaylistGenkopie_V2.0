@@ -279,7 +279,7 @@ def test_vollstaendiger_stretch_fall_ist_read_only(candidate_set, monkeypatch):
 
 @pytest.mark.parametrize(
     "mutation",
-    ["missing", "extra_root", "bool_int", "nan", "bad_mode", "bad_type", "bad_profile"],
+    ["missing", "duplicate_json", "extra_root", "bool_int", "nan", "bad_mode", "bad_type", "bad_profile"],
 )
 def test_manifest_strikt_fail_closed(candidate_set, mutation):
     set_dir, _, _, _ = candidate_set
@@ -288,6 +288,18 @@ def test_manifest_strikt_fail_closed(candidate_set, mutation):
     if mutation == "missing":
         path.unlink()
         with pytest.raises(audit.AuditError, match="Satzwurzel muss exakt"):
+            audit._parse_set(set_dir)
+        return
+    if mutation == "duplicate_json":
+        version = manifest["format_version"]
+        raw = path.read_text(encoding="utf-8")
+        raw = raw.replace(
+            f'"format_version": {version},',
+            f'"format_version": {version},\n  "format_version": {version},',
+            1,
+        )
+        path.write_text(raw, encoding="utf-8")
+        with pytest.raises(audit.AuditError, match="Doppelter JSON-Schluessel"):
             audit._parse_set(set_dir)
         return
     if mutation == "extra_root":
@@ -441,6 +453,15 @@ def test_manifest_seed_und_shuffle_werden_reproduziert(candidate_set):
     order["001"]["seed"] += 1
     order_path.write_text(json.dumps(order), encoding="utf-8")
     with pytest.raises(audit.AuditError, match="Seed oder Shuffle"):
+        audit._parse_set(set_dir)
+
+
+def test_reihenfolge_json_rejects_duplicate_keys(candidate_set):
+    set_dir, _, _, _ = candidate_set
+    (set_dir / "reihenfolge.json").write_text(
+        '{"001": {}, "001": {}}', encoding="utf-8"
+    )
+    with pytest.raises(audit.AuditError, match="Doppelter JSON-Schluessel"):
         audit._parse_set(set_dir)
 
 

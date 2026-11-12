@@ -195,6 +195,15 @@ def _exact_dict(value, keys: set[str], label: str) -> dict:
     return value
 
 
+def _json_object_without_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise AuditError(f"Doppelter JSON-Schluessel: {key!r}")
+        result[key] = value
+    return result
+
+
 def _strict_int(value, label: str, *, minimum: int | None = None, maximum: int | None = None) -> int:
     if type(value) is not int:
         raise AuditError(f"{label}: ganze Zahl erforderlich")
@@ -253,6 +262,7 @@ def _load_manifest(path: Path, cache: Path | None = None, *, text: str | None = 
     try:
         manifest = json.loads(
             path.read_text(encoding="utf-8") if text is None else text,
+            object_pairs_hook=_json_object_without_duplicates,
             parse_constant=lambda raw: (_ for _ in ()).throw(
                 AuditError(f"Manifest enthaelt nicht-endliche JSON-Konstante {raw}")
             ),
@@ -409,7 +419,10 @@ def _parse_set(set_dir: Path, cache: Path | None = None, *, source_session=None)
     merkmale = _read_csv(required["merkmale.csv"], MERKMALE_KANDIDATEN_SPALTEN,
                          schema_resolver=kandidaten_merkmale_schema)
     try:
-        order = json.loads(required["reihenfolge.json"].read_text(encoding="utf-8"))
+        order = json.loads(
+            required["reihenfolge.json"].read_text(encoding="utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+        )
     except (OSError, json.JSONDecodeError) as exc:
         raise AuditError(f"reihenfolge.json ist unlesbar: {exc}") from exc
     manifest = _load_manifest(required[KANDIDATEN_MANIFEST_NAME], cache)
