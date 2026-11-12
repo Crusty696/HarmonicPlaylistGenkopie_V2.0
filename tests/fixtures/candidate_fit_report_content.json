@@ -1,0 +1,9 @@
+{
+  "artifact": "candidate_report",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {},
+  "sha256_by_mode": {
+    "normal": "d0f153a73bc93cea4bf250cd61c4f1c0bb3880511ce1ba566e6e4ecedf0392d4",
+    "three_notes": "dc2323b4efbafe6f991540bcdb7fbecc44c2631e9371a10d5eb43ff832912863"
+  }
+}

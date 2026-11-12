@@ -29,6 +29,19 @@ def _csv(path, fields, rows):
         writer.writerows(rows)
 
 
+def _assert_candidate_fit_report_golden(report, mode):
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "candidate_fit_report_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    canonical = json.dumps(
+        report, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256_by_mode"][mode]
+
+
 @pytest.fixture
 def ram_set(tmp_path, monkeypatch):
     root, sources = tmp_path / "set", tmp_path / "sources"
@@ -192,6 +205,7 @@ def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate
 
     assert cli_status == 0
     assert calculated_reports[-1] == native["candidate_report"]
+    _assert_candidate_fit_report_golden(native["candidate_report"], "normal")
     assert (root / "candidate_preferences_entwurf.json").is_file()
     assert not (op / "child_preferences.json").exists()
 
@@ -265,6 +279,7 @@ def test_three_note_cli_and_native_fit_share_report_but_publish_separately(
 
     assert cli_status == 0
     assert calculated_reports[-1] == native["candidate_report"]
+    _assert_candidate_fit_report_golden(native["candidate_report"], "three_notes")
     assert published and published[0][0] == native["gate_updates"]
     cli_report = json.loads((root / "dreinoten_fit_bericht.json").read_text(encoding="utf-8"))
     expected_cli_report = deepcopy(native["candidate_report"]["ergebnis"])
