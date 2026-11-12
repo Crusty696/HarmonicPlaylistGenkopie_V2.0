@@ -51,7 +51,7 @@
 - Eine gezielte JSON-Schema-Auswahl für Fit, Proposal, Blindtest, Quellmanifest
   und Dramaturgie-Kontext bestand **20/20 in 9,43 s** (`-n 0 --no-cov`).
   Zusammen mit den Producer- und Audit-Tests bleiben die Gesamt-Golden-Master-
-  Rundreise, Vollsuite und JSON-Versionen außerhalb dieser Auswahl offen.
+  Rundreise und JSON-Versionen außerhalb dieser Auswahl offen. Die serielle Standard-Testauswahl bestand am 12.11.2026 mit 6.718 Tests; 46 `slow`-Tests waren abgewählt und Coverage wurde nicht berechnet.
 - Kandidatenmanifest und Reihenfolge sind zusätzlich mit Producer-Rootschema,
   gebundenem Seed/Shuffle, kanonischer CSV-Reihenfolge und Duplicate-Key-
   Abweisung abgedeckt; gezielter Lauf **8/8 in 0,70 s** (`-n 0 --no-cov`).
@@ -67,17 +67,13 @@
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
-- Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist jetzt ausdrücklich
-  als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte
-  einen abweichenden Algorithmus-Fingerprint; aktueller Frozen-Build bleibt
-  daher zu Recht offen.
+- Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist ausdrücklich als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte einen abweichenden Algorithmus-Fingerprint; dieser Stand wurde inzwischen isoliert neu gebaut und per Native-Smoke geprüft (Nachweis oben).
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert
   die Hearing-Services. Diese referenzieren die benötigten Module unter
   `tools/`; `HPG.spec` nimmt `tools/rate_transitions.py` und die
   `hpg_core`-Quellen in die Builddaten auf. Das zeigt Quell-/Smoke-Abdeckung,
-  beweist aber weder Frozen-Importauflösung noch GUI-Laufzeit. Build und
-  Frozen-Smoke bleiben offen.
+  beweist für sich weder Frozen-Importauflösung noch GUI-Laufzeit. Der isolierte aktuelle Frozen-Build und Native-Smoke sind oben nachgewiesen; die GUI-Laufzeit bleibt offen.
 
 - Drei unabhängige, rein statische VERITAS-Pässe über Anwendung, Analyse,
   Playlist, GUI/Worker, Export, Build, Installer, Tests, CI und aktive
@@ -104,10 +100,8 @@
 
 ## Fertigstellung noch nicht belegt
 
-- Die letzte dokumentierte Vollsuite mit 6.679 bestandenen Tests liegt vor den
-  jüngsten Änderungen. Ein aktueller Vollsuite-Lauf fehlt.
-- Ein Frozen-Build aus genau diesem aktuellen Quellstand und dessen sichtbarer
-  GUI-Smoke fehlen.
+- Die serielle Standard-Testauswahl bestand am 12.11.2026 mit 6.718 Tests; 46 `slow`-Tests waren abgewählt. Coverage wurde nicht berechnet. Konfigurierter Coverage-Gate und Slow-Auswahl sind daher nicht nachgewiesen.
+- Der Frozen-Build und Native-Smoke sind am 12.11.2026 in isoliertem Scratch nachgewiesen. Das ist kein sichtbarer GUI-Smoke und ersetzt nicht die manuelle Usability-Abnahme.
 - Eine gezielte manuelle Frozen-GUI-Prüfung vom 11.11. deckt den Kandidaten-
   Hörtest ab: isolierten Satz öffnen, beide Varianten im RAM rendern und
   abspielen, eine Note speichern und nach erneutem Laden wiederfinden. Die
