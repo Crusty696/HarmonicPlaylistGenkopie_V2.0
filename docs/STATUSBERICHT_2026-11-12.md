@@ -28,6 +28,11 @@
 - Kandidatenmanifest und Reihenfolge sind zusätzlich mit Producer-Rootschema,
   gebundenem Seed/Shuffle, kanonischer CSV-Reihenfolge und Duplicate-Key-
   Abweisung abgedeckt; gezielter Lauf **8/8 in 0,70 s** (`-n 0 --no-cov`).
+- Das In-App-Rating-Artefakt `transition_ratings.json` ist jetzt mit exakten
+  Producer-Rootfeldern und Version `hpg_transition_ratings_v1` geprüft. Der
+  separate Diagnose-CLI-Test validiert JSON-Ausgabe, Dateihash, Read-only-
+  Verhalten und Ablehnung zusätzlicher Felder. Beide Tests bestanden **2/2 in
+  4,93 s** (`venv312`, `-n 0 --no-cov`).
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
@@ -135,6 +140,10 @@
 - Der Audit-Erfolgsreport-Contract lief **1/1 in 0,48 s**; geändert wurde nur der Testvertrag, kein Produktcode.
 - Die ausgewählte Fit-/Proposal-/Blindtest-/Manifest-Schemafolge lief **20/20 in 9,43 s**. Alle Testdaten sind synthetisch; kein Originalmusikpfad wurde benutzt.
 - Kandidatenmanifest-/Reihenfolge-Regressionsfolge bestand **8/8 in 0,70 s**; kein Produktcode geändert.
+- Der Ratings-Producer-/Diagnose-CLI-Vertrag bestand **2/2 in 4,93 s**. Die
+  Planinventur wurde um das Artefakt ergänzt; Commits `112c449f` und `85983c9`
+  sind auf `codex/gesamtrefaktorierung` gepusht und der Remote entsprach zuletzt
+  `85983c98bc5bb0685a84b41300c68e45b00e6dce`.
 
 ## Belege
 
