@@ -270,6 +270,8 @@ Die Inventartabelle trennt Hörsatzdateien von Fit-, Audit- und Blindtest-Ausgab
 
 Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-n 0 --no-cov`): Single-/Kandidaten-/Dreinoten-Fitberichte, Proposal-Export, lokale und portable Blindtest-Schemas, Quellmanifest sowie Dramaturgie-Kontext. Diese verteilten Tests decken konkrete Verträge ab; eine vollständige gemeinsame Golden-Master-Rundreise aller publizierten JSON-Versionen und die Vollsuite bleiben offen.
 
+**Kandidatenmanifest-/Reihenfolge-Verifikation 12.11.2026:** Producer-Manifest mit exaktem Schema, Audit-Bindung des gespeicherten Seeds/Shuffles, kanonische CSV-Zeilenfolge und Duplicate-JSON-Key-Abweisung für Kandidaten/Dreinoten bestanden **8/8 in 0,70 s** (`venv312`, `-n 0 --no-cov`).
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.
