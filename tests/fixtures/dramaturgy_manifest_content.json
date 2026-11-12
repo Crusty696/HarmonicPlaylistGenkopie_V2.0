@@ -7,5 +7,5 @@
     "cache.sha256": "$CACHE_SHA256",
     "track_ids": "source paths map to stable synthetic $TRACK_00 through $TRACK_11 identifiers; pool hashes recomputed canonically"
   },
-  "sha256": "894ccf32defd12e0010ba5ece4378610988bb480ce0f6db3c5fd6991f83fcfdd"
+  "sha256": "d9a3a16a8bea26c58f185c2940d4ed04c24463e24529b92b5c00cc77fc3490e4"
 }

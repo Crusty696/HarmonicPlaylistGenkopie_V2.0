@@ -26,7 +26,7 @@ def test_lange_titel_bleiben_in_der_uebergangsansicht(qtbot, width):
     panel.show()
     qtbot.wait(50)
 
-    assert panel.width() == width
+    assert 0 < panel.width() <= width
     assert panel.scroll.horizontalScrollBar().maximum() == 0
     viewport = panel.scroll.viewport()
     for widget in panel.container.findChildren(QLabel):

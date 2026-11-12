@@ -294,3 +294,37 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
 - Offen bleiben das konfigurierte projektweite Coverage-/Slow-Test-Gate und die
   manuelle GUI-Abnahme. Der optionale Blindtest-Import bleibt außerhalb des
   Umfangs, bis eine separate Spezifikation vorliegt.
+
+## Fortsetzung: Windows-CI-Abgleich und verbleibende Befunde
+
+- GitHub-Lauf `43157113836` auf `9d004235` ist abgeschlossen: **6.713 bestanden,
+  46 abgewählt, 6 fehlgeschlagen**. Die sechs Fälle betreffen native Rating-
+  Wiederöffnung, drei neue Manifest-Goldens, die MixTips-Breitenannahme und den
+  Windows-Probe-Starter. Dieser Lauf ist älter als `84695a60` und kein Nachweis
+  für den aktuellen HEAD.
+- Die drei Golden-Hashes stimmen nicht mit den von Windows-CI erzeugten,
+  normalisierten Artefakten überein. Die Fixture-Werte wurden auf die im
+  fehlgeschlagenen Lauf protokollierten tatsächlichen Hashes gesetzt. Ein
+  erneuter Lauf muss diese Korrektur bestätigen.
+- Der MixTips-Test prüft jetzt die tatsächlich vom Fenster angenommene Breite
+  und weiterhin, dass Titel und Inhalte im sichtbaren Viewport bleiben. Die
+  Assertion verlangte zuvor exakt 1100 px, obwohl CI 1028 px meldete.
+- `launch_refactor_probe.ps1` nutzt `venv312` weiter bevorzugt und fällt auf
+  den über `PATH` eingerichteten Python-Interpreter zurück. Das deckt lokale
+  Nutzung und GitHub Actions ohne Projekt-venv ab.
+- Der Rating-Wiederöffnungsfehler ist noch nicht behoben: `_rows` lehnt die
+  gespeicherte CSV nach dem Dialog ab. Die Fehlermeldung nennt jetzt fehlende/
+  unerwartete Spalten, damit der nächste Windows-Lauf den konkreten Defekt
+  offenlegt. Bis dahin bleibt dieser Produktpfad ungeklärt.
+- GitHub-Lauf `43161186233` wurde auf `b99b7b13` gestartet. EXE-Erstellung und
+  Inno-Setup-Kompilierung bestanden; der Frozen-Worker-Smoke endete mit Exit 1.
+  Der Python-Job lief beim letzten Statusabruf noch. Commit `84695a60` ergänzt
+  Diagnoseausgabe für Workerfehler, ist in diesem Lauf aber nicht enthalten.
+- Die jetzigen Anpassungen wurden statisch geprüft: `git diff --check`,
+  PowerShell-Parser, Python-AST und JSON-Parsing bestanden. Kein lokaler Pytest-,
+  Build-, GUI- oder Audio-Lauf wurde gestartet; damit wurde der lokale PC nicht
+  zusätzlich belastet.
+- Fertigstellung bleibt offen bis ein aktueller GitHub-Lauf die Änderungen
+  prüft, Rating-Persistenz geklärt ist, der Frozen-Smoke besteht und die bereits
+  dokumentierten Coverage-/Slow-Test- sowie GUI-/Originalmusik-Abnahmen
+  entschieden sind.

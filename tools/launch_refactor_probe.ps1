@@ -4,6 +4,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $projectRoot 'venv312\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    $availablePython = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($null -eq $availablePython) {
+        $availablePython = Get-Command python -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $availablePython) {
+        $python = $availablePython.Source
+    }
+}
 if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or
     -not (Test-Path -LiteralPath $ProbeScript -PathType Leaf)) {
     throw 'Probe oder Projektinterpreter fehlt'

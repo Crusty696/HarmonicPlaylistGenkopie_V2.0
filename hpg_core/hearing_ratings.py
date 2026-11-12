@@ -68,7 +68,13 @@ def _rows(root):
     ids = set()
     for row in rows:
         if set(row) != set(schema) or any(v is None for v in row.values()):
-            raise RatingError("Bewertungszeile hat falsche Spalten")
+            missing = sorted(set(schema) - set(row))
+            unexpected = sorted(str(key) for key in set(row) - set(schema))
+            raise RatingError(
+                "Bewertungszeile hat falsche Spalten "
+                f"(fehlend={missing!r}, unerwartet={unexpected!r}, "
+                f"zeilenlaenge={len(row)})"
+            )
         pid = row["pair_id"]
         cid = pid if mode == "einzel" else row["clip_id"]
         if not pid or pid != pid.strip() or not cid or cid != cid.strip() or cid in ids:

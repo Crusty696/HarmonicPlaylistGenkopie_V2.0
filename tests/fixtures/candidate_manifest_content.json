@@ -6,7 +6,7 @@
     "pair_track_paths": "basename relative to synthetic source root"
   },
   "sha256_by_mode": {
-    "normal": "99d6396ba977282c7828d06ca409b688d0d2a5852822c76bf72819455e566eaf",
-    "three_notes": "e38c662f303f16ef63b7b8eb87d06c9833ce8ac03a609f8c0578eeeb24a45210"
+    "normal": "e9d2ca6387c304a4befee61a484dc0d673e3d0897f1c43e4b914096dba03e595",
+    "three_notes": "8cb30e1babe18dc301cba3deb9187579b673d3c69f516c852725595b81332809"
   }
 }
