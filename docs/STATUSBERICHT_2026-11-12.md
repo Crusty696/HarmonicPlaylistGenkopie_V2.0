@@ -195,6 +195,12 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   `.agents/skills/hpg-veritas/references/active-learnings.md`, die Löschungen
   von `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, drei HTML-Dokumenten und zwei
   historischen Memory-Dateien.
+- Die Folgecommits `0d27df5a` (Kandidaten-Proposal-Semantik-Goldens) und
+  `1819bcd5` (vollständiges normalisiertes RAM-Audit-Receipt-Golden) enthalten
+  nur Tests/Fixtures und Status-/Plantext, keinen Produktcode. Gezielte Tests
+  bestanden **2/2** und **1/1**; das Artefakt-Gate bestand danach **27/27**.
+  `git ls-remote` bestätigte lokalen und entfernten Branch auf
+  `1819bcd52854384d6a61861b01625013b593538b`.
 - In diesem Fortsetzungsschritt wurde kein Produktcode geändert. Commit
   `c90c5e4a` ergänzt Inventar-Assertions im Producer-Paritätstest und
   korrigiert/erweitert den Hörtest-Plan. AST-Parse und `git diff --check`
