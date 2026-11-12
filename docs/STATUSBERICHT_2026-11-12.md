@@ -13,9 +13,9 @@
   optionalen Kompatibilitätsweg.
 - Der Vier-Modi-Producervergleich prüft jetzt zusätzlich das exakte
   Dateiinventar und CSV-Spaltenfolgen der CLI-Ausgabe und des nativen
-  Quellsatzes für Einzel, Kandidaten, Dreinoten und Dramaturgie. Der Test wurde
-  syntaktisch geparst; Pytest-Collection findet alle vier Parametrisierungen (**4/4**, 0,10 s,
-  `--collect-only --no-cov`). Testkörper und Laufzeitverhalten bleiben ungeprüft.
+  Quellsatzes für Einzel, Kandidaten, Dreinoten und Dramaturgie. Der gezielte
+  Lauf bestand **4/4 in 5,70 s** mit `-n 0 --no-cov`; die Fixtures sind
+  synthetisch. Vollsuite und andere JSON-Artefakte bleiben offen.
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
@@ -115,6 +115,7 @@
 - Die Folgecommits 1d019e64 und 6e390ac9 synchronisierten Status und unabhängige Prüfung; 44fdfa92 ergänzt den Dreinoten-Apply-Test. Nach dessen Push stimmten lokaler und entfernter Branch bei 44fdfa92 überein.
 - `368d3076` dokumentierte den Apply-Push; `c90c5e4a` ergänzt das Artefaktinventar. `git ls-remote` bestätigte danach lokal und remote `c90c5e4abc3fed76c7b24ec17ccf97d2dd5d160b`.
 - `ad2026f3` ergänzt die CSV-Spaltenfolgen, `c7abf2d` dokumentiert die statische Packaging-Prüfung. Vor dieser Statuskorrektur bestätigte `git ls-remote` lokal und remote `c7abf2d1191a54bd52e5d6b255af1d961be0592c`.
+- Der Producer-Contract-Test lief anschließend seriell **4/4 in 5,70 s**; er prüft exaktes Dateiinventar, CSV-Spaltenfolgen und bestehende CLI-/native Producer-Parität. Der Test ist synthetisch und ersetzt keine Vollsuite oder Originalmusik-Abnahme.
 
 ## Belege
 

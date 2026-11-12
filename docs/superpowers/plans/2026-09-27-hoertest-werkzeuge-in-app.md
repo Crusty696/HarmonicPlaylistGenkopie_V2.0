@@ -262,6 +262,8 @@ Der isolierte Frozen-Build samt Native-Smoke (`ok=true`) bestand.
 
 Die Inventartabelle trennt Hörsatzdateien von Fit-, Audit- und Blindtest-Ausgaben. Sie ist kein pauschaler Golden-Master-Nachweis. Fit-Ausgaben und beide Blindtest-Varianten haben eigene Producer/Validatoren; eine gemeinsame, versionsübergreifende Schema-Fixture über alle JSON-Schemas bleibt offen.
 
+**Zusatzverifikation 12.11.2026:** `test_real_internal_producer_artifacts_match_cli_and_native_service` bestand nach den Datei-Inventar- und CSV-Spaltenassertions **4/4 in 5,70 s** (`venv312`, `-n 0 --no-cov`). Geprüft wurden Einzel, normaler Kandidat, Dreinoten und Dramaturgie mit synthetischen Quellen. Das belegt diese Producer-Artefakte, schließt aber keine JSON-Schemas von Fit, Audit oder Blindtest und keine Vollsuite ab.
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.
