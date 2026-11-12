@@ -53,9 +53,12 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   Lauf bestand **4/4 in 5,70 s** mit `-n 0 --no-cov`; die Fixtures sind
   synthetisch. Ein Inhalts-Golden für `kandidaten_manifest.json` bindet jetzt
   zusätzlich normale und Dreinoten-Ausgabe; alle vier Producer-Modi bestanden
-  damit erneut **4/4 in 4,63 s**. Die Fixture normalisiert temporäre Quellpfade
-  und den Build-Fingerprint, andere Manifestwerte bleiben exakt. Die
-  vollständigen Goldens aller publizierten JSON-Artefakte bleiben offen.
+  damit erneut **4/4 in 4,63 s**. `reihenfolge.json` hat jetzt zusätzlich
+  einen kanonischen Inhaltshash, der für normale und Dreinoten-Kandidaten
+  identisch ist; beide gezielten Fälle bestanden **2/2 in 2,70 s**. Die
+  Kandidatenmanifest-Fixture normalisiert temporäre Quellpfade und den
+  Build-Fingerprint, andere Manifestwerte bleiben exakt. Die vollständigen
+  Goldens aller publizierten JSON-Artefakte bleiben offen.
 - Die erfolgreiche CLI-Publikation eines Kandidaten-Auditreports hat jetzt
   einen direkten Vertragstest für exakte Root- und Satzbindungsfelder.
   `test_vollstaendiger_stretch_fall_ist_read_only` bestand **1/1 in 0,48 s**.

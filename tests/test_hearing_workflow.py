@@ -284,6 +284,15 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
         assert _canonical_manifest_sha256(
             _normalize_candidate_manifest_for_golden(candidate_manifest)
         ) == candidate_golden["sha256_by_mode"][candidate_key]
+        order = json.loads(
+            (cli_config.output_dir / "reihenfolge.json").read_text(encoding="utf-8")
+        )
+        order_golden = json.loads(
+            (Path(__file__).parent / "fixtures" / "candidate_order_content.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert _canonical_manifest_sha256(order) == order_golden["sha256_by_mode"][candidate_key]
 
     metadata_by_mode = {
         "einzel": {"merkmale.csv", "bewertung.csv"},

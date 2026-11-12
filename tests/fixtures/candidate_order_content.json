@@ -1,0 +1,9 @@
+{
+  "artifact": "reihenfolge.json",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {},
+  "sha256_by_mode": {
+    "normal": "128af5490d6b8862493cb21f4a2067422db8f22102a2b7669ef49076aa18d5f7",
+    "three_notes": "128af5490d6b8862493cb21f4a2067422db8f22102a2b7669ef49076aa18d5f7"
+  }
+}
