@@ -61,7 +61,7 @@
   synthetische CSVs ohne Cache und Audiodateien.
 - Der Dreinoten-GUI-Fitpfad wurde als echte E2E-Folge ergänzt:
   synthetischer Producer, menschliche Testnoten, GUI-Fitworker, RAM-Audit und
-  gebundener Fitbericht bestanden **1/1** am 12.11.2026 (11,82 s). Bei einem
+  gebundener Fitbericht bestanden **1/1** am 12.11.2026 (13,71 s). Bei einem
   unabhängigen Paar bleibt das Übernahme-Gate korrekt geschlossen; der Test
   belegt keine Gewichtsübernahme. Zusammen mit dem Kandidaten-Apply-E2E, dem
   Einzel-Fit-Draft und dem Vier-Modi-Resume sind die automatisierten
@@ -77,8 +77,7 @@
   von `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, drei HTML-Dokumenten und zwei
   historischen Memory-Dateien.
 - In diesem Fortsetzungsschritt wurde kein Produktcode geändert.
-- Der Statusbericht wurde als `a3a22816` committed und gepusht. Die anschließende
-  Referenzbereinigung wird als eigener Dokumentationsschritt veröffentlicht.
+- Der Dreinoten-GUI-Fitworker wurde in `0c88d8eb` ergänzt; `ccd1c929` klärte den Build-Status, `7bb79cca` öffnete überzogene Artefakt-/E2E-Haken und `b7742ccc` benannte den noch offenen Dreinoten-Apply-Nachweis. Vor diesem Statusabgleich stimmten lokaler und entfernter Branch auf `b7742ccc` überein.
 
 ## Belege
 
