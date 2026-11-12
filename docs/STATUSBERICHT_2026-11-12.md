@@ -30,6 +30,7 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   0,54 s** (`venv312`, `-n 0 --no-cov`).
 - Ein gemeinsamer Artefakt-Vertragslauf bestand **18/18 in 10,48 s** (`venv312`, `-n 0 --no-cov`): vier Producer-Modi sowie Single-/Kandidaten-/Dreinoten-Fit, Proposal-Rundlauf, Kandidaten-Audit, Ratingsreport und lokale/portable Blindtest-Referenzen. Synthetische Quellen; kein Coverage-, Slow-Test-, Originalmusik- oder manueller Usability-Nachweis.
 - Die Vertragsauswahl ist als gemeinsamer pytest-Marker `artifact_contract` wiederholbar. Nach Ergänzung des Root-Schema-Katalogs bestand `venv312\Scripts\python.exe -m pytest tests/ -m artifact_contract --tb=short -q -n 0 --no-cov` **27/27 in 14,52 s**; 6.738 andere Tests wurden abgewählt. Das Gate bindet Producer, unterstützte Versionen, Root-Validatoren, GUI-Exportklick und native Erstellen/Bewerten/Wiederöffnen-Folge in allen vier Modi zusammen; kein Coverage-, Slow-Test- oder sichtbarer manueller Usability-/Audio-Nachweis.
+- Nach den normalisierten Inhalts-Goldens für Kandidatenreihenfolge und Dramaturgiemanifest bestand dasselbe `artifact_contract`-Gate erneut **27/27 in 20,51 s** (6.738 abgewählt; `venv312`, `-n 0 --no-cov`). Dies ist der aktuelle gezielte Gate-Nachweis, kein Vollsuite- oder Coverage-Lauf.
 - Der gespeicherte In-App-Übergangsratings-Satz wurde zusätzlich geprüft: `test_ram_rating_persists_metadata_reopens_and_rejects_changed_source` bestand **1/1 in 6,15 s**; Persistenz, Wiederöffnung und Ablehnung veränderter Quelldaten sind abgedeckt.
 - Der private Snapshot-Vertrag `association.json` ist nun für beide Producerformen explizit geprüft: Einquellen-v1 mit exakten Rootfeldern und Wiederöffnung bestand **1/1 in 0,22 s**, Mehrquellen-v2 mit Schema-/Roundtrip **1/1 in 0,24 s**; für v2 bestehen zusätzlich Strict-Negativtests.
 - Die unterstützten Quellmanifest-Versionen **1, 2 und 3** werden jetzt in einer einzigen Kompatibilitätsrundreise jeweils durch Discovery und vollständigen Loader geprüft. `test_source_session_and_discovery_read_both_versions` bestand **1/1 in 0,15 s**; v2 lag zuvor zwischen den getesteten v1-/v3-Ständen ungetestet.
@@ -58,7 +59,12 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   identisch ist; beide gezielten Fälle bestanden **2/2 in 2,70 s**. Die
   Kandidatenmanifest-Fixture normalisiert temporäre Quellpfade und den
   Build-Fingerprint, andere Manifestwerte bleiben exakt. Die vollständigen
-  Goldens aller publizierten JSON-Artefakte bleiben offen.
+  Goldens aller publizierten JSON-Artefakte bleiben offen. Das
+  Dramaturgiemanifest besitzt jetzt ebenfalls einen Inhalts-Golden. Er
+  normalisiert Algorithmus-/Cache-Fingerprint und ersetzt nur pfadbasierte
+  synthetische Track-IDs durch stabile Fixture-IDs; Poolreihenfolge und
+  Strategie-/Scoring-Kontexte bleiben inhaltlich gebunden. Der Dramaturgie-
+  Producerfall bestand **1/1 in 2,63 s**.
 - Die erfolgreiche CLI-Publikation eines Kandidaten-Auditreports hat jetzt
   einen direkten Vertragstest für exakte Root- und Satzbindungsfelder.
   `test_vollstaendiger_stretch_fall_ist_read_only` bestand **1/1 in 0,48 s**.

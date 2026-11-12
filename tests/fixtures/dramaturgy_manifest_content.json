@@ -1,0 +1,11 @@
+{
+  "artifact": "dramaturgie_manifest.json",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "algorithm_build": "$ALGORITHM_BUILD",
+    "cache.size": "$CACHE_SIZE",
+    "cache.sha256": "$CACHE_SHA256",
+    "track_ids": "source paths map to stable synthetic $TRACK_00 through $TRACK_11 identifiers; pool hashes recomputed canonically"
+  },
+  "sha256": "894ccf32defd12e0010ba5ece4378610988bb480ce0f6db3c5fd6991f83fcfdd"
+}

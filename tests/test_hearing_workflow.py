@@ -61,6 +61,26 @@ def _normalize_candidate_manifest_for_golden(manifest):
     return normalized
 
 
+def _normalize_dramaturgy_manifest_for_golden(manifest, track_id_map):
+    normalized = json.loads(json.dumps(manifest, allow_nan=False))
+    normalized["algorithm_build"] = "$ALGORITHM_BUILD"
+    normalized["cache"]["size"] = "$CACHE_SIZE"
+    normalized["cache"]["sha256"] = "$CACHE_SHA256"
+    normalized["ordered_pool_track_ids"] = [
+        track_id_map[track_id] for track_id in normalized["ordered_pool_track_ids"]
+    ]
+    normalized["pool_hash"] = _canonical_manifest_sha256(normalized["ordered_pool_track_ids"])
+    for variant in normalized["variants"]:
+        variant["pool_hash"] = normalized["pool_hash"]
+        variant["ordered_track_ids"] = [
+            track_id_map[track_id] for track_id in variant["ordered_track_ids"]
+        ]
+        for transition in variant["transitions"]:
+            transition["from_track_id"] = track_id_map[transition["from_track_id"]]
+            transition["to_track_id"] = track_id_map[transition["to_track_id"]]
+    return normalized
+
+
 def producer_for(source_a, source_b):
     def produce(args):
         from tools import rate_transitions as rt
@@ -293,6 +313,24 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
             )
         )
         assert _canonical_manifest_sha256(order) == order_golden["sha256_by_mode"][candidate_key]
+    elif mode == "dramaturgie":
+        track_id_map = {
+            hashlib.sha256(
+                rt._windows_pfadschluessel(str(sources / f"track-{index:02d}.wav")).encode("utf-8")
+            ).hexdigest(): f"$TRACK_{index:02d}"
+            for index in range(track_count)
+        }
+        dramaturgy_manifest = json.loads(
+            (cli_config.output_dir / rt.DRAMATURGIE_MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        dramaturgy_golden = json.loads(
+            (Path(__file__).parent / "fixtures" / "dramaturgy_manifest_content.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert _canonical_manifest_sha256(
+            _normalize_dramaturgy_manifest_for_golden(dramaturgy_manifest, track_id_map)
+        ) == dramaturgy_golden["sha256"]
 
     metadata_by_mode = {
         "einzel": {"merkmale.csv", "bewertung.csv"},
