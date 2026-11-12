@@ -81,6 +81,12 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   `test_published_hearing_json_versions_match_golden_catalog`; das Gesamt-Gate
   besteht 27/27. Offen bleibt der normalisierte Inhaltsvergleich sämtlicher
   Producer-Ausgaben samt Reader-Rundreise.
+- Für `hearing_source_manifest.json` v3 besteht jetzt zusätzlich ein normalisierter
+  Inhalts-Golden-Vergleich in allen vier Prepare-Modi (**4/4**, synthetische
+  Quellen); das Gesamt-Gate bestand danach **27/27 in 15,89 s**. Source-SHA256
+  und Transition-Specs bleiben exakt; Source-Pfade werden relativiert und nur
+  pfadabhängige immutable-Metadata-Größen/Hashes redigiert. Goldens für
+  Kandidaten-/Dramaturgiemanifeste, Fit/Audit, Blindtest und Ratings fehlen.
 - Der frühere Native-Smoke-`ok=true` im Task-6-Abschnitt ist ausdrücklich als Nachweis eines damaligen Quellstands markiert. Der spätere Build hatte einen abweichenden Algorithmus-Fingerprint; dieser Stand wurde inzwischen isoliert neu gebaut und per Native-Smoke geprüft (Nachweis oben).
 - Statische Packaging-Verdrahtung geprüft: `main.py` dispatcht
   `--hpg-native-smoke` an `hpg_core.hearing_smoke.run`; der Smoke importiert

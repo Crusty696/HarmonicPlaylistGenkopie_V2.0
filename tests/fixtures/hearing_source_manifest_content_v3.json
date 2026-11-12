@@ -1,0 +1,17 @@
+{
+  "format": "hpg_hearing_source_refs",
+  "format_version": 3,
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "source_roots": "$SOURCE_ROOT",
+    "source_and_spec_paths": "relative to the synthetic source root",
+    "source_sha256": "preserved",
+    "filesystem_identity": "not present in this schema",
+    "immutable_metadata_size_and_sha256": "redacted because source-root paths vary in CSV bytes"
+  },
+  "sha256_by_mode": {
+    "einzel": "e0b45837e3f173596e35660bf67982a28329474d065f985246590056764c5d40",
+    "kandidaten": "abe2c7595416ea346910e528787139105331ef258e8f0ce25ce700f361427bd4",
+    "dramaturgie": "dc85225c621cf53876fc4e8b7d4f0ffdc1b88fe8c4634408d20eb8e252592187"
+  }
+}

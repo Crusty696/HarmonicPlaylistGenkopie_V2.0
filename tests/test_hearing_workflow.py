@@ -1,5 +1,7 @@
 """Native Vorbereitung hat genau eine Publikationsgrenze."""
 import csv
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,45 @@ from hpg_core.hearing_workflow import (
     HearingTargetExistsError, HearingValidationError, PrepareConfig, create_set,
 )
 from hpg_core.transition_renderer import TransitionClipSpec
+
+
+def _normalize_source_manifest_for_golden(manifest, source_root):
+    source_root = Path(source_root).resolve()
+    normalized_specs = []
+    for _, spec in sorted(manifest["specs"].items()):
+        item = dict(spec)
+        for key in ("track_a_path", "track_b_path"):
+            item[key] = Path(item[key]).resolve().relative_to(source_root).as_posix()
+        normalized_specs.append(item)
+    normalized_sources = []
+    for _, entry in sorted(
+        manifest["sources"].items(), key=lambda pair: Path(pair[0]).name,
+    ):
+        item = dict(entry)
+        item["path"] = Path(item["path"]).name
+        item["root"] = "$SOURCE_ROOT"
+        normalized_sources.append(item)
+    return {
+        "format": manifest["format"],
+        "format_version": manifest["format_version"],
+        "mode": manifest["mode"],
+        "status": manifest["status"],
+        "source_roots": ["$SOURCE_ROOT"],
+        "specs": normalized_specs,
+        "sources": normalized_sources,
+        "immutable_metadata": {
+            name: {"size": "$SIZE", "sha256": "$SHA256"}
+            for name in manifest["immutable_metadata"]
+        },
+    }
+
+
+def _canonical_manifest_sha256(manifest):
+    raw = json.dumps(
+        manifest, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def producer_for(source_a, source_b):
@@ -193,6 +234,13 @@ def test_real_internal_producer_artifacts_match_cli_and_native_service(
     native_result = create_set(config)
     assert native_result.status == "prepared"
     native_session = load_source_session(native_result.output_dir)
+    native_manifest = json.loads(
+        (native_result.output_dir / SOURCE_MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    normalized_manifest = _normalize_source_manifest_for_golden(native_manifest, sources)
+    golden_path = Path(__file__).parent / "fixtures" / "hearing_source_manifest_content_v3.json"
+    golden = json.loads(golden_path.read_text(encoding="utf-8"))
+    assert _canonical_manifest_sha256(normalized_manifest) == golden["sha256_by_mode"][mode]
     assert native_session.mode == mode
     assert native_session.status == "prepared"
 
