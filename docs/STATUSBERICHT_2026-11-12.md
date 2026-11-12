@@ -6,6 +6,13 @@
 
 ## Geprüfte Fortschritte
 
+- Der CLI-Einzel-Fit publizierte `gewichte.json` bisher mit permissivem
+  `json.dumps` und direktem `write_text`: nicht-endliche JSON-Zahlen waren
+  möglich und ein abgebrochener Schreibvorgang konnte eine Teil-Datei lassen.
+  Der neue Create-only-Writer serialisiert mit `allow_nan=False`, fsync und
+  atomarem Hardlink; vorhandene Ausgaben bleiben unverändert. Der bestehende
+  CLI/native Rundlauf plus No-clobber- und NaN-Regressionen bestanden **3/3 in
+  0,54 s** (`venv312`, `-n 0 --no-cov`).
 - Der aktuelle Checkout enthält `Start_Hoertest.bat`,
   `tools/hoertest_launcher.py` und `tests/test_hoertest_launcher.py`.
   Eine widersprechende historische Inventaraussage im Hörtest-Plan wurde

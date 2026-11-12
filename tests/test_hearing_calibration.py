@@ -231,6 +231,30 @@ def test_single_fit_cli_output_matches_native_report_and_roundtrips(tmp_path, mo
     assert not (operation_root / "child_preferences.json").exists()
 
 
+def test_single_fit_cli_does_not_replace_existing_output(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from tools import rate_transitions as rate
+
+    root = _csv_single(tmp_path, rated=True)
+    output = root / "gewichte.json"
+    output.write_bytes(b"valuable existing output")
+    with pytest.raises(FileExistsError):
+        rate.befehl_fit(SimpleNamespace(dir=root, seed=1, genre=None))
+    assert output.read_bytes() == b"valuable existing output"
+    assert not list(root.glob(".gewichte.json.*.tmp"))
+
+
+def test_strict_new_json_writer_rejects_nonfinite_without_publishing(tmp_path):
+    from tools.rate_transitions import _schreibe_json_neu_atomar
+
+    target = tmp_path / "gewichte.json"
+    with pytest.raises(ValueError):
+        _schreibe_json_neu_atomar(target, {"weight": float("nan")})
+    assert not target.exists()
+    assert not list(tmp_path.glob(".gewichte.json.*.tmp"))
+
+
 @pytest.mark.gui
 @pytest.mark.integration
 def test_single_fit_from_app_button_shows_real_draft_without_applying(

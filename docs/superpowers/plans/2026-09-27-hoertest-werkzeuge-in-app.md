@@ -283,6 +283,8 @@ Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-
 
 **Playlist-Toleranz-Overrides 12.11.2026:** Lade- und Schreibpfade prüfen jetzt doppelte JSON-Felder. Ein mehrdeutiger Override führt beim Lesen zurück zu Genre-Defaults und bleibt bei atomaren Schreibversuchen bytegleich erhalten. Override-Fehler- und gültiger Übernahmepfad bestanden **5/5 in 0,18 s** (`-n 0 --no-cov`).
 
+**Einzel-Fit-Publikation 12.11.2026:** `gewichte.json` wird im CLI nun mit `allow_nan=False`, fsync und atomarem Create-only-Hardlink publiziert. Damit werden nicht-endliche Werte verworfen, Teil-Dateien vermieden und vorhandene Ausgaben nicht ersetzt. CLI/native Rundlauf, No-clobber- und NaN-Negativtest bestanden **3/3 in 0,54 s** (`venv312`, `-n 0 --no-cov`).
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.

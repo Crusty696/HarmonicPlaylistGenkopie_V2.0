@@ -3354,8 +3354,7 @@ def befehl_fit(args: argparse.Namespace) -> int:
         aktive, streuungen,
     )
     ziel = ordner / "gewichte.json"
-    ziel.write_text(json.dumps(ergebnis, indent=2, ensure_ascii=False),
-                    encoding="utf-8")
+    _schreibe_json_neu_atomar(ziel, ergebnis)
 
     verworfen = [n for n in KLASSISCHE_FAKTOREN if n not in aktive]
     print()
@@ -4134,6 +4133,30 @@ def _schreibe_json_atomar(ziel: Path, daten: dict) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp, ziel)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _schreibe_json_neu_atomar(ziel: Path, daten: dict) -> None:
+    """Publiziert ein striktes JSON-Artefakt atomar ohne bestehende Datei zu ersetzen."""
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_name = tempfile.mkstemp(
+        prefix=f".{ziel.name}.", suffix=".tmp", dir=ziel.parent
+    )
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(
+                daten,
+                stream,
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temp, ziel)
     finally:
         temp.unlink(missing_ok=True)
 
