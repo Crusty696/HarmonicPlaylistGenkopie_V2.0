@@ -1,6 +1,7 @@
 """Service-Worker pruefen echte Publikation und kooperativen Abbruch."""
 
 from tests.test_hearing_workflow import config_fixture
+from pathlib import Path
 
 import pytest
 
@@ -96,6 +97,8 @@ def test_blind_check_worker_cooperative_cancel_during_real_hash(tmp_path, qtbot,
 @pytest.mark.artifact_contract
 def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp_path, qtbot):
     import csv
+    import hashlib
+    import json
     from hpg_core import hearing_jobs
     from tests.test_hearing_blind import _fixture
     from tests.test_hearing_native_integration import _fingerprints
@@ -135,6 +138,28 @@ def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp
     assert {row["system"] for row in key_rows} == {"HPG", "baseline"}
     assert key.parent != output and "erstelle neutrale Sessionkopien" in messages[0]
     assert _fingerprints(root) == before
+
+    normalized_public_rows = [dict(row, session_id="$SESSION_ID") for row in public_rows]
+    normalized_key_rows = [dict(row, session_id="$SESSION_ID") for row in key_rows]
+    clip_hashes = {
+        path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted((output / "clips").glob("*.wav"))
+    }
+    projection = {
+        "public": normalized_public_rows,
+        "private": normalized_key_rows,
+        "clips_sha256": clip_hashes,
+    }
+    canonical = json.dumps(
+        projection, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "portable_blind_publication_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
 
     check_worker = hearing_jobs.HearingBlindExportCheckWorker(public_path, key)
     with qtbot.waitSignal(check_worker.completed, timeout=10000) as check_signal:

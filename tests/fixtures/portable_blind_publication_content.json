@@ -1,0 +1,8 @@
+{
+  "artifact": "portable blind public CSV, private key CSV and neutral clips",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "session_id": "$SESSION_ID"
+  },
+  "sha256": "ad7bdba8aa91fce921f6ea5932d1574410698f569aad7262ef16ee8c8942bb74"
+}
