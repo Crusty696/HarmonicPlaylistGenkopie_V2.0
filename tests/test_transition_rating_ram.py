@@ -197,6 +197,17 @@ def test_transition_ratings_report_validates_input_and_emits_read_only_json(tmp_
     report = json.loads(capsys.readouterr().out)
     assert report["source"] == "transition_ratings.json"
     assert report["ratings_file_sha256"] == hashlib.sha256(original).hexdigest()
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "transition_ratings_report_content.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    normalized_report = report | {"ratings_file": "$RATINGS_FILE"}
+    canonical = json.dumps(
+        normalized_report, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == golden["sha256"]
     assert report["weights_applied"] is False
     assert report["complete_candidate_sets"] == 0
     assert ratings.read_bytes() == original

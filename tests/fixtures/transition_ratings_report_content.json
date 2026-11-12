@@ -1,0 +1,8 @@
+{
+  "artifact": "transition ratings diagnostic report",
+  "canonical_json": "UTF-8, sorted keys, compact separators, allow_nan=false",
+  "normalization": {
+    "ratings_file": "$RATINGS_FILE"
+  },
+  "sha256": "a0caf3c927f924fe8638eecea24dd53441cd4e7fd8a8bd07b723e73a83a56852"
+}
