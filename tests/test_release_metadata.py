@@ -290,7 +290,8 @@ def test_release_and_main_ci_share_one_strong_installer_runtime_gate():
   for marker in (
     "/VERYSILENT",
     "--worker-smoke",
-    "Frozen worker smoke did not persist both isolated tracks",
+    "Frozen worker smoke cache track rows:",
+    "version_markers",
     "SELECT COUNT(*) FROM cache WHERE key <> ?",
     "Installed application exited",
     "MainWindowHandle",
