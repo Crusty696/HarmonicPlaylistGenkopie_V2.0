@@ -3836,9 +3836,18 @@ def validiere_vollstaendige_dreinotenbewertung(
 
 
 def _lade_json_strikt(path: Path, label: str) -> dict:
+    def ohne_doppelte_schluessel(pairs):
+        result = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError(f"{label} enthaelt doppelten JSON-Schluessel {name!r}")
+            result[name] = value
+        return result
+
     try:
         daten = json.loads(
             path.read_text(encoding="utf-8"),
+            object_pairs_hook=ohne_doppelte_schluessel,
             parse_constant=lambda raw: (_ for _ in ()).throw(
                 ValueError(f"{label} enthaelt nicht-endliche JSON-Konstante {raw}")
             ),

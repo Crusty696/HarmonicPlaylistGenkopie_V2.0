@@ -180,3 +180,14 @@ def test_transition_ratings_report_validates_input_and_emits_read_only_json(tmp_
     error = capsys.readouterr()
     assert "hat kein bekanntes Schema" in error.err
     assert error.out == ""
+
+    ratings.write_text(
+        '{"format":"hpg_transition_ratings_v1","ratings":{},"ratings":{}}',
+        encoding="utf-8",
+    )
+    assert rate_transitions.main([
+        "transition-ratings-report", "--file", str(ratings)
+    ]) == 2
+    error = capsys.readouterr()
+    assert "doppelten JSON-Schluessel 'ratings'" in error.err
+    assert error.out == ""

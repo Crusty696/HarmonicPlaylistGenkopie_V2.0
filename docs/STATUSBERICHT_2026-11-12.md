@@ -33,6 +33,10 @@
   separate Diagnose-CLI-Test validiert JSON-Ausgabe, Dateihash, Read-only-
   Verhalten und Ablehnung zusätzlicher Felder. Beide Tests bestanden **2/2 in
   4,93 s** (`venv312`, `-n 0 --no-cov`).
+- Beim CLI-Einlesen wurde ein realer Strict-JSON-Fehler gefunden und behoben:
+  `_lade_json_strikt` akzeptierte doppelte Feldnamen. Der Loader weist diese
+  jetzt mit `object_pairs_hook` ab; Producer- und Report-Tests bestehen samt
+  Duplikatfall **2/2 in 4,73 s** (`venv312`, `-n 0 --no-cov`).
 - Das Hörtest-Artefaktinventar wurde im Umsetzungsplan getrennt nach
   Prepare-, Fit-, Audit- und Blindtest-Ausgaben ergänzt. Eine gemeinsame
   versionsübergreifende Schema-Fixture aller JSON-Artefakte bleibt offen.
