@@ -328,3 +328,34 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
   prüft, Rating-Persistenz geklärt ist, der Frozen-Smoke besteht und die bereits
   dokumentierten Coverage-/Slow-Test- sowie GUI-/Originalmusik-Abnahmen
   entschieden sind.
+
+## Auslieferung und Originalmusikprüfung
+
+Der Windows-Installerjob auf `579e7f83` bestand den stillen Installationslauf,
+den Worker-Test, den Start der installierten Qt-Oberfläche und die
+Deinstallation. Der korrigierte Test erkennt das Fenster des PyInstaller-
+Kindprozesses am Pfad der installierten EXE. EXE und Setup aus diesem Job
+wurden lokal übernommen und per SHA-256 mit den heruntergeladenen Artefakten
+verglichen. Die lokale EXE öffnete das antwortende Hauptfenster
+„Harmonic Playlist Generator v3.7.2“.
+Im selben Windows-Lauf bestanden alle 6.719 ausgewählten Python-Tests in
+45 Minuten bei 81,25 % Coverage. Die 46 langsamen Tests liefen separat lokal.
+[Windows-Lauf 43169051974](https://github.com/Crusty696/HarmonicPlaylistGenkopie_V2.0/actions/runs/43169051974)
+
+| Datei | SHA-256 |
+| --- | --- |
+| HarmonicPlaylistGenerator.exe | D87257B82E78A151B523D394B92ADF68F64248F40C0F69372386D6B33BE62FC3 |
+| HPG_v3.7.2_Setup.exe | DAF287764B4CAC31541C968384C5317103C8061702AE598C54BEE9D9AA200837 |
+
+Von 46 langsamen Tests bestanden zunächst 42. Die vier übrigen benötigten
+Originaldateien aus `F:\beatport_tracks_2025-08`. Damit bestanden Cache,
+parallele Analyse und Playlist-Erstellung. Der vierte Test verlangte für
+jeden Track Mixpunkte. Seit `23491a4b` prüft er bei fehlenden Punkten auch
+den dokumentierten Rasterstatus und die Nullwerte für die Taktanzahl.
+Der korrigierte Test bestand mit drei Originaltracks in 308 Sekunden.
+
+`e2e_check.py --audio-dir "F:\beatport_tracks_2025-08" --with-rekordbox`
+bestand alle 19 Prüfungen mit frischem Cache. Für zwei Originaltracks entstand
+ein Übergang von 73,5 Sekunden bei 44,1 kHz. Der Peak lag bei 0,950 und die
+Effektivwertdifferenz zwischen Mitte und Anfang bei −0,1 dB.
+Die musikalische Bewertung durch einen DJ steht aus.
