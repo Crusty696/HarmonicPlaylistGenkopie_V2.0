@@ -158,10 +158,20 @@ def _validiere_wahl(wahl: object) -> dict:
 
 
 def _json_laden(raw: bytes, *, strict: bool) -> object:
+    def object_without_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Doppelter JSON-Schluessel: {key!r}")
+            result[key] = value
+        return result
+
     def reject_constant(value: str):
         raise ValueError(f"Nicht endliche JSON-Zahl: {value}")
 
-    kwargs = {"parse_constant": reject_constant} if strict else {}
+    kwargs = {"object_pairs_hook": object_without_duplicates}
+    if strict:
+        kwargs["parse_constant"] = reject_constant
     return json.loads(raw.decode("utf-8"), **kwargs)
 
 

@@ -279,6 +279,8 @@ Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-
 
 **Cache-JSON-Vertrag 12.11.2026:** `_json_strikt` lehnt nun doppelte Trackfelder in Cachezeilen ab. `test_cache_vor_render_ist_strikt_aktuell_und_ohne_windows_duplikate` besteht mit manipuliertem JSON-Datensatz **1/1 in 0,59 s** (`-n 0 --no-cov`).
 
+**Persistierte Ranking-Einstellungen 12.11.2026:** Kandidatengewichte und Mixpunkt-Auswahlen weisen doppelte JSON-Felder jetzt fail-closed ab. Tolerantes Lesen ignoriert die mehrdeutige Datei mit Warnung; atomare Mutationen schreiben sie nicht um. Fehlerfälle bestanden **7/7 in 0,50 s**; gültige Preference- und Choice-Rundreisen **2/2 in 0,10 s** (`-n 0 --no-cov`).
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.

@@ -263,6 +263,16 @@ def test_lesefehlerwarnung_bleibt_erhalten(tmp_path, caplog):
     assert "nicht lesbar" in meldung
 
 
+def test_doppelte_json_schluessel_im_preferences_lesen_warnen_und_verwerfen(tmp_path, caplog):
+    pfad = tmp_path / "prefs.json"
+    pfad.write_text('{"Psytrance":{},"Psytrance":{}}', encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger=cp.__name__)
+
+    assert cp._lies(pfad) == {}
+    assert str(pfad) in caplog.records[0].getMessage()
+    assert "Doppelter JSON-Schluessel" in caplog.records[0].getMessage()
+
+
 def test_override_path_nutzt_localappdata_wenn_env_fehlt(tmp_path, monkeypatch):
     monkeypatch.delenv("HPG_CANDIDATE_PREFERENCES_FILE", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
@@ -352,7 +362,9 @@ def test_atomare_merge_schema_allein_erhaelt_bestehende_gewichte(tmp_path):
     assert cp.schema_rangfolge("Psytrance") == ["pssi_phrase"]
 
 
-@pytest.mark.parametrize("inhalt", [b"{ kaputt", b"[]", b"null"])
+@pytest.mark.parametrize("inhalt", [
+    b"{ kaputt", b"[]", b"null", b'{"Psytrance":{},"Psytrance":{}}',
+])
 def test_atomare_merge_verweigert_ungueltigen_altstand_ohne_write(tmp_path, inhalt):
     ziel = tmp_path / "prefs.json"
     ziel.write_bytes(inhalt)

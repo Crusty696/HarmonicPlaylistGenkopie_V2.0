@@ -204,9 +204,13 @@ def test_vergiss_entfernt_nur_das_paar():
     assert cc.hole("a.mp3", "b.mp3") is None and cc.hole("a.mp3", "c.mp3")["t_out"] == 3.0
 
 
-def test_kaputte_datei_ist_nur_fuer_anzeige_leer_und_wird_nie_ueberschrieben(tmp_path):
+@pytest.mark.parametrize("raw", [
+    "{kaputt",
+    '{"a|b":{"t_out":1,"t_out":2,"t_in":3,"blend_bars":8}}',
+])
+def test_kaputte_datei_ist_nur_fuer_anzeige_leer_und_wird_nie_ueberschrieben(tmp_path, raw):
     datei = tmp_path / "choices.json"
-    datei.write_text("{kaputt", encoding="utf-8")
+    datei.write_text(raw, encoding="utf-8")
     vorher = datei.read_bytes()
     cc.reset_cache()
     assert cc.hole("a.mp3", "b.mp3") is None

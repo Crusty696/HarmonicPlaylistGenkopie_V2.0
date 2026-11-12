@@ -177,6 +177,10 @@
 - Der als strikt bezeichnete Track-Cache-JSON-Leser verwirft doppelte Felder
   jetzt ebenfalls. Die Cache-Vertragsregression mit manipuliertem Duplikat-
   Datensatz bestand seriell **1/1 in 0,59 s** (`-n 0 --no-cov`).
+- Persistierte Kandidatengewichte und Mixpunkt-Auswahlen verwenden nun
+  Duplicate-Key-Prüfung: lesender Fallback protokolliert mehrdeutige Dateien,
+  atomare Schreibpfade lehnen sie ohne Änderung ab. Negativfälle bestanden
+  **7/7 in 0,50 s**; gültige Rundreisen **2/2 in 0,10 s** (`-n 0 --no-cov`).
 
 ## Belege
 

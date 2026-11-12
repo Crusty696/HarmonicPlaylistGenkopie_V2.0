@@ -26,6 +26,15 @@ from .genres import CANONICAL_GENRES
 
 logger = logging.getLogger(__name__)
 
+
+def _json_object_without_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Doppelter JSON-Schluessel: {key!r}")
+        result[key] = value
+    return result
+
 GEWICHT_SCHLUESSEL = tuple(
     f"kandidaten_{f}_weight" for f in (
         "harmonic", "bpm", "energy", "genre", "groove", "bass", "timbre", "mood",
@@ -80,7 +89,10 @@ def _lies(pfad: Path) -> dict:
     if not pfad.is_file():
         return {}
     try:
-        daten = json.loads(pfad.read_text(encoding="utf-8"))
+        daten = json.loads(
+            pfad.read_text(encoding="utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+        )
     except (OSError, ValueError) as exc:
         logger.warning("candidate_preferences nicht lesbar (%s): %s", pfad, exc)
         return {}
@@ -253,8 +265,11 @@ def _lies_override_strikt(pfad: Path) -> tuple[dict, bytes | None]:
         return {}, None
     vorher = pfad.read_bytes()
     try:
-        daten = json.loads(vorher.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        daten = json.loads(
+            vorher.decode("utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"candidate_preferences-Override ist ungueltig: {exc}") from exc
     if not isinstance(daten, dict):
         raise ValueError("candidate_preferences-Override ist kein JSON-Objekt")
