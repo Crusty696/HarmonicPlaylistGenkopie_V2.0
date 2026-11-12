@@ -1714,7 +1714,7 @@ def test_final_generation_verwendet_genau_ein_unveraenderliches_result(
   publish.assert_called_once_with(result)
 
 
-def test_begrenzte_playlist_waehlt_tracks_vor_dem_generation_worker(
+def test_begrenzte_harmonic_playlist_waehlt_tracks_im_generation_worker(
   qtbot, monkeypatch
 ):
   window = _window(qtbot, monkeypatch)
@@ -1750,16 +1750,21 @@ def test_begrenzte_playlist_waehlt_tracks_vor_dem_generation_worker(
     def isRunning(self):
       return False
 
+  real_worker = main.PlaylistGenerationWorker
   monkeypatch.setattr(main, "PlaylistGenerationWorker", _Worker)
 
   window.on_ai_worker_finished(ai_completed=False, finalize=True)
 
-  assert len(captured["tracks"]) == 2
-  assert len({track.track_id for track in captured["tracks"]}) == 2
+  assert len(captured["tracks"]) == 4
   assert captured["started"] is True
-  assert window._playlist_selection_report.requested == 2
-  assert window._playlist_selection_report.eligible == 4
-  assert window._playlist_selection_report.selected == 2
+  worker = real_worker(captured["tracks"], **captured["kwargs"])
+  results = []
+  worker.generation_done.connect(results.append)
+  worker.run()
+  assert len({track.track_id for track in results[0].tracks}) == 2
+  assert worker.selection_report.requested == 2
+  assert worker.selection_report.eligible == 4
+  assert worker.selection_report.selected == 2
 
 
 def test_hearing_ranking_refresh_keeps_playlist_membership_and_selection_report(

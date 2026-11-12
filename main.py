@@ -6684,7 +6684,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                     f"Ranking-Neuberechnung abgebrochen; Trackmitgliedschaft fehlt: {exc}",
                 )
                 return
-        elif finalize and playlist_length:
+        worker_selection = {}
+        if not preserve_membership and finalize and playlist_length:
             from hpg_core.playlist_selection import (
                 empty_history, load_history, select_tracks,
             )
@@ -6697,15 +6698,12 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                     "Rotationshistorie konnte nicht gelesen werden; Auswahl nutzt"
                     f" neutrale Zufallsvariation. Historie bleibt erhalten: {exc}"
                 )
-            selection_options = {}
             if mode == "Harmonic Flow":
-                from hpg_core.playlist import calculate_compatibility
-                selection_options["compatibility"] = lambda a, b: calculate_compatibility(
-                    a, b, bpm_tolerance, **settings["scoring_context"]
+                worker_selection = {"selection_length": playlist_length, "selection_history": history}
+            else:
+                generation_tracks, self._playlist_selection_report = select_tracks(
+                    self.analyzed_raw_tracks, playlist_length, history,
                 )
-            generation_tracks, self._playlist_selection_report = select_tracks(
-                self.analyzed_raw_tracks, playlist_length, history, **selection_options,
-            )
 
         worker = PlaylistGenerationWorker(
             generation_tracks,
@@ -6717,6 +6715,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             ai_failure=ai_failure,
             finalize=finalize,
             parent=self,
+            **worker_selection,
         )
         self.playlist_worker = worker
         worker.generation_done.connect(
@@ -6754,6 +6753,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
         if self.run_state in {RunState.CANCELLING, RunState.CANCELLED}:
             return
+        if getattr(source_worker, "selection_report", None) is not None:
+            self._playlist_selection_report = source_worker.selection_report
         invalid_bpm_excluded = getattr(
             getattr(neues_result, "graph_stats", None),
             "invalid_bpm_excluded",

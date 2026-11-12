@@ -34,6 +34,19 @@ def test_harmonic_selection_prefers_matching_followup_over_rotation():
     assert selected == [tracks[0], tracks[2]]
 
 
+def test_mixable_followup_beats_a_closer_key_without_a_mixpoint():
+    tracks = [_track(name) for name in ("seed", "same_key", "mixable")]
+    class First:
+        def choices(self, population, weights, k):
+            return [population[0]]
+    selected, _ = select_tracks(
+        tracks, 2, rng=First(),
+        compatibility=lambda a, b: 100 if b is tracks[1] else 80,
+        transition_score=lambda a, b: 75 if b is tracks[2] else 0,
+    )
+    assert selected == [tracks[0], tracks[2]]
+
+
 @pytest.mark.parametrize("value,expected", [(None, None), (0, None), (1, 1), (1000, 1000)])
 def test_playlist_length_accepts_all_and_inclusive_range(value, expected):
     assert validate_playlist_length(value) == expected

@@ -171,6 +171,7 @@ def select_tracks(
     tracks: Sequence[object], requested: int | None, history: Mapping | None = None,
     *, rng: random.Random | random.SystemRandom | None = None,
     compatibility: Callable[[object, object], int] | None = None,
+    transition_score: Callable[[object, object], int] | None = None,
 ) -> tuple[list[object], SelectionReport]:
     """Waehlt ohne Zuruecklegen; die existierende Strategie sortiert danach."""
     requested = validate_playlist_length(requested)
@@ -191,19 +192,34 @@ def select_tracks(
         weights = _weights(identities, checked_history)
         remaining = list(zip(eligible, weights))
         selected = []
+        previous = set(checked_history["last_set"])
+        avoided = False
         while remaining and len(selected) < limit:
             candidates = list(range(len(remaining)))
+            if (transition_score is not None and len(previous) == limit
+                    and len(selected) == limit - 1
+                    and all(_track_id(t) in previous for t in selected)):
+                candidates = [i for i in candidates if _track_id(remaining[i][0]) not in previous]
+                avoided = True
             if compatibility is not None and selected:
                 scores = [compatibility(selected[-1], track) for track, _ in remaining]
-                strongest = max(scores)
-                candidates = [i for i in candidates if scores[i] == strongest]
+                if transition_score is None:
+                    strongest = max(scores)
+                    candidates = [i for i in candidates if scores[i] == strongest]
+                else:
+                    # Actual mix-window scoring reads local evidence. Bound
+                    # that work while admitting alternatives to an ideal key.
+                    candidates.sort(key=lambda i: (scores[i], remaining[i][1]), reverse=True)
+                    shortlist = candidates[:12]
+                    ranked = {i: (transition_score(selected[-1], remaining[i][0]), scores[i])
+                              for i in shortlist}
+                    strongest = max(ranked.values())
+                    candidates = [i for i in shortlist if ranked[i] == strongest]
             index = generator.choices(
                 candidates, weights=[remaining[i][1] for i in candidates], k=1
             )[0]
             selected.append(remaining.pop(index)[0])
-        previous = set(checked_history["last_set"])
         selected_ids = {_track_id(track) for track in selected}
-        avoided = False
         if (selected_ids == previous and previous
                 and len(eligible) > limit and limit > 0):
             remaining_ids = {_track_id(track) for track, _ in remaining}

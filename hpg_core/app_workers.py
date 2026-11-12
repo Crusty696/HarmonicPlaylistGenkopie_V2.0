@@ -705,6 +705,8 @@ class PlaylistGenerationWorker(QThread):
         candidate_choice_snapshot,
         ai_failure="",
         finalize=True,
+        selection_length=0,
+        selection_history=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -716,6 +718,9 @@ class PlaylistGenerationWorker(QThread):
         self.candidate_choice_snapshot = deepcopy(candidate_choice_snapshot)
         self.ai_failure = str(ai_failure or "")
         self.finalize_run = bool(finalize)
+        self.selection_length = selection_length
+        self.selection_history = deepcopy(selection_history)
+        self.selection_report = None
 
     def request_cancel(self):
         self.requestInterruption()
@@ -729,6 +734,16 @@ class PlaylistGenerationWorker(QThread):
             tracks_snapshot = deepcopy(self.tracks)
             if self.isInterruptionRequested():
                 return
+            if self.selection_length:
+                from .playlist import calculate_compatibility, calculate_transition_objective
+                from .playlist_selection import select_tracks
+                context = dict(self.scoring_context, cancel_check=self.isInterruptionRequested,
+                               candidate_choice_snapshot=self.candidate_choice_snapshot)
+                tracks_snapshot, self.selection_report = select_tracks(
+                    tracks_snapshot, self.selection_length, self.selection_history,
+                    compatibility=lambda a, b: calculate_compatibility(a, b, self.bpm_tolerance, **context),
+                    transition_score=lambda a, b: calculate_transition_objective(a, b, self.bpm_tolerance, **context),
+                )
             result = generate_playlist_result(
                 list(tracks_snapshot),
                 mode=self.mode,
