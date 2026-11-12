@@ -38,6 +38,7 @@ def _hashes(root):
 
 
 @pytest.mark.parametrize("count", [1, 4, 5])
+@pytest.mark.artifact_contract
 def test_prepare_refs_balance_private_ids_no_audio(tmp_path, count):
     from hpg_core.hearing_blind import prepare_blind_references, load_blind_references
     manifest, output, key, root = _fixture(tmp_path, count)

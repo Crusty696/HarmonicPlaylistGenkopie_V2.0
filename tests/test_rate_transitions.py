@@ -3198,6 +3198,7 @@ def _producer_test_args(tmp_path, cache, *, anzahl=1, max_versionen=2):
     )
 
 
+@pytest.mark.artifact_contract
 def test_kandidaten_manifest_beschreibt_exakten_publizierten_prefix(
     monkeypatch, tmp_path,
 ):
@@ -3610,6 +3611,7 @@ def _dramaturgie_mocklauf(monkeypatch, tmp_path):
     return rt, args, beobachtung
 
 
+@pytest.mark.artifact_contract
 def test_prepare_dramaturgie_bindet_snapshot_context_plan_manifest_und_csv(
     monkeypatch, tmp_path,
 ):

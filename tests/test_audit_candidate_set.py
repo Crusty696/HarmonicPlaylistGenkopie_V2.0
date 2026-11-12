@@ -225,6 +225,7 @@ def _write_manifest(set_dir: Path, manifest: dict) -> None:
     )
 
 
+@pytest.mark.artifact_contract
 def test_vollstaendiger_stretch_fall_ist_read_only(candidate_set, monkeypatch):
     set_dir, cache, _, _ = candidate_set
     rank_calls = []

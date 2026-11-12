@@ -146,6 +146,7 @@ def test_native_fit_is_pure_and_does_not_render_again(ram_set, monkeypatch):
     assert not (op / "child_preferences.json").exists()
 
 
+@pytest.mark.artifact_contract
 def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate(
     ram_set, monkeypatch
 ):
@@ -195,6 +196,7 @@ def test_candidate_cli_and_native_fit_share_report_but_keep_publication_separate
     assert not (op / "child_preferences.json").exists()
 
 
+@pytest.mark.artifact_contract
 def test_three_note_cli_and_native_fit_share_report_but_publish_separately(
     ram_set, monkeypatch
 ):
@@ -637,6 +639,7 @@ def test_source_and_cache_mutations_during_fit_are_rejected(ram_set, monkeypatch
         rate.fit_candidates(inputs, receipt)
 
 
+@pytest.mark.artifact_contract
 def test_export_valid_native_receipt_and_canonical_binding_roundtrip(ram_set, tmp_path):
     result = _proposal(ram_set)
     target = calibration.export_proposal(result, tmp_path / "report.json")

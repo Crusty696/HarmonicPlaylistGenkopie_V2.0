@@ -156,6 +156,7 @@ def test_csv_single_validator_rejects_malformed_metadata(tmp_path, defect):
 
 
 @pytest.mark.parametrize("old_output", [False, True])
+@pytest.mark.artifact_contract
 def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, monkeypatch, old_output, qtbot):
     import json
     from PyQt6.QtWidgets import QPushButton
@@ -202,6 +203,7 @@ def test_csv_single_real_fit_without_cache_audio_preserves_old_output(tmp_path, 
     assert dialog.status_label.text() == f"Bericht gespeichert: {target}"
 
 
+@pytest.mark.artifact_contract
 def test_single_fit_cli_output_matches_native_report_and_roundtrips(tmp_path, monkeypatch):
     from types import SimpleNamespace
 

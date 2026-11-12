@@ -93,6 +93,7 @@ def test_cli_and_native_single_prepare_csv_artifacts_match(config_fixture, monke
         assert (cli_config.output_dir / name).read_bytes() == (gui_config.output_dir / name).read_bytes()
 
 
+@pytest.mark.artifact_contract
 @pytest.mark.parametrize(
     ("mode", "three_notes"),
     (("einzel", False), ("kandidaten", False), ("kandidaten", True), ("dramaturgie", False)),

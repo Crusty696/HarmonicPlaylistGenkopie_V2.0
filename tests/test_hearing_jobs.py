@@ -93,6 +93,7 @@ def test_blind_check_worker_cooperative_cancel_during_real_hash(tmp_path, qtbot,
         worker.wait(5000)
 
 
+@pytest.mark.artifact_contract
 def test_portable_blind_export_worker_copies_neutral_clips_and_separates_key(tmp_path, qtbot):
     import csv
     from hpg_core import hearing_jobs

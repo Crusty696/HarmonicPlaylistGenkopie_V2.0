@@ -19,6 +19,7 @@ def test_snapshot_is_detached_and_filters_other_folders(tmp_path):
     assert json.loads(snapshots[0])["track"]["fileName"] == "a.wav"
 
 
+@pytest.mark.artifact_contract
 def test_private_database_strict_reader_and_reopen_binding(tmp_path, monkeypatch):
     from hpg_core.hearing_managed import freeze_tracks, managed_config, write_snapshot, bind_set, resolve_association
     from tools.rate_transitions import lade_tracks_aus_cache
@@ -412,6 +413,7 @@ def test_multiroot_config_normalizes_order_and_private_uuid_without_writes(tmp_p
         managed.managed_config_from_roots((Path(roots[0].anchor),), mode="einzel")
 
 
+@pytest.mark.artifact_contract
 def test_multiroot_private_snapshot_and_v2_association_roundtrip(tmp_path, monkeypatch):
     import sqlite3
     from hpg_core import hearing_managed as managed

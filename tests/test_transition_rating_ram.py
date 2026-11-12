@@ -87,6 +87,7 @@ def test_rating_dialog_keeps_preview_in_ram_and_blocks_rating_after_player_error
     dialog.close()
 
 
+@pytest.mark.artifact_contract
 def test_ram_rating_persists_metadata_reopens_and_rejects_changed_source(monkeypatch, tmp_path):
     import main
     from hpg_core import hearing_panel
@@ -153,6 +154,7 @@ def test_ram_rating_persists_metadata_reopens_and_rejects_changed_source(monkeyp
     assert audio.decode() not in saved_bytes.decode()
 
 
+@pytest.mark.artifact_contract
 def test_transition_ratings_report_validates_input_and_emits_read_only_json(tmp_path, capsys):
     from tools import rate_transitions
 

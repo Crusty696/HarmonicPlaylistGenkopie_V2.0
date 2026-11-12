@@ -25,6 +25,7 @@ def test_unrecognized_phase_method_cannot_enter_hearing_session(tmp_path):
         validate_spec_v2(data)
 
 
+@pytest.mark.artifact_contract
 def test_source_session_and_discovery_read_both_versions(source_fixture):
     import json
     from hpg_core.hearing_sources import SourceRenderSink, write_source_manifest, load_source_session
