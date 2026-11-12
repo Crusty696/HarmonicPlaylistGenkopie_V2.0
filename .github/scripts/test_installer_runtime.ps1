@@ -131,7 +131,13 @@ print(json.dumps({"track_rows": track_rows, "version_markers": version_markers})
     # unavailable; unit contracts cover persistence for cacheable analyses.
     Write-Host "Frozen worker smoke cache track rows: $($cacheState.track_rows)"
 
-    $app = Start-Process -FilePath $installedExe -WindowStyle Hidden -PassThru
+    $guiLocalAppData = Join-Path $smokeRoot "gui-localappdata"
+    $appInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $appInfo.FileName = $installedExe
+    $appInfo.WorkingDirectory = $installDir
+    $appInfo.UseShellExecute = $false
+    $appInfo.Environment["LOCALAPPDATA"] = $guiLocalAppData
+    $app = [System.Diagnostics.Process]::Start($appInfo)
     $guiDeadline = [System.Diagnostics.Stopwatch]::StartNew()
     $mainWindowReady = $false
     while ($guiDeadline.Elapsed.TotalSeconds -lt 30) {
@@ -147,7 +153,13 @@ print(json.dumps({"track_rows": track_rows, "version_markers": version_markers})
         Start-Sleep -Milliseconds 250
     }
     if (-not $mainWindowReady) {
-        throw "Installed application did not create a main window with a title"
+        $appLogPath = Join-Path $guiLocalAppData "HPG\logs\hpg.log"
+        $appLogTail = if (Test-Path -LiteralPath $appLogPath -PathType Leaf) {
+            (Get-Content -LiteralPath $appLogPath -Tail 60) -join [Environment]::NewLine
+        } else {
+            "GUI log was not created at $appLogPath"
+        }
+        throw "Installed application did not create a main window with a title:`n$appLogTail"
     }
 } catch {
     $failure = $_
