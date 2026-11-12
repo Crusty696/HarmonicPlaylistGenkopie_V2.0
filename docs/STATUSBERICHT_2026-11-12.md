@@ -165,6 +165,10 @@
   verschieben. Dramaturgie-Manifest und HTTP-POST verwenden jetzt ebenfalls
   den Duplikat-Hook. CSV-Unverändertheit nach POST-Ablehnung und Manifestfehler
   bestanden **2/2 in 0,72 s** (`-n 0 --no-cov`).
+- Die native Kandidaten-Hörvorschau las `reihenfolge.json` noch permissiv.
+  Sie nutzt nun `hearing_sources.strict_json_bytes`; doppelter Paar-Schlüssel
+  wird abgewiesen und die gültige Reihenfolge bleibt erhalten. Regression und
+  Normalfall bestanden seriell **2/2 in 0,56 s** (`-n 0 --no-cov`).
 
 ## Belege
 

@@ -1,12 +1,12 @@
 """Lesende native Vorschau vorhandener Kandidaten-Hoertests."""
 
-import json
 from pathlib import Path
 
 from PyQt6.QtCore import QUrl
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
+from .hearing_sources import strict_json_bytes
 from tools.hoertest_server import (
     BEWERTUNG_KANDIDATEN_SPALTEN,
     bewertungsschema,
@@ -143,8 +143,8 @@ def load_candidate_preview(folder):
         raise ValueError("Clips fehlen in den Merkmalen")
 
     try:
-        order = json.loads(order_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        order = strict_json_bytes(order_path.read_bytes())
+    except (OSError, ValueError) as exc:
         raise ValueError("Blinde Reihenfolge ist nicht lesbar") from exc
     if not isinstance(order, dict) or set(order) != set(by_pair):
         raise ValueError("Blinde Reihenfolge passt nicht zu den Paaren")

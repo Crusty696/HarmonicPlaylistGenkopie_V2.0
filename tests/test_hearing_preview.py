@@ -68,6 +68,17 @@ def test_preview_rejects_malformed_blinded_order(tmp_path):
         load_candidate_preview(folder)
 
 
+def test_preview_rejects_duplicate_json_pair_keys(tmp_path):
+    folder = _set(tmp_path)
+    (folder / "reihenfolge.json").write_text(
+        '{"p1":{"seed":42,"clips":["p1_k2","p1_k1"]},'
+        '"p1":{"seed":42,"clips":["p1_k1","p1_k2"]}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Blinde Reihenfolge ist nicht lesbar"):
+        load_candidate_preview(folder)
+
+
 def test_preview_rejects_clips_directory_link_outside_set(tmp_path):
     folder = _set(tmp_path)
     external = tmp_path / "outside"
