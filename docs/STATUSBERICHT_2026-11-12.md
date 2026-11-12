@@ -276,3 +276,16 @@ noch kein neuer Vollsuite-/Coverage-Lauf vor.
 - Gezielte Regressionen: `tests/test_tempo_refinement.py`,
   `tests/test_analysis_tempo_refinement.py`
 - Projektweite Anforderungen und Nachweisgrenzen: `docs/PROJECT_KNOWLEDGE.md`
+
+## Folgeabgleich am 2026-11-12
+
+- Der VERITAS-Hinweis zum versionsfest verdrahteten Installer wurde am aktuellen
+  Workflow bestätigt. Der Release-Tag wird jetzt ohne `v` an Inno Setup
+  übergeben; Installer-Metadaten, Dateiname und Batch-Ausgabekontrolle verwenden
+  dieselbe Version. Commit `d60ab452` ist auf `codex/gesamtrefaktorierung`
+  gepusht; lokaler und entfernter HEAD stimmten überein.
+- Sechs gezielte statische Assertions und `git diff --check` bestanden. Inno-
+  Build, Installer-Smoke und sichtbare GUI-Abnahme wurden nicht ausgeführt.
+- Offen bleiben das konfigurierte projektweite Coverage-/Slow-Test-Gate und die
+  manuelle GUI-Abnahme. Der optionale Blindtest-Import bleibt außerhalb des
+  Umfangs, bis eine separate Spezifikation vorliegt.
