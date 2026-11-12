@@ -153,6 +153,9 @@
   Auditberichte verwendet; deren Lesewege profitieren ebenfalls von der
   Duplikatschlüssel-Abweisung. Bugfix-Commit `03a230d5` ist gepusht; lokaler
   und entfernter Branch stehen auf `03a230d5f62c0b0fe0be30564cf6c14572a08e12`.
+- Kandidaten-Fit-Regressionsfälle prüfen nun beide kritischen Leser (Manifest
+  und Audit-Report) mit doppelten Feldern. Die zwei synthetischen Fälle
+  bestanden seriell **2/2 in 0,35 s** (`-n 0 --no-cov`).
 
 ## Belege
 

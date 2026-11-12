@@ -2609,6 +2609,27 @@ def test_fit_bindet_nichtleeren_erfolgsreport_an_manifest_csv_wav_cache_und_buil
         rt._validiere_fit_bindung(set_dir, cache, report_path)
 
 
+@pytest.mark.parametrize("target", ["manifest", "report"])
+def test_fit_bindung_rejects_duplicate_json_fields(monkeypatch, tmp_path, target):
+    rt = rate_transitions
+    set_dir, cache, report_path, manifest, report = _fit_binding_fixture(
+        monkeypatch, tmp_path
+    )
+    if target == "manifest":
+        path = set_dir / rt.KANDIDATEN_MANIFEST_NAME
+        path.write_text(json.dumps(manifest).replace(
+            '"format_version":', '"format_version": 1, "format_version":', 1
+        ), encoding="utf-8")
+    else:
+        path = report_path
+        path.write_text(json.dumps(report).replace(
+            '"status": "passed"', '"status": "passed", "status": "passed"', 1
+        ), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="doppelten JSON-Schluessel"):
+        rt._validiere_fit_bindung(set_dir, cache, report_path)
+
+
 def _tausche_gueltige_bewertung_und_audit(
     rt, set_dir: Path, report_path: Path, report: dict
 ) -> None:
