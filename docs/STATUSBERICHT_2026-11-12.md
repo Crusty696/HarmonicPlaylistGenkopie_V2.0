@@ -169,6 +169,11 @@
   Sie nutzt nun `hearing_sources.strict_json_bytes`; doppelter Paar-Schlüssel
   wird abgewiesen und die gültige Reihenfolge bleibt erhalten. Regression und
   Normalfall bestanden seriell **2/2 in 0,56 s** (`-n 0 --no-cov`).
+- Das GUI-Auswahlprofil nutzte ebenfalls Standard-JSON-Parsing. Es wird jetzt
+  mit `hearing_sources.strict_json_bytes` gelesen. Doppelte Felder und andere
+  ungültige Profile werden vor Workerstart abgewiesen (**5/5 in 0,39 s**),
+  gültige Kandidatenprofile funktionieren weiter (**1/1 in 0,16 s**); seriell
+  mit `-n 0 --no-cov` geprüft.
 
 ## Belege
 

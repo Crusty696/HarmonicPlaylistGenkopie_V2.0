@@ -379,6 +379,10 @@ def test_prepare_form_selection_profile_file_picker(qtbot, monkeypatch, tmp_path
 @pytest.mark.parametrize("payload", [
     "not JSON",
     "{}",
+    '{"purpose":"selection_only","purpose":"ranking",'
+    '"product_weights_changed":false,"features":[],"feature_mean":{},'
+    '"feature_std":{},"models":{},"excluded_undirected_pairs":[],'
+    '"historical_track_counts":[]}',
     json.dumps({"purpose": "ranking", "product_weights_changed": False}),
     json.dumps({
         "purpose": "selection_only", "product_weights_changed": False,

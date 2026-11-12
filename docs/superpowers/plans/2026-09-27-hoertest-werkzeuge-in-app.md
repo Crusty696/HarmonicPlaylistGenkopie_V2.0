@@ -275,6 +275,8 @@ Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-
 
 **Direkter Ratings-Report-Vertrag 12.11.2026:** `test_transition_ratings_report_validates_input_and_emits_read_only_json` prüft das exakte Eingabeformat `hpg_transition_ratings_v1`, erfolgreiche JSON-Ausgabe samt Hash/Abdeckung/`weights_applied=false`, unveränderte Quelldatei und Ablehnung zusätzlicher Top-Level-Felder sowie doppelter JSON-Schlüssel. Dabei wurde ein Loaderfehler behoben: `_lade_json_strikt` nutzte `json.loads` ohne `object_pairs_hook` und akzeptierte dadurch doppelte Feldnamen. Der Loader weist sie jetzt kontrolliert ab. Producer- und Report-Test bestanden **2/2 in 4,73 s**. Die vollständige versionsübergreifende Golden-Master-Rundreise bleibt offen.
 
+**Auswahlprofil-Vertrag 12.11.2026:** `lade_auswahlprofil` verwendet jetzt `hearing_sources.strict_json_bytes`, damit auch doppelte Schlüssel und nicht-endliche Zahlen fail-closed abgewiesen werden. Die GUI-Rejection-Matrix einschließlich doppeltem `purpose` bestand **5/5 in 0,39 s** (`-n 0`); ein gültiges Kandidatenprofil erreichte weiterhin den Producer-Namespace (**1/1 in 0,16 s**, `-n 0`).
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.

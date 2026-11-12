@@ -1199,8 +1199,9 @@ def lade_auswahlprofil(profil_pfad: Path) -> dict:
             return False
 
     try:
-        profil = json.loads(Path(profil_pfad).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        from hpg_core.hearing_sources import strict_json_bytes
+        profil = strict_json_bytes(Path(profil_pfad).read_bytes())
+    except (OSError, ValueError) as exc:
         raise ValueError(f"Auswahlprofil ist nicht als JSON lesbar: {exc}") from exc
     if type(profil) is not dict:
         raise ValueError("Auswahlprofil muss ein JSON-Objekt sein")
