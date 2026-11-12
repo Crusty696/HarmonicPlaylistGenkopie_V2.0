@@ -913,11 +913,23 @@ def _windows_pfadschluessel(pfad: str) -> str:
 
 
 def _json_strikt(roh: str, *, key: str) -> dict:
+    def ohne_doppelte_schluessel(pairs):
+        result = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError(f"doppelter JSON-Schluessel {name!r}")
+            result[name] = value
+        return result
+
     def ungueltige_konstante(wert: str):
         raise ValueError(f"nicht-endliche JSON-Konstante {wert}")
 
     try:
-        daten = json.loads(roh, parse_constant=ungueltige_konstante)
+        daten = json.loads(
+            roh,
+            object_pairs_hook=ohne_doppelte_schluessel,
+            parse_constant=ungueltige_konstante,
+        )
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Cache-Zeile {key}: ungueltiges JSON ({exc})") from exc
     return validate_track_dict(daten)

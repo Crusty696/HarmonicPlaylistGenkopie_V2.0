@@ -174,6 +174,9 @@
   ungültige Profile werden vor Workerstart abgewiesen (**5/5 in 0,39 s**),
   gültige Kandidatenprofile funktionieren weiter (**1/1 in 0,16 s**); seriell
   mit `-n 0 --no-cov` geprüft.
+- Der als strikt bezeichnete Track-Cache-JSON-Leser verwirft doppelte Felder
+  jetzt ebenfalls. Die Cache-Vertragsregression mit manipuliertem Duplikat-
+  Datensatz bestand seriell **1/1 in 0,59 s** (`-n 0 --no-cov`).
 
 ## Belege
 

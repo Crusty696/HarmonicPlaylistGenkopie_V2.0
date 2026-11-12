@@ -2962,6 +2962,23 @@ def test_cache_vor_render_ist_strikt_aktuell_und_ohne_windows_duplikate(tmp_path
     with pytest.raises(ValueError, match="JSON"):
         rate_transitions.lade_tracks_aus_cache(str(kaputtes_json))
 
+    doppelte_felder = tmp_path / "duplicate-fields.db"
+    _schreibe_testcache(
+        doppelte_felder, [cache_track(r"C:\\Musik\\A.wav", "A.wav")]
+    )
+    conn = sqlite3.connect(doppelte_felder)
+    raw_track = conn.execute("SELECT data FROM cache WHERE key = 'k0'").fetchone()[0]
+    raw_track = raw_track.replace(
+        '"fileName": "A.wav"',
+        '"fileName": "A.wav", "fileName": "B.wav"',
+        1,
+    )
+    conn.execute("UPDATE cache SET data = ? WHERE key = 'k0'", (raw_track,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError, match="doppelter JSON-Schluessel"):
+        rate_transitions.lade_tracks_aus_cache(str(doppelte_felder))
+
     falsches_schema = tmp_path / "schema.db"
     conn = sqlite3.connect(falsches_schema)
     conn.execute("CREATE TABLE cache (key TEXT PRIMARY KEY, data TEXT)")

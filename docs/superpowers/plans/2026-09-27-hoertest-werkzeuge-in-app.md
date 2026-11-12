@@ -277,6 +277,8 @@ Die ergänzende Schema-Auswahl bestand danach **20/20 in 9,43 s** (`venv312`, `-
 
 **Auswahlprofil-Vertrag 12.11.2026:** `lade_auswahlprofil` verwendet jetzt `hearing_sources.strict_json_bytes`, damit auch doppelte Schlüssel und nicht-endliche Zahlen fail-closed abgewiesen werden. Die GUI-Rejection-Matrix einschließlich doppeltem `purpose` bestand **5/5 in 0,39 s** (`-n 0`); ein gültiges Kandidatenprofil erreichte weiterhin den Producer-Namespace (**1/1 in 0,16 s**, `-n 0`).
 
+**Cache-JSON-Vertrag 12.11.2026:** `_json_strikt` lehnt nun doppelte Trackfelder in Cachezeilen ab. `test_cache_vor_render_ist_strikt_aktuell_und_ohne_windows_duplikate` besteht mit manipuliertem JSON-Datensatz **1/1 in 0,59 s** (`-n 0 --no-cov`).
+
 **Dateien:** Tool-/GUI-Tests, Packaging-/Nutzerdokumentation, gegebenenfalls `main.py`.
 
 **Schnittstellen:** Paritätsmatrix aus Aufgabe 1 plus reproduzierbare end-to-end Session.
