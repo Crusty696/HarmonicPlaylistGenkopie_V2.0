@@ -647,6 +647,18 @@ class TestKandidatenCues:
     cues = RekordboxXMLExporter._kandidaten_cues_out(_rec(100.0, 50.0, kand))
     assert [c[0] for c in cues] == [f"HPG K{i} OUT pssi_phrase" for i in range(1, 7)]
 
+  @pytest.mark.parametrize("plan,expected", [
+    ({"mix_out": 62.0}, ("MIX OUT", 62.0, 1)),
+    ({"mix_in": 202.0}, ("MIX IN", 202.0, 0)),
+  ])
+  def test_plan_cue_survives_conflicting_endpoint_default(self, plan, expected):
+    t = make_exportable_track(bpm=192.0, duration=300.0, first_downbeat=2.0,
+                              mix_in_point=62.0, mix_out_point=202.0, outro_covered=True)
+    rb = _MarkRb()
+    _, errors = make_exporter()._add_cue_points(None, rb, t, **plan)
+    assert not errors and expected in rb.marks
+    assert [mark for mark in rb.marks if mark[2] >= 0] == [expected]
+
   def test_ohne_outro_covered_keine_cues(self, tmp_path):
     a = make_track(filePath=str(tmp_path / "a.mp3"), duration=300.0, mix_in_point=60.0,
                    mix_out_point=200.0, outro_covered=False)

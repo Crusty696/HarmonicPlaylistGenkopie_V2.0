@@ -487,6 +487,13 @@ class RekordboxXMLExporter(BaseExporter):
             float(mix_out) if mix_out is not None
             else float(getattr(track, "mix_out_point", -1.0))
         )
+        # At a set endpoint the opposite cue can be a track default.
+        # A conflicting default must not discard the actual transition.
+        if eff_in is not None and eff_out is not None and eff_in >= eff_out:
+            if mix_in is None and mix_out is not None:
+                eff_in, suppress_mix_in = None, True
+            elif mix_out is None and mix_in is not None:
+                eff_out, suppress_mix_out = None, True
         if not self._cue_export_allowed(
             track, eff_in, eff_out,
             allow_partial=suppress_mix_in or suppress_mix_out,
