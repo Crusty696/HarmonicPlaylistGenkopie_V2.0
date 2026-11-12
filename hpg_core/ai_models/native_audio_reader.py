@@ -18,7 +18,7 @@ import numpy as np
 from .feature_audio import mono_downmix
 from .native_phrase_worker import EXE, NativeContractError, _source_identity
 
-CONTRACT = 'rb-7.2.19-file-reader-v33'
+CONTRACT = 'rb-7.2.19-file-reader-v34'
 RATE = 44100
 MAX_SECONDS = 7200
 NATIVE_REKORDBOX_FACTORIES = {
@@ -280,7 +280,9 @@ class NativeAudioReader:
         if not use_rekordbox:
             self._open_fallback()
             return
-        if suffix == '.mp3' and image is None:
+        # The mapped MP3 factory requires Rekordbox application startup and
+        # can terminate the process before Python can handle an open error.
+        if suffix == '.mp3':
             try:
                 self._open_rekordbox_mpg123()
                 return
@@ -1202,12 +1204,7 @@ class NativeAudioStream:
             raise NativeContractError('Invalid audio-reader start/duration')
         self.image = None
         native_selection = use_rekordbox
-        if use_rekordbox and suffix == '.mp3':
-            try:
-                self.image = _reader_image()
-            except Exception:
-                self.image = None
-        elif use_rekordbox and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS:
+        if use_rekordbox and suffix != '.mp3' and suffix in NATIVE_REKORDBOX_READER_EXTENSIONS:
             optional_codec = suffix in ('.flac', '.fla', '.aac', '.m4a', '.mp4')
             channels = _source_channel_count(path)
             if optional_codec and channels not in (None, 1, 2):

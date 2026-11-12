@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import heapq
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Callable, List, Optional, Dict, Tuple
 from .models import Track, effective_bpm_diff
 
@@ -25,6 +26,7 @@ class StrategyServices:
     _track_cache_key: Callable
     _transition_path_score: Callable
     calculate_transition_objective: Callable
+    calculate_compatibility: Callable
     get_genre_compatibility: Callable
     _sort_harmonic_flow: Callable
 
@@ -32,6 +34,45 @@ class StrategyServices:
 class PlaylistStrategies:
     def __init__(self, services: StrategyServices):
         self.services = services
+
+    def _harmonic_set_order(self, tracks, bpm_tolerance, options):
+        """Exact directed path for a DJ set of up to twelve tracks."""
+        pool = sorted(tracks, key=lambda track: (track.filePath, track.fileName, track.title))
+        count = len(pool)
+        edges = {}
+        for i, source in enumerate(pool):
+            for j, target in enumerate(pool):
+                if i == j:
+                    continue
+                score = self.services.calculate_transition_objective(
+                    source, target, bpm_tolerance, **options)
+                harmonic = self.services.calculate_compatibility(
+                    source, target, bpm_tolerance, **options)
+                difference, _ = effective_bpm_diff(source.bpm, target.bpm)
+                edges[i, j] = (int(score > 0), score, harmonic, -difference)
+
+        @lru_cache(None)
+        def best(previous, remaining):
+            self.services._check_cancel(options.get("cancel_check"))
+            if not remaining:
+                return (0, 0, 0, 0), ()
+            best_score = best_path = None
+            for index in range(count):
+                bit = 1 << index
+                if not remaining & bit:
+                    continue
+                tail, path = best(index, remaining ^ bit)
+                edge = edges[previous, index] if previous >= 0 else (0, 0, 0, 0)
+                score = tuple(a + b for a, b in zip(edge, tail))
+                if best_score is None or score > best_score:
+                    best_score, best_path = score, (index,) + path
+            return best_score, best_path
+
+        try:
+            _, order = best(-1, (1 << count) - 1)
+            return [pool[index] for index in order]
+        finally:
+            best.cache_clear()
 
     def _sort_harmonic_flow(self,
         tracks: list[Track], bpm_tolerance: float, **kwargs
@@ -57,6 +98,9 @@ class PlaylistStrategies:
                 complete_path_score,
                 cancel_check,
             )
+
+        if len(tracks) <= 12:
+            return self._harmonic_set_order(tracks, bpm_tolerance, kwargs)
 
         # Create a local cache specifically to avoid repeated function calls during lookahead
         # and pass it to _find_best_starting_track as well.

@@ -10,6 +10,16 @@ from hpg_core.ai_models import native_audio_reader as reader_module
 from tests.test_native_track_beats import snapshot
 
 
+def test_mp3_with_worker_image_uses_standalone_decoder(tmp_path, monkeypatch):
+    path = tmp_path / "track.MP3"
+    path.touch()
+    opened = []
+    monkeypatch.setattr(NativeAudioReader, "_open_rekordbox_mpg123",
+                        lambda reader: opened.append(reader.path))
+    NativeAudioReader(object(), path)
+    assert opened == [path]
+
+
 @pytest.mark.parametrize('suffix', ['.m4a', '.mp4', '.M4A'])
 @pytest.mark.parametrize('codec,expected', [('alac', 0x2cdd630), ('mp4a.40.2', 0x2cdd760)])
 def test_mp4_native_factory_uses_codec_metadata(monkeypatch, suffix, codec, expected):

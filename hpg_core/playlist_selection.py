@@ -5,7 +5,7 @@ Scoring noch Paar-Gates und schreibt Exporthistorie erst nach Erfolg.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 import math
@@ -170,6 +170,7 @@ def _weights(identities: list[str], history: dict) -> list[int]:
 def select_tracks(
     tracks: Sequence[object], requested: int | None, history: Mapping | None = None,
     *, rng: random.Random | random.SystemRandom | None = None,
+    compatibility: Callable[[object, object], int] | None = None,
 ) -> tuple[list[object], SelectionReport]:
     """Waehlt ohne Zuruecklegen; die existierende Strategie sortiert danach."""
     requested = validate_playlist_length(requested)
@@ -191,8 +192,13 @@ def select_tracks(
         remaining = list(zip(eligible, weights))
         selected = []
         while remaining and len(selected) < limit:
+            candidates = list(range(len(remaining)))
+            if compatibility is not None and selected:
+                scores = [compatibility(selected[-1], track) for track, _ in remaining]
+                strongest = max(scores)
+                candidates = [i for i in candidates if scores[i] == strongest]
             index = generator.choices(
-                range(len(remaining)), weights=[weight for _, weight in remaining], k=1
+                candidates, weights=[remaining[i][1] for i in candidates], k=1
             )[0]
             selected.append(remaining.pop(index)[0])
         previous = set(checked_history["last_set"])

@@ -122,6 +122,7 @@ def _strategy_engine():
         _track_cache_key=_track_cache_key,
         _transition_path_score=_transition_path_score,
         calculate_transition_objective=calculate_transition_objective,
+        calculate_compatibility=calculate_compatibility,
         get_genre_compatibility=get_genre_compatibility,
         _sort_harmonic_flow=_sort_harmonic_flow,
     ))

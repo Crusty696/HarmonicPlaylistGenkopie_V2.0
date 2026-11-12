@@ -24,6 +24,16 @@ def _identity(track):
     return os.path.normcase(os.path.abspath(os.path.normpath(track.filePath)))
 
 
+def test_harmonic_selection_prefers_matching_followup_over_rotation():
+    tracks = [_track(name) for name in ("seed", "unrelated", "match")]
+    class First:
+        def choices(self, population, weights, k):
+            return [population[0]]
+    selected, _ = select_tracks(tracks, 2, rng=First(),
+                                 compatibility=lambda a, b: int(b is tracks[2]))
+    assert selected == [tracks[0], tracks[2]]
+
+
 @pytest.mark.parametrize("value,expected", [(None, None), (0, None), (1, 1), (1000, 1000)])
 def test_playlist_length_accepts_all_and_inclusive_range(value, expected):
     assert validate_playlist_length(value) == expected

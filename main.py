@@ -6687,8 +6687,14 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                     "Rotationshistorie konnte nicht gelesen werden; Auswahl nutzt"
                     f" neutrale Zufallsvariation. Historie bleibt erhalten: {exc}"
                 )
+            selection_options = {}
+            if mode == "Harmonic Flow":
+                from hpg_core.playlist import calculate_compatibility
+                selection_options["compatibility"] = lambda a, b: calculate_compatibility(
+                    a, b, bpm_tolerance, **settings["scoring_context"]
+                )
             generation_tracks, self._playlist_selection_report = select_tracks(
-                self.analyzed_raw_tracks, playlist_length, history,
+                self.analyzed_raw_tracks, playlist_length, history, **selection_options,
             )
 
         worker = PlaylistGenerationWorker(
