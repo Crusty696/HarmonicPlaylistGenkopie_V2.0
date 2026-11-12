@@ -13,6 +13,14 @@
   atomarem Hardlink; vorhandene Ausgaben bleiben unverändert. Der bestehende
   CLI/native Rundlauf plus No-clobber- und NaN-Regressionen bestanden **3/3 in
   0,54 s** (`venv312`, `-n 0 --no-cov`).
+- Der aktuelle Frozen-Build wurde gemäß Task-7-Methode isoliert unter
+  `%TEMP%\hpg-final-build-8db92de2cc2f42cab91a6e4e869efa58` erstellt; bestehende
+  `build/`, `dist/` und Root-EXE wurden nicht angetastet. Die EXE bestand den
+  isolierten `--hpg-native-smoke` mit Exitcode 0 und Report `ok=true`: native
+  Imports/Formulare, Spawn-Initializer, Cache-Reaping/Cleanup, RAM-Render und
+  isolierter Fit-Ablehnungsfall. EXE-SHA256:
+  `23F3BDE1A3667F9A3CEE344720EC09EC344EFF73184B6C62F1AA3D3F825B13F1`.
+  Das belegt den Frozen-Smoke, nicht die GUI-Usability oder Gesamt-App-Abnahme.
 - Der aktuelle Checkout enthält `Start_Hoertest.bat`,
   `tools/hoertest_launcher.py` und `tests/test_hoertest_launcher.py`.
   Eine widersprechende historische Inventaraussage im Hörtest-Plan wurde
