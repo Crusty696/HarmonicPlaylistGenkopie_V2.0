@@ -996,7 +996,7 @@ class NativeAudioReader:
                 raise NativeContractError('Fallback decoder metadata mismatch')
             source.seek(frame_offset)
             output_channels = 1 if source_channels > 2 else source_channels
-            expected_output_frames = _ceil_resampled_frames(window_frames, source_rate)
+            expected_output_frames = (2 * window_frames * RATE + source_rate) // (2 * source_rate)
             self.frames = min(expected_output_frames, math.ceil(self.max_seconds * RATE))
             stream_resampler = (soxr.ResampleStream(
                 source_rate, RATE, output_channels, dtype='float32', quality='HQ')
