@@ -13,7 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from . import config as hpg_config
 from .caching import VALID_ANALYSIS_MODES
 from .parallel_analyzer import ParallelAnalyzer
-from .resource_limits import sanitize_playlist as apply_resource_limits
+from .resource_limits import filter_library_tracks as apply_resource_limits
 from .error_reporter import get_error_reporter
 from .run_state import AnalysisIssue
 from .transition_renderer import BeatSyncError, TransitionClipSpec, _render_clip_subprocess_wrapper
@@ -487,7 +487,6 @@ class AnalysisWorker(QThread):
             # Scan for audio files
             audio_files = []
             scan_root = os.path.realpath(self.folder_path)
-            scan_limit_reached = False
             for root, _, files in os.walk(self.folder_path):
                 if self._should_cancel:
                     raise InterruptedError("Analysis cancelled by user")
@@ -507,17 +506,7 @@ class AnalysisWorker(QThread):
                                 candidate,
                             )
                             continue
-                        if len(audio_files) >= hpg_config.SECURITY_MAX_PLAYLIST_SIZE:
-                            scan_limit_reached = True
-                            break
                         audio_files.append(candidate)
-                if scan_limit_reached:
-                    break
-
-            if scan_limit_reached:
-                self.status_update.emit(
-                    f"Hinweis: Suche auf {hpg_config.SECURITY_MAX_PLAYLIST_SIZE} Titel begrenzt."
-                )
 
             total_files = len(audio_files)
             if total_files == 0:
@@ -631,7 +620,7 @@ class AnalysisWorker(QThread):
                     if getattr(track, "analysis_mode", "") in VALID_ANALYSIS_MODES
                 ]
             # Ressourcenfilter: defekte Eintraege und Tracks ueber den Limits
-            # (Dateigroesse/Dauer) entfernen, Playlist-Groesse deckeln
+            # (Dateigroesse/Dauer) entfernen.
             tracks_before_resource_filter = list(analyzed_tracks)
             pre_count = len(analyzed_tracks)
             analyzed_tracks = self._filter_tracks(analyzed_tracks)
@@ -705,6 +694,7 @@ class PlaylistGenerationWorker(QThread):
         candidate_choice_snapshot,
         ai_failure="",
         finalize=True,
+        verify_audio=False,
         selection_length=0,
         selection_history=None,
         parent=None,
@@ -718,6 +708,7 @@ class PlaylistGenerationWorker(QThread):
         self.candidate_choice_snapshot = deepcopy(candidate_choice_snapshot)
         self.ai_failure = str(ai_failure or "")
         self.finalize_run = bool(finalize)
+        self.verify_audio = verify_audio
         self.selection_length = selection_length
         self.selection_history = deepcopy(selection_history)
         self.selection_report = None
@@ -733,6 +724,16 @@ class PlaylistGenerationWorker(QThread):
 
             tracks_snapshot = deepcopy(self.tracks)
             if self.isInterruptionRequested():
+                return
+            if self.verify_audio and self.selection_length:
+                from .verified_playlist import generate_verified_set
+                result = generate_verified_set(
+                    tracks_snapshot, self.selection_length, self.bpm_tolerance,
+                    self.scoring_context, self.candidate_choice_snapshot,
+                    self.isInterruptionRequested, self.selection_history,
+                )
+                if not self.isInterruptionRequested():
+                    self.generation_done.emit(result)
                 return
             if self.selection_length:
                 from .playlist import calculate_compatibility, calculate_transition_objective

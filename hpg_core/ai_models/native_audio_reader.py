@@ -279,7 +279,9 @@ class NativeAudioReader:
             raise NativeContractError('Native reader file size exceeded')
         self.owner = ct.create_string_buffer(0x28)
         suffix = self.path.suffix.lower()
-        if not use_rekordbox:
+        # The standalone native AIFF opener can fail inside its virtual open
+        # on Unicode paths, before Python can handle the access violation.
+        if not use_rekordbox or (suffix in ('.aif', '.aiff') and not str(self.path).isascii()):
             self._open_fallback()
             return
         # The mapped MP3 factory requires Rekordbox application startup and

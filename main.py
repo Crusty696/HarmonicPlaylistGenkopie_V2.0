@@ -224,7 +224,7 @@ from hpg_core.theme import (
     FONT_FAMILY,
 )
 from hpg_core.error_reporter import get_error_reporter
-from hpg_core.resource_limits import sanitize_playlist as apply_resource_limits
+from hpg_core.resource_limits import filter_library_tracks as apply_resource_limits
 from hpg_core.genres import resolve_track_genre
 # AUDIT-FIX F1 (2026-07-24): hpg_config war nur lokal in init_ui importiert;
 # refresh_ai_providers() referenzierte es als Global -> NameError beim Aktivieren
@@ -2301,6 +2301,12 @@ class LibraryPanel(QWidget):
             "Bei einer Begrenzung erhalten laenger nicht exportierte Titel eine hoehere Auswahlchance."
         )
         left_layout.addWidget(self.playlist_length_box)
+        self.verify_audio_box = QCheckBox("Harmonic Flow: nur audiogeprüfte Übergänge")
+        self.verify_audio_box.setToolTip("Bei fester Titellänge Alternativen suchen und jeden Übergang rendern.")
+        left_layout.addWidget(self.verify_audio_box)
+        self.three_sets_box = QCheckBox("Techno + Progressive House: 15, 30 und 100 Titel")
+        self.three_sets_box.setToolTip("Alle drei Sets mit Audioprüfung, Playlist-Dateien und Screenshots erstellen.")
+        left_layout.addWidget(self.three_sets_box)
 
         # BPM Tolerance — Kompakte Zeile
         bpm_label = QLabel("BPM-TOLERANZ")
@@ -2342,6 +2348,13 @@ class LibraryPanel(QWidget):
         bpm_row.addWidget(self.bpm_tolerance_slider, 1)
         bpm_row.addWidget(self.bpm_value_label)
         left_layout.addLayout(bpm_row)
+
+        left_layout.addWidget(QLabel("Analyseprozesse"))
+        self.analysis_workers_box = QSpinBox()
+        self.analysis_workers_box.setRange(0, os.cpu_count() or 1)
+        self.analysis_workers_box.setSpecialValueText("Automatisch")
+        self.analysis_workers_box.setToolTip("Parallele Prozesse für den nächsten Sammlungslauf")
+        left_layout.addWidget(self.analysis_workers_box)
 
         # Generate-Button
         self.start_button = QPushButton("PLAYLIST GENERIEREN")
@@ -2455,6 +2468,7 @@ class LibraryPanel(QWidget):
             "folder": self.current_folder,
             "strategy": self.strategy_combo.currentText(),
             "playlist_length": self.playlist_length_box.value(),
+            "verify_audio": self.verify_audio_box.isChecked(),
             "bpm_tolerance": float(self.bpm_tolerance_slider.value()),
             "advanced_params": self.get_advanced_parameters(),
         }
@@ -6445,6 +6459,7 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             "folder": settings["folder"],
             "strategy": settings["strategy"],
             "playlist_length": playlist_length,
+            "verify_audio": settings.get("verify_audio", False),
             "bpm_tolerance": bpm_tolerance,
             "advanced_params": advanced_params,
             "ai_enabled": ai_enabled,
@@ -6461,6 +6476,11 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             ),
         })
         settings = self._run_settings
+
+        if self.library_panel.three_sets_box.isChecked():
+            settings.update(strategy="Harmonic Flow", verify_audio=True, playlist_length=15,
+                            collection_set_length=15)
+            settings["scoring_context"] = resolve_run_scoring_context("Harmonic Flow", advanced_params)
 
         # Buttons deaktivieren
         self.library_panel.start_button.setEnabled(False)
@@ -6486,6 +6506,9 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         self._run_id += 1
         self._set_run_state(RunState.AUDIO)
         self.worker = AnalysisWorker(folder_path=settings["folder"], cache_policy=cache_policy)
+        worker_count = self.library_panel.analysis_workers_box.value()
+        if worker_count:
+            self.worker._create_analyzer = lambda: ParallelAnalyzer(max_workers=worker_count)
         if _hearing_config is not None:
             # Vor Threadstart binden: auch sehr kurze/leere Scans koennen so
             # nicht vor der Hoertest-Auftragsregistrierung fertigmelden.
@@ -6667,6 +6690,13 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             return
 
         generation_tracks = self.analyzed_raw_tracks
+        if settings.get("collection_set_length"):
+            generation_tracks = [
+                track for track in generation_tracks
+                if any(genre in " ".join((track.genre or "", track.detected_genre or "",
+                                          track.fileName)).lower().replace("_", " ")
+                       for genre in ("techno", "progressive house"))
+            ]
         preserve_membership = bool(settings.get("preserve_playlist_membership"))
         if not preserve_membership:
             self._playlist_selection_report = None
@@ -6700,6 +6730,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 )
             if mode == "Harmonic Flow":
                 worker_selection = {"selection_length": playlist_length, "selection_history": history}
+                if settings.get("verify_audio"):
+                    worker_selection["verify_audio"] = True
             else:
                 generation_tracks, self._playlist_selection_report = select_tracks(
                     self.analyzed_raw_tracks, playlist_length, history,
@@ -6857,6 +6889,44 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             if self._playlist_selection_warning:
                 final_message += f" {self._playlist_selection_warning}"
             self._finish_run(final_state, final_message)
+
+            if (self._run_settings or {}).get("collection_set_length"):
+                try:
+                    self._save_collection_set(neues_result)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    self._finish_run(RunState.ERROR, f"Set-Export fehlgeschlagen: {exc}")
+
+    def _save_collection_set(self, result):
+        length = self._run_settings["collection_set_length"]
+        if len(result.tracks) != length or result.path_stats.planned != length - 1:
+            raise ValueError("Audiogeprüfte Sammlungsliste unvollständig")
+        folder = Path.home() / "Music" / "HPG Gesamtsammlung"
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"Harmonic Flow - {length} Tracks"
+        report = M3U8Exporter().export(list(result.tracks), str(folder / (name + ".m3u8")), name)
+        if report.status != "success":
+            raise OSError("Playlist konnte nicht vollständig geschrieben werden")
+        self.content_stack.setCurrentWidget(self.playlist_panel)
+        pictures = Path.home() / "Pictures" / "HPG Gesamtsammlung"
+        pictures.mkdir(parents=True, exist_ok=True)
+        table = self.playlist_panel.table
+        row = 0
+        while row < length:
+            table.scrollToItem(table.item(row, 1), QAbstractItemView.ScrollHint.PositionAtTop)
+            if not self.grab().save(str(pictures / f"{length}-{row+1:03}.png")):
+                raise OSError("Screenshot konnte nicht gespeichert werden")
+            last = table.rowAt(table.viewport().height()-1)
+            if last < 0 or last == length-1:
+                break
+            row = max(row+1, last)
+        table.scrollToTop()
+        following = {15: 30, 30: 100}.get(length)
+        if following:
+            self._run_settings.update(playlist_length=following, collection_set_length=following)
+            QTimer.singleShot(0, lambda: self.on_ai_worker_finished(ai_completed=False))
+        else:
+            self._run_settings.pop("collection_set_length")
+            self.status_bar.set_status("Drei Sets gespeichert: 142 audiogeprüfte Übergänge.")
 
     def _cleanup_playlist_worker(self, source_worker=None):
         worker = source_worker or self.playlist_worker

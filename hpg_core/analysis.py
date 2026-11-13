@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+from .mix_analyser_metadata import read_collection_metadata
 import os
 import re
 import time
@@ -1497,6 +1498,11 @@ def extract_metadata(file_path: str) -> tuple[str, str, str]:
 
     # Fallback to filename parsing if artist or title is missing
     if not artist or not title or artist == "Unknown" or title == "Unknown":
+        external = read_collection_metadata(file_path)
+        if not artist or artist == "Unknown":
+            artist = external.get("artist")
+        if not title or title == "Unknown":
+            title = external.get("title")
         parsed_artist, parsed_title = parse_filename_for_metadata(file_path)
 
         # Use parsed values if available
@@ -4338,7 +4344,8 @@ def _analyze_audio_path(
         # Nachkommastellen genau), aber der FAKTOR wird gegen das Audio
         # geprueft. Nur wenn ein einfaches Vielfaches des Tags das gemessene
         # Tempo deutlich besser trifft, wird korrigiert.
-        tag_bpm = extract_bpm_from_tags(file_path)
+        external = read_collection_metadata(file_path)
+        tag_bpm = extract_bpm_from_tags(file_path) or external.get('bpm')
         if tag_bpm is not None:
             bpm = tag_bpm
             beat_frames = np.array([])  # Bleibt leer, falls die Gegenprobe scheitert

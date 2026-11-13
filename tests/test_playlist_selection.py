@@ -34,17 +34,18 @@ def test_harmonic_selection_prefers_matching_followup_over_rotation():
     assert selected == [tracks[0], tracks[2]]
 
 
-def test_mixable_followup_beats_a_closer_key_without_a_mixpoint():
-    tracks = [_track(name) for name in ("seed", "same_key", "mixable")]
+@pytest.mark.parametrize("unmixable_count", [1, 12, 24])
+def test_mixable_followup_beats_a_closer_key_without_a_mixpoint(unmixable_count):
+    tracks = [_track("seed"), *[_track(str(i)) for i in range(unmixable_count)], _track("mixable")]
     class First:
         def choices(self, population, weights, k):
             return [population[0]]
     selected, _ = select_tracks(
         tracks, 2, rng=First(),
-        compatibility=lambda a, b: 100 if b is tracks[1] else 80,
-        transition_score=lambda a, b: 75 if b is tracks[2] else 0,
+        compatibility=lambda a, b: 80 if b is tracks[-1] else 100,
+        transition_score=lambda a, b: 75 if b is tracks[-1] else 0,
     )
-    assert selected == [tracks[0], tracks[2]]
+    assert selected == [tracks[0], tracks[-1]]
 
 
 @pytest.mark.parametrize("value,expected", [(None, None), (0, None), (1, 1), (1000, 1000)])

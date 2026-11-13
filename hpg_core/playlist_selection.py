@@ -210,11 +210,20 @@ def select_tracks(
                     # Actual mix-window scoring reads local evidence. Bound
                     # that work while admitting alternatives to an ideal key.
                     candidates.sort(key=lambda i: (scores[i], remaining[i][1]), reverse=True)
-                    shortlist = candidates[:12]
-                    ranked = {i: (transition_score(selected[-1], remaining[i][0]), scores[i])
-                              for i in shortlist}
-                    strongest = max(ranked.values())
-                    candidates = [i for i in shortlist if ranked[i] == strongest]
+                    fallback = candidates
+                    for start in range(0, len(candidates), 12):
+                        shortlist = candidates[start:start + 12]
+                        ranked = {i: (transition_score(selected[-1], remaining[i][0]), scores[i])
+                                  for i in shortlist}
+                        strongest = max(ranked.values())
+                        winners = [i for i in shortlist if ranked[i] == strongest]
+                        if start == 0:
+                            fallback = winners
+                        if strongest[0] > 0:
+                            candidates = winners
+                            break
+                    else:
+                        candidates = fallback
             index = generator.choices(
                 candidates, weights=[remaining[i][1] for i in candidates], k=1
             )[0]

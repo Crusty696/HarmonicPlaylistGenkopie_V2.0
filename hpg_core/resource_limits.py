@@ -11,7 +11,13 @@ from .playlist_security import (
 )
 
 __all__ = [
+    "filter_library_tracks",
     "sanitize_playlist",
     "validate_playlist_security",
     "validate_track_security",
 ]
+
+
+def filter_library_tracks(tracks):
+    """Validate individual library files before selecting a playlist."""
+    return [track for track in tracks if track is not None and validate_track_security(track)]
