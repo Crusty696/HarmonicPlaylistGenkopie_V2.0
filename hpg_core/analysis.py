@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import math
-from .mix_analyser_metadata import read_collection_metadata
+from .mix_analyser_metadata import collection_key, read_collection_metadata
 import os
 import re
 import time
@@ -4491,6 +4491,13 @@ def _analyze_audio_path(
                 )
             else:
                 camelot_code = CAMELOT_MAP.get((key_note, key_mode), "")
+
+        if not camelot_code:
+            fallback_key = collection_key(external.get("key"))
+            if fallback_key in CAMELOT_MAP:
+                key_note, key_mode = fallback_key
+                camelot_code = CAMELOT_MAP[fallback_key]
+                key_confidence = 0.0  # Database metadata has no measured confidence.
 
         energy = calculate_energy(y_fenster)
         bass_intensity = calculate_bass_intensity(y, sr)

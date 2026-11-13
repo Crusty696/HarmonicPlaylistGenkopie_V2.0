@@ -2,6 +2,7 @@
 import logging
 import math
 import os
+import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -32,3 +33,13 @@ def read_collection_metadata(file_path):
     artist, title, bpm, key = row
     return dict(artist=artist, title=title, key=key,
                 bpm=bpm if isinstance(bpm, (float, int)) and math.isfinite(bpm) and 20 < bpm < 300 else None)
+
+def collection_key(value):
+    """Normalize musical key notation while leaving unknown input unresolved."""
+    match = re.fullmatch(r"([A-G])([#b]?)(maj|min)", str(value).strip())
+    if not match:
+        return None
+    note, accidental, mode = match.groups()
+    note += accidental
+    note = {"Db":"C#", "Eb":"D#", "Gb":"F#", "Ab":"G#", "Bb":"A#"}.get(note, note)
+    return note, {"min":"Minor", "maj":"Major"}[mode]
