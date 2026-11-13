@@ -868,8 +868,8 @@ def calculate_paired_mix_points(
   # oder das zuvor gegen den nativen Snapshot validierte Track-Raster. Ein
   # boolescher Native-Status allein ist keine Punktliste und darf keine rohen
   # PSSI-Grenzen freigeben.
-  points_a = pssi_a or (track_a.phrase_grid if native_a else [])
-  points_b = pssi_b or (track_b.phrase_grid if native_b else [])
+  points_a = track_a.phrase_grid if (pssi_a or native_a) else []
+  points_b = track_b.phrase_grid if (pssi_b or native_b) else []
   if (track_a.phrase_anchor is None and not points_a) or (
       track_b.phrase_anchor is None and not points_b
   ):
