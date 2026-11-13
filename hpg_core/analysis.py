@@ -940,6 +940,9 @@ def _get_file_duration(file_path: str) -> float:
             from .ai_models.native_audio_reader import NativeAudioStream
             with NativeAudioStream(file_path) as source:
                 duration = len(source) / source.samplerate
+                state = getattr(getattr(source, "reader", None), "_soundfile_state", None)
+                if state and state["window_frames"] > 0:
+                    duration = state["window_frames"] / state["source_rate"]
             if math.isfinite(duration) and duration > 0:
                 return float(duration)
         except Exception as error:
