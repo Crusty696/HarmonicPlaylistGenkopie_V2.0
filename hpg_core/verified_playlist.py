@@ -13,7 +13,7 @@ from .playlist_selection import _eligible_unique
 from .transition_renderer import BeatSyncError, TransitionClipSpec, render_transition_clip
 
 
-def generate_verified_set(tracks, length, tolerance, context, choices, cancel_check, history=None):
+def generate_verified_set(tracks, length, tolerance, context, choices, cancel_check, history=None, progress=None):
     pool = _eligible_unique(tracks)
     if len(pool) < length:
         raise ValueError(f"{len(pool)} analysierte Titel für {length} Plätze verfügbar.")
@@ -69,6 +69,8 @@ def generate_verified_set(tracks, length, tolerance, context, choices, cancel_ch
         clip = Path(directory)/"transition.wav"
         for seed in sorted(range(len(pool)),key=lambda i: (rotation.get(pool[i].track_id,0),abs(pool[i].bpm-126))):
             path,edges,visited = [seed],[],{seed}
+            if progress:
+                progress(1, pool[seed])
             stack=[options(seed,None,visited)]
             while stack:
                 _check_cancel(cancel_check)
@@ -81,11 +83,15 @@ def generate_verified_set(tracks, length, tolerance, context, choices, cancel_ch
                 if step is None:
                     stack.pop()
                     visited.remove(path.pop())
+                    if progress:
+                        progress(len(path), None)
                     if edges:
                         edges.pop()
                     continue
                 b,c=step
                 path.append(b)
+                if progress:
+                    progress(len(path), pool[b])
                 edges.append(c)
                 visited.add(b)
                 best=max(best,len(path))

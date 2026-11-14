@@ -2631,6 +2631,12 @@ class PlaylistPanel(QWidget):
 
         self._table_stack = QStackedWidget()
         self._table_stack.addWidget(self.table)
+        self.live_table = QTableWidget(0, 4)
+        self.live_table.setHorizontalHeaderLabels(["#", "Titel", "Interpret", "BPM"])
+        self.live_table.setColumnWidth(1, 420)
+        self.live_table.setColumnWidth(2, 250)
+        self.live_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table_stack.addWidget(self.live_table)
         self.empty_playlist_label = QLabel(
             "Noch keine Playlist vorhanden.\n"
             "Erstelle zuerst eine Playlist in der Bibliothek."
@@ -6381,6 +6387,10 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f"Gewichte gespeichert; Ranking-Neuberechnung nicht erfolgreich veröffentlicht ({state.value}): {status}"
             )
             self.toolbar.set_export_enabled(False)
+        panel = self.playlist_panel
+        if panel._table_stack.currentWidget() is panel.live_table:
+            panel._table_stack.setCurrentWidget(panel.table if panel.playlist else panel.empty_playlist_label)
+        panel.quality_widget.show()
         self._set_run_state(state)
         self.library_panel.start_button.setEnabled(True)
         self.toolbar.set_generate_enabled(True)
@@ -6755,6 +6765,24 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             **worker_selection,
         )
         self.playlist_worker = worker
+        if worker_selection.get("verify_audio"):
+            panel = self.playlist_panel
+            panel.live_table.setRowCount(0)
+            panel._table_stack.setCurrentWidget(panel.live_table)
+            panel.quality_widget.hide()
+            self.sidebar.set_active(1)
+            self.content_stack.setCurrentWidget(panel)
+            self.status_bar.set_status(f"0 von {playlist_length} Titeln")
+            def show_selection(size, track):
+                if worker is not self.playlist_worker or self.run_state != RunState.PLAYLIST:
+                    return
+                panel.live_table.setRowCount(size)
+                if track is not None:
+                    for column, value in enumerate((size, track.title, track.artist, f"{track.bpm:.1f}")):
+                        panel.live_table.setItem(size-1, column, QTableWidgetItem(str(value)))
+                    panel.live_table.scrollToBottom()
+                self.status_bar.set_status(f"{size} von {playlist_length} Titeln")
+            worker.selection_progress.connect(show_selection)
         worker.generation_done.connect(
             lambda result, source=worker:
             self._on_playlist_generation_done(result, source)

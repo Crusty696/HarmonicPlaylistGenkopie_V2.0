@@ -680,6 +680,7 @@ class AnalysisWorker(QThread):
 class PlaylistGenerationWorker(QThread):
     """Erzeugt Playlist und TransitionResult ohne Zugriff auf GUI-Widgets."""
 
+    selection_progress = pyqtSignal(int, object)
     generation_done = pyqtSignal(object)
     generation_failed = pyqtSignal(str)
 
@@ -730,7 +731,7 @@ class PlaylistGenerationWorker(QThread):
                 result = generate_verified_set(
                     tracks_snapshot, self.selection_length, self.bpm_tolerance,
                     self.scoring_context, self.candidate_choice_snapshot,
-                    self.isInterruptionRequested, self.selection_history,
+                    self.isInterruptionRequested, self.selection_history, self.selection_progress.emit,
                 )
                 if not self.isInterruptionRequested():
                     self.generation_done.emit(result)
