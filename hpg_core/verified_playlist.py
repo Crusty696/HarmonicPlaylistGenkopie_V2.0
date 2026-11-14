@@ -39,8 +39,8 @@ def generate_verified_set(tracks, length, tolerance, context, choices, cancel_ch
     def options(a, previous, visited):
         if a not in neighbours:
             neighbours[a] = sorted((i for i in range(len(pool)) if i != a),
-                key=lambda i: (-calculate_compatibility(pool[a],pool[i],tolerance,**context),
-                               rotation.get(pool[i].track_id,0),pool[i].track_id))
+                key=lambda i: (rotation.get(pool[i].track_id,0),
+                               -calculate_compatibility(pool[a],pool[i],tolerance,**context),pool[i].track_id))
         for b in neighbours[a]:
             _check_cancel(cancel_check)
             if b in visited:

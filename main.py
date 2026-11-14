@@ -6728,6 +6728,11 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                     "Rotationshistorie konnte nicht gelesen werden; Auswahl nutzt"
                     f" neutrale Zufallsvariation. Historie bleibt erhalten: {exc}"
                 )
+            recent = getattr(self, "_generated_track_times", {})
+            for identity, timestamp in recent.items():
+                history["last_exported"][identity] = max(timestamp, history["last_exported"].get(identity, 0))
+            if recent:
+                history["last_set"] = self._last_generated_ids
             if mode == "Harmonic Flow":
                 worker_selection = {"selection_length": playlist_length, "selection_history": history}
                 if settings.get("verify_audio"):
@@ -6823,6 +6828,13 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
                 f"Fehler bei der Übergangsplanung: {str(exc)}",
             )
             return
+
+        if getattr(source_worker, "selection_length", 0):
+            timestamp = time.time_ns()
+            self._last_generated_ids = [track.track_id for track in neues_result.tracks]
+            if not hasattr(self, "_generated_track_times"):
+                self._generated_track_times = {}
+            self._generated_track_times.update(dict.fromkeys(self._last_generated_ids, timestamp))
 
         self.library_panel.progress_widget.set_step_status(3, "completed")
         if source_worker is self._hearing_refresh_worker and source_worker is not None:
