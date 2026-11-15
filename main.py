@@ -5024,8 +5024,26 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         main_layout.addLayout(right_layout, 1)
         self.setCentralWidget(central)
 
+    def open_saved_set(self, path=None):
+        from hpg_core.saved_set import load_result
+        if self._run_is_active():
+            return
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "HPG-Set öffnen", str(Path.home() / "Music"), "HPG-Set (*.hpgset)")
+        if path:
+            try:
+                result = load_result(path)
+                self._publiziere_generation_result(result)
+                self.analyzed_raw_tracks = list(result.tracks)
+                self.sidebar.set_active(2)
+                self.content_stack.setCurrentWidget(self.mix_tips_panel)
+                self.status_bar.set_status(f"{len(result.tracks)} Titel geladen")
+            except Exception as exc:
+                QMessageBox.warning(self, "Set konnte nicht geöffnet werden", str(exc))
+
     def _setup_shortcuts(self):
         """Tastenkürzel fuer Generierung, Export und Sidebar-Navigation."""
+        self.menuBar().addAction("HPG-Set öffnen …", lambda: self.open_saved_set()).setShortcut(QKeySequence("Ctrl+O"))
         # Ctrl+G → Playlist generieren
         QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self.start_analysis)
         # Ctrl+E → Export
@@ -6946,6 +6964,8 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
         report = M3U8Exporter().export(list(result.tracks), str(folder / (name + ".m3u8")), name)
         if report.status != "success":
             raise OSError("Playlist konnte nicht vollständig geschrieben werden")
+        from hpg_core.saved_set import save_result
+        save_result(folder / (name + ".hpgset"), result)
         self.content_stack.setCurrentWidget(self.playlist_panel)
         pictures = Path.home() / "Pictures" / "HPG Gesamtsammlung"
         pictures.mkdir(parents=True, exist_ok=True)
@@ -7568,6 +7588,9 @@ class MainWindow(ResultPublicationMixin, QMainWindow):
             )
             playlist_name = f"HPG - {mode}"
             report = exporter.export(self.playlist, file_path, playlist_name)
+            if report.status == "success" and self.current_generation_result is not None:
+                from hpg_core.saved_set import save_result
+                save_result(Path(file_path).with_suffix(".hpgset"), self.current_generation_result)
             history_warning = self._record_successful_playlist_export(report)
 
             message = (
